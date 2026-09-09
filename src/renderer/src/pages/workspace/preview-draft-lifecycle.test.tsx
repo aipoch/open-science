@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
+import { completeQuitPersistenceFlush } from '@/hooks/useQuitPersistenceFlush'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -487,4 +489,122 @@ describe('preview draft lifecycle', () => {
       )
     }
   )
+})
+
+it('refuses a successful quit acknowledgement while preview text is unsaved', async () => {
+  await act(async () => root.render(<PersistentPreview />))
+  await startEditing()
+  const acknowledge = vi.fn()
+  await expect(
+    completeQuitPersistenceFlush(
+      { requestId: 'dirty-preview' },
+      {
+        suppressAutoReviews: vi.fn(),
+        drainRuntimeEvents: async () => undefined,
+        flushPersistence: async () => undefined,
+        flushPreviewPersistence,
+        acknowledge
+      }
+    )
+  ).rejects.toThrow()
+  expect(acknowledge).toHaveBeenCalledWith({ requestId: 'dirty-preview', status: 'failed' })
+  expect(editor()?.value).toBe(draft)
+  expect(window.api.managedFileVersions.saveTextEdit).not.toHaveBeenCalled()
+})
+
+it('protects dirty preview text from browser unload', async () => {
+  await act(async () => root.render(<PersistentPreview />))
+  await startEditing()
+  const event = new Event('beforeunload', { cancelable: true })
+  expect(window.dispatchEvent(event)).toBe(false)
+  expect(event.defaultPrevented).toBe(true)
+  expect(confirmation()).toBeNull()
+  expect(editor()?.value).toBe(draft)
+})
+
+it('keeps the editor readonly until its save resolves successfully', async () => {
+  await act(async () => root.render(<PersistentPreview />))
+  await startEditing()
+  let complete!: (
+    value: Awaited<ReturnType<Window['api']['managedFileVersions']['saveTextEdit']>>
+  ) => void
+  vi.mocked(window.api.managedFileVersions.saveTextEdit).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        complete = resolve
+      })
+  )
+  await act(async () =>
+    document.body.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')!.click()
+  )
+  expect(window.api.managedFileVersions.saveTextEdit).toHaveBeenCalledWith(
+    expect.objectContaining({ content: draft })
+  )
+  expect(editor()?.readOnly).toBe(true)
+  expect(editor()?.value).toBe(draft)
+  const inspection = await window.api.managedFileVersions.inspect({
+    source: 'upload',
+    projectId,
+    fileId: 'readme'
+  })
+  if (!inspection.ok) throw new Error('Fixture inspection failed')
+  const selected = inspection.value
+  await act(async () =>
+    complete({
+      ok: true,
+      value: {
+        kind: 'created',
+        version: { ...selected.versions[0], id: 'v2', versionNumber: 2 },
+        headVersionId: 'v2',
+        replayed: false
+      }
+    })
+  )
+  expect(editor()).toBeNull()
+  expect(window.api.managedFileVersions.saveTextEdit).toHaveBeenCalledTimes(1)
+})
+
+it('restores editing after a save failure and releases unload protection after discard', async () => {
+  await act(async () => root.render(<PersistentPreview />))
+  const cleanUnload = new Event('beforeunload', { cancelable: true })
+  expect(window.dispatchEvent(cleanUnload)).toBe(true)
+  await startEditing()
+  await act(async () =>
+    document.body.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')!.click()
+  )
+  expect(editor()?.readOnly).toBe(false)
+  expect(editor()?.value).toBe(draft)
+  expect(previewLeaveGuards.hasUnsavedChanges()).toBe(true)
+  // Existing close protection owns the discard decision.
+  await act(async () => usePreviewWorkbenchStore.getState().removeItem(file.id))
+  const discard = [...confirmation()!.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Discard changes'
+  )
+  await act(async () => discard!.click())
+  expect(previewLeaveGuards.hasUnsavedChanges()).toBe(false)
+  expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(true)
+})
+
+it('asks before the Web recovery action reloads a dirty preview and keeps text on cancel', async () => {
+  await act(async () => root.render(<PersistentPreview />))
+  await startEditing()
+  await act(async () =>
+    root.render(
+      <>
+        <PersistentPreview />
+        <WebEventRecoveryDialog active phase="reload-required" />
+      </>
+    )
+  )
+  const reload = [...document.body.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Reload'
+  )!
+  await act(async () => reload.click())
+  expect(confirmation()).not.toBeNull()
+  const cancel = [...confirmation()!.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Cancel'
+  )!
+  await act(async () => cancel.click())
+  expect(confirmation()).toBeNull()
+  expect(editor()?.value).toBe(draft)
 })

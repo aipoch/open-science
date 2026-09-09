@@ -68,6 +68,10 @@ import {
   type RegisteredSkillPackage,
   validateRegisteredSkillPackages
 } from '../skills/registered-helper-catalog'
+import {
+  isSkillEffectivelyEnabled,
+  trustedSkillActivationPolicy
+} from '../skills/activation-policy'
 
 type SkillCatalogEntry = {
   name: string
@@ -152,9 +156,10 @@ class SkillCatalogModule {
         const disabled = new Set(
           (await this.options.repository.getSettings()).disabledSkillIds ?? []
         )
+        const skill = (await this.catalog()).find((entry) => entry.id === skillId)
         // A trusted Specialist scope may force-load a globally disabled Skill. Main Agent requests
         // have no allowedSkillIds and continue to honor global enablement.
-        return !disabled.has(skillId)
+        return skill ? isSkillEffectivelyEnabled(skill, disabled) : false
       }
     })
   }
@@ -398,7 +403,7 @@ class SkillCatalogModule {
       frameworkName: skill.name,
       displayName: skill.displayName,
       source: skill.source,
-      mainEnabled: !disabled.has(skill.id),
+      mainEnabled: isSkillEffectivelyEnabled(skill, disabled),
       // Catalog entries are installed skills, so they resolve to a present entry at dispatch time.
       available: true,
       ...(skill.compatibility ? { compatibility: skill.compatibility } : {})
@@ -407,8 +412,11 @@ class SkillCatalogModule {
 
   async skillsNeedingForceLoad(ids: string[]): Promise<string[]> {
     const disabled = new Set((await this.options.repository.getSettings()).disabledSkillIds ?? [])
-    const managedIds = new Set((await this.managedCatalog()).map((skill) => skill.id))
-    return ids.filter((id) => managedIds.has(id) && disabled.has(id))
+    const managedById = new Map((await this.managedCatalog()).map((skill) => [skill.id, skill]))
+    return ids.filter((id) => {
+      const skill = managedById.get(id)
+      return skill !== undefined && disabled.has(id) && !isSkillEffectivelyEnabled(skill, disabled)
+    })
   }
 
   async skillNudgeNamesForIds(ids: string[]): Promise<string[]> {
@@ -484,7 +492,7 @@ class SkillCatalogModule {
     const disabled = new Set(settings.disabledSkillIds ?? [])
     const enabled: AdditionalSkillCatalogEntry[] = [
       ...skills
-        .filter((skill) => skill.exposure === 'internal' || !disabled.has(skill.id))
+        .filter((skill) => isSkillEffectivelyEnabled(skill, disabled))
         .map((skill) => ({
           directory: `${OS_SKILL_PREFIX}${skill.id}`,
           name: skill.name,
@@ -569,8 +577,19 @@ class SkillCatalogModule {
 
   async setSkillsEnabled(request: SetSkillsEnabledRequest): Promise<SkillView[]> {
     const ids = [...new Set(request.ids)]
+    const catalog = await this.managedCatalog()
+    if (!request.enabled) {
+      const required = catalog.find(
+        (skill) =>
+          ids.includes(skill.id) &&
+          trustedSkillActivationPolicy(skill.source, skill.activationPolicy) === 'always-on'
+      )
+      if (required) {
+        throw new Error(`Application-required Skill cannot be disabled: ${required.id}`)
+      }
+    }
     const selectableIds = new Set(
-      (await this.managedCatalog())
+      catalog
         .filter((skill) => skill.source === 'imported' || skill.source === 'personal')
         .map((skill) => skill.id)
     )
@@ -1092,9 +1111,7 @@ class SkillCatalogModule {
     const disabled = new Set(disabledIds.filter((id) => !forcedIds.has(id)))
     await new ClaudeCodeSkillMaterializer().sync(
       configRoot,
-      (await this.catalog()).filter(
-        (skill) => skill.exposure === 'internal' || !disabled.has(skill.id)
-      ),
+      (await this.catalog()).filter((skill) => isSkillEffectivelyEnabled(skill, disabled)),
       options
     )
   }
@@ -1150,7 +1167,8 @@ class SkillCatalogModule {
       description: skill.description,
       source: skill.source,
       updatedAt: skill.updatedAt,
-      enabled: !disabled.has(skill.id),
+      enabled: isSkillEffectivelyEnabled(skill, disabled),
+      activationPolicy: trustedSkillActivationPolicy(skill.source, skill.activationPolicy),
       available: true,
       author: skill.author,
       license: skill.license,

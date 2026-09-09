@@ -89,6 +89,24 @@ Only these mutable path fields are rewritten:
 | `ComputeHost`         | `sshOverrides.identityFile`                   |
 | `ComputeJob`          | `inputManifest[]` upload entries' `localPath` |
 
+The schema review covers `prisma/schema.prisma`, the generated SQLite runtime schema and migrations,
+plus the consumers in storage/content repositories, preview persistence, permission grants,
+session projection, Notebook and compute dispatch/recovery. Other path-looking columns have these
+specific meanings:
+
+- `ManagedFile`, `ContentBlob`, `ArtifactMessageSnapshot`, `ArtifactVersionInput` and
+  `ReviewScopeSnapshot.storageKey`, plus `ArtifactVersion.executionSnapshotStorageKey`, are relative
+  content keys resolved by their storage-root owner; their values and checksums stay unchanged.
+- Artifact execution/message snapshots, version input evidence, review snapshots and projection
+  fingerprints preserve immutable provenance and file identity. They are not mutable file locators.
+- `ComputeHost.scratchRoot`, `ComputeJob.remoteWorkdir`, remote handles, output/harvest manifests and
+  remote file evidence refer to the remote host. Local home-root mappings never rewrite them;
+  existing jobs follow the explicit remote transition described below.
+- Permission qualifiers are capability categories or versioned digests, not filesystem roots
+  (`permission-grants/registry.ts`). Replacing text inside them would invent a different approval.
+- Memory, literature metadata, user messages, notes, commands, URLs and encrypted credentials are
+  user or external content. No recursive string replacement is applied to these records.
+
 Rewrites use exact root mappings, path-component boundaries, Windows separator/case rules, and
 file-URI decoding/encoding. Similar prefixes, external paths and relative content/storage keys are
 not rewritten. IDs, project/session ownership, lineage, version relations, checksums, immutable
@@ -154,7 +172,14 @@ but original environments, user files and environment definitions are not dispos
 Run `--audit-aliases` after repairing generated launchers, runtime prefixes and explicit external
 configuration. It reports concrete blockers without editing content. It checks direct paths,
 UTF-16 strings, JSON escaping, file URIs, relative symlink targets, known document path fields and
-live database columns. `--retire-aliases` requires a committed receipt and no blockers, verifies
+live database columns. On Windows it also reads User and Machine PATH, expands environment variables,
+and blocks retirement for any remaining old-root entry or unresolved variable. It never edits these
+registry values. If a new CLI receipt's `beforePath` preserves an unowned old entry, use the app's
+normal CLI uninstall (which validates/restores its owned PATH snapshot), explicitly correct the
+old user PATH entry, then reinstall CLI to create a clean receipt and rerun the audit. Do not delete
+or edit receipts to bypass this check.
+
+`--retire-aliases` requires a committed receipt and no blockers, verifies
 ownership of every alias, then removes only those links. Preserve the journal as the record of
 migration; preserve backups until the operator has separately verified recovery requirements.
 

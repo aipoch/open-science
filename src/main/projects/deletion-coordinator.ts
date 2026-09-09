@@ -388,6 +388,7 @@ class ProjectDeletionCoordinator {
       }
       throw error
     }
+    this.events?.publish('project:deletion-cleanup-changed', undefined)
   }
 
   private async prepareDeletion(projectId: string): Promise<void> {

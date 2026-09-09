@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { documentKind, transformDocument } from './references.mjs'
 import { createReadStream } from 'node:fs'
 import { readFile, readlink, readdir, rm } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, win32 } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import { inside, inspect, remapPath } from './paths.mjs'
@@ -20,12 +21,49 @@ async function mentions(file, needles) {
 
 // Retirement is a separate, fail-closed operation after environment rebuilding and third-party
 // reconciliation. It never edits user programs, ciphertext, binary prefixes or historical evidence.
-export async function auditAliases(journal, inventory) {
+function windowsEnvironmentPaths() {
+  const script = `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$ErrorActionPreference = 'Stop'
+@('User', 'Machine') | ForEach-Object {
+  $value = [Environment]::GetEnvironmentVariable('Path', $_)
+  @{ scope = $_; value = [Environment]::ExpandEnvironmentVariables([string]$value) }
+} | ConvertTo-Json -Compress`
+  const raw = execFileSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-Command', script],
+    {
+      encoding: 'utf8',
+      windowsHide: true
+    }
+  )
+  return JSON.parse(raw)
+}
+
+export async function auditAliases(
+  journal,
+  inventory,
+  readEnvironmentPaths = windowsEnvironmentPaths
+) {
   if (journal.status !== 'committed')
     throw new Error('Alias retirement requires a committed migration')
   const maps = journal.mappings.filter((m) => m.state === 'move' || m.aliasRequired)
   const variants = maps.flatMap((m) => [m.from, ...(m.fromAliases ?? [])])
   const blockers = []
+  if (journal.platform === 'win32' && variants.length) {
+    for (const { scope, value } of readEnvironmentPaths()) {
+      for (const entry of value
+        .split(';')
+        .map((p) => p.trim().replace(/^"|"$/g, ''))
+        .filter(Boolean)) {
+        if (/%[^%]+%/.test(entry))
+          throw new Error(
+            `Unresolved environment variable in ${scope} PATH; resolve it before alias retirement`
+          )
+        if (win32.isAbsolute(entry) && variants.some((from) => inside(from, entry, 'win32')))
+          blockers.push({ path: entry, reason: `${scope}-PATH-reference` })
+      }
+    }
+  }
   const roots = [
     ...new Set([...journal.participants.map((p) => p.to), ...journal.mappings.map((m) => m.to)])
   ]

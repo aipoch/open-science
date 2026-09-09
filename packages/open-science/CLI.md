@@ -498,7 +498,7 @@ By default, the rollback Data Root is a timestamped sibling of the current Data 
 empty location with `--output`:
 
 ```bash
-open-science rollback-to-0.7.3 --yes --output /path/to/OpenScience-0.7.3
+open-science rollback-to-0.7.3 --yes --output /path/to/Open-Science-0.7.3
 ```
 
 Development and recovery workflows can override both source roots explicitly:
@@ -506,8 +506,8 @@ Development and recovery workflows can override both source roots explicitly:
 ```bash
 open-science rollback-to-0.7.3 --yes \
   --config-root /path/to/.open-science \
-  --data-root /path/to/OpenScience \
-  --output /path/to/OpenScience-0.7.3
+  --data-root /path/to/Open-Science \
+  --output /path/to/Open-Science-0.7.3
 ```
 
 Use `--json` to print the rollback manifest as one JSON object. The same manifest is written to

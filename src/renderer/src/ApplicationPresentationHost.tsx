@@ -176,7 +176,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
       message={
         startup.quitPersistence.notice.reason === 'conflict'
           ? t('A conversation changed elsewhere and could not be saved safely.')
-          : t('One or more conversations could not be saved.')
+          : t('Some changes have not been saved.')
       }
       onDismiss={startup.quitPersistence.dismissNotice}
       onRetry={() => {

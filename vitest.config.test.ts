@@ -25,7 +25,8 @@ describe('Vitest discovery boundaries', () => {
     '**/tmp/**',
     '**/.worktrees/**',
     '**/.worktree/**',
-    'docs/internal/**'
+    'docs/internal/**',
+    'dist/**'
   ])('excludes %s from recursive test discovery', (pattern) => {
     expect(VITEST_EXCLUDE_PATTERNS).toContain(pattern)
   })

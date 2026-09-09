@@ -6796,6 +6796,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       ) : null}
       <ProjectFormDialog {...batchProjectFormDialog.dialogProps} />
       <FilePreviewDialog
+        onFocusFallback={() => libraryEntryRef.current?.focus()}
         item={previewItem}
         allowReadingContext={false}
         onReadWithAgent={requestReadWithAgent}

@@ -14,6 +14,7 @@ vi.mock('electron', () => ({
 }))
 
 import { SkillRegistry } from '../skills/registry'
+import { loadSkillDocument } from '../skills/runtime-mcp-server'
 import type { FetchLike } from '../skills/github-import'
 import type { UserSkillRepository } from '../skills/user-skill-repository'
 import { SPECIALIST_PACKAGE_SKILL_METADATA } from '../skills/specialist-package-adapter'
@@ -56,6 +57,7 @@ const createCatalog = async (includeInternal = false): Promise<SkillCatalogModul
                 name: 'Skill Creator',
                 source: 'featured',
                 exposure: 'internal',
+                activationPolicy: 'always-on',
                 updatedAt: '2026-08-09T00:00:00.000Z'
               }
             ]
@@ -523,6 +525,146 @@ describe('SkillCatalogModule', () => {
     ).resolves.toContain('internal body')
     await chmod(join(runtimeRoot, 'skills', 'os-demo'), 0o755)
     await chmod(join(runtimeRoot, 'skills', 'os-skill-creator'), 0o755)
+  })
+
+  it('keeps activation policy independent from internal exposure', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-internal-policy-'))
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'settings-internal-policy-source-'))
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'settings-internal-policy-runtime-'))
+    roots.push(storageRoot, sourceRoot, runtimeRoot)
+    await writeFile(
+      join(sourceRoot, 'SKILL.md'),
+      '---\nname: optional-helper\ndescription: Optional helper.\n---\n\nOptional body.'
+    )
+    await writeFile(
+      join(storageRoot, 'settings.json'),
+      JSON.stringify({ version: 2, providers: [], disabledSkillIds: ['optional-helper'] })
+    )
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: {
+        list: async () => [
+          {
+            id: 'optional-helper',
+            name: 'optional-helper',
+            displayName: 'Optional Helper',
+            description: 'Optional helper.',
+            source: 'featured' as const,
+            updatedAt: '2026-01-01',
+            sourceDir: sourceRoot,
+            exposure: 'internal' as const,
+            activationPolicy: 'user-controlled' as const
+          }
+        ]
+      } as unknown as SkillRegistry
+    })
+
+    await catalog.materializeSkills(runtimeRoot, ['optional-helper'])
+    await expect(
+      readFile(join(runtimeRoot, 'skills', 'os-optional-helper', 'SKILL.md'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('keeps a required Customize Skill enabled and materialized under stale disabled state', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-required-skill-'))
+    const bundleRoot = await mkdtemp(join(tmpdir(), 'settings-required-bundle-'))
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'settings-required-runtime-'))
+    roots.push(storageRoot, bundleRoot, runtimeRoot)
+    await mkdir(join(bundleRoot, 'customize'), { recursive: true })
+    await writeFile(
+      join(bundleRoot, 'customize', 'SKILL.md'),
+      '---\nname: customize\ndescription: Customize Open-Science.\n---\n\nCustomize body.'
+    )
+    await writeFile(
+      join(bundleRoot, 'manifest.json'),
+      JSON.stringify({
+        version: 1,
+        skills: [
+          {
+            id: 'customize',
+            name: 'Customize',
+            source: 'featured',
+            activationPolicy: 'always-on',
+            updatedAt: '2026-08-12T00:00:00.000Z'
+          }
+        ]
+      })
+    )
+    await writeFile(
+      join(storageRoot, 'settings.json'),
+      JSON.stringify({ version: 2, providers: [], disabledSkillIds: ['customize'] })
+    )
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: new SkillRegistry(bundleRoot)
+    })
+
+    await expect(catalog.listSkills()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'customize',
+        enabled: true,
+        activationPolicy: 'always-on'
+      })
+    ])
+    await expect(catalog.skillsNeedingForceLoad(['customize'])).resolves.toEqual([])
+    await catalog.materializeSkills(join(runtimeRoot, '.claude'), ['customize'], new Set(), {
+      directoryLayout: 'agent-facing'
+    })
+    await expect(
+      readFile(join(runtimeRoot, '.claude', 'skills', 'customize', 'SKILL.md'), 'utf8')
+    ).resolves.toContain('Customize body.')
+    await expect(loadSkillDocument({ root: runtimeRoot }, 'customize')).resolves.toContain(
+      'Customize body.'
+    )
+    await catalog.createSkill({ name: 'personal', description: 'Personal.', body: '# Personal' })
+    await expect(catalog.setSkillEnabled({ id: 'customize', enabled: false })).rejects.toThrow(
+      'Application-required Skill cannot be disabled: customize'
+    )
+    await expect(
+      catalog.setSkillsEnabled({ ids: ['personal-personal', 'customize'], enabled: false })
+    ).rejects.toThrow('Application-required Skill cannot be disabled: customize')
+    expect(
+      (await catalog.listSkills()).find((skill) => skill.id === 'personal-personal')?.enabled
+    ).toBe(true)
+    await chmod(join(runtimeRoot, '.claude', 'skills', 'customize'), 0o755)
+  })
+
+  it('does not let user Skill metadata self-promote to always-on', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-user-policy-'))
+    roots.push(storageRoot)
+    await writeFile(
+      join(storageRoot, 'settings.json'),
+      JSON.stringify({ version: 2, providers: [], disabledSkillIds: ['personal-demo'] })
+    )
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: { list: async () => [] } as unknown as SkillRegistry,
+      userSkills: {
+        list: async () => [
+          {
+            id: 'personal-demo',
+            name: 'demo',
+            displayName: 'Demo',
+            description: 'Demo.',
+            source: 'personal' as const,
+            activationPolicy: 'always-on' as const,
+            updatedAt: '2026-01-01',
+            sourceDir: storageRoot
+          }
+        ]
+      } as unknown as UserSkillRepository
+    })
+
+    await expect(catalog.listSkills()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'personal-demo',
+        enabled: false,
+        activationPolicy: 'user-controlled'
+      })
+    ])
   })
 
   it('verifies before replacing a saved token and keeps the old token on failure', async () => {

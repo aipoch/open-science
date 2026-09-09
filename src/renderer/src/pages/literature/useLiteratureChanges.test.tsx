@@ -37,3 +37,28 @@ it('coalesces mutation bursts and restores missed changes on visibility and repl
   expect(latest).toHaveBeenCalledTimes(2)
   expect(unsubscribe).toHaveBeenCalledTimes(1)
 })
+
+it.each(['onDeleted', 'onDeletionCleanupChanged'] as const)(
+  'refreshes literature when project availability changes through %s and releases that subscription',
+  async (subscription) => {
+    let notify!: () => void
+    const remove = vi.fn()
+    const onDeleted = vi.fn((listener: () => void) => {
+      notify = listener
+      return remove
+    })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { projects: { [subscription]: onDeleted } }
+    })
+    const invalidate = vi.fn()
+    const { unmount } = renderHook(() => useLiteratureChanges(invalidate))
+    expect(onDeleted).toHaveBeenCalledOnce()
+    await act(async () => notify())
+    expect(invalidate).toHaveBeenCalledOnce()
+    unmount()
+    expect(remove).toHaveBeenCalledOnce()
+    await act(async () => notify())
+    expect(invalidate).toHaveBeenCalledOnce()
+  }
+)

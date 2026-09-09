@@ -45,7 +45,9 @@ type UsePreviewFileContentRequest = {
   selectedVersionId?: string
   path: string
   source?: PreviewFileSource
+  // Per-page read budget; never an admission limit for the complete file.
   maxBytes?: number
+  maxFileBytes?: number
   encoding?: 'utf8' | 'base64'
 }
 
@@ -78,7 +80,7 @@ const readManagedPreviewPage = async (
   },
   owner?: PreviewResourceOwner
 ): Promise<ArtifactPreviewResult> => {
-  const previewRequest = createManagedPreviewRequest(request)
+  const previewRequest = createManagedPreviewRequest({ ...request, maxBytes: request.maxFileBytes })
   let resource = owner?.resource
   for (let attempt = 0; !resource; attempt += 1) {
     if (request.signal.aborted) throw request.signal.reason
@@ -120,11 +122,6 @@ const readManagedPreviewPage = async (
         signal: request.signal
       })
       if (!response.ok) {
-        if (response.status === 404) {
-          throw Object.assign(new Error('ENOENT: managed preview file is no longer available.'), {
-            code: 'ENOENT'
-          })
-        }
         throw new Error(`Managed preview request failed with status ${response.status}.`)
       }
       size = readResponseSize(response, resource.size)
@@ -181,6 +178,7 @@ export const usePreviewFileContent = ({
   path,
   source = 'artifact',
   maxBytes = PREVIEW_TEXT_MAX_BYTES,
+  maxFileBytes,
   encoding = 'utf8'
 }: UsePreviewFileContentRequest): PreviewFileContentLoadState => {
   const generation = usePreviewResourceGeneration()
@@ -193,6 +191,7 @@ export const usePreviewFileContent = ({
     selectedVersionId ?? null,
     encoding,
     maxBytes,
+    maxFileBytes,
     path
   ])
   // Retain locations, not previous page contents, for the pinned resource sequence.
@@ -244,6 +243,7 @@ export const usePreviewFileContent = ({
         ...(managedFileId ? { managedFileId } : {}),
         ...(selectedVersionId ? { selectedVersionId } : {}),
         maxBytes,
+        maxFileBytes,
         encoding,
         offset,
         signal: abortController.signal
@@ -269,6 +269,7 @@ export const usePreviewFileContent = ({
     encoding,
     managedFileId,
     maxBytes,
+    maxFileBytes,
     offset,
     path,
     projectId,

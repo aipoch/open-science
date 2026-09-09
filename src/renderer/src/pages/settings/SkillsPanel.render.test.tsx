@@ -249,6 +249,39 @@ describe('SkillsPanel (list view)', () => {
     expect(alphaSwitch?.className).toContain('motion-reduce:transition-none')
   })
 
+  it('shows an inoperable checked toggle with an explanation for application-required Skills', async () => {
+    useSettingsStore.setState({
+      skills: seedSkills.map((skill) =>
+        skill.id === 'a' ? { ...skill, activationPolicy: 'always-on' as const } : skill
+      )
+    })
+
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const toggle = document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle Alpha"]')
+    expect(toggle?.getAttribute('data-state')).toBe('checked')
+    expect(toggle?.disabled).toBe(true)
+    expect(toggle?.className).toContain('data-disabled:opacity-50')
+    expect(toggle?.className).toContain('pointer-events-none')
+    expect(document.body.textContent).not.toContain('Application required')
+    expect(document.body.textContent).not.toContain('Always enabled')
+
+    await act(async () => {
+      const trigger = document.body.querySelector<HTMLElement>(
+        '[data-testid="required-skill-toggle-tooltip"]'
+      )
+      const hover = new MouseEvent('pointermove', { bubbles: true })
+      Object.defineProperty(hover, 'pointerType', { value: 'mouse' })
+      trigger?.dispatchEvent(hover)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toContain(
+      'This built-in Skill supports core application features and is always enabled.'
+    )
+  })
+
   it('keeps filters and search above right-aligned list actions', () => {
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)

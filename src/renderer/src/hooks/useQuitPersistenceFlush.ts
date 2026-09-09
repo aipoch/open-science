@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { previewLeaveGuards } from '../stores/preview-leave-guard'
 
 import type {
   SessionPersistenceFlushAbortedEvent,
@@ -39,6 +40,8 @@ export const completeQuitPersistenceFlush = async (
     await deps.drainRuntimeEvents()
     await deps.flushPersistence()
     await deps.flushPreviewPersistence()
+    // Tab persistence does not save edited file content. Reuse Main's existing retry/force-quit gate.
+    if (previewLeaveGuards.hasUnsavedChanges()) throw new Error('Preview has unsaved changes.')
   } catch (error) {
     failure = error
     status = isSessionRevisionConflictError(error) ? 'conflict' : 'failed'

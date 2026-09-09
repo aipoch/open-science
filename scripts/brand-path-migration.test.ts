@@ -1219,3 +1219,30 @@ it('does not mistake an unrelated command argument for an application executable
     await new Promise<void>((r) => child.once('exit', () => r()))
   }
 })
+
+it('blocks alias retirement while a Windows registry PATH still depends on the old root', async () => {
+  const { auditAliases } = await import('../resources/brand-migration/retirement.mjs')
+  const journal = {
+    status: 'committed',
+    platform: 'win32',
+    participants: [],
+    mappings: [
+      {
+        state: 'move',
+        from: 'C:\\Users\\fixture\\Open Science',
+        to: 'C:\\Users\\fixture\\Open-Science'
+      }
+    ]
+  }
+  const audit = await auditAliases(
+    journal,
+    async () => [],
+    () => [
+      { scope: 'User', value: 'C:\\Users\\fixture\\Open Science\\bin;C:\\Windows' },
+      { scope: 'Machine', value: 'C:\\Users\\fixture\\Open Science-other\\bin' }
+    ]
+  )
+  expect(audit.blockers).toEqual([
+    { path: 'C:\\Users\\fixture\\Open Science\\bin', reason: 'User-PATH-reference' }
+  ])
+})

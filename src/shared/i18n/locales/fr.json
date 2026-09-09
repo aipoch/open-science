@@ -38,7 +38,9 @@
     "Skill": "Compétence",
     "Specialist": "Spécialiste",
     "Connector": "Connecteur",
-    "Export Connector configuration": "Exporter la configuration du connecteur"
+    "Export Connector configuration": "Exporter la configuration du connecteur",
+    "Discard changes": "Ignorer les modifications",
+    "Discard unsaved changes?": "Ignorer les modifications non enregistrées ?"
   },
   "native": {
     "Conversation export is too large. Select fewer conversation turns.": "L’exportation de la conversation est trop volumineuse. Sélectionnez moins de tours de conversation.",
@@ -99,9 +101,11 @@
     "Specialist ZIP": "Archive ZIP du spécialiste",
     "JSON report": "Rapport JSON",
     "Connector configuration": "Configuration du connecteur",
-    "Import Connector configuration": "Importer la configuration du connecteur"
+    "Import Connector configuration": "Importer la configuration du connecteur",
+    "Your unsaved changes will be lost.": "Vos modifications non enregistrées seront perdues."
   },
   "renderer": {
+    "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "Ce fichier TIFF dépasse la limite d’aperçu de {{limit}} Mio. Téléchargez-le ou ouvrez-le dans une application externe.",
     "Shared content": "Contenu partagé",
     "Literature settings and tasks": "Paramètres et tâches bibliographiques",
     "Select no more than {{limit}} references for this task.": "Sélectionnez au maximum {{limit}} références pour cette tâche.",
@@ -329,7 +333,6 @@
     "Scientific literature": "Littérature scientifique",
     "Clinical and translational research": "Recherche clinique et translationnelle",
     "A conversation changed elsewhere and could not be saved safely.": "Une conversation a été modifiée ailleurs et n’a pas pu être enregistrée en toute sécurité.",
-    "One or more conversations could not be saved.": "Une ou plusieurs conversations n’ont pas pu être enregistrées.",
     "Quit was canceled": "La fermeture a été annulée",
     "This session was deleted or is unavailable.": "Cette session a été supprimée ou n’est pas disponible.",
     "Add context for the Agent": "Ajouter du contexte pour l’Agent",
@@ -4057,6 +4060,7 @@
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._other": "Utilisée par {{count}} spécialistes. Retirez cette compétence de ces spécialistes avant de la supprimer.",
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._many": "Utilisée par {{count}} spécialistes. Retirez cette compétence de ces spécialistes avant de la supprimer.",
     "Availability": "Disponibilité",
+    "This built-in Skill supports core application features and is always enabled.": "Cette Compétence intégrée prend en charge des fonctionnalités essentielles de l’application et reste toujours activée.",
     "Specialist access is configured on each Specialist.": "L'accès Spécialiste est configuré sur chaque Spécialiste.",
     "Resolve Skill conflicts": "Résoudre les conflits de compétences",
     "Choose one version for every conflicting Skill before installing the Specialist.": "Choisissez une version pour chaque compétence en conflit avant d'installer le spécialiste.",
@@ -4423,8 +4427,6 @@
     "Compare {{name}} with its source version": "Comparer {{name}} à sa version source",
     "Compare with source version": "Comparer à la version source",
     "Comparing versions...": "Comparaison des versions…",
-    "Discard unsaved changes?": "Ignorer les modifications non enregistrées ?",
-    "Discard changes": "Ignorer les modifications",
     "Changes could not be saved.": "Les modifications n’ont pas pu être enregistrées.",
     "File storage is unavailable. Check the storage location and try again.": "Le stockage des fichiers est indisponible. Vérifiez l’emplacement de stockage, puis réessayez.",
     "Open-Science does not have permission to save this file.": "Open-Science n’a pas l’autorisation d’enregistrer ce fichier.",
@@ -5185,6 +5187,7 @@
     "Failed: {{failed}} · Skipped: {{skipped}}": "Échecs : {{failed}} · Ignorés : {{skipped}}",
     "You can import unfinished files or close this window.": "Vous pouvez importer les fichiers inachevés ou fermer cette fenêtre.",
     "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "Les nouvelles tâches Compute peuvent rester en attente, car les limites de simultanéité enregistrées n’ont pas pu être vérifiées. Conservez les fichiers concernés, restaurez une copie valide, puis relancez la vérification pour reprendre l’envoi des tâches.",
-    "Recheck saved conversations": "Revérifier les conversations enregistrées"
+    "Recheck saved conversations": "Revérifier les conversations enregistrées",
+    "Some changes have not been saved.": "Certaines modifications n’ont pas été enregistrées."
   }
 }

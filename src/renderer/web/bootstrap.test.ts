@@ -57,6 +57,7 @@ class FakeWebSocket {
 }
 
 type WebApi = {
+  storage: Window['api']['storage']
   uploads: Record<'appendTransfer' | 'getTransferStatus', (request: unknown) => Promise<unknown>>
   specialist: Record<
     | 'beginPackageUpload'
@@ -98,6 +99,11 @@ const chunkOperations = [
 
 // Exercise the installed public API: only HTTP completion and event liveness are controlled.
 const longRunningOperations = [
+  {
+    channel: 'storage:migrate',
+    result: { ok: true, cleanupPending: false },
+    invoke: (api: WebApi) => api.storage.migrate('migration-target')
+  },
   {
     channel: 'notebook:execute',
     result: { runId: 'run-1', status: 'completed' },
