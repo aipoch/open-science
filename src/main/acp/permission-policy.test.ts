@@ -37,6 +37,29 @@ const createPermissionRequest = (
 })
 
 describe('permission policy', () => {
+  it('approves only the runtime-verified Codex Skill loader without a redundant permission prompt', () => {
+    const request = createPermissionRequest('other', undefined, {
+      title: 'mcp__skills__load_skill'
+    })
+    const context = {
+      profile: 'ask' as const,
+      frameworkId: 'codex' as const,
+      mcpServerNames: ['skills']
+    }
+    expect(resolveAutomaticPermission(request, context)).toBeUndefined()
+    expect(
+      resolveAutomaticPermission(withTrustedMcpToolIdentity(request, 'skills/load_skill'), context)
+    ).toBe('allow')
+    expect(
+      resolveAutomaticPermission(withTrustedMcpToolIdentity(request, 'other/load_skill'), context)
+    ).toBeUndefined()
+    expect(
+      resolveAutomaticPermission(withTrustedMcpToolIdentity(request, 'skills/load_skill'), {
+        ...context,
+        mcpServerNames: []
+      })
+    ).toBeUndefined()
+  })
   it('accepts only paths contained by the workspace', () => {
     expect(isWithinWorkspace('src/index.ts', '/workspace/project')).toBe(true)
     expect(isWithinWorkspace('/workspace/project/data.csv', '/workspace/project')).toBe(true)

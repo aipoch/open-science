@@ -184,7 +184,8 @@ class AcpSessionPresentationPolicy {
         : input.specialistSkills?.kind === 'unavailable'
           ? []
           : undefined
-    const skillRuntimeScope = skillWhitelist ?? 'all'
+    const skillRuntimeScope =
+      input.role && input.role !== 'primary' ? undefined : (skillWhitelist ?? 'all')
     const setup = input.framework.buildSessionSetup({
       systemPromptAppends: this.systemPromptAppends(input),
       sessionOptions: input.sessionOptions,

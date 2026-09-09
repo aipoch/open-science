@@ -84,6 +84,43 @@ const specialistSkillScope = (names: readonly string[]): string =>
 
 describe('ACP Session presentation policy', () => {
   const policy = new AcpSessionPresentationPolicy()
+  it('keeps the Codex loader limited to the current primary Skill scope', () => {
+    const input = {
+      framework: codexFramework,
+      tooling: { artifacts: false, notebook: false, skillImport: false },
+      sessionOptions: {
+        openScienceSkillRuntime: {
+          command: '/node',
+          entryPath: '/main.js',
+          root: '/codex',
+          skillsDirectory: '/codex/skills'
+        }
+      }
+    }
+    expect(policy.buildSessionSetup(input).mcpServers).toHaveLength(1)
+    expect(policy.buildSessionSetup({ ...input, role: 'reviewer' }).mcpServers).toBeUndefined()
+    const scoped = (names: string[]): ReturnType<typeof policy.buildSessionSetup> =>
+      policy.buildSessionSetup({
+        ...input,
+        specialistSkills: {
+          kind: 'specialist',
+          skillIds: [],
+          frameworkNames: names,
+          missingSkillIds: []
+        }
+      })
+    expect(scoped(['mcp-genomes']).mcpServers?.[0]).toMatchObject({
+      env: expect.arrayContaining([
+        { name: 'OPEN_SCIENCE_SKILL_RUNTIME_ALLOWED_NAMES', value: '["mcp-genomes"]' }
+      ])
+    })
+    expect(scoped([]).mcpServers).toBeUndefined()
+    expect(scoped(['mcp-regulation']).mcpServers?.[0]).toMatchObject({
+      env: expect.arrayContaining([
+        { name: 'OPEN_SCIENCE_SKILL_RUNTIME_ALLOWED_NAMES', value: '["mcp-regulation"]' }
+      ])
+    })
+  })
 
   it('returns the exact application appends in stable order when every tool is available', () => {
     const appends = policy.applicationSystemPromptAppends({
