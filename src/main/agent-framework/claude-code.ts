@@ -44,7 +44,8 @@ const CLAUDE_CODE_NATIVE_DELEGATION_TOOLS = Object.freeze([
 
 // Shell execution is app-owned so every framework follows the Notebook runtime's managed working
 // directory, environment-mutation guard, permission identity, and durable Run recording contract.
-const CLAUDE_CODE_NATIVE_EXECUTION_TOOLS = Object.freeze(['Bash'] as const)
+// Native bulk discovery does not pass through the Notebook search-scope preflight.
+const CLAUDE_CODE_NATIVE_EXECUTION_TOOLS = Object.freeze(['Bash', 'Glob', 'Grep'] as const)
 const CLAUDE_CODE_DISABLED_AUTO_MEMORY_ENV = Object.freeze({
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'
 })

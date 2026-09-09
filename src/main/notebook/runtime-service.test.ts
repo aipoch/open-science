@@ -4600,6 +4600,38 @@ describe('notebook runtime service', () => {
       expect(state.runs).toEqual([])
     })
 
+    it('releases Shell admission after scope preflight rejects without persisting a Run', async () => {
+      const root = await createStorageRoot()
+      const execute = vi.fn<NotebookShellProcess['execute']>()
+      const preparedExecute = vi
+        .fn()
+        .mockResolvedValue({ stdout: 'scoped', stderr: '', exitCode: 0 })
+      const prepare = vi
+        .fn<NonNullable<NotebookShellProcess['prepare']>>()
+        .mockRejectedValueOnce(new Error('Shell search scope denied: outside cwd'))
+        .mockResolvedValue({ execute: preparedExecute, dispose: vi.fn() })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute, prepare },
+        shellConcurrencyLimit: 1
+      })
+      const scope = { sessionId: 'session-1', workspaceCwd: root }
+      await expect(service.executeShell({ ...scope, command: 'unsafe-search' })).rejects.toThrow(
+        /search scope denied/i
+      )
+      expect((await service.state(scope)).runs).toEqual([])
+      await expect(
+        service.executeShell({ ...scope, command: 'scoped-search' })
+      ).resolves.toMatchObject({ stdout: 'scoped', exitCode: 0 })
+      expect(prepare).toHaveBeenCalledTimes(2)
+      expect(preparedExecute).toHaveBeenCalledOnce()
+      expect(execute).not.toHaveBeenCalled()
+      expect((await service.state(scope)).runs).toHaveLength(1)
+    })
+
     it('dispatches a queued Shell Run with the environment frozen at admission', async () => {
       const root = await createStorageRoot()
       const originalPath = process.env.PATH ?? ''
@@ -4831,12 +4863,15 @@ describe('notebook runtime service', () => {
       'Remove-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\conda-meta\\history"'
     ])('uses the PowerShell runtime-write policy on Windows: %s', async (command) => {
       const root = await createStorageRoot()
+      // This portable unit test owns runtime-write policy, not OS parsing or process launch.
+      const execute = vi.fn<NotebookShellProcess['execute']>()
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
         projectId: 'default-project',
         repository: new NotebookRunRepository(root),
-        platform: 'win32'
+        platform: 'win32',
+        shellProcess: { execute }
       })
 
       const result = await service.executeShell({
@@ -4847,6 +4882,7 @@ describe('notebook runtime service', () => {
 
       expect(result).toMatchObject({ stdout: '', exitCode: 1 })
       expect(result.stderr).toMatch(/managed runtime is read-only/i)
+      expect(execute).not.toHaveBeenCalled()
     })
 
     it.skipIf(process.platform === 'win32')(

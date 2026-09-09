@@ -14,7 +14,7 @@ describe('native shell policy', () => {
         options: { disallowedTools: string[] }
       }
     ).options
-    expect(claudeOptions.disallowedTools).toContain('Bash')
+    expect(claudeOptions.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Glob', 'Grep']))
 
     const opencode = opencodeFramework.prepareModelConfig(
       {
@@ -26,7 +26,13 @@ describe('native shell policy', () => {
       },
       { storageRoot: '/data', executablePath: '/runtime/opencode' }
     )
-    expect(JSON.parse(opencode.env?.OPENCODE_CONFIG_CONTENT ?? '{}').permission.bash).toBe('deny')
+    expect(JSON.parse(opencode.env?.OPENCODE_CONFIG_CONTENT ?? '{}').permission).toMatchObject({
+      bash: 'deny',
+      glob: 'deny',
+      grep: 'deny',
+      list: 'deny',
+      external_directory: 'deny'
+    })
 
     const codex = createCodexFramework().prepareModelConfig(
       { type: 'codex-isolated', model: 'gpt-5.4' },
@@ -45,7 +51,8 @@ describe('native shell policy', () => {
       { storageRoot: '/data', executablePath: '/runtime/codebuddy' }
     )
     const enabledTools = codebuddy.args?.[codebuddy.args.indexOf('--tools') + 1]
-    expect(enabledTools?.split(',')).not.toContain('Bash')
+    for (const tool of ['Bash', 'Glob', 'Grep'])
+      expect(enabledTools?.split(',')).not.toContain(tool)
   })
 
   it('keeps the app-owned Notebook shell available to every framework', () => {

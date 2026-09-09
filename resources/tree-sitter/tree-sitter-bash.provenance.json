@@ -1,0 +1,10 @@
+{
+  "name": "tree-sitter-bash",
+  "version": "0.25.1",
+  "repository": "https://github.com/tree-sitter/tree-sitter-bash",
+  "archive": "https://registry.npmjs.org/tree-sitter-bash/-/tree-sitter-bash-0.25.1.tgz",
+  "integrity": "sha512-7hMytuYIMoXOq24yRulgIxthE9YmggZIOHCyPTTuJcu6EU54tYD+4G39cUb28kxC6jMf/AbPfWGLQtgPTdh3xw==",
+  "wasmSha256": "8292919c88a0f7d3fb31d0cd0253ca5a9531bc1ede82b0537f2c63dd8abe6a7a",
+  "license": "MIT",
+  "acquisition": "Extracted WASM and LICENSE only; no lifecycle scripts executed."
+}
