@@ -279,6 +279,8 @@ export const assertShellSearchScope = async (
       const visit = (node: Node, context: State): void => {
         if (node.type === 'variable_assignment') {
           const name = node.childForFieldName('name')?.text
+          if (name === 'BASH_ENV' || name === 'ENV')
+            return denied('shell startup files cannot be inspected')
           const value = literal(node.childForFieldName('value'), context, true)
           if (name) {
             if (value === undefined) context.variables.delete(name)
@@ -289,6 +291,12 @@ export const assertShellSearchScope = async (
           const name = literal(node.childForFieldName('name'), context)
           const argNodes = fieldChildren(node, 'argument')
           const args = argNodes.map((arg) => literal(arg, context))
+          if (
+            node.namedChildren.some(
+              (child) => child.type === 'variable_assignment' && /^(BASH_ENV|ENV)=/.test(child.text)
+            )
+          )
+            return denied('shell startup files cannot be inspected')
           if (!name) return denied('the command name cannot be resolved')
           let tool: string | undefined = commandName(name)
           let values = args
@@ -326,8 +334,11 @@ export const assertShellSearchScope = async (
               values[offset]?.includes('=') ||
               values[offset] === '--' ||
               (tool === 'env' && values[offset] === '-i')
-            )
+            ) {
+              if (/^(BASH_ENV|ENV)=/.test(values[offset] ?? ''))
+                return denied('shell startup files cannot be inspected')
               offset++
+            }
             if (!values[offset] || values[offset]?.startsWith('-'))
               return denied('the command wrapper cannot be resolved')
             tool = values[offset] && commandName(values[offset]!)
@@ -342,11 +353,10 @@ export const assertShellSearchScope = async (
           if (tool === 'printf' && values.includes('-v')) context.variables.clear()
           if (tool === 'alias') return denied('aliases can hide search commands')
           if (tool === 'hash') return denied('command rebinding can hide search commands')
-          if (
-            ['read', 'export', 'declare', 'typeset', 'local', 'source', '.'].includes(tool ?? '')
-          ) {
+          if (tool === 'source' || tool === '.')
+            return denied('sourced shell files cannot be inspected; use an inline shell command')
+          if (['read', 'export', 'declare', 'typeset', 'local'].includes(tool ?? '')) {
             context.variables.clear()
-            if (tool === 'source' || tool === '.') context.cwd = undefined
           }
           if (tool === 'cd' || tool === 'pushd' || tool === 'popd') {
             context.cwd =
@@ -369,12 +379,29 @@ export const assertShellSearchScope = async (
             context.variables.clear()
           } else if (tool && shells.has(tool)) {
             const index = values.findIndex((value) => value !== undefined && /^-[^-]*c/.test(value))
+            // Only accept simple execution flags before the inline payload. A positional
+            // script or an option with its own operand must not be mistaken for `-c` input.
+            const flags = index >= 0 ? values.slice(0, index + 1) : values
+            if (flags.some((value) => !value || !/^-[ceuvxs]+$/.test(value)))
+              return denied('shell script files and unresolved shell options cannot be inspected')
             if (index >= 0) {
               const script = values[index + 1]
               if (script === undefined) return denied('the nested shell command cannot be resolved')
               const snapshot = { cwd: context.cwd, variables: new Map(context.variables) }
               checks.push(() => analyze(script, snapshot, depth + 1))
             } else {
+              const redirected = node.parent?.type === 'redirected_statement' ? node.parent : node
+              const redirects = redirected.descendantsOfType([
+                'heredoc_redirect',
+                'herestring_redirect',
+                'file_redirect'
+              ])
+              if (
+                redirects.length !== 1 ||
+                redirects[0].type === 'file_redirect' ||
+                !['', '0'].includes(redirects[0].childForFieldName('descriptor')?.text ?? '')
+              )
+                return denied('the shell requires one unambiguous inline stdin source')
               const hereString = node.descendantsOfType('herestring_redirect')[0]
               if (hereString) {
                 const script = literal(hereString.namedChild(0), context)
@@ -386,6 +413,8 @@ export const assertShellSearchScope = async (
                 node.parent?.type === 'redirected_statement'
                   ? node.parent.descendantsOfType('heredoc_body')[0]
                   : undefined
+              if (!hereString && !body)
+                return denied('the shell requires a statically resolvable inline command')
               if (body) {
                 const script = body.text
                 const snapshot = { cwd: context.cwd, variables: new Map(context.variables) }
@@ -476,6 +505,12 @@ export const assertShellSearchScope = async (
     for (const entry of commands) {
       if (!entry.name) return denied('the PowerShell command name cannot be resolved')
       const name = normalize(entry.name)
+      // The unqualified PowerShell alias filters pipeline objects; executable paths do not.
+      if (
+        /^where$/i.test(entry.name) &&
+        !entry.arguments.some((arg) => arg?.toLowerCase() === '/r')
+      )
+        continue
       if (
         ['cmd', 'powershell', 'pwsh', 'iex', 'invoke-expression', 'wsl', 'bash', 'sh'].includes(
           name

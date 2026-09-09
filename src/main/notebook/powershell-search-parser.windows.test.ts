@@ -22,6 +22,7 @@ describe.skipIf(process.platform !== 'win32')('Windows PowerShell search preflig
     'Get-ChildItem -Path $env:USERPROFILE -Recurse',
     'Set-Location ..; gci . -Recurse',
     'cmd /c "dir /s C:\\"',
+    'Remove-Item Alias:where; where /r C:\\ chart.png',
     'where.exe /r C:\\ chart.png'
   ])('rejects unsafe discovery without running the command: %s', async (source) => {
     await expect(assertShellSearchScope(source, process.cwd())).rejects.toThrow(
@@ -32,6 +33,8 @@ describe.skipIf(process.platform !== 'win32')('Windows PowerShell search preflig
   it.each([
     'Get-ChildItem -LiteralPath . -Recurse -Filter chart.png',
     'gci -LiteralPath . -File',
+    "Get-ChildItem . | where Name -like '*.csv'",
+    'where.exe /r . chart.png',
     "Write-Output 'Get-ChildItem C:\\ is documentation'"
   ])('retains scoped discovery and ordinary output: %s', async (source) => {
     await expect(assertShellSearchScope(source, process.cwd())).resolves.toBeUndefined()

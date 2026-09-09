@@ -26,6 +26,10 @@ describe('PowerShell search admission contract', () => {
     { name: 'gci', arguments: ['-Path', null, '-Recurse'] },
     { name: 'dir', arguments: ['../outside', '-Recurse'] },
     { name: 'where.exe', arguments: ['/r', '..', 'chart.png'] },
+    { name: 'C:\\Windows\\System32\\where.exe', arguments: ['/r', '..', 'chart.png'] },
+    { name: './where', arguments: ['/r', '..', 'chart.png'] },
+    { name: 'where.exe', arguments: ['chart.png'] },
+    { name: 'where', arguments: ['/r', '..', 'chart.png'] },
     { name: 'cmd.exe', arguments: ['/c', 'dir /s C:\\'] },
     { name: 'Get-ChildItem', arguments: ['-LiteralPath', '.', '..'] },
     { name: null, arguments: ['..'] }
@@ -50,6 +54,9 @@ describe('PowerShell search admission contract', () => {
   it('checks literal scoped paths and preserves normal commands', async () => {
     vi.mocked(parsePowerShellSearchCommands).mockResolvedValue([
       { name: 'Get-ChildItem', arguments: ['-LiteralPath', '.', '-Recurse', '-Filter', '*.png'] },
+      { name: 'where', arguments: ['Name', '-like', '*.csv'] },
+      { name: 'WHERE', arguments: [null] },
+      { name: 'where.exe', arguments: ['/r', '.', 'chart.png'] },
       { name: 'Write-Output', arguments: ['documentation containing find /'] }
     ])
     const sentinel = new Error('stopped before workload')
