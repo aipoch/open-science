@@ -81,6 +81,9 @@ const renderItem = async (
       messageId: string,
       target: EditAnnotationTarget | undefined
     ) => void
+    onPreviewMentionArtifact?: React.ComponentProps<
+      typeof WorkspaceMessageItem
+    >['onPreviewMentionArtifact']
     canBranchInNewSession?: boolean
     onBranchInNewSession?: (messageId: string) => void
     subsequentTurns?: number
@@ -103,7 +106,7 @@ const renderItem = async (
         onPreviewArtifact={noop}
         onPreviewUploadAttachment={noop}
         onOpenSkillMention={noop}
-        onPreviewMentionArtifact={noop}
+        onPreviewMentionArtifact={options.onPreviewMentionArtifact ?? noop}
         canEditMessage={options.canEditMessage ?? false}
         showUserActions={options.showUserActions}
         onSendEditedMessage={options.onSendEditedMessage}
@@ -1077,6 +1080,27 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(editor?.textContent).toBe('Run /forecast now')
     // The structured skill segment comes back as a chip, not flattened text.
     expect(editor?.querySelector('[data-mention-type="skill"]')).not.toBeNull()
+  })
+
+  it('uses the message owner preview action for a file chip in the inline editor', async () => {
+    const part = {
+      type: 'artifact' as const,
+      source: 'upload' as const,
+      id: 'mention-1',
+      sourceFileId: 'file-1',
+      versionId: 'version-1',
+      name: 'volcano.csv',
+      path: 'uploads/volcano.csv'
+    }
+    const preview = vi.fn()
+    await renderItem(createMessage({ content: '@volcano.csv', parts: [part] }), {
+      canEditMessage: true,
+      onPreviewMentionArtifact: preview
+    })
+    await click(getButton('Edit message'))
+    const chip = getEditor()!.querySelector<HTMLElement>('[data-mention-type="artifact"]')!
+    await click(chip)
+    expect(preview).toHaveBeenCalledWith(expect.objectContaining(part))
   })
 
   it('separates read-only uploaded files from the message editor', async () => {

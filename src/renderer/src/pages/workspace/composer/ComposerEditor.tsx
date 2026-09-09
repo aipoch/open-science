@@ -12,7 +12,6 @@ import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 import { createPreviewFileItemFromLocal, LOCAL_PREVIEW_SESSION_ID } from '../preview-file-item'
 import { createPreviewFileItemFromMention } from '../preview-file-item'
-import { createPreviewRequestScope } from '../previews/preview-file-reader'
 
 import {
   ArtifactMentionPopup,
@@ -74,9 +73,9 @@ type ComposerEditorProps = {
   isHistoryBrowsing?: boolean
   historyStatus?: string
   onNavigateHistory?: (direction: 'previous' | 'next') => boolean
-  // Scope for previewing clicked `@` mention chips (uploads/artifacts); without it those chips
-  // stay inert on click (linked-folder chips resolve through the granted-roots store instead).
+  // Legacy paths need their owner context; version locators already carry their source Session.
   mentionPreviewContext?: { sessionId: string; projectId?: string }
+  onPreviewMentionArtifact?: (part: Parameters<typeof createPreviewFileItemFromMention>[0]) => void
   focusRequest?: string | number
   restoreFocusRequest?: number
   caretRequest?: { key: number; position: ComposerCaretPosition }
@@ -452,6 +451,7 @@ export const ComposerEditor = ({
   historyStatus = '',
   onNavigateHistory,
   mentionPreviewContext,
+  onPreviewMentionArtifact,
   focusRequest,
   restoreFocusRequest,
   caretRequest
@@ -567,9 +567,8 @@ export const ComposerEditor = ({
   }, [emitDocFromDom])
 
   // Clicking an `@` mention chip opens the file in the preview workbench, like the sent-message
-  // pills do. Linked-folder chips resolve rootId + relativePath through the granted-roots store
-  // (inert once the root is revoked); upload/artifact chips probe first so a stale chip stays
-  // inert, then open through the mention preview item.
+  // pills do. The preview surface owns loading, errors and retry; do not gate it on a separate
+  // read probe. Linked-folder chips still require a currently granted root.
   const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
     const root = editorRef.current
     const pastedTextMarker = (event.target as HTMLElement).closest?.(
@@ -627,10 +626,7 @@ export const ComposerEditor = ({
       return
     }
 
-    if (
-      (source !== 'upload' && source !== 'artifact' && source !== 'literature') ||
-      !mentionPreviewContext
-    ) {
+    if (source !== 'upload' && source !== 'artifact' && source !== 'literature') {
       return
     }
     const path = chip.getAttribute('data-mention-path')
@@ -639,36 +635,25 @@ export const ComposerEditor = ({
     const part: Parameters<typeof createPreviewFileItemFromMention>[0] = {
       type: 'artifact',
       id: chip.getAttribute('data-mention-id') ?? path,
+      sourceFileId: chip.getAttribute('data-mention-source-file-id') ?? undefined,
       name: chip.getAttribute('data-mention-filename') ?? path,
       path,
       source,
       mimeType: chip.getAttribute('data-mention-mime-type') ?? undefined,
       versionId: chip.getAttribute('data-mention-version-id') ?? undefined
     }
-    const { sessionId, projectId } = mentionPreviewContext
-    if (source === 'literature') {
-      usePreviewWorkbenchStore
-        .getState()
-        .upsertAndActivateItem(createPreviewFileItemFromMention(part, '__literature__', projectId))
+    if (onPreviewMentionArtifact && source !== 'literature') {
+      onPreviewMentionArtifact(part)
       return
     }
-    void (async () => {
-      const read =
-        source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
-      try {
-        await read({
-          ...createPreviewRequestScope({ projectId, sessionId, source, path }),
-          path,
-          maxBytes: 1,
-          encoding: 'utf8'
-        })
-      } catch {
-        return
-      }
-      usePreviewWorkbenchStore
-        .getState()
-        .upsertAndActivateItem(createPreviewFileItemFromMention(part, sessionId, projectId))
-    })()
+    const item = createPreviewFileItemFromMention(
+      part,
+      source === 'literature' ? '__literature__' : (mentionPreviewContext?.sessionId ?? ''),
+      mentionPreviewContext?.projectId ?? activeProjectId
+    )
+    // An unscoped legacy path cannot identify its source Session. Do not guess from the filename.
+    if (!item.sessionId) return
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(item)
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
