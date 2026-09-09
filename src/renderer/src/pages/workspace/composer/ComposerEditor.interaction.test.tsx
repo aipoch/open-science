@@ -1595,3 +1595,104 @@ describe('ComposerEditor', () => {
     })
   })
 })
+
+describe('structured message paste', () => {
+  const fragment = [{ type: 'skill' as const, id: 'lit', name: 'Literature' }]
+  const pasteSkill = (): void => {
+    const element = document.createElement('span')
+    element.setAttribute(
+      'data-open-science-message',
+      JSON.stringify({
+        version: 1,
+        origin: location.origin,
+        projectId: 'default',
+        parts: fragment
+      })
+    )
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', {
+      value: {
+        files: [],
+        getData: (type: string) => (type === 'text/html' ? element.outerHTML : '/Literature')
+      }
+    })
+    act(() => {
+      editor().dispatchEvent(paste)
+    })
+  }
+  const selectContents = (): void => {
+    editor().focus()
+    const range = document.createRange()
+    range.selectNodeContents(editor())
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+  }
+
+  it('preserves the selection while the Skill catalog loads, then restores the Skill on retry', async () => {
+    const loadSkills = vi.fn(async () => {
+      useSettingsStore.setState({ skillsLoaded: true, skills: seedSkills })
+    })
+    useSettingsStore.setState({ skillsLoaded: false, skills: [], loadSkills })
+    const onDocChange = vi.fn()
+    renderEditor({ doc: { nodes: [{ type: 'text', text: 'keep this' }] }, onDocChange })
+    selectContents()
+    await act(async () => {
+      pasteSkill()
+    })
+    expect(editor().textContent).toBe('keep this')
+    expect(onDocChange).not.toHaveBeenCalled()
+    expect(loadSkills).toHaveBeenCalledOnce()
+    expect(document.body.textContent).toContain('Skills are loading. Paste again shortly.')
+    pasteSkill()
+    expect(domToDoc(editor())).toEqual({ nodes: fragment })
+    expect(onDocChange).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the draft on catalog failure and hides its notice in a different Session', async () => {
+    const loadSkills = vi.fn().mockRejectedValue(new Error('offline'))
+    useSettingsStore.setState({ skillsLoaded: false, skills: [], loadSkills })
+    const doc: ComposerDoc = { nodes: [{ type: 'text', text: 'keep this' }] }
+    renderEditor({ doc, mentionPreviewContext: { sessionId: 'first', projectId: 'default' } })
+    selectContents()
+    await act(async () => {
+      pasteSkill()
+    })
+    expect(editor().textContent).toBe('keep this')
+    expect(document.body.textContent).toContain('Could not load Skills. Try pasting again.')
+    renderEditor({ doc, mentionPreviewContext: { sessionId: 'second', projectId: 'default' } })
+    expect(document.body.textContent).not.toContain('Could not load Skills. Try pasting again.')
+  })
+
+  it('replaces a selected Skill without counting it against the new paste', () => {
+    useSettingsStore.setState({ skillsLoaded: true })
+    const onDocChange = vi.fn()
+    renderEditor({
+      doc: { nodes: [{ type: 'skill', id: 'mpnn', name: 'ProteinMPNN' }] },
+      onDocChange
+    })
+    selectContents()
+    pasteSkill()
+    expect(domToDoc(editor())).toEqual({ nodes: fragment })
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: fragment },
+      expect.objectContaining({ nodeIndex: 0 })
+    )
+  })
+
+  it('preserves surrounding text and inserts at the selected range', () => {
+    useSettingsStore.setState({ skillsLoaded: true })
+    renderEditor({ doc: { nodes: [{ type: 'text', text: 'before replace after' }] } })
+    editor().focus()
+    const range = document.createRange()
+    range.setStart(editor().firstChild!, 7)
+    range.setEnd(editor().firstChild!, 14)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    pasteSkill()
+    expect(domToDoc(editor()).nodes).toEqual([
+      { type: 'text', text: 'before ' },
+      ...fragment,
+      { type: 'text', text: ' after' }
+    ])
+  })
+})

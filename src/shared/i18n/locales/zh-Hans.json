@@ -103,6 +103,8 @@
     "Your unsaved changes will be lost.": "未保存的更改将会丢失。"
   },
   "renderer": {
+    "Skills are loading. Paste again shortly.": "正在加载技能，请稍后再次粘贴。",
+    "Could not load Skills. Try pasting again.": "无法加载技能，请尝试再次粘贴。",
     "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "此 TIFF 超过 {{limit}} MiB 的预览限制。请下载或使用外部应用打开。",
     "Shared content": "共享内容",
     "Literature settings and tasks": "文献配置与任务",

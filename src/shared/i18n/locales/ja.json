@@ -103,6 +103,8 @@
     "Your unsaved changes will be lost.": "保存されていない変更は失われます。"
   },
   "renderer": {
+    "Skills are loading. Paste again shortly.": "スキルを読み込んでいます。少し待ってから再度貼り付けてください。",
+    "Could not load Skills. Try pasting again.": "スキルを読み込めませんでした。もう一度貼り付けてください。",
     "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "このTIFFはプレビューの上限（{{limit}} MiB）を超えています。ダウンロードするか、外部アプリで開いてください。",
     "Shared content": "共有コンテンツ",
     "Literature settings and tasks": "文献の設定とタスク",

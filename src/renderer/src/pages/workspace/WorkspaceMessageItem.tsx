@@ -49,6 +49,7 @@ import { getUploadedAttachmentName } from '../../../../shared/uploads'
 
 import { ArtifactPreview } from './artifact-preview'
 import { ComposerEditor } from './composer/ComposerEditor'
+import { copyMessageToClipboard } from './composer/message-clipboard'
 import { EditMessageConfirmDialog } from './EditMessageConfirmDialog'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { providerKindKey } from '../settings/provider-form-value'
@@ -1464,7 +1465,11 @@ const WorkspaceMessageItemImpl = ({
 
   // Copies the message text and briefly swaps the icon to confirm the clipboard write succeeded.
   const handleCopyMessage = (): void => {
-    void navigator.clipboard.writeText(liveMessageContent).then(() => {
+    void copyMessageToClipboard(
+      liveMessageContent,
+      message.role === 'user' ? message.parts : undefined,
+      projectId
+    ).then(() => {
       setCopied(true)
       if (copyResetTimeoutRef.current !== null) window.clearTimeout(copyResetTimeoutRef.current)
       copyResetTimeoutRef.current = window.setTimeout(() => setCopied(false), 2000)
