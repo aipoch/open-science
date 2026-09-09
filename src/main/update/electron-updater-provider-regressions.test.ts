@@ -4,7 +4,11 @@ import { join } from 'node:path'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { expect, it, vi } from 'vitest'
-import { ElectronUpdaterStrategy } from './electron-updater-strategy'
+import {
+  ElectronUpdaterStrategy,
+  type MinimalAutoUpdater,
+  type MinimalCancellationToken
+} from './electron-updater-strategy'
 vi.mock('electron', () => ({
   app: { getVersion: () => '0.26.0' },
   BrowserWindow: { getAllWindows: () => [] },
@@ -16,7 +20,7 @@ vi.mock('electron-updater', async () => ({
   autoUpdater: {},
   CancellationToken: class {
     cancelled = false
-    cancel() {
+    cancel(): void {
       this.cancelled = true
     }
   }
@@ -26,7 +30,7 @@ const { AppUpdater } = requireRepo('electron-updater/out/AppUpdater')
 const { DebUpdater } = requireRepo('electron-updater/out/DebUpdater')
 const { CancellationToken } = requireRepo('builder-util-runtime')
 const log = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }
-const offline = async () => {
+const offline = async (): Promise<never> => {
   throw new Error('No network in audit')
 }
 
@@ -41,7 +45,11 @@ it.each([true, false])(
     const validation = new Promise<void>((r) => {
       release = r
     })
-    const updater = new EventEmitter() as any
+    const updater = new EventEmitter() as EventEmitter &
+      MinimalAutoUpdater & {
+        _logger: typeof log
+        getOrCreateDownloadHelper: () => Promise<unknown>
+      }
     updater.autoDownload = true
     updater.autoInstallOnAppQuit = true
     updater._logger = log
@@ -60,8 +68,9 @@ it.each([true, false])(
       },
       setDownloadedFile: async () => {}
     })
-    let token: any
-    updater.downloadUpdate = (t: any) => {
+    let token: MinimalCancellationToken | undefined
+    updater.downloadUpdate = (t?: MinimalCancellationToken): Promise<unknown> => {
+      if (!t) throw new Error('Expected cancellation token')
       token = t
       return AppUpdater.prototype.executeDownload.call(updater, {
         fileExtension: 'exe',
@@ -77,7 +86,7 @@ it.each([true, false])(
         task: async () => {
           throw new Error('Network task must not run for cache')
         },
-        done: async (e: any) => updater.emit('update-downloaded', e)
+        done: async (e: unknown) => updater.emit('update-downloaded', e)
       })
     }
     const s = new ElectronUpdaterStrategy({
@@ -94,7 +103,7 @@ it.each([true, false])(
       const downloading = s.download()
       await enteredPromise
       if (cancelled) expect((await s.cancel()).state).toBe('available')
-      expect(token.cancelled).toBe(cancelled)
+      expect(token?.cancelled).toBe(cancelled)
       release()
       await downloading
       expect(s.getStatus().state).toBe(cancelled ? 'available' : 'ready')
@@ -111,7 +120,7 @@ it('does not claim an AppImage size for an unknown Linux provider that may downl
     { url: 'aipoch-open-science-0.27.0-linux-x64.AppImage', size: 900 },
     { url: 'aipoch-open-science_0.27.0_amd64.deb', size: 600 }
   ]
-  const updater = new EventEmitter() as any
+  const updater = new EventEmitter() as EventEmitter & MinimalAutoUpdater
   updater.checkForUpdates = async () =>
     updater.emit('update-available', { version: '0.27.0', files })
   updater.downloadUpdate = vi.fn()
@@ -125,21 +134,21 @@ it('does not claim an AppImage size for an unknown Linux provider that may downl
     broadcast: () => {}
   })
   await strategy.check()
-  let selected: any
+  let selected: { info: { size: number } } | undefined
   const provider = {
     resolveFiles: () =>
       files.map((info) => ({ url: new URL(info.url, 'https://cdn.example/'), info }))
   }
   DebUpdater.prototype.doDownloadUpdate.call(
     {
-      executeDownload: (o: any) => {
+      executeDownload: (o: { fileInfo: { info: { size: number } } }) => {
         selected = o.fileInfo
         return Promise.resolve([])
       }
     },
     { updateInfoAndProvider: { provider, info: { version: '0.27.0', files } } }
   )
-  expect(selected.info.size).toBe(600)
+  expect(selected?.info.size).toBe(600)
   expect(strategy.getStatus().totalBytes).toBeUndefined()
 })
 

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Merge the two per-arch macOS update feeds (arm64-mac.yml + x64-mac.yml) into a single
 // latest-mac.yml that lists both arch zips. This is the feed the installed app actually polls: its
 // app-update.yml ships the default `latest` channel, so on macOS electron-updater fetches

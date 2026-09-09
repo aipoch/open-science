@@ -552,8 +552,8 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(previous.run).toContain('gh release download')
     expect(previous.run).toContain('*-win-x64-setup.exe.blockmap')
     expect(previous.run).not.toContain('Get-AuthenticodeSignature')
-    expect(previous.run).toContain("$_.tagName -like 'v*'")
-    expect(previous.run).toContain('$_.tagName -ne $env:CURRENT_TAG')
+    expect(previous.run).toContain('gh api --paginate --slurp')
+    expect(previous.run).toContain('$version -lt $current')
     expect(findStep(upgrade, 'Certify Windows electron-updater differential update')).toMatchObject(
       {
         id: 'updater',
