@@ -23,6 +23,7 @@ export const useLiteratureChanges = (invalidate: () => void): void => {
     }
     const remove = window.api?.literature?.onChanged?.(refresh)
     const removeProjectDeleted = window.api?.projects?.onDeleted?.(refresh)
+    const removeProjectCleanup = window.api?.projects?.onDeletionCleanupChanged?.(refresh)
     window.addEventListener('focus', refresh)
     document.addEventListener('visibilitychange', visible)
     window.addEventListener('open-science:web-events-open', refresh)
@@ -30,6 +31,7 @@ export const useLiteratureChanges = (invalidate: () => void): void => {
       active = false
       remove?.()
       removeProjectDeleted?.()
+      removeProjectCleanup?.()
       window.removeEventListener('focus', refresh)
       document.removeEventListener('visibilitychange', visible)
       window.removeEventListener('open-science:web-events-open', refresh)
