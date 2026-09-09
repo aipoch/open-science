@@ -188,6 +188,17 @@ describe('claudeCodeFramework', () => {
         [SKILL_RUNTIME_ROOT_ENV]: '/runtime/revision'
       }
     })
+    expect(setup.mcpServers).toEqual([
+      {
+        name: SKILL_RUNTIME_MCP_SERVER_NAME,
+        command: '/app/electron',
+        args: ['/app/main.js', '--open-science-skill-runtime-mcp'],
+        env: [
+          { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+          { name: SKILL_RUNTIME_ROOT_ENV, value: '/runtime/revision' }
+        ]
+      }
+    ])
     expect(hooks.PreToolUse[0]).toMatchObject({
       matcher: 'Bash',
       hooks: [existingPreToolUseHook]
@@ -235,6 +246,14 @@ describe('claudeCodeFramework', () => {
     expect(servers[SKILL_RUNTIME_MCP_SERVER_NAME].env[SKILL_RUNTIME_ALLOWED_NAMES_ENV]).toBe(
       '["literature-review"]'
     )
+    expect(setup.mcpServers).toEqual([
+      expect.objectContaining({
+        name: SKILL_RUNTIME_MCP_SERVER_NAME,
+        env: expect.arrayContaining([
+          { name: SKILL_RUNTIME_ALLOWED_NAMES_ENV, value: '["literature-review"]' }
+        ])
+      })
+    ])
   })
 
   it('keeps the backend Skill runtime disabled without explicit primary-session authority', () => {
@@ -258,6 +277,7 @@ describe('claudeCodeFramework', () => {
       expect(options).not.toHaveProperty('toolAliases')
       expect(options).not.toHaveProperty('mcpServers')
       expect(options).not.toHaveProperty('allowedTools')
+      expect(setup.mcpServers).toBeUndefined()
     }
   })
 
