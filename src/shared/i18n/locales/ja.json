@@ -4865,6 +4865,8 @@
     "Some PDFs could not be imported. Review the details below before retrying.": "一部の PDF をインポートできませんでした。再試行する前に、以下の詳細を確認してください。",
     "Selected PDFs imported. You can close this window.": "選択した PDF をインポートしました。このウィンドウを閉じることができます。",
     "Failed: {{failed}} · Skipped: {{skipped}}": "失敗: {{failed}} · スキップ: {{skipped}}",
-    "You can import unfinished files or close this window.": "未完了のファイルをインポートするか、このウィンドウを閉じることができます。"
+    "You can import unfinished files or close this window.": "未完了のファイルをインポートするか、このウィンドウを閉じることができます。",
+    "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "保存された同時実行数の制限を検証できないため、新しい Compute ジョブがキューに残る場合があります。対象ファイルを保持し、有効なコピーを復元してから再確認すると、ジョブの送信を再開できます。",
+    "Recheck saved conversations": "保存済みの会話を再確認"
   }
 }

@@ -4865,6 +4865,8 @@
     "Some PDFs could not be imported. Review the details below before retrying.": "部分 PDF 無法匯入。請先查看下方詳細資訊，再重試。",
     "Selected PDFs imported. You can close this window.": "所選 PDF 已匯入。您可以關閉此視窗。",
     "Failed: {{failed}} · Skipped: {{skipped}}": "失敗：{{failed}} · 已略過：{{skipped}}",
-    "You can import unfinished files or close this window.": "您可以匯入未完成的檔案或關閉此視窗。"
+    "You can import unfinished files or close this window.": "您可以匯入未完成的檔案或關閉此視窗。",
+    "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "無法驗證已儲存的並行限制，新 Compute 任務可能會持續排隊。請保留受影響的檔案，還原有效副本後重新檢查，以恢復任務派發。",
+    "Recheck saved conversations": "重新檢查已儲存的對話"
   }
 }

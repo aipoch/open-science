@@ -4863,6 +4863,8 @@
     "Some PDFs could not be imported. Review the details below before retrying.": "일부 PDF를 가져오지 못했습니다. 다시 시도하기 전에 아래 세부 정보를 확인하세요.",
     "Selected PDFs imported. You can close this window.": "선택한 PDF를 가져왔습니다. 이 창을 닫을 수 있습니다.",
     "Failed: {{failed}} · Skipped: {{skipped}}": "실패: {{failed}} · 건너뜀: {{skipped}}",
-    "You can import unfinished files or close this window.": "미완료 파일을 가져오거나 이 창을 닫을 수 있습니다."
+    "You can import unfinished files or close this window.": "미완료 파일을 가져오거나 이 창을 닫을 수 있습니다.",
+    "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "저장된 동시 실행 제한을 확인할 수 없어 새 Compute 작업이 대기열에 남을 수 있습니다. 영향을 받은 파일을 보존하고 유효한 사본을 복원한 다음 다시 확인하여 작업 전송을 재개하세요.",
+    "Recheck saved conversations": "저장된 대화 다시 확인"
   }
 }

@@ -197,6 +197,7 @@ type ComputeHandlers = {
     active_count: number
     queued_count: number
     provider_ceilings: Record<string, number>
+    queue_blocked_reason?: 'session_limits_unavailable'
   }>
   listDir: (providerId: string, path: string) => Promise<DirListing>
   download: (providerId: string, remotePath: string, dest: DownloadDest) => Promise<LocalFile>

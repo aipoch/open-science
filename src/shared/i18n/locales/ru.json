@@ -5314,6 +5314,8 @@
     "Some PDFs could not be imported. Review the details below before retrying.": "Некоторые PDF не удалось импортировать. Перед повторной попыткой проверьте сведения ниже.",
     "Selected PDFs imported. You can close this window.": "Выбранные PDF импортированы. Можно закрыть это окно.",
     "Failed: {{failed}} · Skipped: {{skipped}}": "Ошибки: {{failed}} · Пропущено: {{skipped}}",
-    "You can import unfinished files or close this window.": "Можно импортировать незавершённые файлы или закрыть это окно."
+    "You can import unfinished files or close this window.": "Можно импортировать незавершённые файлы или закрыть это окно.",
+    "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "Новые задания Compute могут оставаться в очереди, поскольку не удалось проверить сохранённые ограничения параллельного выполнения. Сохраните затронутые файлы, восстановите корректную копию и повторите проверку, чтобы возобновить отправку заданий.",
+    "Recheck saved conversations": "Повторно проверить сохранённые диалоги"
   }
 }

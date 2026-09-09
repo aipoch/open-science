@@ -5181,6 +5181,8 @@
     "Some PDFs could not be imported. Review the details below before retrying.": "No se pudieron importar algunos PDF. Revise los detalles a continuación antes de reintentar.",
     "Selected PDFs imported. You can close this window.": "Se han importado los PDF seleccionados. Puede cerrar esta ventana.",
     "Failed: {{failed}} · Skipped: {{skipped}}": "Fallidos: {{failed}} · Omitidos: {{skipped}}",
-    "You can import unfinished files or close this window.": "Puede importar los archivos pendientes o cerrar esta ventana."
+    "You can import unfinished files or close this window.": "Puede importar los archivos pendientes o cerrar esta ventana.",
+    "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "Los nuevos trabajos de Compute pueden permanecer en cola porque no se pudieron verificar los límites de concurrencia guardados. Conserve los archivos afectados, restaure una copia válida y vuelva a comprobarlos para reanudar el envío de trabajos.",
+    "Recheck saved conversations": "Volver a comprobar las conversaciones guardadas"
   }
 }
