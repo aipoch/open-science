@@ -30,6 +30,8 @@ describe('PowerShell search admission contract', () => {
     { name: './where', arguments: ['/r', '..', 'chart.png'] },
     { name: 'where.exe', arguments: ['chart.png'] },
     { name: 'where', arguments: ['/r', '..', 'chart.png'] },
+    { name: 'rg.exe', arguments: ['--ignore-file', '../outside/ignore', 'needle', '.'] },
+    { name: 'rg.exe', arguments: ['-f', 'C:patterns', '.'] },
     { name: 'Get-ChildItem', arguments: ['HKLM:\\', '-Recurse'] },
     { name: 'Get-ChildItem', arguments: ['C:..', '-Recurse'] },
     { name: 'Get-ChildItem', arguments: ['FileSystem::C:\\', '-Recurse'] },
@@ -60,6 +62,7 @@ describe('PowerShell search admission contract', () => {
       { name: 'where', arguments: ['Name', '-like', '*.csv'] },
       { name: 'WHERE', arguments: [null] },
       { name: 'where.exe', arguments: ['/r', '.', 'chart.png'] },
+      { name: 'rg.exe', arguments: ['--ignore-file=./ignore', 'needle', '.'] },
       { name: 'Write-Output', arguments: ['documentation containing find /'] }
     ])
     const sentinel = new Error('stopped before workload')

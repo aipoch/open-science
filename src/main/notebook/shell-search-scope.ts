@@ -189,6 +189,7 @@ const rootsFor = (name: string, args: string[]): string[] => {
     return args.flatMap((arg, offset) => (arg === '-onlyin' ? [args[offset + 1] ?? ''] : []))
   }
   const paths: string[] = []
+  const optionPaths: string[] = []
   let explicitPattern = false
   let endOptions = false
   for (let index = 0; index < args.length; index++) {
@@ -199,7 +200,7 @@ const rootsFor = (name: string, args: string[]): string[] => {
     }
     if (!endOptions && arg.startsWith('-') && arg !== '-') {
       const [option] = arg.split('=', 1)
-      // -L means files-without-match in grep/rg, but link following in traversal utilities.
+      // -L means files-without-match in grep, but link following in traversal utilities.
       if (
         (['ls', 'du'].includes(name) && /^-[^-]*[LH]/.test(arg)) ||
         (name === 'tree' && /^-[^-]*l/.test(arg)) ||
@@ -217,10 +218,20 @@ const rootsFor = (name: string, args: string[]): string[] => {
           ? 'fd'
           : name
       if (valueOptions[optionOwner]?.has(option)) {
+        if (!arg.startsWith('--') && arg.includes('='))
+          return denied('attached short option values cannot be resolved')
         if (option === '-e' || option === '--regexp' || option === '-f' || option === '--file')
           explicitPattern = true
         if (!arg.includes('=')) {
           if (++index >= args.length) return denied(`missing value for ${option}`)
+        }
+        if (
+          ['-f', '--file', '--ignore-file', '--exclude-from'].includes(option) ||
+          (optionOwner === 'du' && option === '-X')
+        ) {
+          const value = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : args[index]
+          if (!value || value === '-') return denied('search option files require a scoped path')
+          optionPaths.push(value)
         }
       } else if (flagOptions.has(option) || /^-[a-zA-Z0-9]+$/.test(arg)) {
         // Only argument-free short options can be clustered. Attached option values are ambiguous.
@@ -249,7 +260,7 @@ const rootsFor = (name: string, args: string[]): string[] => {
     !explicitPattern
   )
     paths.shift()
-  return paths.length ? paths : ['.']
+  return [...(paths.length ? paths : ['.']), ...optionPaths]
 }
 
 export const assertShellSearchScope = async (

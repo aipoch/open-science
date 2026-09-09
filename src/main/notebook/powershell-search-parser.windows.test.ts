@@ -19,6 +19,7 @@ describe.skipIf(process.platform !== 'win32')('Windows PowerShell search preflig
   it.each([
     "Get-ChildItem -LiteralPath 'C:\\' -Recurse",
     'gci .. -Recurse',
+    'rg --ignore-file ../outside/ignore needle .',
     'Get-ChildItem HKLM:\\ -Recurse',
     'Get-ChildItem C:.. -Recurse',
     'Get-ChildItem FileSystem::C:\\ -Recurse',
@@ -38,6 +39,7 @@ describe.skipIf(process.platform !== 'win32')('Windows PowerShell search preflig
     'gci -LiteralPath . -File',
     "Get-ChildItem . | where Name -like '*.csv'",
     'where.exe /r . chart.png',
+    'rg --ignore-file ./ignore needle .',
     "Write-Output 'Get-ChildItem C:\\ is documentation'"
   ])('retains scoped discovery and ordinary output: %s', async (source) => {
     await expect(assertShellSearchScope(source, process.cwd())).resolves.toBeUndefined()
