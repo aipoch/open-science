@@ -2701,3 +2701,35 @@ it('keeps normalized preference defaults when an untyped receipt omits the field
     vi.unstubAllGlobals()
   }
 })
+
+it.each([
+  ['closePreference', 'setClosePreference'],
+  ['projectFilesFilter', 'setProjectFilesFilter']
+] as const)(
+  'keeps a successful %s clear when transport omits the field',
+  async (field, command) => {
+    useSettingsStore.setState(createInitialSettingsState())
+    const previous: SettingsSnapshot = {
+      ...snapshot([]),
+      revision: 1,
+      closePreference: 'quit',
+      projectFilesFilter: { sourceMode: 'local' }
+    }
+    useSettingsStore.getState().acceptCommittedSnapshot(previous)
+    const cleared = JSON.parse(
+      JSON.stringify({ ...previous, revision: 2, [field]: undefined })
+    ) as SettingsSnapshot
+    expect(Object.hasOwn(cleared, field)).toBe(false)
+    const save = vi.fn().mockResolvedValue(cleared)
+    vi.stubGlobal('window', { api: { settings: { [command]: save } } })
+    try {
+      await useSettingsStore.getState()[command](undefined)
+      expect(save).toHaveBeenCalledOnce()
+      expect(useSettingsStore.getState()[field]).toBeUndefined()
+      expect(useSettingsStore.getState().settingsSnapshotRevision).toBe(2)
+      expect(useSettingsStore.getState().settingsWriteError).toBeUndefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  }
+)
