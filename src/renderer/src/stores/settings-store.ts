@@ -124,6 +124,7 @@ type SettingsStoreData = RuntimeSetupState &
     codexManaged: boolean
     codebuddyManaged: boolean
     onboardingCompletedAt: number | undefined
+    credentialStore?: 'os' | 'file'
     encryptionAvailable: boolean
     // Configured package mirror (conda/pip); undefined means automatic mirror selection.
     packageMirror?: PackageMirror
@@ -221,6 +222,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
 
 // Applies a fresh main-process snapshot to the renderer cache.
 const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> => ({
+  credentialStore: snapshot.credentialStore ?? 'os',
   claude: snapshot.claude,
   activeProviderId: snapshot.activeProviderId,
   claudeSubscriptionProviderId: snapshot.claudeSubscriptionProviderId,

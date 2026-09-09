@@ -1,3 +1,4 @@
+import { useFileCredentialNotice } from './use-file-credential-notice'
 import type { TFunction } from 'i18next'
 import { ChevronDown, Eye, EyeOff } from 'lucide-react'
 import { useState } from 'react'
@@ -244,6 +245,7 @@ const ProviderForm = ({
   defaultCustomApiEndpoint = 'anthropic'
 }: ProviderFormProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const fileCredentialNotice = useFileCredentialNotice()
   const isCustom = value.type === 'custom'
   const isOfficial = value.type === 'official'
   const isCodexSubscription = value.type === 'codex-shared' || value.type === 'codex-isolated'
@@ -289,7 +291,9 @@ const ProviderForm = ({
             content={
               <>
                 <span className="block font-medium">{t(securityCopyKeys.title)}</span>
-                <span className="block text-bg-000/80">{t(securityCopyKeys.description)}</span>
+                <span className="block text-bg-000/80">
+                  {fileCredentialNotice ?? t(securityCopyKeys.description)}
+                </span>
               </>
             }
           />
@@ -355,6 +359,11 @@ const ProviderForm = ({
 
   return (
     <div className="space-y-4">
+      {fileCredentialNotice ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {fileCredentialNotice}
+        </p>
+      ) : null}
       <div className="space-y-1.5">
         <div className="flex items-center gap-1">
           <span className={fieldLabelClassName}>{t('Provider type')}</span>
@@ -549,15 +558,19 @@ const ProviderForm = ({
               <p className="text-xs text-muted-foreground">
                 {/* Paths and the CLI command sit mid-sentence, so the catalog carries a <code> tag and
                     the translator places it — Chinese word order puts them elsewhere in the clause. */}
-                <Trans
-                  t={t}
-                  i18nKey={
-                    value.type === 'claude-shared'
-                      ? 'Sign in via browser OAuth. The Settings card will open your browser to sign in with your Claude account. Your credentials are stored in <code>~/.claude</code>.'
-                      : 'Run <code>claude setup-token</code> in a terminal and paste the token below. It is stored encrypted under your app-owned Claude config dir; nothing is read from or written to <code>~/.claude</code>.'
-                  }
-                  components={{ code: <code className="font-mono" /> }}
-                />
+                {fileCredentialNotice && value.type !== 'claude-shared' ? (
+                  fileCredentialNotice
+                ) : (
+                  <Trans
+                    t={t}
+                    i18nKey={
+                      value.type === 'claude-shared'
+                        ? 'Sign in via browser OAuth. The Settings card will open your browser to sign in with your Claude account. Your credentials are stored in <code>~/.claude</code>.'
+                        : 'Run <code>claude setup-token</code> in a terminal and paste the token below. It is stored encrypted under your app-owned Claude config dir; nothing is read from or written to <code>~/.claude</code>.'
+                    }
+                    components={{ code: <code className="font-mono" /> }}
+                  />
+                )}
               </p>
             </div>
             {value.type === 'claude-isolated' && (

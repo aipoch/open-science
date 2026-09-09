@@ -80,6 +80,14 @@ const localizeHostEnvironmentCheck = (
         label: localizedLabel(check, t),
         summary: t('Open Science cannot write to its private data folder.')
       }
+    case 'file-credential-storage':
+      return {
+        ...check,
+        label: localizedLabel(check, t),
+        summary: t(
+          'File credential storage is enabled. New and updated credentials are stored unencrypted in local application files. Existing encrypted credentials are not migrated.'
+        )
+      }
     case 'secure-storage-available':
       return {
         ...check,

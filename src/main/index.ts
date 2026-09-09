@@ -1,3 +1,4 @@
+import { configureCredentialStore } from './settings/credential-store-mode'
 import { createRequire } from 'node:module'
 import { isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -162,6 +163,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     return
   }
   const webMode = parseWebModeOptions(process.argv)
+  configureCredentialStore(process.argv, process.platform, webMode.headless)
   let bindSystemShutdownWindow = (window: InstanceType<typeof BrowserWindow>): void => {
     void window
   }

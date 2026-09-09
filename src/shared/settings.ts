@@ -526,6 +526,8 @@ export type AgentFrameworkView = {
 
 // Full renderer snapshot of settings state.
 export type SettingsSnapshot = {
+  // Effective Settings credential backend; startup-only, not a stored preference.
+  credentialStore?: 'os' | 'file'
   // Volatile Main-authority projection order. It is not persisted; older peers may omit it.
   // Renderer stores use it to reject an RPC response that arrives after a newer settings event.
   revision?: number
@@ -1055,6 +1057,7 @@ export type EnvironmentCheckPresentation =
     }
   | { kind: 'storage-writable' }
   | { kind: 'storage-unwritable' }
+  | { kind: 'file-credential-storage' }
   | { kind: 'secure-storage-available' }
   | { kind: 'secure-storage-unavailable' }
   | {

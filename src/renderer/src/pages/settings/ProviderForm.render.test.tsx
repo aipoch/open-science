@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useSettingsStore } from '@/stores/settings-store'
 import { i18next } from '@/i18n'
 import { ProviderForm } from './ProviderForm'
 import { getApiKeySecurityCopyKeys } from './provider-key-security'
@@ -25,6 +26,7 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount())
+  useSettingsStore.setState({ credentialStore: 'os' })
   container.remove()
 })
 
@@ -59,6 +61,13 @@ const render = (
 }
 
 describe('ProviderForm field switching', () => {
+  it('describes unencrypted file storage without claiming OS protection', () => {
+    useSettingsStore.setState({ credentialStore: 'file' })
+    render(createEmptyProviderFormValue({ type: 'custom' }))
+    expect(container.textContent).toContain('stored unencrypted in local application files')
+    expect(container.textContent).not.toContain('Your OS secure storage protects it')
+  })
+
   it('shows gateway/key/model fields for a custom provider and no auth-style control', () => {
     render(createEmptyProviderFormValue({ type: 'custom' }))
 

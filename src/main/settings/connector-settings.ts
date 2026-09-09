@@ -47,6 +47,7 @@ import {
 import { hasAmbiguousCustomMcpCredentialNames } from '../connectors/custom-mcp-windows-credential-names'
 import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
+import { getCredentialStore } from './credential-store-mode'
 import { sanitizeCustomMcpServer, type SettingsRepository } from './repository'
 import type {
   StoredConnectors,
@@ -285,7 +286,11 @@ class ConnectorSettingsModule {
     for (const stored of connectors.customMcpServers) {
       let secured = stored
       // Migrate pre-encryption settings on first read. The renderer never receives resolved secrets.
-      if ((stored.env || stored.headers) && isEncryptionAvailable()) {
+      if (
+        (stored.env || stored.headers) &&
+        getCredentialStore() === 'os' &&
+        isEncryptionAvailable()
+      ) {
         secured = {
           ...stored,
           ...(stored.env ? { envRefs: this.encryptSecretRecord(stored.env) } : {}),

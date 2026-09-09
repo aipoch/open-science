@@ -1,22 +1,28 @@
 import { safeStorage } from 'electron'
 
 import { isSecureStorageAvailable } from '../secure-storage'
+import { getCredentialStore } from './credential-store-mode'
 
-// Wraps Electron safeStorage for Settings credential material. Plaintext values exist only transiently in main
-// memory (during validation and env assembly); at rest they are OS-encrypted ciphertext, and the
-// renderer only ever sees the masked hint produced by maskKey().
+// Settings refs use OS encryption by default. Explicit Linux headless file mode stores
+// reversible values in the existing private JSON documents; base64 is not encryption.
 
 // Stored ciphertext is base64 with this prefix so the on-disk shape is self-describing.
 const KEY_REF_PREFIX = 'enc:'
 
 // Legacy reduced-protection refs remain readable for migration, but new writes never create them.
 const PLAIN_REF_PREFIX = 'plain:'
+const FILE_REF_PREFIX = 'file:v1:'
 
 // Reports whether safeStorage is backed by an OS credential vault on this machine.
 const isEncryptionAvailable = (): boolean => isSecureStorageAvailable()
+const isCredentialStorageAvailable = (): boolean =>
+  getCredentialStore() === 'file' || isEncryptionAvailable()
 
-// Turns plaintext into an OS-protected keyRef. Saving secrets fails closed when safeStorage is absent.
+// Encodes a ref using the explicitly selected backend; OS writes still fail closed.
 const encryptKey = (plaintext: string): string => {
+  if (getCredentialStore() === 'file') {
+    return `${FILE_REF_PREFIX}${Buffer.from(plaintext, 'utf8').toString('base64')}`
+  }
   if (!isEncryptionAvailable()) {
     throw new Error(
       'Secure credential storage is unavailable. Unlock the system keychain and retry.'
@@ -30,6 +36,18 @@ const encryptKey = (plaintext: string): string => {
 
 // Decrypts a stored keyRef. `plain:` is accepted only for backwards-compatible migration.
 const decryptKey = (keyRef: string): string => {
+  if (keyRef.startsWith(FILE_REF_PREFIX)) {
+    if (getCredentialStore() !== 'file') {
+      throw new Error(
+        'This credential requires --credential-store=file on the Linux headless backend.'
+      )
+    }
+    const encoded = keyRef.slice(FILE_REF_PREFIX.length)
+    const bytes = Buffer.from(encoded, 'base64')
+    if (bytes.toString('base64') !== encoded)
+      throw new Error('Malformed file credential reference.')
+    return bytes.toString('utf8')
+  }
   if (!isEncryptionAvailable()) {
     throw new Error(
       'Secure credential storage is unavailable. Unlock the system keychain and retry.'
@@ -97,6 +115,7 @@ export {
   encryptKey,
   hardenKeyMask,
   isEncryptionAvailable,
+  isCredentialStorageAvailable,
   maskKey,
   tryDecryptKey
 }

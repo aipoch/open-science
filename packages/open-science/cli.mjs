@@ -101,6 +101,7 @@ Options:
   --jsonl                With run --wait, stream one machine-readable event per line
   --output <path>        Artifact download destination
   --yes                  Confirm the offline rollback conversion
+  --credential-store <os|file>  Settings credential storage (Linux headless; start only)
   --no-open              Do not open the browser after start
   --no-sandbox           Disable Chromium's process sandbox (security risk; start/update only)
   --force                Sign in again even when Codex credentials already exist
@@ -110,6 +111,7 @@ Options:
 // Flags that take a value, mapped to their camelCase option key (explicit so new hyphenated flags
 // can't collide the way a generic slice/replace would).
 const VALUE_OPTIONS = {
+  '--credential-store': 'credentialStore',
   '--port': 'port',
   '--app-path': 'appPath',
   '--config-root': 'configRoot',
@@ -245,7 +247,11 @@ export const parseCliArgs = (argv) => {
   const positionals = []
   while (args.length > 0) {
     const arg = args.shift()
-    if (arg === '--no-open') options.open = false
+    if (arg.startsWith('--credential-store=')) {
+      if (options.credentialStore !== undefined)
+        throw new CliUsageError('Specify --credential-store only once.')
+      options.credentialStore = arg.slice('--credential-store='.length)
+    } else if (arg === '--no-open') options.open = false
     else if (arg === '--no-sandbox') options.noSandbox = true
     else if (arg === '--json') options.json = true
     else if (arg === '--yes') options.yes = true
@@ -302,6 +308,8 @@ export const parseCliArgs = (argv) => {
     else if (Object.hasOwn(VALUE_OPTIONS, arg)) {
       const value = args.shift()
       if (!value) throw new CliUsageError(`${arg} requires a value.`)
+      if (arg === '--credential-store' && options.credentialStore !== undefined)
+        throw new CliUsageError('Specify --credential-store only once.')
       options[VALUE_OPTIONS[arg]] = value
     } else if (arg.startsWith('-')) {
       throw new CliUsageError(`Unknown option: ${arg}`)
@@ -391,6 +399,12 @@ export const parseCliArgs = (argv) => {
   }
   if (options.cancelOnTimeout && options.timeoutMs === undefined) {
     throw new CliUsageError('--cancel-on-timeout requires --timeout-ms.')
+  }
+  if (
+    options.credentialStore !== undefined &&
+    (command !== 'start' || !['os', 'file'].includes(options.credentialStore))
+  ) {
+    throw new CliUsageError('--credential-store requires start and a value of os or file.')
   }
   if (options.noSandbox && command !== 'start' && command !== 'update') {
     throw new CliUsageError('--no-sandbox requires start or update.')
@@ -688,6 +702,7 @@ export const openLaunchLog = (logPath) => openSync(logPath, 'w')
 export const buildAppLaunchArgs = (appArgs, options, port) => [
   ...(options.noSandbox ? ['--no-sandbox'] : []),
   ...appArgs,
+  ...(options.credentialStore ? [`--credential-store=${options.credentialStore}`] : []),
   // `--open-science-headless` instead of `--headless`: Chromium consumes `--headless` and renders
   // native menus (like the tray context menu) invisibly on Windows (electron/electron#48982).
   '--open-science-headless',
@@ -717,9 +732,13 @@ export const formatStartupFailure = (outcome, logTail, options) => {
   return `Open Science exited before becoming healthy${exitStatus}.${logTail ? `\n\n${logTail}` : ''}`
 }
 
-const startCommand = async (options, deps = DEFAULT_DEPS) => {
+export const startCommand = async (options, deps = DEFAULT_DEPS) => {
   const existing = await findCurrentState(options, deps)
   if (await healthCheck(existing, deps)) {
+    if (options.credentialStore !== undefined)
+      throw new Error(
+        'Open Science is already running. Stop it before selecting a credential store.'
+      )
     const url = await authenticatedUrl(existing, deps)
     deps.log(`Open Science is already running (PID ${existing.pid}).`)
     if (options.open) openBrowser(url)
@@ -753,6 +772,10 @@ const startCommand = async (options, deps = DEFAULT_DEPS) => {
   if (options.noSandbox) {
     deps.warn("Warning: --no-sandbox disables Chromium's process sandbox and reduces security.")
   }
+  if (options.credentialStore === 'file')
+    deps.warn(
+      'Settings credentials will be stored unencrypted in local files. Use this option at every start; existing encrypted credentials are not migrated. Compute credentials still require OS secure storage.'
+    )
   const child = spawn(app.command, buildAppLaunchArgs(app.args, options, port), {
     detached: true,
     stdio: ['ignore', logFd, logFd],

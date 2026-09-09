@@ -103,7 +103,8 @@ import type { CodexDetectDeps } from './codex-detect'
 import type { InstallManagedOpencodeOptions } from './managed-opencode'
 import type { InstallManagedCodexOptions, ManagedCodexInstallOutcome } from './managed-codex'
 import type { InstallManagedClaudeOptions, ManagedInstallOutcome } from './managed-claude'
-import { isEncryptionAvailable } from './crypto'
+import { isEncryptionAvailable, isCredentialStorageAvailable } from './crypto'
+import { getCredentialStore } from './credential-store-mode'
 import { getUserClaudeConfigDir } from './provider-env'
 import { SettingsRepository } from './repository'
 import { SettingsPreferencesModule, type SetDataRootOptions } from './preferences'
@@ -387,7 +388,10 @@ class SettingsService {
       operation.phase('migrate-legacy-key-refs')
       const settings = await this.migrateLegacyKeyRefs(stored)
       operation.phase('build-renderer-view')
-      const snapshot = buildSettingsSnapshot(settings, this.runtimeManager, this.providers)
+      const snapshot = {
+        ...buildSettingsSnapshot(settings, this.runtimeManager, this.providers),
+        credentialStore: getCredentialStore()
+      }
       operation.complete({ providerCount: settings.providers.length })
       return snapshot
     } catch (error) {
@@ -484,7 +488,7 @@ class SettingsService {
   }
 
   private async migrateLegacyKeyRefs(settings: StoredSettings): Promise<StoredSettings> {
-    if (!isEncryptionAvailable()) return settings
+    if (getCredentialStore() === 'file' || !isEncryptionAvailable()) return settings
     let changed = await this.providers.migrateLegacyKeyRefs(settings.providers)
     changed = (await this.connectors.migrateLegacyNcbiKeyRef(settings.connectors)) || changed
     return changed ? this.repository.getSettings() : settings
@@ -1126,7 +1130,8 @@ class SettingsService {
 
   // Reports whether the OS keychain is usable so the UI can warn before a save is attempted.
   isEncryptionAvailable(): boolean {
-    return isEncryptionAvailable()
+    // Legacy RPC name: this reports whether Settings can save credentials.
+    return isCredentialStorageAvailable()
   }
 
   // Reads the connector enablement/config block, read fresh so callers see the latest saved state.

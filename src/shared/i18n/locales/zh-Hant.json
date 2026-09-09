@@ -4747,6 +4747,7 @@
     "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF 未驗證：超過 50 MiB 自動處理限制。",
     "PDF structure not yet validated.": "PDF 結構尚未驗證。",
     "Attachment unavailable": "附件無法使用",
-    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "聊天或訊息歷史仍引用此 PDF，無法移除。解除目前聊天的關聯不會移除歷史引用。"
+    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "聊天或訊息歷史仍引用此 PDF，無法移除。解除目前聊天的關聯不會移除歷史引用。",
+    "File credential storage is enabled. New and updated credentials are stored unencrypted in local application files. Existing encrypted credentials are not migrated.": "已啟用檔案憑據儲存。新增和更新的憑據將以未加密形式儲存在本機應用程式檔案中。現有加密憑據不會遷移。"
   }
 }

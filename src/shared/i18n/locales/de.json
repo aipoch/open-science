@@ -4900,6 +4900,7 @@
     "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF nicht validiert: überschreitet die Grenze von 50 MiB für die automatische Verarbeitung.",
     "PDF structure not yet validated.": "PDF-Struktur noch nicht validiert.",
     "Attachment unavailable": "Anhang nicht verfügbar",
-    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "Diese PDF wird von einem Chat oder dessen Nachrichtenverlauf referenziert und kann nicht entfernt werden. Das Aufheben der Verknüpfung im aktuellen Chat entfernt keine Verweise im Verlauf."
+    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "Diese PDF wird von einem Chat oder dessen Nachrichtenverlauf referenziert und kann nicht entfernt werden. Das Aufheben der Verknüpfung im aktuellen Chat entfernt keine Verweise im Verlauf.",
+    "File credential storage is enabled. New and updated credentials are stored unencrypted in local application files. Existing encrypted credentials are not migrated.": "Die Speicherung von Anmeldedaten in Dateien ist aktiviert. Neue und aktualisierte Anmeldedaten werden unverschlüsselt in lokalen Anwendungsdateien gespeichert. Bestehende verschlüsselte Anmeldedaten werden nicht migriert."
   }
 }

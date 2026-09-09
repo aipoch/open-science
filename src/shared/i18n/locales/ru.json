@@ -5193,6 +5193,7 @@
     "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF не проверен: превышен предел автоматической обработки в 50 MiB.",
     "PDF structure not yet validated.": "Структура PDF ещё не проверена.",
     "Attachment unavailable": "Вложение недоступно",
-    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "Этот PDF используется в чате или истории сообщений, поэтому его нельзя удалить. Отвязка от текущего чата не удаляет ссылки в истории."
+    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "Этот PDF используется в чате или истории сообщений, поэтому его нельзя удалить. Отвязка от текущего чата не удаляет ссылки в истории.",
+    "File credential storage is enabled. New and updated credentials are stored unencrypted in local application files. Existing encrypted credentials are not migrated.": "Включено хранение учётных данных в файлах. Новые и обновлённые учётные данные сохраняются без шифрования в локальных файлах приложения. Существующие зашифрованные учётные данные не переносятся."
   }
 }
