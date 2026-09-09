@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -214,4 +214,34 @@ it('CS-02 checks and restores stored bytes even when UTF-8 decoding masks corrup
   expect.soft((await library.list()).some(({ id }) => id === styleId)).toBe(false)
   expect(await library.import(content)).toBe(styleId)
   expect(await readFile(path)).toEqual(original)
+})
+
+it.each([
+  ['csl-file-too-large', 'x'.repeat(1024 * 1024 + 1)],
+  ['csl-invalid-xml', '<'],
+  [
+    'csl-unsupported-doctype',
+    '<!DOCTYPE style>' + independentStyle().replace('<?xml version="1.0"?>', '')
+  ],
+  ['csl-unsupported-style', '<style/>'],
+  ['csl-missing-metadata', independentStyle().replace(/<title>.*?<\/title>/u, '')],
+  [
+    'csl-dependent-style',
+    independentStyle().replace(
+      '<info>',
+      '<info><link rel="independent-parent" href="https://example.test/parent"/>'
+    )
+  ],
+  [
+    'csl-undefined-macro',
+    independentStyle().replace('<text variable="title"/>', '<text macro="author-原名"/>')
+  ],
+  ['csl-missing-sections', independentStyle().replace(/<bibliography>.*?<\/bibliography>/u, '')]
+])('rejects imports with the stable code %s before writing files', async (code, content) => {
+  const { library, stylesDirectory } = await createLibrary()
+  await expect(library.import(content)).rejects.toMatchObject({
+    code,
+    ...(code === 'csl-undefined-macro' ? { parameters: { macro: 'author-原名' } } : {})
+  })
+  await expect(readdir(stylesDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
 })

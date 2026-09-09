@@ -116,9 +116,11 @@ const opencodeApiKeyEnv = (provider: ResolvedProvider): string =>
 const OPENCODE_PERMISSION_RULES: Record<string, 'ask' | 'allow' | 'deny'> = {
   '*': 'ask',
   read: 'allow',
-  glob: 'allow',
-  grep: 'allow',
-  list: 'allow',
+  // Bulk discovery must use Notebook's checked Shell entry. Read can also list a directory, so
+  // external_directory is denied below rather than offering a grant that reopens outside traversal.
+  glob: 'deny',
+  grep: 'deny',
+  list: 'deny',
   lsp: 'allow',
   edit: 'ask',
   // Shell execution stays on the app-owned Notebook tool, which retains its separate MCP identity
@@ -133,7 +135,7 @@ const OPENCODE_PERMISSION_RULES: Record<string, 'ask' | 'allow' | 'deny'> = {
   skill: 'allow',
   webfetch: 'ask',
   websearch: 'ask',
-  external_directory: 'ask'
+  external_directory: 'deny'
 }
 
 // OpenCode also permits direct `@agent` invocation independently of Task permission. Disable every

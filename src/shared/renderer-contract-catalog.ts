@@ -1,3 +1,8 @@
+import type {
+  LiteratureExportRecordRequest,
+  LiteratureExportRecordResult
+} from './literature-export'
+import type { LiteratureChangedEvent } from './literature'
 import type { ProvenanceReadResult } from './provenance-read-result'
 import type { LiteratureJobRequest, LiteratureJobsResult } from './literature-jobs'
 import type { LiteratureFullTextRequest, LiteratureFullTextResult } from './literature'
@@ -257,6 +262,7 @@ import type {
   LiteratureFormatReferencesRequest,
   LiteratureFormatReferencesResult,
   LiteratureItemView,
+  LiteratureSourceRecordView,
   LiteratureItemInput,
   LiteratureMetadataCompletionRequest,
   LiteratureMetadataCompletionResult,
@@ -932,9 +938,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'compute.deletionStatus': callable<
     (request: DeleteComputeHostRequest) => Promise<ComputeHostDeletionStatus>
   >()('compute', ['compute:deletion-status']),
-  'compute.detailsGet': callable<
-    (providerId: string) => Promise<{ doc: string; isSkeleton: boolean }>
-  >()('compute', ['compute:details:get']),
+  'compute.detailsGet': callable<(providerId: string) => Promise<{ doc: string }>>()('compute', [
+    'compute:details:get'
+  ]),
   'compute.detailsSave': callable<
     (providerId: string, text: string, oldText: string, author: DetailsAuthor) => Promise<void>
   >()('compute', ['compute:details:save']),
@@ -1136,6 +1142,13 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'literature.completeMetadata': callable<
     (request: LiteratureMetadataCompletionRequest) => Promise<LiteratureMetadataCompletionResult>
   >()('literature', ['literature:complete-metadata', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.exportRecord': callable<
+    (request: LiteratureExportRecordRequest) => Promise<LiteratureExportRecordResult>
+  >()('literature', ['literature:export-record', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.sources': callable<(itemId: string) => Promise<LiteratureSourceRecordView[]>>()(
+    'literature',
+    ['literature:sources', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'literature.get': callable<(itemId: string) => Promise<LiteratureItemView | undefined>>()(
     'literature',
     ['literature:get', WEB, undefined, undefined, RUNTIME_VALIDATED]
@@ -1153,6 +1166,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'literature.importRecords': callable<
     (request: LiteratureRecordImportRequest) => Promise<LiteratureRecordImportResult>
   >()('literature', ['literature:import-records', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.onChanged': callable<
+    (listener: AcpListener<LiteratureChangedEvent>) => RemoveListener
+  >()('literature', ['literature:changed', EVENT]),
   'literature.search': callable<
     (request: LiteratureCatalogSearchRequest) => Promise<LiteratureCatalogSearchPage>
   >()('literature', ['literature:search', WEB, undefined, undefined, RUNTIME_VALIDATED]),

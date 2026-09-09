@@ -193,7 +193,7 @@ describe('ACP Runtime base composition', () => {
     ['codex-response compatibility', codexFramework, false, true],
     ['codex-bridge', codexFramework, false, true]
   ] as const)(
-    'forwards the acquisition cancellation signal with trusted origin for %s',
+    'forwards literature cancellation signals with trusted origin for %s',
     async (_path, framework, nativeMcpEnabled, bridgeMcpAliasesEnabled) => {
       let handler: LiteratureLibraryMcpHandler | undefined
       const host = {
@@ -209,6 +209,9 @@ describe('ACP Runtime base composition', () => {
       const acquirePdf = vi.fn<
         (request: { signal?: AbortSignal }) => Promise<{ status: 'not-found' }>
       >(async () => ({ status: 'not-found' }))
+      const saveToInbox = vi.fn(async () => ({ results: [], cancelled: true }))
+      const resolveSaveReferences = vi.fn(async () => [])
+      const readCandidateFile = vi.fn(async () => '{}')
       const owners = composeAcpRuntimeBaseOwners({
         appVersion: 'test',
         defaultCwd: '/workspace',
@@ -218,7 +221,9 @@ describe('ACP Runtime base composition', () => {
           searchLibrary: vi.fn(),
           readAbstract: vi.fn(),
           readPdf: vi.fn(),
-          saveToInbox: vi.fn()
+          saveToInbox,
+          resolveSaveReferences,
+          readCandidateFile
         }
       })
       const provision = await owners.sessionCapabilities.provision({
@@ -241,6 +246,27 @@ describe('ACP Runtime base composition', () => {
         signal: controller.signal,
         projectId: 'project-1',
         sessionId: 'session-1'
+      })
+      const saved = await handler!.saveToInbox({
+        candidates: [candidate],
+        signal: controller.signal
+      })
+      expect(saved).toEqual({ results: [], cancelled: true })
+      expect(saveToInbox).toHaveBeenCalledWith({
+        candidates: [candidate],
+        signal: controller.signal,
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
+      await handler!.resolveSaveReferences!(['doi:10.1234/paper'], controller.signal)
+      expect(resolveSaveReferences).toHaveBeenCalledWith(['doi:10.1234/paper'], controller.signal)
+      await handler!.readCandidateFile!('candidates.json', controller.signal)
+      expect(readCandidateFile).toHaveBeenCalledWith({
+        filename: 'candidates.json',
+        signal: controller.signal,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace'
       })
       controller.abort()
       expect(acquirePdf.mock.calls[0][0].signal!.aborted).toBe(true)
@@ -439,7 +465,7 @@ describe('ACP Runtime base composition', () => {
       promptMessageId: 'message-1',
       itemId: 'item-1'
     })
-    expect(resolveSaveReferences).toHaveBeenCalledWith(['pmid:35486828'])
+    expect(resolveSaveReferences).toHaveBeenCalledWith(['pmid:35486828'], undefined)
     expect(formatReferences).toHaveBeenCalledWith({
       projectId: 'project-1',
       itemIds: ['item-1'],

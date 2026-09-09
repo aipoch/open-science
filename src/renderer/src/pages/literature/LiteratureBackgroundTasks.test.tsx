@@ -21,7 +21,14 @@ it('refreshes the library when a background job completes after its dialog close
   request.mockResolvedValue({
     jobs: [],
     summaries: [
-      { ...job, state: 'completed', done: 3, ready: 0, completedItemIds: ['a', 'b', 'c'] }
+      {
+        ...job,
+        state: 'completed',
+        checked: 3,
+        done: 3,
+        ready: 0,
+        completedItemIds: ['a', 'b', 'c']
+      }
     ]
   })
   await act(async () => {
@@ -176,4 +183,164 @@ it('updates metadata dates with the interface language on an unchanged host', as
       useLocaleStore.setState({ locale: 'en' })
     })
   }
+})
+
+it.each([
+  { state: 'running' as const, failed: 0, ready: 1, label: 'Searching' },
+  { state: 'paused' as const, failed: 0, ready: 1, label: 'Paused' },
+  { state: 'completed' as const, failed: 1, ready: 0, label: 'Failed' }
+])(
+  'describes the background task state $label while closed',
+  async ({ state, failed, ready, label }) => {
+    await show([{ ...job, state, failed, ready }])
+    const button = screen.getByRole('button', { name: 'Background tasks' })
+    expect(button.textContent).toContain(label)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Background tasks', description: new RegExp(label) })
+    ).toBe(button)
+  }
+)
+
+it('describes an unavailable background task list while closed', async () => {
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: { literature: { jobs: vi.fn().mockRejectedValue(new Error('offline')) } }
+  })
+  await act(async () => {
+    render(<LiteratureBackgroundTasks onOpen={vi.fn()} />)
+  })
+  const button = screen.getByRole('button', { name: 'Background tasks' })
+  expect(button.textContent).toContain('Task list unavailable')
+  expect(
+    screen.getByRole('button', { name: 'Background tasks', description: 'Task list unavailable' })
+  ).toBe(button)
+})
+
+it('does not announce historical completed jobs on initial load', async () => {
+  await show([{ ...job, state: 'completed', checked: 3, ready: 0, done: 3 }])
+  expect(screen.queryByRole('button')).toBeNull()
+  const liveRegion = document.querySelector<HTMLElement>('[aria-live="polite"]')
+  expect(liveRegion).not.toBeNull()
+  expect(liveRegion?.textContent).toBe('')
+})
+
+it('keeps progress polls quiet and announces important transitions after the indicator disappears', async () => {
+  const request = vi.fn().mockResolvedValue({ jobs: [], summaries: [job] })
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: { literature: { jobs: request } }
+  })
+  await act(async () => {
+    render(<LiteratureBackgroundTasks onOpen={vi.fn()} />)
+  })
+  const status = document.querySelector<HTMLElement>('[aria-live="polite"]')!
+  const mutations: MutationRecord[] = []
+  const observer = new MutationObserver((records) => mutations.push(...records))
+  observer.observe(status, { childList: true, characterData: true, subtree: true })
+  try {
+    const refresh = async (summary: LiteratureJobSummary): Promise<void> => {
+      request.mockResolvedValue({ jobs: [], summaries: [summary] })
+      await act(async () => {
+        window.dispatchEvent(new Event('literature-jobs-changed'))
+      })
+    }
+    await refresh({ ...job, checked: 2 })
+    expect(
+      screen.getByRole('button', { name: 'Background tasks', description: /2\/3/ })
+    ).toBeTruthy()
+    expect(mutations).toHaveLength(0)
+    await refresh({ ...job, state: 'paused' })
+    expect(status.textContent).toBe('Paused')
+    mutations.length = 0
+    await refresh({ ...job, state: 'paused' })
+    expect(mutations).toHaveLength(0)
+    await refresh({ ...job, state: 'completed', failed: 1, ready: 0 })
+    expect(status.textContent).toBe('Failed')
+    await refresh({ ...job, state: 'completed', done: 3, checked: 3, failed: 0, ready: 0 })
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(status.isConnected).toBe(true)
+    expect(status.textContent).toBe('Completed')
+    mutations.length = 0
+    await refresh({ ...job, state: 'completed', done: 3, checked: 3, failed: 0, ready: 0 })
+    expect(mutations).toHaveLength(0)
+  } finally {
+    observer.disconnect()
+  }
+})
+
+it('does not announce newly discovered historical completions or task removal as completion', async () => {
+  const completed = { ...job, state: 'completed' as const, checked: 3, ready: 0, done: 3 }
+  const request = vi.fn().mockResolvedValue({ jobs: [], summaries: [] })
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: { literature: { jobs: request } }
+  })
+  await act(async () => {
+    render(<LiteratureBackgroundTasks onOpen={vi.fn()} />)
+  })
+  const status = document.querySelector<HTMLElement>('[aria-live="polite"]')!
+  const refresh = async (summaries: LiteratureJobSummary[]): Promise<void> => {
+    request.mockResolvedValue({ jobs: [], summaries })
+    await act(async () => {
+      window.dispatchEvent(new Event('literature-jobs-changed'))
+    })
+  }
+  await refresh([completed])
+  expect(status.textContent).toBe('')
+  await refresh([completed, { ...job, id: 'pending' }])
+  expect(status.textContent).toBe('Searching…')
+  await refresh([completed])
+  expect(status.textContent).toBe('')
+})
+
+it.each(['poll', 'remove'])(
+  'does not reannounce a completion after a %s error recovers',
+  async (operation) => {
+    const completed = { ...job, state: 'completed' as const, checked: 3, ready: 0, done: 3 }
+    const request = vi.fn().mockResolvedValue({ jobs: [], summaries: [job] })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { literature: { jobs: request } }
+    })
+    await act(async () => {
+      render(<LiteratureBackgroundTasks onOpen={vi.fn()} />)
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Background tasks' }))
+    const status = document.querySelector<HTMLElement>('[aria-live="polite"]')!
+    const poll = async (): Promise<void> => {
+      await act(async () => {
+        window.dispatchEvent(new Event('literature-jobs-changed'))
+      })
+    }
+    request.mockResolvedValue({ jobs: [], summaries: [completed] })
+    await poll()
+    expect(status.textContent).toBe('Completed')
+    request.mockRejectedValueOnce(new Error('offline'))
+    if (operation === 'poll') await poll()
+    else
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Remove task' }))
+      })
+    expect(status.textContent).toBe('Task list unavailable')
+    await poll()
+    expect(status.textContent).toBe('')
+  }
+)
+
+it('keeps unsearched references discoverable after a partial application is marked completed', async () => {
+  await show([
+    {
+      ...job,
+      state: 'completed',
+      phase: 'apply',
+      total: 2,
+      checked: 1,
+      ready: 0,
+      done: 1,
+      failed: 0,
+      completedItemIds: ['a']
+    }
+  ])
+  expect(screen.queryByRole('button', { name: 'Background tasks' })).not.toBeNull()
 })

@@ -6,15 +6,12 @@ import type { Language, Node, Tree } from 'web-tree-sitter'
 
 const here = typeof __dirname === 'string' ? __dirname : dirname(fileURLToPath(import.meta.url))
 
-type NotebookParserLanguage = 'python' | 'r'
+type NotebookParserLanguage = 'python' | 'r' | 'bash'
 
 // Grammar wasm: web-tree-sitter 0.26.12, tree-sitter-python 0.25.0, @davisvaughan/tree-sitter-r 1.3.0.
+// Bash 0.25.1 provenance and license are bundled beside its grammar in resources/tree-sitter.
 const wasmFile = (language: NotebookParserLanguage | 'runtime'): string =>
-  language === 'runtime'
-    ? 'web-tree-sitter.wasm'
-    : language === 'python'
-      ? 'tree-sitter-python.wasm'
-      : 'tree-sitter-r.wasm'
+  language === 'runtime' ? 'web-tree-sitter.wasm' : `tree-sitter-${language}.wasm`
 
 const resolveTreeSitterDir = (): string | undefined => {
   const resourcesPath = process.resourcesPath

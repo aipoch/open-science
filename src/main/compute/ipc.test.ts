@@ -100,6 +100,39 @@ const approvalBrokerFrom = (service: ComputeService): ComputeApprovalBroker =>
   ).remoteOperations.approvalBroker
 
 describe('compute handlers', () => {
+  it('round-trips host instructions separately from probed resources through renderer handlers', async () => {
+    const host = sampleHost({
+      probeResult: {
+        ok: true,
+        probedAt: '2026-09-08T00:00:00Z',
+        exitCode: 0,
+        errorTail: null,
+        cpus: 128,
+        detectedScheduler: 'slurm'
+      }
+    })
+    const computeHandlers = createComputeHandlers(
+      mockRepository({
+        get: async () => host,
+        updateDetails: async (_providerId, text, _author, hostId, oldText) => {
+          if (host.id !== hostId || host.detailsDoc !== oldText) return false
+          host.detailsDoc = text
+          return true
+        }
+      })
+    )
+
+    const initial = await computeHandlers.detailsGet(host.providerId)
+    expect(initial).toEqual({ doc: '' })
+    const instructions = 'Use direct SSH. Do not submit Slurm jobs unless requested.'
+    await computeHandlers.detailsSave(host.providerId, instructions, initial.doc, 'user')
+    expect(await computeHandlers.detailsGet(host.providerId)).toEqual({ doc: instructions })
+    expect((await computeHandlers.get(host.providerId))?.probeResult).toMatchObject({
+      cpus: 128,
+      detectedScheduler: 'slurm'
+    })
+  })
+
   it('passes the complete renderer owner tuple to cancellation', async () => {
     const cancelJob = vi.fn(async () => ({
       job_id: 'job-1',

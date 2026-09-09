@@ -25,6 +25,7 @@ const validatedChannels = [
   'acp:respond-plan',
   'literature:citation-styles',
   'literature:complete-metadata',
+  'literature:export-record',
   'literature:format-document',
   'literature:format-references',
   'literature:full-text',
@@ -34,6 +35,7 @@ const validatedChannels = [
   'literature:jobs',
   'literature:lookup-metadata',
   'literature:search',
+  'literature:sources',
   'literature:transact',
   'memory:clear-all',
   'memory:create-category',
@@ -143,5 +145,28 @@ describe('Electron Application Command adapter', () => {
       })
     ).toThrow('Electron Application Command adapter inventory mismatch.')
     expect(handlers).toEqual(new Map())
+  })
+})
+
+it('preserves CSL validation parameters through the Electron command adapter', async () => {
+  registerApplicationCommandElectronAdapter(
+    dispatcher(
+      vi.fn().mockRejectedValue(
+        new ApplicationCommandError('csl-undefined-macro', 'Undefined macro', {
+          macro: 'author-原名'
+        })
+      )
+    ),
+    { warn }
+  )
+  await expect(
+    handlers.get('literature:citation-styles')?.(eventWithLease(), { kind: 'import', content: '<' })
+  ).resolves.toEqual({
+    ok: false,
+    error: {
+      code: 'csl-undefined-macro',
+      message: 'Undefined macro',
+      parameters: { macro: 'author-原名' }
+    }
   })
 })

@@ -1,3 +1,4 @@
+import { useLiteratureChanges } from '@/pages/literature/useLiteratureChanges'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import * as Dialog from '@/components/ui/dialog'
 import { FileText, X } from 'lucide-react'
@@ -69,6 +70,10 @@ const ArtifactLiteratureDetailDialog = ({
   onOpenChange
 }: ArtifactLiteratureDetailDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const [literatureRevision, setLiteratureRevision] = useState(0)
+  useLiteratureChanges(() => {
+    if (reference) setLiteratureRevision((value) => value + 1)
+  })
   const [liveReference, setLiveReference] = useState<LiveReferenceState>({ status: 'idle' })
 
   useEffect(() => {
@@ -92,7 +97,7 @@ const ArtifactLiteratureDetailDialog = ({
     return () => {
       active = false
     }
-  }, [reference])
+  }, [reference, literatureRevision])
 
   const resolvedReference =
     reference && liveReference.itemId === reference.itemId ? liveReference : undefined

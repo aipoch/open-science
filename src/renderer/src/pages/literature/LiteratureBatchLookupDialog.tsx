@@ -1,3 +1,6 @@
+import { oversizedLiteratureReference } from '../../../../shared/literature-export'
+import { LiteratureOversizedNotice } from './LiteratureOversizedNotice'
+import { readLiteratureJobPages } from './literature-read-pages'
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoaderCircle, X } from 'lucide-react'
@@ -30,8 +33,8 @@ import {
 type BatchLookupMode = 'metadata' | 'full-text'
 const progressClassName =
   'h-1.5 w-full overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary'
-type Row = import('../../../../shared/literature-jobs').LiteratureJobRow
-type Job = import('../../../../shared/literature-jobs').LiteratureJob
+type Row = import('../../../../shared/literature-jobs').LiteratureJobRowView
+type Job = import('../../../../shared/literature-jobs').LiteratureJobView
 
 export const LiteratureBatchLookupDialog = ({
   itemIds,
@@ -61,6 +64,7 @@ export const LiteratureBatchLookupDialog = ({
       checked: true
     }))
   )
+  const [oversizedItemId, setOversizedItemId] = useState<string>()
   const [error, setError] = useState(false)
   const [sending, setSending] = useState(false)
   const jobRef = useRef<Job | undefined>(undefined)
@@ -72,6 +76,21 @@ export const LiteratureBatchLookupDialog = ({
   const receive = (value: Job): void => {
     const prior = jobRef.current
     if (prior && value.updatedAt < prior.updatedAt) return
+    const failed = failedCommand.current
+    if (
+      failed?.action === 'apply' &&
+      failed.selections.some((selection) => {
+        if (pendingDrafts.current.has(selection.itemId)) return false
+        const row = value.rows.find(({ id }) => id === selection.itemId)
+        return (
+          !row ||
+          row.status !== 'ready' ||
+          !row.checked ||
+          row.candidateId !== selection.candidateId
+        )
+      })
+    )
+      failedCommand.current = undefined
     const changedRows = prior
       ? value.rows
           .filter((row, index) => row.status === 'done' && prior.rows[index]?.status !== 'done')
@@ -85,7 +104,10 @@ export const LiteratureBatchLookupDialog = ({
       const byId = new Map(current.map((row) => [row.id, row]))
       return value.rows.map((row) => {
         const local = byId.get(row.id)
-        return local && local.status === 'ready' && row.status === 'ready'
+        return pendingDrafts.current.has(row.id) &&
+          local &&
+          local.status === 'ready' &&
+          row.status === 'ready'
           ? {
               ...row,
               checked: local.checked,
@@ -108,10 +130,12 @@ export const LiteratureBatchLookupDialog = ({
       if (inFlight) return
       inFlight = true
       try {
-        const result = await window.api.literature.jobs(
-          id
-            ? { action: 'get', jobId: id, ifUpdatedAt: jobRef.current?.updatedAt }
-            : { action: 'create', mode, itemIds, requestId }
+        const result = await readLiteratureJobPages(
+          await window.api.literature.jobs(
+            id
+              ? { action: 'get', jobId: id, ifUpdatedAt: jobRef.current?.updatedAt }
+              : { action: 'create', mode, itemIds, requestId }
+          )
         )
         if (!active) return
         const value = result.jobs[0]
@@ -121,9 +145,13 @@ export const LiteratureBatchLookupDialog = ({
         } else if (!jobRef.current) throw new Error('Task unavailable')
         else if (result.progress || jobRef.current.progress)
           setJob((current) => (current ? { ...current, progress: result.progress } : current))
+        setOversizedItemId(undefined)
         if (pendingDrafts.current.size === 0 && !failedCommand.current) setError(false)
-      } catch {
-        if (active) setError(true)
+      } catch (error) {
+        if (active) {
+          setOversizedItemId(oversizedLiteratureReference(error))
+          setError(true)
+        }
       } finally {
         inFlight = false
         const running =
@@ -159,15 +187,18 @@ export const LiteratureBatchLookupDialog = ({
       const currentJob = jobRef.current
       const selections = [...pendingDrafts.current.values()]
       if (!currentJob || selections.length === 0) return
-      await window.api.literature.jobs({
-        action: 'review',
-        jobId: currentJob.id,
-        selections
-      })
+      const result = await readLiteratureJobPages(
+        await window.api.literature.jobs({
+          action: 'review',
+          jobId: currentJob.id,
+          selections
+        })
+      )
       for (const selection of selections) {
         if (pendingDrafts.current.get(selection.itemId) === selection)
           pendingDrafts.current.delete(selection.itemId)
       }
+      if (result.jobs[0]) receive(result.jobs[0])
     }
     // Retain failed selections so Retry and later commands can persist them again.
     draftWrites.current = draftWrites.current.then(write, write)
@@ -195,7 +226,7 @@ export const LiteratureBatchLookupDialog = ({
     try {
       failedCommand.current = request
       await saveDrafts()
-      const result = await window.api.literature.jobs(request)
+      const result = await readLiteratureJobPages(await window.api.literature.jobs(request))
       if (result.jobs[0]) receive(result.jobs[0])
       failedCommand.current = undefined
       setError(false)
@@ -243,6 +274,9 @@ export const LiteratureBatchLookupDialog = ({
     'Full-text search failed. Try again.': t('Full-text search failed. Try again.')
   }
 
+  const running = Boolean(job && ['queued', 'running', 'pausing'].includes(job.state))
+  const paused = job?.state === 'paused'
+  const hasCandidates = rows.some((row) => row.status === 'ready')
   const ready = rows.filter((row) => row.status === 'ready' && row.checked).length
   const checked = rows.filter((row) => !['pending', 'searching'].includes(row.status)).length
   const done = rows.filter((row) => row.status === 'done').length
@@ -250,6 +284,42 @@ export const LiteratureBatchLookupDialog = ({
   const skipped = rows.filter((row) => row.status === 'skipped').length
   const title = mode === 'metadata' ? t('Complete metadata') : t('Find full-text PDF')
   const phaseProgress = job ? literatureJobProgress(job) : { processed: 0, phaseTotal: rows.length }
+  const statusLabel = paused
+    ? t('Paused')
+    : stopping
+      ? t('Pausing after the current reference…')
+      : job?.state === 'queued'
+        ? t('Queued')
+        : running
+          ? job?.phase === 'apply'
+            ? mode === 'metadata'
+              ? t('Saving…')
+              : t('Downloading…')
+            : t('Searching…')
+          : failed > 0
+            ? t('Failed')
+            : hasCandidates
+              ? t('Awaiting review')
+              : t('Completed')
+  const statusHint = paused
+    ? t('Progress is saved. Resume to continue unfinished references.')
+    : stopping
+      ? t('Finishing the current reference before pausing.')
+      : running
+        ? t('You can close this window. Tasks continue in the background.')
+        : failed > 0
+          ? t('Some references failed. Search again to retry unfinished references.')
+          : hasCandidates
+            ? t('Review the results before applying them.')
+            : done > 0
+              ? t('Completed results are saved.')
+              : t('No results are available to apply.')
+  const resumeLabel =
+    job?.phase === 'apply'
+      ? mode === 'metadata'
+        ? t('Continue applying')
+        : t('Continue download')
+      : t('Continue search')
   const labels = {
     pending: t('Pending'),
     searching: t('Searching…'),
@@ -293,9 +363,27 @@ export const LiteratureBatchLookupDialog = ({
             role="status"
           >
             {job ? (
-              <p>{t('You can close this window. Tasks continue in the background.')}</p>
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-medium text-foreground">{statusLabel}</span>
+                  {!running && done < rows.length ? (
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="h-auto px-0 py-0 text-xs text-muted-foreground"
+                      disabled={sending}
+                      title={t('Search again resets unfinished results and their selections.')}
+                      onClick={() => void command('retry')}
+                    >
+                      {t('Search again')}
+                    </Button>
+                  ) : null}
+                </div>
+                <p>{statusHint}</p>
+              </>
             ) : null}
-            {error ? (
+            {oversizedItemId ? <LiteratureOversizedNotice itemId={oversizedItemId} /> : null}
+            {error && !oversizedItemId ? (
               <LiteratureErrorNotice
                 title={t('Background task could not be updated. Try again.')}
                 primaryButton={{
@@ -314,18 +402,16 @@ export const LiteratureBatchLookupDialog = ({
                 }}
               />
             ) : null}
+            {rows.length > checked ? (
+              <p>
+                {t('Pending')}: {rows.length - checked}
+              </p>
+            ) : null}
             <div className="flex flex-wrap justify-between gap-2 tabular-nums">
               <span>
-                {job?.state === 'queued'
-                  ? t('Queued')
-                  : job?.phase === 'apply'
-                    ? mode === 'full-text'
-                      ? t('Downloading…')
-                      : t('Saving…')
-                    : t('Checked {{checked}} of {{total}}', { checked, total: rows.length })}
                 {job?.phase === 'apply'
-                  ? ` ${phaseProgress.processed}/${phaseProgress.phaseTotal}`
-                  : ''}
+                  ? `${phaseProgress.processed} / ${phaseProgress.phaseTotal}`
+                  : t('Checked {{checked}} of {{total}}', { checked, total: rows.length })}
               </span>
               <span>
                 {t('Completed {{done}} · Skipped {{skipped}} · Failed {{failed}}', {
@@ -473,55 +559,53 @@ export const LiteratureBatchLookupDialog = ({
               )
             })}
           </ol>
-          <footer
-            className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
-          >
-            {error && !job ? (
-              <Button variant="ghost" onClick={onClose}>
-                {t('Close')}
-              </Button>
-            ) : busy ? (
-              <>
-                <Button variant="ghost" onClick={onClose}>
-                  {t('Run in background')}
-                </Button>
-                {job?.state !== 'queued' ? (
-                  <LoaderCircle
-                    className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                ) : null}
+          {job && (running || paused || hasCandidates) ? (
+            <footer
+              className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+            >
+              {running ? (
                 <Button
                   variant="outline"
-                  disabled={stopping}
-                  onClick={() => {
-                    void command('pause')
-                  }}
+                  disabled={stopping || sending}
+                  onClick={() => void command('pause')}
                 >
+                  {stopping ? (
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : null}
                   {stopping ? t('Pausing after the current reference…') : t('Pause')}
                 </Button>
-              </>
-            ) : (
-              <>
-                {job?.state === 'paused' ? (
-                  <Button onClick={() => void command('resume')}>{t('Resume')}</Button>
-                ) : null}
-                <Button variant="ghost" onClick={onClose}>
-                  {t('Close')}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => void command('retry')}
-                  disabled={done === rows.length}
-                >
-                  {checked ? t('Search again') : t('Search')}
-                </Button>
-                <Button disabled={!ready} onClick={() => void command('apply')}>
-                  {mode === 'metadata' ? t('Apply metadata') : t('Add attachment')} ({ready})
-                </Button>
-              </>
-            )}
-          </footer>
+              ) : (
+                <>
+                  {hasCandidates && !ready ? (
+                    <span className="mr-auto text-xs text-muted-foreground">
+                      {t('Select at least one result.')}
+                    </span>
+                  ) : null}
+                  {hasCandidates ? (
+                    <Button
+                      variant={paused || error ? 'outline' : 'default'}
+                      disabled={!ready || sending}
+                      onClick={() => void command('apply')}
+                    >
+                      {mode === 'metadata' ? t('Apply selected') : t('Add selected')} ({ready})
+                    </Button>
+                  ) : null}
+                  {paused ? (
+                    <Button
+                      variant={error ? 'outline' : 'default'}
+                      disabled={sending}
+                      onClick={() => void command('resume')}
+                    >
+                      {resumeLabel}
+                    </Button>
+                  ) : null}
+                </>
+              )}
+            </footer>
+          ) : null}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

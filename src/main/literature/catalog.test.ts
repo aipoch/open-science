@@ -6,7 +6,10 @@ import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  createLiteratureIdentifierUrl,
   literatureCatalogSearchRequestSchema,
+  literatureCatalogCommandSchema,
+  type LiteratureCollectionView,
   literatureCandidateInputSchema,
   literatureItemInputSchema,
   type LiteratureCandidateInput
@@ -83,6 +86,550 @@ describe('LiteratureCatalog', () => {
     await client.project.create({ data: { id: 'project-1', name: 'Research' } })
     return new LiteratureCatalog(async () => client!)
   }
+
+  it.each(['10.2468/exact-reference', '39876543'])(
+    'finds an exact identifier through ordinary search: %s',
+    async (query) => {
+      const catalog = await setup()
+      const created = await catalog.transact({
+        kind: 'create-item',
+        item: literatureItemInputSchema.parse({
+          itemType: 'journalArticle',
+          title: 'Identifier control',
+          issuedYear: 2024,
+          identifiers: [
+            { scheme: 'doi', value: '10.2468/exact-reference' },
+            { scheme: 'pmid', value: '39876543' }
+          ]
+        })
+      })
+      expect((await catalog.get(created.id))!.item.identifiers).toHaveLength(2)
+      expect(
+        (await catalog.search({ scope: 'library', query: 'Identifier control' })).totalCount
+      ).toBe(1)
+      const page = await catalog.search(
+        literatureCatalogSearchRequestSchema.parse({ scope: 'library', query })
+      )
+      expect
+        .soft(page.entries.flatMap((entry) => ('id' in entry ? [entry.id] : [])))
+        .toEqual([created.id])
+      expect.soft(page.totalCount).toBe(1)
+      expect(
+        (await catalog.search({ scope: 'library', query, filter: { yearFrom: 2025 } })).totalCount
+      ).toBe(0)
+    }
+  )
+
+  it.each(['query', 'creator'] as const)(
+    'finds a displayed personal name through %s',
+    async (surface) => {
+      const catalog = await setup()
+      const created = await catalog.transact({
+        kind: 'create-item',
+        item: literatureItemInputSchema.parse({
+          itemType: 'journalArticle',
+          title: 'Personal author control',
+          creators: [
+            { nameMode: 'person', givenName: 'Jane', familyName: 'Smith', creatorType: 'author' }
+          ]
+        })
+      })
+      await catalog.transact({
+        kind: 'create-item',
+        item: literatureItemInputSchema.parse({
+          itemType: 'journalArticle',
+          title: 'Separate authors',
+          creators: [
+            { nameMode: 'person', givenName: 'Jane', familyName: 'Doe', creatorType: 'author' },
+            { nameMode: 'person', givenName: 'John', familyName: 'Smith', creatorType: 'author' }
+          ]
+        })
+      })
+      const search = (text: string): ReturnType<LiteratureCatalog['search']> =>
+        catalog.search(
+          literatureCatalogSearchRequestSchema.parse({
+            scope: 'library',
+            ...(surface === 'query' ? { query: text } : { filter: { creator: text } })
+          })
+        )
+      expect(
+        (await search('Smith Jane')).entries.flatMap((entry) => ('id' in entry ? [entry.id] : []))
+      ).toEqual([created.id])
+      expect(
+        (await search('Jane Smith')).entries.flatMap((entry) => ('id' in entry ? [entry.id] : []))
+      ).toEqual([created.id])
+    }
+  )
+
+  it.each([
+    ['Überblick', 'überblick'],
+    ['Биология', 'биология'],
+    ['ÉTUDE', 'étude']
+  ])('matches Unicode case variants of %s', async (title, query) => {
+    const catalog = await setup()
+    const created = await catalog.transact({
+      kind: 'create-item',
+      item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title })
+    })
+    expect((await catalog.search({ scope: 'library', query: title })).totalCount).toBe(1)
+    const page = await catalog.search(
+      literatureCatalogSearchRequestSchema.parse({ scope: 'library', query })
+    )
+    expect
+      .soft(page.entries.flatMap((entry) => ('id' in entry ? [entry.id] : [])))
+      .toEqual([created.id])
+    expect.soft(page.totalCount).toBe(1)
+  })
+
+  it.each([
+    ['95%', '95% confidence'],
+    ['gene_A', 'gene_A'],
+    ['%', '95% confidence']
+  ])('treats ordinary search input literally: %s', async (query, expectedTitle) => {
+    const catalog = await setup()
+    const ids = new Map<string, string>()
+    for (const title of ['95% confidence', '95X confidence', 'gene_A', 'geneXA']) {
+      const receipt = await catalog.transact({
+        kind: 'create-item',
+        item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title })
+      })
+      ids.set(title, receipt.id)
+    }
+    const request = literatureCatalogSearchRequestSchema.parse({ scope: 'library', query })
+    const page = await catalog.search(request)
+    expect
+      .soft(page.entries.flatMap((entry) => ('id' in entry ? [entry.id] : [])))
+      .toEqual([ids.get(expectedTitle)])
+    expect.soft(page.totalCount).toBe(1)
+    expect
+      .soft((await catalog.search({ ...request, allItemIds: true })).itemIds)
+      .toEqual([ids.get(expectedTitle)])
+  })
+
+  it('keeps a mixed Trash restore atomic and permits restoring its ordinary item alone', async () => {
+    const catalog = await setup()
+    const survivor = await catalog.transact({
+      kind: 'create-item',
+      item: candidate({ doi: '10.2468/retained' }).item
+    })
+    const alias = await catalog.transact({
+      kind: 'create-item',
+      item: candidate({ doi: '10.2468/alias', title: 'Alias' }).item
+    })
+    const ordinary = await catalog.transact({
+      kind: 'create-item',
+      item: candidate({ doi: '10.2468/ordinary', title: 'Ordinary' }).item
+    })
+    const reviewed = (await Promise.all([catalog.get(survivor.id), catalog.get(alias.id)])).map(
+      (view) => view!
+    )
+    await catalog.transact({
+      kind: 'merge-items',
+      survivorId: survivor.id,
+      duplicateIds: [alias.id],
+      expectedMetadataRevision: reviewed[0].metadataRevision,
+      expectedItems: reviewed.map(({ id, metadataRevision, updatedAt }) => ({
+        id,
+        metadataRevision,
+        updatedAt
+      })),
+      item: reviewed[0].item
+    })
+    await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [ordinary.id], state: 'deleted' })
+    const request = literatureCatalogSearchRequestSchema.parse({
+      scope: 'library',
+      lifecycle: 'deleted'
+    })
+    const trash = await catalog.search(request)
+    expect(trash.totalCount).toBe(2)
+    expect(trash.entries.find((entry) => 'id' in entry && entry.id === alias.id)).toMatchObject({
+      mergedIntoItemId: survivor.id
+    })
+    await expect(
+      catalog.transact({
+        kind: 'set-item-lifecycle',
+        itemIds: trash.entries.flatMap((entry) => ('id' in entry ? [entry.id] : [])),
+        state: 'active'
+      })
+    ).rejects.toThrow('One or more Literature Items are unavailable.')
+    expect((await catalog.search(request)).totalCount).toBe(2)
+    await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [ordinary.id], state: 'active' })
+    expect(
+      (await catalog.search(request)).entries.flatMap((entry) => ('id' in entry ? [entry.id] : []))
+    ).toEqual([alias.id])
+    expect((await catalog.get(ordinary.id))!.id).toBe(ordinary.id)
+  })
+
+  it('preserves scope, deduplication and both text conditions for normalized identifiers', async () => {
+    const catalog = await setup()
+    const item = literatureItemInputSchema.parse({
+      itemType: 'book',
+      title: '10.2468/scoped control',
+      issuedYear: 2024,
+      identifiers: [{ scheme: 'doi', value: '10.2468/scoped' }]
+    })
+    const receipt = await catalog.transact({ kind: 'create-item', item })
+    await catalog.transact({
+      kind: 'set-project-items',
+      projectId: 'project-1',
+      itemIds: [receipt.id],
+      included: true,
+      source: 'library'
+    })
+    const request = literatureCatalogSearchRequestSchema.parse({
+      scope: 'library',
+      query: 'https://doi.org/10.2468/SCOPED',
+      projectId: 'project-1',
+      filter: { query: 'control', itemTypes: ['book'], yearFrom: 2024, yearTo: 2024 }
+    })
+    expect
+      .soft(
+        (await catalog.search(request)).entries.flatMap((entry) =>
+          'id' in entry ? [entry.id] : []
+        )
+      )
+      .toEqual([receipt.id])
+    expect.soft((await catalog.search({ ...request, query: '10.2468/scoped' })).totalCount).toBe(1)
+    expect((await catalog.search({ ...request, projectId: 'missing' })).totalCount).toBe(0)
+    expect((await catalog.search({ ...request, filter: { query: 'absent' } })).totalCount).toBe(0)
+    expect(
+      (await catalog.search({ ...request, filter: { itemTypes: ['dataset'] } })).totalCount
+    ).toBe(0)
+  })
+
+  it('normalizes imported and edited text without losing accents or organization phrase order', async () => {
+    const catalog = await setup()
+    const {
+      itemIds: [id]
+    } = await catalog.importItems([
+      literatureItemInputSchema.parse({
+        itemType: 'book',
+        title: 'Imported control',
+        abstract: 'ÉTUDE gene_A',
+        containerTitle: 'Биология',
+        creators: [
+          { nameMode: 'organization', literalName: 'Jane Smith Institute', creatorType: 'author' }
+        ]
+      })
+    ])
+    expect
+      .soft(
+        (
+          await catalog.search({
+            scope: 'library',
+            query: 'étude gene_A',
+            filter: { containerTitle: 'биология' }
+          })
+        ).totalCount
+      )
+      .toBe(1)
+    expect((await catalog.search({ scope: 'library', query: 'etude' })).totalCount).toBe(0)
+    expect(
+      (await catalog.search({ scope: 'library', filter: { creator: 'Smith Jane Institute' } }))
+        .totalCount
+    ).toBe(0)
+    expect(
+      (await catalog.search({ scope: 'library', filter: { creator: 'Jane Smith Institute' } }))
+        .totalCount
+    ).toBe(1)
+    const view = (await catalog.get(id!))!
+    await catalog.transact({
+      kind: 'update-item',
+      itemId: id!,
+      expectedMetadataRevision: view.metadataRevision,
+      item: { ...view.item, title: 'U\u0308berblick', abstract: 'Updated', containerTitle: 'ÉTUDE' }
+    })
+    expect
+      .soft(
+        (
+          await catalog.search({
+            scope: 'library',
+            query: 'überblick',
+            filter: { containerTitle: 'étude' }
+          })
+        ).totalCount
+      )
+      .toBe(1)
+    expect((await catalog.search({ scope: 'library', query: 'étude gene_A' })).totalCount).toBe(0)
+  })
+
+  it('matches numeric publication identifiers without extracting numbers from unrelated prose', async () => {
+    const catalog = await setup()
+    const receipt = await catalog.transact({
+      kind: 'create-item',
+      item: literatureItemInputSchema.parse({
+        itemType: 'book',
+        title: 'Numeric identifier control',
+        identifiers: [
+          { scheme: 'isbn', value: '978-0-306-40615-7' },
+          { scheme: 'issn', value: '2049-3630' }
+        ]
+      })
+    })
+    for (const query of ['9780306406157', '978-0-306-40615-7', '2049-3630']) {
+      expect
+        .soft(
+          (await catalog.search({ scope: 'library', query })).entries.flatMap((entry) =>
+            'id' in entry ? [entry.id] : []
+          )
+        )
+        .toEqual([receipt.id])
+    }
+    expect(
+      (await catalog.search({ scope: 'library', query: 'unrelated 9780306406157 prose' }))
+        .totalCount
+    ).toBe(0)
+  })
+
+  it('keeps filtered pages, counts and all IDs complete beyond a scan batch with tied and null years', async () => {
+    const catalog = await setup()
+    const { itemIds } = await catalog.importItems(
+      Array.from({ length: 503 }, (_, index) =>
+        literatureItemInputSchema.parse({
+          itemType: 'book',
+          title: index % 2 ? 'Control' : 'ÉTUDE',
+          issuedYear: index < 501 ? 2024 : undefined
+        })
+      )
+    )
+    const expected = itemIds.filter((_, index) => index % 2 === 0)
+    for (const sortDirection of ['asc', 'desc'] as const) {
+      const request = literatureCatalogSearchRequestSchema.parse({
+        scope: 'library',
+        query: 'étude',
+        sortBy: 'year',
+        sortDirection,
+        limit: 100
+      })
+      const all = await catalog.search({ ...request, allItemIds: true })
+      expect(all.totalCount).toBe(expected.length)
+      expect(new Set(all.itemIds)).toEqual(new Set(expected))
+      const pages: string[] = []
+      let offset = 0
+      for (;;) {
+        const page = await catalog.search({ ...request, offset })
+        expect(page.totalCount).toBe(expected.length)
+        pages.push(...page.entries.flatMap((entry) => ('id' in entry ? [entry.id] : [])))
+        if (page.nextOffset === undefined) break
+        offset = page.nextOffset
+      }
+      expect(pages).toEqual(all.itemIds)
+      expect((await catalog.search({ ...request, offset: 999 })).entries).toEqual([])
+    }
+  })
+
+  it('does not reinterpret a bare PMID as a different PMCID identity', async () => {
+    const catalog = await setup()
+    const receipts = []
+    for (const scheme of ['pmid', 'pmcid'] as const) {
+      receipts.push(
+        await catalog.transact({
+          kind: 'create-item',
+          item: literatureItemInputSchema.parse({
+            itemType: 'journalArticle',
+            title: `${scheme} control`,
+            identifiers: [{ scheme, value: scheme === 'pmid' ? '39876543' : 'PMC39876543' }]
+          })
+        })
+      )
+    }
+    expect(
+      (await catalog.search({ scope: 'library', query: '39876543' })).entries.flatMap((entry) =>
+        'id' in entry ? [entry.id] : []
+      )
+    ).toEqual([receipts[0].id])
+    expect(
+      (await catalog.search({ scope: 'library', query: 'PMCID: 39876543' })).entries.flatMap(
+        (entry) => ('id' in entry ? [entry.id] : [])
+      )
+    ).toEqual([receipts[1].id])
+  })
+
+  it.each(['cond-mat.stat-mech/9901001', 'math.algebra.geometry/9901001'])(
+    'recognizes old-style arXiv forms accepted by the shared link contract: %s',
+    async (value) => {
+      expect(createLiteratureIdentifierUrl('arxiv', value)).toBeDefined()
+      const catalog = await setup()
+      const receipt = await catalog.transact({
+        kind: 'create-item',
+        item: literatureItemInputSchema.parse({
+          itemType: 'preprint',
+          title: 'Archive category control',
+          identifiers: [{ scheme: 'arxiv', value }]
+        })
+      })
+      expect(
+        (await catalog.search({ scope: 'library', query: value })).entries.flatMap((entry) =>
+          'id' in entry ? [entry.id] : []
+        )
+      ).toEqual([receipt.id])
+    }
+  )
+
+  describe('source provenance', () => {
+    it.each([false, true])(
+      'retains independent evidence across item ownership and deletion: %s',
+      async (removeFirst) => {
+        const catalog = await setup()
+        const input = candidate()
+        const a = await catalog.transact({ kind: 'create-item', item: input.item })
+        const b = await catalog.transact({
+          kind: 'create-item',
+          item: input.item,
+          duplicatePolicy: 'separate'
+        })
+        for (const [receipt, title] of [
+          [a, 'First'],
+          [b, 'Second']
+        ] as const) {
+          const view = (await catalog.get(receipt.id))!
+          await catalog.applyMetadata({
+            itemId: receipt.id,
+            expectedMetadataRevision: view.metadataRevision,
+            item: { ...view.item, title },
+            source: { ...input.source, rawMetadata: { title } }
+          })
+        }
+        if (removeFirst) {
+          await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [a.id], state: 'deleted' })
+          await catalog.transact({ kind: 'delete-items-permanently', itemIds: [a.id] })
+        }
+        expect((await catalog.get(b.id))!.item.title).toBe('Second')
+        const rows = await client!.literatureSourceRecord.findMany()
+        expect
+          .soft(rows.filter((r) => r.itemId === b.id).map((r) => JSON.parse(r.rawMetadataJson)))
+          .toEqual([{ title: 'Second' }])
+        if (!removeFirst)
+          expect
+            .soft(rows.filter((r) => r.itemId === a.id).map((r) => JSON.parse(r.rawMetadataJson)))
+            .toEqual([{ title: 'First' }])
+      }
+    )
+
+    it('retains sources for distinct candidates sharing an external identity', async () => {
+      const catalog = await setup()
+      const a = await catalog.transact({
+        kind: 'stage-candidate',
+        candidate: candidate({ doi: '10.1234/first' })
+      })
+      const b = await catalog.transact({
+        kind: 'stage-candidate',
+        candidate: candidate({ doi: '10.1234/second' })
+      })
+      expect(b.id).not.toBe(a.id)
+      expect
+        .soft(await client!.literatureSourceRecord.count({ where: { inboxCandidateId: b.id } }))
+        .toBe(1)
+      const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: b.id })
+      expect(await catalog.get(accepted.id)).not.toBeNull()
+      expect
+        .soft(await client!.literatureSourceRecord.count({ where: { itemId: accepted.id } }))
+        .toBe(1)
+    })
+
+    it('keeps the frozen candidate and accepted evidence at the same version', async () => {
+      const catalog = await setup()
+      const input = candidate({ title: 'Old title' })
+      const old = { ...input, source: { ...input.source, rawMetadata: { title: 'Old title' } } }
+      const a = await catalog.transact({ kind: 'stage-candidate', candidate: old })
+      const frozen = await client!.literatureSourceRecord.findMany({
+        where: { inboxCandidateId: a.id }
+      })
+      const b = await catalog.transact({
+        kind: 'stage-candidate',
+        candidate: {
+          ...old,
+          item: { ...old.item, title: 'New title' },
+          source: { ...old.source, rawMetadata: { title: 'New title' } }
+        }
+      })
+      expect(b.id).toBe(a.id)
+      expect(
+        await client!.literatureSourceRecord.findMany({ where: { inboxCandidateId: a.id } })
+      ).toEqual(frozen)
+      const pending = await client!.literatureInboxCandidate.findUniqueOrThrow({
+        where: { id: a.id }
+      })
+      expect(JSON.parse(pending.candidateJson).item.title).toBe('Old title')
+      const sources = await client!.literatureSourceRecord.findMany({
+        where: { inboxCandidateId: a.id }
+      })
+      expect
+        .soft(sources.map((r) => JSON.parse(r.rawMetadataJson)))
+        .toContainEqual({ title: 'Old title' })
+      const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: a.id })
+      expect((await catalog.get(accepted.id))!.item.title).toBe('Old title')
+      const rows = await client!.literatureSourceRecord.findMany({ where: { itemId: accepted.id } })
+      expect
+        .soft(rows.map((r) => JSON.parse(r.rawMetadataJson)))
+        .toContainEqual({ title: 'Old title' })
+    })
+
+    it('reads empty, missing and deleted source ownership distinctly', async () => {
+      const catalog = await setup()
+      const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      await expect(catalog.sources(created.id)).resolves.toEqual([])
+      await expect(catalog.sources('missing')).rejects.toThrow('unavailable')
+      await catalog.transact({
+        kind: 'set-item-lifecycle',
+        itemIds: [created.id],
+        state: 'deleted'
+      })
+      await expect(catalog.sources(created.id)).rejects.toThrow('unavailable')
+    })
+
+    it('reads the consolidated sources through the survivor and merged alias', async () => {
+      const catalog = await setup()
+      const a = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      const b = await catalog.transact({
+        kind: 'create-item',
+        item: candidate().item,
+        duplicatePolicy: 'separate'
+      })
+      for (const [receipt, provider] of [
+        [a, 'crossref'],
+        [b, 'pubmed']
+      ] as const) {
+        const view = (await catalog.get(receipt.id))!
+        await catalog.applyMetadata({
+          itemId: receipt.id,
+          expectedMetadataRevision: view.metadataRevision,
+          item: view.item,
+          source: { ...candidate().source, provider }
+        })
+      }
+      const reviewed = await Promise.all([catalog.get(a.id), catalog.get(b.id)])
+      await catalog.transact({
+        kind: 'merge-items',
+        survivorId: a.id,
+        duplicateIds: [b.id],
+        item: reviewed[0]!.item,
+        expectedMetadataRevision: reviewed[0]!.metadataRevision,
+        expectedItems: reviewed.map((view) => ({
+          id: view!.id,
+          metadataRevision: view!.metadataRevision,
+          updatedAt: view!.updatedAt
+        }))
+      })
+      const sources = await catalog.sources(a.id)
+      expect(sources.map((source) => source.provider).sort()).toEqual(['crossref', 'pubmed'])
+      await expect(catalog.sources(b.id)).resolves.toEqual(sources)
+    })
+
+    it('exposes accepted source identity and URL through the item read boundary', async () => {
+      const catalog = await setup()
+      const input = candidate()
+      const staged = await catalog.transact({ kind: 'stage-candidate', candidate: input })
+      expect(JSON.stringify(await catalog.search({ scope: 'inbox' }))).toContain(
+        input.source.sourceUrl
+      )
+      const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+      expect(await client!.literatureSourceRecord.count({ where: { itemId: accepted.id } })).toBe(1)
+      expect(await catalog.sources(accepted.id)).toEqual([
+        expect.objectContaining({ ...input.source, savedAt: expect.any(Number) })
+      ])
+    })
+  })
 
   it.each(['merge', 'delete', 'batch', 'rollback', 'preview'] as const)(
     'publishes tag assignments only after committed catalog changes: %s',
@@ -1022,6 +1569,209 @@ describe('LiteratureCatalog', () => {
     })
   })
 
+  it('keeps a rediscovered trashed reference pending until explicit acceptance', async () => {
+    const catalog = await setup()
+    const item = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [item.id], state: 'deleted' })
+    const staged = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    expect.soft(staged).toMatchObject({ kind: 'candidate', state: 'pending' })
+    expect.soft((await catalog.search({ scope: 'inbox' })).entries).toHaveLength(1)
+    expect
+      .soft(
+        (await catalog.search({ scope: 'library', lifecycle: 'deleted' })).entries.map((entry) =>
+          'id' in entry ? entry.id : undefined
+        )
+      )
+      .toContain(item.id)
+    expect.soft((await catalog.get(item.id))?.projectIds ?? []).toEqual([])
+    expect.soft(await client!.literatureSourceRecord.count({ where: { itemId: item.id } })).toBe(0)
+    if (staged.kind !== 'candidate') return
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+    expect(accepted.id).toBe(item.id)
+    expect((await catalog.get(item.id))!.projectIds).toEqual(['project-1'])
+  })
+
+  it('retains provenance when accepting the second PDF from the same provider record', async () => {
+    const catalog = await setup()
+    const staged = []
+    for (const letter of ['a', 'b']) {
+      const checksum = letter.repeat(64)
+      const blob = await client!.contentBlob.create({
+        data: {
+          id: `inbox-${letter}`,
+          checksum,
+          storageKey: `content/${letter}`,
+          sizeBytes: 128n,
+          contentType: 'application/pdf',
+          state: 'available'
+        }
+      })
+      staged.push(
+        await catalog.stageAcquiredPdf(candidate(), {
+          contentBlobId: blob.id,
+          checksum,
+          sizeBytes: 128,
+          contentType: 'application/pdf',
+          filename: `${letter}.pdf`,
+          pageCount: 8,
+          sourceUrl: 'https://example.test/paper'
+        })
+      )
+    }
+    expect(staged[0].id).not.toBe(staged[1].id)
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged[1].id })
+    expect((await catalog.get(accepted.id))!.attachments).toHaveLength(1)
+    expect
+      .soft(await client!.literatureSourceRecord.count({ where: { itemId: accepted.id } }))
+      .toBe(1)
+    expect
+      .soft(
+        await client!.literatureSourceRecord.count({ where: { inboxCandidateId: staged[0].id } })
+      )
+      .toBe(1)
+    await catalog.transact({ kind: 'dismiss-candidate', candidateId: staged[0].id })
+    expect
+      .soft(await client!.literatureSourceRecord.count({ where: { itemId: accepted.id } }))
+      .toBe(1)
+    await catalog.transact({ kind: 'restore-candidates', candidateIds: [staged[0].id] })
+    expect(
+      (await catalog.transact({ kind: 'accept-candidate', candidateId: staged[0].id })).id
+    ).toBe(accepted.id)
+    expect((await catalog.get(accepted.id))!.attachments).toHaveLength(2)
+    expect(await client!.literatureSourceRecord.count({ where: { itemId: accepted.id } })).toBe(1)
+  })
+
+  it('preserves both discovery projects when accepting a globally deduplicated candidate', async () => {
+    const catalog = await setup()
+    await client!.project.create({ data: { id: 'project-2', name: 'Second research project' } })
+    const first = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    const second = await catalog.transact({
+      kind: 'stage-candidate',
+      candidate: {
+        ...candidate(),
+        origin: { kind: 'agent', projectId: 'project-2', sessionId: 'session-2' }
+      }
+    })
+    expect(second.id).toBe(first.id)
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: second.id })
+    expect([...(await catalog.get(accepted.id))!.projectIds].sort()).toEqual([
+      'project-1',
+      'project-2'
+    ])
+  })
+
+  it('stages a fresh review when a previously accepted reference is rediscovered in Trash', async () => {
+    const catalog = await setup()
+    const first = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: first.id })
+    await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [accepted.id], state: 'deleted' })
+    const next = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    expect(next).toMatchObject({ kind: 'candidate', state: 'pending' })
+    expect(next.id).not.toBe(first.id)
+    expect(
+      (await catalog.search({ scope: 'inbox', inboxState: 'accepted' })).entries
+    ).toMatchObject([{ id: first.id }])
+    expect(
+      (await catalog.search({ scope: 'library', lifecycle: 'deleted' })).entries
+    ).toMatchObject([{ id: accepted.id }])
+    expect((await catalog.transact({ kind: 'accept-candidate', candidateId: next.id })).id).toBe(
+      accepted.id
+    )
+  })
+
+  it('keeps distinct sessions idempotently while preserving a dismissed candidate and skipping deleted projects on acceptance', async () => {
+    const catalog = await setup()
+    await client!.project.create({ data: { id: 'project-2', name: 'Second project' } })
+    const first = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    await catalog.transact({ kind: 'dismiss-candidate', candidateId: first.id })
+    const incoming = {
+      ...candidate(),
+      origin: { kind: 'agent', projectId: 'project-2', sessionId: 'session-2' }
+    }
+    for (let index = 0; index < 2; index++) {
+      expect(
+        await catalog.transact({ kind: 'stage-candidate', candidate: incoming })
+      ).toMatchObject({ id: first.id, state: 'dismissed' })
+    }
+    const page = await catalog.search({ scope: 'inbox', inboxState: 'dismissed' })
+    expect(page.entries).toMatchObject([
+      {
+        discoveries: [
+          { origin: candidate().origin, createdAt: expect.any(Number) },
+          { origin: incoming.origin, createdAt: expect.any(Number) }
+        ]
+      }
+    ])
+    expect(await client!.projectLiterature.count()).toBe(0)
+    await client!.project.delete({ where: { id: 'project-2' } })
+    await catalog.transact({ kind: 'restore-candidates', candidateIds: [first.id] })
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: first.id })
+    expect((await catalog.get(accepted.id))!.projectIds).toEqual(['project-1'])
+    expect(
+      (await catalog.search({ scope: 'inbox', inboxState: 'accepted' })).entries
+    ).toMatchObject([
+      {
+        discoveries: [{ origin: candidate().origin }, { origin: incoming.origin }]
+      }
+    ])
+  })
+
+  it.each([true, false])(
+    'merges repeated owner-scoped source snapshots into the survivor (external id: %s)',
+    async (identified) => {
+      const catalog = await setup()
+      const itemIds: string[] = []
+      const source = { ...candidate().source, externalId: identified ? 'shared-source' : undefined }
+      for (const title of ['First', 'Second']) {
+        const created = await catalog.transact({
+          kind: 'create-item',
+          item: candidate({ title, doi: `10.1234/${title.toLowerCase()}` }).item
+        })
+        const view = (await catalog.get(created.id))!
+        await catalog.applyMetadata({
+          itemId: created.id,
+          expectedMetadataRevision: view.metadataRevision,
+          item: view.item,
+          source
+        })
+        itemIds.push(created.id)
+      }
+      const current = await Promise.all(itemIds.map(async (id) => (await catalog.get(id))!))
+      await catalog.transact({
+        kind: 'merge-items',
+        survivorId: itemIds[0],
+        duplicateIds: [itemIds[1]],
+        expectedMetadataRevision: current[0].metadataRevision,
+        expectedItems: current.map(({ id, metadataRevision, updatedAt }) => ({
+          id,
+          metadataRevision,
+          updatedAt
+        })),
+        item: current[0].item
+      })
+      expect(await client!.literatureSourceRecord.count({ where: { itemId: itemIds[0] } })).toBe(1)
+      expect(await client!.literatureSourceRecord.count({ where: { itemId: itemIds[1] } })).toBe(0)
+    }
+  )
+
+  it('preserves dismissal across service recreation and supports explicit restoration', async () => {
+    const catalog = await setup()
+    const staged = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    await catalog.transact({ kind: 'dismiss-candidate', candidateId: staged.id })
+    const restarted = new LiteratureCatalog(async () => client!)
+    expect(await restarted.transact({ kind: 'stage-candidate', candidate: candidate() })).toEqual({
+      kind: 'candidate',
+      id: staged.id,
+      state: 'dismissed'
+    })
+    expect((await restarted.search({ scope: 'inbox' })).entries).toEqual([])
+    expect(
+      (await restarted.search({ scope: 'inbox', inboxState: 'dismissed' })).entries
+    ).toHaveLength(1)
+    await restarted.transact({ kind: 'restore-candidates', candidateIds: [staged.id] })
+    expect((await restarted.search({ scope: 'inbox' })).entries).toHaveLength(1)
+  })
+
   it('keeps acquired PDFs in Inbox until acceptance and reuses an existing library reference', async () => {
     const catalog = await setup()
     const existing = await catalog.transact({ kind: 'create-item', item: candidate().item })
@@ -1356,7 +2106,11 @@ describe('LiteratureCatalog', () => {
     await expect(
       client!.literatureSourceRecord.findUnique({
         where: {
-          provider_externalId: { provider: 'crossref', externalId: '10.1234/crag' }
+          itemId_provider_externalId: {
+            itemId: accepted.id,
+            provider: 'crossref',
+            externalId: '10.1234/crag'
+          }
         }
       })
     ).resolves.toMatchObject({
@@ -1825,20 +2579,13 @@ describe('LiteratureCatalog', () => {
     const catalog = await setup()
     const source = await catalog.transact({ kind: 'create-collection', name: 'Source' })
     const target = await catalog.transact({ kind: 'create-collection', name: 'Target' })
-    const ids: string[] = []
-    for (let index = 0; index < 201; index++) {
-      const item = await catalog.transact({
-        kind: 'create-item',
-        item: candidate({ doi: `10.1234/batch-${index}`, title: `Reference ${index}` }).item
-      })
-      ids.push(item.id)
-      await catalog.transact({
-        kind: 'set-collection-item',
-        collectionId: source.id,
-        itemId: item.id,
-        included: true
-      })
-    }
+    const { itemIds: ids } = await catalog.importItems(
+      Array.from(
+        { length: 201 },
+        (_, index) => candidate({ doi: `10.1234/batch-${index}`, title: `Reference ${index}` }).item
+      ),
+      source.id
+    )
     await catalog.transact({
       kind: 'move-collection-items',
       sourceCollectionId: source.id,
@@ -1898,6 +2645,199 @@ describe('LiteratureCatalog', () => {
     })
   })
 
+  it('publishes committed literature writes, excluding no-ops, previews and rollbacks', async () => {
+    await setup()
+    const events = vi.fn()
+    const catalog = new LiteratureCatalog(
+      async () => client!,
+      undefined,
+      undefined,
+      undefined,
+      events
+    )
+    const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    expect(events).toHaveBeenLastCalledWith({
+      revision: 1,
+      itemIds: [created.id],
+      collectionIds: undefined
+    })
+    expect((await catalog.get(created.id))!.item.title).toBe(candidate().item.title)
+    events.mockClear()
+    await catalog.importItems([])
+    await catalog.inspectImportItems([candidate().item], [])
+    await expect(
+      catalog.transact({
+        kind: 'set-item-lifecycle',
+        itemIds: [created.id, 'missing'],
+        state: 'deleted'
+      })
+    ).rejects.toThrow()
+    await expect(
+      catalog.transact({
+        kind: 'update-item',
+        itemId: created.id,
+        expectedMetadataRevision: 999,
+        item: candidate().item
+      })
+    ).rejects.toThrow()
+    expect(events).not.toHaveBeenCalled()
+    expect(await catalog.get(created.id)).toBeDefined()
+    const collection = await catalog.transact({ kind: 'create-collection', name: 'Shared' })
+    const linking = {
+      kind: 'set-collection-item' as const,
+      collectionId: collection.id,
+      itemId: created.id,
+      included: true
+    }
+    await catalog.transact(linking)
+    expect(events).toHaveBeenLastCalledWith(
+      expect.objectContaining({ itemIds: [created.id], collectionIds: [collection.id] })
+    )
+    events.mockClear()
+    await catalog.transact(linking)
+    expect(events).not.toHaveBeenCalled()
+    const input = { ...candidate().item, title: 'Saved despite failed delivery' }
+    events.mockImplementation(() => {
+      throw new Error('Disconnected renderer')
+    })
+    await expect(
+      catalog.transact({
+        kind: 'update-item',
+        itemId: created.id,
+        expectedMetadataRevision: 1,
+        item: input
+      })
+    ).resolves.toMatchObject({ id: created.id })
+    expect((await catalog.get(created.id))!.item.title).toBe(input.title)
+  })
+
+  it('rejects stale collection edits after promotion, deletion and request retry', async () => {
+    const catalog = await setup()
+    const parent = await catalog.transact({ kind: 'create-collection', name: 'Parent' })
+    const child = await catalog.transact({
+      kind: 'create-collection',
+      name: 'Child',
+      parentId: parent.id
+    })
+    const command = {
+      kind: 'update-collection' as const,
+      collectionId: child.id,
+      expectedRevision: 1,
+      name: 'Changed',
+      description: ''
+    }
+    await catalog.transact({ kind: 'delete-collection', collectionId: parent.id })
+    await expect(catalog.transact(command)).rejects.toThrow(
+      'literature_collection_revision_conflict'
+    )
+    await catalog.transact({ ...command, expectedRevision: 2 })
+    await expect(catalog.transact({ ...command, expectedRevision: 2 })).rejects.toThrow(
+      'literature_collection_revision_conflict'
+    )
+    await catalog.transact({ kind: 'delete-collection', collectionId: child.id })
+    const recreated = await catalog.transact({ kind: 'create-collection', name: 'Changed' })
+    expect(recreated.id).not.toBe(child.id)
+    await expect(catalog.transact({ ...command, expectedRevision: 3 })).rejects.toThrow(
+      'literature_collection_revision_conflict'
+    )
+  })
+
+  it.each(['name', 'description'] as const)(
+    'does not silently overwrite a prior collection edit when a stale editor changes %s',
+    async (field) => {
+      const first = await setup()
+      const second = new LiteratureCatalog(async () => client!)
+      const created = await first.transact({
+        kind: 'create-collection',
+        name: 'Original',
+        description: 'Original description'
+      })
+      const read = async (catalog: LiteratureCatalog): Promise<LiteratureCollectionView> =>
+        (await catalog.search({ scope: 'collections' })).entries.find(
+          (entry) => 'id' in entry && entry.id === created.id
+        ) as LiteratureCollectionView
+      const snapshotA = await read(first)
+      const snapshotB = await read(second)
+      expect(snapshotB).toEqual(snapshotA)
+      await first.transact(
+        literatureCatalogCommandSchema.parse({
+          kind: 'update-collection',
+          expectedRevision: 1,
+          collectionId: created.id,
+          name: 'Renamed by A',
+          description: snapshotA.description
+        })
+      )
+      expect((await read(first)).name).toBe('Renamed by A')
+      const [saveB] = await Promise.allSettled([
+        second.transact(
+          literatureCatalogCommandSchema.parse({
+            kind: 'update-collection',
+            expectedRevision: snapshotA.revision,
+            collectionId: created.id,
+            name: field === 'name' ? 'Renamed by B' : snapshotB.name,
+            description: field === 'description' ? 'Description from B' : snapshotB.description
+          })
+        )
+      ])
+      const final = await read(first)
+      // A visible conflict or an explicit disjoint-field merge are both safe policies.
+      expect.soft(saveB.status).toBe('rejected')
+      expect(final.name).toBe('Renamed by A')
+      expect(final.description).toBe(
+        saveB.status === 'fulfilled' && field === 'description'
+          ? 'Description from B'
+          : snapshotA.description
+      )
+    }
+  )
+
+  it('reads new attachments and relationships without a metadata or parent timestamp change', async () => {
+    const catalog = await setup()
+    const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    const before = (await catalog.get(created.id))!
+    const collection = await catalog.transact({ kind: 'create-collection', name: 'Related' })
+    await catalog.transact({
+      kind: 'set-collection-item',
+      collectionId: collection.id,
+      itemId: created.id,
+      included: true
+    })
+    await catalog.transact({
+      kind: 'set-project-item',
+      projectId: 'project-1',
+      itemId: created.id,
+      included: true,
+      source: 'user'
+    })
+    const checksum = 'a'.repeat(64)
+    await client!.contentBlob.create({
+      data: {
+        id: 'relation-blob',
+        checksum,
+        storageKey: 'content/relation-blob',
+        sizeBytes: 128n,
+        contentType: 'application/pdf',
+        state: 'available',
+        verifiedAt: new Date()
+      }
+    })
+    await catalog.attachContent({
+      itemId: created.id,
+      contentBlobId: 'relation-blob',
+      filename: 'new.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: 128,
+      checksum
+    })
+    const after = (await catalog.get(created.id))!
+    expect(after.attachments).toHaveLength(1)
+    expect(after.collectionIds).toEqual([collection.id])
+    expect(after.projectIds).toEqual(['project-1'])
+    expect(after.metadataRevision).toBe(before.metadataRevision)
+    expect(after.updatedAt).toBe(before.updatedAt)
+  })
+
   it('enforces sibling Collection names while allowing the same name under different parents', async () => {
     const catalog = await setup()
     const root = await catalog.transact({ kind: 'create-collection', name: ' Review   queue ' })
@@ -1919,6 +2859,7 @@ describe('LiteratureCatalog', () => {
     await expect(
       catalog.transact({
         kind: 'update-collection',
+        expectedRevision: 1,
         collectionId: other.id,
         name: 'Review queue',
         description: ''
@@ -1927,6 +2868,7 @@ describe('LiteratureCatalog', () => {
     await expect(
       catalog.transact({
         kind: 'update-collection',
+        expectedRevision: 1,
         collectionId: child.id,
         name: 'REVIEW QUEUE',
         description: 'Updated'
@@ -1967,6 +2909,7 @@ describe('LiteratureCatalog', () => {
     })
     await catalog.transact({
       kind: 'update-collection',
+      expectedRevision: 1,
       collectionId: child.id,
       name: 'Child review',
       description: ''
@@ -2010,6 +2953,7 @@ describe('LiteratureCatalog', () => {
 
     await catalog.transact({
       kind: 'update-collection',
+      expectedRevision: 1,
       collectionId: collection.id,
       name: 'Included studies',
       description: 'Final synthesis set.'
@@ -2219,5 +3163,116 @@ describe('LiteratureCatalog', () => {
     await expect(
       client!.literatureItem.count({ where: { id: { in: items.map(({ id }) => id) } } })
     ).resolves.toBe(0)
+  })
+
+  it('retains metadata commit proof across edits and soft deletion, and removes it with the reference', async () => {
+    const catalog = await setup()
+    const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    const before = (await catalog.get(created.id))!
+    const input = {
+      operationId: 'review-operation',
+      itemId: before.id,
+      expectedMetadataRevision: before.metadataRevision,
+      item: { ...before.item, containerTitle: 'Committed journal' },
+      source: candidate().source
+    }
+    const committed = await catalog.applyMetadata(input)
+    expect(await catalog.getMetadataCommitReceipt(input.operationId)).toEqual({
+      operationId: input.operationId,
+      itemId: before.id,
+      expectedMetadataRevision: before.metadataRevision,
+      committedMetadataRevision: committed.metadataRevision
+    })
+    await catalog.transact({
+      kind: 'update-item',
+      itemId: before.id,
+      expectedMetadataRevision: committed.metadataRevision,
+      item: { ...committed.item, title: 'Later edit' }
+    })
+    const later = (await catalog.get(before.id))!
+    expect(await catalog.applyMetadata(input)).toEqual(later)
+    await expect(
+      catalog.applyMetadata({ ...input, operationId: 'different-operation' })
+    ).rejects.toThrow('revision conflict')
+    expect(await catalog.getMetadataCommitReceipt('different-operation')).toBeNull()
+    await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [before.id], state: 'deleted' })
+    expect(await catalog.getMetadataCommitReceipt(input.operationId)).not.toBeNull()
+    await catalog.transact({ kind: 'delete-items-permanently', itemIds: [before.id] })
+    expect(await catalog.getMetadataCommitReceipt(input.operationId)).toBeNull()
+  })
+
+  it('rolls back metadata when its commit receipt cannot be written', async () => {
+    const catalog = await setup()
+    const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    const before = (await catalog.get(created.id))!
+    const failing = client!.$extends({
+      query: {
+        literatureMetadataCommitReceipt: {
+          async create() {
+            throw new Error('Receipt storage unavailable')
+          }
+        }
+      }
+    })
+    const failingCatalog = new LiteratureCatalog(async () => failing as unknown as PrismaClient)
+    await expect(
+      failingCatalog.applyMetadata({
+        operationId: 'interrupted',
+        itemId: before.id,
+        expectedMetadataRevision: before.metadataRevision,
+        item: { ...before.item, containerTitle: 'Must roll back' },
+        source: candidate().source
+      })
+    ).rejects.toThrow('Receipt storage unavailable')
+    expect(await catalog.get(before.id)).toEqual(before)
+    expect(await catalog.getMetadataCommitReceipt('interrupted')).toBeNull()
+    expect(await client!.literatureSourceRecord.count()).toBe(0)
+  })
+
+  it('keeps commit receipts bound to their original reference when references merge', async () => {
+    const catalog = await setup()
+    const first = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    const second = await catalog.transact({
+      kind: 'create-item',
+      item: candidate({ doi: '10.1234/other' }).item
+    })
+    const before = (await catalog.get(first.id))!
+    await catalog.applyMetadata({
+      operationId: 'original-reference-operation',
+      itemId: first.id,
+      expectedMetadataRevision: before.metadataRevision,
+      item: before.item,
+      source: candidate().source
+    })
+    const originalReceipt = await catalog.getMetadataCommitReceipt('original-reference-operation')
+    const reviewed = (await Promise.all([catalog.get(first.id), catalog.get(second.id)])).map(
+      (item) => item!
+    )
+    await catalog.transact({
+      kind: 'merge-items',
+      survivorId: second.id,
+      duplicateIds: [first.id],
+      item: reviewed[1].item,
+      expectedMetadataRevision: reviewed[1].metadataRevision,
+      expectedItems: reviewed.map(({ id, metadataRevision, updatedAt }) => ({
+        id,
+        metadataRevision,
+        updatedAt
+      }))
+    })
+    expect(await catalog.getMetadataCommitReceipt('original-reference-operation')).toEqual(
+      originalReceipt
+    )
+    const survivor = (await catalog.get(second.id))!
+    await expect(
+      catalog.applyMetadata({
+        operationId: 'original-reference-operation',
+        itemId: second.id,
+        expectedMetadataRevision: survivor.metadataRevision,
+        item: survivor.item,
+        source: candidate().source
+      })
+    ).rejects.toThrow('operation identity')
+    expect(await catalog.get(second.id)).toEqual(survivor)
   })
 })

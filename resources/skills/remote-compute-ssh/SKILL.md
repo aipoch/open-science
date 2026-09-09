@@ -59,23 +59,36 @@ const result = await c.callCommand('<shell command>', '<one-line intent for the 
 })
 // result → { exit_code, stdout, stderr, truncated }
 
-// Read the host knowledge doc and resource probe snapshot on demand.
+// Read the persisted operation instructions and the independent resource probe snapshot.
+// doc is always the exact saved text (including '' before instructions are saved).
 // probe is explicitly null when this host has never been probed.
 const info = await host.compute.details('ssh:<alias>', { mode: 'read' })
 
-// Append a note to the host knowledge doc (agent writes; 32 KB cap enforced)
+// Append a note to the persisted host knowledge doc (agent writes; 32 KB cap enforced).
+// Append changes only doc; it never copies or changes probe observations.
 await host.compute.details('ssh:<alias>', {
   mode: 'append',
   text: '\n## Note\nlearned X on <date>'
 })
 
-// Replace the entire host knowledge doc (oldText must match the current doc exactly)
+// Alternatively, replace the entire host knowledge doc. Read again before replacing,
+// especially if you appended above: oldText must match the persisted doc exactly.
+const latest = await host.compute.details('ssh:<alias>', { mode: 'read' })
 await host.compute.details('ssh:<alias>', {
   mode: 'replace',
   text: '<new full doc>',
-  oldText: info.doc // from the read above
+  oldText: latest.doc
 })
 ```
+
+Treat `doc` as operation instructions and durable host knowledge. Treat `probe` as a dated
+observation: resource values may change, and detecting a scheduler does not authorize submitting a
+job or select an account, partition, or queue. On a document mismatch or `details_conflict` error,
+read again and merge your draft with the latest document before retrying. A resource-only probe
+refresh does not change `doc` or cause a replacement conflict. After writing, read again to verify
+the saved contents. A successful append or replace result is only `{ ok: true }`. The write result
+does not contain `doc` or `probe`; always read again to verify the exact persisted `doc` rather than
+reading fields from the write result.
 
 With `loginShell: true`, the remote Bash login profiles run first and then Open Science attempts to
 source `~/.bashrc` when it is readable. A `.bashrc` can deliberately return early for non-interactive
@@ -420,8 +433,9 @@ try {
 
 ## Typical first-contact workflow
 
-1. `await host.compute.details(provider_id, { mode: 'read' })` — a `## Resources` skeleton means
-   first contact; populated sections mean prior sessions did the legwork, trust them.
+1. `await host.compute.details(provider_id, { mode: 'read' })` — read saved operation instructions
+   from `doc` and inspect the separate, dated `probe` observation. An empty `doc` means no
+   instructions have been saved; it says nothing about whether the host has been probed.
 2. Bind once: `const c = host.compute.create(provider_id)`.
 3. Run one batched probe: `await c.callCommand('id; module avail 2>&1 | head -40', '<intent>')`.
 4. Append what you learned via `await host.compute.details(..., { mode: 'append' })`.

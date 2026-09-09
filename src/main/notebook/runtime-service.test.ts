@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, posix, win32 } from 'node:path'
+import { delimiter, dirname, join, posix, win32 } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { NotebookBackgroundRunError } from '../../shared/notebook'
 
@@ -27,6 +27,7 @@ import {
   recordSpawnIntentSync
 } from './operation-journal'
 import { DefaultRuntimeProvisioner } from './provisioner'
+import * as environmentDiscovery from './environment-discovery'
 import {
   EnvironmentManifestPublicationError,
   type EnvironmentStateTracker
@@ -3878,15 +3879,28 @@ describe('notebook runtime service', () => {
       }
     )
 
-    it.each(['linux', 'win32'] as const)(
-      'recovers a lost background Shell receipt and idempotently cancels running work on %s',
-      async (platform) => {
+    it.each([
+      { platform: 'linux', dispatchDelayMs: 0 },
+      { platform: 'win32', dispatchDelayMs: 0 },
+      { platform: 'linux', dispatchDelayMs: 1500 }
+    ] as const)(
+      'recovers a lost background Shell receipt and idempotently cancels running work on $platform after $dispatchDelayMs ms dispatch delay',
+      async ({ platform, dispatchDelayMs }) => {
         const root = await createStorageRoot()
+        const executionStarted = createDeferred<void>()
+        const dispatchAllowed = createDeferred<void>()
+        const repository = new NotebookRunRepository(root)
+        const transitionRun = repository.transitionRun.bind(repository)
+        vi.spyOn(repository, 'transitionRun').mockImplementation(async (request) => {
+          if (dispatchDelayMs && request.run.status === 'running') await dispatchAllowed.promise
+          return transitionRun(request)
+        })
         let executions = 0
         const execute = vi.fn<NotebookShellProcess['execute']>(
           (request) =>
             new Promise((resolve) => {
               executions += 1
+              executionStarted.resolve()
               request.signal?.addEventListener(
                 'abort',
                 () =>
@@ -3904,7 +3918,7 @@ describe('notebook runtime service', () => {
           configRoot: root,
           dataRoot: root,
           projectId: 'default-project',
-          repository: new NotebookRunRepository(root),
+          repository,
           shellProcess: { execute },
           backgroundExecutionEnabled: true,
           platform
@@ -3920,10 +3934,26 @@ describe('notebook runtime service', () => {
         const first = await service.executeShellBackground(request)
         const recovered = await service.executeShellBackground(request)
 
-        expect(recovered.runId).toBe(first.runId)
-        await vi.waitFor(() => expect(executions).toBe(1))
-        await service.cancelBackgroundRun({ ...request, runId: first.runId })
-        expect(executions).toBe(1)
+        // Admission can precede dispatch by more than waitFor's one-second default.
+        const releaseDispatch = setTimeout(() => dispatchAllowed.resolve(), dispatchDelayMs)
+        try {
+          expect(recovered.runId).toBe(first.runId)
+          await executionStarted.promise
+          expect(executions).toBe(1)
+          await expect(
+            service.cancelBackgroundRun({ ...request, runId: first.runId })
+          ).resolves.toMatchObject({ run: { status: 'cancelled' } })
+          await expect(
+            service.cancelBackgroundRun({ ...request, runId: first.runId })
+          ).resolves.toMatchObject({ run: { status: 'cancelled' } })
+          expect(executions).toBe(1)
+        } finally {
+          clearTimeout(releaseDispatch)
+          dispatchAllowed.resolve()
+          await executionStarted.promise
+          await service.cancelBackgroundRun({ ...request, runId: first.runId })
+          await service.waitForBackgroundRun(first.runId)
+        }
       }
     )
 
@@ -4084,7 +4114,8 @@ describe('notebook runtime service', () => {
         command: 'first',
         provenanceContext: rootContext
       })
-      await vi.waitFor(() => expect(entered).toEqual(['first']))
+      // Filesystem preparation can exceed waitFor's default 1s under CI coverage.
+      await firstStarted.promise
       const second = service.executeShell({
         sessionId: 'session-1',
         workspaceCwd: root,
@@ -4093,9 +4124,6 @@ describe('notebook runtime service', () => {
       })
 
       try {
-        // Filesystem preparation can exceed waitFor's default 1s under CI coverage.
-        // Observe process admission directly before checking the second call is still queued.
-        await firstStarted.promise
         await vi.waitFor(
           async () => {
             const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
@@ -4572,6 +4600,38 @@ describe('notebook runtime service', () => {
       expect(state.runs).toEqual([])
     })
 
+    it('releases Shell admission after scope preflight rejects without persisting a Run', async () => {
+      const root = await createStorageRoot()
+      const execute = vi.fn<NotebookShellProcess['execute']>()
+      const preparedExecute = vi
+        .fn()
+        .mockResolvedValue({ stdout: 'scoped', stderr: '', exitCode: 0 })
+      const prepare = vi
+        .fn<NonNullable<NotebookShellProcess['prepare']>>()
+        .mockRejectedValueOnce(new Error('Shell search scope denied: outside cwd'))
+        .mockResolvedValue({ execute: preparedExecute, dispose: vi.fn() })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute, prepare },
+        shellConcurrencyLimit: 1
+      })
+      const scope = { sessionId: 'session-1', workspaceCwd: root }
+      await expect(service.executeShell({ ...scope, command: 'unsafe-search' })).rejects.toThrow(
+        /search scope denied/i
+      )
+      expect((await service.state(scope)).runs).toEqual([])
+      await expect(
+        service.executeShell({ ...scope, command: 'scoped-search' })
+      ).resolves.toMatchObject({ stdout: 'scoped', exitCode: 0 })
+      expect(prepare).toHaveBeenCalledTimes(2)
+      expect(preparedExecute).toHaveBeenCalledOnce()
+      expect(execute).not.toHaveBeenCalled()
+      expect((await service.state(scope)).runs).toHaveLength(1)
+    })
+
     it('dispatches a queued Shell Run with the environment frozen at admission', async () => {
       const root = await createStorageRoot()
       const originalPath = process.env.PATH ?? ''
@@ -4803,12 +4863,15 @@ describe('notebook runtime service', () => {
       'Remove-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\conda-meta\\history"'
     ])('uses the PowerShell runtime-write policy on Windows: %s', async (command) => {
       const root = await createStorageRoot()
+      // This portable unit test owns runtime-write policy, not OS parsing or process launch.
+      const execute = vi.fn<NotebookShellProcess['execute']>()
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
         projectId: 'default-project',
         repository: new NotebookRunRepository(root),
-        platform: 'win32'
+        platform: 'win32',
+        shellProcess: { execute }
       })
 
       const result = await service.executeShell({
@@ -4819,6 +4882,7 @@ describe('notebook runtime service', () => {
 
       expect(result).toMatchObject({ stdout: '', exitCode: 1 })
       expect(result.stderr).toMatch(/managed runtime is read-only/i)
+      expect(execute).not.toHaveBeenCalled()
     })
 
     it.skipIf(process.platform === 'win32')(
@@ -10311,6 +10375,7 @@ describe('notebook runtime service', () => {
       const root = await createStorageRoot()
       const events: string[] = []
       let releaseInstall: (() => void) | undefined
+      const installStarted = Promise.withResolvers<void>()
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
@@ -10345,6 +10410,7 @@ describe('notebook runtime service', () => {
           events.push('install:start')
           await new Promise<void>((resolve) => {
             releaseInstall = resolve
+            installStarted.resolve()
           })
           events.push('install:end')
           return { ok: true, needsRestart: false, log: '' }
@@ -10352,7 +10418,7 @@ describe('notebook runtime service', () => {
       })
 
       const install = service.managePackages({ language: 'python', packages: ['numpy'] })
-      await vi.waitFor(() => expect(releaseInstall).toBeDefined())
+      await installStarted.promise
 
       const run = service.execute({
         sessionId: 's',
@@ -10372,6 +10438,7 @@ describe('notebook runtime service', () => {
     it('rechecks the repair gate after a queued run acquires the environment lock', async () => {
       const root = await createStorageRoot()
       let releaseInstall: (() => void) | undefined
+      const installStarted = Promise.withResolvers<void>()
       const execute = vi.fn(async (request): Promise<NotebookExecutionResult> => ({
         status: 'completed',
         stdout: '',
@@ -10394,6 +10461,7 @@ describe('notebook runtime service', () => {
         installPackagesImpl: async () => {
           await new Promise<void>((resolve) => {
             releaseInstall = resolve
+            installStarted.resolve()
           })
           return {
             ok: false,
@@ -10406,7 +10474,7 @@ describe('notebook runtime service', () => {
       })
 
       const install = service.managePackages({ language: 'python', packages: ['numpy'] })
-      await vi.waitFor(() => expect(releaseInstall).toBeDefined())
+      await installStarted.promise
       const run = service.execute({
         sessionId: 's',
         workspaceCwd: root,
@@ -15289,7 +15357,7 @@ describe('v4 runtime bindings & agent tools', () => {
   })
 
   // End-to-end constructor wiring of NotebookRuntimeSettings: a Settings-added interpreter is folded
-  // into the service's REAL default discovery (NOT an injected discoverRuntimes), so it becomes
+  // into the service's default discovery (NOT an injected discoverRuntimes), so it becomes
   // discoverable, enable-able, and bindable — and survives a restart (a fresh service with the same
   // capability still resolves it active, not 'missing'). Uses a real executable interpreter so the
   // version probe + runnability classification run for real. POSIX-only:
@@ -15297,9 +15365,8 @@ describe('v4 runtime bindings & agent tools', () => {
   it.skipIf(process.platform === 'win32')(
     'discovers, binds, and (across a restart) keeps a constructor-injected manual interpreter',
     async () => {
-      // Real discovery is exercised (no injected discoverRuntimes): it enumerates PATH + conda roots and
-      // probes every real interpreter's `--version`, and it runs on each list/bind/execute/restart call —
-      // so this legitimately needs far more than the default 5s budget on a machine with many envs.
+      // Keep real probing and binding, but bound candidate enumeration to this fixture. Host PATH
+      // and conda inventory are covered in environment-discovery.test.ts, not constructor wiring.
       const root = await createStorageRoot()
 
       // A real, runnable Python shim OUTSIDE runtime/envs (so discovery classifies it 'user-own'): it
@@ -15310,6 +15377,17 @@ describe('v4 runtime bindings & agent tools', () => {
       await chmod(shim, 0o755)
       // Key everything by the canonical path — discovery's realpath-dedup makes envId the real path.
       const manualPath = await realpath(shim)
+
+      // A host interpreter must not leak into this constructor-wiring test.
+      const hostBin = join(root, 'host-bin')
+      await mkdir(hostBin)
+      const hostInterpreter = join(hostBin, 'python3')
+      await writeFile(
+        hostInterpreter,
+        '#!/bin/sh\necho probed > "$0.probed"\necho "Python 3.11.9"\n'
+      )
+      await chmod(hostInterpreter, 0o755)
+      vi.stubEnv('PATH', `${hostBin}${delimiter}${process.env.PATH ?? ''}`)
 
       let manualResolverCalls = 0
       const resolver = async (language: 'python' | 'r'): Promise<string[]> => {
@@ -15358,47 +15436,60 @@ describe('v4 runtime bindings & agent tools', () => {
         return service
       }
 
-      const service = makeService()
+      const realDiscoveryDeps = environmentDiscovery.defaultDiscoveryDeps
+      const discovery = vi
+        .spyOn(environmentDiscovery, 'defaultDiscoveryDeps')
+        .mockImplementation((runtimeRoot, manualPaths, runtimeDeps) => ({
+          ...realDiscoveryDeps(runtimeRoot, manualPaths, runtimeDeps),
+          candidatePaths: async (language) => manualPaths?.(language) ?? []
+        }))
+      try {
+        const service = makeService()
 
-      // 1) The manual interpreter surfaces through the agent-facing list (real discovery folded it in).
-      const listed = await service.listRuntimes({ sessionId: 's', workspaceCwd: root })
-      const manualListing = listed.runtimes.find((r) => r.runtimeId === manualPath)
-      expect(manualResolverCalls).toBeGreaterThan(0) // proves the resolver was consulted by discovery
-      expect(manualListing).toBeDefined()
-      expect(manualListing?.provenance).toBe('user-own')
-      expect(manualListing?.runnable).toBe(true)
-      expect(manualListing?.version).toMatch(/^3\.12\.7/)
+        // 1) The manual interpreter surfaces through the agent-facing list (real discovery folded it in).
+        const listed = await service.listRuntimes({ sessionId: 's', workspaceCwd: root })
+        expect(existsSync(`${hostInterpreter}.probed`)).toBe(false)
+        const manualListing = listed.runtimes.find((r) => r.runtimeId === manualPath)
+        expect(manualResolverCalls).toBeGreaterThan(0) // proves the resolver was consulted by discovery
+        expect(manualListing).toBeDefined()
+        expect(manualListing?.provenance).toBe('user-own')
+        expect(manualListing?.runnable).toBe(true)
+        expect(manualListing?.version).toMatch(/^3\.12\.7/)
 
-      // 2) It is bindable, and a subsequent state/execute reflects the binding + threads the interpreter.
-      const bound = await service.bindRuntime({
-        sessionId: 's',
-        workspaceCwd: root,
-        language: 'python',
-        runtimeId: manualPath
-      })
-      if (!('bound' in bound)) throw new Error(bound.error)
-      expect(bound.bound.source).toBe('external')
-      expect(bound.bound.runtimeId).toBe(manualPath)
+        // 2) It is bindable, and a subsequent state/execute reflects the binding + threads the interpreter.
+        const bound = await service.bindRuntime({
+          sessionId: 's',
+          workspaceCwd: root,
+          language: 'python',
+          runtimeId: manualPath
+        })
+        if (!('bound' in bound)) throw new Error(bound.error)
+        expect(bound.bound.source).toBe('external')
+        expect(bound.bound.runtimeId).toBe(manualPath)
 
-      const state = await service.state({ sessionId: 's', workspaceCwd: root })
-      expect(state.runtimeBindings.python?.runtimeId).toBe(manualPath)
-      expect(state.runtimeBindings.python?.status ?? 'active').toBe('active')
+        const state = await service.state({ sessionId: 's', workspaceCwd: root })
+        expect(state.runtimeBindings.python?.runtimeId).toBe(manualPath)
+        expect(state.runtimeBindings.python?.status ?? 'active').toBe('active')
 
-      await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'python' })
-      expect(executions.at(-1)?.resolvedInterpreter?.command).toBe(manualPath)
+        await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'python' })
+        expect(executions.at(-1)?.resolvedInterpreter?.command).toBe(manualPath)
 
-      // 3) Restart: a FRESH service instance (same manual resolver + same on-disk repository) must still
-      // discover the interpreter and rehydrate the persisted binding as ACTIVE — never 'missing'.
-      const afterRestart = makeService()
-      const restartState = await afterRestart.state({ sessionId: 's', workspaceCwd: root })
-      expect(restartState.runtimeBindings.python?.runtimeId).toBe(manualPath)
-      expect(restartState.runtimeBindings.python?.status ?? 'active').toBe('active')
-      expect(restartState.runtimeBindings.python?.reason).toBeUndefined()
+        // 3) Restart: a FRESH service instance (same manual resolver + same on-disk repository) must still
+        // discover the interpreter and rehydrate the persisted binding as ACTIVE — never 'missing'.
+        const afterRestart = makeService()
+        const restartState = await afterRestart.state({ sessionId: 's', workspaceCwd: root })
+        expect(restartState.runtimeBindings.python?.runtimeId).toBe(manualPath)
+        expect(restartState.runtimeBindings.python?.status ?? 'active').toBe('active')
+        expect(restartState.runtimeBindings.python?.reason).toBeUndefined()
 
-      const relisted = await afterRestart.listRuntimes({ sessionId: 's', workspaceCwd: root })
-      expect(relisted.runtimes.some((r) => r.runtimeId === manualPath)).toBe(true)
+        const relisted = await afterRestart.listRuntimes({ sessionId: 's', workspaceCwd: root })
+        expect(relisted.runtimes.some((r) => r.runtimeId === manualPath)).toBe(true)
 
-      await rm(manualDir, { recursive: true, force: true })
+        expect(existsSync(`${hostInterpreter}.probed`)).toBe(false)
+      } finally {
+        discovery.mockRestore()
+        await rm(manualDir, { recursive: true, force: true })
+      }
     },
     60_000
   )

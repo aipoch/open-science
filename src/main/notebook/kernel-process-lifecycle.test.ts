@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -74,6 +74,61 @@ describe('KernelProcessLifecycleOwner', () => {
     )
     expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
   })
+
+  it.each([
+    { probe: 'owned', reaped: true, foreign: false, removed: true },
+    { probe: 'dead', reaped: false, foreign: false, removed: true },
+    { probe: 'reused', reaped: false, foreign: false, removed: true },
+    { probe: 'owned', reaped: false, foreign: false, removed: false },
+    { probe: 'unknown', reaped: false, foreign: false, removed: false },
+    { probe: 'owned', reaped: true, foreign: true, removed: false }
+  ] as const)(
+    'handles interrupted host receipt writes after recovery ($probe, reaped=$reaped, foreign=$foreign)',
+    async ({ probe, reaped, foreign, removed }) => {
+      root = await mkdtemp(join(tmpdir(), 'kernel-process-interrupted-receipt-'))
+      const first = new KernelProcessLifecycleOwner({
+        storageRoot: root,
+        ownerInstanceId: 'owner-a'
+      })
+      await first.ensureReady()
+      const intent = first.beginSpawn({
+        laneKey: 'lane',
+        processKey: 'repl',
+        kernelEpochId: 'epoch-interrupted'
+      })
+      const receipt = first.recordSpawned(intent, { pid: 4242 })
+      const temporary = `${receipt.path}.4242.tmp`
+      const contents = await readFile(receipt.path, 'utf8')
+      await writeFile(
+        temporary,
+        foreign
+          ? JSON.stringify({ ...JSON.parse(contents), ownerToken: 'different-owner' })
+          : contents
+      )
+      // The host publishes the active filename before persisting its PID in the receipt.
+      await writeFile(receipt.path, JSON.stringify(intent.record))
+      const terminate = vi.fn(async () => {
+        expect(await readFile(temporary, 'utf8')).toBeTruthy()
+        return { reaped }
+      })
+      const restarted = new KernelProcessLifecycleOwner({
+        storageRoot: root,
+        ownerInstanceId: 'owner-b',
+        controller: { probe: async () => probe, terminate }
+      })
+      if (probe === 'unknown' || (probe === 'owned' && !reaped)) {
+        await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+      } else {
+        await restarted.ensureReady()
+      }
+      expect(terminate).toHaveBeenCalledTimes(probe === 'owned' ? 1 : 0)
+      if (removed) {
+        await expect(readFile(temporary, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+      } else {
+        expect(await readFile(temporary, 'utf8')).toBeTruthy()
+      }
+    }
+  )
 
   it('retains an unverified old writer and keeps admission fenced', async () => {
     root = await mkdtemp(join(tmpdir(), 'kernel-process-fence-'))

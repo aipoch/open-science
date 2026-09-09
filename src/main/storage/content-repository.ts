@@ -4,6 +4,13 @@ import { copyFile, link, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
+import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
+import type { ManagedFileReadLease } from '../managed-file-versions/service'
+
+type ContentReadLease = Pick<
+  ManagedFileReadLease,
+  'path' | 'size' | 'versionToken' | 'snapshot' | 'read' | 'readRange' | 'verifyUnchanged' | 'close'
+> & { checksum: string }
 
 type OpenedContent = {
   id: string
@@ -255,6 +262,85 @@ class ContentRepository {
     })
   }
 
+  async openLease(contentId: string): Promise<ContentReadLease> {
+    const verified = await this.verify(contentId)
+    if (verified.state !== 'available') {
+      throw new ContentOpenError(verified.reason, 'Content is unavailable.')
+    }
+    const content = verified.content
+    const lease = await new NodeVersionFileOperator({
+      storageRoot: this.options.storageRoot
+    }).openImmutable(content.storageKey, {
+      checksum: content.checksum,
+      sizeBytes: Number(content.sizeBytes)
+    })
+    // Like managed file versions, admission snapshots describe immutable content identity.
+    const versionToken = Number.parseInt(content.checksum.slice(0, 12), 16)
+    let failure: unknown
+    const verifyUnchanged = async (): Promise<void> => {
+      if (failure) throw failure
+      try {
+        const client = await this.options.getClient()
+        const current = await client.contentBlob.findUnique({ where: { id: contentId } })
+        if (
+          !current ||
+          current.state !== 'available' ||
+          current.lastVerificationFailure ||
+          current.checksum !== content.checksum ||
+          current.sizeBytes !== content.sizeBytes ||
+          current.storageKey !== content.storageKey
+        ) {
+          throw new ContentOpenError('not-available', 'Content is unavailable.')
+        }
+        await lease.verifyUnchanged()
+      } catch (error) {
+        failure = error
+        throw error
+      }
+    }
+    const readRange = async (begin: number, end: number): Promise<Uint8Array> => {
+      if (failure) throw failure
+      try {
+        const bytes = await lease.readRange(begin, end)
+        await verifyUnchanged()
+        return bytes
+      } catch (error) {
+        failure = error
+        throw error
+      }
+    }
+    try {
+      await verifyUnchanged()
+      return {
+        path: lease.localPath,
+        size: lease.sizeBytes,
+        checksum: lease.checksum,
+        versionToken,
+        snapshot: {
+          dev: 0n,
+          ino: BigInt(`0x${content.checksum.slice(0, 16)}`),
+          size: content.sizeBytes,
+          mtimeNs: BigInt(versionToken) * 1_000_000n
+        },
+        readRange,
+        read: async (buffer, offset, length, position) => {
+          if (position >= lease.sizeBytes || length <= 0) {
+            await verifyUnchanged()
+            return { bytesRead: 0 }
+          }
+          const bytes = await readRange(position, Math.min(position + length, lease.sizeBytes))
+          buffer.set(bytes, offset)
+          return { bytesRead: bytes.byteLength }
+        },
+        verifyUnchanged,
+        close: lease.close
+      }
+    } catch (error) {
+      await lease.close()
+      throw error
+    }
+  }
+
   async open(contentId: string): Promise<OpenedContent> {
     return this.readContent(contentId)
   }
@@ -351,6 +437,15 @@ class ContentRepository {
       await observe(null)
       return { state: 'available', content }
     } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        (error.code === 'EACCES' || error.code === 'EPERM')
+      ) {
+        await observe('permission-denied')
+        throw error
+      }
       if (missingFile(error)) {
         await this.quarantine(contentId)
         await observe('missing')
@@ -384,30 +479,27 @@ class ContentRepository {
       createdAt: { lt: request.createdBefore },
       ...(request.contentIds ? { id: { in: [...new Set(request.contentIds)] } } : {})
     }
-    const [
-      candidates,
-      uploadReferences,
-      artifactReferences,
-      literatureReferences,
-      inboxReferences
-    ] = await Promise.all([
-      client.contentBlob.findMany({
-        where: candidateWhere,
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
-      }),
-      client.uploadVersion.findMany({
-        where: { contentBlobId: { not: null } },
-        select: { contentBlobId: true }
-      }),
-      client.artifactVersion.findMany({
-        where: { contentBlobId: { not: null } },
-        select: { contentBlobId: true }
-      }),
-      client.literatureAttachmentVersion.findMany({
-        select: { contentBlobId: true }
-      }),
-      client.literatureInboxPdf.findMany({ select: { contentBlobId: true } })
-    ])
+    const candidates = await client.contentBlob.findMany({
+      where: candidateWhere,
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
+    })
+    if (candidates.length === 0) return { removedIds: [], retainedIds: [], failedIds: [] }
+    const where = request.contentIds
+      ? { contentBlobId: { in: candidates.map(({ id }) => id) } }
+      : undefined
+    const [uploadReferences, artifactReferences, literatureReferences, inboxReferences] =
+      await Promise.all([
+        client.uploadVersion.findMany({
+          where: where ?? { contentBlobId: { not: null } },
+          select: { contentBlobId: true }
+        }),
+        client.artifactVersion.findMany({
+          where: where ?? { contentBlobId: { not: null } },
+          select: { contentBlobId: true }
+        }),
+        client.literatureAttachmentVersion.findMany({ where, select: { contentBlobId: true } }),
+        client.literatureInboxPdf.findMany({ where, select: { contentBlobId: true } })
+      ])
     const referencedIds = new Set(
       [
         ...uploadReferences,
@@ -481,3 +573,5 @@ class ContentRepository {
 
 export { ContentRepository, resolveContentStorageKey }
 export type { ContentSweepReceipt, ContentVerification, OpenedContent, PublishContentRequest }
+
+export type { ContentReadLease }

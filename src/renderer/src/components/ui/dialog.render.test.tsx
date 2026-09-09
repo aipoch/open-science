@@ -114,3 +114,33 @@ it('forwards content refs and preserves stricter caller dismissal policies', asy
   view.unmount()
   expect(cleanupRef).toHaveBeenCalledOnce()
 })
+
+it.each([false, true])(
+  'ignores composing Escape before caller effects and preserves ordinary Escape policy (custom=%s)',
+  (custom) => {
+    const onEscapeKeyDown = vi.fn((event: KeyboardEvent) => event.preventDefault())
+    render(
+      <Dialog.Root defaultOpen>
+        <Dialog.Content onEscapeKeyDown={custom ? onEscapeKeyDown : undefined}>
+          <Dialog.Title>Edit reference</Dialog.Title>
+          <Dialog.Description>Unsaved draft</Dialog.Description>
+          <input aria-label="Draft" defaultValue="Existing draft" />
+        </Dialog.Content>
+      </Dialog.Root>
+    )
+    const dialog = screen.getByRole('dialog')
+    const input = screen.getByRole('textbox', { name: 'Draft' })
+    fireEvent.compositionStart(input)
+    fireEvent.keyDown(input, { key: 'Escape', isComposing: true })
+    expect(onEscapeKeyDown).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBe(dialog)
+    fireEvent.compositionEnd(input)
+    fireEvent.keyDown(input, { key: 'Escape', isComposing: false })
+    if (custom) {
+      expect(onEscapeKeyDown).toHaveBeenCalledOnce()
+      expect(screen.queryByRole('dialog')).toBe(dialog)
+    } else {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    }
+  }
+)

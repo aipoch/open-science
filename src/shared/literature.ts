@@ -233,6 +233,14 @@ const literatureSourceInputSchema = z
   })
   .strict()
 
+// Current persisted metadata evidence, not an application history. savedAt is the legacy
+// source-record write timestamp; it does not claim the time of network acquisition.
+const literatureSourceRecordViewSchema = literatureSourceInputSchema.extend({
+  id: nonEmptyTextSchema,
+  savedAt: z.number().int().nonnegative()
+})
+type LiteratureSourceRecordView = z.infer<typeof literatureSourceRecordViewSchema>
+
 const literatureCandidateOriginSchema = z
   .object({
     kind: nonEmptyTextSchema,
@@ -311,6 +319,16 @@ const literatureInboxCandidateViewSchema = z
     id: nonEmptyTextSchema,
     state: z.enum(LITERATURE_INBOX_STATES),
     candidate: literatureCandidateInputSchema,
+    discoveries: z
+      .array(
+        z
+          .object({
+            origin: literatureCandidateOriginSchema,
+            createdAt: z.number().int().nonnegative()
+          })
+          .strict()
+      )
+      .optional(),
     pdfs: z
       .array(
         z
@@ -330,8 +348,11 @@ const literatureInboxCandidateViewSchema = z
   })
   .strict()
 
+const LITERATURE_COLLECTION_REVISION_CONFLICT = 'literature_collection_revision_conflict'
+
 const literatureCollectionViewSchema = z
   .object({
+    revision: z.number().int().positive(),
     id: nonEmptyTextSchema,
     name: nonEmptyTextSchema.max(LITERATURE_COLLECTION_NAME_MAX_LENGTH),
     description: z.string().max(LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH),
@@ -365,6 +386,8 @@ const literatureCatalogSearchRequestSchema = z
     scope: z.enum(['library', 'inbox', 'collections', 'project-counts', 'duplicates']),
     refreshDuplicates: z.boolean().optional(),
     allItemIds: z.boolean().optional(),
+    countOnly: z.boolean().optional(),
+    itemIds: z.array(nonEmptyTextSchema).max(200).optional(),
     query: optionalTextSchema,
     projectId: optionalTextSchema,
     collectionId: optionalTextSchema,
@@ -381,6 +404,12 @@ const literatureCatalogSearchRequestSchema = z
   .strict()
   .refine((request) => !request.allItemIds || request.scope === 'library', {
     message: 'Complete item membership is only available for the library.'
+  })
+  .refine((request) => request.itemIds === undefined || request.scope === 'library', {
+    message: 'Selected item membership is only available for the library.'
+  })
+  .refine((request) => !request.countOnly || (request.scope === 'library' && !request.allItemIds), {
+    message: 'Count-only queries require the library and cannot request item membership.'
   })
 
 const literatureCatalogSearchPageSchema = z
@@ -502,6 +531,7 @@ const literatureCatalogCommandSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('update-collection'),
+      expectedRevision: z.number().int().positive(),
       collectionId: nonEmptyTextSchema,
       name: nonEmptyTextSchema.max(LITERATURE_COLLECTION_NAME_MAX_LENGTH),
       description: z.string().trim().max(LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH)
@@ -973,6 +1003,10 @@ const literatureApplicationCommandContracts = Object.freeze({
     validationCodec(z.tuple([literatureCatalogSearchRequestSchema])),
     validationCodec(literatureCatalogSearchPageSchema)
   ),
+  sources: defineApplicationCommandContract(
+    validationCodec(z.tuple([nonEmptyTextSchema])),
+    validationCodec(z.array(literatureSourceRecordViewSchema))
+  ),
   get: defineApplicationCommandContract(
     validationCodec(z.tuple([nonEmptyTextSchema])),
     validationCodec(literatureItemViewSchema.optional())
@@ -1137,6 +1171,7 @@ export {
   LITERATURE_RECORD_IMPORT_MAX_BYTES,
   LITERATURE_RECORD_IMPORT_MAX_RECORDS,
   literatureCandidateInputSchema,
+  literatureCandidateOriginSchema,
   literatureAttachmentVersionViewSchema,
   literatureAttachmentViewSchema,
   literatureApplicationCommandContracts,
@@ -1144,6 +1179,7 @@ export {
   literatureCatalogReceiptSchema,
   literatureCatalogSearchPageSchema,
   literatureCatalogSearchRequestSchema,
+  LITERATURE_COLLECTION_REVISION_CONFLICT,
   literatureCollectionViewSchema,
   literatureFilterSchema,
   literatureCreatorInputSchema,
@@ -1202,6 +1238,7 @@ export type {
   LiteratureInboxCandidateView,
   LiteratureItemInput,
   LiteratureItemView,
+  LiteratureSourceRecordView,
   LiteratureMetadataCompletionRequest,
   LiteratureMetadataCompletionResult,
   LiteratureMetadataConflict,
@@ -1223,3 +1260,11 @@ export type {
   LiteraturePdfImportRequest,
   LiteratureSourceInput
 }
+
+// Invalidation hints only; clients re-read authoritative records rather than applying event content.
+export type LiteratureChangedEvent = Readonly<{
+  revision: number
+  itemIds?: readonly string[]
+  collectionIds?: readonly string[]
+  candidateIds?: readonly string[]
+}>

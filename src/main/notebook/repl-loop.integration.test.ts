@@ -3099,7 +3099,7 @@ gate('repl_loop.js host.compute', () => {
   }, 60_000)
 
   it('details() maps public oldText to wire old_text and returns the result', async () => {
-    next = { status: 200, body: { result: { doc: 'the doc', isSkeleton: false } } }
+    next = { status: 200, body: { result: { doc: 'the doc', probe: null } } }
     const { child, send } = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
       OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok'

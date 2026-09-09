@@ -1,3 +1,7 @@
+import {
+  literatureDeletionError,
+  parseLiteratureDeletionError
+} from '../../shared/literature-deletion'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -28,6 +32,43 @@ function surface<Electron, Web>(electron: Electron, web: Web): Surface<Electron,
 }
 
 describe('installWebRendererContracts', () => {
+  it('preserves recoverable deletion diagnostics without turning rejection into success', async () => {
+    const diagnostic = {
+      reason: 'scan-incomplete' as const,
+      references: [],
+      issues: [
+        {
+          kind: 'corrupt' as const,
+          projectId: 'project',
+          fileName: 'session.json',
+          recovered: true
+        }
+      ],
+      truncated: false
+    }
+    const error = literatureDeletionError(diagnostic)
+    const api: Record<string, unknown> = {}
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['literature:transact']),
+      restrictedRpcChannels: new Set(),
+      invoke: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(JSON.parse(JSON.stringify({ message: error.message })).message)
+        ),
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    const result = await (
+      methodAt(api, 'literature.transact')!({
+        kind: 'delete-items-permanently',
+        itemIds: ['item']
+      }) as Promise<unknown>
+    ).catch((error) => error)
+    expect(result).toBeInstanceOf(Error)
+    expect(parseLiteratureDeletionError(result)).toEqual(diagnostic)
+  })
+
   it('forwards the Session delegation mutation unchanged and returns the authoritative Session', async () => {
     const api: Record<string, unknown> = {}
     const authoritative = { id: 'session-1', projectId: 'project-1', delegationPolicy: 'deny' }

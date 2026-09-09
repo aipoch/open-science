@@ -27,7 +27,9 @@ describe('claudeCodeFramework', () => {
             'SendMessage',
             'TeamCreate',
             'TeamDelete',
-            'Bash'
+            'Bash',
+            'Glob',
+            'Grep'
           ],
           managedSettings: {
             disableAgentView: true,
@@ -85,7 +87,9 @@ describe('claudeCodeFramework', () => {
       'SendMessage',
       'TeamCreate',
       'TeamDelete',
-      'Bash'
+      'Bash',
+      'Glob',
+      'Grep'
     ])
     expect(options.managedSettings).toMatchObject({
       disableAgentView: true,

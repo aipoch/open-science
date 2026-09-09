@@ -1,6 +1,13 @@
+import {
+  literatureDeletionError,
+  parseLiteratureDeletionError
+} from '../shared/literature-deletion'
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
-import { ApplicationCommandError } from '../shared/application-command-contract'
+import {
+  ApplicationCommandError,
+  toApplicationCommandErrorEnvelope
+} from '../shared/application-command-contract'
 import { createElectronRendererContractAdapter } from './electron-renderer-contract-adapter'
 
 type MockPort = Readonly<{
@@ -74,6 +81,33 @@ describe('electron renderer contract adapter', () => {
       expect(port.send).toHaveBeenCalledWith(channel, ...args)
     }
   )
+
+  it('preserves recoverable deletion diagnostics without turning rejection into success', async () => {
+    const diagnostic = {
+      reason: 'scan-incomplete' as const,
+      references: [],
+      issues: [
+        {
+          kind: 'corrupt' as const,
+          projectId: 'project',
+          fileName: 'session.json',
+          recovered: true
+        }
+      ],
+      truncated: false
+    }
+    const error = literatureDeletionError(diagnostic)
+    const port = createPort()
+    port.invoke.mockResolvedValue(
+      JSON.parse(JSON.stringify({ ok: false, error: toApplicationCommandErrorEnvelope(error) }))
+    )
+    const adapter = createElectronRendererContractAdapter(port)
+    const result = await adapter
+      .invoke('literature.transact', { kind: 'delete-items-permanently', itemIds: ['item'] })
+      .catch((error) => error)
+    expect(result).toBeInstanceOf(Error)
+    expect(parseLiteratureDeletionError(result)).toEqual(diagnostic)
+  })
 
   it('rejects lifecycle-managed contracts from generic send and subscribe paths', () => {
     const port = createPort()
@@ -192,6 +226,27 @@ describe('electron renderer contract adapter', () => {
       name: 'ApplicationCommandError',
       code: 'session-size-limit'
     })
+  })
+
+  it.each([
+    { code: 'csl-invalid-xml', message: 'Invalid XML.' },
+    {
+      code: 'csl-undefined-macro',
+      message: 'Undefined macro.',
+      parameters: { macro: 'author-原名' }
+    }
+  ])('preserves $code as a serializable rejection for contextBridge', async (error) => {
+    const port = createPort()
+    port.invoke.mockResolvedValue({ ok: false, error })
+    const adapter = createElectronRendererContractAdapter(port)
+
+    const failure = await adapter
+      .invoke('literature.citationStyles', { kind: 'import', content: '<' })
+      .catch((cause: unknown) => cause)
+
+    expect(failure).not.toBeInstanceOf(Error)
+    expect(failure).toEqual(error)
+    expect(JSON.parse(JSON.stringify(failure))).toEqual(error)
   })
 
   it('rejects surface-native methods from the IPC request path', async () => {

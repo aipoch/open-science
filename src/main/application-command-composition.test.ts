@@ -202,6 +202,7 @@ describe('application command composition', () => {
       'acp:respond-plan',
       'literature:citation-styles',
       'literature:complete-metadata',
+      'literature:export-record',
       'literature:format-document',
       'literature:format-references',
       'literature:full-text',
@@ -211,6 +212,7 @@ describe('application command composition', () => {
       'literature:jobs',
       'literature:lookup-metadata',
       'literature:search',
+      'literature:sources',
       'literature:transact',
       'memory:clear-all',
       'memory:create-category',
@@ -597,5 +599,29 @@ it('routes Task Connector reads to the existing Settings owner without adding We
   expect(listConnectors).toHaveBeenCalledOnce()
   expect(composition.localWeb.commandNames()).not.toContain('settings:test-custom-server')
   expect(composition.remoteWeb.commandNames()).not.toContain('settings:test-custom-server')
+  composition.dispose()
+})
+
+it('validates bounded reference exports through the shared Web command boundary', async () => {
+  const exported = { chunk: '{"title":"Reference"}', digest: 'a'.repeat(64) }
+  const exportRecord = vi.fn(async () => exported)
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    literature: { exportRecord } as never
+  })
+  await expect(
+    composition.localWeb.invoke('literature:export-record', {
+      ...invocation(),
+      args: [{ itemId: 'reference', offset: -1 }]
+    })
+  ).rejects.toThrow()
+  expect(exportRecord).not.toHaveBeenCalled()
+  await expect(
+    composition.remoteWeb.invoke('literature:export-record', {
+      ...invocation('remote'),
+      args: [{ itemId: 'reference' }]
+    })
+  ).resolves.toEqual(exported)
+  expect(exportRecord).toHaveBeenCalledWith({ itemId: 'reference' })
   composition.dispose()
 })
