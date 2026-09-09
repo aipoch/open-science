@@ -20,7 +20,8 @@ type AttachmentOperations = {
     item: LiteratureItemView,
     attachmentId: string,
     action: AttachmentAction,
-    versionId?: string
+    versionId: string | undefined,
+    readItem: (id: string) => Promise<LiteratureItemView | undefined>
   ) => Promise<void>
   dismiss: (operation: AttachmentOperation) => void
 }
@@ -32,7 +33,7 @@ export const useAttachmentOperations = create<AttachmentOperations>((set, get) =
     if (!operation.pending)
       set({ operations: get().operations.filter((entry) => entry !== operation) })
   },
-  run: async (item, attachmentId, action, versionId) => {
+  run: async (item, attachmentId, action, versionId, readItem) => {
     // Preserve the existing per-item exclusion, including conflicting actions on other attachments.
     if (get().operations.some((entry) => entry.itemId === item.id && entry.pending)) return
     const attachment = item.attachments.find((entry) => entry.id === attachmentId)
@@ -64,9 +65,7 @@ export const useAttachmentOperations = create<AttachmentOperations>((set, get) =
       error = failure
     }
     const updated =
-      receipt || action === 'verify'
-        ? await window.api.literature.get(item.id).catch(() => undefined)
-        : undefined
+      receipt || action === 'verify' ? await readItem(item.id).catch(() => undefined) : undefined
     // A refresh failure cannot restore an attachment whose deletion has committed.
     const result =
       updated ??
