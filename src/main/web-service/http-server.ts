@@ -1631,6 +1631,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             callerContext,
             parsed.data.args
           )
+          assertExternalAuthorizationCurrent(externalAuthorization)
           json(
             response,
             200,
@@ -1642,6 +1643,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             MAX_WEB_RPC_RESPONSE_BYTES
           )
         } catch (error) {
+          // A delayed error may carry the same private data as a successful result.
+          if (externalAuthorization && !externalAuthorization.isCurrent()) {
+            webRpcError(response, 401, 'invalid_request', 'Remote access authorization expired.')
+            return
+          }
           log.warn('web rpc rejected', {
             channel,
             surface: callerContext.surface,

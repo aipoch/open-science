@@ -5188,6 +5188,8 @@
     "You can import unfinished files or close this window.": "Vous pouvez importer les fichiers inachevés ou fermer cette fenêtre.",
     "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "Les nouvelles tâches Compute peuvent rester en attente, car les limites de simultanéité enregistrées n’ont pas pu être vérifiées. Conservez les fichiers concernés, restaurez une copie valide, puis relancez la vérification pour reprendre l’envoi des tâches.",
     "Recheck saved conversations": "Revérifier les conversations enregistrées",
-    "Some changes have not been saved.": "Certaines modifications n’ont pas été enregistrées."
+    "Some changes have not been saved.": "Certaines modifications n’ont pas été enregistrées.",
+    "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "Autoriser une fois s’applique à la prochaine exécution dans cet environnement, même si le code change. Plusieurs connexions à ce domaine sont autorisées pendant cette exécution.",
+    "Next execution in this runtime": "Prochaine exécution dans cet environnement"
   }
 }
