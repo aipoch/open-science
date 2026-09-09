@@ -129,6 +129,7 @@ type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'sa
   ) => Promise<PersistedChatSession>
   seedAcknowledgedSessions: (sessions: readonly PersistedChatSession[]) => void
   getAcknowledgedSession: (sessionId: string) => PersistedChatSession | undefined
+  releaseAcknowledgedSessionBody: (sessionId: string) => boolean
   clearWriteFailure: (target: string) => void
   clearWriteFailures: () => void
   flush: () => Promise<void>
@@ -647,6 +648,7 @@ const createOrderedSessionPersistence = (
   api: Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
 ): OrderedSessionPersistence => {
   let queue: Promise<unknown> = Promise.resolve()
+  let pendingWriteCount = 0
   const acknowledgedRevisions = new Map<string, number>()
   const acknowledgedSessions = new Map<string, PersistedChatSession>()
   const pendingLatestByTarget = new Map<string, PendingLatestSessionSave>()
@@ -727,10 +729,15 @@ const createOrderedSessionPersistence = (
   const enqueue = <Result>(target: string, task: () => Promise<Result>): Promise<Result> => {
     releasePendingLatestCadence()
     pendingLatestByTarget.clear()
-    const run = queue.then(
-      () => trackWrite(target, task),
-      () => trackWrite(target, task)
-    )
+    pendingWriteCount += 1
+    const run = queue
+      .then(
+        () => trackWrite(target, task),
+        () => trackWrite(target, task)
+      )
+      .finally(() => {
+        pendingWriteCount -= 1
+      })
     queue = run.then(
       () => undefined,
       () => undefined
@@ -792,10 +799,15 @@ const createOrderedSessionPersistence = (
       acknowledgeSession(durable)
       return durable
     }
-    const run = queue.then(
-      () => trackWrite(target, runTask),
-      () => trackWrite(target, runTask)
-    )
+    pendingWriteCount += 1
+    const run = queue
+      .then(
+        () => trackWrite(target, runTask),
+        () => trackWrite(target, runTask)
+      )
+      .finally(() => {
+        pendingWriteCount -= 1
+      })
     entry.promise = run
     pendingLatestByTarget.set(target, entry)
     queue = run.then(
@@ -825,6 +837,12 @@ const createOrderedSessionPersistence = (
     getAcknowledgedSession: (sessionId) => {
       const session = acknowledgedSessions.get(sessionId)
       return session ? structuredClone(session) : undefined
+    },
+    releaseAcknowledgedSessionBody: (sessionId) => {
+      if (pendingWriteCount > 0 || failedWritesByTarget.has(`session:${sessionId}`)) return false
+      acknowledgedSessions.delete(sessionId)
+      // Keep the small revision watermark: later explicit writes must not regress their revision.
+      return true
     },
     clearWriteFailure: (target) => failedWritesByTarget.delete(target),
     clearWriteFailures: () => failedWritesByTarget.clear(),
@@ -1237,7 +1255,10 @@ type StoreSaverObserver = {
   onSuccess?: (target: string) => void
 }
 
-type StoreSaver = (state: SessionStoreSnapshot, options?: StoreSaverOptions) => Promise<unknown>
+type StoreSaver = {
+  (state: SessionStoreSnapshot, options?: StoreSaverOptions): Promise<unknown>
+  releaseReadOnlySession: (source: ChatSession, summary: ChatSession) => boolean
+}
 
 const pruneRemovedSessionWriteTargets = (
   targets: Set<string>,
@@ -1440,7 +1461,7 @@ const createStoreSaver = (
     )
   }
 
-  return (state, options) => {
+  const save: StoreSaver = (state, options) => {
     const nextSessions = state.sessions
     const previousById = indexById(previousSessions)
     const nextById = indexById(nextSessions)
@@ -1727,6 +1748,23 @@ const createStoreSaver = (
 
     return Promise.all(scheduledTasks).then(() => undefined)
   }
+  save.releaseReadOnlySession = (source, summary) => {
+    const current = useSessionStore.getState()
+    if (
+      current.selectedSessionId === source.id ||
+      current.sessions.find((session) => session.id === source.id) !== source ||
+      previousSessions.find((session) => session.id === source.id) !== source ||
+      !persistence.releaseAcknowledgedSessionBody(source.id)
+    )
+      return false
+    acknowledgedSessions.delete(source.id)
+    // Change the diff baseline before publishing the summary. Unloading is not a metadata edit
+    // and must not enqueue a save which loads the same body straight back into the store.
+    previousSessions = current.sessions.map((session) => (session === source ? summary : session))
+    useSessionStore.setState({ sessions: previousSessions })
+    return true
+  }
+  return save
 }
 
 // Starts session persistence and returns health/recovery state so App can gate input and surface failures.
@@ -2038,6 +2076,30 @@ const useSessionPersistence = (): SessionPersistenceState => {
       activeSaver = save
       saverRef.current = save
       const loadingSessionContent = new Set<string>()
+      // ponytail: only unchanged, passively loaded history is reclaimable. Edited/runtime-owned
+      // sessions stay resident; extend this policy only with a proven save-acknowledgement contract.
+      const readOnlyHistory = new Map<string, { loaded: ChatSession; summary: ChatSession }>()
+      const trimReadOnlyHistory = (): void => {
+        if (!isMounted || readOnlyHistory.size === 0) return
+        const state = useSessionStore.getState()
+        const byId = indexById(state.sessions)
+        for (const [id, entry] of readOnlyHistory) {
+          if (byId.get(id) !== entry.loaded) {
+            readOnlyHistory.delete(id)
+          }
+        }
+        const selected = state.selectedSessionId && readOnlyHistory.get(state.selectedSessionId)
+        if (selected) {
+          readOnlyHistory.delete(selected.loaded.id)
+          readOnlyHistory.set(selected.loaded.id, selected)
+        }
+        for (const [id, entry] of readOnlyHistory) {
+          if (readOnlyHistory.size <= 16) break
+          if (id === state.selectedSessionId) continue
+          if (!save.releaseReadOnlySession(entry.loaded, entry.summary)) continue
+          readOnlyHistory.delete(id)
+        }
+      }
 
       unsubscribe = useSessionStore.subscribe((state) => {
         const failedTargetCount = failedWriteTargets.current.size
@@ -2067,7 +2129,41 @@ const useSessionPersistence = (): SessionPersistenceState => {
           void loadPersistedSession({ projectId: selected.projectId, sessionId: selected.id })
             .then((session) => {
               if (!session) throw new Error('Selected Session JSON is missing.')
-              if (isMounted) hydratePersistedSessionIfPresent(session)
+              if (!isMounted) return
+              const unchangedSummary =
+                useSessionStore
+                  .getState()
+                  .sessions.find((candidate) => candidate.id === selected.id) === selected
+              const loaded = hydratePersistedSessionIfPresent(session)
+              if (
+                unchangedSummary &&
+                loaded &&
+                loaded.status === 'idle' &&
+                !loaded.activeRun &&
+                !loaded.unsavedTitle &&
+                !loaded.isPending &&
+                !loaded.runtimeContext?.sideChat &&
+                !loaded.runtimeContext?.delegatedWork &&
+                !hasStagedUploads(loaded) &&
+                pendingArtifactRequests(loaded, true).length === 0
+              ) {
+                readOnlyHistory.set(loaded.id, {
+                  loaded,
+                  summary: {
+                    ...selected,
+                    title: loaded.title,
+                    status: loaded.status,
+                    pinned: loaded.pinned,
+                    archivedAt: loaded.archivedAt,
+                    revision: loaded.revision,
+                    filesRevision: loaded.filesRevision,
+                    updatedAt: loaded.updatedAt,
+                    activeMessageCount: loaded.messages.length,
+                    artifactCount: loaded.artifacts?.length ?? 0
+                  }
+                })
+                trimReadOnlyHistory()
+              }
             })
             .catch((error) => {
               reportPersistenceError(error, 'session-load')
@@ -2075,7 +2171,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
             })
             .finally(() => loadingSessionContent.delete(selected.id))
         }
-        void save(state).catch(reportPersistenceError)
+        void save(state).then(trimReadOnlyHistory).catch(reportPersistenceError)
       })
 
       // Hydration intentionally uses the user's live selection instead of the older disk manifest

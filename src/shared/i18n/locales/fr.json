@@ -5194,6 +5194,10 @@
     "Some changes have not been saved.": "Certaines modifications n’ont pas été enregistrées.",
     "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "Autoriser une fois s’applique à la prochaine exécution dans cet environnement, même si le code change. Plusieurs connexions à ce domaine sont autorisées pendant cette exécution.",
     "Next execution in this runtime": "Prochaine exécution dans cet environnement",
+    "Research work is still running. Stop it before restarting to update.": "Des tâches de recherche sont encore en cours. Arrêtez-les avant de redémarrer pour effectuer la mise à jour.",
+    "Subagents are still running. Return to their tasks and stop them before restarting to update.": "Des sous-agents sont encore en cours d’exécution. Revenez à leurs tâches et arrêtez-les avant de redémarrer pour effectuer la mise à jour.",
+    "The installer is missing or has changed. Download the update again.": "Le programme d’installation est introuvable ou a été modifié. Téléchargez à nouveau la mise à jour.",
+    "Verifying installer…": "Vérification du programme d’installation…",
     "Open Science couldn't display this page": "Open Science n’a pas pu afficher cette page",
     "Background work may still be running. Reloading may lose unsaved changes on this page.": "Des tâches peuvent encore être en cours en arrière-plan. Le rechargement peut entraîner la perte des modifications non enregistrées sur cette page.",
     "Reload page": "Recharger la page"

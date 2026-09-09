@@ -1,5 +1,6 @@
-import { existsSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { createReadStream, existsSync } from 'node:fs'
+import { lstat, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
 import { app, BrowserWindow, dialog, shell } from 'electron'
@@ -369,6 +370,7 @@ export class UpdateService implements UpdateStrategy {
           },
           signal: abort.signal
         })
+        if (abort.signal.aborted || this.downloadAbort !== abort) return
         this.setStatus({
           ...this.status,
           state: 'ready',
@@ -424,7 +426,7 @@ export class UpdateService implements UpdateStrategy {
     if (this.applyLifecycle) return this.applyLifecycle
 
     const admittedStatus = this.status
-    const lifecycle = this.applyAdmitted(admittedStatus)
+    const lifecycle = Promise.resolve().then(() => this.applyAdmitted(admittedStatus))
     this.applyLifecycle = lifecycle
     const clearLifecycle = (): void => {
       if (this.applyLifecycle === lifecycle) this.applyLifecycle = undefined
@@ -434,46 +436,63 @@ export class UpdateService implements UpdateStrategy {
   }
 
   private async applyAdmitted(admittedStatus: UpdateStatus): Promise<UpdateStatus> {
+    if (this.status !== admittedStatus) return this.status
+    let ownedStatus = admittedStatus
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-apply',
       fields: { strategy: 'manifest' }
     })
     try {
       const { localPath, download } = admittedStatus
-      if (localPath) {
+      if (localPath && download) {
+        this.setStatus({ ...admittedStatus, state: 'applying', error: undefined })
+        ownedStatus = this.status
         operation.phase('verify-installer')
-        if (this.fileExists(localPath)) {
+        let verified = false
+        try {
+          if (this.fileExists(localPath)) {
+            const stat = await lstat(localPath)
+            if (stat.isFile() && stat.size === download.size) {
+              const hash = createHash('sha256')
+              for await (const chunk of createReadStream(localPath)) hash.update(chunk)
+              verified = hash.digest('hex') === download.sha256.toLowerCase()
+            }
+          }
+        } catch {
+          // Missing/unreadable or replaced files must go through download again.
+        }
+        if (this.status !== ownedStatus) return this.status
+        if (verified) {
           operation.phase('open-installer')
           const error = await this.openPath(localPath)
-          if (!error) {
-            if (this.status === admittedStatus && admittedStatus.error) {
-              this.setStatus({ ...admittedStatus, error: undefined })
-            }
-            operation.complete({ result: 'installer-opened' })
-            return this.status
+          if (this.status === ownedStatus) {
+            this.setStatus({
+              ...admittedStatus,
+              state: 'ready',
+              error: error
+                ? this.translate('Could not open the update installer: {{error}}', { error })
+                : undefined
+            })
           }
-          operation.fail(new Error('Installer open failed'), { reason: 'open-failed' })
-          if (this.status !== admittedStatus) return this.status
-          this.setStatus({
-            ...admittedStatus,
-            state: 'ready',
-            error: this.translate('Could not open the update installer: {{error}}', { error })
-          })
+          if (error) operation.fail(new Error('Installer open failed'), { reason: 'open-failed' })
+          else operation.complete({ result: 'installer-opened' })
           return this.status
-        } else {
-          operation.fail(new Error('Installer unavailable'), { reason: 'installer-missing' })
         }
+        operation.fail(new Error('Installer integrity check failed'), {
+          reason: 'installer-invalid'
+        })
       } else if (download) {
         operation.fail(new Error('Installer unavailable'), { reason: 'installer-missing' })
       }
 
+      if (this.status !== ownedStatus) return this.status
       if (download) {
         this.setStatus({
           ...admittedStatus,
           state: 'available',
           localPath: undefined,
           progress: undefined,
-          error: undefined
+          error: 'The installer is missing or has changed. Download the update again.'
         })
       } else {
         operation.phase('open-download-page')
@@ -482,6 +501,9 @@ export class UpdateService implements UpdateStrategy {
       }
       return this.status
     } catch (error) {
+      if (this.status === ownedStatus && ownedStatus.state === 'applying') {
+        this.setStatus({ ...admittedStatus, state: 'ready' })
+      }
       operation.fail(error, { result: 'error' })
       throw error
     }

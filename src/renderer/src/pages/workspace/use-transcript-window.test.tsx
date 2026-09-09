@@ -19,6 +19,96 @@ const items = Array.from(
 )
 
 describe('useTranscriptWindow', () => {
+  it.each(['none', 'selection', 'focus'] as const)(
+    'PERF-03 bounds reading after releasing %s without moving the reading anchor',
+    (pin) => {
+      const viewport = document.createElement('div')
+      document.body.appendChild(viewport)
+      const root = createRoot(viewport)
+      const rows = Array.from({ length: 1000 }, (_, index) => ({
+        id: `row-${index}`,
+        type: 'message',
+        message: { id: `row-${index}` }
+      })) as WorkspaceConversationTimelineItem[]
+      Object.defineProperties(viewport, {
+        clientHeight: { value: 400 },
+        scrollHeight: { get: () => viewport.childElementCount * 20 }
+      })
+      viewport.getBoundingClientRect = () => ({ top: 100, bottom: 500 }) as DOMRect
+      viewport.scrollTo = (options) => {
+        viewport.scrollTop = (options as ScrollToOptions).top ?? 0
+      }
+      let current!: ReturnType<typeof useTranscriptWindow>
+      const Harness = (): React.JSX.Element => {
+        current = useTranscriptWindow('large', rows, -1, { current: viewport })
+        return (
+          <>
+            {current.entries.map(({ item }) => (
+              <div
+                key={item.id}
+                data-message-id={item.id}
+                ref={(node) => {
+                  if (node)
+                    node.getBoundingClientRect = () => {
+                      const top =
+                        100 + Array.from(viewport.children).indexOf(node) * 20 - viewport.scrollTop
+                      return { top, bottom: top + 20 } as DOMRect
+                    }
+                }}
+              >
+                {item.id}
+              </div>
+            ))}
+          </>
+        )
+      }
+      const expand = (direction: 'up' | 'down', bounded = true): void => {
+        viewport.scrollTop = direction === 'up' ? 0 : viewport.scrollHeight - 400
+        const anchor = Array.from(viewport.children).find(
+          (node) => node.getBoundingClientRect().bottom > 100
+        )!
+        const id = (anchor as HTMLElement).dataset.messageId
+        const top = anchor.getBoundingClientRect().top
+        act(() => current.expandAtScrollEdge(direction === 'up' ? 100 : 0))
+        if (bounded) expect(viewport.childElementCount).toBeLessThanOrEqual(160)
+        const retained = viewport.querySelector<HTMLElement>(`[data-message-id="${id}"]`)
+        expect(retained).not.toBeNull()
+        expect(retained!.getBoundingClientRect().top).toBe(top)
+      }
+      try {
+        act(() => root.render(<Harness />))
+        expect(viewport.childElementCount).toBe(80)
+        if (pin !== 'none') {
+          const pinned = viewport.lastElementChild as HTMLElement
+          if (pin === 'selection') {
+            const range = document.createRange()
+            range.selectNodeContents(pinned)
+            document.getSelection()!.addRange(range)
+          } else {
+            pinned.tabIndex = 0
+            pinned.focus()
+          }
+          for (let i = 0; i < 3; i++) expand('up', false)
+          expect(pinned.isConnected).toBe(true)
+          if (pin === 'selection') {
+            expect(document.getSelection()!.toString()).toBe('row-999')
+            document.getSelection()!.removeAllRanges()
+          } else {
+            expect(document.activeElement).toBe(pinned)
+            pinned.blur()
+          }
+        }
+        for (let i = 0; i < 12; i++) expand('up')
+        expect(current.entries[0].item.id).toBe('row-0')
+        for (let i = 0; i < 12; i++) expand('down')
+        expect(current.entries.at(-1)?.item.id).toBe('row-999')
+      } finally {
+        act(() => root.unmount())
+        viewport.remove()
+      }
+    }
+  )
+
   it('keeps the full transcript mounted when revealing a run during whole-window find', () => {
     const container = document.createElement('div')
     const root = createRoot(container)

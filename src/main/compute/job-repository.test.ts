@@ -1,8 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { ConcurrencyManager } from './concurrency-manager'
 import { ComputeJobRepository } from './job-repository'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ComputeConnectionError, type ComputeConnectionBrokerAcquirer } from './connection-broker'
@@ -47,6 +48,43 @@ afterEach(async () => {
 })
 
 describe('ComputeJob repository (SQLite integration)', () => {
+  it('PERF-04 returns status without decrypting historical payloads', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'concurrency-projection-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const cipher = testCipher()
+    const repo = new ComputeJobRepository(async () => client, protectedFields(cipher))
+    const hosts = new ComputeHostRepository(async () => client)
+    for (let i = 0; i < 40; i++) {
+      await repo.create({
+        id: `history-${i}`,
+        providerId: 'ssh:deleted-host',
+        shape: 'direct_ssh',
+        sessionId: 's',
+        projectId: 'p',
+        intent: 'history',
+        command: 'true',
+        commandHash: `hash-${i}`,
+        initialStatus: 'submitted'
+      })
+      await repo.update(`history-${i}`, {
+        status: 'success',
+        stdoutTail: 'x'.repeat(32768),
+        stderrTail: 'y'.repeat(32768)
+      })
+    }
+    const decrypt = vi.spyOn(cipher, 'decryptString')
+    const manager = new ConcurrencyManager(repo, hosts, async () => {})
+    expect(await manager.getStatus('s')).toEqual({
+      active_count: 0,
+      queued_count: 0,
+      session_limit: null,
+      provider_ceilings: { 'ssh:deleted-host': 10 }
+    })
+    expect(decrypt).not.toHaveBeenCalled()
+  })
+
   it('lists project overview jobs using active and recent-terminal visibility rules newest-first', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-job-overview-'))
 

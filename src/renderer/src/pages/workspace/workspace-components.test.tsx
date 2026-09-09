@@ -410,7 +410,7 @@ describe('conversation message scroller integration', () => {
       "'relative w-full max-w-[56rem] text-sm leading-relaxed text-text-000 md:text-[15px]'"
     )
     expect(workspaceMessageScrollerSource).toContain(
-      'className="mx-auto w-full max-w-4xl gap-0 px-4 pb-[56px]"'
+      "'mx-auto w-full max-w-4xl gap-0 px-4 pb-[56px]'"
     )
     // Rows must stay direct children of MessageScrollerContent; no transcript wrapper div.
     expect(workspaceMessageScrollerSource).not.toContain('conversationContentClassName')

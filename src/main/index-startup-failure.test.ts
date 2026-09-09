@@ -8,6 +8,8 @@ const fixture = vi.hoisted(() => {
     disposeRuntime: vi.fn(async () => {}),
     disposeWeb: vi.fn(async () => {}),
     shutdownRemote: vi.fn(async () => {}),
+    exited: Promise.resolve(),
+    finishExit: () => {},
     failAt: 'web' as 'icon' | 'remote' | 'web',
     failure: Object.assign(new Error('listen EADDRINUSE'), { code: 'EADDRINUSE' }),
     electron: {
@@ -189,6 +191,10 @@ const monitorListeners = process.listeners('uncaughtExceptionMonitor')
 beforeEach(() => {
   vi.resetModules()
   vi.clearAllMocks()
+  fixture.exited = new Promise<void>((resolve) => {
+    fixture.finishExit = resolve
+  })
+  fixture.electron.app.exit.mockImplementation(() => fixture.finishExit())
   fixture.failAt = 'web'
   fixture.disposeWeb.mockReset().mockResolvedValue()
   fixture.disposeRuntime.mockReset().mockResolvedValue()
@@ -204,7 +210,8 @@ it('disposes acquired application surfaces when explicit web startup fails befor
   // Exercise the real process entry, startup orchestration and database owner; replace only
   // environmental services so the existing web-start boundary deterministically rejects.
   await import('./index')
-  await vi.waitFor(() => expect(fixture.electron.app.exit).toHaveBeenCalledWith(1))
+  await fixture.exited
+  expect(fixture.electron.app.exit).toHaveBeenCalledWith(1)
   expect(fixture.startupFailure).toHaveBeenCalledWith(
     expect.objectContaining({ error: fixture.failure })
   )
@@ -218,7 +225,8 @@ it.each(['icon', 'remote'] as const)(
   async (stage) => {
     fixture.failAt = stage
     await import('./index')
-    await vi.waitFor(() => expect(fixture.electron.app.exit).toHaveBeenCalledWith(1))
+    await fixture.exited
+    expect(fixture.electron.app.exit).toHaveBeenCalledWith(1)
     expect(fixture.startupFailure).toHaveBeenCalledWith(
       expect.objectContaining({ error: fixture.failure })
     )
@@ -234,9 +242,8 @@ it.each(['reject', 'hang'] as const)(
     if (failure === 'reject') fixture.disposeWeb.mockRejectedValue(new Error('cleanup failed'))
     else fixture.disposeWeb.mockImplementation(() => new Promise(() => {}))
     await import('./index')
-    await vi.waitFor(() => expect(fixture.electron.app.exit).toHaveBeenCalledWith(1), {
-      timeout: 4000
-    })
+    await fixture.exited
+    expect(fixture.electron.app.exit).toHaveBeenCalledWith(1)
     expect(fixture.startupFailure).toHaveBeenCalledWith(
       expect.objectContaining({ error: fixture.failure })
     )

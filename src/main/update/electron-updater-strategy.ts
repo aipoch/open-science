@@ -124,11 +124,10 @@ const notesToString = (notes: unknown): string => {
 type UpdateFeedFile = { url?: string; size?: number }
 
 // The file extension electron-updater downloads for each platform (the auto-update artifact, not the
-// CDN manifest's installer entry): ZIP on macOS, NSIS .exe on Windows, AppImage on Linux.
+// CDN manifest's installer entry): ZIP on macOS, NSIS .exe on Windows. Linux package format is not available on this port, so omit its estimate.
 const PLATFORM_ARTIFACT_EXT: Record<string, string> = {
   darwin: '.zip',
-  win32: '.exe',
-  linux: '.AppImage'
+  win32: '.exe'
 }
 
 // Architecture tokens that appear in electron-updater artifact filenames for each platform.
@@ -149,7 +148,7 @@ const extractArtifactSize = (
 ): number | undefined => {
   if (!files || files.length === 0) return undefined
   const targetExt = PLATFORM_ARTIFACT_EXT[platform]
-  if (!targetExt) return files.find((f) => f.size != null)?.size
+  if (!targetExt) return undefined
   const archToken = PLATFORM_ARCH_TOKENS[platform]?.find((token) => arch.includes(token))
   if (archToken) {
     // Match both extension and arch token — the exact artifact electron-updater will download.
@@ -185,6 +184,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly createCancellationToken: () => MinimalCancellationToken
   // The token for the current download, held so cancel() can abort it. Cleared once download() settles.
   private downloadToken?: MinimalCancellationToken
+  // Keep the actual transfer identity distinct from a retry waiting for it to drain. Retain the
+  // cancelled token after settlement so queued SDK events cannot resurrect a cancelled operation.
+  private transferToken?: MinimalCancellationToken
   // The current download()'s lifecycle promise, resolved only after the underlying downloadUpdate has
   // fully settled. A retry awaits this so it never reuses electron-updater's still-live downloadPromise
   // (which ignores a fresh token — see AppUpdater.downloadUpdate) or races an aborted download's cleanup.
@@ -275,6 +277,12 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       this.setStatus({ state: 'up-to-date', latest: i.version })
     })
     this.updater.on('download-progress', (p) => {
+      if (
+        !this.transferToken ||
+        this.transferToken.cancelled ||
+        this.status.state !== 'downloading'
+      )
+        return
       const info = p as {
         percent?: number
         transferred?: number
@@ -305,10 +313,23 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       })
     })
     this.updater.on('update-downloaded', () => {
+      if (
+        !this.transferToken ||
+        this.transferToken.cancelled ||
+        this.status.state !== 'downloading'
+      )
+        return
       this.setStatus({ ...this.status, state: 'ready', progress: 100 })
     })
     this.updater.on('error', (err) => {
       if (this.applying && !this.installerStarted) return
+      if (
+        this.transferToken?.cancelled &&
+        !this.installerStarted &&
+        !this.checkLifecycle &&
+        this.status.state !== 'checking'
+      )
+        return
       if (this.readyCheckStatus && this.status === this.readyCheckStatus) {
         this.readyCheckError = err
         return
@@ -491,6 +512,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         // A cancel() during the drain means never start this download.
         if (token.cancelled) return
         operation.phase('transfer')
+        this.transferToken = token
         await this.updater.downloadUpdate(token)
         if (this.status.state === 'error') {
           operation.fail(new Error('Updater download failed'), { result: 'error' })
@@ -549,7 +571,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     if (this.status.state !== 'ready' || this.applying) return this.status
     this.applying = true
     this.installerStarted = false
-    this.setStatus({ ...this.status, state: 'applying' })
+    this.setStatus({ ...this.status, state: 'applying', error: undefined, blockedBy: undefined })
 
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-apply',
@@ -573,7 +595,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         this.applying = false
         this.setStatus({
           ...this.status,
-          state: 'error',
+          state: 'ready',
           error: 'Could not stop background processes before updating. Please try again.'
         })
         operation.fail(error, { result: 'error' })
@@ -590,7 +612,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         this.applying = false
         this.setStatus({
           ...this.status,
-          state: 'error',
+          state: 'ready',
           error:
             readiness.blockedBy?.length === 1 && readiness.blockedBy[0] === 'delegated'
               ? 'Subagents are still running. Return to their tasks and stop them before restarting to update.'
