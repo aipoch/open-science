@@ -106,6 +106,8 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
     'grep -I needle /',
     'du -P /',
     'env command find /',
+    'env --chdir=/ find .',
+    'env -C / find .',
     'command env find /',
     'time find /',
     'busybox find /',
@@ -158,6 +160,7 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
 
   it.each([
     'find',
+    'env LANG=C find .',
     'find -P',
     'find . -regextype posix-extended -name chart.png',
     "builtin printf '%s' 'find / is documentation'",

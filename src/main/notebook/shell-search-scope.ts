@@ -331,7 +331,7 @@ export const assertShellSearchScope = async (
             if (tool === 'sudo' && values[0]?.startsWith('-'))
               return denied('sudo options can change the command scope')
             while (
-              values[offset]?.includes('=') ||
+              /^[A-Za-z_][A-Za-z0-9_]*=/.test(values[offset] ?? '') ||
               values[offset] === '--' ||
               (tool === 'env' && values[offset] === '-i')
             ) {
@@ -586,9 +586,9 @@ export const assertShellSearchScope = async (
         paths.push(args[index + 1] ?? '')
       } else paths.push(...rootsFor(name, args))
       for (const path of paths.length ? paths : ['.']) {
-        if (/[~*?[\]{}]/.test(path) || /^[a-z]+::/i.test(path))
+        if (/[~*?[\]{}]/.test(path) || (path.includes(':') && !/^[a-z]:[\\/][^:]*$/i.test(path)))
           return denied(
-            'the PowerShell search directory contains an unresolved wildcard or provider'
+            'the PowerShell search directory contains an unresolved wildcard, provider, or drive-relative path'
           )
         await check(path, { cwd: moved ? undefined : root, variables: new Map() })
       }

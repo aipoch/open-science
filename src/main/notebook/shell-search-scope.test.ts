@@ -30,6 +30,9 @@ describe('PowerShell search admission contract', () => {
     { name: './where', arguments: ['/r', '..', 'chart.png'] },
     { name: 'where.exe', arguments: ['chart.png'] },
     { name: 'where', arguments: ['/r', '..', 'chart.png'] },
+    { name: 'Get-ChildItem', arguments: ['HKLM:\\', '-Recurse'] },
+    { name: 'Get-ChildItem', arguments: ['C:..', '-Recurse'] },
+    { name: 'Get-ChildItem', arguments: ['FileSystem::C:\\', '-Recurse'] },
     { name: 'cmd.exe', arguments: ['/c', 'dir /s C:\\'] },
     { name: 'Get-ChildItem', arguments: ['-LiteralPath', '.', '..'] },
     { name: null, arguments: ['..'] }

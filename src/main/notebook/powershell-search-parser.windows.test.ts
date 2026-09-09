@@ -19,6 +19,9 @@ describe.skipIf(process.platform !== 'win32')('Windows PowerShell search preflig
   it.each([
     "Get-ChildItem -LiteralPath 'C:\\' -Recurse",
     'gci .. -Recurse',
+    'Get-ChildItem HKLM:\\ -Recurse',
+    'Get-ChildItem C:.. -Recurse',
+    'Get-ChildItem FileSystem::C:\\ -Recurse',
     'Get-ChildItem -Path $env:USERPROFILE -Recurse',
     'Set-Location ..; gci . -Recurse',
     'cmd /c "dir /s C:\\"',
