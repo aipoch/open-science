@@ -55,6 +55,8 @@ const fetchRegistry = (): Promise<
 const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
   let policyGeneration = 0
   let policyRequest: Promise<boolean> | undefined
+  // undefined means another operation owns the error; null is a policy-only failure.
+  let policyErrorFallback: string | null | undefined
   const readPolicy = (): Promise<boolean> => {
     if (policyRequest) return policyRequest
     const request = (async () => {
@@ -63,10 +65,15 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
         try {
           const enabled = await window.api.runtime.getAgentEnvironmentCreationEnabled()
           if (generation !== policyGeneration) continue
-          set({ agentEnvironmentCreationEnabled: enabled })
+          set({
+            agentEnvironmentCreationEnabled: enabled,
+            ...(policyErrorFallback === undefined ? {} : { error: policyErrorFallback })
+          })
+          policyErrorFallback = undefined
           return enabled
         } catch (error) {
           if (generation !== policyGeneration) continue
+          if (policyErrorFallback === undefined) policyErrorFallback = get().error
           set({ error: 'Could not load runtimes.' })
           throw error
         }
@@ -137,6 +144,7 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
     }
     if (registryRequest) return registryRequest
 
+    policyErrorFallback = undefined
     const generation = ++registryGeneration
     const policyAtStart = policyGeneration
     if (force) {
@@ -171,6 +179,8 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
       },
       (error: unknown) => {
         if (generation === registryGeneration) {
+          // A full load failure still needs Recheck, even if a policy-only read recovers.
+          policyErrorFallback = undefined
           set({
             loaded: true,
             busy: false,
@@ -201,7 +211,10 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
     load: () => refresh(false),
     recheck: () => refresh(true),
     setBusy: (busy) => set({ busy }),
-    setError: (error) => set({ error }),
+    setError: (error) => {
+      policyErrorFallback = undefined
+      set({ error })
+    },
     setEnablement: (language, enablement) =>
       set((state) => ({ enablement: { ...state.enablement, [language]: enablement } })),
     refreshPolicy,

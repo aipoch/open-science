@@ -268,3 +268,44 @@ it.each([false, true])(
     expect(useRuntimeSettingsStore.getState().error).toBeNull()
   }
 )
+
+it('clears a recovered policy read failure without repeating discovery', async () => {
+  const policy = vi.fn().mockResolvedValue(true)
+  const discovery = vi.fn().mockResolvedValue({ python: [], r: [] })
+  setRuntimeApi({
+    listEnvironments: discovery,
+    getEnablement: vi.fn().mockResolvedValue(enablement),
+    getAgentEnvironmentCreationEnabled: policy
+  })
+  await useRuntimeSettingsStore.getState().load()
+  policy.mockRejectedValueOnce(new Error('offline'))
+  await expect(useRuntimeSettingsStore.getState().refreshPolicy()).rejects.toThrow('offline')
+  expect(useRuntimeSettingsStore.getState().error).toBe('Could not load runtimes.')
+  await useRuntimeSettingsStore.getState().refreshPolicy()
+  expect(useRuntimeSettingsStore.getState().error).toBeNull()
+  expect(discovery).toHaveBeenCalledOnce()
+})
+
+it('preserves discovery failure when a failed policy read later recovers', async () => {
+  const policy = vi.fn().mockResolvedValue(true)
+  setRuntimeApi({
+    listEnvironments: vi.fn().mockRejectedValue(new Error('discovery failed')),
+    getEnablement: vi.fn().mockResolvedValue(enablement),
+    getAgentEnvironmentCreationEnabled: policy
+  })
+  await expect(useRuntimeSettingsStore.getState().load()).rejects.toThrow('discovery failed')
+  policy.mockRejectedValueOnce(new Error('offline'))
+  await expect(useRuntimeSettingsStore.getState().refreshPolicy()).rejects.toThrow('offline')
+  await useRuntimeSettingsStore.getState().refreshPolicy()
+  expect(useRuntimeSettingsStore.getState().error).toBe('Could not load runtimes.')
+})
+
+it('preserves a newer operation error when a policy read recovers', async () => {
+  const policy = vi.fn().mockResolvedValue(true)
+  setRuntimeApi({ getAgentEnvironmentCreationEnabled: policy })
+  policy.mockRejectedValueOnce(new Error('offline'))
+  await expect(useRuntimeSettingsStore.getState().refreshPolicy()).rejects.toThrow('offline')
+  useRuntimeSettingsStore.getState().setError('Could not register interpreter.')
+  await useRuntimeSettingsStore.getState().refreshPolicy()
+  expect(useRuntimeSettingsStore.getState().error).toBe('Could not register interpreter.')
+})
