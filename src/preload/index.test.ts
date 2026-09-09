@@ -360,6 +360,7 @@ describe('preload bridge — public surface inventory', () => {
       'literature.jobs',
       'literature.lookupMetadata',
       'literature.search',
+      'literature.sources',
       'literature.transact',
       'localFs.getRoots',
       'localFs.grantRoot',
