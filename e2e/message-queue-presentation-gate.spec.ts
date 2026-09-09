@@ -1,4 +1,6 @@
 import { expect } from '@playwright/test'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 import { test } from './fixtures/electron-app'
 
@@ -13,7 +15,7 @@ const FOLLOW_UP = 'Follow-up after the reveal.'
 // The fake agent replies with this fixed text for any prompt without a journey route.
 const AGENT_REPLY = 'Deterministic reply: Summarize the deterministic fixture.'
 
-test('holds the queued message until the previous reply finishes revealing', async ({ app }) => {
+test('holds the queued message until the previous reply finishes revealing', async ({ app }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
@@ -34,7 +36,8 @@ test('holds the queued message until the previous reply finishes revealing', asy
   await sendButton.click()
   await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toHaveCount(1)
 
-  await textbox.fill(GATE_PROMPT)
+  const releaseFile = join(await app.createTestDirectory('queue-stream'), 'release')
+  await textbox.fill(`${GATE_PROMPT}\nRelease file: ${JSON.stringify(releaseFile)}`)
   await expect(sendButton).toBeEnabled()
   await sendButton.click()
 
@@ -46,6 +49,8 @@ test('holds the queued message until the previous reply finishes revealing', asy
   const queueTrigger = page.getByTestId('composer-queue-trigger')
   await expect(queueTrigger).toBeVisible()
 
+  await writeFile(releaseFile, '')
+
   // The fake agent's stream ends almost immediately (the session goes idle), but the giant
   // final chunk keeps the paced reveal busy for seconds afterwards. Well past store-complete
   // the follow-up must still be queued — an ungated queue dispatches the moment the session
@@ -53,6 +58,7 @@ test('holds the queued message until the previous reply finishes revealing', asy
   await page.waitForTimeout(2000)
   await expect(queueTrigger).toBeVisible()
   await expect(conversation.getByText(FOLLOW_UP)).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('queued-during-reveal.png') })
 
   // Once the reveal settles, the queue drains and the follow-up turn completes.
   await expect(conversation.getByText(FOLLOW_UP)).toBeVisible({ timeout: 30000 })
