@@ -15494,3 +15494,85 @@ describe('v4 runtime bindings & agent tools', () => {
     60_000
   )
 })
+
+it('retries Notebook lifecycle recovery after a transient repository failure', async () => {
+  const root = await createStorageRoot()
+  const repository = new NotebookRunRepository(root)
+  const recover = vi
+    .spyOn(repository, 'recoverAllRunLifecycles')
+    .mockRejectedValueOnce(new Error('transient EIO'))
+    .mockResolvedValue([])
+  const service = new NotebookRuntimeService({
+    dataRoot: root,
+    repository,
+    projectId: 'recovery-project',
+    configRoot: root
+  })
+  try {
+    await expect(service.recoverInterruptedOperations()).rejects.toThrow('transient EIO')
+    await expect(service.recoverInterruptedOperations()).resolves.toBeUndefined()
+    await expect(service.ensureRecovered()).resolves.toBeUndefined()
+    expect(recover).toHaveBeenCalledTimes(2)
+  } finally {
+    await service.dispose()
+  }
+})
+
+it('keeps a failed recovery round joined until its other owners finish', async () => {
+  const root = await createStorageRoot()
+  const runtimeRoot = getRuntimeRoot(root)
+  const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+  await journal.begin({
+    operationId: 'slow-recovery',
+    kind: 'install',
+    runtimeId: 'analysis',
+    phase: 'install-python',
+    startedAt: 100,
+    targetPath: envPrefix(runtimeRoot, 'analysis')
+  })
+  const repository = new NotebookRunRepository(root)
+  const recover = vi
+    .spyOn(repository, 'recoverAllRunLifecycles')
+    .mockRejectedValueOnce(new Error('transient EIO'))
+    .mockResolvedValue([])
+  const originalComplete = journal.complete.bind(journal)
+  const entered = createDeferred<void>()
+  const release = createDeferred<void>()
+  const complete = vi.spyOn(journal, 'complete').mockImplementationOnce(async (id) => {
+    entered.resolve()
+    await release.promise
+    await originalComplete(id)
+  })
+  const service = new NotebookRuntimeService({
+    configRoot: root,
+    dataRoot: root,
+    repository,
+    projectId: 'recovery-project'
+  })
+  let settled = false
+  const first = service.recoverInterruptedOperations().catch((error: unknown) => {
+    settled = true
+    return error
+  })
+  try {
+    await entered.promise
+    expect.soft(settled).toBe(false)
+    const joined = service.recoverInterruptedOperations().catch((error: unknown) => error)
+    expect(recover).toHaveBeenCalledTimes(1)
+    release.resolve()
+    expect(await first).toMatchObject({ message: 'transient EIO' })
+    expect(await joined).toMatchObject({ message: 'transient EIO' })
+    await expect(
+      Promise.all([service.ensureRecovered(), service.ensureRecovered()])
+    ).resolves.toEqual([undefined, undefined])
+    expect(recover).toHaveBeenCalledTimes(2)
+    await service.ensureRecovered()
+    expect(recover).toHaveBeenCalledTimes(2)
+  } finally {
+    release.resolve()
+    await first
+    await service.dispose()
+    recover.mockRestore()
+    complete.mockRestore()
+  }
+})

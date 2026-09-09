@@ -309,8 +309,12 @@ export class NotebookRecoveryCoordinator {
         publishedArchiveRecords.push(record)
       },
       deferArchiveCompletion: true,
-      onRetained: () => {
+      onRetained: (record) => {
         recoveryIncomplete = true
+        // A failed repair or journal commit is no safer than an unconfirmed writer. Keep the
+        // existing admission block until the retained operation can be reconciled durably.
+        if (record.kind === 'install') nextStartupBlockedRuntimeIds.add(record.runtimeId)
+        if (record.targetPath) nextStartupBlockedPrefixes.add(record.targetPath)
       }
     })
 
