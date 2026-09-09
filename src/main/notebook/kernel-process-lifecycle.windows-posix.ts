@@ -80,17 +80,24 @@ const writeRecordSync = (path: string, record: KernelProcessRecord): void => {
   const directory = dirname(path)
   mkdirSync(directory, { recursive: true })
   const temporary = `${path}.${process.pid}-${randomUUID()}.tmp`
-  writeFileSync(temporary, `${JSON.stringify(record, null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600
-  })
-  const file = openSync(temporary, 'r')
   try {
-    fsyncSync(file)
-  } finally {
-    closeSync(file)
+    // Windows requires a writable handle for fsync (FlushFileBuffers).
+    const file = openSync(temporary, 'wx', 0o600)
+    try {
+      writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`, 'utf8')
+      fsyncSync(file)
+    } finally {
+      closeSync(file)
+    }
+    renameSync(temporary, path)
+  } catch (error) {
+    try {
+      rmSync(temporary, { force: true })
+    } catch {
+      // Preserve the original write failure; the published receipt remains authoritative.
+    }
+    throw error
   }
-  renameSync(temporary, path)
 }
 
 const decodeRecord = (contents: string): KernelProcessRecord | undefined => {
@@ -263,7 +270,12 @@ class KernelProcessLifecycleOwner {
   ): KernelProcessSpawnIntent {
     const prefix = recordFilePrefix(scope)
     mkdirSync(this.directory, { recursive: true })
-    if (readdirSync(this.directory).some((name) => name.startsWith(`${prefix}.`))) {
+    // Unpublished .tmp writes cannot authorize a host; recovery only reads published JSON receipts.
+    if (
+      readdirSync(this.directory).some(
+        (name) => name.startsWith(`${prefix}.`) && name.endsWith('.json')
+      )
+    ) {
       throw new Error(
         `KERNEL_STARTUP_FENCE: ${scope.processKey} still has durable process ownership.`
       )

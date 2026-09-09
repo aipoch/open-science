@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -31,6 +31,54 @@ describe('KernelProcessLifecycleOwner', () => {
     vi.restoreAllMocks()
     if (root) await rm(root, { recursive: true, force: true })
     root = undefined
+  })
+
+  it('does not fence admission on unpublished temporary records left by a failed write', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-temporary-'))
+    const owner = new KernelProcessLifecycleOwner({ storageRoot: root })
+    const scope = { laneKey: 'lane', processKey: 'python:default-python', kernelEpochId: 'epoch' }
+    const intent = owner.beginSpawn(scope)
+    await writeFile(`${intent.path}.123-test.tmp`, JSON.stringify(intent.record))
+    owner.abandonSpawn(intent)
+    const restarted = new KernelProcessLifecycleOwner({ storageRoot: root })
+    await restarted.ensureReady()
+    const retried = restarted.beginSpawn(scope)
+    expect(retried.record.processKey).toBe('python:default-python')
+    expect(() => restarted.beginSpawn(scope)).toThrow('KERNEL_STARTUP_FENCE')
+  })
+
+  it('allows the real process host to publish its receipt and execute code', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-host-execution-'))
+    const owner = new KernelProcessLifecycleOwner({ storageRoot: root })
+    const intent = owner.beginSpawn({
+      laneKey: 'lane',
+      processKey: 'python:default-python',
+      kernelEpochId: 'epoch'
+    })
+    const host = spawn(
+      process.execPath,
+      [
+        join(__dirname, '../../../resources/notebook/kernel_process_host.js'),
+        intent.path,
+        intent.record.receiptId,
+        process.execPath,
+        '-e',
+        'process.stdout.write("42")'
+      ],
+      { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true }
+    )
+    let output = ''
+    host.stdout.on('data', (chunk) => {
+      output += chunk.toString()
+    })
+    const exitCode = await new Promise<number | null>((resolve, reject) => {
+      host.once('error', reject)
+      host.once('close', resolve)
+    })
+    expect(exitCode).toBe(0)
+    expect(output).toBe('42')
+    const record = JSON.parse(await readFile(intent.activePath(host.pid!), 'utf8'))
+    expect(record.pid).toBe(host.pid)
   })
 
   it('reaps a verified stale owner before opening process admission', async () => {
