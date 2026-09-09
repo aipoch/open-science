@@ -747,7 +747,9 @@
   }
 
   [data-streamdown='mermaid'] {
-    @apply m-2.5 max-w-full min-w-0 rounded-lg;
+    /* width must stay auto: streamdown sets size-full, and width:100% + m-2.5 would overflow the
+       block by 10px on each side, pushing the pan-zoom clip edge past the block's right border. */
+    @apply m-2.5 w-auto! max-w-full min-w-0 rounded-lg;
   }
 
   :where(:not([class~='not-prose'], [class~='not-prose'] *)) {
@@ -842,8 +844,13 @@
   }
 
   /* Mermaid source view (view toggle): the container carries data-streamdown="code-block-body",
-     so it inherits the code-block body rules above; the only extra is tinting the mermaid body
-     with the code-block surface token while the source replaces the diagram. */
+     so it inherits the code-block body rules above; the extras tint the mermaid body with the
+     code-block surface token and clip the block so the square source panel cannot poke through
+     the frame's rounded corners (the block itself is overflow-visible for the action chip). */
+  [data-streamdown='mermaid-block']:has(> div:last-child > [data-mermaid-source-view]) {
+    @apply overflow-hidden;
+  }
+
   [data-streamdown='mermaid-block'] > div:last-child:has(> [data-mermaid-source-view]) {
     @apply bg-sd-code-bg!;
   }
