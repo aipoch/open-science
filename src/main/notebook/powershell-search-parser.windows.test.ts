@@ -19,6 +19,9 @@ describe.skipIf(process.platform !== 'win32')('Windows PowerShell search preflig
   it.each([
     "Get-ChildItem -LiteralPath 'C:\\' -Recurse",
     'gci .. -Recurse',
+    "Start-Process powershell.exe -ArgumentList '-Command','Get-ChildItem C:\\' -Wait",
+    "saps powershell.exe -ArgumentList '-Command','Get-ChildItem C:\\' -Wait",
+    "start powershell.exe -ArgumentList '-Command','Get-ChildItem C:\\' -Wait",
     'rg --ignore-file ../outside/ignore needle .',
     'Get-ChildItem HKLM:\\ -Recurse',
     'Get-ChildItem C:.. -Recurse',

@@ -526,9 +526,19 @@ export const assertShellSearchScope = async (
       )
         continue
       if (
-        ['cmd', 'powershell', 'pwsh', 'iex', 'invoke-expression', 'wsl', 'bash', 'sh'].includes(
-          name
-        )
+        [
+          'cmd',
+          'powershell',
+          'pwsh',
+          'iex',
+          'invoke-expression',
+          'wsl',
+          'bash',
+          'sh',
+          'start-process',
+          'saps',
+          'start'
+        ].includes(name)
       )
         return denied('nested Windows shell execution requires a direct scoped PowerShell command')
       if (['set-alias', 'new-alias', 'sal', 'nal'].includes(name))

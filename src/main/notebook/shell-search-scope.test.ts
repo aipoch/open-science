@@ -36,6 +36,12 @@ describe('PowerShell search admission contract', () => {
     { name: 'Get-ChildItem', arguments: ['C:..', '-Recurse'] },
     { name: 'Get-ChildItem', arguments: ['FileSystem::C:\\', '-Recurse'] },
     { name: 'cmd.exe', arguments: ['/c', 'dir /s C:\\'] },
+    {
+      name: 'Start-Process',
+      arguments: ['powershell.exe', '-ArgumentList', '-Command', 'gci C:\\', '-Wait']
+    },
+    { name: 'saps', arguments: ['powershell.exe'] },
+    { name: 'start', arguments: ['powershell.exe'] },
     { name: 'Get-ChildItem', arguments: ['-LiteralPath', '.', '..'] },
     { name: null, arguments: ['..'] }
   ])('rejects $name before starting the workload', async (entry) => {
