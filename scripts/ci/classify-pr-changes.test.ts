@@ -373,6 +373,8 @@ describe('pull request change classification', () => {
 
   it.each([
     ['Windows runtime', 'src/main/windows.ts'],
+    ['Shell search scope', 'src/main/notebook/shell-search-scope.ts'],
+    ['PowerShell search parser', 'src/main/notebook/powershell-search-parser.ts'],
     ['PowerShell', 'src/main/notebook/micromamba-cache-powershell.test.ts'],
     ['path handling', 'src/main/acp/workspace-path.ts'],
     ['ACL behavior', 'src/main/notebook/micromamba-cache-acl.integration.test.ts'],
