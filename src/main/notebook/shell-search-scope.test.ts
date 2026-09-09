@@ -42,6 +42,11 @@ describe('PowerShell search admission contract', () => {
     },
     { name: 'saps', arguments: ['powershell.exe'] },
     { name: 'start', arguments: ['powershell.exe'] },
+    {
+      name: 'New-Item',
+      arguments: ['-ItemType', 'SymbolicLink', '-Path', './escape', '-Target', 'C:\\']
+    },
+    { name: 'ni', arguments: ['-Type', 'Junction', '-Path', './escape', '-Target', 'C:\\'] },
     { name: 'New-Item', arguments: ['Alias:x', '-Value', 'Get-ChildItem'] },
     { name: 'ni', arguments: ['Alias:x', '-Value', 'Get-ChildItem'] },
     { name: 'Microsoft.PowerShell.Management\\Set-Item', arguments: ['Function:x', null] },

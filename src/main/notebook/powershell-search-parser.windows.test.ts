@@ -19,6 +19,8 @@ describe.skipIf(process.platform !== 'win32')('Windows PowerShell search preflig
   it.each([
     "Get-ChildItem -LiteralPath 'C:\\' -Recurse",
     'gci .. -Recurse',
+    'New-Item -ItemType SymbolicLink -Path ./escape -Target C:\\; gci ./escape',
+    'ni -Type Junction -Path ./escape -Target C:\\; gci ./escape',
     'New-Item Alias:x -Value Get-ChildItem; x C:\\ -Recurse',
     'ni Alias:x -Value Get-ChildItem; x C:\\ -Recurse',
     'Microsoft.PowerShell.Management\\Set-Item Function:x { Get-ChildItem C:\\ }; x',

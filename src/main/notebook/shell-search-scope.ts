@@ -367,6 +367,13 @@ export const assertShellSearchScope = async (
           if (tool === 'alias') return denied('aliases can hide search commands')
           if (tool === 'hash') return denied('command rebinding can hide search commands')
           if (tool === 'trap') return denied('shell traps can change the search context')
+          if (
+            tool === 'ln' ||
+            tool === 'link' ||
+            (tool === 'cp' &&
+              values.some((value) => value === '--symbolic-link' || /^-[^-]*s/.test(value ?? '')))
+          )
+            return denied('link creation can change search paths after inspection')
           if (tool === 'source' || tool === '.')
             return denied('sourced shell files cannot be inspected; use an inline shell command')
           if (['read', 'export', 'declare', 'typeset', 'local'].includes(tool ?? '')) {
@@ -543,6 +550,11 @@ export const assertShellSearchScope = async (
         return denied('nested Windows shell execution requires a direct scoped PowerShell command')
       if (['set-alias', 'new-alias', 'sal', 'nal'].includes(name))
         return denied('aliases can hide search commands')
+      if (
+        ['new-item', 'ni'].includes(name) &&
+        entry.arguments.some((arg) => /^(symboliclink|junction|hardlink)$/i.test(arg ?? ''))
+      )
+        return denied('link creation can change search paths after inspection')
       if (
         [
           'new-item',
