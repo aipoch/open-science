@@ -112,7 +112,6 @@ type ResourceEntry = ManagedPreviewResource & {
     dev: bigint
     ino: bigint
     mtimeNs: bigint
-    maxBytes: number
   }
   strictObservation?: FileObservation & { maxBytes: number }
 }
@@ -330,13 +329,13 @@ class ManagedPreviewResources {
         ownerId,
         filePath,
         ...(trustedLease ? { trustedLease } : {}),
-        ...(options
+        // Capability identity is independent of an optional whole-file admission limit.
+        ...(!trustedLease
           ? {
               strictSnapshot: {
-                dev: options.snapshot.dev,
-                ino: options.snapshot.ino,
-                mtimeNs: options.snapshot.mtimeNs,
-                maxBytes: options.maxBytes
+                dev: fileSnapshot.dev,
+                ino: fileSnapshot.ino,
+                mtimeNs: fileSnapshot.mtimeNs
               }
             }
           : {})
@@ -428,9 +427,14 @@ class ManagedPreviewResources {
     }
 
     const buffer = Buffer.allocUnsafe(end - begin)
-    const fileHandle = await open(resource.filePath, 'r')
+    const verified = await this.resolveProtocolResource(resource.id)
+    if (!('fileHandle' in verified)) {
+      throw new Error('Managed preview resource has no verified file handle.')
+    }
+    const { fileHandle } = verified
     try {
       await readExactRange(fileHandle, buffer, begin)
+      await verified.verifyUnchanged()
 
       return {
         begin,
@@ -543,7 +547,6 @@ class ManagedPreviewResources {
       if (
         !fileStat.isFile() ||
         fileStat.size !== BigInt(resource.size) ||
-        fileStat.size > BigInt(strictSnapshot.maxBytes) ||
         fileStat.mtimeNs !== strictSnapshot.mtimeNs ||
         fileStat.dev !== strictSnapshot.dev ||
         fileStat.ino !== strictSnapshot.ino
@@ -557,7 +560,6 @@ class ManagedPreviewResources {
         if (
           !finalStat.isFile() ||
           finalStat.size !== BigInt(resource.size) ||
-          finalStat.size > BigInt(strictSnapshot.maxBytes) ||
           finalStat.mtimeNs !== strictSnapshot.mtimeNs ||
           finalStat.dev !== strictSnapshot.dev ||
           finalStat.ino !== strictSnapshot.ino

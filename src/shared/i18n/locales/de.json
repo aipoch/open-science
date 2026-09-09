@@ -38,7 +38,9 @@
     "Open the app for details.": "Öffnen Sie die App, um weitere Informationen zu erhalten.",
     "Test notification": "Testbenachrichtigung",
     "System notifications from Open Science are working.": "Systembenachrichtigungen von Open Science funktionieren.",
-    "Task needs attention": "Aufgabe erfordert Aufmerksamkeit"
+    "Task needs attention": "Aufgabe erfordert Aufmerksamkeit",
+    "Discard changes": "Änderungen verwerfen",
+    "Discard unsaved changes?": "Nicht gespeicherte Änderungen verwerfen?"
   },
   "native": {
     "Conversation export is too large. Select fewer conversation turns.": "Der Konversationsexport ist zu groß. Wählen Sie weniger Konversationsrunden aus.",
@@ -98,9 +100,11 @@
     "Import {{source}}": "{{source}} importieren",
     "{{taskName}} has a plan ready for review.": "Für {{taskName}} liegt ein Plan zur Prüfung vor.",
     "Review the proposed plan: {{summary}}": "Prüfen Sie den vorgeschlagenen Plan: {{summary}}",
-    "Could not open the update installer: {{error}}": "Das Update-Installationsprogramm konnte nicht geöffnet werden: {{error}}"
+    "Could not open the update installer: {{error}}": "Das Update-Installationsprogramm konnte nicht geöffnet werden: {{error}}",
+    "Your unsaved changes will be lost.": "Ihre ungespeicherten Änderungen gehen verloren."
   },
   "renderer": {
+    "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "Diese TIFF-Datei überschreitet die Vorschaugrenze von {{limit}} MiB. Laden Sie sie herunter oder öffnen Sie sie extern.",
     "Shared content": "Gemeinsame Inhalte",
     "Literature settings and tasks": "Literatureinstellungen und Aufgaben",
     "Select no more than {{limit}} references for this task.": "Wählen Sie für diese Aufgabe höchstens {{limit}} Referenzen aus.",
@@ -4001,7 +4005,6 @@
     "CodeBuddy is required for this framework. Install it below, or install it manually and re-detect.": "Für dieses Framework ist CodeBuddy erforderlich. Installieren Sie CodeBuddy über die Optionen unten oder manuell und starten Sie anschließend die Erkennung erneut.",
     "Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.": "Lädt CodeBuddy in die von der App verwaltete Laufzeit herunter und führt es dort aus – Node.js und npm müssen nicht global installiert sein.",
     "A conversation changed elsewhere and could not be saved safely.": "Eine Konversation wurde an anderer Stelle geändert und konnte nicht sicher gespeichert werden.",
-    "One or more conversations could not be saved.": "Mindestens eine Konversation konnte nicht gespeichert werden.",
     "Quit was canceled": "Das Beenden wurde abgebrochen",
     "This session was deleted or is unavailable.": "Diese Sitzung wurde gelöscht oder ist nicht verfügbar.",
     "A quick host check confirms this computer is ready, then you choose where your data lives before connecting the model you want to use.": "Eine kurze Systemprüfung bestätigt, dass dieser Computer bereit ist. Wählen Sie anschließend den Speicherort Ihrer Daten aus, bevor Sie das gewünschte Modell verbinden.",
@@ -4350,8 +4353,6 @@
     "Compare {{name}} with its source version": "{{name}} mit der Quellversion vergleichen",
     "Compare with source version": "Mit Quellversion vergleichen",
     "Comparing versions...": "Versionen werden verglichen…",
-    "Discard unsaved changes?": "Nicht gespeicherte Änderungen verwerfen?",
-    "Discard changes": "Änderungen verwerfen",
     "Changes could not be saved.": "Änderungen konnten nicht gespeichert werden.",
     "File storage is unavailable. Check the storage location and try again.": "Der Dateispeicher ist nicht verfügbar. Überprüfen Sie den Speicherort und versuchen Sie es erneut.",
     "Open Science does not have permission to save this file.": "Open Science hat keine Berechtigung, diese Datei zu speichern.",
@@ -5025,6 +5026,7 @@
     "You can import unfinished files or close this window.": "Sie können unfertige Dateien importieren oder dieses Fenster schließen.",
     "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "Neue Compute-Aufträge bleiben möglicherweise in der Warteschlange, weil die gespeicherten Parallelitätsgrenzen nicht überprüft werden konnten. Bewahren Sie die betroffenen Dateien auf, stellen Sie eine gültige Kopie wieder her und prüfen Sie erneut, um die Auftragsvergabe fortzusetzen.",
     "Recheck saved conversations": "Gespeicherte Konversationen erneut prüfen",
+    "Some changes have not been saved.": "Einige Änderungen wurden nicht gespeichert.",
     "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "Einmal erlauben gilt für die nächste Ausführung in dieser Laufzeitumgebung, auch wenn sich der Code ändert. Während dieser Ausführung sind mehrere Verbindungen zu dieser Domain erlaubt.",
     "Next execution in this runtime": "Nächste Ausführung in dieser Laufzeitumgebung"
   }

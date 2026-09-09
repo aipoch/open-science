@@ -14,6 +14,34 @@ afterEach(() => {
 })
 
 describe('ProjectDeletionCoordinator', () => {
+  it('invalidates project availability after the intent commits while runtime cleanup is blocked', async () => {
+    const projects = createProjects()
+    const blocked = createDeferred<void>()
+    const beforeProjectDelete = vi.fn(() => blocked.promise)
+    const events = { publish: vi.fn() }
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      createSessions(),
+      undefined,
+      undefined,
+      undefined,
+      { beforeProjectDelete },
+      events
+    )
+    const deletion = coordinator.deleteProject('project-1')
+    try {
+      await vi.waitFor(() => expect(beforeProjectDelete).toHaveBeenCalled())
+      expect(projects.delete).not.toHaveBeenCalled()
+      expect(events.publish).toHaveBeenCalledWith('project:deletion-cleanup-changed', undefined)
+      expect(vi.mocked(projects.createDeletionIntent).mock.invocationCallOrder[0]).toBeLessThan(
+        events.publish.mock.invocationCallOrder[0]
+      )
+    } finally {
+      blocked.resolve()
+      await deletion
+    }
+  })
+
   it('rejects deletion recovery while a data-root migration is pending', async () => {
     const projects = createProjects()
     const coordinator = new ProjectDeletionCoordinator(projects, createSessions())

@@ -564,31 +564,38 @@ describe('ManagedPreviewResources', () => {
     expect(createId).not.toHaveBeenCalled()
   })
 
-  it('never serves replacement bytes swapped after capability admission', async () => {
-    const filePath = await createFile(Buffer.from('trusted-office'), 'report.docx')
-    const verifiedObservation = await observe(filePath)
-    const resources = new ManagedPreviewResources({
-      resolvePath: async () => filePath,
-      createId: () => 'verified-capability'
-    })
-    const resource = await resources.acquireResolvedFile(
-      17,
-      {
-        path: filePath,
-        verifiedObservation,
-        verifiedChecksum: 'trusted-checksum'
-      },
-      100
-    )
-    const replacementPath = join(temporaryDirectory!, 'replacement-after-admission.docx')
-    await writeFile(replacementPath, Buffer.from('hostile-office'))
-    await rename(replacementPath, filePath)
+  it.each(['protocol', 'IPC'])(
+    'never serves replacement bytes swapped after Reviewer capability admission through %s',
+    async (transport) => {
+      const filePath = await createFile(Buffer.from('trusted-office'), 'report.docx')
+      const verifiedObservation = await observe(filePath)
+      const resources = new ManagedPreviewResources({
+        resolvePath: async () => filePath,
+        createId: () => 'verified-capability'
+      })
+      const resource = await resources.acquireResolvedFile(
+        17,
+        {
+          path: filePath,
+          verifiedObservation,
+          verifiedChecksum: 'trusted-checksum'
+        },
+        100
+      )
+      const replacementPath = join(temporaryDirectory!, 'replacement-after-admission.docx')
+      await writeFile(replacementPath, Buffer.from('hostile-office'))
+      await rename(replacementPath, filePath)
 
-    await expect(resources.resolveProtocolResource(resource.id)).rejects.toMatchObject({
-      name: 'FileObservationMismatchError'
-    })
-    await expect(resources.resolveProtocolResource(resource.id)).rejects.toThrow(/not available/i)
-  })
+      await expect(
+        transport === 'protocol'
+          ? resources.resolveProtocolResource(resource.id)
+          : resources.readRange(17, { resourceId: resource.id, begin: 0, end: 4 })
+      ).rejects.toMatchObject({
+        name: 'FileObservationMismatchError'
+      })
+      await expect(resources.resolveProtocolResource(resource.id)).rejects.toThrow(/not available/i)
+    }
+  )
 
   it('rejects oversized ranges and access from another owner', async () => {
     const filePath = await createFile(new Uint8Array(2 * 1024 * 1024))
@@ -811,21 +818,29 @@ describe('ManagedPreviewResources', () => {
     expect(createId).not.toHaveBeenCalled()
   })
 
-  it('returns the filePath variant when a non-strict resource is resolved for protocol streaming', async () => {
-    const filePath = await createFile(Buffer.from('non-strict-protocol'))
+  it('returns a verified handle for protocol streaming without a whole-file limit', async () => {
+    const content = Buffer.from('verified-protocol')
+    const filePath = await createFile(content)
     const resources = new ManagedPreviewResources({
       resolvePath: async () => filePath,
-      createId: () => 'non-strict-resource'
+      createId: () => 'uncapped-resource'
     })
     const resource = await resources.acquire(17, { source: 'local', path: filePath })
 
     const protocolResource = await resources.resolveProtocolResource(resource.id)
 
-    expect(protocolResource).toEqual({
-      filePath,
-      mimeType: 'application/pdf'
-    })
-    expect('fileHandle' in protocolResource).toBe(false)
+    expect('fileHandle' in protocolResource).toBe(true)
+    if (!('fileHandle' in protocolResource)) throw new Error('Expected a verified handle')
+    try {
+      expect('filePath' in protocolResource).toBe(false)
+      expect(protocolResource.mimeType).toBe('application/pdf')
+      const bytes = Buffer.alloc(content.length)
+      await readExactRange(protocolResource.fileHandle, bytes, 0)
+      await protocolResource.verifyUnchanged()
+      expect(bytes).toEqual(content)
+    } finally {
+      await protocolResource.fileHandle.close()
+    }
   })
 
   it('rejects resolveProtocolResource for an unknown resource id', async () => {

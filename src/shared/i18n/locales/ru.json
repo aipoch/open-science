@@ -38,7 +38,9 @@
     "Skill": "Навык",
     "Specialist": "Специалист",
     "Connector": "Коннектор",
-    "Export Connector configuration": "Экспорт конфигурации коннектора"
+    "Export Connector configuration": "Экспорт конфигурации коннектора",
+    "Discard changes": "Отбросить изменения",
+    "Discard unsaved changes?": "Отменить несохранённые изменения?"
   },
   "native": {
     "Conversation export is too large. Select fewer conversation turns.": "Экспорт беседы слишком велик. Выберите меньше реплик беседы.",
@@ -100,9 +102,11 @@
     "Specialist ZIP": "ZIP-архив специалиста",
     "JSON report": "Отчёт JSON",
     "Connector configuration": "Конфигурация коннектора",
-    "Import Connector configuration": "Импорт конфигурации коннектора"
+    "Import Connector configuration": "Импорт конфигурации коннектора",
+    "Your unsaved changes will be lost.": "Несохранённые изменения будут потеряны."
   },
   "renderer": {
+    "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "Этот TIFF превышает ограничение предпросмотра в {{limit}} МиБ. Скачайте его или откройте во внешнем приложении.",
     "Shared content": "Общее содержимое",
     "Literature settings and tasks": "Настройки и задачи литературы",
     "Select no more than {{limit}} references for this task.": "Выберите не более {{limit}} источников для этой задачи.",
@@ -334,7 +338,6 @@
     "Scientific literature": "Научная литература",
     "Clinical and translational research": "Клинические и трансляционные исследования",
     "A conversation changed elsewhere and could not be saved safely.": "Диалог был изменён в другом месте, поэтому его не удалось безопасно сохранить.",
-    "One or more conversations could not be saved.": "Не удалось сохранить один или несколько диалогов.",
     "Quit was canceled": "Выход отменён",
     "This session was deleted or is unavailable.": "Эта сессия удалена или недоступна.",
     "Add context for the Agent": "Добавить контекст для Агента",
@@ -4549,8 +4552,6 @@
     "Comparing versions...": "Сравнение версий...",
     "Could not resolve file version.": "Не удалось определить версию файла.",
     "Diff could not be loaded.": "Не удалось загрузить различия.",
-    "Discard unsaved changes?": "Отменить несохранённые изменения?",
-    "Discard changes": "Отбросить изменения",
     "Download latest version v{{version}}": "Загрузить последнюю версию v{{version}}",
     "Download options for {{name}}": "Варианты загрузки для {{name}}",
     "Download version v{{version}}": "Загрузить версию v{{version}}",
@@ -5320,6 +5321,7 @@
     "You can import unfinished files or close this window.": "Можно импортировать незавершённые файлы или закрыть это окно.",
     "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "Новые задания Compute могут оставаться в очереди, поскольку не удалось проверить сохранённые ограничения параллельного выполнения. Сохраните затронутые файлы, восстановите корректную копию и повторите проверку, чтобы возобновить отправку заданий.",
     "Recheck saved conversations": "Повторно проверить сохранённые диалоги",
+    "Some changes have not been saved.": "Некоторые изменения не сохранены.",
     "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "Однократное разрешение действует для следующего выполнения в этой среде, даже если код изменится. Во время этого выполнения разрешено несколько подключений к этому домену.",
     "Next execution in this runtime": "Следующее выполнение в этой среде"
   }

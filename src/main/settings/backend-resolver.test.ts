@@ -1,6 +1,12 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
+
+import { SideChatRuntimeOwner } from '../side-chat/runtime-owner'
+import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
+import type { ResolvedAgentBackend } from '../agent-framework'
 
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { AgentConfigFile, AgentFrameworkId } from '../agent-framework'
@@ -150,6 +156,7 @@ const makeOpenAiProviderBridgeDouble = (index: number): OpenAiProviderBridgeDoub
 })
 
 type HarnessOptions = {
+  storageRoot?: string
   settings?: StoredSettings
   frameworkOverride?: string
   connectorIds?: string[]
@@ -311,7 +318,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     providers,
     runtime,
     connectors,
-    storageRoot: '/storage',
+    storageRoot: options.storageRoot ?? '/storage',
     userClaudeDir: '/user/.claude',
     skillRuntimeMcpEntryPath: '/app/main.js',
     readFrameworkOverride,
@@ -478,6 +485,162 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     expect(backend.responsesBridgeLease).toBeDefined()
     await backend.responsesBridgeLease?.release()
   })
+
+  it.each(['start', 'resume'] as const)(
+    '%s Side chat with the same Codex subscription that resolves for Main',
+    async (mode) => {
+      const root = await mkdtemp(join(tmpdir(), 'side-chat-subscription-'))
+      const provider: StoredProvider = {
+        id: 'builtin-codex-subscription',
+        type: 'codex-isolated',
+        codexAuthMode: 'isolated',
+        name: 'Codex subscription',
+        model: 'gpt-5.4'
+      }
+      const harness = makeHarness({
+        storageRoot: root,
+        settings: makeSettings({
+          providers: [provider],
+          activeProviderId: provider.id,
+          activeModel: provider.model,
+          agentFrameworkId: 'codex'
+        }),
+        targetOverride: () => ({
+          apiEndpoints: ['responses'],
+          provider: { apiEndpoints: ['responses'] }
+        })
+      })
+      let prepared: ResolvedAgentBackend | undefined
+      const owner = new SideChatRuntimeOwner({
+        appVersion: '0.26.0',
+        configRoot: root,
+        captureTarget: () => harness.resolver.captureExplicitTarget(),
+        resolveTarget: (target, context) => harness.resolver.resolveExplicitTarget(target, context),
+        relay: new SideChatRelayOwner({
+          targetState: () => 'idle',
+          appendRelay: async () => undefined
+        }),
+        persistence: {
+          save: async (input) => input.sideChat,
+          clear: async () => true
+        },
+        onEvent: vi.fn(),
+        createRuntime: (options) => ({
+          createSession: async () => {
+            prepared = await options.resolveBackend!({
+              forcedSkillIds: [],
+              systemPromptAppends: []
+            })
+            return { sessionId: 'side-provider-session', frameworkId: 'codex' as const }
+          },
+          sendPrompt: async (request) => {
+            options.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            return { stopReason: 'end_turn' as const }
+          },
+          cancelPrompt: async () => {
+            throw new Error('Unexpected cancellation during startup')
+          },
+          deleteSession: async () => {
+            throw new Error('Unexpected deletion during startup')
+          },
+          resumeSession: async () => {
+            prepared = await options.resolveBackend!({
+              forcedSkillIds: [],
+              systemPromptAppends: []
+            })
+            return { sessionId: 'side-provider-session', frameworkId: 'codex' as const }
+          },
+          respondToPermission: async () => {
+            throw new Error('Unexpected permission during startup')
+          },
+          applyModelChange: async () => false,
+          applyReasoningEffortChange: async () => false,
+          requestProviderReconnect: async () => {
+            prepared = await options.resolveBackend!({
+              forcedSkillIds: [],
+              systemPromptAppends: []
+            })
+          },
+          shutdownForQuit: async () => ({ reaped: true })
+        })
+      })
+      try {
+        const home = join(root, 'codex-subscription')
+        await mkdir(home, { recursive: true })
+        await writeFile(
+          join(home, 'auth.json'),
+          JSON.stringify({
+            tokens: { access_token: 'test-only-token' }
+          })
+        )
+        const target = await harness.resolver.captureExplicitTarget()
+        await expect(harness.resolver.resolveExplicitTarget(target)).resolves.toMatchObject({
+          providerId: provider.id
+        })
+        if (mode === 'start') {
+          await expect(
+            owner.start({
+              parentSessionId: 'main-session',
+              projectId: 'project',
+              text: 'Explain this separately.'
+            })
+          ).resolves.toMatchObject({ frameworkId: 'codex' })
+        } else {
+          owner.hydrate([
+            {
+              parentSessionId: 'main-session',
+              projectId: 'project',
+              sideChat: {
+                version: 1,
+                id: 'side-chat-restored',
+                lifecycle: 'open',
+                frameworkId: 'codex',
+                providerId: provider.id,
+                backendId: `codex:${provider.id}`,
+                providerSessionId: 'side-provider-session',
+                historyPreamble: 'Main conversation snapshot.',
+                entries: [],
+                createdAt: 1,
+                updatedAt: 2
+              }
+            }
+          ])
+          await expect(
+            owner.send({ sideSessionId: 'side-chat-restored', text: 'Continue.' })
+          ).resolves.toBeUndefined()
+        }
+        const sideHome = prepared!.env.CODEX_HOME!
+        expect(sideHome).not.toBe(home)
+        await expect(readFile(join(sideHome, 'auth.json'), 'utf8')).resolves.toContain(
+          'test-only-token'
+        )
+        expect(JSON.parse(prepared!.env.CODEX_CONFIG!)).toMatchObject({
+          features: {
+            shell_tool: false,
+            multi_agent: false,
+            code_mode: false,
+            apply_patch_freeform: false
+          },
+          tools: { web_search: false }
+        })
+        await writeFile(
+          join(home, 'auth.json'),
+          JSON.stringify({ tokens: { access_token: 'refreshed-test-token' } })
+        )
+        await owner.requestProviderReconnect()
+        expect(prepared!.env.CODEX_HOME).toBe(sideHome)
+        await expect(readFile(join(sideHome, 'auth.json'), 'utf8')).resolves.toContain(
+          'refreshed-test-token'
+        )
+        expect(prepared?.providerId).toBe(provider.id)
+        expect(harness.createNativeResponsesProxy).not.toHaveBeenCalled()
+        expect(harness.createResponsesBridge).not.toHaveBeenCalled()
+      } finally {
+        await owner.shutdown()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('fails closed for Codex subscription reconstruction before starting a runtime', async () => {
     const provider: StoredProvider = {

@@ -642,6 +642,20 @@ const createMainWindow = (
     }
   })
 
+  // Electron otherwise silently refuses a dirty page's close/reload. Only an explicit discard
+  // overrides beforeunload; hiding to tray never reaches this event.
+  window.webContents.on('will-prevent-unload', (event) => {
+    const choice = dialog.showMessageBoxSync(window, {
+      type: 'warning',
+      buttons: [translate('Cancel'), translate('Discard changes')],
+      defaultId: 0,
+      cancelId: 0,
+      title: translate('Discard unsaved changes?'),
+      message: translate('Your unsaved changes will be lost.')
+    })
+    if (choice === 1) event.preventDefault()
+  })
+
   // Close handling. classifyClose decides synchronously: darwin and mid-quit close instantly; 'hide'
   // minimizes to tray (Linux); 'quit' retains a no-tray renderer through app teardown; 'confirm'
   // (Windows X) asks the user. The

@@ -13,6 +13,7 @@ import type { AcpCreateSessionResponse } from '../../shared/acp'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { PersistedSideChat } from '../../shared/session-persistence'
+import { isCodexSubscriptionProviderId } from '../../shared/settings'
 import {
   SIDE_CHAT_MESSAGE_LIMIT,
   type SideChatEntry,
@@ -101,7 +102,7 @@ type SideChatRuntimeOwnerOptions = Readonly<{
     context: {
       systemPromptAppends: string[]
       includeSkillAndConnectorContext: false
-      forceCodexNativeResponsesCompatibility: true
+      forceCodexNativeResponsesCompatibility: boolean
     }
   ) => Promise<ResolvedAgentBackend>
   relay: SideChatRelayOwner
@@ -431,7 +432,10 @@ class SideChatRuntimeOwner {
         let resolved = await this.options.resolveTarget(target, {
           systemPromptAppends: [SIDE_CHAT_SYSTEM_PROMPT],
           includeSkillAndConnectorContext: false,
-          forceCodexNativeResponsesCompatibility: true
+          // Subscription authentication uses native Codex; API-key routes still need the
+          // compatibility bridge to enforce their host-message-only tool surface.
+          forceCodexNativeResponsesCompatibility:
+            target.frameworkId !== 'codex' || !isCodexSubscriptionProviderId(target.providerId)
         })
         resolved = await prepareSideChatBackend(resolved, profileRoot)
         const bridge = resolved.responsesBridgeLease
@@ -995,7 +999,10 @@ class SideChatRuntimeOwner {
         let resolved = await this.options.resolveTarget(target, {
           systemPromptAppends: [SIDE_CHAT_SYSTEM_PROMPT],
           includeSkillAndConnectorContext: false,
-          forceCodexNativeResponsesCompatibility: true
+          // Subscription authentication uses native Codex; API-key routes still need the
+          // compatibility bridge to enforce their host-message-only tool surface.
+          forceCodexNativeResponsesCompatibility:
+            target.frameworkId !== 'codex' || !isCodexSubscriptionProviderId(target.providerId)
         })
         resolved = await prepareSideChatBackend(resolved, profileRoot)
         const bridge = resolved.responsesBridgeLease
