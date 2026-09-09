@@ -1637,10 +1637,10 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   {mode === 'edit' ? (
                     <div className="flex size-full min-h-0 flex-col">
                       <textarea
-                        readOnly={saving}
                         autoFocus
                         aria-label={t('Edit {{name}} source', { name: resolvedPreviewItem.name })}
                         className="min-h-0 flex-1 resize-none bg-bg-000 p-4 font-mono text-sm leading-6 text-text-000 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                        readOnly={saving}
                         value={draft}
                         onChange={(event) => setDraft(event.target.value)}
                       />

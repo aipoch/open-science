@@ -1,4 +1,15 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { writeFileSync } from 'node:fs'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -13,7 +24,20 @@ import { createManagedFileReferenceResolver } from './file-reference-resolver'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
-  return { ...actual, stat: vi.fn(actual.stat) }
+  return { ...actual, stat: vi.fn(actual.stat), realpath: vi.fn(actual.realpath) }
+})
+
+const copying = vi.hoisted(() => ({ path: '', mutate: undefined as (() => void) | undefined }))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    createReadStream: (...args: Parameters<typeof actual.createReadStream>) => {
+      const stream = actual.createReadStream(...args)
+      if (args[0] === copying.path) stream.once('data', () => copying.mutate?.())
+      return stream
+    }
+  }
 })
 
 let root: string | undefined
@@ -623,7 +647,7 @@ describe('managed file reference resolver', () => {
     resolver.clear()
   })
 
-  it('bounds the bytes actually copied into a read-only snapshot', async () => {
+  it('rejects a file that grows after inspection and refunds the snapshot budget', async () => {
     root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
     const sourcePath = join(root, 'growing.txt')
     await writeFile(sourcePath, '1234')
@@ -646,7 +670,7 @@ describe('managed file reference resolver', () => {
       return beforeGrowth
     })
 
-    await expect(resolver.resolve(context, reference)).rejects.toThrow(/Session storage limit/i)
+    await expect(resolver.resolve(context, reference)).rejects.toThrow(/file changed/i)
 
     await writeFile(sourcePath, '12345')
     await expect(resolver.resolve(context, reference)).resolves.toMatchObject({ size: 5 })
@@ -779,3 +803,150 @@ it.skipIf(process.platform === 'win32')(
     }
   }
 )
+
+describe('TB-03 linked-folder snapshot identity', () => {
+  it.each(['after-realpath', 'after-stat', 'parent-after-stat'] as const)(
+    'rejects outside snapshot content with a replacement %s',
+    async (stage) => {
+      root = await mkdtemp(join(tmpdir(), 'linked-snapshot-race-'))
+      const granted = join(root, 'granted')
+      const outsideDirectory = join(root, 'outside')
+      await mkdir(granted)
+      await mkdir(outsideDirectory)
+      const source = join(granted, 'study.txt')
+      const outside = join(outsideDirectory, 'study.txt')
+      await writeFile(source, 'approved-content')
+      await writeFile(outside, 'outside-secret!!')
+      const canonicalSource = await realpath(source)
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      let substituted = false
+      const substitute = async (): Promise<void> => {
+        substituted = true
+        if (stage === 'parent-after-stat') {
+          await rename(granted, join(root!, 'original-directory'))
+          await symlink(outsideDirectory, granted, 'junction')
+        } else {
+          await rename(source, join(granted, 'original.txt'))
+          await symlink(outside, source)
+        }
+      }
+      vi.mocked(stat).mockImplementation(async (...args) => {
+        const result = await actual.stat(...args)
+        if (args[0] === canonicalSource && !substituted && stage !== 'after-realpath')
+          await substitute()
+        return result
+      })
+      vi.mocked(realpath).mockImplementation(async (...args) => {
+        const result = await actual.realpath(...args)
+        if (args[0] === source && !substituted && stage === 'after-realpath') await substitute()
+        return result
+      })
+      const resolver = createManagedFileReferenceResolver({
+        grantedRoots: { resolveRoot: async () => ({ path: granted, access: 'ro' }) }
+      })
+      try {
+        const result = await resolver
+          .resolve(
+            { projectId: 'default-project', sessionId: 'session-race' },
+            {
+              id: 'linked-race',
+              name: 'study.txt',
+              source: 'linked-folder',
+              rootId: 'root-1',
+              relativePath: 'study.txt',
+              mimeType: 'text/plain'
+            }
+          )
+          .then(
+            async (resolved) => readFile(resolved.absolutePath, 'utf8'),
+            () => undefined
+          )
+        expect(substituted).toBe(true)
+        expect(
+          [undefined, 'approved-content'],
+          'snapshot must reject the replacement or retain the approved file'
+        ).toContain(result)
+      } finally {
+        resolver.clear()
+        vi.mocked(stat).mockImplementation(actual.stat)
+        vi.mocked(realpath).mockImplementation(actual.realpath)
+      }
+    }
+  )
+})
+
+describe('TB-03 snapshot completion', () => {
+  it('rejects a same-size source mutation during copying and refunds its budget', async () => {
+    root = await mkdtemp(join(tmpdir(), 'linked-copy-change-'))
+    const path = join(root, 'data.txt')
+    const original = 'a'.repeat(128 * 1024)
+    await writeFile(path, original)
+    copying.path = await realpath(path)
+    let mutated = false
+    copying.mutate = () => {
+      mutated = true
+      writeFileSync(path, 'b'.repeat(original.length))
+    }
+    const resolver = createManagedFileReferenceResolver({
+      grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'ro' }) },
+      readOnlyProjectionMaxSessionBytes: original.length
+    })
+    const context = { projectId: 'project', sessionId: 'session' }
+    const reference = {
+      id: 'file',
+      name: 'data.txt',
+      source: 'linked-folder' as const,
+      rootId: 'root',
+      relativePath: 'data.txt'
+    }
+    try {
+      await expect(resolver.resolve(context, reference)).rejects.toThrow(/file changed/i)
+      expect(mutated).toBe(true)
+      copying.path = ''
+      copying.mutate = undefined
+      await expect(resolver.resolve(context, reference)).resolves.toMatchObject({
+        size: original.length
+      })
+    } finally {
+      copying.path = ''
+      copying.mutate = undefined
+      resolver.clear()
+    }
+  })
+
+  it.each(['remove', 'change-access'] as const)(
+    'rejects a root %s before snapshot copying',
+    async (change) => {
+      root = await mkdtemp(join(tmpdir(), 'linked-root-change-'))
+      const path = join(root, 'data.txt')
+      await writeFile(path, 'approved')
+      let grant: { path: string; access: 'ro' | 'rw' } | undefined = { path: root, access: 'ro' }
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      vi.mocked(stat).mockImplementationOnce(async (...args) => {
+        const result = await actual.stat(...args)
+        grant = change === 'remove' ? undefined : { path: root!, access: 'rw' }
+        return result
+      })
+      const resolver = createManagedFileReferenceResolver({
+        grantedRoots: { resolveRoot: async () => grant }
+      })
+      try {
+        await expect(
+          resolver.resolve(
+            { projectId: 'project', sessionId: 'session' },
+            {
+              id: 'file',
+              name: 'data.txt',
+              source: 'linked-folder',
+              rootId: 'root',
+              relativePath: 'data.txt'
+            }
+          )
+        ).rejects.toThrow(/reference changed/i)
+      } finally {
+        resolver.clear()
+        vi.mocked(stat).mockImplementation(actual.stat)
+      }
+    }
+  )
+})
