@@ -958,3 +958,65 @@ describe('AppImage reconciliation platform boundary', () => {
     expect(await readFile(plan.target, 'utf8')).toBe('user-managed launcher')
   })
 })
+
+describe('owned launchers after the application bundle is renamed', () => {
+  it.each(['darwin', 'linux', 'win32'] as const)(
+    'refreshes the exact app executable and CLI path on %s',
+    async (platform) => {
+      const env = platform === 'win32' ? winEnv() : posixEnv({ platform })
+      await installCliLauncher(env, () => true)
+      const updated = {
+        ...env,
+        appExecPath: join(home, 'Open-Science', 'new-executable'),
+        cliEntryPath: join(home, 'Open-Science', 'cli', 'index.mjs')
+      }
+      const result = await ensureCliLauncherCurrent(updated, () => true)
+      expect(result?.installed).toBe(true)
+      expect(await readFile(planCliLauncher(updated).target, 'utf8')).toBe(
+        planCliLauncher(updated).shim
+      )
+    }
+  )
+})
+
+describe('Windows profile PATH transition', () => {
+  it('recovers after removal of the old owned PATH entry and installs the new launcher', async () => {
+    const { migrateCliLauncherProfile } = await import('./launcher')
+    const env = winEnv()
+    const old = { ...env, userDataDir: join(home, 'AppData', 'Roaming', 'Open Science') }
+    await installCliLauncher(old, () => true)
+    await writeWindowsPathJournal(old)
+    await rename(old.userDataDir, env.userDataDir)
+    await symlink(
+      env.userDataDir,
+      old.userDataDir,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const state = join(home, 'migration-state')
+    await mkdir(state)
+    await writeFile(
+      join(state, 'journal.json'),
+      JSON.stringify({ id: '11111111-1111-1111-1111-111111111111', status: 'committed' })
+    )
+    const commands: string[] = []
+    const run = (_command: string, args: string[]): boolean => {
+      commands.push(args.join('\n'))
+      return true
+    }
+    await expect(
+      migrateCliLauncherProfile(env, old.userDataDir, state, run, () => {
+        throw new Error('interrupted between PATH generations')
+      })
+    ).rejects.toThrow('between PATH')
+    await migrateCliLauncherProfile(env, old.userDataDir, state, run)
+    expect(await readFile(planCliLauncher(env).target, 'utf8')).toBe(planCliLauncher(env).shim)
+    expect(commands[0]).toContain(planCliLauncher(old).binDir)
+    expect(commands.at(-1)).toContain(planCliLauncher(env).binDir)
+    expect(JSON.parse(await readFile(join(state, 'launcher.json'), 'utf8')).status).toBe(
+      'committed'
+    )
+    const count = commands.length
+    await migrateCliLauncherProfile(env, old.userDataDir, state, run)
+    expect(commands.length).toBe(count)
+  })
+})

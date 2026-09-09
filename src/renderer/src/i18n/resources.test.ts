@@ -1551,7 +1551,7 @@ describe('mandatory product glossary', () => {
         ],
       researchData:
         de.renderer[
-          'Your research data is in a hidden folder. Moving it into a visible OpenScience folder makes it easy to find and back up — your settings and history stay where they are.'
+          'Your research data is in a hidden folder. Moving it into a visible Open-Science folder makes it easy to find and back up — your settings and history stay where they are.'
         ],
       credentials:
         de.renderer[
@@ -1570,7 +1570,7 @@ describe('mandatory product glossary', () => {
       dataFolder:
         'Ihr Datenordner <path>{{path}}</path> wurde nicht gefunden. Möglicherweise wurde er gelöscht oder befindet sich auf einem nicht verbundenen Laufwerk.',
       researchData:
-        'Ihre Forschungsdaten befinden sich in einem versteckten Ordner. Wenn Sie sie in einen sichtbaren OpenScience-Ordner verschieben, lassen sie sich leichter finden und sichern. Ihre Einstellungen und Ihr Verlauf bleiben am bisherigen Speicherort.',
+        'Ihre Forschungsdaten befinden sich in einem versteckten Ordner. Wenn Sie sie in einen sichtbaren Open-Science-Ordner verschieben, lassen sie sich leichter finden und sichern. Ihre Einstellungen und Ihr Verlauf bleiben am bisherigen Speicherort.',
       credentials:
         'Die gespeicherten Anmeldedaten können auf diesem Gerät nicht verwendet werden. Ersetzen Sie sie und testen Sie die Verbindung erneut.',
       remoteCommand:
@@ -2492,7 +2492,7 @@ describe('mandatory product glossary', () => {
       { source: /\bMain\b/, untranslated: /\bMain\b/ }
     ]
     const retainedIdentifiersAndNames = [
-      /\b(?:specialist\.json|openscience-specialist-template\.zip)\b/gi,
+      /\b(?:specialist\.json|open-science-specialist-template\.zip)\b/gi,
       /Claude Connectors Directory/g,
       /Specialist Marketplace protocol/g,
       /(?:GitHub|Azure|Microsoft|Visual Studio) Marketplace/g
@@ -2889,8 +2889,8 @@ describe('Russian catalog quality', () => {
       'Инструменты песочницы, которые запускаются без предпросмотра'
     ],
     [
-      'Your research data is in a hidden folder. Moving it into a visible OpenScience folder makes it easy to find and back up — your settings and history stay where they are.',
-      'Ваши исследовательские данные находятся в скрытой папке. Перемещение их в видимую папку OpenScience упростит поиск и резервное копирование — настройки и история останутся на прежнем месте.'
+      'Your research data is in a hidden folder. Moving it into a visible Open-Science folder makes it easy to find and back up — your settings and history stay where they are.',
+      'Ваши исследовательские данные находятся в скрытой папке. Перемещение их в видимую папку Open-Science упростит поиск и резервное копирование — настройки и история останутся на прежнем месте.'
     ],
     ['System Tags stay first', 'Системные теги всегда остаются в начале'],
     ['Reorder {{tag}}', 'Изменить порядок тега {{tag}}'],
@@ -3696,7 +3696,7 @@ describe('Korean binding terminology', () => {
       'Skills and connectors this specialist can use. Anything not chosen here stays invisible and unreachable in its sessions, even when enabled globally.',
       '이 스페셜리스트가 사용할 수 있는 스킬과 커넥터입니다. 여기에서 선택하지 않은 항목은 전역으로 활성화되어 있어도 해당 세션에서 보이지 않으며 접근할 수 없습니다.'
     ],
-    ['Move to OpenScience', 'OpenScience로 이동'],
+    ['Move to Open-Science', 'Open-Science로 이동'],
     ['Official install.ps1', '공식 install.ps1'],
     [
       'Used by host.mcp("{{name}}", …), Specialists, and the generated MCP skill.',

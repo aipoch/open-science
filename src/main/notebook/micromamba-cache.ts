@@ -52,7 +52,7 @@ type CacheMarker = { schema?: number; canonicalRoot?: string; userIdentity?: str
 
 type TempParentMarker = { schema?: number; kind?: string; userIdentity?: string }
 
-const WINDOWS_TEMP_PARENT = 'OpenScienceTmp'
+const WINDOWS_TEMP_PARENT = 'Open-ScienceTmp'
 const TEMP_PARENT_MARKER_FILE = '.open-science-temp.json'
 const TEMP_PARENT_MARKER_KIND = 'micromamba-working-cache-parent'
 
@@ -654,7 +654,7 @@ export const selectMicromambaCache = (
 // Recovery reads an exact working-cache path from the operation journal. Revalidate that persisted
 // path without creating it before any recursive scan: a damaged journal must not turn archive
 // publication into an arbitrary-directory traversal, and a cache parent may have been replaced by a
-// reparse point while the app was stopped. The marker-bound OpenScienceTmp form remains valid even if
+// reparse point while the app was stopped. The marker-bound Open-ScienceTmp form remains valid even if
 // TEMP changed between runs; the fixed profile fallback must remain inside the current profile.
 export const isTrustedMicromambaWorkingCacheForRoot = (
   root: string,

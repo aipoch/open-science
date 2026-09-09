@@ -1,3 +1,5 @@
+import { configureCredentialStore } from './settings/credential-store-mode'
+import { prepareBrandPathMigration } from './brand-path-migration'
 import { createRequire } from 'node:module'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -119,11 +121,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // Establish identity and single-writer ownership before opening main.log. A secondary launch must
   // never rotate or append to the primary process's file sink. These two modules are lightweight; all
   // backend imports remain behind the lock.
-  // Keep Chromium state and installed CLI launchers in the pre-rename profile directory.
+  // Complete filesystem and reference migration before Chromium, logging or backend writers open.
+  const migratedBrandPaths = prepareBrandPathMigration(app)
   if (!app.commandLine.hasSwitch('user-data-dir')) {
     app.setPath(
       'userData',
-      join(app.getPath('appData'), app.isPackaged ? 'Open Science' : 'Open Science (DEV)')
+      migratedBrandPaths?.userData ??
+        join(app.getPath('appData'), app.isPackaged ? 'Open-Science' : 'Open-Science (DEV)')
     )
   }
   app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
@@ -169,6 +173,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     return
   }
   const webMode = parseWebModeOptions(process.argv)
+  configureCredentialStore(process.argv, process.platform, webMode.headless)
   let bindSystemShutdownWindow = (window: InstanceType<typeof BrowserWindow>): void => {
     void window
   }
@@ -301,6 +306,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
 
       startupDiagnostics?.phase('electron-ready')
       await app.whenReady()
+      await migratedBrandPaths?.reconcileProtectedPaths()
       installPowerMonitorListeners()
 
       startupDiagnostics?.phase('load-startup-shell-modules')

@@ -102,7 +102,10 @@ const cleanupCommand = (
   requirePidWitness = false,
   allowPidCleanup = true
 ): string => {
-  const marker = '/.openscience/jobs/'
+  // Persisted running jobs retain their exact scheduler workdir until terminal cleanup.
+  const marker = workdir.includes('/.open-science/jobs/')
+    ? '/.open-science/jobs/'
+    : '/.openscience/jobs/'
   const markerIndex = workdir.lastIndexOf(marker)
   if (markerIndex < 0) throw new Error('Unsafe remote Compute Job cleanup path.')
   const scratchRoot = markerIndex === 0 ? '/' : workdir.slice(0, markerIndex)
@@ -525,7 +528,9 @@ class ComputeJobDeletionOwner {
     }
     if (job.status === 'queued') return undefined
     const host = await this.deps.hostRepository.get(job.provider_id)
-    const fallbackWorkdir = host ? computeRemoteWorkdir(host.scratchRoot, job.job_id) : undefined
+    const fallbackWorkdir = host
+      ? computeRemoteWorkdir(host.scratchRoot, job.job_id, true)
+      : undefined
     const workdir = parseRemoteJobWorkdir(job.job_id, job.remote_workdir, fallbackWorkdir)
     if (!workdir) {
       throw new Error(`Unsafe remote work directory for Compute Job ${job.job_id}.`)

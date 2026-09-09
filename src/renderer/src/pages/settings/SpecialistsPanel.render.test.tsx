@@ -865,7 +865,7 @@ describe('SpecialistsPanel', () => {
     await act(async () => finishSave?.({ saved: true }))
     expect(document.body.textContent).toContain('Template saved')
     expect(document.body.textContent).toContain(
-      'openscience-specialist-template.zip is ready for contributor editing.'
+      'open-science-specialist-template.zip is ready for contributor editing.'
     )
   })
 

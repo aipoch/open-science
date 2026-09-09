@@ -9,7 +9,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   activateRollbackConfig,
   convertSessionToV073,
-  runRollbackToV073
+  runRollbackToV073,
+  resolveConfiguredDataRoot
 } from './rollback-to-0.7.3.mjs'
 
 const temporaryRoots: string[] = []
@@ -32,6 +33,20 @@ afterEach(async () => {
 })
 
 describe('rollback-to-0.7.3', () => {
+  it('discovers the canonical default and retains only explicit legacy recovery fallback', async () => {
+    const home = await temporaryRoot()
+    const config = join(home, '.open-science')
+    const current = join(home, 'Open-Science')
+    const legacy = join(home, 'OpenScience')
+    expect(await resolveConfiguredDataRoot(config, home)).toBe(current)
+    await mkdir(legacy)
+    expect(await resolveConfiguredDataRoot(config, home)).toBe(legacy)
+    await mkdir(current)
+    await expect(resolveConfiguredDataRoot(config, home)).rejects.toThrow(
+      'Both legacy and current Data Roots exist'
+    )
+  })
+
   it('preserves both recovery candidates when activation and automatic restoration fail', async () => {
     const renamePath = vi
       .fn()

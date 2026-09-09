@@ -137,7 +137,7 @@ Call `dispose()` during lifecycle shutdown.
   access, protected files and directories remain read-only, and their ancestor boundaries omit
   delete-child access. A creation journal
   and ownership receipt under the original desktop user's
-  `%LOCALAPPDATA%\Aipoch\OpenScience\notebook-sandbox\<installationId>\` make setup recoverable.
+  `%LOCALAPPDATA%\Aipoch\Open-Science\notebook-sandbox\<installationId>\` make setup recoverable.
   The desktop process passes that root explicitly across UAC, so elevation with another
   administrator account cannot redirect ownership state into the administrator profile.
   The stable installation identity is independent of the selected install directory, so a moved

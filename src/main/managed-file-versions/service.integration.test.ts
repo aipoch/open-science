@@ -1185,6 +1185,38 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
   })
 
   it.each(['artifact', 'upload'] as const)(
+    'preserves the %s head message association across repeated startup recovery',
+    async (source) => {
+      const fixture = await createFixture(source)
+      const where = {
+        projectId_source_sourceFileId: {
+          projectId: 'project-1',
+          source,
+          sourceFileId: fixture.fileId
+        }
+      }
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      // Normalize the deliberately stale shared fixture before associating its current head.
+      await service.recoverPendingWrites()
+      await client.managedFile.update({ where, data: { messageId: 'historical-message' } })
+      const before = await client.managedFile.findUniqueOrThrow({ where })
+      await service.recoverPendingWrites()
+      await service.recoverPendingWrites()
+      expect(await client.managedFile.findUniqueOrThrow({ where })).toMatchObject({
+        seq: before.seq,
+        projectId: before.projectId,
+        sessionId: before.sessionId,
+        sourceFileId: fixture.fileId,
+        sourceVersionId: fixture.versionIds[1],
+        messageId: 'historical-message'
+      })
+    }
+  )
+
+  it.each(['artifact', 'upload'] as const)(
     'saves a %s historical edit as the next immutable head and synchronizes the Files projection',
     async (source) => {
       const fixture = await createFixture(source)

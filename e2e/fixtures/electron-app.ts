@@ -1,7 +1,18 @@
 import { expect, test as base } from '@playwright/test'
 import { spawn } from 'node:child_process'
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
 import {
@@ -115,6 +126,8 @@ const closeElectronApplicationForCleanup = async (
 
 type ElectronApp = {
   readonly page: Page
+  openAdditionalRenderer: () => Promise<Page>
+  authenticatedWebUrl: () => Promise<string>
   allowRendererConsoleError: (text: string) => void
   captureMainLog: (name: string) => Promise<string>
   armDelegatedHandoffCleanupSabotage: (childName: string) => Promise<void>
@@ -129,6 +142,13 @@ type ElectronApp = {
   configureFileBrowserFixture: () => Promise<void>
   configureFakeAgent: () => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
+  restartWithLegacyBrandPaths: () => Promise<{
+    page: Page
+    oldRoot: string
+    newRoot: string
+    identityBefore: unknown
+    identityAfter: unknown
+  }>
   enableFakeRemoteIt: () => Promise<Page>
   findOverlayIsVisible: () => Promise<boolean>
   launchSecondInstance: () => Promise<Page>
@@ -549,6 +569,62 @@ class ElectronAppHarness implements ElectronApp {
     })
   }
 
+  async openAdditionalRenderer(): Promise<Page> {
+    const next = this.runningApplication.waitForEvent('window')
+    await this.runningApplication.evaluate(
+      ({ BrowserWindow }, preload) => {
+        const source = BrowserWindow.getAllWindows().find((window) =>
+          window.webContents.getURL().includes('index.html')
+        )!
+        const window = new BrowserWindow({
+          show: false,
+          webPreferences: {
+            preload,
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true
+          }
+        })
+        void window.loadURL(source.webContents.getURL())
+      },
+      fileURLToPath(new URL('../preload/index.js', this.page.url()))
+    )
+    const page = await next
+    await page.waitForFunction(() => Boolean(window.api?.databaseStartup))
+    await waitForRendererReady(page)
+    return page
+  }
+
+  async authenticatedWebUrl(): Promise<string> {
+    const target = electronLaunchTarget(this.roots.userDataRoot)
+    const child = spawn(
+      target.executablePath ?? ((await import('electron')).default as unknown as string),
+      [...target.args, '--serve=0'],
+      { env: launchEnvironment(this.roots.storageRoot), stdio: 'ignore' }
+    )
+    await new Promise<void>((resolve, reject) => {
+      child.once('error', reject)
+      child.once('exit', () => resolve())
+    })
+    let port: number | undefined
+    await expect
+      .poll(async () => {
+        try {
+          port = (
+            JSON.parse(
+              await readFile(join(this.roots.storageRoot, 'web-service.json'), 'utf8')
+            ) as { port: number }
+          ).port
+        } catch {
+          return false
+        }
+        return Boolean(port)
+      })
+      .toBe(true)
+    const token = (await readFile(join(this.roots.storageRoot, 'web-token'), 'utf8')).trim()
+    return `http://127.0.0.1:${port}/?token=${encodeURIComponent(token)}`
+  }
+
   async completeOnboarding(): Promise<Page> {
     await this.page.evaluate(async () => {
       const bridge = globalThis as unknown as {
@@ -833,6 +909,96 @@ class ElectronAppHarness implements ElectronApp {
     }
     await this.launch()
     return this.page
+  }
+
+  async restartWithLegacyBrandPaths(): Promise<{
+    page: Page
+    oldRoot: string
+    newRoot: string
+    identityBefore: unknown
+    identityAfter: unknown
+  }> {
+    const newRoot = await this.page.evaluate(
+      async () => (await window.api.storage.getInfo()).dataRoot
+    )
+    if (
+      !newRoot.startsWith(`${this.roots.storageRoot}${sep}`) ||
+      !this.roots.storageRoot.startsWith(`${this.testRoot}${sep}`)
+    )
+      throw new Error('Legacy migration fixture must remain inside its disposable test root')
+    const oldRoot = newRoot.replace(/Open-Science(-DEV)?$/, 'OpenScience$1')
+    if (oldRoot === newRoot) throw new Error('Unexpected fixture data root')
+    await this.close()
+    const { DatabaseSync } = await import('node:sqlite')
+    const dbPath = join(this.roots.storageRoot, 'open-science.db')
+    const fixtureDb = new DatabaseSync(dbPath)
+    try {
+      fixtureDb
+        .prepare(
+          'INSERT INTO GrantedLocalRoot (id, path, name, access, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)'
+        )
+        .run('brand-migration-e2e-root', oldRoot, 'Historical research root', 'ro', 1, 1)
+    } finally {
+      fixtureDb.close()
+    }
+    const snapshot = (): unknown => {
+      const db = new DatabaseSync(dbPath, { readOnly: true })
+      try {
+        const tables = [
+          'Project',
+          'Session',
+          'ManagedFile',
+          'ContentBlob',
+          'UploadVersion',
+          'ArtifactVersion',
+          'GrantedLocalRoot'
+        ]
+        return Object.fromEntries(
+          tables.map((table) => [
+            table,
+            db
+              .prepare(`SELECT * FROM "${table}"`)
+              .all()
+              .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+              .map((row) => {
+                // Ignore non-identity projection bookkeeping when comparing the restored records.
+                const identity = { ...row }
+                if (table === 'GrantedLocalRoot') delete identity.path
+                delete identity.updatedAt
+                delete identity.sourceByteLength
+                delete identity.sourceMtimeMs
+                return identity
+              })
+          ])
+        )
+      } finally {
+        db.close()
+      }
+    }
+    const identityBefore = snapshot()
+    await rename(newRoot, oldRoot)
+    const settingsFile = join(this.roots.storageRoot, 'settings.json')
+    const settings = JSON.parse(await readFile(settingsFile, 'utf8'))
+    settings.dataRoot = oldRoot
+    await writeFile(settingsFile, JSON.stringify(settings, null, 2))
+    // Discard only the empty fresh-install receipt in this disposable fixture to simulate upgrade.
+    const state = `${this.roots.storageRoot}.brand-migration`
+    const receipt = JSON.parse(await readFile(join(state, 'journal.json'), 'utf8'))
+    if (receipt.participants.length)
+      throw new Error('Fixture already contains a real migration receipt')
+    await rm(state, { recursive: true })
+    await this.launch()
+    const migratedDb = new DatabaseSync(dbPath, { readOnly: true })
+    try {
+      expect(
+        migratedDb
+          .prepare('SELECT path FROM GrantedLocalRoot WHERE id = ?')
+          .get('brand-migration-e2e-root')?.path
+      ).toBe(newRoot)
+    } finally {
+      migratedDb.close()
+    }
+    return { page: this.page, oldRoot, newRoot, identityBefore, identityAfter: snapshot() }
   }
 
   async restartWithCorruptHistoricalSessionFile(projectId: string): Promise<Page> {

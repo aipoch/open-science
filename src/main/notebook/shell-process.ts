@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { dirname } from 'node:path'
+import { assertShellSearchScope } from './shell-search-scope'
 
 import { protectManagedRuntimeWrites } from './managed-runtime-guard'
 import type { NotebookProcessSandbox } from './process-sandbox'
@@ -253,6 +254,7 @@ const prepareShellLaunch = async (
   platform: NodeJS.Platform = process.platform,
   processSandbox?: NotebookProcessSandbox
 ): Promise<PreparedShellLaunch> => {
+  await assertShellSearchScope(options.command, options.cwd, platform, options.signal)
   const baseEnv = options.environment
     ? { ...options.environment }
     : buildShellEnv(

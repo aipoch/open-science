@@ -67,10 +67,10 @@ Open-Science keeps configuration and research data in local storage by default:
 
 - `~/.open-science` contains settings, the application database, session state,
   permissions, provider profiles, and Skills; and
-- `~/OpenScience` contains artifacts, uploads, Notebook and workspace data, managed
+- `~/Open-Science` contains artifacts, uploads, Notebook and workspace data, managed
   runtimes, and related large files. The data root can be relocated in Settings.
 
-Development builds use `~/.open-science-project` and `~/OpenScience-DEV` unless an
+Development builds use `~/.open-science-project` and `~/Open-Science-DEV` unless an
 explicit development override is supplied. Desktop logs use Electron's
 operating-system-specific logs directory; the CLI daemon writes `cli-daemon.log` under
 the configuration root.

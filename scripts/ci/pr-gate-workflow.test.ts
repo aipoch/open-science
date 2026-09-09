@@ -862,7 +862,12 @@ describe('PR Gate workflow', () => {
     const serviceTimeout = workflow.jobs.windows_core.steps?.find(
       ({ name }) => name === 'Test Windows notebook shell service timeout'
     )
-    expect(shell?.run).toBe('npx vitest run src/main/notebook/windows-shell.integration.test.ts')
+    for (const file of [
+      'src/main/notebook/windows-shell.integration.test.ts',
+      'src/main/notebook/powershell-search-parser.windows.test.ts',
+      'src/main/notebook/shell-search-scope.test.ts'
+    ])
+      expect(shell?.run).toContain(file)
     expect(serviceTimeout?.run).toContain('src/main/notebook/runtime-service.test.ts')
     expect(serviceTimeout?.run).toContain('--testNamePattern')
 

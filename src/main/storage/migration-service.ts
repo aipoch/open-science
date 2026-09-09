@@ -401,7 +401,7 @@ export const classifyDataRoot = async (
 
   return {
     kind: 'invalid',
-    error: 'A different folder named OpenScience already exists here. Choose another location.'
+    error: 'A different folder named Open-Science already exists here. Choose another location.'
   }
 }
 
@@ -580,7 +580,7 @@ type MigrationCommitDeps = {
 }
 
 // PHASE 1 (copy): validate the move parent -> interrupt running writers -> copy+verify the migrated
-// dirs into `<parent>/OpenScience`. NOTHING is committed here — no setDataRoot, no delete. The old
+// dirs into `<parent>/Open-Science`. NOTHING is committed here — no setDataRoot, no delete. The old
 // root and settings.dataRoot are left fully intact, so this phase is entirely reversible: on
 // success the new root holds a verified copy the caller can either commit (commitDataRootSwitch) or
 // throw away (the caller rm's the target). On failure/cancel the partial target is rolled back by
@@ -1120,7 +1120,7 @@ export const commitDataRootSwitch = async (
   return { ok: true, cleanupPending: cleanupDegraded || cleanupDeferred }
 }
 
-// Throws away an uncommitted staged copy at `<parent>/OpenScience` (the user chose "Keep current
+// Throws away an uncommitted staged copy at `<parent>/Open-Science` (the user chose "Keep current
 // location" on the done stage). Refuses unless the target is genuinely a staging copy for the current
 // root — never the live data location, and only when a marker confirms this source→target pair — so a
 // misrouted parent can never rm the folder the app is actively using. A fresh process may also discard

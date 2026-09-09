@@ -316,7 +316,7 @@ describe('HomePage persistence recovery', () => {
   it('keeps the confirmation open, explains a durable deletion failure, and allows retry', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     deleteProject.mockRejectedValueOnce(
-      new Error('ENOENT: no such file or directory, unlink /Users/private/OpenScience/project-1')
+      new Error('ENOENT: no such file or directory, unlink /Users/private/Open-Science/project-1')
     )
 
     await act(async () =>
@@ -345,7 +345,7 @@ describe('HomePage persistence recovery', () => {
     expect(warn).toHaveBeenCalledWith(
       'Project deletion failed',
       expect.objectContaining({
-        message: 'ENOENT: no such file or directory, unlink /Users/private/OpenScience/project-1'
+        message: 'ENOENT: no such file or directory, unlink /Users/private/Open-Science/project-1'
       })
     )
     expect(useProjectStore.getState().projects).toContainEqual(project)

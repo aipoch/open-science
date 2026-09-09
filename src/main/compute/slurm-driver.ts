@@ -25,7 +25,7 @@ export class SlurmDriverError extends Error {
   }
 }
 
-const jobName = (jobId: string): string => `openscience-${jobId}`
+const jobName = (jobId: string): string => `open-science-${jobId}`
 
 const normalizeState = (state: string): string =>
   state
@@ -279,7 +279,10 @@ export const recoverSlurmJob = async (
 ): Promise<SlurmRemoteHandle | undefined> => {
   const workdir = job.remote_workdir
   if (!workdir) return undefined
-  const name = jobName(job.job_id)
+  // Existing scheduler jobs cannot be renamed safely; use the name paired with their durable workdir.
+  const name = job.remote_workdir?.includes('/.openscience/jobs/')
+    ? `openscience-${job.job_id}`
+    : jobName(job.job_id)
   const receiptPath = quoteRemotePath(`${workdir}/scheduler_job_id`)
   const scriptPath = quoteRemotePath(`${workdir}/job.sbatch`)
   const quotedWorkdir = quoteRemotePath(workdir)

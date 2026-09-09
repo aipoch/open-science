@@ -251,11 +251,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   }> => {
     const dataRoot = resolveDataRoot()
     // Only an explicitly-configured-but-now-gone root counts as "missing"; a fresh install's unset
-    // dataRoot (default `~/OpenScience` not created yet) is normal and must never nag the user.
+    // dataRoot (default `~/Open-Science` not created yet) is normal and must never nag the user.
     let dataRootMissing = false
     // A pre-§20 legacy install still keeps its data in the hidden config root: settings.dataRoot is
     // unset (using the default), that default resolved to the config root itself, and real user data
-    // lives there. Offer the one-time "move to the visible OpenScience folder" prompt until answered.
+    // lives there. Offer the one-time "move to the visible Open-Science folder" prompt until answered.
     let legacyDataMovePrompt = false
     // Fail closed: only the same main-owned filesystem/settings snapshot that identifies an empty,
     // unconfigured root may authorize onboarding's pointer-only default-drive selection.
@@ -571,7 +571,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     return { token: marker.token, target, correlationId: randomUUID(), recovered: true }
   }
 
-  // Discards a completed-but-uncommitted copy at `<parent>/OpenScience` when the user picks "Keep
+  // Discards a completed-but-uncommitted copy at `<parent>/Open-Science` when the user picks "Keep
   // current location" on the done stage. Since the copy phase never touched settings.dataRoot or the
   // old root, this just removes the new copy and leaves the app on its current root. discardStagedCopy
   // refuses anything that isn't a marker-confirmed staging copy for the current root, so a misrouted
@@ -904,7 +904,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   // Settings + onboarding recovery: classify a candidate parent without committing to it, so the
   // caller can route to the right UI (migrate confirm for 'move', adopt confirm for 'adopt',
   // staged-copy resolution for 'recover', inline error for 'invalid') and display the derived
-  // `<parent>/OpenScience` path regardless of kind. Never throws.
+  // `<parent>/Open-Science` path regardless of kind. Never throws.
   const inspectDataRoot = async (request: StorageParentRequest): Promise<DataRootInspection> => {
     let dataRoot = ''
     try {

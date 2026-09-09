@@ -553,7 +553,7 @@ const InstalledSpecialistsPanel = ({
           </div>
           <h3 className="mt-4 text-lg font-semibold">{t('Template saved')}</h3>
           <p className="mt-2 text-sm text-muted-foreground">
-            {t('openscience-specialist-template.zip is ready for contributor editing.')}
+            {t('open-science-specialist-template.zip is ready for contributor editing.')}
           </p>
           <Button type="button" className="mt-5" onClick={() => setTemplateSaved(false)}>
             {t('Done')}

@@ -103,7 +103,7 @@ const useLiteratureMetadata = (
       controller.getSnapshot().generation === current.generation && requestRef.current === request
     setSaving(true)
     try {
-      const updated = await window.api.literature.get(current.item.id)
+      const updated = await controller.read(current.item.id)
       if (!updated) throw new Error('Literature Item is unavailable after updating.')
       onItemChange(updated)
       controller.replace(updated)
@@ -135,7 +135,7 @@ const useLiteratureMetadata = (
         item
       })
       persisted = true
-      const updated = await window.api.literature.get(current.id)
+      const updated = await controller.read(current.id)
       if (!updated) throw new Error('Literature Item is unavailable after updating.')
       onItemChange(updated)
       controller.replace(updated)
@@ -152,7 +152,7 @@ const useLiteratureMetadata = (
       if (!persisted) {
         // Read the conflicting version without rebasing the user's whole draft onto it.
         try {
-          const latest = await window.api.literature.get(current.id)
+          const latest = await controller.read(current.id)
           if (latest) {
             onItemChange(latest)
             controller.replace(latest)

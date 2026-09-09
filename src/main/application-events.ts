@@ -1,3 +1,4 @@
+import type { LiteratureChangedEvent } from '../shared/literature'
 import type {
   AcpAgentRuntimeUpdate,
   AcpPermissionRequest,
@@ -72,6 +73,7 @@ export type ApplicationEventMap = {
   'sessions:flush-request': SessionPersistenceFlushRequest
   'project-files:changed': ProjectFilesChangedEvent
   'permissions:changed': PermissionGrantsChangedEvent
+  'literature:changed': LiteratureChangedEvent
   'tags:changed': TagsChangedEvent
   'memory:changed': MemoryChangedEvent
   'connectors:approval-request': ConnectorApprovalRequest

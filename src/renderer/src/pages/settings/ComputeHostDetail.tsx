@@ -181,7 +181,6 @@ export function ComputeHostDetail({
   const [mergeBase, setMergeBase] = useState<string | undefined>()
   const [detailsSaving, setDetailsSaving] = useState(false)
   const [detailsError, setDetailsError] = useState<DetailError | undefined>(undefined)
-  const [isSkeleton, setIsSkeleton] = useState(false)
   const detailsLoadedRef = useRef(false)
 
   // Scratch root editor state
@@ -219,17 +218,16 @@ export function ComputeHostDetail({
     setNeedsExpand(scrollHeight > clientHeight + 10) // 10px threshold
   }, [detailsDoc, isEditingDetails])
 
-  // Load the details doc (with skeleton synthesis) when the host is first available.
+  // Load the persisted details doc when the host is first available.
   useEffect(() => {
     if (!host || detailsLoadedRef.current || isEditingDetails) return
     detailsLoadedRef.current = true
 
     window.api.compute
       .detailsGet(providerId)
-      .then(({ doc, isSkeleton: skelFlag }) => {
+      .then(({ doc }) => {
         setDetailsDoc(doc)
         setOriginalDoc(doc)
-        setIsSkeleton(skelFlag)
       })
       .catch(() => {
         // Fallback to the cached detailsDoc if IPC fails.
@@ -284,7 +282,7 @@ export function ComputeHostDetail({
       if (result.ok && authenticationRequest !== undefined) {
         setResolvedAuthenticationRequest(authenticationRequest)
       }
-      // After a probe, reset the details-loaded flag so skeleton is re-fetched.
+      // After a probe, reset the details-loaded flag so persisted details are re-fetched.
       detailsLoadedRef.current = false
     } catch (err) {
       setProbeError(failure(err, 'Probe failed unexpectedly.'))
@@ -307,13 +305,17 @@ export function ComputeHostDetail({
       setDetailsConflict(false)
       setMergeBase(undefined)
       setOriginalDoc(detailsDoc)
-      setIsSkeleton(false)
       setIsEditingDetails(false)
     } catch (err) {
-      setDetailsConflict(
-        /details_conflict|old_text/.test(err instanceof Error ? err.message : String(err))
+      const isConflict = /details_conflict|old_text/.test(
+        err instanceof Error ? err.message : String(err)
       )
-      setDetailsError(failure(err, 'Failed to save details.'))
+      setDetailsConflict(isConflict)
+      setDetailsError(
+        isConflict
+          ? { kind: 'key', key: 'Failed to save details.' }
+          : failure(err, 'Failed to save details.')
+      )
     } finally {
       setDetailsSaving(false)
     }
@@ -322,9 +324,8 @@ export function ComputeHostDetail({
   const reloadDetailsForMerge = async (): Promise<void> => {
     setDetailsSaving(true)
     try {
-      const { doc, isSkeleton: skeleton } = await window.api.compute.detailsGet(providerId)
-      setOriginalDoc(skeleton ? '' : doc)
-      setIsSkeleton(skeleton)
+      const { doc } = await window.api.compute.detailsGet(providerId)
+      setOriginalDoc(doc)
       setMergeBase(doc)
       setDetailsConflict(false)
       setDetailsError(undefined)
@@ -915,16 +916,10 @@ export function ComputeHostDetail({
                 ref={detailsRef}
                 className={cn(
                   'overflow-x-auto whitespace-pre-wrap px-4 py-3 font-mono text-xs text-foreground/80 transition-opacity duration-150 motion-reduce:transition-none',
-                  !isDetailsExpanded && 'max-h-[200px]',
-                  isSkeleton && 'opacity-70'
+                  !isDetailsExpanded && 'max-h-[200px]'
                 )}
               >
                 {detailsDoc}
-                {isSkeleton ? (
-                  <span className="ml-2 text-muted-foreground">
-                    {t('(auto-generated from probe)')}
-                  </span>
-                ) : null}
               </pre>
               {!isDetailsExpanded && needsExpand ? (
                 <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-muted/20 to-transparent" />

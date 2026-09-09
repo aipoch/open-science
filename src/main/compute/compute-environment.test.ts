@@ -27,7 +27,7 @@ describe('Compute environment resolution', () => {
     const command = applyComputeEnvironment('python analysis.py', 'rna.gpu-1')
 
     expect(command).toContain(
-      'OPEN_SCIENCE_ENV_FILE="$HOME/.openscience/environments/rna.gpu-1.sh"'
+      'OPEN_SCIENCE_ENV_FILE="$HOME/.open-science/environments/rna.gpu-1.sh"'
     )
     expect(command).toContain('. "$OPEN_SCIENCE_ENV_FILE"')
     expect(command.indexOf('. "$OPEN_SCIENCE_ENV_FILE"')).toBeLessThan(
@@ -66,11 +66,11 @@ describe('Compute environment resolution', () => {
         env: { ...process.env, HOME: home }
       })
 
-      expect(command).toContain('~/.openscience/environments/protein-gpu.sh')
+      expect(command).toContain('~/.open-science/environments/protein-gpu.sh')
       expect(command).toContain('compute-env-setup Skill')
       expect(command).toContain('exit 78')
       expect(result.status).toBe(78)
-      expect(result.stderr).toContain('~/.openscience/environments/protein-gpu.sh')
+      expect(result.stderr).toContain('~/.open-science/environments/protein-gpu.sh')
       expect(result.stderr).toContain('os-compute-env-setup')
     }
   )
@@ -170,6 +170,6 @@ describe('Compute environment resolution', () => {
 
   it.each(['python', 'cuda-12.4', 'rna_seq', 'R4'])('accepts environment name %j', (name) => {
     expect(() => validateComputeEnvironmentName(name)).not.toThrow()
-    expect(computeEnvironmentPath(name)).toBe(`~/.openscience/environments/${name}.sh`)
+    expect(computeEnvironmentPath(name)).toBe(`~/.open-science/environments/${name}.sh`)
   })
 })

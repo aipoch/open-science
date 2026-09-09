@@ -470,7 +470,7 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
     expect(result.status).toBe('submitted')
     expect(result.provider_id).toBe('ssh:biowulf')
     expect(result.job_id).toBeDefined()
-    expect(result.remote_workdir).toContain('.openscience/jobs/')
+    expect(result.remote_workdir).toContain('.open-science/jobs/')
     expect(createCalls).toHaveBeenCalledOnce()
   })
 
@@ -672,7 +672,7 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
         environment: 'protein-gpu',
         resources: '{"cpus":4}',
         timeout_seconds: 120,
-        remote_workdir: expect.stringContaining('/.openscience/jobs/')
+        remote_workdir: expect.stringContaining('/.open-science/jobs/')
       }),
       expect.objectContaining({ operation: 'submit_job' }),
       signal
@@ -859,7 +859,7 @@ describe('ComputeJobWorkflowOwner.getJobStatus', () => {
       output_manifest: undefined,
       harvest_config: undefined,
       timeout_seconds: 3600,
-      remote_workdir: '~/.openscience/jobs/job-42',
+      remote_workdir: '~/.open-science/jobs/job-42',
       remote_handle: undefined,
       exit_code: 0,
       stdout_tail: 'hi\n',
@@ -884,7 +884,7 @@ describe('ComputeJobWorkflowOwner.getJobStatus', () => {
     expect(status.result_final).toBe(false)
     expect(status.exit_code).toBe(0)
     expect(status.stdout_tail).toBe('hi\n')
-    expect(status.remote_workdir).toBe('~/.openscience/jobs/job-42')
+    expect(status.remote_workdir).toBe('~/.open-science/jobs/job-42')
     expect(status.harvest_error).toBe('harvest pending: authentication_failed')
 
     job.harvested_at = 3
@@ -1380,7 +1380,7 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     output_manifest: undefined,
     harvest_config: undefined,
     timeout_seconds: 3600,
-    remote_workdir: '~/.openscience/jobs/job-result-1',
+    remote_workdir: '~/.open-science/jobs/job-result-1',
     remote_handle: undefined,
     exit_code: 0,
     stdout_tail: 'hi\n',
@@ -1549,14 +1549,14 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
       harvested_at: Date.now(),
       harvest_error: 'scp failed: connection reset',
       left_on_remote: leftOnRemote,
-      remote_workdir: '~/.openscience/jobs/job-result-1'
+      remote_workdir: '~/.open-science/jobs/job-result-1'
     })
     const service = makeServiceWithStorageRoot(job, tmpDir)
     const result = await service.getJobResult('job-result-1')
 
     expect(result.status).toBe('success')
     expect(result.featured_files).toEqual([])
-    expect(result.remote_workdir).toBe('~/.openscience/jobs/job-result-1')
+    expect(result.remote_workdir).toBe('~/.open-science/jobs/job-result-1')
     expect(result.left_on_remote).toHaveLength(1)
     expect(result.left_on_remote[0].uri).toBe('ssh://biowulf/tmp/big.bin')
   })

@@ -497,7 +497,7 @@ describe('workspace conversation items', () => {
       activities: [
         createActivity({
           id: 'tool-web-1',
-          title: '"open science repositories"',
+          title: '"open-science repositories"',
           toolKind: 'search',
           sortIndex: 2
         })

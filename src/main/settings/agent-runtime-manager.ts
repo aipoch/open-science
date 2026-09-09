@@ -101,6 +101,7 @@ import {
 import { runEnvironmentCheck } from './environment-check'
 import { computePreflight } from './preflight'
 import { isEncryptionAvailable } from './crypto'
+import { getCredentialStore } from './credential-store-mode'
 import { augmentedPathEnv } from './shell-path'
 import { buildProviderEnv, type ResolvedProvider } from './provider-env'
 import { resolveSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
@@ -558,7 +559,8 @@ export class AgentRuntimeManager {
             runtime: codebuddyRuntime
           }
         ],
-        encryptionAvailable: isEncryptionAvailable()
+        encryptionAvailable: isEncryptionAvailable(),
+        credentialStore: getCredentialStore()
       })
       signal.throwIfAborted()
       return result

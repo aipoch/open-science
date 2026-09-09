@@ -195,7 +195,7 @@ describe('codebuddy framework', () => {
     const tools = config.args?.[config.args.indexOf('--tools') + 1]
     const settings = JSON.parse(config.configFiles?.[1]?.content ?? '{}')
 
-    expect(tools).toBe('Read,Write,Edit,Glob,Grep')
+    expect(tools).toBe('Read,Write,Edit')
     expect(config.args).toContain('Bash(curl:*)')
     expect(settings.sandbox.enabled).toBe(false)
   })

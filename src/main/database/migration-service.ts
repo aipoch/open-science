@@ -1,3 +1,4 @@
+import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import {
   literatureSearchTextMigration,
   backfillLiteratureSearchText
@@ -792,6 +793,17 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...literatureCollectionRevisionMigration,
+    checksum: checksumMigrationPayload(
+      literatureCollectionRevisionMigration.id,
+      literatureCollectionRevisionMigration.statements,
+      literatureCollectionRevisionMigration.verifiers,
+      literatureCollectionRevisionMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1213,6 +1225,7 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
   await runMigrationVerifiers(client, literaturePdfProvenanceMigration.verifiers)
   await runMigrationVerifiers(client, contentVerificationObservationMigration.verifiers)
   await runMigrationVerifiers(client, literatureMetadataCommitReceiptMigration.verifiers)
+  await runMigrationVerifiers(client, literatureCollectionRevisionMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {

@@ -1,7 +1,10 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { AgentComputeService } from '../compute/agent-compute-service'
+import { ComputeService } from '../compute/compute-service'
+import type { ComputeHostRepository } from '../compute/repository'
 import { ConnectorService } from '../connectors/service'
 import { NotebookLocalRpcServer } from './local-rpc-server'
+import type { ComputeHost } from '../../shared/compute'
 import type { SpecialistView } from '../../shared/specialist'
 
 const fakeConnector = {
@@ -658,7 +661,7 @@ describe('computeCall RPC', () => {
     const fakeCompute = {
       callCommand: async () => ({}),
       list: async () => fakeHosts,
-      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      getDetails: async () => ({ doc: '' }),
       appendDetails: async () => {},
       replaceDetails: async () => {}
     }
@@ -734,7 +737,7 @@ describe('computeCall RPC', () => {
       listHosts: async () => enabledCatalog,
       listRegistered: async () => enabledCatalog,
       listPreferred: async () => enabledCatalog.filter((host) => host.role === 'selected'),
-      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      getDetails: async () => ({ doc: '' }),
       appendDetails: async () => {},
       replaceDetails: async () => {}
     }
@@ -774,7 +777,7 @@ describe('computeCall RPC', () => {
       listHosts: async () => [],
       listRegistered: async () => [],
       listPreferred: async () => [],
-      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      getDetails: async () => ({ doc: '' }),
       appendDetails: async () => {},
       replaceDetails: async () => {}
     }
@@ -802,8 +805,7 @@ describe('computeCall RPC', () => {
       callCommand: async () => ({}),
       list: async () => [],
       getDetails: async (_sessionId: string, providerId: string) => ({
-        doc: `doc for ${providerId}`,
-        isSkeleton: false
+        doc: `doc for ${providerId}`
       }),
       appendDetails: async () => {},
       replaceDetails: async () => {}
@@ -823,11 +825,10 @@ describe('computeCall RPC', () => {
     })
     expect(res.status).toBe(200)
     const body = (await res.json()) as {
-      result: { doc: string; isSkeleton: boolean; probe: unknown }
+      result: { doc: string; probe: unknown }
     }
     expect(body.result).toEqual({
       doc: 'doc for ssh:biowulf',
-      isSkeleton: false,
       probe: null
     })
   })
@@ -838,7 +839,6 @@ describe('computeCall RPC', () => {
       list: async () => [],
       getDetails: async () => ({
         doc: 'Use the gpu queue.',
-        isSkeleton: false,
         probeResult: {
           ok: true,
           probedAt: '2026-08-20T00:00:00.000Z',
@@ -871,7 +871,6 @@ describe('computeCall RPC', () => {
     await expect(response.json()).resolves.toEqual({
       result: {
         doc: 'Use the gpu queue.',
-        isSkeleton: false,
         probe: {
           ok: true,
           probed_at: '2026-08-20T00:00:00.000Z',
@@ -886,12 +885,149 @@ describe('computeCall RPC', () => {
     })
   })
 
+  it('round-trips agent instructions independently from changing probe observations', async () => {
+    const host: ComputeHost = {
+      id: 'host-1',
+      providerId: 'ssh:gpu',
+      displayName: 'GPU cluster',
+      shape: 'scheduler_cluster',
+      executionMode: 'direct_ssh',
+      sshAlias: 'gpu',
+      sshOverrides: undefined,
+      scratchRoot: undefined,
+      scratchPinned: false,
+      concurrencyLimit: undefined,
+      probeResult: {
+        ok: true,
+        probedAt: '2026-09-08T00:00:00.000Z',
+        exitCode: 0,
+        errorTail: null,
+        cpus: 128,
+        detectedScheduler: 'slurm'
+      },
+      detailsDoc: '',
+      detailsUpdatedAt: undefined,
+      detailsUpdatedBy: undefined,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const repository = {
+      get: async (providerId: string) => (providerId === host.providerId ? host : null),
+      list: async () => [host],
+      updateDetails: async (
+        providerId: string,
+        text: string,
+        author: 'user' | 'agent',
+        hostId: string,
+        oldText: string
+      ) => {
+        if (providerId !== host.providerId || hostId !== host.id || oldText !== host.detailsDoc) {
+          return false
+        }
+        host.detailsDoc = text
+        host.detailsUpdatedBy = author
+        return true
+      }
+    } as unknown as ComputeHostRepository
+    const compute = new ComputeService({ runner: {} as never, repository })
+    const agentCompute = new AgentComputeService(compute, {
+      getEnabled: () => [host.providerId],
+      getSelected: () => [host.providerId]
+    })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: agentCompute
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const details = async (
+      params: Record<string, unknown>
+    ): Promise<{ response: Response; body: Record<string, unknown> }> => {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          method: 'computeCall',
+          params: { op: 'details', provider_id: host.providerId, ...params }
+        })
+      })
+      return { response, body: (await response.json()) as Record<string, unknown> }
+    }
+
+    const initial = await details({ mode: 'read' })
+    expect(initial.body).toEqual({
+      result: {
+        doc: '',
+        probe: {
+          ok: true,
+          probed_at: '2026-09-08T00:00:00.000Z',
+          exit_code: 0,
+          error_tail: null,
+          cpus: 128,
+          detected_scheduler: 'slurm'
+        }
+      }
+    })
+    const initialDoc = (initial.body.result as { doc: string }).doc
+
+    const policy = 'Always use direct SSH. Do not submit Slurm jobs without explicit user approval.'
+    const replaced = await details({ mode: 'replace', text: policy, old_text: initialDoc })
+    expect(replaced.response.status).toBe(200)
+    expect(replaced.body).toEqual({ result: { ok: true } })
+    expect((await details({ mode: 'read' })).body).toMatchObject({ result: { doc: policy } })
+
+    const note = 'Default to the standard partition.'
+    const appendedWrite = await details({ mode: 'append', text: note })
+    expect(appendedWrite.response.status).toBe(200)
+    expect(appendedWrite.body).toEqual({ result: { ok: true } })
+    const appended = await details({ mode: 'read' })
+    expect(appended.body).toMatchObject({ result: { doc: `${policy}\n${note}` } })
+    const appendedDoc = (appended.body.result as { doc: string }).doc
+
+    host.probeResult = {
+      ...host.probeResult!,
+      probedAt: '2026-09-08T01:00:00.000Z',
+      cpus: 256
+    }
+    const reprobed = await details({ mode: 'read' })
+    expect(reprobed.body).toMatchObject({
+      result: {
+        doc: `${policy}\n${note}`,
+        probe: { probed_at: '2026-09-08T01:00:00.000Z', cpus: 256 }
+      }
+    })
+
+    const revisedPolicy = `${appendedDoc}\nA detected scheduler is only an observation.`
+    expect(
+      (
+        await details({
+          mode: 'replace',
+          text: revisedPolicy,
+          old_text: appendedDoc
+        })
+      ).response.status
+    ).toBe(200)
+    expect((await details({ mode: 'read' })).body).toMatchObject({
+      result: { doc: revisedPolicy, probe: { detected_scheduler: 'slurm' } }
+    })
+
+    const stale = await details({
+      mode: 'replace',
+      text: 'stale overwrite',
+      old_text: appendedDoc
+    })
+    expect(stale.response.status).toBe(500)
+    expect(stale.body.error).toMatch(/old_text|details_conflict/i)
+    expect((await details({ mode: 'read' })).body).toMatchObject({
+      result: { doc: revisedPolicy }
+    })
+  })
+
   it('routes computeCall op=details mode=append to appendDetails with author=agent', async () => {
     let capturedArgs: unknown
     const fakeCompute = {
       callCommand: async () => ({}),
       list: async () => [],
-      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      getDetails: async () => ({ doc: '' }),
       appendDetails: async (_sessionId: string, providerId: string, args: unknown) => {
         capturedArgs = { providerId, ...((args ?? {}) as object) }
       },
@@ -923,7 +1059,7 @@ describe('computeCall RPC', () => {
     const fakeCompute = {
       callCommand: async () => ({}),
       list: async () => [],
-      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      getDetails: async () => ({ doc: '' }),
       appendDetails: async () => {},
       replaceDetails: async (_sessionId: string, providerId: string, args: unknown) => {
         capturedArgs = { providerId, ...((args ?? {}) as object) }
@@ -961,7 +1097,7 @@ describe('computeCall RPC', () => {
     const fakeCompute = {
       callCommand: async () => ({}),
       list: async () => [],
-      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      getDetails: async () => ({ doc: '' }),
       appendDetails: async () => {},
       replaceDetails: async () => {}
     }
@@ -1416,7 +1552,7 @@ describe('computeCall RPC', () => {
     const fakeCompute = {
       callCommand: async () => ({}),
       list: async () => [],
-      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      getDetails: async () => ({ doc: '' }),
       appendDetails: async () => {},
       replaceDetails: async () => {},
       submitJob: async () => ({}),
@@ -1454,7 +1590,7 @@ describe('computeCall RPC', () => {
     const fakeCompute = {
       callCommand: async () => ({}),
       list: async () => [],
-      getDetails: async () => ({ doc: '', isSkeleton: false }),
+      getDetails: async () => ({ doc: '' }),
       appendDetails: async () => {},
       replaceDetails: async () => {},
       submitJob: async () => ({}),

@@ -16863,7 +16863,9 @@ describe('ACP runtime session management', () => {
                 'SendMessage',
                 'TeamCreate',
                 'TeamDelete',
-                'Bash'
+                'Bash',
+                'Glob',
+                'Grep'
               ],
               managedSettings: {
                 disableAgentView: true,

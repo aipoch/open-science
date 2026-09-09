@@ -118,12 +118,12 @@ describe('LocationStep', () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' })
     await renderStep()
     await clickButton(/browse/i)
 
     expect(window.api.storage.inspectDataRoot).toHaveBeenCalledWith('/mnt/data')
-    expect(container.textContent).toContain('/mnt/data/OpenScience')
+    expect(container.textContent).toContain('/mnt/data/Open-Science')
     expect(container.textContent).toContain('Open-Science will restart to set this up')
   })
 
@@ -131,11 +131,11 @@ describe('LocationStep', () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/existing')
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'adopt', dataRoot: '/mnt/existing/OpenScience' })
+      .mockResolvedValue({ kind: 'adopt', dataRoot: '/mnt/existing/Open-Science' })
     await renderStep()
     await clickButton(/browse/i)
 
-    expect(container.textContent).toContain('/mnt/existing/OpenScience')
+    expect(container.textContent).toContain('/mnt/existing/Open-Science')
     expect(container.textContent).toContain('already contains Open-Science data')
     expect(container.textContent).toContain('used as-is')
   })
@@ -144,14 +144,14 @@ describe('LocationStep', () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/bad')
     window.api.storage.inspectDataRoot = vi.fn().mockResolvedValue({
       kind: 'invalid',
-      dataRoot: '/mnt/bad/OpenScience',
+      dataRoot: '/mnt/bad/Open-Science',
       error: 'The selected folder is not writable.'
     })
     await renderStep()
     await clickButton(/browse/i)
 
     expect(container.textContent).toContain('The selected folder is not writable.')
-    expect(container.textContent).not.toContain('/mnt/bad/OpenScience')
+    expect(container.textContent).not.toContain('/mnt/bad/Open-Science')
   })
 
   it('Browse cancelled (null) leaves the default location untouched', async () => {
@@ -213,17 +213,17 @@ describe('LocationStep', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
       'Directory inspection failed.'
     )
-    expect(container.textContent).not.toContain('/mnt/data/OpenScience')
+    expect(container.textContent).not.toContain('/mnt/data/Open-Science')
   })
 
   it('"Use default location" clears a previously chosen path', async () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' })
     await renderStep()
     await clickButton(/browse/i)
-    expect(container.textContent).toContain('/mnt/data/OpenScience')
+    expect(container.textContent).toContain('/mnt/data/Open-Science')
 
     await clickButton(/use default location/i)
 
@@ -243,7 +243,7 @@ describe('LocationStep', () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' })
     await renderStep()
     await clickButton(/browse/i)
     await clickButton(/continue/i)
@@ -274,7 +274,7 @@ describe('LocationStep', () => {
       )
     ).toBe(true)
     expect(dialog?.querySelector<HTMLButtonElement>('button[aria-label="Close"]')).not.toBeNull()
-    expect(document.body.textContent).toContain('/mnt/data/OpenScience')
+    expect(document.body.textContent).toContain('/mnt/data/Open-Science')
     // The dialog gates the relaunch; nothing has happened yet.
     expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
   })
@@ -283,7 +283,7 @@ describe('LocationStep', () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' })
     window.api.storage.setDataRootAndRelaunch = vi.fn().mockResolvedValue({ ok: true })
     const { setIsRelaunching } = await renderStep()
     await clickButton(/browse/i)
@@ -301,7 +301,7 @@ describe('LocationStep', () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' })
     window.api.storage.setDataRootAndRelaunch = vi
       .fn()
       .mockReturnValue(new Promise(() => undefined))
@@ -323,7 +323,7 @@ describe('LocationStep', () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' })
     window.api.storage.setDataRootAndRelaunch = vi
       .fn()
       .mockResolvedValue({ ok: false, error: 'Disk is full.' })
@@ -342,7 +342,7 @@ describe('LocationStep', () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' })
     window.api.storage.setDataRootAndRelaunch = vi
       .fn()
       .mockRejectedValue(new Error('Relaunch IPC failed.'))
@@ -360,7 +360,7 @@ describe('LocationStep', () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' })
     const { onContinue } = await renderStep()
     await clickButton(/browse/i)
     await clickButton(/continue/i)
@@ -374,7 +374,7 @@ describe('LocationStep', () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' })
     const { onContinue } = await renderStep()
     await clickButton(/browse/i)
     await clickButton(/continue/i)
@@ -387,14 +387,14 @@ describe('LocationStep', () => {
 
     expect(onContinue).not.toHaveBeenCalled()
     expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
-    expect(container.textContent).toContain('/mnt/data/OpenScience')
+    expect(container.textContent).toContain('/mnt/data/Open-Science')
   })
 
   it('pressing Escape keeps the chosen path without advancing', async () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' })
     const { onContinue } = await renderStep()
     await clickButton(/browse/i)
     await clickButton(/continue/i)
@@ -406,6 +406,6 @@ describe('LocationStep', () => {
 
     expect(onContinue).not.toHaveBeenCalled()
     expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
-    expect(container.textContent).toContain('/mnt/data/OpenScience')
+    expect(container.textContent).toContain('/mnt/data/Open-Science')
   })
 })

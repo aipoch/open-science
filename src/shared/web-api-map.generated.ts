@@ -366,6 +366,7 @@ export const WEB_EVENT_CHANNELS = {
   'compute.onApprovalRequest': 'compute:approval-request',
   'compute.onApprovalSettled': 'compute:approval-settled',
   'compute.onJobUpdated': 'compute:job-updated',
+  'literature.onChanged': 'literature:changed',
   'memory.onChanged': 'memory:changed',
   'notebook.onAvailable': 'notebook:available',
   'notebook.onChanged': 'notebook:changed',

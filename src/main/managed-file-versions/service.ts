@@ -2073,7 +2073,8 @@ class ManagedFileVersionService {
     tx: Prisma.TransactionClient,
     logicalFile: ManagedLogicalFile,
     version: ManagedFileVersionRecord,
-    timestamp: Date
+    timestamp: Date,
+    messageId: string | null = null
   ): Promise<void> {
     await tx.managedFile.upsert({
       where: {
@@ -2107,7 +2108,7 @@ class ManagedFileVersionService {
         sizeBytes: version.sizeBytes,
         mtimeMs: BigInt(timestamp.getTime()),
         sortAtMs: BigInt(timestamp.getTime()),
-        messageId: null,
+        messageId,
         deletedAt: null,
         deleteOperationId: null
       }
@@ -2473,7 +2474,7 @@ class ManagedFileVersionService {
                 sourceFileId: file.id
               }
             },
-            select: { deletedAt: true }
+            select: { deletedAt: true, sourceVersionId: true, sessionId: true, messageId: true }
           })
           // Runtime recovery repairs an already-visible Files tile. It must not create one for an Agent
           // head whose compatibility bytes or durable Message graph have not become visible yet.
@@ -2494,7 +2495,10 @@ class ManagedFileVersionService {
               originalFilename: null,
               createdAt: version.createdAt
             },
-            version.createdAt
+            version.createdAt,
+            existing.sourceVersionId === version.id && existing.sessionId === file.sessionId
+              ? existing.messageId
+              : null
           )
         })
       }
@@ -2526,7 +2530,7 @@ class ManagedFileVersionService {
                 sourceFileId: file.id
               }
             },
-            select: { deletedAt: true }
+            select: { deletedAt: true, sourceVersionId: true, sessionId: true, messageId: true }
           })
           if (!existing || existing.deletedAt) return
           const createdAt = version.createdAt ?? version.registeredAt
@@ -2541,7 +2545,10 @@ class ManagedFileVersionService {
               currentVersionId: version.id
             },
             { ...version, fileId: version.uploadFileId, createdAt },
-            createdAt
+            createdAt,
+            existing.sourceVersionId === version.id && existing.sessionId === file.sessionId
+              ? existing.messageId
+              : null
           )
         })
       }

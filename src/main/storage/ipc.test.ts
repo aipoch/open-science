@@ -9,7 +9,7 @@ import { DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
 import { STAGING_UPLOAD_SESSION_ID, UPLOADS_DIR } from '../uploads/storage-helpers'
 
 // Capture ipcMain.handle registrations; stub dialog/BrowserWindow/app so handlers can be invoked
-// directly without a real Electron runtime. isPackaged: true means dataFolderName() === 'OpenScience'.
+// directly without a real Electron runtime. isPackaged: true means dataFolderName() === 'Open-Science'.
 const handlers = new Map<string, (event: unknown, payload?: unknown) => unknown>()
 const showOpenDialog = vi.fn()
 const sentWindows: {
@@ -151,7 +151,7 @@ const diagnosticRecords = (logger: Logger): Record<string, unknown>[] =>
   )
 
 // Data folder name mirrors dataFolderName() for a packaged build (see the electron mock above).
-const dataRootFor = (parent: string): string => join(parent, 'OpenScience')
+const dataRootFor = (parent: string): string => join(parent, 'Open-Science')
 
 let currentParent: string
 let dataRoot: string
@@ -383,9 +383,9 @@ describe('storage IPC handlers', () => {
     const status = await invoke('storage:get-status')
 
     expect(status).toEqual({
-      dataRoot: join('/home/user', 'OpenScience'),
+      dataRoot: join('/home/user', 'Open-Science'),
       isDefault: true,
-      defaultDataRoot: join('/home/user', 'OpenScience'),
+      defaultDataRoot: join('/home/user', 'Open-Science'),
       defaultParent: '/home/user',
       dataRootMissing: false,
       legacyDataMovePrompt: false,
@@ -427,9 +427,9 @@ describe('storage IPC handlers', () => {
     }
 
     expect(info.isDefault).toBe(true)
-    // The default root is `<home>/OpenScience` (home mocked to /home/user), reproducible from home.
+    // The default root is `<home>/Open-Science` (home mocked to /home/user), reproducible from home.
     // Derive with join so the assertion holds on Windows (backslashes), not just POSIX.
-    expect(info.defaultDataRoot).toBe(join('/home/user', 'OpenScience'))
+    expect(info.defaultDataRoot).toBe(join('/home/user', 'Open-Science'))
     expect(info.defaultParent).toBe('/home/user')
     expect(info.canAutoSelectDataDrive).toBe(true)
   })
@@ -441,7 +441,7 @@ describe('storage IPC handlers', () => {
       await mkdir(
         join(
           home,
-          'OpenScience',
+          'Open-Science',
           UPLOADS_DIR,
           DEFAULT_UPLOAD_PROJECT_ID,
           STAGING_UPLOAD_SESSION_ID
@@ -467,7 +467,7 @@ describe('storage IPC handlers', () => {
     try {
       const staging = join(
         home,
-        'OpenScience',
+        'Open-Science',
         UPLOADS_DIR,
         DEFAULT_UPLOAD_PROJECT_ID,
         STAGING_UPLOAD_SESSION_ID
@@ -511,7 +511,7 @@ describe('storage IPC handlers', () => {
     const home = await mkdtemp(join(tmpdir(), 'ds-runtime-home-'))
     electronHome.path = home
     try {
-      await mkdir(join(home, 'OpenScience', 'runtime'), { recursive: true })
+      await mkdir(join(home, 'Open-Science', 'runtime'), { recursive: true })
       initDataRoot(undefined)
       registerStorageIpcHandlers(fakeDeps())
 
@@ -529,7 +529,7 @@ describe('storage IPC handlers', () => {
     const home = await mkdtemp(join(tmpdir(), 'ds-legacy-home-'))
     electronHome.path = home
     try {
-      // Legacy layout: user data sits directly in the hidden config root, no OpenScience folder yet.
+      // Legacy layout: user data sits directly in the hidden config root, no Open-Science folder yet.
       await mkdir(join(home, '.open-science', 'artifacts'), { recursive: true })
       initDataRoot(undefined) // unconfigured -> resolves to the legacy config root
       registerStorageIpcHandlers(fakeDeps()) // getStoredSettings -> {} (unset, never dismissed)
@@ -663,8 +663,8 @@ describe('storage IPC handlers', () => {
     expect(info.dataRoot).toBe(dataRoot)
     expect(info.isDefault).toBe(false)
     // Even from a custom root, the default and its parent are reported so Settings can offer a
-    // one-click return to `<home>/OpenScience` and show the destination.
-    expect(info.defaultDataRoot).toBe(join('/home/user', 'OpenScience'))
+    // one-click return to `<home>/Open-Science` and show the destination.
+    expect(info.defaultDataRoot).toBe(join('/home/user', 'Open-Science'))
     expect(info.defaultParent).toBe('/home/user')
     expect(info.usage.totalBytes).toBe(0)
     expect(info.availableBytes).toBeGreaterThan(0)
@@ -2058,7 +2058,7 @@ describe('storage IPC handlers', () => {
     expect(existsSync(target)).toBe(true)
   })
 
-  it("validate-data-root returns validateNewDataRoot's ok result for a parent with no OpenScience subdir", async () => {
+  it("validate-data-root returns validateNewDataRoot's ok result for a parent with no Open-Science subdir", async () => {
     initDataRoot(dataRoot)
     registerStorageIpcHandlers(fakeDeps())
 
@@ -2077,7 +2077,7 @@ describe('storage IPC handlers', () => {
     })
   })
 
-  it('inspect-data-root returns move and the derived dataRoot for a parent with no OpenScience subdir', async () => {
+  it('inspect-data-root returns move and the derived dataRoot for a parent with no Open-Science subdir', async () => {
     initDataRoot(dataRoot)
     registerStorageIpcHandlers(fakeDeps())
 
@@ -2200,7 +2200,7 @@ describe('storage IPC handlers', () => {
 
   it('set-data-root-and-relaunch creates the derived target directory for a fresh empty folder', async () => {
     // Regression: onboarding to a brand-new empty folder persisted settings.dataRoot but never
-    // created `<parent>/OpenScience`, so the next launch's startup guard read the configured-but-
+    // created `<parent>/Open-Science`, so the next launch's startup guard read the configured-but-
     // absent root as deleted and wrongly showed "Data folder not found". The handler must mkdir the
     // target so the recorded root actually exists on disk.
     initDataRoot(dataRoot)

@@ -93,7 +93,7 @@ const SessionCatalogRecoveryAlert = ({
               ? t('Conversation storage limit reached')
               : t('Project archive needs attention')
           }
-          message={
+          message={`${
             isOversized
               ? t(
                   'One or more saved conversations exceed the 256 MiB storage limit. They were left unchanged and cannot be opened. Review the affected files before retrying.'
@@ -106,9 +106,11 @@ const SessionCatalogRecoveryAlert = ({
                       'A damaged saved conversation was moved aside. Project archive stays unavailable because its state cannot be verified. You can still permanently delete the project.'
                   }
                 )
-          }
+          } ${t('New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.')}`}
           variant="warning"
           inline={inline}
+          onRetry={onRetry}
+          retryLabel={t('Recheck saved conversations')}
           onAction={() => setAreRecoveryDetailsOpen(true)}
           actionLabel={t('View affected conversations')}
           onDismiss={onDismiss}

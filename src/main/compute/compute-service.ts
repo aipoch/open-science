@@ -284,8 +284,8 @@ export class ComputeService {
     this.jobWorkflow.handleJobUpdated(job)
   }
 
-  startQueueReconciliation = async (): Promise<void> => {
-    await this.concurrencyManager?.startQueueReconciliation()
+  startQueueReconciliation = async (options?: { retryFailedOnly?: boolean }): Promise<void> => {
+    await this.concurrencyManager?.startQueueReconciliation(options)
   }
 
   stopQueueReconciliation = async (): Promise<void> => {

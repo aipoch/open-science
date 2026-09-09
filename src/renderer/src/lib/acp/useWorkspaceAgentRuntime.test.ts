@@ -6395,7 +6395,7 @@ describe('workspace agent message sending', () => {
       state: { ...createSnapshot(), cwd: 'C:\\Users\\example' },
       createSession: vi.fn().mockResolvedValue({
         sessionId: 'transport-session-1',
-        cwd: 'E:\\OpenScience\\workspaces\\workspace-1'
+        cwd: 'E:\\Open-Science\\workspaces\\workspace-1'
       }),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),

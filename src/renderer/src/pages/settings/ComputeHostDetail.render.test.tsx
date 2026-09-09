@@ -53,10 +53,10 @@ const passwordHost = (): ComputeHost =>
   })
 
 // Stub window.api.compute.detailsGet so the component does not hit real IPC.
-const stubDetailsGet = (doc: string, isSkeleton = false): void => {
+const stubDetailsGet = (doc: string): void => {
   ;(window as unknown as { api: { compute: Record<string, unknown> } }).api = {
     compute: {
-      detailsGet: vi.fn().mockResolvedValue({ doc, isSkeleton }),
+      detailsGet: vi.fn().mockResolvedValue({ doc }),
       deletionStatus: vi.fn().mockResolvedValue({ blockedByJobs: false }),
       passwordCapability: vi.fn().mockResolvedValue({ available: true })
     }
@@ -1210,6 +1210,83 @@ describe('ComputeHostDetail', () => {
     expect(saveDetails).toHaveBeenCalled()
   })
 
+  it('keeps probed resources separate from persisted details through save and probe', async () => {
+    const saveDetails = vi.fn().mockResolvedValue(undefined)
+    const probedHost = host({
+      detailsDoc: '',
+      probeResult: {
+        ok: true,
+        probedAt: '2026-09-08T08:00:00.000Z',
+        exitCode: 0,
+        errorTail: null,
+        cpus: 16,
+        memMib: 32768,
+        detectedScheduler: 'slurm'
+      }
+    })
+    const probeHost = vi.fn().mockResolvedValue(probedHost.probeResult)
+    useComputeStore.setState({
+      hosts: [probedHost],
+      isLoaded: true,
+      saveDetails,
+      probeHost
+    })
+    stubDetailsGet('')
+
+    await act(async () => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+    expect(container.textContent).toContain('Login host resources')
+    expect(container.textContent).toContain('16 CPUs')
+    expect(container.textContent).toContain('No notes yet.')
+    expect(container.textContent).not.toContain('auto-generated')
+
+    const detailsSection = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')
+    ).find((section) => section.querySelector('h3')?.textContent === 'Details')!
+    const click = async (label: string): Promise<void> => {
+      await act(async () =>
+        Array.from(detailsSection.querySelectorAll('button'))
+          .find((button) => button.textContent?.trim() === label)!
+          .click()
+      )
+    }
+
+    await click('Edit')
+    const textarea = detailsSection.querySelector('textarea')!
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+        textarea,
+        'saved host details'
+      )
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await click('Save')
+
+    expect(saveDetails).toHaveBeenCalledWith('ssh:biowulf', 'saved host details', '')
+    expect(detailsSection.querySelector('textarea')).toBeNull()
+    expect(detailsSection.textContent).toContain('saved host details')
+
+    vi.mocked(window.api.compute.detailsGet).mockResolvedValue({ doc: 'saved host details' })
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent?.trim() === 'Probe')!
+        .click()
+      await Promise.resolve()
+      useComputeStore.setState({
+        hosts: [
+          {
+            ...probedHost,
+            probeResult: { ...probedHost.probeResult!, probedAt: '2026-09-08T09:00:00.000Z' }
+          }
+        ]
+      })
+    })
+
+    expect(probeHost).toHaveBeenCalledWith('ssh:biowulf')
+    expect(window.api.compute.detailsGet).toHaveBeenCalledTimes(2)
+    expect(detailsSection.textContent).toContain('saved host details')
+    expect(container.textContent).toContain('Login host resources')
+  })
+
   it('opens and focuses the saved-password reset editor from credential recovery', async () => {
     const scrollIntoView = vi.fn()
     HTMLElement.prototype.scrollIntoView = scrollIntoView
@@ -1378,6 +1455,10 @@ it('keeps the draft and reloads a merge base after a details conflict', async ()
   })
   await click('Save')
   expect(draft.value).toBe('my draft')
+  expect(section.textContent).toContain(
+    'Your draft is preserved. Reload the current details, then merge them into your draft before saving.'
+  )
+  expect(section.textContent).not.toContain('old_text')
   stubDetailsGet('other writer')
   expect(
     Array.from(section.querySelectorAll('button')).some(
@@ -1389,6 +1470,8 @@ it('keeps the draft and reloads a merge base after a details conflict', async ()
   expect(section.textContent).toContain('other writer')
   await click('Save')
   expect(saveDetails).toHaveBeenLastCalledWith('ssh:biowulf', 'my draft', 'other writer')
+  expect(section.querySelector('textarea')).toBeNull()
+  expect(section.textContent).toContain('my draft')
 })
 
 // Exercise live app-language changes while Intl retains the host's default locale.

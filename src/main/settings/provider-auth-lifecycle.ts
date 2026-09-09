@@ -32,7 +32,7 @@ import {
   type ClaudeSharedAuthControllerPort,
   type ClaudeSharedAuthStatus
 } from './claude-shared-auth'
-import { encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey } from './crypto'
+import { encryptKey, isCredentialStorageAvailable, maskKey, tryDecryptKey } from './crypto'
 import { getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
 import {
   buildProviderValidationPatch,
@@ -109,7 +109,7 @@ class ProviderAuthLifecycleOwner {
           loadToken: () => this.loadClaudeIsolatedToken(),
           saveToken: (token) => this.saveClaudeIsolatedToken(token),
           clearToken: () => this.clearClaudeIsolatedToken(),
-          isEncryptionAvailable: () => isEncryptionAvailable()
+          isEncryptionAvailable: () => isCredentialStorageAvailable()
         },
         claudePath: async () => {
           const settings = await this.repository.getSettings()

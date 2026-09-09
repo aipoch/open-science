@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, createRef } from 'react'
+import { act, createRef, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -23,6 +23,7 @@ import {
 
 const provenancePanelSpy = vi.hoisted(() => vi.fn())
 const previewContentSpy = vi.hoisted(() => vi.fn())
+const pdfPageReport = vi.hoisted(() => ({ enabled: true }))
 const diffContentSpy = vi.hoisted(() => vi.fn())
 const downloadButtonSpy = vi.hoisted(() => vi.fn())
 
@@ -66,6 +67,12 @@ vi.mock('./previews/PreviewFileContent', () => ({
     onPdfReadingPositionChange?: (position: { pageNumber: number; pageCount: number }) => void
   }) => {
     previewContentSpy(props)
+    const { onPdfReadingPositionChange } = props
+    useEffect(() => {
+      if (pdfPageReport.enabled) {
+        onPdfReadingPositionChange?.({ pageNumber: 1, pageCount: 2 })
+      }
+    }, [onPdfReadingPositionChange])
     return (
       <div data-testid="preview-content" data-path={props.item.path}>
         Preview content
@@ -248,6 +255,7 @@ const selectPdfContextSession = (
 }
 
 beforeEach(() => {
+  pdfPageReport.enabled = true
   previewLeaveGuards.clear()
   provenancePanelSpy.mockClear()
   previewContentSpy.mockClear()
@@ -3344,6 +3352,119 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     })
     await act(async () => Promise.resolve())
     expect(document.body.querySelector('[data-testid="pdf-preview-context-menu"]')).toBeNull()
+  })
+
+  it.each([false, true])(
+    'hides the single-page PDF header entry (Library: %s)',
+    async (library) => {
+      pdfPageReport.enabled = false
+      selectPdfContextSession()
+      installPdfContextApi()
+      const render = async (item: PreviewFileItem): Promise<void> => {
+        await act(async () => {
+          root.render(
+            <PreviewFileSurface
+              item={item}
+              onReadWithAgent={library ? vi.fn() : undefined}
+              onClose={vi.fn()}
+            />
+          )
+        })
+      }
+      const reportPages = (pageCount: number): void => {
+        const props = previewContentSpy.mock.calls.at(-1)?.[0]
+        expect(props.onPdfReadingPositionChange).toBeTypeOf('function')
+        act(() => props.onPdfReadingPositionChange({ pageNumber: 1, pageCount }))
+      }
+      const headerAction = (): Element | null =>
+        container.querySelector('[data-testid="pdf-context-action"]')
+
+      await render(pdfItem)
+      expect(headerAction()).toBeNull()
+      reportPages(1)
+      expect(headerAction()).toBeNull()
+      expect(usePreviewWorkbenchStore.getState().pdfReadingPositionByBindingId).toEqual({})
+
+      await render({ ...pdfItem, selectedVersionId: 'another-version' })
+      expect(headerAction()).toBeNull()
+      reportPages(2)
+      expect(headerAction()?.textContent).toContain('Read with agent')
+
+      await render({ ...pdfItem, id: 'another-pdf', path: 'another.pdf' })
+      expect(headerAction()).toBeNull()
+      reportPages(1)
+      expect(headerAction()).toBeNull()
+    }
+  )
+
+  it.each([undefined, 1, 2])(
+    'gates the PDF content-menu reading entry for %s pages',
+    async (pageCount) => {
+      pdfPageReport.enabled = false
+      selectPdfContextSession()
+      installPdfContextApi()
+      await act(async () => {
+        root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+      })
+      if (pageCount !== undefined) {
+        act(() => {
+          previewContentSpy.mock.calls.at(-1)?.[0].onPdfReadingPositionChange({
+            pageNumber: 1,
+            pageCount
+          })
+        })
+      }
+      act(() => {
+        container
+          .querySelector('[data-testid="preview-file-content-surface"]')
+          ?.dispatchEvent(
+            new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 120 })
+          )
+      })
+      await act(async () => Promise.resolve())
+      const menu = document.body.querySelector('[data-testid="preview-content-context-menu"]')
+      expect(menu).not.toBeNull()
+      expect(menu?.textContent?.includes('Read with agent')).toBe(pageCount === 2)
+      expect(menu?.textContent).toContain('Download')
+    }
+  )
+
+  it('keeps the content-menu removal action for a linked single-page PDF', async () => {
+    selectPdfContextSession(linkedPdfContext)
+    const { unlinkPdfContext } = installPdfContextApi()
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+    })
+    act(() => {
+      previewContentSpy.mock.calls
+        .at(-1)?.[0]
+        .onPdfReadingPositionChange({ pageNumber: 1, pageCount: 1 })
+      container
+        .querySelector('[data-testid="preview-file-content-surface"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 120 }))
+    })
+    await act(async () => Promise.resolve())
+    await clickMenuItem('Remove PDF from context')
+    expect(unlinkPdfContext).toHaveBeenCalledWith(
+      expect.objectContaining({ bindingId: 'binding-1' })
+    )
+  })
+
+  it('retains the removal control for an already linked single-page PDF', async () => {
+    selectPdfContextSession(linkedPdfContext)
+    const { unlinkPdfContext } = installPdfContextApi()
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+    })
+    act(() => {
+      previewContentSpy.mock.calls.at(-1)?.[0].onPdfReadingPositionChange({
+        pageNumber: 1,
+        pageCount: 1
+      })
+    })
+    await openMenu(container.querySelector('[data-testid="pdf-context-status"]'))
+    await clickMenuItem('Remove PDF from context')
+    expect(unlinkPdfContext).toHaveBeenCalled()
   })
 
   it('lets a Library preview supply its own Read with agent action without linking a Session', async () => {

@@ -78,7 +78,7 @@ describe('electron-builder Windows targets', () => {
     expect(cleanup).toContain('Get-WorkingCacheLeaf')
     expect(cleanup).toContain('$workingLeaf = Get-WorkingCacheLeaf $canonicalRoot $userIdentity')
     expect(cleanup).toContain('foreach ($configuredTemp in @($env:TEMP, $env:TMP))')
-    expect(cleanup).toContain("(Join-Path $configuredTemp 'OpenScienceTmp')")
+    expect(cleanup).toContain("(Join-Path $configuredTemp 'Open-ScienceTmp')")
     expect(cleanup).toContain("(Join-Path $env:USERPROFILE 'os-tmp')")
     expect(cleanup).toContain('Test-TrustedManagedParent')
     expect(cleanup).toContain('Test-NoReparsePointInPath')

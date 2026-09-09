@@ -86,6 +86,84 @@ it('preserves both simultaneous appends', async () => {
   ])
 })
 
+it('allows the first document save after a successful probe refresh', async () => {
+  const service = owner()
+  await client.computeHost.update({ where: { providerId }, data: { detailsDoc: '' } })
+
+  await service.probe(providerId)
+  const details = await service.getDetails(providerId)
+
+  expect(details).toMatchObject({
+    doc: '',
+    probeResult: { ok: true, cpus: 8, detectedScheduler: 'none' }
+  })
+  await service.replaceDetails(providerId, {
+    text: 'Use the gpu partition.',
+    oldText: details.doc,
+    author: 'user'
+  })
+
+  await expect(service.getDetails(providerId)).resolves.toMatchObject({
+    doc: 'Use the gpu partition.',
+    probeResult: { ok: true, cpus: 8, detectedScheduler: 'none' }
+  })
+})
+
+it('preserves an existing host and its historical details document across read and replace', async () => {
+  const historicalDoc = '## Resources\ncpus: 4\n\n## Usage Policy\nUse the batch queue.'
+  const legacy = await repository.create({
+    sshAlias: 'legacy',
+    displayName: 'NIH Legacy Cluster',
+    executionMode: 'slurm',
+    sshOverrides: { user: 'researcher', port: 2202, identityFile: '~/.ssh/legacy' },
+    detailsDoc: historicalDoc
+  })
+  await repository.updateScratchPinned(legacy.providerId, '/cluster/scratch/researcher')
+  await repository.updateConcurrencyLimit(legacy.providerId, 17)
+  const probeResult = {
+    ok: true,
+    probedAt: '2025-06-01T12:00:00.000Z',
+    exitCode: 0,
+    errorTail: null,
+    authenticationRevision: legacy.authentication?.revision ?? 1,
+    os: 'Linux',
+    cpus: 96,
+    memMib: 512000,
+    detectedScheduler: 'slurm' as const
+  }
+  expect(
+    await repository.updateProbeResult(
+      legacy.providerId,
+      probeResult,
+      'scheduler_cluster',
+      legacy.id
+    )
+  ).toBe(true)
+  const service = owner()
+  const beforeRead = await repository.get(legacy.providerId)
+  if (!beforeRead) throw new Error('Expected the seeded legacy host to exist.')
+
+  const details = await service.getDetails(legacy.providerId)
+
+  expect(details).toEqual({ doc: historicalDoc, probeResult })
+  expect(await repository.get(legacy.providerId)).toEqual(beforeRead)
+
+  await service.replaceDetails(legacy.providerId, {
+    text: `${historicalDoc}\nBring your own container.`,
+    oldText: details.doc,
+    author: 'agent'
+  })
+
+  const afterReplace = await repository.get(legacy.providerId)
+  expect(afterReplace).toEqual({
+    ...beforeRead,
+    detailsDoc: `${historicalDoc}\nBring your own container.`,
+    detailsUpdatedBy: 'agent',
+    detailsUpdatedAt: expect.any(Number),
+    updatedAt: expect.any(Number)
+  })
+})
+
 it('rechecks the length limit after a competing append', async () => {
   await client.computeHost.update({
     where: { providerId },

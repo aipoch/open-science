@@ -188,6 +188,8 @@ $userIdentity = $identityParts -join '\'
 $roots = [System.Collections.Generic.HashSet[string]]::new(
   [System.StringComparer]::OrdinalIgnoreCase
 )
+[void]$roots.Add((Join-Path $env:USERPROFILE 'Open-Science\runtime'))
+# Transitional cleanup of cache ownership records from installations not yet migrated.
 [void]$roots.Add((Join-Path $env:USERPROFILE 'OpenScience\runtime'))
 [void]$roots.Add((Join-Path $env:USERPROFILE '.open-science\runtime'))
 $settingsPath = Join-Path $env:USERPROFILE '.open-science\settings.json'
@@ -218,10 +220,10 @@ foreach ($root in $roots) {
       [pscustomobject]@{ Path = (Join-Path $env:USERPROFILE $leaf); ManagedParent = $false }
       [pscustomobject]@{ Path = (Join-Path $env:USERPROFILE $compactLeaf); ManagedParent = $false }
       $managedParents = @(
-        (Join-Path ([System.IO.Path]::GetPathRoot($canonicalRoot)) 'OpenScienceTmp')
+        (Join-Path ([System.IO.Path]::GetPathRoot($canonicalRoot)) 'Open-ScienceTmp')
         foreach ($configuredTemp in @($env:TEMP, $env:TMP)) {
           if ($configuredTemp) {
-            (Join-Path $configuredTemp 'OpenScienceTmp')
+            (Join-Path $configuredTemp 'Open-ScienceTmp')
           }
         }
         (Join-Path $env:USERPROFILE 'os-tmp')

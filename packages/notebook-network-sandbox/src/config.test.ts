@@ -60,14 +60,14 @@ describe('Notebook network sandbox configuration', () => {
     )
     expect(config.installationId).toBe('0f3cd2a44c3d4e4e9f1e2a5b')
     expect(config.windowsOwnershipRoot.replaceAll('\\', '/')).toContain(
-      `Aipoch/OpenScience/notebook-sandbox/${config.installationId}`
+      `Aipoch/Open-Science/notebook-sandbox/${config.installationId}`
     )
   })
 
   it('keeps Windows resource ownership stable when the application moves', () => {
     const original = createRuntimeConfig(createOptions(), 'x64')
     const moved = createRuntimeConfig(
-      createOptions({ resources: { root: 'D:\\Portable\\OpenScience\\resources' } }),
+      createOptions({ resources: { root: 'D:\\Portable\\Open-Science\\resources' } }),
       'x64'
     )
 

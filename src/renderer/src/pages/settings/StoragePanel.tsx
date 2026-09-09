@@ -131,7 +131,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   const [newPath, setNewPath] = useState('')
   // The classification of `newPath` (a PARENT the user typed/picked), keyed by the exact path it
   // was computed for so a stale response for an already-superseded path never drives the action
-  // buttons. `dataRoot` is the derived `<newPath>/OpenScience` the app will actually use.
+  // buttons. `dataRoot` is the derived `<newPath>/Open-Science` the app will actually use.
   const [inspection, setInspection] = useState<(DataRootInspection & { path: string }) | null>(null)
   const [migrationTarget, setMigrationTarget] = useState<{
     path: string
@@ -266,7 +266,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     // On success the app relaunches; nothing left to update here.
   }
 
-  // "Use default location": relocate back to the default `<home>/OpenScience` (the reverse of any
+  // "Use default location": relocate back to the default `<home>/Open-Science` (the reverse of any
   // other move). The default is reproduced by feeding its parent through the same inspect/migrate
   // flow a browsed folder uses, so the common case (default folder empty or gone → 'move') just
   // opens the migration modal, which moves the data back and restarts. Rare fallbacks: the default

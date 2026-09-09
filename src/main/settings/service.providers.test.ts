@@ -12,6 +12,7 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/home', getAppPath: () => '/home/no-such-app-root', isPackaged: false }
 }))
 
+import { configureCredentialStore } from './credential-store-mode'
 const { SettingsService } = await import('./service')
 const { SettingsRepository } = await import('./repository')
 
@@ -26,6 +27,25 @@ describe('SettingsService provider facade', () => {
     service = new SettingsService({ repository, configRoot: dir })
     return async () => {
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('projects file storage capability and leaves legacy refs unchanged', async () => {
+    configureCredentialStore(['--credential-store=file'], 'linux', true)
+    try {
+      const legacyRef = `plain:${Buffer.from('legacy-key').toString('base64')}`
+      await repository.upsertProvider({
+        id: 'legacy',
+        type: 'custom',
+        name: 'Legacy',
+        keyRef: legacyRef
+      })
+      const snapshot = await service.getSettingsView()
+      expect(snapshot.credentialStore).toBe('file')
+      expect(service.isEncryptionAvailable()).toBe(true)
+      expect((await repository.getSettings()).providers[0].keyRef).toBe(legacyRef)
+    } finally {
+      configureCredentialStore([], 'linux', true)
     }
   })
 

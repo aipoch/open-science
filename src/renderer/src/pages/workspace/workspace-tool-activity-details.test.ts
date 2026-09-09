@@ -1308,7 +1308,7 @@ describe('workspace tool activity details', () => {
       ok: true,
       needsRestart: false,
       method: 'conda',
-      prefix: '/Users/x/OpenScience/runtime/envs/analysis',
+      prefix: '/Users/x/Open-Science/runtime/envs/analysis',
       log: 'done'
     }
     const activity = createActivity({
@@ -1327,7 +1327,7 @@ describe('workspace tool activity details', () => {
     )
     // The concrete env-scoped install location is surfaced (the "where is it installed" ask).
     expect(commandSection?.kind === 'code' && commandSection.text).toContain(
-      'installs into  /Users/x/OpenScience/runtime/envs/analysis'
+      'installs into  /Users/x/Open-Science/runtime/envs/analysis'
     )
   })
 

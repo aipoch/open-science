@@ -197,7 +197,7 @@ const stubWindowApi = (): void => {
       pickDirectory: vi.fn().mockResolvedValue(null),
       inspectDataRoot: vi
         .fn()
-        .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' }),
+        .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' }),
       setDataRootAndRelaunch: vi.fn().mockResolvedValue({ ok: true })
     },
     // The reused RuntimesPanel lists detected interpreters on mount; stub so the effect resolves.

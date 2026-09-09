@@ -46,6 +46,8 @@ vi.mock('node:module', async (importOriginal) => ({
   })
 }))
 
+vi.mock('./brand-path-migration', () => ({ prepareBrandPathMigration: vi.fn() }))
+
 vi.mock('./single-instance', () => ({
   acquireSingleInstanceLock: vi.fn(() => true)
 }))
@@ -167,14 +169,14 @@ afterEach(() => {
 
 describe('main-process fatal errors', () => {
   it.each([true, false])(
-    'retains the Electron profile across rebranding (packaged=%s)',
+    'uses the migrated Electron profile before opening writers (packaged=%s)',
     async (packaged) => {
       mocks.app.isPackaged = packaged
       try {
         await bootUntilFailureHandlersAreInstalled()
         expect(mocks.app.setPath).toHaveBeenCalledWith(
           'userData',
-          join('test-logs', packaged ? 'Open Science' : 'Open Science (DEV)')
+          join('test-logs', packaged ? 'Open-Science' : 'Open-Science (DEV)')
         )
         expect(mocks.app.setName).toHaveBeenCalledWith(
           packaged ? 'Open-Science' : 'Open-Science (DEV)'

@@ -27,7 +27,7 @@ for (const [version, code, hook] of [
       name,
       version,
       description: 'Isolated Windows update notice test',
-      author: 'Open Science'
+      author: 'Open-Science'
     })
   )
   await writeFile(
@@ -42,7 +42,11 @@ for (const [version, code, hook] of [
       'SectionEnd'
     ].join('\n')
   )
-  execFileSync(compiler, ['/V2', join(projectDir, 'payload.nsi')], { windowsHide: true })
+  execFileSync(
+    compiler,
+    [process.platform === 'win32' ? '/V2' : '-V2', join(projectDir, 'payload.nsi')],
+    { windowsHide: true }
+  )
   for (const script of [
     'windows-runtime-cache-uninstall.ps1',
     'windows-notebook-sandbox-uninstall.ps1'

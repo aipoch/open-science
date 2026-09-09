@@ -27,7 +27,7 @@ $hostPaths = @(
   (Join-Path $SandboxRoot 'arm64\notebook-appcontainer-host.exe')
 )
 $installationId = '0f3cd2a44c3d4e4e9f1e2a5b'
-$ownershipRoot = Join-Path $env:LOCALAPPDATA "Aipoch\OpenScience\notebook-sandbox\$installationId"
+$ownershipRoot = Join-Path $env:LOCALAPPDATA "Aipoch\Open-Science\notebook-sandbox\$installationId"
 $HostPath = $hostPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
 if (-not $HostPath) {
   $receipt = Join-Path $ownershipRoot 'receipt.json'

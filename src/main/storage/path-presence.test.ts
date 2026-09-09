@@ -34,7 +34,7 @@ describe('isDataRootMissing', () => {
   it('treats ENOTDIR (a file where a dir was expected) as missing', async () => {
     const statFn = vi.fn().mockRejectedValue(errno('ENOTDIR'))
 
-    expect(await isDataRootMissing('/whatever/OpenScience', { statFn })).toBe(true)
+    expect(await isDataRootMissing('/whatever/Open-Science', { statFn })).toBe(true)
   })
 
   it('does NOT treat a non-ENOENT stat error as missing, and logs it', async () => {
@@ -43,7 +43,7 @@ describe('isDataRootMissing', () => {
     // would nag the user to abandon real data. This is the regression the fix targets.
     for (const code of ['EPERM', 'EBUSY', 'EINVAL', 'EIO']) {
       const statFn = vi.fn().mockRejectedValue(errno(code))
-      expect(await isDataRootMissing('/mnt/data/OpenScience', { statFn, logger })).toBe(false)
+      expect(await isDataRootMissing('/mnt/data/Open-Science', { statFn, logger })).toBe(false)
     }
 
     expect(logger.warn).toHaveBeenCalledTimes(4)
@@ -53,7 +53,7 @@ describe('isDataRootMissing', () => {
     const statFn = vi.fn().mockRejectedValue(errno('EIO'))
 
     await expect(
-      isDataRootMissing('/mnt/data/OpenScience', {
+      isDataRootMissing('/mnt/data/Open-Science', {
         statFn,
         logger: {
           warn: () => {
@@ -66,7 +66,7 @@ describe('isDataRootMissing', () => {
 
   it('regression: a non-ASCII (CJK) path whose stat throws a non-ENOENT error is not missing', async () => {
     const logger = { warn: vi.fn() }
-    const cjkPath = 'F:\\openscience产生数据\\OpenScience'
+    const cjkPath = 'F:\\open-science产生数据\\Open-Science'
     const statFn = vi.fn().mockRejectedValue(errno('EINVAL'))
 
     expect(await isDataRootMissing(cjkPath, { statFn, logger })).toBe(false)
@@ -80,7 +80,7 @@ describe('isDataRootMissing', () => {
   it('reports missing for a CJK path that genuinely does not exist (ENOENT)', async () => {
     const statFn = vi.fn().mockRejectedValue(errno('ENOENT'))
 
-    expect(await isDataRootMissing('F:\\openscience产生数据\\OpenScience', { statFn })).toBe(true)
+    expect(await isDataRootMissing('F:\\open-science产生数据\\Open-Science', { statFn })).toBe(true)
   })
 })
 

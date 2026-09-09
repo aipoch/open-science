@@ -395,7 +395,7 @@ const validateVersionContents = async (indexes, dataRoot, label) => {
   }
 }
 
-const resolveConfiguredDataRoot = async (configRoot) => {
+export const resolveConfiguredDataRoot = async (configRoot, dataHome = homedir()) => {
   const settingsPath = join(configRoot, 'settings.json')
   try {
     const settings = JSON.parse(await readFile(settingsPath, 'utf8'))
@@ -408,7 +408,17 @@ const resolveConfiguredDataRoot = async (configRoot) => {
   const hasLegacyData = await Promise.all(
     DATA_DIRECTORIES.map((directory) => exists(join(configRoot, directory)))
   ).then((values) => values.some(Boolean))
-  return hasLegacyData ? configRoot : join(homedir(), 'OpenScience')
+  if (hasLegacyData) return configRoot
+  const current = join(dataHome, 'Open-Science')
+  const legacy = join(dataHome, 'OpenScience')
+  const [hasCurrent, hasLegacy] = await Promise.all([exists(current), exists(legacy)])
+  if (hasCurrent && hasLegacy && (await realpath(current)) !== (await realpath(legacy))) {
+    throw new Error(
+      `Both legacy and current Data Roots exist: ${legacy}; ${current}. Select --data-root explicitly.`
+    )
+  }
+  // Read-only downgrade discovery may recover an unmigrated installation; never create old roots.
+  return hasCurrent || !hasLegacy ? current : legacy
 }
 
 const readActivatedRollback = async (configRoot, requestedOutput) => {

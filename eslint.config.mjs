@@ -66,5 +66,10 @@ export default defineConfig(
     files: ['resources/notebook/*.js', 'resources/find-overlay/*.js'],
     rules: typescriptRulesOff
   },
+  {
+    files: ['resources/brand-migration/*.mjs'],
+    // These shipped Node modules run directly, without TypeScript syntax or a transpilation step.
+    rules: { '@typescript-eslint/explicit-function-return-type': 'off' }
+  },
   eslintConfigPrettier
 )

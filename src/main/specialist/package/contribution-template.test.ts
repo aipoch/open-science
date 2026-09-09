@@ -100,7 +100,7 @@ describe('contribution template ZIP', () => {
 
     await expect(exportContributionTemplate()).resolves.toEqual({ saved: true })
     expect(showSaveDialog).toHaveBeenCalledWith(
-      expect.objectContaining({ defaultPath: 'openscience-specialist-template.zip' })
+      expect.objectContaining({ defaultPath: 'open-science-specialist-template.zip' })
     )
     expect(writeFile).toHaveBeenCalledWith('/chosen/template.zip', expect.any(Uint8Array))
   })

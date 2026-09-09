@@ -86,7 +86,7 @@ describe('Remote Compute Skill document', () => {
     )
 
     expect(doc).toContain('configured execution mode')
-    expect(doc).toContain('~/.openscience/environments/<name>.sh')
+    expect(doc).toContain('~/.open-science/environments/<name>.sh')
     expect(doc).toContain('Compute Environment Setup')
     expect(doc).toMatch(/prepare exact setup, repair, and removal instructions/)
     expect(doc).toMatch(/user-managed activation after they apply the plan/)

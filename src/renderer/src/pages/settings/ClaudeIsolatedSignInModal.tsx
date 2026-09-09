@@ -1,3 +1,4 @@
+import { useFileCredentialNotice } from './use-file-credential-notice'
 import { useEffect, useRef, useState } from 'react'
 import { AlertDialog } from 'radix-ui'
 import { Check, Copy, Loader2, X } from 'lucide-react'
@@ -74,6 +75,7 @@ const ClaudeIsolatedSignInModalBody = ({
   'onOpenChange' | 'onSubmit' | 'browserSignInPending'
 >): React.JSX.Element => {
   const { t } = useTranslation()
+  const fileCredentialNotice = useFileCredentialNotice()
   const [token, setToken] = useState('')
   const [copied, setCopied] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -146,20 +148,22 @@ const ClaudeIsolatedSignInModalBody = ({
 
         <div className={dialogBodyClassName}>
           <AlertDialog.Description className={dialogDescriptionClassName}>
-            <Trans
-              i18nKey="Use a long-lived OAuth token from <code>claude setup-token</code>. The token is encrypted in Open-Science app storage and never read from or written to <code>~/.claude</code>. See <docsLink>Anthropic's setup-token guide</docsLink> for the full flow."
-              components={{
-                code: <code className="font-mono" />,
-                docsLink: (
-                  <a
-                    href={SETUP_TOKEN_DOCS_URL}
-                    className="text-primary underline underline-offset-2"
-                    target="_blank"
-                    rel="noreferrer"
-                  />
-                )
-              }}
-            />
+            {fileCredentialNotice ?? (
+              <Trans
+                i18nKey="Use a long-lived OAuth token from <code>claude setup-token</code>. The token is encrypted in Open-Science app storage and never read from or written to <code>~/.claude</code>. See <docsLink>Anthropic's setup-token guide</docsLink> for the full flow."
+                components={{
+                  code: <code className="font-mono" />,
+                  docsLink: (
+                    <a
+                      href={SETUP_TOKEN_DOCS_URL}
+                      className="text-primary underline underline-offset-2"
+                      target="_blank"
+                      rel="noreferrer"
+                    />
+                  )
+                }}
+              />
+            )}
           </AlertDialog.Description>
 
           {browserSignInPending ? (

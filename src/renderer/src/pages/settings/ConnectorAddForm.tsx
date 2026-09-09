@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useFileCredentialNotice } from './use-file-credential-notice'
 import { localizeConnectorError } from './connector-error-message'
 import { ConnectorOAuthSignInDialog } from './ConnectorOAuthSignInDialog'
 import { ConnectorNamedCredentialEditor } from './ConnectorNamedCredentialEditor'
@@ -140,6 +141,7 @@ export function ConnectorAddForm({
   const { t: tCommon } = useTranslation()
   const addCustomServer = useSettingsStore((s) => s.addCustomServer)
   const updateCustomServer = useSettingsStore((s) => s.updateCustomServer)
+  const fileCredentialNotice = useFileCredentialNotice()
   const encryptionAvailable = useSettingsStore((s) => s.encryptionAvailable)
   const connectors = useSettingsStore((s) => s.connectors)
   const customServers = useSettingsStore((s) => s.customServers)
@@ -1360,7 +1362,8 @@ export function ConnectorAddForm({
                                   <p className={helperClassName}>
                                     {removeClientSecret
                                       ? t('The saved client secret will be removed.')
-                                      : t('A client secret is saved securely.')}
+                                      : (fileCredentialNotice ??
+                                        t('A client secret is saved securely.'))}
                                   </p>
                                   <Button
                                     type="button"

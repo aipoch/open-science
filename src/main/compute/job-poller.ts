@@ -62,7 +62,10 @@ const POLL_BATCH_MAX_JOBS = 8
 const POLLER_KILL_GRACE_SECONDS = 60
 
 const buildDispatchRecoveryCommand = (workdir: string): string => {
-  const marker = '/.openscience/jobs/'
+  // Persisted running jobs retain their exact scheduler workdir until terminal cleanup.
+  const marker = workdir.includes('/.open-science/jobs/')
+    ? '/.open-science/jobs/'
+    : '/.openscience/jobs/'
   const markerIndex = workdir.lastIndexOf(marker)
   if (markerIndex < 0) throw new Error('Unsafe remote Compute Job recovery path.')
   const scratchRoot = markerIndex === 0 ? '/' : workdir.slice(0, markerIndex)
@@ -376,7 +379,7 @@ export class JobPoller {
     for (const job of legacyNoHandle) {
       if (signal.aborted) return
       const fallbackWorkdir = hasRecoveryFallback
-        ? computeRemoteWorkdir(recoveryFallbackRoot, job.job_id)
+        ? computeRemoteWorkdir(recoveryFallbackRoot, job.job_id, true)
         : undefined
       const recovered = await this._recoverSubmittedJob(job, connection, signal, fallbackWorkdir)
       if (recovered) withHandle.push(recovered)

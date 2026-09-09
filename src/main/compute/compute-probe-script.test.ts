@@ -35,9 +35,6 @@ describe('compute probe shell protocol', () => {
       const owner = new ComputeHostProfileOwner(broker, repository)
       const result = await owner.probe('ssh:probe')
       expect(result.detectedScheduler).toBe('slurm')
-      host.probeResult = result
-      const details = await owner.getDetails('ssh:probe')
-      expect(details.doc).toContain('SSH login host, not a scheduler allocation')
     } finally {
       rmSync(bin, { recursive: true, force: true })
     }

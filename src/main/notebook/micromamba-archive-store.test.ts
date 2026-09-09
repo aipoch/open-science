@@ -172,8 +172,8 @@ describe('publishMicromambaArchives', () => {
   it('publishes nested package archives into the durable data-root store', async () => {
     const root = await mkdtemp(join(tmpdir(), 'os-mm-archive-'))
     roots.push(root)
-    const runtimeRoot = join(root, 'OpenScience', 'runtime')
-    const workingRoot = join(root, 'OpenScienceTmp', 'm-test')
+    const runtimeRoot = join(root, 'Open-Science', 'runtime')
+    const workingRoot = join(root, 'Open-ScienceTmp', 'm-test')
     await mkdir(join(workingRoot, 'https', 'conda.example', 'win-64'), { recursive: true })
     await writeFile(join(workingRoot, 'https', 'conda.example', 'win-64', 'a-1.conda'), 'a')
     await writeFile(join(workingRoot, 'b-1.tar.bz2'), 'b')

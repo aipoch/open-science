@@ -47,7 +47,7 @@ const windowsDriveLetter = (path: string): string | undefined => {
 }
 
 // On a fresh Windows setup, prefer the first usable data drive (D:, E:, F:, ...). Existing
-// OpenScience folders are deliberately skipped: adopting historical data remains an explicit user
+// Open-Science folders are deliberately skipped: adopting historical data remains an explicit user
 // choice through Browse rather than a silent onboarding default.
 const findWindowsStorageDefault = async (
   storageInfo: StorageInfo,

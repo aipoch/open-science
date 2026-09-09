@@ -186,7 +186,8 @@ export default defineConfig({
             ...VITEST_EXCLUDE_PATTERNS,
             ...VITEST_ARCHITECTURE_TEST_GLOBS,
             ...VITEST_DATABASE_TEST_GLOBS,
-            ...VITEST_PROCESS_TEST_GLOBS
+            ...VITEST_PROCESS_TEST_GLOBS,
+            'scripts/brand-path-migration.test.ts'
           ]
         }
       },
@@ -211,6 +212,19 @@ export default defineConfig({
           isolate: true,
           fileParallelism: false,
           maxWorkers: 1
+        }
+      },
+      {
+        extends: true,
+        test: {
+          name: 'brand-migration',
+          include: ['scripts/brand-path-migration.test.ts'],
+          exclude: [...VITEST_EXCLUDE_PATTERNS],
+          isolate: true,
+          fileParallelism: false,
+          maxWorkers: 1,
+          // Its real busy-process guard must not race CLI/Electron fixtures in other projects.
+          sequence: { groupOrder: 3 }
         }
       },
       {

@@ -68,7 +68,7 @@ describe('workspace web search details', () => {
       formatWebSearchDetails(
         createActivity({
           id: 'tool-search-1',
-          title: 'open science repositories',
+          title: 'open-science repositories',
           toolKind: 'search',
           toolContent: [
             {
@@ -86,7 +86,7 @@ describe('workspace web search details', () => {
         })
       )
     ).toEqual({
-      query: 'open science repositories',
+      query: 'open-science repositories',
       resultCount: 2,
       results: [
         {
@@ -180,7 +180,7 @@ describe('workspace web search details', () => {
   it('formats Claude web_search_result title-url text', () => {
     const activity = createActivity({
       id: 'tool-search-1',
-      title: '"open science"',
+      title: '"open-science"',
       toolKind: 'fetch',
       providerToolName: 'WebSearch',
       toolContent: [
@@ -195,7 +195,7 @@ describe('workspace web search details', () => {
     })
 
     expect(formatWebSearchDetails(activity)).toEqual({
-      query: 'open science',
+      query: 'open-science',
       resultCount: 1,
       results: [
         {
@@ -249,7 +249,7 @@ describe('workspace web search details', () => {
       formatWebSearchDetails(
         createActivity({
           id: 'tool-search-1',
-          title: 'open science repositories',
+          title: 'open-science repositories',
           toolKind: 'search',
           toolContent: [
             {
@@ -257,7 +257,7 @@ describe('workspace web search details', () => {
               content: {
                 type: 'text',
                 text: JSON.stringify({
-                  query: 'open science repositories',
+                  query: 'open-science repositories',
                   results
                 })
               }
@@ -266,7 +266,7 @@ describe('workspace web search details', () => {
         })
       )
     ).toEqual({
-      query: 'open science repositories',
+      query: 'open-science repositories',
       resultCount: 9,
       results: results.slice(0, 8)
     })
