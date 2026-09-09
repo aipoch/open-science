@@ -4454,7 +4454,6 @@
     "Import PDF": "PDF を読み込む",
     "Import references": "参考文献を読み込む",
     "Create metadata manually": "メタデータを手動で作成",
-    "Create a reference from a PDF": "PDF から参考文献を作成",
     "BibTeX, RIS, or PubMed NBIB": "BibTeX、RIS、PubMed NBIB",
     "Only the first 1,000 references will be imported.": "先頭の 1,000 件のみ読み込みます。",
     "References per page": "1ページあたりの文献数",
@@ -4851,7 +4850,6 @@
     "Could not load metadata sources": "メタデータの出典を読み込めませんでした",
     "No saved metadata sources for this reference.": "この文献には保存済みのメタデータの出典がありません。",
     "Import PDFs": "PDF をインポート",
-    "Review the files, then import the selected PDFs. Keep this window open until the batch finishes.": "ファイルを確認して、選択した PDF をインポートします。一括インポートが完了するまで、このウィンドウを開いたままにしてください。",
     "The result could not be confirmed. Check your library before importing this file again.": "結果を確認できませんでした。このファイルを再度インポートする前に、ライブラリを確認してください。",
     "The reference was kept. Retry to finish adding its PDF.": "文献は保持されています。再試行して PDF の追加を完了してください。",
     "Retry unfinished": "未完了の項目を再試行",
@@ -4861,6 +4859,13 @@
     "This collection changed. Your edits have been kept.": "このコレクションは変更されています。編集内容は保持されています。",
     "This collection no longer exists. Your edits have been kept.": "このコレクションは存在しません。編集内容は保持されています。",
     "The latest collection could not be loaded. Your edits have been kept.": "最新のコレクションを読み込めませんでした。編集内容は保持されています。",
-    "Replace your unsaved edits with the latest saved collection.": "未保存の編集内容を最後に保存されたコレクションで置き換えます。"
+    "Replace your unsaved edits with the latest saved collection.": "未保存の編集内容を最後に保存されたコレクションで置き換えます。",
+    "Create references from PDF files": "PDF ファイルから参考文献を作成",
+    "Keep this window open until the batch finishes. You can stop without losing completed imports.": "一括インポートが完了するまで、このウィンドウを開いたままにしてください。停止しても、完了したインポートは保持されます。",
+    "Review the files, then import the selected PDFs.": "ファイルを確認して、選択した PDF をインポートします。",
+    "Some PDFs could not be imported. Review the details below before retrying.": "一部の PDF をインポートできませんでした。再試行する前に、以下の詳細を確認してください。",
+    "Selected PDFs imported. You can close this window.": "選択した PDF をインポートしました。このウィンドウを閉じることができます。",
+    "Failed: {{failed}} · Skipped: {{skipped}}": "失敗: {{failed}} · スキップ: {{skipped}}",
+    "You can import unfinished files or close this window.": "未完了のファイルをインポートするか、このウィンドウを閉じることができます。"
   }
 }

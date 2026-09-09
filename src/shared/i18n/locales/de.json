@@ -4439,7 +4439,6 @@
     "Copy RIS": "RIS kopieren",
     "Copy in-text citation": "Kurzbeleg kopieren",
     "Copy reference": "Literaturangabe kopieren",
-    "Create a reference from a PDF": "Literaturangabe aus einer PDF erstellen",
     "Create a reference in your library.": "Erstellen Sie eine Literaturangabe in Ihrer Bibliothek.",
     "Create collection": "Sammlung erstellen",
     "Create a collection for the selected references.": "Erstellen Sie eine Sammlung für die ausgewählten Literaturangaben.",
@@ -5005,7 +5004,6 @@
     "Could not load metadata sources": "Metadatenquellen konnten nicht geladen werden",
     "No saved metadata sources for this reference.": "Für diesen Literaturverweis sind keine Metadatenquellen gespeichert.",
     "Import PDFs": "PDFs importieren",
-    "Review the files, then import the selected PDFs. Keep this window open until the batch finishes.": "Prüfen Sie die Dateien und importieren Sie die ausgewählten PDFs. Lassen Sie dieses Fenster geöffnet, bis der Stapel abgeschlossen ist.",
     "The result could not be confirmed. Check your library before importing this file again.": "Das Ergebnis konnte nicht bestätigt werden. Prüfen Sie Ihre Bibliothek, bevor Sie diese Datei erneut importieren.",
     "The reference was kept. Retry to finish adding its PDF.": "Die Referenz wurde beibehalten. Versuchen Sie erneut, das PDF hinzuzufügen.",
     "Retry unfinished": "Unfertige erneut versuchen",
@@ -5015,6 +5013,13 @@
     "This collection changed. Your edits have been kept.": "Diese Sammlung wurde geändert. Ihre Eingaben wurden beibehalten.",
     "This collection no longer exists. Your edits have been kept.": "Diese Sammlung existiert nicht mehr. Ihre Eingaben wurden beibehalten.",
     "The latest collection could not be loaded. Your edits have been kept.": "Die aktuelle Sammlung konnte nicht geladen werden. Ihre Eingaben wurden beibehalten.",
-    "Replace your unsaved edits with the latest saved collection.": "Ersetzen Sie Ihre ungespeicherten Änderungen durch die zuletzt gespeicherte Sammlung."
+    "Replace your unsaved edits with the latest saved collection.": "Ersetzen Sie Ihre ungespeicherten Änderungen durch die zuletzt gespeicherte Sammlung.",
+    "Create references from PDF files": "Literaturangaben aus PDF-Dateien erstellen",
+    "Keep this window open until the batch finishes. You can stop without losing completed imports.": "Lassen Sie dieses Fenster geöffnet, bis der Stapel abgeschlossen ist. Beim Stoppen bleiben abgeschlossene Importe erhalten.",
+    "Review the files, then import the selected PDFs.": "Prüfen Sie die Dateien und importieren Sie die ausgewählten PDFs.",
+    "Some PDFs could not be imported. Review the details below before retrying.": "Einige PDFs konnten nicht importiert werden. Prüfen Sie vor einem erneuten Versuch die Details unten.",
+    "Selected PDFs imported. You can close this window.": "Ausgewählte PDFs importiert. Sie können dieses Fenster schließen.",
+    "Failed: {{failed}} · Skipped: {{skipped}}": "Fehlgeschlagen: {{failed}} · Übersprungen: {{skipped}}",
+    "You can import unfinished files or close this window.": "Sie können unfertige Dateien importieren oder dieses Fenster schließen."
   }
 }

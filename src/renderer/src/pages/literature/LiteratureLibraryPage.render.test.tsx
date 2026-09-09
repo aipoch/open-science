@@ -2769,7 +2769,7 @@ describe('LiteratureLibraryPage', () => {
     importPdf.mockResolvedValue({ item: libraryItem })
     const page = render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    fireEvent.change(screen.getByLabelText('Import PDF'), {
+    fireEvent.change(screen.getByLabelText('Import PDFs'), {
       target: { files: [new File(['pdf'], 'paper.pdf')] }
     })
     await screen.findByLabelText('Title')
@@ -2844,7 +2844,7 @@ describe('LiteratureLibraryPage', () => {
         await openReferenceDetail(await screen.findByText(libraryItem.item.title))
         fireEvent.change(screen.getByLabelText('Add PDF'), { target: { files: [file] } })
       } else {
-        fireEvent.change(screen.getByLabelText('Import PDF'), { target: { files: [file] } })
+        fireEvent.change(screen.getByLabelText('Import PDFs'), { target: { files: [file] } })
         await screen.findByLabelText('Title')
         fireEvent.click(screen.getByRole('button', { name: 'Save' }))
       }
@@ -2909,7 +2909,7 @@ describe('LiteratureLibraryPage', () => {
         )
         fireEvent.change(screen.getByLabelText('Add PDF'), { target: { files: [file] } })
       } else {
-        fireEvent.change(screen.getByLabelText('Import PDF'), { target: { files: [file] } })
+        fireEvent.change(screen.getByLabelText('Import PDFs'), { target: { files: [file] } })
         await screen.findByLabelText('Title')
         fireEvent.click(screen.getByRole('button', { name: 'Save' }))
       }
@@ -5488,14 +5488,14 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.getByRole('columnheader', { name: 'Notes' })).not.toBeNull()
     expect(screen.getByRole('columnheader', { name: 'Publication' })).not.toBeNull()
     expect(screen.queryByRole('button', { name: 'Edit metadata' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Import PDF' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Import PDFs' })).toBeNull()
     await openMenu(screen.getByRole('button', { name: 'Add' }))
     expect(screen.getByRole('menuitem', { name: 'Add reference' })).not.toBeNull()
-    expect(screen.getByRole('menuitem', { name: 'Import PDF' })).not.toBeNull()
+    expect(screen.getByRole('menuitem', { name: 'Import PDFs' })).not.toBeNull()
     expect(screen.getByRole('menuitem', { name: 'Import references' })).not.toBeNull()
     expect(screen.queryByRole('menuitem', { name: 'Smart collection' })).toBeNull()
     expect(screen.getByText('Create metadata manually')).not.toBeNull()
-    expect(screen.getByText('Create a reference from a PDF')).not.toBeNull()
+    expect(screen.getByText('Create references from PDF files')).not.toBeNull()
     expect(screen.getByText('BibTeX, RIS, or PubMed NBIB')).not.toBeNull()
     expect(screen.queryByText('Only the first 1,000 references will be imported.')).toBeNull()
   })
@@ -6281,7 +6281,7 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     const file = new File(['%PDF-1.7'], staged.name, { type: 'application/pdf' })
-    fireEvent.change(screen.getByLabelText('Import PDF'), { target: { files: [file] } })
+    fireEvent.change(screen.getByLabelText('Import PDFs'), { target: { files: [file] } })
 
     expect(((await screen.findByLabelText('Title')) as HTMLInputElement).value).toBe(
       '2024 corrective rag'
@@ -6314,7 +6314,7 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     const file = new File(['%PDF-1.7'], 'opaque-name.pdf', { type: 'application/pdf' })
-    fireEvent.change(screen.getByLabelText('Import PDF'), { target: { files: [file] } })
+    fireEvent.change(screen.getByLabelText('Import PDFs'), { target: { files: [file] } })
 
     expect(screen.getByRole('dialog')).not.toBeNull()
     expect(screen.getByRole('status').textContent).toContain('Reading…')
@@ -6369,7 +6369,7 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     const upload = (name: string): void => {
-      fireEvent.change(screen.getByLabelText('Import PDF'), {
+      fireEvent.change(screen.getByLabelText('Import PDFs'), {
         target: { files: [new File(['%PDF-1.7'], name, { type: 'application/pdf' })] }
       })
     }
@@ -6399,7 +6399,7 @@ describe('LiteratureLibraryPage', () => {
   it('opens one batch preview for multiple PDFs without creating references', async () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    const picker = screen.getByLabelText('Import PDF') as HTMLInputElement
+    const picker = screen.getByLabelText('Import PDFs') as HTMLInputElement
     expect(picker.multiple).toBe(true)
     fireEvent.change(picker, {
       target: {
@@ -6426,7 +6426,7 @@ describe('LiteratureLibraryPage', () => {
   it('imports PDFs with empty normalized stems using their original filenames', async () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    fireEvent.change(screen.getByLabelText('Import PDF'), {
+    fireEvent.change(screen.getByLabelText('Import PDFs'), {
       target: {
         files: ['.pdf', '___---.PDF'].map(
           (name) => new File(['%PDF-1.7'], name, { type: 'application/pdf' })
@@ -6446,7 +6446,7 @@ describe('LiteratureLibraryPage', () => {
 
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    fireEvent.change(screen.getByLabelText('Import PDF'), {
+    fireEvent.change(screen.getByLabelText('Import PDFs'), {
       target: {
         files: [new File(['not-a-pdf'], 'fallback-title.pdf', { type: 'application/pdf' })]
       }
@@ -8734,7 +8734,7 @@ describe('LiteratureLibraryPage', () => {
 
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    fireEvent.change(screen.getByLabelText('Import PDF'), {
+    fireEvent.change(screen.getByLabelText('Import PDFs'), {
       target: { files: [new File(['broken'], staged.name, { type: 'application/pdf' })] }
     })
     fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Paper' } })

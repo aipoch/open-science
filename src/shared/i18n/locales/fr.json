@@ -4760,7 +4760,6 @@
     "Import PDF": "Importer un PDF",
     "Import references": "Importer les références",
     "Create metadata manually": "Créer les métadonnées manuellement",
-    "Create a reference from a PDF": "Créer une référence à partir d’un PDF",
     "BibTeX, RIS, or PubMed NBIB": "BibTeX, RIS ou NBIB PubMed",
     "Only the first 1,000 references will be imported.": "Seules les 1 000 premières références seront importées.",
     "References per page": "Références par page",
@@ -5167,7 +5166,6 @@
     "Could not load metadata sources": "Impossible de charger les sources des métadonnées",
     "No saved metadata sources for this reference.": "Aucune source de métadonnées enregistrée pour cette référence.",
     "Import PDFs": "Importer des PDF",
-    "Review the files, then import the selected PDFs. Keep this window open until the batch finishes.": "Vérifiez les fichiers, puis importez les PDF sélectionnés. Gardez cette fenêtre ouverte jusqu’à la fin du lot.",
     "The result could not be confirmed. Check your library before importing this file again.": "Le résultat n’a pas pu être confirmé. Vérifiez votre bibliothèque avant de réimporter ce fichier.",
     "The reference was kept. Retry to finish adding its PDF.": "La référence a été conservée. Réessayez pour terminer l’ajout du PDF.",
     "Retry unfinished": "Réessayer les éléments inachevés",
@@ -5177,6 +5175,13 @@
     "This collection changed. Your edits have been kept.": "Cette collection a été modifiée. Vos modifications ont été conservées.",
     "This collection no longer exists. Your edits have been kept.": "Cette collection n’existe plus. Vos modifications ont été conservées.",
     "The latest collection could not be loaded. Your edits have been kept.": "La dernière version de la collection n’a pas pu être chargée. Vos modifications ont été conservées.",
-    "Replace your unsaved edits with the latest saved collection.": "Remplacer les modifications non enregistrées par la dernière version enregistrée de la collection."
+    "Replace your unsaved edits with the latest saved collection.": "Remplacer les modifications non enregistrées par la dernière version enregistrée de la collection.",
+    "Create references from PDF files": "Créer des références à partir de fichiers PDF",
+    "Keep this window open until the batch finishes. You can stop without losing completed imports.": "Gardez cette fenêtre ouverte jusqu’à la fin du lot. Vous pouvez arrêter sans perdre les imports terminés.",
+    "Review the files, then import the selected PDFs.": "Vérifiez les fichiers, puis importez les PDF sélectionnés.",
+    "Some PDFs could not be imported. Review the details below before retrying.": "Certains PDF n’ont pas pu être importés. Vérifiez les détails ci-dessous avant de réessayer.",
+    "Selected PDFs imported. You can close this window.": "Les PDF sélectionnés ont été importés. Vous pouvez fermer cette fenêtre.",
+    "Failed: {{failed}} · Skipped: {{skipped}}": "Échecs : {{failed}} · Ignorés : {{skipped}}",
+    "You can import unfinished files or close this window.": "Vous pouvez importer les fichiers inachevés ou fermer cette fenêtre."
   }
 }

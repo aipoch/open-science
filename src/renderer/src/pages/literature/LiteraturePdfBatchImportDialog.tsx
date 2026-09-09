@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Check } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { LiteratureImportDialogFrame } from './LiteratureImportDialogFrame'
@@ -232,6 +233,34 @@ export function LiteraturePdfBatchImportDialog({
     (row) => row.checked && row.status !== 'done' && !row.uncertain
   ).length
   const selectable = rows.filter((row) => row.status !== 'done' && !row.uncertain)
+  const attempted = rows.some((row) => row.itemId || row.status === 'error')
+  const retrySelected = rows.some(
+    (row) =>
+      row.checked &&
+      !row.uncertain &&
+      row.status !== 'done' &&
+      (row.itemId || row.status === 'error')
+  )
+  const failed = rows.filter((row) => row.status === 'error').length
+  const skipped = rows.filter(
+    (row) => !row.checked && row.status !== 'done' && row.status !== 'error'
+  ).length
+  const canCreate = selectable.some((row) => !row.itemId)
+  const description = busy
+    ? t(
+        'Keep this window open until the batch finishes. You can stop without losing completed imports.'
+      )
+    : !attempted
+      ? t('Review the files, then import the selected PDFs.')
+      : rows.some((row) => row.uncertain)
+        ? t(
+            'The result could not be confirmed. Check your library before importing this file again.'
+          )
+        : failed > 0
+          ? t('Some PDFs could not be imported. Review the details below before retrying.')
+          : remaining > 0
+            ? t('You can import unfinished files or close this window.')
+            : t('Selected PDFs imported. You can close this window.')
   const labels = {
     pending: t('Pending'),
     reading: t('Reading…'),
@@ -243,9 +272,7 @@ export function LiteraturePdfBatchImportDialog({
   return (
     <LiteratureImportDialogFrame
       title={t('Import PDFs')}
-      description={t(
-        'Review the files, then import the selected PDFs. Keep this window open until the batch finishes.'
-      )}
+      description={description}
       busy={busy}
       onClose={onClose}
       footer={
@@ -254,16 +281,25 @@ export function LiteraturePdfBatchImportDialog({
             <Button variant="outline" disabled={stopping} onClick={stop}>
               {stopping ? t('Stopping…') : t('Stop')}
             </Button>
+          ) : attempted ? (
+            <>
+              {remaining > 0 ? (
+                <Button variant="outline" onClick={() => void run()}>
+                  {retrySelected ? t('Retry unfinished') : t('Import selected')}
+                </Button>
+              ) : null}
+              <Button onClick={onClose}>{completed ? t('Done') : t('Close')}</Button>
+            </>
           ) : (
-            <Button variant="outline" onClick={onClose}>
-              {completed ? t('Done') : t('Cancel')}
-            </Button>
+            <>
+              <Button variant="outline" onClick={onClose}>
+                {t('Cancel')}
+              </Button>
+              <Button disabled={reading || remaining === 0} onClick={() => void run()}>
+                {t('Import selected')}
+              </Button>
+            </>
           )}
-          <Button disabled={reading || busy || remaining === 0} onClick={() => void run()}>
-            {rows.some((row) => row.itemId || row.status === 'error')
-              ? t('Retry unfinished')
-              : t('Import selected')}
-          </Button>
         </div>
       }
     >
@@ -271,18 +307,36 @@ export function LiteraturePdfBatchImportDialog({
         <p className="text-sm [overflow-wrap:anywhere]">
           {t('Import to')} · <strong>{destination.name}</strong>
         </p>
-        <LiteratureDuplicatePolicyField value={policy} onChange={setPolicy} disabled={busy} />
-        <p className="text-xs text-muted-foreground">
-          {t(
-            'PDFs are attached to matching references. Identical attachments are reused; different PDFs are kept separately.'
-          )}
-        </p>
+        {canCreate ? (
+          <LiteratureDuplicatePolicyField value={policy} onChange={setPolicy} disabled={busy} />
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            {t('When identifiers match')} ·{' '}
+            {policy === 'reuse'
+              ? t('Reuse existing reference')
+              : policy === 'separate'
+                ? t('Keep as separate reference')
+                : t('Fill empty fields')}
+          </p>
+        )}
+        {!attempted ? (
+          <p className="text-xs text-muted-foreground">
+            {t(
+              'PDFs are attached to matching references. Identical attachments are reused; different PDFs are kept separately.'
+            )}
+          </p>
+        ) : null}
         <div role="status" className="space-y-2 text-sm">
           <p>
             {reading
               ? t('Reading…')
               : t('{{completed}} / {{total}} completed', { completed, total: rows.length })}
           </p>
+          {!reading && !busy && attempted ? (
+            <p className="text-xs text-muted-foreground">
+              {t('Failed: {{failed}} · Skipped: {{skipped}}', { failed, skipped })}
+            </p>
+          ) : null}
           {stopping ? (
             <p>
               {t('Finishing the current operation before stopping. Completed references are kept.')}
@@ -306,30 +360,36 @@ export function LiteraturePdfBatchImportDialog({
             </>
           ) : null}
         </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            disabled={busy || selectable.length === 0}
-            checked={selectable.length > 0 && selectable.every((row) => row.checked)}
-            onChange={(event) => selectAll(event.target.checked)}
-          />
-          {t('Select all')}
-        </label>
+        {selectable.length > 0 ? (
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              disabled={busy}
+              checked={selectable.every((row) => row.checked)}
+              onChange={(event) => selectAll(event.target.checked)}
+            />
+            {t('Select all')}
+          </label>
+        ) : null}
         <ul className="divide-y divide-border-300/80 rounded-lg border border-border-300/80">
           {rows.slice(0, visible).map((row, index) => (
             <li key={index} className="space-y-2 px-3 py-3">
               <div className="flex items-start gap-3">
-                <input
-                  className="mt-1"
-                  type="checkbox"
-                  aria-label={t('Select {{name}}', { name: row.file.name })}
-                  disabled={busy || row.status === 'done' || row.uncertain}
-                  checked={row.checked}
-                  onChange={(event) => {
-                    rowsRef.current[index].checked = event.target.checked
-                    publish()
-                  }}
-                />
+                {row.status === 'done' ? (
+                  <Check className="mt-1 size-4 shrink-0 text-primary" aria-hidden="true" />
+                ) : (
+                  <input
+                    className="mt-1"
+                    type="checkbox"
+                    aria-label={t('Select {{name}}', { name: row.file.name })}
+                    disabled={busy || row.uncertain}
+                    checked={row.checked}
+                    onChange={(event) => {
+                      rowsRef.current[index].checked = event.target.checked
+                      publish()
+                    }}
+                  />
+                )}
                 <div className="min-w-0 flex-1">
                   <p className="break-words text-sm font-medium">{row.draft.title}</p>
                   <p className="break-all text-xs text-muted-foreground">{row.file.name}</p>

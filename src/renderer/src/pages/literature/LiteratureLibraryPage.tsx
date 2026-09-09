@@ -671,12 +671,12 @@ function LiteratureAddMenu({
             <span className="text-xs text-muted-foreground">{t('Create metadata manually')}</span>
           </span>
         </DropdownMenuItem>
-        <DropdownMenuItem className="gap-2.5" aria-label={t('Import PDF')} onSelect={onImportPdf}>
+        <DropdownMenuItem className="gap-2.5" aria-label={t('Import PDFs')} onSelect={onImportPdf}>
           <FilePlus2 className="size-4 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex flex-col">
-            <span>{t('Import PDF')}</span>
+            <span>{t('Import PDFs')}</span>
             <span className="text-xs text-muted-foreground">
-              {t('Create a reference from a PDF')}
+              {t('Create references from PDF files')}
             </span>
           </span>
         </DropdownMenuItem>
@@ -4161,7 +4161,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                     type="file"
                     accept="application/pdf,.pdf"
                     className="sr-only"
-                    aria-label={t('Import PDF')}
+                    aria-label={t('Import PDFs')}
                     onChange={(event) => {
                       const files = Array.from(event.currentTarget.files ?? [])
                       event.currentTarget.value = ''
