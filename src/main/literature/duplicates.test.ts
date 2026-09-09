@@ -122,3 +122,28 @@ it('finds matching metadata after an incompatible candidate occupies its key', (
     ]).map((group) => group.itemIds)
   ).toEqual([['c', 'd']])
 })
+
+it('partitions a collision key even when unrelated records lack identifiers', () => {
+  const records = Array.from({ length: 1000 }, (_, index) =>
+    item(String(index), { identifiers: doi(`10.1234/${index}`) })
+  )
+  records.push(item('unidentified', { title: 'Unrelated' }))
+  records.push(item('copy', { identifiers: doi('10.1234/999') }))
+  expect(findLiteratureDuplicateGroups(records).map((group) => group.itemIds)).toEqual([
+    ['999', 'copy']
+  ])
+})
+it('preserves cross-key joins when a component gains a second identity scheme', () => {
+  const records = [
+    item('a', { title: 'First title', identifiers: doi('10.1234/a') }),
+    item('b', {
+      title: 'Second title',
+      identifiers: [...doi('10.1234/a'), { scheme: 'pmid', normalizedValue: '42' }]
+    }),
+    item('c', { title: 'Third title', identifiers: [{ scheme: 'pmid', normalizedValue: '42' }] }),
+    item('d', { title: 'Second title', identifiers: doi('10.1234/conflict') })
+  ]
+  expect(findLiteratureDuplicateGroups(records).map((group) => group.itemIds)).toEqual([
+    ['a', 'b', 'c']
+  ])
+})

@@ -19,7 +19,7 @@ describe('SessionPdfSourceResolver', () => {
     }))
     const resolver = new SessionPdfSourceResolver({
       inputs: { resolveVersion: resolveInputVersion, openContent: vi.fn() },
-      literature: { resolveVersion: resolveLiteratureVersion }
+      literature: { resolveVersion: resolveLiteratureVersion, openContent: vi.fn() }
     })
 
     await expect(
@@ -37,7 +37,8 @@ describe('SessionPdfSourceResolver', () => {
       contentType: 'application/pdf',
       sizeBytes: 42,
       checksum: 'a'.repeat(64),
-      path: '/managed/paper.pdf'
+      path: '/managed/paper.pdf',
+      openContent: expect.any(Function)
     })
     expect(resolveInputVersion).not.toHaveBeenCalled()
   })
@@ -46,6 +47,7 @@ describe('SessionPdfSourceResolver', () => {
     const resolver = new SessionPdfSourceResolver({
       inputs: { resolveVersion: vi.fn(), openContent: vi.fn() },
       literature: {
+        openContent: vi.fn(),
         resolveVersion: vi.fn(async () => ({
           itemId: 'item-1',
           attachmentId: 'attachment-2',

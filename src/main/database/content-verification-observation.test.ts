@@ -20,15 +20,21 @@ it('adds unknown verification observations without changing historical content o
   await client.$executeRawUnsafe(
     'ALTER TABLE "ContentBlob" DROP COLUMN "lastVerificationAttemptAt"'
   )
+  await client.$executeRawUnsafe('DROP TABLE "LiteratureMetadataCommitReceipt"')
   await client.$executeRawUnsafe(
-    `DELETE FROM "_open_science_migrations" WHERE "id" = '0036_content_verification_observation'`
+    `DELETE FROM "_open_science_migrations" WHERE "id" >= '0036_content_verification_observation'`
   )
   await client.$executeRawUnsafe(
     `INSERT INTO "ContentBlob" ("id", "checksum", "storageKey", "sizeBytes", "state") VALUES ('old', ?, 'content/old', 10, 'available')`,
     'a'.repeat(64)
   )
   await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-    applied: ['0036_content_verification_observation']
+    applied: [
+      '0036_content_verification_observation',
+      '0037_literature_inbox_integrity',
+      '0038_literature_search_text',
+      '0039_literature_metadata_commit_receipt'
+    ]
   })
   expect(await client.contentBlob.findUnique({ where: { id: 'old' } })).toMatchObject({
     state: 'available',

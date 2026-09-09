@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client'
 
-import type { ContentRepository } from '../storage/content-repository'
+import { parseLiteratureAttachmentVersionReference } from '../../shared/literature'
+import type { ContentReadLease, ContentRepository } from '../storage/content-repository'
 
 type ResolvedLiteratureAttachmentVersion = Readonly<{
   itemId: string
@@ -18,13 +19,37 @@ type ResolvedLiteratureAttachmentVersion = Readonly<{
 
 type LiteratureAttachmentAuthorityOptions = Readonly<{
   getClient: () => Promise<PrismaClient>
-  content: Pick<ContentRepository, 'verify'>
+  content: Pick<ContentRepository, 'verify' | 'openLease'>
 }>
 
 class LiteratureAttachmentUnavailableError extends Error {}
 
 class LiteratureAttachmentAuthority {
   constructor(private readonly options: LiteratureAttachmentAuthorityOptions) {}
+
+  async openReference(reference: string): Promise<ContentReadLease> {
+    const versionId = parseLiteratureAttachmentVersionReference(reference)
+    if (!versionId) throw new Error('Invalid Literature attachment reference.')
+    return this.openContent(versionId)
+  }
+
+  async openContent(versionId: string): Promise<ContentReadLease> {
+    const version = await this.resolveVersion(versionId)
+    if (!version)
+      throw new LiteratureAttachmentUnavailableError('Literature attachment is unavailable.')
+    const client = await this.options.getClient()
+    const row = await client.literatureAttachmentVersion.findUnique({ where: { id: versionId } })
+    if (!row)
+      throw new LiteratureAttachmentUnavailableError('Literature attachment is unavailable.')
+    const lease = await this.options.content.openLease(row.contentBlobId)
+    if (lease.checksum !== version.checksum || lease.size !== version.sizeBytes) {
+      await lease.close()
+      throw new LiteratureAttachmentUnavailableError(
+        'Literature attachment content identity changed.'
+      )
+    }
+    return lease
+  }
 
   async resolveVersion(
     versionId: string

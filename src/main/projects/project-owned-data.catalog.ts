@@ -278,11 +278,15 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
     id: 'literature-inbox-provenance',
     medium: 'sqlite',
-    resources: ['LiteratureInboxCandidate'],
+    resources: ['LiteratureInboxCandidate', 'LiteratureCandidateDiscovery'],
     prismaModels: [
       {
         name: 'LiteratureInboxCandidate',
         ownerFields: [optionalOwner('sourceProjectId'), optionalOwner('sourceSessionId')]
+      },
+      {
+        name: 'LiteratureCandidateDiscovery',
+        ownerFields: [optionalOwner('projectId'), optionalOwner('sessionId')]
       }
     ],
     policy: {

@@ -1,3 +1,4 @@
+import { withDataRootWrite } from '../storage/migration-state'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
@@ -106,31 +107,32 @@ const createLiteratureMcpServer = (handler: LiteratureMcpHandler): ModelContextP
           }
         })
     },
-    async (request) => {
-      try {
-        const result = await handler.readDocument(request)
-        const presentation = createPresentationBlock(result)
-        return {
-          structuredContent: result as Record<string, unknown>,
-          content: [
-            ...(presentation
-              ? [{ type: 'text' as const, text: JSON.stringify(presentation) }]
-              : []),
-            { type: 'text' as const, text: JSON.stringify(result) }
-          ]
+    async (request) =>
+      withDataRootWrite(async () => {
+        try {
+          const result = await handler.readDocument(request)
+          const presentation = createPresentationBlock(result)
+          return {
+            structuredContent: result as Record<string, unknown>,
+            content: [
+              ...(presentation
+                ? [{ type: 'text' as const, text: JSON.stringify(presentation) }]
+                : []),
+              { type: 'text' as const, text: JSON.stringify(result) }
+            ]
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          const known = /^([A-Z][A-Z_]+):\s*(.+)$/.exec(message)
+          if (!known) throw error
+          const result = { error: { code: known[1], message: known[2] } }
+          return {
+            isError: true,
+            structuredContent: result,
+            content: [{ type: 'text' as const, text: JSON.stringify(result) }]
+          }
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        const known = /^([A-Z][A-Z_]+):\s*(.+)$/.exec(message)
-        if (!known) throw error
-        const result = { error: { code: known[1], message: known[2] } }
-        return {
-          isError: true,
-          structuredContent: result,
-          content: [{ type: 'text' as const, text: JSON.stringify(result) }]
-        }
-      }
-    }
+      })
   )
   return server
 }

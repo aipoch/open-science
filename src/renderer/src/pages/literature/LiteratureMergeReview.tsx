@@ -58,6 +58,7 @@ export function LiteratureMergeReview({
     publisher: t('Publisher'),
     edition: t('Edition'),
     place: t('Place'),
+    publisherPlace: t('Place'),
     series: t('Series'),
     isbn: t('ISBN'),
     issn: t('ISSN')

@@ -92,21 +92,26 @@ class LiteratureReferenceResolver {
     > = new LiteratureCitationFormatter()
   ) {}
 
-  async resolve(inputs: readonly string[]): Promise<readonly LiteratureReferenceDiscovery[]> {
-    const references = [
-      ...new Map(inputs.map(parseReference).map((ref) => [ref.key, ref])).values()
-    ]
+  async resolve(
+    inputs: readonly string[],
+    signal?: AbortSignal
+  ): Promise<readonly LiteratureReferenceDiscovery[]> {
+    signal?.throwIfAborted()
+    const requested = inputs.map(parseReference)
+    const references = [...new Map(requested.map((ref) => [ref.key, ref])).values()]
     const pmids = references.filter(({ scheme }) => scheme === 'pmid').map(({ value }) => value)
     const discoveries = new Map<string, LiteratureReferenceDiscovery>()
 
     await Promise.all([
-      this.resolvePubmed(pmids, discoveries),
+      this.resolvePubmed(pmids, discoveries, signal),
       ...references
         .filter(({ scheme }) => scheme === 'doi')
-        .map(({ value }) => this.resolveCrossref(value, discoveries))
+        .map(({ value }) => this.resolveCrossref(value, discoveries, signal))
     ])
 
-    return references.map(({ key }) => {
+    signal?.throwIfAborted()
+    // Fetch each identifier once, but keep receipts aligned with every original input.
+    return requested.map(({ key }) => {
       const discovery = discoveries.get(key)
       if (!discovery) throw new Error(`REFERENCE_NOT_FOUND: No metadata was found for ${key}.`)
       return discovery
@@ -115,7 +120,8 @@ class LiteratureReferenceResolver {
 
   private async resolvePubmed(
     pmids: readonly string[],
-    discoveries: Map<string, LiteratureReferenceDiscovery>
+    discoveries: Map<string, LiteratureReferenceDiscovery>,
+    signal?: AbortSignal
   ): Promise<void> {
     if (pmids.length === 0) return
     const params = new URLSearchParams({
@@ -130,7 +136,9 @@ class LiteratureReferenceResolver {
         Accept: 'text/plain',
         'User-Agent': 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
       },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+        : AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     })
     const parsed = await this.formatter.parseReferences(await readResponse(response, 'PubMed'))
     for (const item of parsed.items) {
@@ -152,7 +160,8 @@ class LiteratureReferenceResolver {
 
   private async resolveCrossref(
     doi: string,
-    discoveries: Map<string, LiteratureReferenceDiscovery>
+    discoveries: Map<string, LiteratureReferenceDiscovery>,
+    signal?: AbortSignal
   ): Promise<void> {
     const sourceUrl = `${CROSSREF_BASE}${encodeURIComponent(doi)}`
     const response = await this.fetchFn(sourceUrl, {
@@ -160,7 +169,9 @@ class LiteratureReferenceResolver {
         Accept: 'application/json',
         'User-Agent': 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
       },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+        : AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     })
     const message = parseCrossrefResponse(await readResponse(response, 'Crossref'))
     const responseDoi = normalizeIdentifier('doi', message.DOI ?? doi)

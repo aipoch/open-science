@@ -324,6 +324,7 @@ const openMainWindow = async (
 class ElectronAppHarness implements ElectronApp {
   private application: ElectronApplication | undefined
   private currentPage: Page | undefined
+  private mainLogDirectory: string | undefined
   private fakeAgentEnabled = false
   private fakeRemoteItEnabled = false
   private readonly rendererFailures = new RendererFailureGate()
@@ -376,7 +377,8 @@ class ElectronAppHarness implements ElectronApp {
     const evidenceRoot = resolve('.scratch', 'notebook-lifecycle-e2e', 'evidence')
     await mkdir(evidenceRoot, { recursive: true })
     const destination = join(evidenceRoot, name)
-    await copyFile(join(this.roots.userDataRoot, 'logs', 'main.log'), destination)
+    if (!this.mainLogDirectory) throw new Error('Electron log directory is unavailable.')
+    await copyFile(join(this.mainLogDirectory, 'main.log'), destination)
     return destination
   }
 
@@ -880,6 +882,7 @@ class ElectronAppHarness implements ElectronApp {
       this.rendererFailures,
       this.windowMode
     )
+    this.mainLogDirectory = await this.application.evaluate(({ app }) => app.getPath('logs'))
   }
 
   private get runningApplication(): ElectronApplication {
@@ -965,12 +968,19 @@ class ElectronAppHarness implements ElectronApp {
 const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
   windowMode: ['hidden', { option: true }],
   // Playwright fixture callbacks require an object pattern even when no base fixture is needed.
-  app: async ({ windowMode }, install) => {
+  app: async ({ windowMode }, install, testInfo) => {
     const app = await ElectronAppHarness.create(windowMode)
 
     try {
       await install(app)
     } finally {
+      if (testInfo.status !== testInfo.expectedStatus) {
+        // Preserve the original test failure even if shutdown left no readable log.
+        await app
+          .captureMainLog('test-failure.log')
+          .then((path) => testInfo.attach('main-process-log', { path, contentType: 'text/plain' }))
+          .catch(() => undefined)
+      }
       await app.dispose()
     }
   }

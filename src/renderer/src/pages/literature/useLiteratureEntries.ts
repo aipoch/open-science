@@ -1,3 +1,5 @@
+import { oversizedLiteratureReference } from '../../../../shared/literature-export'
+import { readLiteratureDisplayPage } from './literature-read-pages'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
 import type {
@@ -31,12 +33,14 @@ const useLiteratureEntries = ({
   onEmptyPage,
   onError
 }: LiteratureEntriesOptions): {
+  oversizedItemId?: string
   loading: boolean
   failed: boolean
   pageTransitionLoading: boolean
   reload: (force?: boolean, preservePage?: boolean) => Promise<void>
   refreshItems: (itemIds: string[], updatedItems?: LiteratureItemView[]) => Promise<void>
 } => {
+  const [oversizedItemId, setOversizedItemId] = useState<string>()
   const [loading, setLoading] = useState(true)
   const [loadedKey, setLoadedKey] = useState<string>()
   const [failedKey, setFailedKey] = useState<string>()
@@ -77,6 +81,7 @@ const useLiteratureEntries = ({
         force || dirtyKeys.current.has(pageKey) ? undefined : cacheRef.current.get(pageKey)
       setFailedKey(undefined)
       onError(false)
+      setOversizedItemId(undefined)
       if (
         cached &&
         appliedPageRef.current?.key === pageKey &&
@@ -87,10 +92,15 @@ const useLiteratureEntries = ({
       }
       if (!cached) setLoading(true)
       try {
-        let page = cached ?? (await window.api.literature.search(request))
+        let page =
+          cached ??
+          (await readLiteratureDisplayPage(request, () => generation === generationRef.current))
         while (generation === generationRef.current && dataRevision !== dataRevisionRef.current) {
           dataRevision = dataRevisionRef.current
-          page = await window.api.literature.search(request)
+          page = await readLiteratureDisplayPage(
+            request,
+            () => generation === generationRef.current
+          )
         }
         if (generation !== generationRef.current) return
         if (page.entries.length === 0 && (request.offset ?? 0) > 0) {
@@ -109,8 +119,9 @@ const useLiteratureEntries = ({
         onPage(page, request, Boolean(cached))
         appliedPageRef.current = { key: pageKey, page }
         setLoadedKey(pageKey)
-      } catch {
+      } catch (error) {
         if (generation === generationRef.current) {
+          setOversizedItemId(oversizedLiteratureReference(error))
           if (!retained) setFailedKey(pageKey)
           onError(true)
         }
@@ -185,6 +196,7 @@ const useLiteratureEntries = ({
   const pending =
     failedKey !== pageKey && !cachedKeys.has(pageKey) && (loading || loadedKey !== pageKey)
   return {
+    oversizedItemId,
     loading: pending,
     failed: failedKey === pageKey,
     pageTransitionLoading: pending && loadedKey?.startsWith(`${scopeKey}:`) === true,

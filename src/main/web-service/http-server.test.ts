@@ -882,9 +882,16 @@ describe('startWebHttpServer', () => {
     for (const [code, expectedStatus] of [
       ['command-unavailable', 404],
       ['session-details-conflict', 409],
-      ['session-revision-conflict', 409]
+      ['session-revision-conflict', 409],
+      ['csl-undefined-macro', 400]
     ] as const) {
-      directInvoke.mockRejectedValueOnce(new ApplicationCommandError(code, `Rejected: ${code}`))
+      directInvoke.mockRejectedValueOnce(
+        new ApplicationCommandError(
+          code,
+          `Rejected: ${code}`,
+          code === 'csl-undefined-macro' ? { macro: 'author-原名' } : undefined
+        )
+      )
       const rejectedResponse = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
         method: 'POST',
         headers: {
@@ -897,7 +904,10 @@ describe('startWebHttpServer', () => {
       expect(rejectedResponse.status).toBe(expectedStatus)
       expect(await rejectedResponse.json()).toMatchObject({
         ok: false,
-        error: { code }
+        error: {
+          code,
+          ...(code === 'csl-undefined-macro' ? { parameters: { macro: 'author-原名' } } : {})
+        }
       })
     }
 

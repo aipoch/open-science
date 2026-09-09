@@ -13,7 +13,7 @@ import {
 } from '../../shared/literature'
 import { normalizeIdentifier, type LiteratureCatalog } from './catalog'
 
-type MetadataCatalog = Pick<LiteratureCatalog, 'applyMetadata' | 'get'>
+type MetadataCatalog = Pick<LiteratureCatalog, 'applyMetadata' | 'get' | 'getMetadataCommitReceipt'>
 type FetchFn = typeof fetch
 
 const CROSSREF_BASE = 'https://api.crossref.org/works/'
@@ -484,6 +484,28 @@ class LiteratureMetadataEnricher {
     overwriteFields: readonly LiteratureMetadataField[] = []
   ): Promise<LiteratureMetadataCompletionResult> {
     const current = await this.catalog.get(review.item.id)
+    const operationId = review.reviewToken
+      ? `${review.reviewToken}:${JSON.stringify([...new Set(overwriteFields)].sort())}`
+      : undefined
+    const receipt = operationId ? await this.catalog.getMetadataCommitReceipt(operationId) : null
+    if (
+      receipt &&
+      current &&
+      current.id === review.item.id &&
+      !current.deletedAt &&
+      receipt.itemId === review.item.id &&
+      receipt.expectedMetadataRevision === review.item.metadataRevision &&
+      current.metadataRevision >= receipt.committedMetadataRevision
+    ) {
+      return {
+        mode: 'commit',
+        provider: review.provider,
+        sourceUrl: review.sourceUrl,
+        item: current,
+        filled: review.filled,
+        conflicts: review.conflicts
+      }
+    }
     if (
       !current ||
       current.id !== review.item.id ||
@@ -516,6 +538,7 @@ class LiteratureMetadataEnricher {
       }
     }
     const persistedItem = await this.catalog.applyMetadata({
+      operationId,
       itemId: current.id,
       expectedMetadataRevision: review.item.metadataRevision,
       item: merged.item,

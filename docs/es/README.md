@@ -45,11 +45,11 @@
 
 > Este documento es una traducción del `README.md` en inglés. En caso de discrepancia, prevalece la [versión en inglés](../../README.md).
 
-Open-Science es un entorno local y de código abierto, desarrollado por [AIPOCH](https://aipoch.com/open-science) para científicos e investigadores, compatible con distintos modelos de IA. Permite realizar investigaciones reproducibles e inspeccionables con agentes científicos de IA, ejecutar Python y R, conectarse a fuentes de datos científicos y trabajar en macOS, Windows y Linux. Cree un proyecto, describa su objetivo de investigación en lenguaje natural y permita que los agentes lean archivos, busquen en la web, ejecuten código, consulten fuentes de datos científicos y produzcan informes, tablas y figuras con procedencia rastreable, todo en un mismo espacio de trabajo.
+AIPOCH Open-Science es un entorno local y de código abierto, desarrollado por [AIPOCH](https://aipoch.com/open-science) para científicos e investigadores, compatible con distintos modelos de IA. Permite realizar investigaciones reproducibles e inspeccionables con agentes científicos de IA, ejecutar Python y R, conectarse a fuentes de datos científicos y trabajar en macOS, Windows y Linux. Cree un proyecto, describa su objetivo de investigación en lenguaje natural y permita que los agentes lean archivos, busquen en la web, ejecuten código, consulten fuentes de datos científicos y produzcan informes, tablas y figuras con procedencia rastreable, todo en un mismo espacio de trabajo.
 
-Open-Science respalda la investigación computacional y con uso intensivo de datos en todas las disciplinas, incluidos el aprendizaje automático, la estadística, las ciencias biológicas, la química, la ciencia de los materiales, la física y las ciencias ambientales. Acompaña todo el proceso de investigación, desde la revisión bibliográfica y el desarrollo de hipótesis hasta la ejecución de código, el análisis de datos, la simulación, la visualización y la producción de resultados rastreables.
+AIPOCH Open-Science respalda la investigación computacional y con uso intensivo de datos en todas las disciplinas, incluidos el aprendizaje automático, la estadística, las ciencias biológicas, la química, la ciencia de los materiales, la física y las ciencias ambientales. Acompaña todo el proceso de investigación, desde la revisión bibliográfica y el desarrollo de hipótesis hasta la ejecución de código, el análisis de datos, la simulación, la visualización y la producción de resultados rastreables.
 
-> 💡 **[Open-Science v0.26.0 publicado](https://github.com/aipoch/open-science/releases/latest)** _(última actualización en septiembre de 2026)_. Open-Science v0.26.0 incorpora cálculo de clase HPC y un espacio de trabajo de literatura: los hosts de cálculo remotos estrenan un modo de ejecución por host con Slurm junto al SSH directo, y una nueva biblioteca de referencias organiza las referencias, los PDF y las citas con importaciones que reconocen identificadores, combinación de duplicados, adjunción de texto completo de acceso abierto y formateo de citas. Apodex se suma a los proveedores integrados junto con los últimos modelos de OpenAI y Anthropic, las llamadas a herramientas del Notebook se convierten en tarjetas de resumen legibles, y llegan un streaming más fluido, permisos predeterminados menos intrusivos y un amplio conjunto de correcciones en toda la aplicación. Consulte las [notas de la versión más recientes](https://github.com/aipoch/open-science/releases/latest) para obtener todos los detalles.
+> 💡 **[AIPOCH Open-Science v0.26.0 publicado](https://github.com/aipoch/open-science/releases/latest)** _(última actualización en septiembre de 2026)_. AIPOCH Open-Science v0.26.0 incorpora cálculo de clase HPC y un espacio de trabajo de literatura: los hosts de cálculo remotos estrenan un modo de ejecución por host con Slurm junto al SSH directo, y una nueva biblioteca de referencias organiza las referencias, los PDF y las citas con importaciones que reconocen identificadores, combinación de duplicados, adjunción de texto completo de acceso abierto y formateo de citas. Apodex se suma a los proveedores integrados junto con los últimos modelos de OpenAI y Anthropic, las llamadas a herramientas del Notebook se convierten en tarjetas de resumen legibles, y llegan un streaming más fluido, permisos predeterminados menos intrusivos y un amplio conjunto de correcciones en toda la aplicación. Consulte las [notas de la versión más recientes](https://github.com/aipoch/open-science/releases/latest) para obtener todos los detalles.
 
 <p align="center">
  <img width="1920" height="1140" alt="Banner principal de AIPOCH Open-Science: Science, Open to All — un entorno de investigación de IA científica de código abierto, independiente del modelo y autohospedado" src="../images/readme/open-science-banner.png" />
@@ -60,7 +60,7 @@ Open-Science respalda la investigación computacional y con uso intensivo de dat
 - [Inicio rápido](#-inicio-rápido)
 - [Recorrido por el producto](#recorrido-por-el-producto)
 - [Rendimiento en benchmarks](#rendimiento-en-benchmarks)
-- [Por qué Open-Science](#por-qué-open-science)
+- [Por qué AIPOCH Open-Science](#por-qué-aipoch-open-science)
 - [Capacidades principales](#capacidades-principales)
 - [Proveedores de modelos](#proveedores-de-modelos)
 - [Datos, permisos y confianza](#datos-permisos-y-confianza)
@@ -73,7 +73,7 @@ Open-Science respalda la investigación computacional y con uso intensivo de dat
 
 ## 🚀 Inicio rápido
 
-Ejecute Open-Science en tres pasos: descargue el instalador para su plataforma, complete la configuración guiada de primera ejecución y cree un proyecto de investigación.
+Ejecute AIPOCH Open-Science en tres pasos: descargue el instalador para su plataforma, complete la configuración guiada de primera ejecución y cree un proyecto de investigación.
 
 ### 1. Descargue la aplicación
 
@@ -110,8 +110,8 @@ El primer lanzamiento tiene cinco pasos guiados:
 
 <table>
 <tr>
-<td width="50%"> <img src="../images/readme/onboarding-environment.jpg" alt="Comprobaciones automáticas del entorno durante el primer inicio de Open-Science"> </td>
-<td width="50%"> <img src="../images/readme/onboarding-model-provider.jpg" alt="Configuración del proveedor de modelos durante el primer inicio de Open-Science"> </td>
+<td width="50%"> <img src="../images/readme/onboarding-environment.jpg" alt="Comprobaciones automáticas del entorno durante el primer inicio de AIPOCH Open-Science"> </td>
+<td width="50%"> <img src="../images/readme/onboarding-model-provider.jpg" alt="Configuración del proveedor de modelos durante el primer inicio de AIPOCH Open-Science"> </td>
 </tr>
 <tr>
 <td align="center"> <sub> Comprobaciones de red, almacenamiento y compatibilidad del host </sub> </td>
@@ -137,14 +137,14 @@ La ejecución de Notebook es opcional. Todas las comprobaciones obligatorias del
 
 ### De la solicitud de investigación al resultado rastreable
 
-Considere una tarea bioinformática representativa: reproducir un análisis publicado de expresión diferencial, comparar los resultados regenerados con el artículo y entregar el informe, las tablas y las figuras necesarias para la revisión. Las capturas siguientes son vistas representativas de flujos de trabajo documentados de Open-Science; ilustran cada etapa, pero no pertenecen a una única sesión continua.
+Considere una tarea bioinformática representativa: reproducir un análisis publicado de expresión diferencial, comparar los resultados regenerados con el artículo y entregar el informe, las tablas y las figuras necesarias para la revisión. Las capturas siguientes son vistas representativas de flujos de trabajo documentados de AIPOCH Open-Science; ilustran cada etapa, pero no pertenecen a una única sesión continua.
 
 #### 1. Definir la tarea de investigación y sus evidencias
 
 Describa la pregunta de investigación, el artículo y los conjuntos de datos de origen, los métodos o umbrales necesarios, los resultados esperados y los criterios de aceptación. Cargue los archivos de apoyo o haga referencia a un artefacto existente del proyecto con `@`, para que el agente parta de entradas explícitas y no de un contexto oculto.
 
 <p align="center">
-  <img src="../images/readme/product-tour-task.jpg" alt="Tarea de reproducción de un artículo en Open-Science con la conclusión, los artefactos generados y la comparación de fuentes en un mismo espacio de trabajo" width="900">
+  <img src="../images/readme/product-tour-task.jpg" alt="Tarea de reproducción de un artículo en AIPOCH Open-Science con la conclusión, los artefactos generados y la comparación de fuentes en un mismo espacio de trabajo" width="900">
 </p>
 
 #### 2. Ejecutar con herramientas científicas inspeccionables
@@ -152,7 +152,7 @@ Describa la pregunta de investigación, el artículo y los conjuntos de datos de
 El agente puede combinar en el Notebook compartido habilidades científicas, conectores de investigación sujetos a permisos, búsquedas, operaciones con archivos y código Python o R. Las figuras generadas se pueden revisar junto al resumen de la investigación, mientras que el registro del artefacto permite inspeccionar el código productor capturado y las evidencias de ejecución.
 
 <p align="center">
-  <img src="../images/readme/product-tour-execute.png" alt="Análisis bioinformático en Open-Science que muestra juntos el resumen de la investigación, la figura generada y el código productor capturado" width="900">
+  <img src="../images/readme/product-tour-execute.png" alt="Análisis bioinformático en AIPOCH Open-Science que muestra juntos el resumen de la investigación, la figura generada y el código productor capturado" width="900">
 </p>
 
 #### 3. Revisar informes, tablas y figuras en contexto
@@ -160,7 +160,7 @@ El agente puede combinar en el Notebook compartido habilidades científicas, con
 La respuesta final resume qué se reprodujo, qué presentó diferencias y qué limitaciones son importantes. Los informes Markdown, las tablas CSV, las imágenes y otros artefactos de investigación generados permanecen asociados a la sesión y también se reúnen en la biblioteca de archivos del proyecto, donde se pueden previsualizar junto a la conversación y reutilizar en trabajos posteriores.
 
 <p align="center">
-  <img src="../images/readme/product-tour-output.jpg" alt="Resultado de reproducción en Open-Science con figuras de expresión diferencial y archivos generados junto a la explicación del agente" width="900">
+  <img src="../images/readme/product-tour-output.jpg" alt="Resultado de reproducción en AIPOCH Open-Science con figuras de expresión diferencial y archivos generados junto a la explicación del agente" width="900">
 </p>
 
 #### 4. Rastrear cada artefacto hasta sus evidencias
@@ -168,22 +168,22 @@ La respuesta final resume qué se reprodujo, qué presentó diferencias y qué l
 Cada artefacto generado se almacena como una versión inmutable con suma de comprobación. La vista **Provenance** puede mostrar el código productor y el historial de ejecución, las entradas referenciadas, el inventario observado del entorno, la rama de conversación productora y los hallazgos del Reviewer específicos de la versión. Las evidencias que no se pudieron verificar se marcan como no disponibles en lugar de inferirse.
 
 <p align="center">
-  <img src="../images/readme/product-tour-provenance.jpg" alt="Vista previa de un artefacto de investigación de Open-Science con acceso a Provenance para rastrear un resultado generado" width="900">
+  <img src="../images/readme/product-tour-provenance.jpg" alt="Vista previa de un artefacto de investigación de AIPOCH Open-Science con acceso a Provenance para rastrear un resultado generado" width="900">
 </p>
 
 ## Rendimiento en benchmarks
 
 ### 🏆 N.º 1 en BiomniBench-DA Public 50
 
-Open-Science obtuvo la puntuación de clasificación más alta en la comparación recopilada de BiomniBench-DA Public 50: **79.05** con **gpt-5.6-sol (xhigh)**. El resultado combina una puntuación del evaluador Gemini 3.1 Pro de **81.04** y una puntuación del evaluador DeepSeek v4-pro de **77.06** mediante una media con ponderación equivalente, lo que sitúa a Open-Science en el **n.º 1** entre los resultados recopilados de Public 50. Consulte el [conjunto de datos BiomniBench-DA](https://huggingface.co/datasets/phylobio/BiomniBench-DA).
+AIPOCH Open-Science obtuvo la puntuación de clasificación más alta en la comparación recopilada de BiomniBench-DA Public 50: **79.05** con **gpt-5.6-sol (xhigh)**. El resultado combina una puntuación del evaluador Gemini 3.1 Pro de **81.04** y una puntuación del evaluador DeepSeek v4-pro de **77.06** mediante una media con ponderación equivalente, lo que sitúa a AIPOCH Open-Science en el **n.º 1** entre los resultados recopilados de Public 50. Consulte el [conjunto de datos BiomniBench-DA](https://huggingface.co/datasets/phylobio/BiomniBench-DA).
 
 <p align="center">
   <img src="../images/readme/biomnibench-public50-leaderboard.png" alt="Comparación BiomniBench-DA Public 50 que muestra a AIPOCH Open-Science en primer lugar con una puntuación de 79.05" width="1200" />
 </p>
 
-## Por qué Open-Science
+## Por qué AIPOCH Open-Science
 
-Open-Science reúne chats, Notebooks, scripts locales, bases de datos científicas, archivos y herramientas de informes en un entorno de investigación de IA persistente y local-first donde la ejecución permanece vinculada a las pruebas.
+AIPOCH Open-Science reúne chats, Notebooks, scripts locales, bases de datos científicas, archivos y herramientas de informes en un entorno de investigación de IA persistente y local-first donde la ejecución permanece vinculada a las pruebas.
 
 - **Ejecución persistente.** Los proyectos, sesiones, archivos, vistas previas e historial sobreviven a los reinicios, mientras que los agentes aprobados pueden ejecutar comandos, Python y R y generar artefactos.
 - **Resultados rastreables.** Las versiones de artefactos inmutables conservan pruebas de producción verificables y señalan claramente la información no disponible.
@@ -191,11 +191,9 @@ Open-Science reúne chats, Notebooks, scripts locales, bases de datos científic
 - **Control local-first.** La aplicación y el estado del proyecto permanecen en su equipo; las llamadas externas utilizan únicamente los servicios que configure o apruebe.
 - **Abierto y extensible.** El código independiente bajo Apache-2.0, las habilidades, los conectores, la actividad de las herramientas y los archivos generados son inspeccionables, y puede añadir habilidades y conectores MCP.
 
-[AIPOCH](https://aipoch.com/) desarrolla [Open-Science](https://aipoch.com/open-science), un entorno de investigación de escritorio, de código abierto y local-first para flujos de trabajo de IA científica.
-
 ## Capacidades principales
 
-Open-Science combina gestión de proyectos, ejecución de agentes multimodelo, Notebooks de Python y R, conectores de datos científicos, versiones inmutables de artefactos con procedencia y control humano autorizado en un espacio de trabajo local. La aplicación instalada y las [notas de la versión más recientes](https://github.com/aipoch/open-science/releases/latest) son la fuente de referencia para los catálogos actuales, los detalles de empaquetado y las opciones recién incorporadas.
+AIPOCH Open-Science combina gestión de proyectos, ejecución de agentes multimodelo, Notebooks de Python y R, conectores de datos científicos, versiones inmutables de artefactos con procedencia y control humano autorizado en un espacio de trabajo local. La aplicación instalada y las [notas de la versión más recientes](https://github.com/aipoch/open-science/releases/latest) son la fuente de referencia para los catálogos actuales, los detalles de empaquetado y las opciones recién incorporadas.
 
 | Área                                                   | Capacidad central                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -212,7 +210,7 @@ Open-Science combina gestión de proyectos, ejecución de agentes multimodelo, N
 
 ## Proveedores de modelos
 
-Open-Science es independiente del modelo a nivel de producto: conéctelo a los principales proveedores de LLM en la nube, una puerta de enlace personalizada o reutilice una suscripción Claude o Codex existente. Actualmente, la disponibilidad del proveedor depende del backend del agente seleccionado y de los protocolos API que admite. Hay cuatro formas de conectar un modelo:
+AIPOCH Open-Science es independiente del modelo a nivel de producto: conéctelo a los principales proveedores de LLM en la nube, una puerta de enlace personalizada o reutilice una suscripción Claude o Codex existente. Actualmente, la disponibilidad del proveedor depende del backend del agente seleccionado y de los protocolos API que admite. Hay cuatro formas de conectar un modelo:
 
 | Modo proveedor                     | Cómo funciona                                                                                                                                                                                                                                                                                                                                                                            |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -229,7 +227,7 @@ Los proveedores, los modelos disponibles y los endpoints regionales pueden evolu
 
 ## Datos, permisos y confianza
 
-Open-Science almacena en el equipo local los datos del proyecto, la configuración, las versiones de los artefactos y la evidencia de procedencia. Las claves API se guardan localmente y utilizan el almacén seguro de credenciales del sistema operativo cuando está disponible. Los registros también son locales y no se cargan automáticamente.
+AIPOCH Open-Science almacena en el equipo local los datos del proyecto, la configuración, las versiones de los artefactos y la evidencia de procedencia. Las claves API se guardan localmente y utilizan el almacén seguro de credenciales del sistema operativo cuando está disponible. Los registros también son locales y no se cargan automáticamente.
 
 El flujo de datos externos aún es posible y debe revisarse:
 
@@ -250,15 +248,15 @@ Revise los parámetros del conector y la actividad de la herramienta antes de ap
 
 ## Estado del proyecto
 
-Open-Science es una aplicación de escritorio desarrollada activamente disponible para macOS, Windows y Linux. El desarrollo se centra en flujos de trabajo de investigación locales confiables, capacidades científicas extensibles, artefactos de investigación rastreables y ejecución controlada por el usuario.
+AIPOCH Open-Science es una aplicación de escritorio desarrollada activamente disponible para macOS, Windows y Linux. El desarrollo se centra en flujos de trabajo de investigación locales confiables, capacidades científicas extensibles, artefactos de investigación rastreables y ejecución controlada por el usuario.
 
 Consulte la [última versión](https://github.com/aipoch/open-science/releases/latest) para conocer las descargas actuales y los cambios específicos de la versión. Para conocer las capacidades publicadas, parciales y planificadas, consulte el [Mapa de capacidades](../../ROADMAP.md#capability-map).
 
-Open-Science facilita la ejecución de investigaciones y el mantenimiento de registros; los investigadores siguen siendo responsables de los métodos, la interpretación, la privacidad y la validez científica.
+AIPOCH Open-Science facilita la ejecución de investigaciones y el mantenimiento de registros; los investigadores siguen siendo responsables de los métodos, la interpretación, la privacidad y la validez científica.
 
 ## Desarrollo y empaquetado
 
-Open-Science es una aplicación Electron creada con React, TypeScript, Prisma/SQLite y un entorno de ejecución de agentes basado en ACP.
+AIPOCH Open-Science es una aplicación Electron creada con React, TypeScript, Prisma/SQLite y un entorno de ejecución de agentes basado en ACP.
 
 Requisitos previos para desarrollar desde el código fuente:
 
@@ -306,7 +304,7 @@ Abra la URL autenticada que muestra la aplicación. Utilice `npm run dev:headles
 
 ### Acceso remoto móvil
 
-Se puede acceder a la misma interfaz web de localhost desde un teléfono o una tableta mediante el emparejamiento de Remote.It. Empareje un navegador con un código de Open-Science de seis dígitos, apruébelo una vez en el escritorio y el espacio de trabajo permanecerá accesible sin exponer directamente el servidor de loopback. Puede revocar la confianza del navegador; además, los cambios de modo o el cierre del servicio invalidan de inmediato las sesiones remotas activas.
+Se puede acceder a la misma interfaz web de localhost desde un teléfono o una tableta mediante el emparejamiento de Remote.It. Empareje un navegador con un código de AIPOCH Open-Science de seis dígitos, apruébelo una vez en el escritorio y el espacio de trabajo permanecerá accesible sin exponer directamente el servidor de loopback. Puede revocar la confianza del navegador; además, los cambios de modo o el cierre del servicio invalidan de inmediato las sesiones remotas activas.
 
 ### CLI y SDK sin interfaz gráfica
 
@@ -317,7 +315,7 @@ La CLI sin interfaz gráfica y el SDK de Node.js sin dependencias utilizan el mi
 
 ## Preguntas frecuentes
 
-### ¿Qué debo hacer la primera vez que abro Open-Science?
+### ¿Qué debo hacer la primera vez que abro AIPOCH Open-Science?
 
 R: Complete los cinco pasos de configuración: **Entorno**, **Ubicación de datos**, **Entorno de ejecución del agente**, **Proveedor de modelo** y **Entorno de ejecución de Notebook**. Corrija las filas obligatorias marcadas como **Acción necesaria**, instale o repare el agente seleccionado si se ofrece esa opción y pruebe la conexión con el modelo. La configuración de Notebook y una ubicación de datos personalizada son opcionales.
 
@@ -374,7 +372,7 @@ Consulte la [guía CLI](../../packages/open-science/CLI.md) para obtener la refe
 
 ### ¿Cómo inspecciono de dónde provino un resultado generado?
 
-R: Abra el artefacto generado y elija **Procedencia**. Seleccione una versión para inspeccionar la identidad del contenido, el código que produjo el artefacto, el historial de ejecución, las entradas, el inventario del entorno, el contexto de la conversación de origen y la evidencia del revisor. La evidencia que Open-Science no pudo verificar se marca como no disponible.
+R: Abra el artefacto generado y elija **Procedencia**. Seleccione una versión para inspeccionar la identidad del contenido, el código que produjo el artefacto, el historial de ejecución, las entradas, el inventario del entorno, el contexto de la conversación de origen y la evidencia del revisor. La evidencia que AIPOCH Open-Science no pudo verificar se marca como no disponible.
 
 ### ¿Puedo revisar una solicitud anterior sin perder la conversación que siguió?
 
@@ -386,7 +384,7 @@ R: Los proyectos, sesiones, archivos, configuraciones y credenciales configurada
 
 ## Participe
 
-Open-Science agradece informes de errores, propuestas de funciones, debates sobre diseño, preguntas de la comunidad y contribuciones a través de GitHub, Discord, X y el sitio web de AIPOCH. Elija el canal que mejor se adapte a su objetivo, luego siga la guía de contribución vinculada y el recordatorio de seguridad de publicación pública antes de compartir los detalles del proyecto.
+AIPOCH Open-Science agradece informes de errores, propuestas de funciones, debates sobre diseño, preguntas de la comunidad y contribuciones a través de GitHub, Discord, X y el sitio web de AIPOCH. Elija el canal que mejor se adapte a su objetivo, luego siga la guía de contribución vinculada y el recordatorio de seguridad de publicación pública antes de compartir los detalles del proyecto.
 
 | Canal                                                                    | Úselo para                                                                           |
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
@@ -394,7 +392,7 @@ Open-Science agradece informes de errores, propuestas de funciones, debates sobr
 | [GitHub Discusiones](https://github.com/aipoch/open-science/discussions) | Preguntas de diseño, propuestas de hoja de ruta y conversaciones técnicas más largas |
 | [Discord](https://discord.gg/zxQAYjReRv)                                 | Ayuda comunitaria, coordinación de contribuyentes y discusión informal               |
 | [X / @aipoch_ai](https://x.com/aipoch_ai)                                | Anuncios de versiones y novedades sobre el desarrollo público                        |
-| [Sitio web de Open-Science](https://aipoch.com/open-science)             | Descripción general oficial del producto y descargas                                 |
+| [Sitio web de AIPOCH Open-Science](https://aipoch.com/open-science)      | Descripción general oficial del producto y descargas                                 |
 
 Antes de abrir una incidencia pública, elimine de los registros y las capturas de pantalla las claves API, los tokens, las rutas de archivos privados, los datos no publicados, los identificadores de pacientes y cualquier otro material confidencial. Consulte [CONTRIBUTING.md](CONTRIBUTING.md) para conocer el flujo de trabajo de desarrollo.
 

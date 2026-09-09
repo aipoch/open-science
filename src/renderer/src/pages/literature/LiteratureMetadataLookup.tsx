@@ -118,7 +118,7 @@ const LiteratureMetadataLookup = ({
               updateIdentifier({ ...identifier, value: event.currentTarget.value })
             }
             onKeyDown={(event) => {
-              if (event.key === 'Enter') search()
+              if (event.key === 'Enter' && !event.nativeEvent.isComposing) search()
             }}
           />
           <Button

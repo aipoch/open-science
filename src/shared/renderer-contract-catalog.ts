@@ -1,3 +1,7 @@
+import type {
+  LiteratureExportRecordRequest,
+  LiteratureExportRecordResult
+} from './literature-export'
 import type { ProvenanceReadResult } from './provenance-read-result'
 import type { LiteratureJobRequest, LiteratureJobsResult } from './literature-jobs'
 import type { LiteratureFullTextRequest, LiteratureFullTextResult } from './literature'
@@ -257,6 +261,7 @@ import type {
   LiteratureFormatReferencesRequest,
   LiteratureFormatReferencesResult,
   LiteratureItemView,
+  LiteratureSourceRecordView,
   LiteratureItemInput,
   LiteratureMetadataCompletionRequest,
   LiteratureMetadataCompletionResult,
@@ -1136,6 +1141,13 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'literature.completeMetadata': callable<
     (request: LiteratureMetadataCompletionRequest) => Promise<LiteratureMetadataCompletionResult>
   >()('literature', ['literature:complete-metadata', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.exportRecord': callable<
+    (request: LiteratureExportRecordRequest) => Promise<LiteratureExportRecordResult>
+  >()('literature', ['literature:export-record', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.sources': callable<(itemId: string) => Promise<LiteratureSourceRecordView[]>>()(
+    'literature',
+    ['literature:sources', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'literature.get': callable<(itemId: string) => Promise<LiteratureItemView | undefined>>()(
     'literature',
     ['literature:get', WEB, undefined, undefined, RUNTIME_VALIDATED]

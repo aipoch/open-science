@@ -336,7 +336,14 @@ describe('Web bootstrap event connection', () => {
     expect(document.querySelector('button')?.textContent).toBe('重试')
   })
 
-  it('reconstructs Application Command errors returned by Web RPC', async () => {
+  it.each([
+    { code: 'invalid-command-arguments', message: 'Invalid project request.' },
+    {
+      code: 'csl-undefined-macro',
+      message: 'Undefined macro',
+      parameters: { macro: 'author-原名' }
+    }
+  ])('reconstructs Application Command errors returned by Web RPC: $code', async (error) => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
@@ -351,10 +358,7 @@ describe('Web bootstrap event connection', () => {
             JSON.stringify({
               protocolVersion: WEB_RPC_PROTOCOL_VERSION,
               ok: false,
-              error: {
-                code: 'invalid-command-arguments',
-                message: 'Invalid project request.'
-              }
+              error
             }),
             { status: 400, headers: { 'content-type': 'application/json' } }
           )
@@ -366,8 +370,7 @@ describe('Web bootstrap event connection', () => {
     const api = await loadBootstrap()
     await expect(api.projects.create({ name: 42 })).rejects.toMatchObject({
       name: 'ApplicationCommandError',
-      code: 'invalid-command-arguments',
-      message: 'Invalid project request.'
+      ...error
     })
   })
 

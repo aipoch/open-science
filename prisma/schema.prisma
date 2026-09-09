@@ -192,19 +192,19 @@ model SessionArtifactRef {
 }
 
 model PermissionGrant {
-  id             String    @id
-  capabilityKind String
-  capabilityKey  String
-  qualifierMode  String    @default("none")
-  qualifierValue String?
-  scopeKind      String
-  projectId      String?
-  sessionId      String?
+  id              String    @id
+  capabilityKind  String
+  capabilityKey   String
+  qualifierMode   String    @default("none")
+  qualifierValue  String?
+  scopeKind       String
+  projectId       String?
+  sessionId       String?
   approvalSummary String?
-  fingerprint    String    @unique
-  revision       Int       @default(1)
-  createdAt      DateTime?
-  project        Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fingerprint     String    @unique
+  revision        Int       @default(1)
+  createdAt       DateTime?
+  project         Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([capabilityKind, capabilityKey, qualifierMode, qualifierValue, scopeKind, projectId, sessionId])
   @@index([projectId, sessionId])
@@ -427,7 +427,7 @@ model ContentBlob {
   lastVerificationFailure      String?
   lastVerificationAttemptAt    DateTime?
   literatureAttachmentVersions LiteratureAttachmentVersion[]
-  literatureInboxPdfs           LiteratureInboxPdf[]
+  literatureInboxPdfs          LiteratureInboxPdf[]
 
   @@index([checksum, sizeBytes])
   @@index([state, createdAt])
@@ -436,37 +436,41 @@ model ContentBlob {
 // Mutable bibliographic identity. Item-specific fields that do not belong in the indexed core are
 // retained as validated JSON so Zotero-compatible imports can round-trip without a wide nullable table.
 model LiteratureItem {
-  id                      String                     @id @default(cuid())
-  itemType                String
-  title                   String
-  abstract                String                     @default("")
-  issuedText              String                     @default("")
-  issuedYear              Int?
-  containerTitle          String                     @default("")
-  shortTitle              String                     @default("")
-  language                String                     @default("")
-  rights                  String                     @default("")
-  url                     String                     @default("")
-  accessedAt              DateTime?
-  citationKey             String?
-  extra                   String                     @default("")
-  rating                  Int                        @default(0)
-  personalNote            String                     @default("")
-  typeFieldsJson          String                     @default("{}")
-  metadataRevision        Int                        @default(1)
-  createdAt               DateTime                   @default(now())
-  updatedAt               DateTime                   @updatedAt
-  deletedAt               DateTime?
-  mergedIntoItemId        String?
-  mergedInto              LiteratureItem?            @relation("LiteratureItemMerge", fields: [mergedIntoItemId], references: [id], onDelete: Restrict)
-  mergedItems             LiteratureItem[]           @relation("LiteratureItemMerge")
-  creators                LiteratureItemCreator[]
-  identifiers             LiteratureIdentifier[]
-  sourceRecords           LiteratureSourceRecord[]
-  collections             LiteratureCollectionItem[]
-  projects                ProjectLiterature[]
-  attachments             LiteratureAttachment[]
-  acceptedInboxCandidates LiteratureInboxCandidate[] @relation("AcceptedLiteratureItem")
+  normalizedTitle          String                     @default("")
+  normalizedAbstract       String                     @default("")
+  normalizedContainerTitle String                     @default("")
+  id                       String                     @id @default(cuid())
+  itemType                 String
+  title                    String
+  abstract                 String                     @default("")
+  issuedText               String                     @default("")
+  issuedYear               Int?
+  containerTitle           String                     @default("")
+  shortTitle               String                     @default("")
+  language                 String                     @default("")
+  rights                   String                     @default("")
+  url                      String                     @default("")
+  accessedAt               DateTime?
+  citationKey              String?
+  extra                    String                     @default("")
+  rating                   Int                        @default(0)
+  personalNote             String                     @default("")
+  typeFieldsJson           String                     @default("{}")
+  metadataRevision         Int                        @default(1)
+  createdAt                DateTime                   @default(now())
+  updatedAt                DateTime                   @updatedAt
+  deletedAt                DateTime?
+  mergedIntoItemId         String?
+  mergedInto               LiteratureItem?            @relation("LiteratureItemMerge", fields: [mergedIntoItemId], references: [id], onDelete: Restrict)
+  mergedItems              LiteratureItem[]           @relation("LiteratureItemMerge")
+  creators                 LiteratureItemCreator[]
+  identifiers              LiteratureIdentifier[]
+  sourceRecords            LiteratureSourceRecord[]
+  collections              LiteratureCollectionItem[]
+  projects                 ProjectLiterature[]
+  attachments              LiteratureAttachment[]
+  acceptedInboxCandidates  LiteratureInboxCandidate[] @relation("AcceptedLiteratureItem")
+  metadataCommitReceipts LiteratureMetadataCommitReceipt[]
 
   @@index([deletedAt, updatedAt])
   @@index([mergedIntoItemId])
@@ -492,19 +496,19 @@ model LiteratureAttachment {
 }
 
 model LiteratureAttachmentVersion {
-  id            String               @id @default(cuid())
-  attachmentId  String
-  contentBlobId String
-  versionNumber Int
-  filename      String
-  contentType   String
-  sizeBytes     BigInt
+  id             String               @id @default(cuid())
+  attachmentId   String
+  contentBlobId  String
+  versionNumber  Int
+  filename       String
+  contentType    String
+  sizeBytes      BigInt
   provenanceJson String?
-  checksum      String
-  pageCount     Int?
-  createdAt     DateTime             @default(now())
-  attachment    LiteratureAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
-  contentBlob   ContentBlob          @relation(fields: [contentBlobId], references: [id], onDelete: Restrict)
+  checksum       String
+  pageCount      Int?
+  createdAt      DateTime             @default(now())
+  attachment     LiteratureAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  contentBlob    ContentBlob          @relation(fields: [contentBlobId], references: [id], onDelete: Restrict)
 
   @@unique([attachmentId, versionNumber])
   @@unique([attachmentId, checksum])
@@ -512,15 +516,16 @@ model LiteratureAttachmentVersion {
 }
 
 model LiteratureCreator {
-  id             String                  @id @default(cuid())
-  nameMode       String
-  givenName      String                  @default("")
-  familyName     String                  @default("")
-  literalName    String                  @default("")
-  normalizedName String
-  createdAt      DateTime                @default(now())
-  updatedAt      DateTime                @updatedAt
-  items          LiteratureItemCreator[]
+  normalizedDisplayName String                  @default("")
+  id                    String                  @id @default(cuid())
+  nameMode              String
+  givenName             String                  @default("")
+  familyName            String                  @default("")
+  literalName           String                  @default("")
+  normalizedName        String
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  items                 LiteratureItemCreator[]
 
   @@index([normalizedName])
 }
@@ -572,6 +577,7 @@ model LiteratureInboxCandidate {
   updatedAt        DateTime                 @updatedAt
   acceptedItem     LiteratureItem?          @relation("AcceptedLiteratureItem", fields: [acceptedItemId], references: [id], onDelete: Restrict)
   sourceRecords    LiteratureSourceRecord[]
+  discoveries      LiteratureCandidateDiscovery[]
   pdfs             LiteratureInboxPdf[]
 
   @@index([state, createdAt])
@@ -579,20 +585,35 @@ model LiteratureInboxCandidate {
   @@index([acceptedItemId])
 }
 
+// Distinct discovery contexts survive global candidate deduplication and acceptance.
+model LiteratureCandidateDiscovery {
+  id          String @id @default(cuid())
+  candidateId String
+  contextKey  String
+  origin      String
+  projectId   String?
+  sessionId   String?
+  createdAt   DateTime @default(now())
+  candidate   LiteratureInboxCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, contextKey])
+  @@index([projectId, sessionId])
+}
+
 // Agent-acquired PDFs stay in Inbox until their reference is accepted.
 model LiteratureInboxPdf {
-  id            String @id @default(cuid())
-  candidateId   String
-  contentBlobId String
-  filename      String
-  sizeBytes     BigInt
+  id             String                   @id @default(cuid())
+  candidateId    String
+  contentBlobId  String
+  filename       String
+  sizeBytes      BigInt
   provenanceJson String?
-  checksum      String
-  pageCount     Int
-  sourceUrl     String
-  createdAt     DateTime @default(now())
-  candidate     LiteratureInboxCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  contentBlob   ContentBlob @relation(fields: [contentBlobId], references: [id], onDelete: Restrict)
+  checksum       String
+  pageCount      Int
+  sourceUrl      String
+  createdAt      DateTime                 @default(now())
+  candidate      LiteratureInboxCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  contentBlob    ContentBlob              @relation(fields: [contentBlobId], references: [id], onDelete: Restrict)
 
   @@unique([candidateId, checksum])
   @@index([contentBlobId])
@@ -611,7 +632,8 @@ model LiteratureSourceRecord {
   item             LiteratureItem?           @relation(fields: [itemId], references: [id], onDelete: Cascade)
   inboxCandidate   LiteratureInboxCandidate? @relation(fields: [inboxCandidateId], references: [id], onDelete: Cascade)
 
-  @@unique([provider, externalId])
+  @@unique([itemId, provider, externalId])
+  @@unique([inboxCandidateId, provider, externalId])
   @@index([itemId, provider])
   @@index([inboxCandidateId, provider])
 }
@@ -1133,21 +1155,33 @@ model MemoryEntry {
 // Main-owned delivery facts for terminal background outcomes. This table records only delivery
 // workflow state; Notebook Run and Compute Job records remain the execution authorities.
 model BackgroundResultDelivery {
-  id                    String   @id
+  id                    String    @id
   sourceKind            String
   sourceId              String
   projectId             String
   sessionId             String
   agentFrameId          String?
   state                 String
-  attemptCount          Int      @default(0)
+  attemptCount          Int       @default(0)
   claimToken            String?
   claimExpiresAt        DateTime?
   continuationMessageId String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   @@unique([sourceKind, sourceId])
   @@index([sessionId, state, createdAt, id])
   @@index([sourceKind, state, createdAt, id])
+}
+
+// Immutable proof of a metadata application. Retain while the reference exists, including soft
+// deletion/merge; removing a JSON task must not invalidate checkpoints that can still replay.
+model LiteratureMetadataCommitReceipt {
+  operationId                String         @id
+  itemId                     String
+  expectedMetadataRevision   Int
+  committedMetadataRevision  Int
+  item                       LiteratureItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([itemId])
 }

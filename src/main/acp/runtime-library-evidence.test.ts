@@ -98,57 +98,69 @@ const setup = async (
 }
 
 describe('Runtime Library evidence ownership', () => {
-  it('does not attribute delayed search or PDF evidence to a replacement prompt', async () => {
-    let finish!: () => void
-    const pending = new Promise<void>((resolve) => {
-      finish = resolve
-    })
-    const result = { items: [], totalCount: 0, hasMore: false }
-    const pdf = {
-      itemTitle: 'Original paper',
-      evidence: { scope: 'relevant-passages', passages: [{ content: 'Original findings.' }] }
-    }
-    const { handler, owners, interaction, recordLiteratureSearch, recordLiteraturePdfRead } =
-      await setup({
-        searchLibrary: async () => {
-          await pending
-          return result
-        },
-        readPdf: async () => {
-          await pending
-          return pdf
-        }
+  it.each([
+    ['claude-code', claudeCodeFramework, false],
+    ['opencode', opencodeFramework, false],
+    ['codex-response', codexFramework, false],
+    ['codex-bridge', codexFramework, true]
+  ] as const)(
+    'does not attribute delayed %s search or PDF evidence to a replacement prompt',
+    async (_route, framework, bridge) => {
+      let finish!: () => void
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve
       })
-    const search = handler.searchLibrary({ query: 'original question', scope: 'project' })
-    const read = handler.readPdf({ itemId: 'original-item', query: 'original findings' })
-    owners.sessionInteractions.supersede(interaction)
-    const replacement = owners.sessionInteractions.claim({
-      sessionId: 'session-1',
-      kind: 'prompt',
-      promptMessageId: 'message-2'
-    })
-    expect(interaction.signal.aborted).toBe(true)
-    expect(owners.sessionInteractions.current('session-1')).toBe(replacement)
-    finish()
-    await Promise.all([search, read])
-    // Either discard cancelled results or retain their original owner; never relabel them.
-    expect
-      .soft(recordLiteratureSearch.mock.calls.map(([request]) => request.promptMessageId))
-      .not.toContain('message-2')
-    expect
-      .soft(recordLiteraturePdfRead.mock.calls.map(([request]) => request.promptMessageId))
-      .not.toContain('message-2')
-    recordLiteratureSearch.mockClear()
-    recordLiteraturePdfRead.mockClear()
-    await handler.searchLibrary({ query: 'current question' })
-    await handler.readPdf({ itemId: 'current-item', query: 'current findings' })
-    expect(recordLiteratureSearch).toHaveBeenCalledWith(
-      expect.objectContaining({ promptMessageId: 'message-2', query: 'current question' })
-    )
-    expect(recordLiteraturePdfRead).toHaveBeenCalledWith(
-      expect.objectContaining({ promptMessageId: 'message-2', itemId: 'current-item' })
-    )
-  })
+      const result = { items: [], totalCount: 0, hasMore: false }
+      const pdf = {
+        itemTitle: 'Original paper',
+        evidence: { scope: 'relevant-passages', passages: [{ content: 'Original findings.' }] }
+      }
+      const { handler, owners, interaction, recordLiteratureSearch, recordLiteraturePdfRead } =
+        await setup(
+          {
+            searchLibrary: async () => {
+              await pending
+              return result
+            },
+            readPdf: async () => {
+              await pending
+              return pdf
+            }
+          },
+          framework,
+          bridge
+        )
+      const search = handler.searchLibrary({ query: 'original question', scope: 'project' })
+      const read = handler.readPdf({ itemId: 'original-item', query: 'original findings' })
+      owners.sessionInteractions.supersede(interaction)
+      const replacement = owners.sessionInteractions.claim({
+        sessionId: 'session-1',
+        kind: 'prompt',
+        promptMessageId: 'message-2'
+      })
+      expect(interaction.signal.aborted).toBe(true)
+      expect(owners.sessionInteractions.current('session-1')).toBe(replacement)
+      finish()
+      await Promise.all([search, read])
+      // Either discard cancelled results or retain their original owner; never relabel them.
+      expect
+        .soft(recordLiteratureSearch.mock.calls.map(([request]) => request.promptMessageId))
+        .not.toContain('message-2')
+      expect
+        .soft(recordLiteraturePdfRead.mock.calls.map(([request]) => request.promptMessageId))
+        .not.toContain('message-2')
+      recordLiteratureSearch.mockClear()
+      recordLiteraturePdfRead.mockClear()
+      await handler.searchLibrary({ query: 'current question' })
+      await handler.readPdf({ itemId: 'current-item', query: 'current findings' })
+      expect(recordLiteratureSearch).toHaveBeenCalledWith(
+        expect.objectContaining({ promptMessageId: 'message-2', query: 'current question' })
+      )
+      expect(recordLiteraturePdfRead).toHaveBeenCalledWith(
+        expect.objectContaining({ promptMessageId: 'message-2', itemId: 'current-item' })
+      )
+    }
+  )
 
   it('does not register an empty production PDF search as delivered PDF evidence', async () => {
     const checksum = 'a'.repeat(64)

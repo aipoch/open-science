@@ -1,3 +1,4 @@
+import { readLiteratureSelectionPage } from '../../pages/literature/literature-read-pages'
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
  * component: command palette · genre: modern-minimal · theme: Open-Science tokens
  * structural fingerprint: fixed header / single scroll plane / fixed shortcut footer
@@ -413,7 +414,7 @@ export const GlobalSearchDialog = ({
     const version = ++literatureRequestVersionRef.current
     setLiterature({ items: [], status: 'loading' })
     try {
-      const page = await window.api.literature.search({
+      const page = await readLiteratureSelectionPage({
         scope: 'library',
         query: trimmedQuery,
         limit: GLOBAL_SEARCH_PAGE_SIZE,

@@ -1,6 +1,6 @@
 import * as Checkbox from '@radix-ui/react-checkbox'
 import { Check, Columns3, GripVertical } from 'lucide-react'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -28,6 +28,7 @@ const LiteratureColumnCustomizer = <Column extends string>({
   visible: ReadonlySet<Column>
 }>): React.JSX.Element => {
   const { t } = useTranslation()
+  const titleId = useId()
   const [draggedColumn, setDraggedColumn] = useState<Column>()
   const [dropTarget, setDropTarget] = useState<DropTarget<Column>>()
 
@@ -46,12 +47,15 @@ const LiteratureColumnCustomizer = <Column extends string>({
       </PopoverTrigger>
       <PopoverContent
         align="end"
+        aria-labelledby={titleId}
         className="w-80 rounded-xl border border-border bg-bg-000 p-2 text-sm text-foreground shadow-lg"
       >
         <div className="px-2 pb-1.5 pt-1">
-          <p className="text-sm font-medium">{t('Customize columns')}</p>
-          <p className="mt-0.5 text-xs whitespace-nowrap text-muted-foreground">
-            {t('Drag to reorder. Select columns to show.')}
+          <p id={titleId} className="text-sm font-medium">
+            {t('Customize columns')}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t('Drag or use the up and down arrow keys to reorder. Select columns to show.')}
           </p>
         </div>
         <div className="space-y-0.5" aria-label={t('Customize columns')}>

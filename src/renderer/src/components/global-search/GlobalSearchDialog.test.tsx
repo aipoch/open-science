@@ -1,3 +1,4 @@
+import { LITERATURE_OVERSIZED_REFERENCE } from '../../../../shared/literature-export'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -233,39 +234,74 @@ afterEach(() => {
 })
 
 describe('GlobalSearchDialog', () => {
-  it('opens a Literature PDF from Workspace search in the Preview panel only', async () => {
-    vi.mocked(window.api.literature.search).mockResolvedValue({ entries: [literatureItem] })
-    const onOpenChange = vi.fn()
-    await act(async () => {
-      root.render(<GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />)
-    })
+  it.each(['single', 'paged', 'oversized'])(
+    'opens a Literature PDF from %s Workspace search in the Preview panel only',
+    async (kind) => {
+      const search = vi.mocked(window.api.literature.search)
+      search.mockResolvedValue({ entries: [literatureItem] })
+      if (kind === 'paged')
+        search.mockResolvedValueOnce({
+          entries: [
+            {
+              ...literatureItem,
+              id: 'first',
+              item: { ...literatureItem.item, title: 'Another result' },
+              attachments: []
+            }
+          ],
+          nextOffset: 1,
+          totalCount: 2
+        })
+      if (kind === 'oversized') {
+        search
+          .mockRejectedValueOnce(new Error(LITERATURE_OVERSIZED_REFERENCE + literatureItem.id))
+          .mockResolvedValue({ entries: [], totalCount: 1 })
+        const content = JSON.stringify(literatureItem)
+        window.api.literature.exportRecord = vi
+          .fn()
+          .mockResolvedValueOnce({
+            chunk: content.slice(0, 100),
+            digest: 'a'.repeat(64),
+            nextOffset: 100
+          })
+          .mockResolvedValueOnce({ chunk: content.slice(100), digest: 'a'.repeat(64) })
+      }
+      const onOpenChange = vi.fn()
+      await act(async () => {
+        root.render(
+          <GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />
+        )
+      })
 
-    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
-    await act(async () => {
-      input?.focus()
-      input?.setRangeText('Corrective')
-      input?.dispatchEvent(new Event('input', { bubbles: true }))
-      await new Promise((resolve) => window.setTimeout(resolve, 180))
-    })
-    expect(window.api.literature.search).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: 'project-a' })
-    )
+      const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+      await act(async () => {
+        input?.focus()
+        input?.setRangeText('Corrective')
+        input?.dispatchEvent(new Event('input', { bubbles: true }))
+        await new Promise((resolve) => window.setTimeout(resolve, 180))
+      })
+      expect(window.api.literature.search).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: 'project-a' })
+      )
 
-    const literatureRow = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
-      (option) => option.textContent?.includes('Corrective Retrieval Augmented Generation')
-    )
-    expect(literatureRow?.textContent).toContain('Shi-Qi Yan · 2024 · arXiv')
-    act(() => literatureRow?.click())
+      const literatureRow = [
+        ...document.body.querySelectorAll<HTMLElement>('[role="option"]')
+      ].find((option) => option.textContent?.includes('Corrective Retrieval Augmented Generation'))
+      expect(literatureRow?.textContent).toContain('Shi-Qi Yan · 2024 · arXiv')
+      act(() => literatureRow?.click())
 
-    expect(useNavigationStore.getState().view).toBe('workspace')
-    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('literature:literature-version-1')
-    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
-      source: 'literature',
-      path: 'literature-attachment-version:literature-version-1',
-      format: 'pdf'
-    })
-    expect(onOpenChange).toHaveBeenCalledWith(false)
-  })
+      expect(useNavigationStore.getState().view).toBe('workspace')
+      expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
+        'literature:literature-version-1'
+      )
+      expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+        source: 'literature',
+        path: 'literature-attachment-version:literature-version-1',
+        format: 'pdf'
+      })
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    }
+  )
 
   it('opens a Literature result from Home in its Library detail', async () => {
     useNavigationStore.setState({ view: 'home', activeProjectId: undefined })

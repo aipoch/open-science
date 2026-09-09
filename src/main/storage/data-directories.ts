@@ -3,7 +3,9 @@
 export const RELOCATABLE_DATA_DIRS = [
   'artifacts',
   'compute',
+  'content',
   'delegation',
+  'literature',
   'notebooks',
   'execution-file-evidence',
   'uploads',

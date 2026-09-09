@@ -25,8 +25,9 @@ describe('Compute Job operation migration', () => {
     await client.$executeRawUnsafe(`DROP TABLE "ComputeJobOperation"`)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "executionMode"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeHost" DROP COLUMN "executionMode"')
+    await client.$executeRawUnsafe('DROP TABLE IF EXISTS "LiteratureMetadataCommitReceipt"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation')`
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt')`
     )
     const [{ sql: computeJobSqlBefore }] = await client.$queryRawUnsafe<Array<{ sql: string }>>(
       `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
@@ -46,8 +47,8 @@ describe('Compute Job operation migration', () => {
         `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 2`
       )
     ).resolves.toEqual([
-      { id: '0036_content_verification_observation' },
-      { id: '0035_literature_pdf_provenance' }
+      { id: '0039_literature_metadata_commit_receipt' },
+      { id: '0038_literature_search_text' }
     ])
   })
 

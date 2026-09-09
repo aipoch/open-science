@@ -9,6 +9,7 @@ import { normalizeSessionFile } from '../../shared/session-persistence'
 import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { requireAgentArtifactVersion } from '../artifacts/provenance-version-kind'
+import { resolveContentStorageKey } from './content-repository'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const storageKey = (...segments: string[]): string => segments.join('/')
@@ -289,6 +290,53 @@ const validateSqliteStore = async (dataRoot: string, authorityRoot: string): Pro
       "SELECT name FROM sqlite_master WHERE type = 'table'"
     )
     const tables = new Set(tableRows.map((row) => row.name))
+    if (tables.has('ContentBlob')) {
+      // Check each shared blob once, including references retained on deleted items. Migration
+      // verification must not quarantine content or persist observations in the authority database.
+      const blobs = await client.contentBlob.findMany({
+        where: {
+          OR: [
+            { literatureAttachmentVersions: { some: {} } },
+            { literatureInboxPdfs: { some: {} } }
+          ]
+        },
+        include: { literatureAttachmentVersions: true, literatureInboxPdfs: true }
+      })
+      for (const blob of blobs) {
+        if (blob.state !== 'available') {
+          throw new Error(`Literature content is not available: ${blob.id}`)
+        }
+        // Older shared blobs may still live under uploads/ or artifacts/. Use the same key
+        // contract as the reader rather than requiring a new content/blobs/ location.
+        const contentPath = resolveContentStorageKey(dataRoot, blob.storageKey)
+        if (!(await fileExists(contentPath))) {
+          throw new Error(`Literature content file is missing or not a file: ${blob.id}`)
+        }
+        if (
+          (await stat(contentPath, { bigint: true })).size !== blob.sizeBytes ||
+          !SHA256_PATTERN.test(blob.checksum) ||
+          (await sha256File(contentPath)) !== blob.checksum
+        ) {
+          throw new Error(`Literature content checksum or size mismatch: ${blob.id}`)
+        }
+        for (const version of blob.literatureAttachmentVersions) {
+          if (
+            version.checksum !== blob.checksum ||
+            version.sizeBytes !== blob.sizeBytes ||
+            (blob.contentType !== null && version.contentType !== blob.contentType)
+          ) {
+            throw new Error(
+              `Literature Attachment Version does not match Content Blob: ${version.id}`
+            )
+          }
+        }
+        for (const pdf of blob.literatureInboxPdfs) {
+          if (pdf.checksum !== blob.checksum || pdf.sizeBytes !== blob.sizeBytes) {
+            throw new Error(`Literature Inbox PDF does not match Content Blob: ${pdf.id}`)
+          }
+        }
+      }
+    }
     if (tables.has('ArtifactVersion')) {
       const versions = await client.artifactVersion.findMany({ include: { artifact: true } })
       for (const version of versions) {

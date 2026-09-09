@@ -45,11 +45,11 @@
 
 > 이 문서는 영어 `README.md`의 번역본입니다. 내용이 다르면 [영문 원본](../../README.md)을 기준으로 합니다.
 
-Open-Science는 [AIPOCH](https://aipoch.com/open-science)가 과학자와 연구자를 위해 개발한 오픈 소스, 로컬 우선, 모델 독립형 AI 연구 워크벤치입니다. 과학 AI 에이전트, Python 및 R 실행, 과학 데이터 커넥터, macOS·Windows·Linux 크로스 플랫폼 지원을 통해 재현 가능하고 검토 가능한 연구를 수행합니다. 하나의 워크스페이스에서 프로젝트를 만들고 연구 목표를 자연어로 설명하면, 에이전트가 파일을 읽고 웹을 검색하며 코드를 실행하고 과학 데이터 소스를 조회하여 추적 가능한 출처가 포함된 보고서, 표, 그림을 생성합니다.
+AIPOCH Open-Science는 [AIPOCH](https://aipoch.com/open-science)가 과학자와 연구자를 위해 개발한 오픈 소스, 로컬 우선, 모델 독립형 AI 연구 워크벤치입니다. 과학 AI 에이전트, Python 및 R 실행, 과학 데이터 커넥터, macOS·Windows·Linux 크로스 플랫폼 지원을 통해 재현 가능하고 검토 가능한 연구를 수행합니다. 하나의 워크스페이스에서 프로젝트를 만들고 연구 목표를 자연어로 설명하면, 에이전트가 파일을 읽고 웹을 검색하며 코드를 실행하고 과학 데이터 소스를 조회하여 추적 가능한 출처가 포함된 보고서, 표, 그림을 생성합니다.
 
-Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
+AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
-> 💡 **[Open-Science v0.26.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 9월)_. Open-Science v0.26.0은 HPC급 컴퓨팅과 문헌 워크스페이스를 제공합니다. 원격 컴퓨팅 호스트가 직접 SSH와 함께 호스트별 Slurm 실행 모드를 갖추고, 새로운 참고문헌 라이브러리가 식별자 기반 가져오기, 중복 병합, 오픈 액세스 전문 첨부, 인용 형식 지정으로 참고문헌·PDF·인용을 정리합니다. Apodex가 최신 OpenAI 및 Anthropic 모델과 함께 기본 제공업체에 합류하고, Notebook 도구 호출이 읽기 쉬운 요약 카드로 바뀌며, 더 매끄러운 스트리밍, 더 조용해진 기본 권한, 폭넓은 수정이 전반에 걸쳐 포함됩니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
+> 💡 **[AIPOCH Open-Science v0.26.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 9월)_. AIPOCH Open-Science v0.26.0은 HPC급 컴퓨팅과 문헌 워크스페이스를 제공합니다. 원격 컴퓨팅 호스트가 직접 SSH와 함께 호스트별 Slurm 실행 모드를 갖추고, 새로운 참고문헌 라이브러리가 식별자 기반 가져오기, 중복 병합, 오픈 액세스 전문 첨부, 인용 형식 지정으로 참고문헌·PDF·인용을 정리합니다. Apodex가 최신 OpenAI 및 Anthropic 모델과 함께 기본 제공업체에 합류하고, Notebook 도구 호출이 읽기 쉬운 요약 카드로 바뀌며, 더 매끄러운 스트리밍, 더 조용해진 기본 권한, 폭넓은 수정이 전반에 걸쳐 포함됩니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />
@@ -60,7 +60,7 @@ Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물
 - [빠른 시작](#-빠른-시작)
 - [제품 둘러보기](#제품-둘러보기)
 - [벤치마크 성능](#벤치마크-성능)
-- [Open-Science를 선택하는 이유](#open-science를-선택하는-이유)
+- [AIPOCH Open-Science를 선택하는 이유](#aipoch-open-science를-선택하는-이유)
 - [핵심 기능](#핵심-기능)
 - [모델 제공업체](#모델-제공업체)
 - [데이터, 권한 및 신뢰](#데이터-권한-및-신뢰)
@@ -72,7 +72,7 @@ Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물
 
 ## 🚀 빠른 시작
 
-세 단계로 Open-Science를 실행할 수 있습니다. 플랫폼에 맞는 설치 프로그램을 다운로드하고, 안내에 따라 최초 실행 설정을 완료한 다음 연구 프로젝트를 만듭니다.
+세 단계로 AIPOCH Open-Science를 실행할 수 있습니다. 플랫폼에 맞는 설치 프로그램을 다운로드하고, 안내에 따라 최초 실행 설정을 완료한 다음 연구 프로젝트를 만듭니다.
 
 ### 1. 앱 다운로드
 
@@ -109,8 +109,8 @@ Homebrew는 Apple Silicon 또는 Intel용 패키지를 자동으로 선택합니
 
 <table>
   <tr>
-    <td width="50%"><img src="../images/readme/onboarding-environment.jpg" alt="Open-Science의 자동 최초 실행 환경 검사"></td>
-    <td width="50%"><img src="../images/readme/onboarding-model-provider.jpg" alt="Open-Science 최초 실행 모델 제공업체 구성"></td>
+    <td width="50%"><img src="../images/readme/onboarding-environment.jpg" alt="AIPOCH Open-Science의 자동 최초 실행 환경 검사"></td>
+    <td width="50%"><img src="../images/readme/onboarding-model-provider.jpg" alt="AIPOCH Open-Science 최초 실행 모델 제공업체 구성"></td>
   </tr>
   <tr>
     <td align="center"><sub>호스트 호환성, 저장소 및 네트워크 검사</sub></td>
@@ -136,14 +136,14 @@ Notebook 실행은 선택 사항입니다. 필수 환경 및 에이전트 런타
 
 ### 연구 요청에서 추적 가능한 결과까지
 
-대표적인 생물정보학 작업을 예로 들어 보겠습니다. 출판된 차등 발현 분석을 재현하고, 다시 생성한 결과를 논문과 비교한 뒤 검토에 필요한 보고서, 표, 그림을 제공합니다. 아래 스크린샷은 기록된 Open-Science 워크플로의 대표 화면으로, 각 단계를 보여 주지만 하나의 연속된 세션을 의미하지는 않습니다.
+대표적인 생물정보학 작업을 예로 들어 보겠습니다. 출판된 차등 발현 분석을 재현하고, 다시 생성한 결과를 논문과 비교한 뒤 검토에 필요한 보고서, 표, 그림을 제공합니다. 아래 스크린샷은 기록된 AIPOCH Open-Science 워크플로의 대표 화면으로, 각 단계를 보여 주지만 하나의 연속된 세션을 의미하지는 않습니다.
 
 #### 1. 연구 작업과 근거 정의
 
 연구 질문, 원문 논문과 데이터 세트, 필요한 방법 또는 임계값, 예상 출력, 승인 기준을 설명합니다. 관련 파일을 업로드하거나 `@`로 기존 프로젝트 아티팩트를 참조하여 에이전트가 숨겨진 컨텍스트가 아닌 명시적인 입력에서 시작하도록 합니다.
 
 <p align="center">
-  <img src="../images/readme/product-tour-task.jpg" alt="연구 결론, 생성 아티팩트, 출처 비교를 한 작업 공간에 표시한 Open-Science 논문 재현 작업" width="900">
+  <img src="../images/readme/product-tour-task.jpg" alt="연구 결론, 생성 아티팩트, 출처 비교를 한 작업 공간에 표시한 AIPOCH Open-Science 논문 재현 작업" width="900">
 </p>
 
 #### 2. 검사 가능한 과학 도구로 실행
@@ -151,7 +151,7 @@ Notebook 실행은 선택 사항입니다. 필수 환경 및 에이전트 런타
 에이전트는 공유 Notebook에서 과학 스킬, 권한이 적용된 연구 커넥터, 검색, 파일 작업, Python 또는 R 코드를 함께 사용할 수 있습니다. 생성된 그림을 연구 요약 옆에서 검토할 수 있으며, 아티팩트 기록에서는 캡처된 생성 코드와 실행 근거를 확인할 수 있습니다.
 
 <p align="center">
-  <img src="../images/readme/product-tour-execute.png" alt="연구 요약, 생성된 그림, 캡처된 생성 코드를 나란히 표시한 Open-Science 생물정보학 분석" width="900">
+  <img src="../images/readme/product-tour-execute.png" alt="연구 요약, 생성된 그림, 캡처된 생성 코드를 나란히 표시한 AIPOCH Open-Science 생물정보학 분석" width="900">
 </p>
 
 #### 3. 보고서, 표, 그림을 한곳에서 검토
@@ -159,7 +159,7 @@ Notebook 실행은 선택 사항입니다. 필수 환경 및 에이전트 런타
 최종 응답은 재현된 내용, 달라진 내용, 중요한 한계를 요약합니다. 생성된 Markdown 보고서, CSV 표, 이미지 및 기타 연구 아티팩트는 세션에 연결된 상태로 프로젝트 파일 라이브러리에도 모이며, 대화 옆에서 미리 보고 후속 작업에 다시 사용할 수 있습니다.
 
 <p align="center">
-  <img src="../images/readme/product-tour-output.jpg" alt="에이전트 설명 옆에서 차등 발현 그림과 생성 파일을 미리 보는 Open-Science 재현 결과" width="900">
+  <img src="../images/readme/product-tour-output.jpg" alt="에이전트 설명 옆에서 차등 발현 그림과 생성 파일을 미리 보는 AIPOCH Open-Science 재현 결과" width="900">
 </p>
 
 #### 4. 모든 아티팩트를 근거까지 추적
@@ -167,22 +167,22 @@ Notebook 실행은 선택 사항입니다. 필수 환경 및 에이전트 런타
 생성된 각 아티팩트는 체크섬이 있는 변경 불가능한 버전으로 저장됩니다. **Provenance** 보기에서는 생성 코드와 실행 기록, 참조된 입력, 관찰된 환경 목록, 생성한 대화 브랜치, 버전별 Reviewer 결과를 표시할 수 있습니다. 검증할 수 없는 근거는 추론하지 않고 사용할 수 없음으로 표시합니다.
 
 <p align="center">
-  <img src="../images/readme/product-tour-provenance.jpg" alt="생성 결과를 추적하는 Provenance 진입점이 있는 Open-Science 연구 아티팩트 미리 보기" width="900">
+  <img src="../images/readme/product-tour-provenance.jpg" alt="생성 결과를 추적하는 Provenance 진입점이 있는 AIPOCH Open-Science 연구 아티팩트 미리 보기" width="900">
 </p>
 
 ## 벤치마크 성능
 
 ### 🏆 BiomniBench-DA Public 50 1위
 
-Open-Science는 집계된 BiomniBench-DA Public 50 비교에서 **gpt-5.6-sol (xhigh)**로 **79.05**를 기록해 가장 높은 순위 점수를 달성했습니다. 이 결과는 Gemini 3.1 Pro 평가 점수 **81.04**와 DeepSeek v4-pro 평가 점수 **77.06**을 동일 가중치로 평균한 값이며, 수집된 Public 50 결과에서 Open-Science를 **1위**에 올렸습니다. [BiomniBench-DA 데이터세트](https://huggingface.co/datasets/phylobio/BiomniBench-DA)를 살펴보세요.
+AIPOCH Open-Science는 집계된 BiomniBench-DA Public 50 비교에서 **gpt-5.6-sol (xhigh)**로 **79.05**를 기록해 가장 높은 순위 점수를 달성했습니다. 이 결과는 Gemini 3.1 Pro 평가 점수 **81.04**와 DeepSeek v4-pro 평가 점수 **77.06**을 동일 가중치로 평균한 값이며, 수집된 Public 50 결과에서 AIPOCH Open-Science를 **1위**에 올렸습니다. [BiomniBench-DA 데이터세트](https://huggingface.co/datasets/phylobio/BiomniBench-DA)를 살펴보세요.
 
 <p align="center">
   <img src="../images/readme/biomnibench-public50-leaderboard.png" alt="AIPOCH Open-Science가 79.05점으로 1위를 기록한 BiomniBench-DA Public 50 비교" width="1200" />
 </p>
 
-## Open-Science를 선택하는 이유
+## AIPOCH Open-Science를 선택하는 이유
 
-Open-Science는 채팅, Notebook, 로컬 스크립트, 과학 데이터베이스, 파일, 보고 도구에 흩어진 연구 작업을 실행과 증거가 함께 유지되는 하나의 영구적인 로컬 우선 AI 연구 워크벤치로 통합합니다.
+AIPOCH Open-Science는 채팅, Notebook, 로컬 스크립트, 과학 데이터베이스, 파일, 보고 도구에 흩어진 연구 작업을 실행과 증거가 함께 유지되는 하나의 영구적인 로컬 우선 AI 연구 워크벤치로 통합합니다.
 
 - **영구적인 실행.** 프로젝트, 세션, 파일, 미리보기, 실행 기록은 재시작 후에도 유지되며, 승인된 에이전트는 명령, Python, R을 실행하고 아티팩트를 생성할 수 있습니다.
 - **추적 가능한 결과.** 불변 아티팩트 버전은 검증 가능한 생성 증거를 보존하고 확보할 수 없는 증거를 명확히 표시합니다.
@@ -190,11 +190,9 @@ Open-Science는 채팅, Notebook, 로컬 스크립트, 과학 데이터베이스
 - **로컬 우선 제어.** 앱과 프로젝트 상태는 사용자 컴퓨터에 유지되며 외부 호출은 명시적으로 구성하거나 승인한 서비스만 사용합니다.
 - **개방성과 확장성.** 독립적인 Apache-2.0 코드베이스, 스킬, 커넥터, 도구 활동, 생성 파일을 검토할 수 있으며 스킬과 MCP 커넥터를 추가할 수 있습니다.
 
-[AIPOCH](https://aipoch.com/)는 [Open-Science](https://aipoch.com/open-science)를 과학 AI 워크플로를 위한 오픈 소스 로컬 우선 데스크톱 연구 워크벤치로 개발합니다.
-
 ## 핵심 기능
 
-Open-Science는 프로젝트 관리, 다중 모델 에이전트 실행, Python 및 R Notebook, 과학 데이터 커넥터, 출처가 포함된 불변 아티팩트 버전, 권한이 적용된 사람 참여 제어를 하나의 로컬 워크스페이스에 통합합니다. 변경되는 카탈로그, 패키징 세부 정보, 새 옵션은 설치된 앱과 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 기준으로 확인하세요.
+AIPOCH Open-Science는 프로젝트 관리, 다중 모델 에이전트 실행, Python 및 R Notebook, 과학 데이터 커넥터, 출처가 포함된 불변 아티팩트 버전, 권한이 적용된 사람 참여 제어를 하나의 로컬 워크스페이스에 통합합니다. 변경되는 카탈로그, 패키징 세부 정보, 새 옵션은 설치된 앱과 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 기준으로 확인하세요.
 
 | 영역                                         | 핵심 기능                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -211,7 +209,7 @@ Open-Science는 프로젝트 관리, 다중 모델 에이전트 실행, Python �
 
 ## 모델 제공업체
 
-Open-Science는 제품 수준에서 특정 모델에 종속되지 않습니다. 주요 클라우드 LLM 제공업체 또는 사용자 지정 게이트웨이에 연결하거나 기존 Claude 또는 Codex 구독을 재사용할 수 있습니다. 현재 제공업체 사용 가능 여부는 선택한 에이전트 백엔드와 지원 API 프로토콜에 따라 달라집니다. 모델에 연결하는 방법은 네 가지입니다.
+AIPOCH Open-Science는 제품 수준에서 특정 모델에 종속되지 않습니다. 주요 클라우드 LLM 제공업체 또는 사용자 지정 게이트웨이에 연결하거나 기존 Claude 또는 Codex 구독을 재사용할 수 있습니다. 현재 제공업체 사용 가능 여부는 선택한 에이전트 백엔드와 지원 API 프로토콜에 따라 달라집니다. 모델에 연결하는 방법은 네 가지입니다.
 
 | 제공업체 모드              | 작동 방식                                                                                                                                                                                                                                                                      |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -228,7 +226,7 @@ Open-Science는 제품 수준에서 특정 모델에 종속되지 않습니다. 
 
 ## 데이터, 권한 및 신뢰
 
-Open-Science는 프로젝트 데이터, 설정, 아티팩트 버전, 출처 증거를 로컬 컴퓨터에 저장합니다. API Key는 로컬에 보관되며 운영 체제에서 지원할 경우 보안 자격 증명 저장소로 보호됩니다. 로그는 로컬에 있고 자동으로 업로드되지 않습니다.
+AIPOCH Open-Science는 프로젝트 데이터, 설정, 아티팩트 버전, 출처 증거를 로컬 컴퓨터에 저장합니다. API Key는 로컬에 보관되며 운영 체제에서 지원할 경우 보안 자격 증명 저장소로 보호됩니다. 로그는 로컬에 있고 자동으로 업로드되지 않습니다.
 
 외부 데이터 흐름은 발생할 수 있으므로 검토해야 합니다.
 
@@ -249,15 +247,15 @@ Open-Science는 프로젝트 데이터, 설정, 아티팩트 버전, 출처 증�
 
 ## 프로젝트 상태
 
-Open-Science는 macOS, Windows, Linux에서 사용할 수 있으며 활발히 개발되는 데스크톱 앱입니다. 신뢰할 수 있는 로컬 우선 연구 워크플로, 확장 가능한 과학 기능, 추적 가능한 연구 아티팩트, 사용자 제어 실행에 중점을 둡니다.
+AIPOCH Open-Science는 macOS, Windows, Linux에서 사용할 수 있으며 활발히 개발되는 데스크톱 앱입니다. 신뢰할 수 있는 로컬 우선 연구 워크플로, 확장 가능한 과학 기능, 추적 가능한 연구 아티팩트, 사용자 제어 실행에 중점을 둡니다.
 
 현재 다운로드와 버전별 변경 사항은 [최신 릴리스](https://github.com/aipoch/open-science/releases/latest)를 확인하세요. 제공됨, 일부 구현됨, 계획됨 상태의 기능은 [기능 맵](../../ROADMAP.md#capability-map)을 참고하세요.
 
-Open-Science는 연구 실행과 기록 보관을 지원하지만 연구자는 방법, 해석, 개인정보 보호, 과학적 타당성에 대한 책임을 집니다.
+AIPOCH Open-Science는 연구 실행과 기록 보관을 지원하지만 연구자는 방법, 해석, 개인정보 보호, 과학적 타당성에 대한 책임을 집니다.
 
 ## 개발 및 패키징
 
-Open-Science는 React, TypeScript, Prisma/SQLite, ACP 기반 에이전트 런타임으로 구축된 Electron 앱입니다.
+AIPOCH Open-Science는 React, TypeScript, Prisma/SQLite, ACP 기반 에이전트 런타임으로 구축된 Electron 앱입니다.
 
 소스 개발 요구 사항:
 
@@ -305,7 +303,7 @@ npm run dev:web
 
 ### 모바일 원격 액세스
 
-Remote.It 페어링을 통해 휴대전화나 태블릿에서 동일한 localhost 웹 UI에 연결할 수 있습니다. 6자리 Open-Science 코드로 브라우저를 페어링하고 데스크톱에서 한 번 승인하면 루프백 서버를 직접 공개하지 않고 워크스페이스에 연결할 수 있습니다. 브라우저 신뢰는 취소할 수 있으며 모드 변경이나 서비스 종료는 활성 원격 세션을 즉시 무효화합니다.
+Remote.It 페어링을 통해 휴대전화나 태블릿에서 동일한 localhost 웹 UI에 연결할 수 있습니다. 6자리 AIPOCH Open-Science 코드로 브라우저를 페어링하고 데스크톱에서 한 번 승인하면 루프백 서버를 직접 공개하지 않고 워크스페이스에 연결할 수 있습니다. 브라우저 신뢰는 취소할 수 있으며 모드 변경이나 서비스 종료는 활성 원격 세션을 즉시 무효화합니다.
 
 ### 헤드리스 CLI 및 SDK
 
@@ -316,7 +314,7 @@ Remote.It 페어링을 통해 휴대전화나 태블릿에서 동일한 localhos
 
 ## 자주 묻는 질문
 
-### Open-Science를 처음 열면 무엇을 해야 하나요?
+### AIPOCH Open-Science를 처음 열면 무엇을 해야 하나요?
 
 답변: **Environment**, **Data location**, **Agent runtime**, **Model provider**, **Notebook runtime**의 다섯 설정 단계를 완료하세요. `Action needed`로 표시된 필수 항목을 해결하고, 선택한 에이전트의 설치 또는 복구가 제안되면 수행한 다음 모델 연결을 테스트하세요. Notebook 설정과 사용자 지정 데이터 위치는 선택 사항입니다.
 
@@ -373,7 +371,7 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 ### 생성된 결과의 출처를 확인하려면 어떻게 하나요?
 
-답변: 생성된 아티팩트를 열고 **Provenance**를 선택하세요. 버전을 선택하여 콘텐츠 ID와 사용 가능한 생성 코드, 실행 기록, 입력, 환경 인벤토리, 생성 대화 컨텍스트, 리뷰 증거를 확인합니다. Open-Science가 검증할 수 없는 증거는 사용할 수 없음으로 표시됩니다.
+답변: 생성된 아티팩트를 열고 **Provenance**를 선택하세요. 버전을 선택하여 콘텐츠 ID와 사용 가능한 생성 코드, 실행 기록, 입력, 환경 인벤토리, 생성 대화 컨텍스트, 리뷰 증거를 확인합니다. AIPOCH Open-Science가 검증할 수 없는 증거는 사용할 수 없음으로 표시됩니다.
 
 ### 이후 대화를 잃지 않고 이전 요청을 수정할 수 있나요?
 
@@ -385,7 +383,7 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 ## 참여하기
 
-Open-Science는 GitHub, Discord, X 및 AIPOCH 웹사이트를 통해 버그 신고, 기능 제안, 설계 토론, 커뮤니티 질문 및 기여를 받습니다. 목적에 가장 잘 맞는 채널을 선택하고 프로젝트 세부 정보를 공개하기 전에 관련 기여 가이드와 공개 게시 안전 안내를 확인하세요.
+AIPOCH Open-Science는 GitHub, Discord, X 및 AIPOCH 웹사이트를 통해 버그 신고, 기능 제안, 설계 토론, 커뮤니티 질문 및 기여를 받습니다. 목적에 가장 잘 맞는 채널을 선택하고 프로젝트 세부 정보를 공개하기 전에 관련 기여 가이드와 공개 게시 안전 안내를 확인하세요.
 
 | 채널                                                                     | 용도                                       |
 | ------------------------------------------------------------------------ | ------------------------------------------ |
@@ -393,7 +391,7 @@ Open-Science는 GitHub, Discord, X 및 AIPOCH 웹사이트를 통해 버그 신�
 | [GitHub Discussions](https://github.com/aipoch/open-science/discussions) | 설계 질문, 로드맵 제안, 긴 기술 토론       |
 | [Discord](https://discord.gg/zxQAYjReRv)                                 | 커뮤니티 지원, 기여자 조율, 비공식 토론    |
 | [X / @aipoch_ai](https://x.com/aipoch_ai)                                | 릴리스 발표 및 공개 개발 업데이트          |
-| [Open-Science 공식 웹사이트](https://aipoch.com/open-science)            | 공식 제품 개요 및 다운로드                 |
+| [AIPOCH Open-Science 공식 웹사이트](https://aipoch.com/open-science)     | 공식 제품 개요 및 다운로드                 |
 
 공개 이슈를 만들기 전에 로그와 스크린샷에서 API Key, 토큰, 비공개 파일 경로, 미공개 데이터, 환자 식별자 및 기타 민감한 정보를 제거하세요. 개발 워크플로는 [기여 가이드](CONTRIBUTING.md)를 참고하세요.
 
