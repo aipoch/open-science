@@ -175,7 +175,7 @@ export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
           </thead>
           <tbody className="bg-bg-000 text-text-100">
             {dataRows.map((row, rowIndex) => (
-              <tr key={rowIndex} className="odd:bg-bg-10">
+              <tr key={rowIndex} className="bg-bg-000 odd:bg-bg-10">
                 <td className="sticky left-0 z-[1] w-12 border-b border-r border-border-300 bg-inherit px-3 py-1.5 text-right font-mono text-text-300">
                   {rowIndex + 1}
                 </td>
