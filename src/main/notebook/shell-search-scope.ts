@@ -159,6 +159,8 @@ const rootsFor = (name: string, args: string[]): string[] => {
     return denied('following directory links can leave cwd')
   if (['grep', 'egrep', 'fgrep'].includes(name) && args.some((arg) => /^-[^-]*R/.test(arg)))
     return denied('recursive grep with -R follows directory links')
+  if (name === 'rg' && args.some((arg) => /^-[^-]*L/.test(arg)))
+    return denied('ripgrep with -L follows directory links')
   if (name === 'find') {
     if (args.some((arg) => /^-(D|O)/.test(arg)))
       return denied('find startup options require an explicit scoped command')

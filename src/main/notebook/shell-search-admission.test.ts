@@ -92,6 +92,8 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
     'printf "%s" "$(find / -name chord_diagram.png)"',
     'find -L ./escape -name "chord_diagram.png"',
     'rg --files /',
+    'rg -L needle .',
+    'rg -nL needle .',
     "bash <<< 'find /'",
     'ROOT=.; printf -v ROOT /; find "$ROOT"',
     'PWD=/; find "$PWD"',
