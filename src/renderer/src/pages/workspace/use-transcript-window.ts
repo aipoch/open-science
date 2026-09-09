@@ -296,6 +296,27 @@ const useTranscriptWindow = (
     }
     const readingId = readingAnchorRef.current?.messageId
     const readingIndex = readingId ? items.findIndex((item) => item.id === readingId) : -1
+    const selection = viewport.ownerDocument.getSelection()
+    const selectionInside =
+      selection &&
+      !selection.isCollapsed &&
+      ((selection.anchorNode && viewport.contains(selection.anchorNode)) ||
+        (selection.focusNode && viewport.contains(selection.focusNode)))
+    const focusedRow = viewport.ownerDocument.activeElement?.closest('[data-message-id]')
+    // Keep a page of overscan in each direction. A live selection or focused control pins its
+    // mounted rows until the reader releases it; whole-window find is handled above.
+    if (!selectionInside && !(focusedRow && viewport.contains(focusedRow))) {
+      const limit = TRANSCRIPT_WINDOW_SIZE * 2
+      if (nextEnd - nextStart > limit) {
+        if (viewport.scrollTop < previousScrollTop) nextEnd = nextStart + limit
+        else nextStart = nextEnd - limit
+        // Trimming after a selection ends must also retain a reader in the middle of the window.
+        if (readingIndex >= 0 && (readingIndex < nextStart || readingIndex >= nextEnd)) {
+          nextStart = Math.max(0, readingIndex - TRANSCRIPT_WINDOW_SIZE)
+          nextEnd = Math.min(items.length, nextStart + limit)
+        }
+      }
+    }
     const anchorIndex =
       readingIndex >= nextStart && readingIndex < nextEnd ? readingIndex : nextStart
     const anchorId = items[anchorIndex]?.id
