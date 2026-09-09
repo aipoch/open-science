@@ -3802,7 +3802,18 @@ const createApplicationModules = async (
   const sessionPersistenceHandlers = createSessionPersistenceHandlersWithAttributionAuthority(
     sessionPersistenceBackend,
     reviewRepository,
-    messageAttributionAuthority
+    messageAttributionAuthority,
+    async () => {
+      try {
+        await computeService.startQueueReconciliation({ retryFailedOnly: true })
+      } catch (error) {
+        // Keep the catalog diagnostics and affected-file recovery UI readable while dispatch is blocked.
+        createLogger('compute-integrity').warn(
+          'Compute queue recovery remains blocked',
+          errorLogFields(error)
+        )
+      }
+    }
   )
   const sessionDetailsOwner = await modules.add(
     {

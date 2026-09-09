@@ -5183,6 +5183,8 @@
     "Some PDFs could not be imported. Review the details below before retrying.": "Certains PDF n’ont pas pu être importés. Vérifiez les détails ci-dessous avant de réessayer.",
     "Selected PDFs imported. You can close this window.": "Les PDF sélectionnés ont été importés. Vous pouvez fermer cette fenêtre.",
     "Failed: {{failed}} · Skipped: {{skipped}}": "Échecs : {{failed}} · Ignorés : {{skipped}}",
-    "You can import unfinished files or close this window.": "Vous pouvez importer les fichiers inachevés ou fermer cette fenêtre."
+    "You can import unfinished files or close this window.": "Vous pouvez importer les fichiers inachevés ou fermer cette fenêtre.",
+    "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "Les nouvelles tâches Compute peuvent rester en attente, car les limites de simultanéité enregistrées n’ont pas pu être vérifiées. Conservez les fichiers concernés, restaurez une copie valide, puis relancez la vérification pour reprendre l’envoi des tâches.",
+    "Recheck saved conversations": "Revérifier les conversations enregistrées"
   }
 }

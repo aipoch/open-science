@@ -10,6 +10,7 @@ export type SessionStatus = {
   active_count: number
   queued_count: number
   provider_ceilings: Record<string, number>
+  queue_blocked_reason?: 'session_limits_unavailable'
 }
 
 // Default provider ceiling when ComputeHost.concurrencyLimit is null/undefined.
@@ -42,6 +43,7 @@ export class ConcurrencyManager {
   private reconciliationTask: Promise<void> | undefined
   private queueStopped: boolean
   private queueLifecycleRevision = 0
+  private sessionLimitRestorationFailed = false
 
   // In-process serialization lock for admit(). The decision (read counts → pick status) and the
   // job-row commit must be atomic: without this, two concurrent submitJob calls could both read the
@@ -247,25 +249,35 @@ export class ConcurrencyManager {
     await this.reconcileQueuedJobs()
   }
 
-  async startQueueReconciliation(): Promise<void> {
+  async startQueueReconciliation(options: { retryFailedOnly?: boolean } = {}): Promise<void> {
+    // Catalog reads may retry a failed startup, but must not start an uninitialized or stopped runtime.
+    if (options.retryFailedOnly && !this.sessionLimitRestorationFailed) return
     const lifecycleRevision = ++this.queueLifecycleRevision
-    const restoredLimits = await this.sessionLimitPersistence?.load()
     let limits: Map<string, number> | undefined
-    if (restoredLimits) {
-      limits = new Map<string, number>()
-      for (const [sessionId, limit] of restoredLimits) {
-        if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
-          throw new Error(
-            `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
-          )
+    try {
+      const restoredLimits = await this.sessionLimitPersistence?.load()
+      if (restoredLimits) {
+        limits = new Map<string, number>()
+        for (const [sessionId, limit] of restoredLimits) {
+          if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+            throw new Error(
+              `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
+            )
+          }
+          limits.set(sessionId, limit)
         }
-        limits.set(sessionId, limit)
       }
+    } catch (error) {
+      if (lifecycleRevision === this.queueLifecycleRevision && this.queueStopped) {
+        this.sessionLimitRestorationFailed = true
+      }
+      throw error
     }
     let shouldReconcile = false
     await this.runExclusive(async () => {
       if (lifecycleRevision !== this.queueLifecycleRevision) return
       if (limits) this.sessionLimits = limits
+      this.sessionLimitRestorationFailed = false
       this.queueStopped = false
       shouldReconcile = true
     })
@@ -275,6 +287,7 @@ export class ConcurrencyManager {
   async stopQueueReconciliation(): Promise<void> {
     this.queueLifecycleRevision += 1
     this.queueStopped = true
+    this.sessionLimitRestorationFailed = false
     this.reconciliationRequested = false
     await this.reconciliationTask
   }
@@ -320,7 +333,10 @@ export class ConcurrencyManager {
       session_limit: sessionLimit,
       active_count: activeCount,
       queued_count: queuedCount,
-      provider_ceilings: providerCeilings
+      provider_ceilings: providerCeilings,
+      ...(this.sessionLimitRestorationFailed
+        ? { queue_blocked_reason: 'session_limits_unavailable' as const }
+        : {})
     }
   }
 

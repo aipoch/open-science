@@ -167,15 +167,20 @@ const loadSessionsAfterProjectRecovery = async (
 const createSessionPersistenceHandlersWithAttributionAuthority = (
   repository: SessionPersistenceBackend,
   reviewRepository: ReviewRepository,
-  messageAttributionAuthority: MainMessageAttributionAuthority
+  messageAttributionAuthority: MainMessageAttributionAuthority,
+  beforeCatalogRead?: () => Promise<void>
 ): SessionPersistenceHandlers => {
   // Kept as an injected boundary for project-level cleanup compatibility; session deletion must not
   // call it because Reviews belong to retained provenance.
   void reviewRepository
   return {
-    loadAll: () => repository.loadAll(),
-    list: () => {
+    loadAll: async () => {
+      await beforeCatalogRead?.()
+      return repository.loadAll()
+    },
+    list: async () => {
       if (!repository.list) throw new Error('Session summary projection is unavailable.')
+      await beforeCatalogRead?.()
       return repository.list()
     },
     loadUsage: () => {
