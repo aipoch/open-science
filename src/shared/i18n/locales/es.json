@@ -3030,6 +3030,7 @@
     "View raw JSON": "Ver JSON sin formato",
     "View release notes on GitHub": "Ver notas de la versión en GitHub",
     "View source": "Ver código fuente",
+    "View diagram": "Ver diagrama",
     "View this device's runtime log — it records what the app is doing so problems can be diagnosed.": "Consulte el registro del entorno de ejecución de este dispositivo; registra lo que hace la aplicación para poder diagnosticar problemas.",
     "View {{name}}": "Ver {{name}}",
     "Viewer failed": "Error en el visor",

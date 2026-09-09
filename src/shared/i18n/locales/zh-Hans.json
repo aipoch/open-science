@@ -2996,6 +2996,7 @@
     "View raw JSON": "查看原始 JSON",
     "View release notes on GitHub": "在 GitHub 上查看发布说明",
     "View source": "查看源码",
+    "View diagram": "查看图表",
     "View this device's runtime log — it records what the app is doing so problems can be diagnosed.": "查看这台设备的运行日志 —— 它记录了应用正在做什么，便于排查问题。",
     "View {{name}}": "查看 {{name}}",
     "Viewer failed": "查看器失败",
