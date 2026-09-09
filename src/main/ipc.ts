@@ -1134,6 +1134,7 @@ const createApplicationModules = async (
   // One registry owns short-lived capability URLs for both managed artifact repositories.
   const previewResources = new ManagedPreviewResources({
     resolvePath: resolveManagedFilePath,
+    openLiterature: (reference) => literatureAttachmentAuthority.openReference(reference),
     openLatestManagedFile: (source, request) =>
       managedFileVersionService.openLatest({ source, ...request }),
     openManagedFileVersion: (source, request) =>

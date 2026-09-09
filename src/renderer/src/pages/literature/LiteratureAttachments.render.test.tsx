@@ -57,6 +57,60 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('Attachment safety and version access', () => {
+  it('refreshes permission failures in the attachment and history views, then recovers on retry', async () => {
+    const available = makeItem(2)
+    const unavailable = structuredClone(available)
+    Object.assign(unavailable.attachments[0].versions[0], {
+      availability: 'unavailable',
+      verificationFailure: 'permission-denied',
+      verificationAttemptAt: 2
+    })
+    vi.mocked(window.api.literature.get)
+      .mockResolvedValueOnce(unavailable)
+      .mockResolvedValueOnce(available)
+    transact.mockRejectedValueOnce(new Error('EACCES')).mockResolvedValueOnce({ state: 'present' })
+    const View = (): React.JSX.Element => {
+      const item = useAttachmentOperations(
+        (state) => state.operations.find((operation) => operation.itemId === available.id)?.item
+      )
+      return <LiteratureAttachments item={item ?? available} onPreview={vi.fn()} />
+    }
+    render(<View />)
+    const retry = async (): Promise<void> => {
+      fireEvent.click(screen.getByRole('button', { name: 'Attachment actions for paper-v2.pdf' }))
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Retry file verification' }))
+    }
+    await retry()
+    await screen.findByText('File unavailable')
+    const attachmentRow = screen
+      .getByRole('button', { name: 'Preview paper-v2.pdf' })
+      .closest('[aria-busy]')!
+    expect(within(attachmentRow as HTMLElement).getByRole('alert').textContent).toContain(
+      'The attachment operation failed. Try again.'
+    )
+    expect(
+      (screen.getByRole('button', { name: 'Preview paper-v2.pdf' }) as HTMLButtonElement).disabled
+    ).toBe(true)
+    expect(screen.queryByText('File integrity verified')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Attachment actions for paper-v2.pdf' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Version history' }))
+    const dialog = screen.getByRole('dialog')
+    expect(
+      (within(dialog).getByRole('button', { name: 'Preview paper-v2.pdf' }) as HTMLButtonElement)
+        .disabled
+    ).toBe(true)
+    expect(
+      (within(dialog).getByRole('button', { name: 'Preview paper-v1.pdf' }) as HTMLButtonElement)
+        .disabled
+    ).toBe(false)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await retry()
+    await screen.findByText('File integrity verified')
+    expect(
+      (screen.getByRole('button', { name: 'Preview paper-v2.pdf' }) as HTMLButtonElement).disabled
+    ).toBe(false)
+  })
+
   it.each(['referenced', 'scan-incomplete'] as const)(
     'retains structured %s diagnostics after confirming deletion',
     async (reason) => {

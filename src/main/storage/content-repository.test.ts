@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile, stat, rename } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -14,7 +14,7 @@ import { ContentRepository, resolveContentStorageKey } from './content-repositor
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>()
-  return { ...original, rm: vi.fn(original.rm) }
+  return { ...original, rm: vi.fn(original.rm), stat: vi.fn(original.stat) }
 })
 
 const sha256 = (content: Buffer): string => createHash('sha256').update(content).digest('hex')
@@ -24,6 +24,11 @@ describe('content repository', () => {
   let client: PrismaClient | undefined
 
   afterEach(async () => {
+    vi.mocked(stat)
+      .mockReset()
+      .mockImplementation(
+        (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).stat
+      )
     vi.mocked(rm).mockReset()
     vi.mocked(rm).mockImplementation(
       (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).rm
@@ -88,6 +93,93 @@ describe('content repository', () => {
       if (fail) await expect(acquisition).rejects.toThrow('Reference insertion failed')
       else await acquisition
       expect((await sweep()).removedIds).toContain(contentId)
+    }
+  )
+
+  it.each(['EACCES', 'EPERM'])('records %s as a retryable permission failure', async (code) => {
+    const repository = await createRepository()
+    await publishFixture('blob-permissions', 'content/project/permissions', Buffer.from('readable'))
+    await repository.verify('blob-permissions')
+    await client!.contentBlob.update({
+      where: { id: 'blob-permissions' },
+      data: { lastVerificationAttemptAt: new Date(1) }
+    })
+    vi.mocked(stat).mockRejectedValueOnce(Object.assign(new Error('Access denied'), { code }))
+    await expect(repository.verify('blob-permissions', { retry: true })).rejects.toMatchObject({
+      code
+    })
+    const failed = await client!.contentBlob.findUniqueOrThrow({
+      where: { id: 'blob-permissions' }
+    })
+    expect(failed).toMatchObject({
+      state: 'available',
+      lastVerificationFailure: 'permission-denied'
+    })
+    expect(failed.lastVerificationAttemptAt!.getTime()).toBeGreaterThan(1)
+    await expect(repository.verify('blob-permissions', { retry: true })).resolves.toMatchObject({
+      state: 'available'
+    })
+    expect(
+      await client!.contentBlob.findUniqueOrThrow({ where: { id: 'blob-permissions' } })
+    ).toMatchObject({ lastVerificationFailure: null })
+  })
+
+  it('validates content availability once per preview chunk before releasing bytes', async () => {
+    const repository = await createRepository()
+    const bytes = Buffer.from('ORIGINAL')
+    await publishFixture('blob-chunks', 'content/project/chunks', bytes)
+    const lease = await repository.openLease('blob-chunks')
+    const lookup = vi.spyOn(client!.contentBlob, 'findUnique')
+    try {
+      const buffer = Buffer.alloc(bytes.length)
+      await expect(lease.read(buffer, 0, buffer.length, 0)).resolves.toEqual({
+        bytesRead: bytes.length
+      })
+      expect(buffer).toEqual(bytes)
+      expect(lookup).toHaveBeenCalledTimes(1)
+      lookup.mockClear()
+      await expect(lease.readRange(0, bytes.length)).resolves.toEqual(new Uint8Array(bytes))
+      expect(lookup).toHaveBeenCalledTimes(1)
+    } finally {
+      lookup.mockRestore()
+      await lease.close()
+    }
+  })
+
+  it.each(['replace', 'overwrite'] as const)(
+    'keeps content leases bound to their verified bytes after %s',
+    async (mode) => {
+      const repository = await createRepository()
+      const bytes = Buffer.from('ORIGINAL')
+      await publishFixture('blob-lease', 'content/project/lease', bytes)
+      const lease = await repository.openLease('blob-lease')
+      try {
+        if (mode === 'replace') {
+          const replacement = join(storageRoot!, 'replacement')
+          await writeFile(replacement, 'REPLACED')
+          await rename(replacement, lease.path)
+          expect(Buffer.from(await lease.readRange(0, bytes.length))).toEqual(bytes)
+        } else {
+          await writeFile(lease.path, 'REPLACED')
+          await expect(lease.readRange(0, bytes.length)).rejects.toThrow()
+        }
+        await expect(repository.verify('blob-lease')).resolves.toMatchObject({
+          state: 'unavailable'
+        })
+        await expect(lease.readRange(0, bytes.length)).rejects.toThrow()
+        await writeFile(lease.path, bytes)
+        await repository.verify('blob-lease', { retry: true })
+        await expect(lease.readRange(0, bytes.length)).rejects.toThrow()
+      } finally {
+        await lease.close()
+      }
+      await expect(lease.readRange(0, bytes.length)).rejects.toThrow()
+      const fresh = await repository.openLease('blob-lease')
+      try {
+        expect(Buffer.from(await fresh.readRange(0, bytes.length))).toEqual(bytes)
+      } finally {
+        await fresh.close()
+      }
     }
   )
 

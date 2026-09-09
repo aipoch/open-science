@@ -156,16 +156,17 @@ type AttachmentByteSource = {
   readBytes: () => Promise<Uint8Array>
 }
 
-export const inspectPdfPageCount = async (filePath: string): Promise<number> => {
-  const fileInfo = await stat(filePath)
-  if (fileInfo.size > MAX_AUTO_EXTRACT_PDF_BYTES) {
-    throw new Error(
-      `PDF source is ${fileInfo.size} bytes, exceeding the automatic extraction limit.`
-    )
+export const inspectPdfPageCount = async (
+  filePath: string,
+  source?: AttachmentByteSource
+): Promise<number> => {
+  const size = source?.size ?? (await stat(filePath)).size
+  if (size > MAX_AUTO_EXTRACT_PDF_BYTES) {
+    throw new Error(`PDF source is ${size} bytes, exceeding the automatic extraction limit.`)
   }
   const pdfjs = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as typeof import('pdfjs-dist')
   const loadingTask = pdfjs.getDocument({
-    url: filePath,
+    ...(source ? { data: new Uint8Array(await source.readBytes()) } : { url: filePath }),
     disableFontFace: true,
     isEvalSupported: false,
     verbosity: 0

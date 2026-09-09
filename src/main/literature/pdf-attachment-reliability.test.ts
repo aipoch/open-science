@@ -1,12 +1,25 @@
+import { createHash } from 'node:crypto'
 import { parseLiteratureDeletionError } from '../../shared/literature-deletion'
 import { transactLiterature } from './transact'
-import { mkdtemp, rm, writeFile, truncate, access, readFile, readdir } from 'node:fs/promises'
+import {
+  mkdtemp,
+  rm,
+  writeFile,
+  truncate,
+  access,
+  readFile,
+  readdir,
+  rename,
+  chmod
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  createLiteratureAttachmentVersionReference,
+  parseLiteratureAttachmentVersionReference,
   literatureCatalogCommandSchema,
   literatureCatalogReceiptSchema,
   literatureItemInputSchema,
@@ -34,6 +47,11 @@ import {
   type SessionFileIndex
 } from '../session-persistence/coordinator'
 import { LiteraturePdfImporter } from './pdf-importer'
+import { LiteratureFullTextIndex } from './full-text-index'
+import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
+import { LiteratureDocumentReader } from './document-reader'
+import { SessionPdfSourceResolver } from './session-pdf-source-resolver'
+import { ManagedPreviewResources } from '../managed-preview-resources'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -420,6 +438,349 @@ describe('Literature PDF attachment reliability', () => {
     ).rejects.toThrow('attachment removal is unavailable')
     expect(await client!.literatureAttachmentVersion.count()).toBe(1)
   })
+
+  // Valid equal-length PDFs keep size checks from masking the content-identity race.
+  const textPdf = (label: string): Buffer => {
+    const stream = `BT /F1 12 Tf 10 50 Td (${label}) Tj ET`
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
+      ...[1, 2].map(
+        () =>
+          '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>'
+      ),
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`
+    ]
+    let text = '%PDF-1.4\n'
+    const offsets: number[] = []
+    objects.forEach((body, index) => {
+      offsets.push(Buffer.byteLength(text))
+      text += `${index + 1} 0 obj\n${body}\nendobj\n`
+    })
+    const xref = Buffer.byteLength(text)
+    text += `xref\n0 7\n0000000000 65535 f \n`
+    text += offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')
+    text += `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+    return Buffer.from(text)
+  }
+
+  it('keeps replacement text out of extraction caches and persistent search results', async () => {
+    const original = textPdf('ORIGINAL')
+    const replacement = textPdf('REPLACED')
+    expect(replacement.length).toBe(original.length)
+    const { importer, request, catalog, authority } = await setup(original)
+    const imported = await importer.import(request)
+    const attachment = imported.item.attachments[0]
+    const version = attachment.versions[0]
+    expect(version.pageCount).toBe(2)
+    const sources = new SessionPdfSourceResolver({
+      literature: authority,
+      inputs: {
+        resolveVersion: async () => undefined,
+        openContent: async () => {
+          throw new Error('Unexpected upload')
+        }
+      }
+    })
+    const makeReader = (): LiteratureDocumentReader =>
+      new LiteratureDocumentReader({
+        storageRoot: root,
+        sources,
+        sessions: {
+          loadSessionForContinuation: async () => {
+            throw new Error('Unexpected session')
+          }
+        }
+      })
+    const search = {
+      projectId: 'project',
+      attachmentId: attachment.id,
+      attachmentVersionId: version.id,
+      filename: version.filename,
+      sizeBytes: version.sizeBytes,
+      checksum: version.checksum,
+      query: 'REPLACED'
+    }
+    const resolved = await authority.resolveVersion(version.id)
+    const resolve = sources.resolveVersion.bind(sources)
+    vi.spyOn(sources, 'resolveVersion').mockImplementationOnce(async (input) => {
+      const verified = await resolve(input)
+      await writeFile(resolved!.path, replacement)
+      return verified
+    })
+    const reader = makeReader()
+    const raced = await reader.searchAttachment(search).catch(() => undefined)
+    if (raced !== undefined) expect.soft(raced).toMatchObject({ passages: [] })
+    await expect(authority.resolveVersion(version.id)).rejects.toThrow('unavailable')
+    await writeFile(resolved!.path, original)
+    await catalog.transact({
+      kind: 'verify-attachment',
+      itemId: request.itemId,
+      versionId: version.id
+    })
+    const cached = await reader.searchAttachment(search)
+    const persisted = await makeReader().searchAttachment(search)
+    // Inspect returned passages independently of response metadata.
+    for (const result of [cached, persisted]) {
+      expect.soft(result).toMatchObject({ passages: [] })
+    }
+    const control = await makeReader().searchAttachment({ ...search, query: 'ORIGINAL' })
+    expect.soft(control).toMatchObject({
+      passages: expect.arrayContaining([
+        expect.objectContaining({ content: expect.stringContaining('ORIGINAL') })
+      ])
+    })
+  })
+
+  it('rebuilds pre-verification derived indexes from the current verified bytes', async () => {
+    const { importer, request, authority } = await setup(textPdf('ORIGINAL'))
+    const attachment = (await importer.import(request)).item.attachments[0]
+    const version = attachment.versions[0]
+    const fingerprint = createHash('sha256')
+      .update('open-science-pdfjs-selectable-text-v1')
+      .digest('hex')
+    const extractionId = createHash('sha256')
+      .update(`${version.checksum}:${fingerprint}`)
+      .digest('hex')
+    const index = await LiteratureFullTextIndex.open(root)
+    try {
+      await index.replace({
+        extractionId,
+        documentChecksum: version.checksum,
+        extractorFingerprint: fingerprint,
+        chunks: [{ pageStart: 1, pageEnd: 1, textStart: 0, textEnd: 8, content: 'REPLACED' }]
+      })
+    } finally {
+      await index.close()
+    }
+    const reader = new LiteratureDocumentReader({
+      storageRoot: root,
+      sources: new SessionPdfSourceResolver({
+        literature: authority,
+        inputs: { resolveVersion: vi.fn(), openContent: vi.fn() }
+      }),
+      sessions: { loadSessionForContinuation: vi.fn() }
+    })
+    const search = {
+      projectId: 'project',
+      attachmentId: attachment.id,
+      attachmentVersionId: version.id,
+      filename: version.filename,
+      sizeBytes: version.sizeBytes,
+      checksum: version.checksum
+    }
+    expect(await reader.searchAttachment({ ...search, query: 'REPLACED' })).toMatchObject({
+      passages: []
+    })
+    expect(await reader.searchAttachment({ ...search, query: 'ORIGINAL' })).toMatchObject({
+      retrievalMode: 'bm25',
+      passages: expect.arrayContaining([
+        expect.objectContaining({ content: expect.stringContaining('ORIGINAL') })
+      ])
+    })
+  })
+
+  it('counts pages from the held bytes rather than a replacement pathname', async () => {
+    const original = textPdf('ORIGINAL')
+    const { importer, request, authority } = await setup(original)
+    const version = (await importer.import(request)).item.attachments[0].versions[0]
+    const resolved = (await authority.resolveVersion(version.id))!
+    const lease = await new NodeVersionFileOperator({ storageRoot: root }).openImmutable(
+      resolved.storageKey,
+      { checksum: version.checksum, sizeBytes: version.sizeBytes }
+    )
+    try {
+      const replacement = join(root, 'one-page.pdf')
+      await writeFile(replacement, pdf())
+      await rename(replacement, resolved.path)
+      expect(
+        await inspectPdfPageCount(lease.localPath, {
+          size: lease.sizeBytes,
+          readBytes: () => lease.readRange(0, lease.sizeBytes)
+        })
+      ).toBe(2)
+    } finally {
+      await lease.close()
+    }
+  })
+
+  it('extracts from the held lease when its pathname is atomically replaced', async () => {
+    const original = textPdf('ORIGINAL')
+    const { importer, request, authority } = await setup(original)
+    const attachment = (await importer.import(request)).item.attachments[0]
+    const version = attachment.versions[0]
+    const sources = new SessionPdfSourceResolver({
+      literature: authority,
+      inputs: { resolveVersion: vi.fn(), openContent: vi.fn() }
+    })
+    const resolved = await authority.resolveVersion(version.id)
+    const resolve = sources.resolveVersion.bind(sources)
+    const close = vi.fn()
+    vi.spyOn(sources, 'resolveVersion').mockImplementationOnce(async (input) => ({
+      ...(await resolve(input))!,
+      openContent: async () => {
+        const lease = await new NodeVersionFileOperator({ storageRoot: root }).openImmutable(
+          resolved!.storageKey,
+          { checksum: version.checksum, sizeBytes: version.sizeBytes }
+        )
+        const replaced = join(root, 'replacement.pdf')
+        try {
+          await writeFile(replaced, textPdf('REPLACED'))
+          await rename(replaced, resolved!.path)
+        } catch (error) {
+          await lease.close()
+          throw error
+        }
+        return {
+          path: lease.localPath,
+          size: lease.sizeBytes,
+          readRange: lease.readRange,
+          verifyUnchanged: lease.verifyUnchanged,
+          close: async () => {
+            close()
+            await lease.close()
+          }
+        }
+      }
+    }))
+    const reader = new LiteratureDocumentReader({
+      storageRoot: root,
+      sources,
+      sessions: { loadSessionForContinuation: vi.fn() }
+    })
+    expect(
+      await reader.searchAttachment({
+        projectId: 'project',
+        attachmentId: attachment.id,
+        attachmentVersionId: version.id,
+        filename: version.filename,
+        sizeBytes: version.sizeBytes,
+        checksum: version.checksum,
+        query: 'REPLACED'
+      })
+    ).toMatchObject({ passages: [] })
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('refuses old preview resources after their attachment is quarantined', async () => {
+    const original = textPdf('ORIGINAL')
+    const replacement = textPdf('REPLACED')
+    const { importer, request, authority, catalog } = await setup(original)
+    const version = (await importer.import(request)).item.attachments[0].versions[0]
+    const resolved = await authority.resolveVersion(version.id)
+    const resources = new ManagedPreviewResources({
+      openLiterature: (reference) => authority.openReference(reference),
+      resolvePath: async (_source, input) => {
+        const id = parseLiteratureAttachmentVersionReference(input.path)
+        if (!id) throw new Error('Invalid attachment reference')
+        const value = await authority.resolveVersion(id)
+        if (!value) throw new Error('Unavailable attachment')
+        return value.path
+      }
+    })
+    const input = {
+      source: 'literature' as const,
+      path: createLiteratureAttachmentVersionReference(version.id),
+      mimeType: 'application/pdf'
+    }
+    const resource = await resources.acquire(17, input)
+    const protocol = await resources.resolveProtocolResource(resource.id)
+    try {
+      expect(
+        Buffer.from(
+          (
+            await resources.readRange(17, {
+              resourceId: resource.id,
+              begin: 0,
+              end: original.length
+            })
+          ).data
+        )
+      ).toEqual(original)
+      await writeFile(resolved!.path, replacement)
+      await expect(authority.resolveVersion(version.id)).rejects.toThrow('unavailable')
+      await expect(resources.acquire(17, input)).rejects.toThrow('unavailable')
+      await expect(
+        resources.readRange(17, { resourceId: resource.id, begin: 0, end: replacement.length })
+      ).rejects.toThrow()
+      expect(protocol).toHaveProperty('fileHandle')
+      if (!('fileHandle' in protocol)) throw new Error('Expected a trusted protocol lease')
+      await expect(
+        protocol.fileHandle.read(Buffer.alloc(original.length), 0, original.length, 0)
+      ).rejects.toThrow()
+      await writeFile(resolved!.path, original)
+      await catalog.transact({
+        kind: 'verify-attachment',
+        itemId: request.itemId,
+        versionId: version.id
+      })
+      // A rejected resource cannot be resurrected by restoring its path.
+      await expect(
+        resources.readRange(17, { resourceId: resource.id, begin: 0, end: original.length })
+      ).rejects.toThrow()
+      const recovered = await resources.acquire(17, input)
+      try {
+        expect(
+          Buffer.from(
+            (
+              await resources.readRange(17, {
+                resourceId: recovered.id,
+                begin: 0,
+                end: original.length
+              })
+            ).data
+          )
+        ).toEqual(original)
+      } finally {
+        resources.release(17, { resourceId: recovered.id })
+      }
+    } finally {
+      if ('fileHandle' in protocol) await protocol.fileHandle.close()
+      resources.release(17, { resourceId: resource.id })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'records a permission-denied verification attempt and recovers after permission restoration',
+    async () => {
+      const { importer, request, catalog, authority } = await setup()
+      const version = (await importer.import(request)).item.attachments[0].versions[0]
+      const resolved = await authority.resolveVersion(version.id)
+      const row = await client!.literatureAttachmentVersion.findUniqueOrThrow({
+        where: { id: version.id }
+      })
+      const retry = {
+        kind: 'verify-attachment' as const,
+        itemId: request.itemId,
+        versionId: version.id
+      }
+      // Persist an old timestamp to make the attempt observation deterministic without sleeps.
+      await client!.contentBlob.update({
+        where: { id: row.contentBlobId },
+        data: { lastVerificationAttemptAt: new Date(1) }
+      })
+      try {
+        await chmod(resolved!.path, 0o000)
+        await expect(readFile(resolved!.path)).rejects.toMatchObject({ code: 'EACCES' })
+        await expect(catalog.transact(retry)).rejects.toThrow()
+        const after = (await catalog.get(request.itemId))!.attachments[0].versions[0]
+        expect.soft(after.availability).toBe('unavailable')
+        expect.soft(after.verificationFailure).toBeTruthy()
+        expect.soft(after.verificationAttemptAt).toBeGreaterThan(1)
+        expect(
+          (await client!.contentBlob.findUniqueOrThrow({ where: { id: row.contentBlobId } })).state
+        ).toBe('available')
+      } finally {
+        await chmod(resolved!.path, 0o644)
+      }
+      await catalog.transact(retry)
+      expect((await catalog.get(request.itemId))!.attachments[0].versions[0]).toMatchObject({
+        availability: 'available',
+        verificationFailure: undefined
+      })
+    }
+  )
 
   it('rejects a header-only corrupt PDF before creating an attachment', async () => {
     const { importer, request, path } = await setup(Buffer.from('%PDF-1.7\nnot a document'))
