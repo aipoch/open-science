@@ -138,9 +138,11 @@ const AttachmentPreview = ({
 
 export const LiteratureAttachments = ({
   item,
+  readItem,
   onPreview
 }: {
   item: LiteratureItemView
+  readItem: (id: string) => Promise<LiteratureItemView | undefined>
   onPreview: (version: Version) => void
 }): React.JSX.Element => {
   const { t, i18n } = useTranslation()
@@ -173,7 +175,7 @@ export const LiteratureAttachments = ({
   const itemOperations = operations.filter((operation) => operation.itemId === item.id)
   const pending = itemOperations.some((operation) => operation.pending)
   const run = (action: AttachmentAction, attachmentId: string, versionId?: string): Promise<void> =>
-    useAttachmentOperations.getState().run(item, attachmentId, action, versionId)
+    useAttachmentOperations.getState().run(item, attachmentId, action, versionId, readItem)
   return (
     <ActionMenuProvider>
       <div className="mt-2 space-y-2">

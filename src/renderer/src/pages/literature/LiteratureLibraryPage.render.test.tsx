@@ -23,6 +23,7 @@ import { createInitialProjectState, useProjectStore } from '@/stores/project-sto
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { LiteratureLibraryPage } from './LiteratureLibraryPage'
 import { useAttachmentOperations } from './literature-attachment-operations'
+import { i18next } from '@/i18n'
 
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = (): void => undefined
@@ -366,6 +367,7 @@ describe('LiteratureLibraryPage', () => {
         literature: {
           exportRecord: vi.fn(),
           sources: vi.fn(async () => []),
+          onChanged: vi.fn(() => () => undefined),
           lookupMetadata: vi.fn(async () => libraryItem.item),
           jobs: vi.fn(async () => ({ jobs: [], summaries: [] })),
           search: async (request: LiteratureCatalogSearchRequest) => {
@@ -611,6 +613,59 @@ describe('LiteratureLibraryPage', () => {
       vi.useRealTimers()
     }
   })
+
+  it.each(['focus', 'visibility', 'scope return', 'remount'] as const)(
+    'reads externally committed references after %s',
+    async (recovery) => {
+      const original = {
+        ...libraryItem,
+        item: { ...libraryItem.item, title: 'Original from server' }
+      }
+      let records = [original]
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => ({
+        entries: request.scope === 'library' ? records : [],
+        totalCount: request.scope === 'library' ? records.length : 0
+      }))
+      const mounted = render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await screen.findByText('Original from server')
+      const libraryQueries = (): number =>
+        search.mock.calls.filter(([request]) => request.scope === 'library' && !request.allItemIds)
+          .length
+      const before = libraryQueries()
+      records = [
+        {
+          ...original,
+          metadataRevision: 2,
+          item: { ...original.item, title: 'Updated by another client' }
+        },
+        {
+          ...original,
+          id: 'external-new-item',
+          item: { ...original.item, title: 'Added by another client' }
+        }
+      ]
+      if (recovery === 'remount') {
+        mounted.unmount()
+        render(<LiteratureLibraryPage />)
+        fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      } else {
+        await act(async () => {
+          if (recovery !== 'visibility') window.dispatchEvent(new Event('focus'))
+          if (recovery !== 'focus') document.dispatchEvent(new Event('visibilitychange'))
+        })
+        if (recovery === 'scope return') {
+          fireEvent.click(screen.getByRole('button', { name: 'Inbox' }))
+          await screen.findByRole('heading', { name: 'Inbox' })
+          fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        }
+      }
+      await waitFor(() => expect(libraryQueries()).toBeGreaterThan(before))
+      expect(await screen.findByText('Updated by another client')).not.toBeNull()
+      expect(await screen.findByText('Added by another client')).not.toBeNull()
+      expect(screen.queryByText('Original from server')).toBeNull()
+    }
+  )
 
   it('trashes all 26 members despite an update between target reads', async () => {
     const { mkdtemp, rm } = await import('node:fs/promises')
@@ -2021,6 +2076,7 @@ describe('LiteratureLibraryPage', () => {
   it('opens an explicitly scoped Collection view', async () => {
     const collection = {
       id: 'collection-1',
+      revision: 1,
       name: 'TP53 evidence',
       description: 'Curated TP53 studies.',
       itemCount: 1,
@@ -2083,6 +2139,60 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.getByRole('dialog')).toBe(dialog)
   })
 
+  it.each(['pending', 'failed'] as const)(
+    'reopens a saved Collection with its committed revision while directory reload is %s',
+    async (reload) => {
+      let collection = {
+        id: 'collection-1',
+        name: 'Screening',
+        description: 'Original description',
+        revision: 1,
+        itemCount: 0,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      search.mockImplementation((request: { scope: string }) => {
+        if (request.scope === 'collections') {
+          if (collection.revision > 1) {
+            return reload === 'failed'
+              ? Promise.reject(new Error('Directory unavailable'))
+              : new Promise(() => {})
+          }
+          return Promise.resolve({ entries: [{ ...collection }], totalCount: 1 })
+        }
+        return Promise.resolve(request.scope === 'inbox' ? inboxPage : { entries: [] })
+      })
+      transact.mockImplementation(
+        (command: { expectedRevision?: number; name?: string; description?: string }) => {
+          if (command.expectedRevision !== collection.revision)
+            return Promise.reject(new Error('literature_collection_revision_conflict'))
+          collection = {
+            ...collection,
+            name: command.name ?? collection.name,
+            description: command.description ?? collection.description,
+            revision: collection.revision + 1
+          }
+          return Promise.resolve({ kind: 'collection', id: collection.id })
+        }
+      )
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(await screen.findByRole('button', { name: collection.name }))
+      for (const description of ['First saved description', 'Second saved description']) {
+        await openMenu(screen.getByRole('button', { name: 'Collection actions' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Edit collection' }))
+        const dialog = await screen.findByRole('dialog')
+        fireEvent.change(within(dialog).getByLabelText('Description'), {
+          target: { value: description }
+        })
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }))
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      }
+      expect(collection.revision).toBe(3)
+      expect(collection.description).toBe('Second saved description')
+      expect(transact.mock.calls.map(([command]) => command.expectedRevision)).toEqual([1, 2])
+    }
+  )
+
   it('creates and edits Collections with one shared name and description form', async () => {
     let collection:
       | {
@@ -2090,6 +2200,7 @@ describe('LiteratureLibraryPage', () => {
           name: string
           description: string
           itemCount: number
+          revision: number
           createdAt: number
           updatedAt: number
         }
@@ -2108,6 +2219,7 @@ describe('LiteratureLibraryPage', () => {
         if (command.kind === 'create-collection') {
           collection = {
             id: 'collection-1',
+            revision: 1,
             name: command.name ?? '',
             description: command.description ?? '',
             itemCount: 0,
@@ -2175,6 +2287,7 @@ describe('LiteratureLibraryPage', () => {
     await waitFor(() =>
       expect(transact).toHaveBeenCalledWith({
         kind: 'update-collection',
+        expectedRevision: 1,
         collectionId: 'collection-1',
         name: 'Included studies',
         description: 'Final synthesis set.'
@@ -2208,6 +2321,7 @@ describe('LiteratureLibraryPage', () => {
     async (nameConflict) => {
       const collection = {
         id: 'collection-1',
+        revision: 1,
         name: 'Screening',
         description: 'Papers awaiting review.',
         itemCount: 1,
@@ -4147,6 +4261,7 @@ describe('LiteratureLibraryPage', () => {
           entries: [
             {
               id: 'collection-1',
+              revision: 1,
               name: 'Retrieval methods',
               itemCount: 0,
               createdAt: 1,
@@ -4207,6 +4322,7 @@ describe('LiteratureLibraryPage', () => {
           entries: [
             {
               id: 'collection-1',
+              revision: 1,
               name: 'Retrieval methods',
               itemCount: 0,
               createdAt: 1,
@@ -5237,6 +5353,7 @@ describe('LiteratureLibraryPage', () => {
   it('links a manually created reference to the current Collection', async () => {
     const collection = {
       id: 'collection-1',
+      revision: 1,
       name: 'Review set',
       description: '',
       itemCount: 0,
@@ -7510,6 +7627,7 @@ describe('LiteratureLibraryPage', () => {
                 entries: [
                   {
                     id: 'collection-1',
+                    revision: 1,
                     name: 'Review queue',
                     description: '',
                     itemCount: 0,
@@ -8780,6 +8898,251 @@ describe('LiteratureLibraryPage', () => {
     const closeDetail = (): void => {
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
     }
+
+    it('returns to all references after the active collection is deleted externally', async () => {
+      let removed = false
+      const collection = {
+        id: 'collection-1',
+        revision: 1,
+        name: 'Remote collection',
+        description: '',
+        itemCount: 1,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => ({
+        entries:
+          request.scope === 'collections'
+            ? removed
+              ? []
+              : [collection]
+            : request.scope === 'library' && (!removed || !request.collectionId)
+              ? [libraryItem]
+              : [],
+        totalCount: request.scope === 'library' && (!removed || !request.collectionId) ? 1 : 0
+      }))
+      useNavigationStore.setState({ pendingLiteratureCollectionId: collection.id })
+      render(<LiteratureLibraryPage />)
+      await screen.findByRole('heading', { name: collection.name })
+      await screen.findByText(libraryItem.item.title)
+      fireEvent.click(screen.getByRole('checkbox', { name: `Select ${libraryItem.item.title}` }))
+      removed = true
+      search.mockClear()
+      await act(async () => {
+        vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+          listener({ revision: 1, collectionIds: [collection.id] })
+        )
+      })
+      await screen.findByRole('heading', { name: 'All references' })
+      await waitFor(() =>
+        expect(
+          search.mock.calls.some(
+            ([request]) =>
+              request.scope === 'library' &&
+              !request.countOnly &&
+              request.collectionId === undefined
+          )
+        ).toBe(true)
+      )
+      expect(await screen.findByText(libraryItem.item.title)).not.toBeNull()
+      expect(
+        screen.getByRole('checkbox', { name: `Select ${libraryItem.item.title}` })
+      ).toHaveProperty('checked', false)
+    })
+
+    it('keeps a newly selected collection when an older navigation refresh completes', async () => {
+      const first = {
+        id: 'first',
+        revision: 1,
+        name: 'First collection',
+        description: '',
+        itemCount: 1,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const second = { ...first, id: 'second', name: 'Second collection' }
+      const delayed = Promise.withResolvers<{ entries: (typeof first)[] }>()
+      let refreshing = false
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'collections')
+          return refreshing ? delayed.promise : { entries: [first, second] }
+        return { entries: request.scope === 'library' ? [libraryItem] : [], totalCount: 1 }
+      })
+      useNavigationStore.setState({ pendingLiteratureCollectionId: first.id })
+      render(<LiteratureLibraryPage />)
+      await screen.findByRole('heading', { name: first.name })
+      refreshing = true
+      await act(async () => {
+        vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+          listener({ revision: 1, collectionIds: [first.id] })
+        )
+      })
+      await act(async () => {
+        useNavigationStore.setState({ pendingLiteratureCollectionId: second.id })
+      })
+      await screen.findByRole('heading', { name: second.name })
+      await act(async () => {
+        delayed.resolve({ entries: [second] })
+      })
+      expect(screen.getByRole('heading', { name: second.name })).not.toBeNull()
+      expect(screen.queryByRole('heading', { name: 'All references' })).toBeNull()
+    })
+
+    it.each(['notification', 'reconnect'] as const)(
+      'refreshes external metadata after %s while retaining an open draft',
+      async (trigger) => {
+        await showLibrary()
+        await openReferenceDetail(screen.getByText(libraryItem.item.title))
+        await editDetail()
+        fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'My unsaved title' } })
+        const latest = version(2, 'Externally saved title')
+        get.mockResolvedValue(latest)
+        search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => ({
+          entries: request.scope === 'library' ? [latest] : [],
+          totalCount: request.scope === 'library' ? 1 : 0
+        }))
+        await act(async () => {
+          if (trigger === 'reconnect')
+            window.dispatchEvent(new Event('open-science:web-events-open'))
+          else
+            vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+              listener({ revision: 1, itemIds: [latest.id] })
+            )
+        })
+        await waitFor(() =>
+          expect(
+            document.querySelector('[data-slot="literature-table-scroll"]')!.textContent
+          ).toContain(latest.item.title)
+        )
+        expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('My unsaved title')
+        expect(transact).not.toHaveBeenCalled()
+        expect(screen.getByRole('button', { name: 'Load latest version' })).not.toBeNull()
+      }
+    )
+
+    it.each(
+      ['notification', 'focus', 'reconnect'].flatMap((trigger) =>
+        [false, true].map((editing) => ({ trigger, editing }))
+      )
+    )(
+      'handles an externally removed reference after $trigger without discarding a draft (editing: $editing)',
+      async ({ trigger, editing }) => {
+        await showLibrary()
+        await openReferenceDetail(screen.getByText(libraryItem.item.title))
+        if (editing) {
+          await editDetail()
+          fireEvent.change(screen.getByLabelText('Title'), {
+            target: { value: 'Keep this unsaved title' }
+          })
+        }
+        get.mockResolvedValue(undefined)
+        search.mockResolvedValue({ entries: [], totalCount: 0 })
+        await act(async () => {
+          if (trigger === 'notification')
+            vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+              listener({ revision: 1, itemIds: [libraryItem.id] })
+            )
+          else
+            window.dispatchEvent(
+              new Event(trigger === 'focus' ? 'focus' : 'open-science:web-events-open')
+            )
+        })
+        await (editing ? within(screen.getByRole('dialog')) : screen).findByText(
+          'This reference is no longer in your Library.'
+        )
+        if (editing) {
+          expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(
+            true
+          )
+          expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(
+            'Keep this unsaved title'
+          )
+        } else {
+          await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+        }
+        expect(transact).not.toHaveBeenCalled()
+      }
+    )
+
+    it('keeps a removed reference unsaveable after switching locale without losing its draft', async () => {
+      await showLibrary()
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await editDetail()
+      fireEvent.change(screen.getByLabelText('Title'), {
+        target: { value: 'Keep this unsaved title' }
+      })
+      get.mockResolvedValue(undefined)
+      search.mockResolvedValue({ entries: [], totalCount: 0 })
+      await act(async () => {
+        vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+          listener({ revision: 1, itemIds: [libraryItem.id] })
+        )
+      })
+      await within(screen.getByRole('dialog')).findByText(
+        'This reference is no longer in your Library.'
+      )
+      try {
+        await act(async () => {
+          await i18next.changeLanguage('zh-Hans')
+        })
+        const save = screen.getByRole('button', { name: i18next.t('Save') }) as HTMLButtonElement
+        expect.soft(save.disabled).toBe(true)
+        expect
+          .soft(
+            within(screen.getByRole('dialog')).queryByText(
+              i18next.t('This reference is no longer in your Library.')
+            )
+          )
+          .not.toBeNull()
+        expect((screen.getByLabelText(i18next.t('Title')) as HTMLInputElement).value).toBe(
+          'Keep this unsaved title'
+        )
+        fireEvent.click(save)
+        expect(transact).not.toHaveBeenCalled()
+      } finally {
+        await act(async () => {
+          await i18next.changeLanguage('en')
+        })
+      }
+    })
+
+    it.each(['edit', 'reopen'] as const)(
+      'does not let a pending removal read discard a later %s',
+      async (interaction) => {
+        await showLibrary()
+        await openReferenceDetail(screen.getByText(libraryItem.item.title))
+        const removal = deferred<LiteratureItemView | undefined>()
+        get.mockReturnValueOnce(removal.promise)
+        await act(async () => {
+          vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+            listener({ revision: 1, itemIds: [libraryItem.id] })
+          )
+        })
+        if (interaction === 'edit') {
+          await editDetail()
+          fireEvent.change(screen.getByLabelText('Title'), {
+            target: { value: 'Started editing during refresh' }
+          })
+        } else {
+          closeDetail()
+          get.mockResolvedValue({
+            ...version(1, 'Different reference'),
+            id: 'different-reference'
+          })
+          act(() => useNavigationStore.getState().openLiteratureItem('different-reference', 'user'))
+          await screen.findByRole('heading', { name: 'Different reference' })
+        }
+        await act(async () => removal.resolve(undefined))
+        if (interaction === 'edit') {
+          expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(
+            'Started editing during refresh'
+          )
+        } else {
+          expect(screen.getByRole('heading', { name: 'Different reference' })).not.toBeNull()
+          expect(screen.queryByText('This reference is no longer in your Library.')).toBeNull()
+        }
+      }
+    )
 
     it('keeps a reopened reference newer than an earlier save readback', async () => {
       await showLibrary()

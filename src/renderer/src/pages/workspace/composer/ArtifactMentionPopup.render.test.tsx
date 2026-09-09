@@ -417,6 +417,7 @@ describe('ArtifactMentionPopup', () => {
           ? [
               {
                 id: 'collection-1',
+                revision: 1,
                 name: 'TP53 evidence',
                 description: '',
                 itemCount: 27,

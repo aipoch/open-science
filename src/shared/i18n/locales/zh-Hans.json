@@ -4857,6 +4857,10 @@
     "Retry unfinished": "重试未完成项",
     "PDFs are attached to matching references. Identical attachments are reused; different PDFs are kept separately.": "PDF 将添加到匹配的文献。相同附件会复用，不同 PDF 会分别保留。",
     "{{completed}} / {{total}} completed": "已完成 {{completed}} / {{total}}",
-    "Finishing the current operation before stopping. Completed references are kept.": "完成当前操作后停止。已完成的文献会保留。"
+    "Finishing the current operation before stopping. Completed references are kept.": "完成当前操作后停止。已完成的文献会保留。",
+    "This collection changed. Your edits have been kept.": "此合集已更改。已保留您的编辑内容。",
+    "This collection no longer exists. Your edits have been kept.": "此合集已不存在。已保留您的编辑内容。",
+    "The latest collection could not be loaded. Your edits have been kept.": "无法加载最新合集。已保留您的编辑内容。",
+    "Replace your unsaved edits with the latest saved collection.": "用最新保存的合集替换您尚未保存的编辑内容。"
   }
 }

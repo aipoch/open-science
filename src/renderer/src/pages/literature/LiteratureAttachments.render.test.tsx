@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literatureItemInputSchema, type LiteratureItemView } from '../../../../shared/literature'
 import { literatureDeletionError } from '../../../../shared/literature-deletion'
 import { useAttachmentOperations } from './literature-attachment-operations'
+import { createLiteratureDetailController } from './LiteratureDetailController'
 import { LiteratureAttachments } from './LiteratureAttachments'
 
 const version = (
@@ -73,7 +74,13 @@ describe('Attachment safety and version access', () => {
       const item = useAttachmentOperations(
         (state) => state.operations.find((operation) => operation.itemId === available.id)?.item
       )
-      return <LiteratureAttachments item={item ?? available} onPreview={vi.fn()} />
+      return (
+        <LiteratureAttachments
+          readItem={window.api.literature.get}
+          item={item ?? available}
+          onPreview={vi.fn()}
+        />
+      )
     }
     render(<View />)
     const retry = async (): Promise<void> => {
@@ -111,6 +118,30 @@ describe('Attachment safety and version access', () => {
     ).toBe(false)
   })
 
+  it('keeps newer attachment history when an operation refresh finishes last', async () => {
+    const oldItem = makeItem(1)
+    const latest = makeItem(2)
+    const delayed = Promise.withResolvers<LiteratureItemView>()
+    const get = vi.mocked(window.api.literature.get)
+    get.mockReturnValueOnce(delayed.promise).mockResolvedValue(latest)
+    const controller = createLiteratureDetailController()
+    render(<LiteratureAttachments item={oldItem} readItem={controller.read} onPreview={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Attachment actions for paper-v1.pdf' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Retry file verification' }))
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      expect(await controller.read(oldItem.id)).toEqual(latest)
+    })
+    await act(async () => {
+      delayed.resolve(oldItem)
+    })
+    await waitFor(() => {
+      const operation = useAttachmentOperations.getState().operations[0]
+      expect(operation.pending).toBe(false)
+      expect(operation.item?.attachments).toEqual(latest.attachments)
+    })
+  })
+
   it.each(['referenced', 'scan-incomplete'] as const)(
     'retains structured %s diagnostics after confirming deletion',
     async (reason) => {
@@ -137,7 +168,13 @@ describe('Attachment safety and version access', () => {
           truncated: false
         })
       )
-      render(<LiteratureAttachments item={makeItem(2)} onPreview={vi.fn()} />)
+      render(
+        <LiteratureAttachments
+          readItem={window.api.literature.get}
+          item={makeItem(2)}
+          onPreview={vi.fn()}
+        />
+      )
       await openRemoval()
       fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
       await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
@@ -163,7 +200,13 @@ describe('Attachment safety and version access', () => {
   it.each(['cancel', 'escape'])(
     'does not delete on %s and returns focus to the attachment menu',
     async (close) => {
-      render(<LiteratureAttachments item={makeItem(2)} onPreview={vi.fn()} />)
+      render(
+        <LiteratureAttachments
+          readItem={window.api.literature.get}
+          item={makeItem(2)}
+          onPreview={vi.fn()}
+        />
+      )
       const trigger = screen.getByRole('button', { name: 'Attachment actions for paper-v2.pdf' })
       trigger.focus()
       await openRemoval()
@@ -190,7 +233,13 @@ describe('Attachment safety and version access', () => {
           finish = resolve
         })
     )
-    render(<LiteratureAttachments item={makeItem(2)} onPreview={vi.fn()} />)
+    render(
+      <LiteratureAttachments
+        readItem={window.api.literature.get}
+        item={makeItem(2)}
+        onPreview={vi.fn()}
+      />
+    )
     await openRemoval()
     const confirm = screen.getByRole('button', { name: 'Permanently delete attachment' })
     fireEvent.click(confirm)
@@ -214,7 +263,13 @@ describe('Attachment safety and version access', () => {
 
   it('preserves the attachment and explains saved chat references when deletion is refused', async () => {
     transact.mockRejectedValue(new Error('LITERATURE_ATTACHMENT_IN_USE'))
-    render(<LiteratureAttachments item={makeItem(2)} onPreview={vi.fn()} />)
+    render(
+      <LiteratureAttachments
+        readItem={window.api.literature.get}
+        item={makeItem(2)}
+        onPreview={vi.fn()}
+      />
+    )
     await openRemoval()
     fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
@@ -229,10 +284,13 @@ describe('Attachment safety and version access', () => {
     'invalidates confirmation when the %s changes',
     async (change) => {
       const props = { onPreview: vi.fn() }
-      const view = render(<LiteratureAttachments item={makeItem(2)} {...props} />)
+      const view = render(
+        <LiteratureAttachments readItem={window.api.literature.get} item={makeItem(2)} {...props} />
+      )
       await openRemoval()
       view.rerender(
         <LiteratureAttachments
+          readItem={window.api.literature.get}
           item={change === 'reference' ? { ...makeItem(2), id: 'other' } : makeItem(3)}
           {...props}
         />
@@ -244,7 +302,13 @@ describe('Attachment safety and version access', () => {
 
   it('shows version metadata and prevents previewing a missing version', async () => {
     const onPreview = vi.fn()
-    render(<LiteratureAttachments item={makeItem(2, true)} onPreview={onPreview} />)
+    render(
+      <LiteratureAttachments
+        readItem={window.api.literature.get}
+        item={makeItem(2, true)}
+        onPreview={onPreview}
+      />
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Attachment actions for paper-v2.pdf' }))
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Version history' }))
     const dialog = screen.getByRole('dialog')
@@ -265,7 +329,13 @@ describe('Attachment safety and version access', () => {
   it.each([1, 2])(
     'requires confirmation before deleting an attachment with %i versions',
     async (count) => {
-      render(<LiteratureAttachments item={makeItem(count)} onPreview={vi.fn()} />)
+      render(
+        <LiteratureAttachments
+          readItem={window.api.literature.get}
+          item={makeItem(count)}
+          onPreview={vi.fn()}
+        />
+      )
       fireEvent.click(
         screen.getByRole('button', { name: `Attachment actions for paper-v${count}.pdf` })
       )
@@ -284,6 +354,7 @@ describe('Attachment safety and version access', () => {
       const onPreview = vi.fn()
       render(
         <LiteratureAttachments
+          readItem={window.api.literature.get}
           item={makeItem(2, missing)}
 
           onPreview={onPreview}

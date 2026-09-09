@@ -4857,6 +4857,10 @@
     "Retry unfinished": "未完了の項目を再試行",
     "PDFs are attached to matching references. Identical attachments are reused; different PDFs are kept separately.": "PDF は一致する文献に添付されます。同一の添付ファイルは再利用し、異なる PDF は個別に保持します。",
     "{{completed}} / {{total}} completed": "{{completed}} / {{total}} 完了",
-    "Finishing the current operation before stopping. Completed references are kept.": "現在の操作を完了してから停止します。完了した文献は保持されます。"
+    "Finishing the current operation before stopping. Completed references are kept.": "現在の操作を完了してから停止します。完了した文献は保持されます。",
+    "This collection changed. Your edits have been kept.": "このコレクションは変更されています。編集内容は保持されています。",
+    "This collection no longer exists. Your edits have been kept.": "このコレクションは存在しません。編集内容は保持されています。",
+    "The latest collection could not be loaded. Your edits have been kept.": "最新のコレクションを読み込めませんでした。編集内容は保持されています。",
+    "Replace your unsaved edits with the latest saved collection.": "未保存の編集内容を最後に保存されたコレクションで置き換えます。"
   }
 }

@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createLiteratureIdentifierUrl,
   literatureCatalogSearchRequestSchema,
+  literatureCatalogCommandSchema,
+  type LiteratureCollectionView,
   literatureCandidateInputSchema,
   literatureItemInputSchema,
   type LiteratureCandidateInput
@@ -2577,20 +2579,13 @@ describe('LiteratureCatalog', () => {
     const catalog = await setup()
     const source = await catalog.transact({ kind: 'create-collection', name: 'Source' })
     const target = await catalog.transact({ kind: 'create-collection', name: 'Target' })
-    const ids: string[] = []
-    for (let index = 0; index < 201; index++) {
-      const item = await catalog.transact({
-        kind: 'create-item',
-        item: candidate({ doi: `10.1234/batch-${index}`, title: `Reference ${index}` }).item
-      })
-      ids.push(item.id)
-      await catalog.transact({
-        kind: 'set-collection-item',
-        collectionId: source.id,
-        itemId: item.id,
-        included: true
-      })
-    }
+    const { itemIds: ids } = await catalog.importItems(
+      Array.from(
+        { length: 201 },
+        (_, index) => candidate({ doi: `10.1234/batch-${index}`, title: `Reference ${index}` }).item
+      ),
+      source.id
+    )
     await catalog.transact({
       kind: 'move-collection-items',
       sourceCollectionId: source.id,
@@ -2650,6 +2645,199 @@ describe('LiteratureCatalog', () => {
     })
   })
 
+  it('publishes committed literature writes, excluding no-ops, previews and rollbacks', async () => {
+    await setup()
+    const events = vi.fn()
+    const catalog = new LiteratureCatalog(
+      async () => client!,
+      undefined,
+      undefined,
+      undefined,
+      events
+    )
+    const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    expect(events).toHaveBeenLastCalledWith({
+      revision: 1,
+      itemIds: [created.id],
+      collectionIds: undefined
+    })
+    expect((await catalog.get(created.id))!.item.title).toBe(candidate().item.title)
+    events.mockClear()
+    await catalog.importItems([])
+    await catalog.inspectImportItems([candidate().item], [])
+    await expect(
+      catalog.transact({
+        kind: 'set-item-lifecycle',
+        itemIds: [created.id, 'missing'],
+        state: 'deleted'
+      })
+    ).rejects.toThrow()
+    await expect(
+      catalog.transact({
+        kind: 'update-item',
+        itemId: created.id,
+        expectedMetadataRevision: 999,
+        item: candidate().item
+      })
+    ).rejects.toThrow()
+    expect(events).not.toHaveBeenCalled()
+    expect(await catalog.get(created.id)).toBeDefined()
+    const collection = await catalog.transact({ kind: 'create-collection', name: 'Shared' })
+    const linking = {
+      kind: 'set-collection-item' as const,
+      collectionId: collection.id,
+      itemId: created.id,
+      included: true
+    }
+    await catalog.transact(linking)
+    expect(events).toHaveBeenLastCalledWith(
+      expect.objectContaining({ itemIds: [created.id], collectionIds: [collection.id] })
+    )
+    events.mockClear()
+    await catalog.transact(linking)
+    expect(events).not.toHaveBeenCalled()
+    const input = { ...candidate().item, title: 'Saved despite failed delivery' }
+    events.mockImplementation(() => {
+      throw new Error('Disconnected renderer')
+    })
+    await expect(
+      catalog.transact({
+        kind: 'update-item',
+        itemId: created.id,
+        expectedMetadataRevision: 1,
+        item: input
+      })
+    ).resolves.toMatchObject({ id: created.id })
+    expect((await catalog.get(created.id))!.item.title).toBe(input.title)
+  })
+
+  it('rejects stale collection edits after promotion, deletion and request retry', async () => {
+    const catalog = await setup()
+    const parent = await catalog.transact({ kind: 'create-collection', name: 'Parent' })
+    const child = await catalog.transact({
+      kind: 'create-collection',
+      name: 'Child',
+      parentId: parent.id
+    })
+    const command = {
+      kind: 'update-collection' as const,
+      collectionId: child.id,
+      expectedRevision: 1,
+      name: 'Changed',
+      description: ''
+    }
+    await catalog.transact({ kind: 'delete-collection', collectionId: parent.id })
+    await expect(catalog.transact(command)).rejects.toThrow(
+      'literature_collection_revision_conflict'
+    )
+    await catalog.transact({ ...command, expectedRevision: 2 })
+    await expect(catalog.transact({ ...command, expectedRevision: 2 })).rejects.toThrow(
+      'literature_collection_revision_conflict'
+    )
+    await catalog.transact({ kind: 'delete-collection', collectionId: child.id })
+    const recreated = await catalog.transact({ kind: 'create-collection', name: 'Changed' })
+    expect(recreated.id).not.toBe(child.id)
+    await expect(catalog.transact({ ...command, expectedRevision: 3 })).rejects.toThrow(
+      'literature_collection_revision_conflict'
+    )
+  })
+
+  it.each(['name', 'description'] as const)(
+    'does not silently overwrite a prior collection edit when a stale editor changes %s',
+    async (field) => {
+      const first = await setup()
+      const second = new LiteratureCatalog(async () => client!)
+      const created = await first.transact({
+        kind: 'create-collection',
+        name: 'Original',
+        description: 'Original description'
+      })
+      const read = async (catalog: LiteratureCatalog): Promise<LiteratureCollectionView> =>
+        (await catalog.search({ scope: 'collections' })).entries.find(
+          (entry) => 'id' in entry && entry.id === created.id
+        ) as LiteratureCollectionView
+      const snapshotA = await read(first)
+      const snapshotB = await read(second)
+      expect(snapshotB).toEqual(snapshotA)
+      await first.transact(
+        literatureCatalogCommandSchema.parse({
+          kind: 'update-collection',
+          expectedRevision: 1,
+          collectionId: created.id,
+          name: 'Renamed by A',
+          description: snapshotA.description
+        })
+      )
+      expect((await read(first)).name).toBe('Renamed by A')
+      const [saveB] = await Promise.allSettled([
+        second.transact(
+          literatureCatalogCommandSchema.parse({
+            kind: 'update-collection',
+            expectedRevision: snapshotA.revision,
+            collectionId: created.id,
+            name: field === 'name' ? 'Renamed by B' : snapshotB.name,
+            description: field === 'description' ? 'Description from B' : snapshotB.description
+          })
+        )
+      ])
+      const final = await read(first)
+      // A visible conflict or an explicit disjoint-field merge are both safe policies.
+      expect.soft(saveB.status).toBe('rejected')
+      expect(final.name).toBe('Renamed by A')
+      expect(final.description).toBe(
+        saveB.status === 'fulfilled' && field === 'description'
+          ? 'Description from B'
+          : snapshotA.description
+      )
+    }
+  )
+
+  it('reads new attachments and relationships without a metadata or parent timestamp change', async () => {
+    const catalog = await setup()
+    const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    const before = (await catalog.get(created.id))!
+    const collection = await catalog.transact({ kind: 'create-collection', name: 'Related' })
+    await catalog.transact({
+      kind: 'set-collection-item',
+      collectionId: collection.id,
+      itemId: created.id,
+      included: true
+    })
+    await catalog.transact({
+      kind: 'set-project-item',
+      projectId: 'project-1',
+      itemId: created.id,
+      included: true,
+      source: 'user'
+    })
+    const checksum = 'a'.repeat(64)
+    await client!.contentBlob.create({
+      data: {
+        id: 'relation-blob',
+        checksum,
+        storageKey: 'content/relation-blob',
+        sizeBytes: 128n,
+        contentType: 'application/pdf',
+        state: 'available',
+        verifiedAt: new Date()
+      }
+    })
+    await catalog.attachContent({
+      itemId: created.id,
+      contentBlobId: 'relation-blob',
+      filename: 'new.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: 128,
+      checksum
+    })
+    const after = (await catalog.get(created.id))!
+    expect(after.attachments).toHaveLength(1)
+    expect(after.collectionIds).toEqual([collection.id])
+    expect(after.projectIds).toEqual(['project-1'])
+    expect(after.metadataRevision).toBe(before.metadataRevision)
+    expect(after.updatedAt).toBe(before.updatedAt)
+  })
+
   it('enforces sibling Collection names while allowing the same name under different parents', async () => {
     const catalog = await setup()
     const root = await catalog.transact({ kind: 'create-collection', name: ' Review   queue ' })
@@ -2671,6 +2859,7 @@ describe('LiteratureCatalog', () => {
     await expect(
       catalog.transact({
         kind: 'update-collection',
+        expectedRevision: 1,
         collectionId: other.id,
         name: 'Review queue',
         description: ''
@@ -2679,6 +2868,7 @@ describe('LiteratureCatalog', () => {
     await expect(
       catalog.transact({
         kind: 'update-collection',
+        expectedRevision: 1,
         collectionId: child.id,
         name: 'REVIEW QUEUE',
         description: 'Updated'
@@ -2719,6 +2909,7 @@ describe('LiteratureCatalog', () => {
     })
     await catalog.transact({
       kind: 'update-collection',
+      expectedRevision: 1,
       collectionId: child.id,
       name: 'Child review',
       description: ''
@@ -2762,6 +2953,7 @@ describe('LiteratureCatalog', () => {
 
     await catalog.transact({
       kind: 'update-collection',
+      expectedRevision: 1,
       collectionId: collection.id,
       name: 'Included studies',
       description: 'Final synthesis set.'

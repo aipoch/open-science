@@ -86,10 +86,11 @@ describe('Compute Job sensitive data encryption migration', () => {
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
         '0038_literature_search_text',
-        '0039_literature_metadata_commit_receipt'
+        '0039_literature_metadata_commit_receipt',
+        '0040_literature_collection_revision'
       ],
       from: '0015_session_model_call_usage',
-      to: '0039_literature_metadata_commit_receipt'
+      to: '0040_literature_collection_revision'
     })
     await expect(
       access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)
