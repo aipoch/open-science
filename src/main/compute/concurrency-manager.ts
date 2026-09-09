@@ -315,8 +315,8 @@ export class ConcurrencyManager {
     const sessionLimit = this.sessionLimits.get(sessionId) ?? null
     const activeCount = await this.jobRepository.countActiveBySession(sessionId)
 
-    // Find all jobs for this session to compute queued count and provider ceilings
-    const allJobs = await this.jobRepository.findBySession(sessionId)
+    // Read only status/provider metadata, including historical and needs-attention jobs.
+    const allJobs = await this.jobRepository.findSessionConcurrencyJobs(sessionId)
     const queuedJobs = allJobs.filter((job) => job.status === 'queued')
     const queuedCount = queuedJobs.length
 

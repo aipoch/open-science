@@ -1,4 +1,5 @@
-import { type Dirent, existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { type Dirent, existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { readdir, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 
@@ -1380,16 +1381,18 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
 
   // Scans the physical env directory and maps reserved Windows default directories back to their
   // logical names. Dirs with neither interpreter are skipped. Tolerant of a missing envs dir.
-  listEnvironments(): EnvironmentInfo[] {
+  async listEnvironments(signal?: AbortSignal): Promise<EnvironmentInfo[]> {
+    signal?.throwIfAborted()
     const envsDir = join(this.deps.root, 'envs')
     let entries: Dirent[]
     try {
-      entries = readdirSync(envsDir, { withFileTypes: true })
+      entries = await readdir(envsDir, { withFileTypes: true })
     } catch {
       return []
     }
     const infos: EnvironmentInfo[] = []
     for (const entry of entries) {
+      signal?.throwIfAborted()
       if (!entry.isDirectory()) continue
       const platform = this.platform
       const name = logicalEnvNameFromDirectory(entry.name)
@@ -1398,12 +1401,20 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       const isPython = existsSync(pythonBin(prefix, platform))
       const isR = !isPython && existsSync(rBin(prefix, platform))
       if (!isPython && !isR) continue
+      const before = await stat(prefix).catch(() => undefined)
+      if (!before) continue
+      const sizeBytes = await dirSizeBytes(prefix, signal)
+      const after = await stat(prefix).catch(() => undefined)
+      signal?.throwIfAborted()
+      // Discard scans of environments removed or replaced while filesystem I/O yielded.
+      if (!after || before.dev !== after.dev || before.ino !== after.ino) continue
+      if (!existsSync(isPython ? pythonBin(prefix, platform) : rBin(prefix, platform))) continue
       infos.push({
         name,
         language: isPython ? 'python' : 'r',
         ready: true,
         isDefault: name === DEFAULT_PY_ENV || name === DEFAULT_R_ENV,
-        sizeBytes: dirSizeBytes(prefix)
+        sizeBytes
       })
     }
     return infos
@@ -1796,19 +1807,22 @@ class MaxPathRetryError extends Error {
 
 // Best-effort recursive directory size (OQ5: surface disk usage in `list`). Tolerates any error
 // (permission, race with a concurrent remove, etc.) by returning undefined rather than throwing.
-const dirSizeBytes = (path: string): number | undefined => {
+const dirSizeBytes = async (path: string, signal?: AbortSignal): Promise<number | undefined> => {
   try {
     let total = 0
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const walk = async (dir: string): Promise<void> => {
+      signal?.throwIfAborted()
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        signal?.throwIfAborted()
         const full = join(dir, entry.name)
-        if (entry.isDirectory()) walk(full)
-        else if (entry.isFile()) total += statSync(full).size
+        if (entry.isDirectory()) await walk(full)
+        else if (entry.isFile()) total += (await stat(full)).size
       }
     }
-    walk(path)
+    await walk(path)
     return total
   } catch {
+    signal?.throwIfAborted()
     return undefined
   }
 }

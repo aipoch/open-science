@@ -21,7 +21,7 @@ const createMockJobRepo = (): ComputeJobRepository =>
     findNonTerminalByProvider: vi.fn(),
     findTerminalUnharvested: vi.fn(),
     hasActiveJobsForProvider: vi.fn(),
-    findBySession: vi.fn(),
+    findSessionConcurrencyJobs: vi.fn(),
     findPendingNotifications: vi.fn(),
     markNotificationsConsumed: vi.fn()
   }) as unknown as ComputeJobRepository
@@ -253,7 +253,7 @@ describe('ConcurrencyManager', () => {
       }
     )
     vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
-    vi.mocked(jobRepo.findBySession).mockResolvedValue([])
+    vi.mocked(jobRepo.findSessionConcurrencyJobs).mockResolvedValue([])
     await expect(durableManager.startQueueReconciliation()).rejects.toThrow('could not be restored')
     expect(await durableManager.getStatus('unrelated-session')).toMatchObject({
       active_count: 0,
@@ -773,7 +773,7 @@ describe('ConcurrencyManager', () => {
     it('returns accurate session status', async () => {
       await manager.setSessionLimit('session-1', 5)
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(3)
-      vi.mocked(jobRepo.findBySession).mockResolvedValue([
+      vi.mocked(jobRepo.findSessionConcurrencyJobs).mockResolvedValue([
         { provider_id: 'ssh:cluster-a', status: 'queued' } as ComputeJob,
         { provider_id: 'ssh:cluster-b', status: 'queued' } as ComputeJob
       ])
@@ -794,7 +794,7 @@ describe('ConcurrencyManager', () => {
 
     it('returns null session_limit when not set', async () => {
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
-      vi.mocked(jobRepo.findBySession).mockResolvedValue([])
+      vi.mocked(jobRepo.findSessionConcurrencyJobs).mockResolvedValue([])
 
       const status = await manager.getStatus('session-1')
 
@@ -805,7 +805,7 @@ describe('ConcurrencyManager', () => {
 
     it('uses default ceiling of 10 when host.concurrencyLimit is undefined', async () => {
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(1)
-      vi.mocked(jobRepo.findBySession).mockResolvedValue([
+      vi.mocked(jobRepo.findSessionConcurrencyJobs).mockResolvedValue([
         { provider_id: 'ssh:cluster-a', status: 'running' } as ComputeJob
       ])
       vi.mocked(hostRepo.get).mockResolvedValue({
