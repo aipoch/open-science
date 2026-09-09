@@ -8899,6 +8899,95 @@ describe('LiteratureLibraryPage', () => {
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
     }
 
+    it('returns to all references after the active collection is deleted externally', async () => {
+      let removed = false
+      const collection = {
+        id: 'collection-1',
+        revision: 1,
+        name: 'Remote collection',
+        description: '',
+        itemCount: 1,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => ({
+        entries:
+          request.scope === 'collections'
+            ? removed
+              ? []
+              : [collection]
+            : request.scope === 'library' && (!removed || !request.collectionId)
+              ? [libraryItem]
+              : [],
+        totalCount: request.scope === 'library' && (!removed || !request.collectionId) ? 1 : 0
+      }))
+      useNavigationStore.setState({ pendingLiteratureCollectionId: collection.id })
+      render(<LiteratureLibraryPage />)
+      await screen.findByRole('heading', { name: collection.name })
+      await screen.findByText(libraryItem.item.title)
+      fireEvent.click(screen.getByRole('checkbox', { name: `Select ${libraryItem.item.title}` }))
+      removed = true
+      search.mockClear()
+      await act(async () => {
+        vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+          listener({ revision: 1, collectionIds: [collection.id] })
+        )
+      })
+      await screen.findByRole('heading', { name: 'All references' })
+      await waitFor(() =>
+        expect(
+          search.mock.calls.some(
+            ([request]) =>
+              request.scope === 'library' &&
+              !request.countOnly &&
+              request.collectionId === undefined
+          )
+        ).toBe(true)
+      )
+      expect(await screen.findByText(libraryItem.item.title)).not.toBeNull()
+      expect(
+        screen.getByRole('checkbox', { name: `Select ${libraryItem.item.title}` })
+      ).toHaveProperty('checked', false)
+    })
+
+    it('keeps a newly selected collection when an older navigation refresh completes', async () => {
+      const first = {
+        id: 'first',
+        revision: 1,
+        name: 'First collection',
+        description: '',
+        itemCount: 1,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const second = { ...first, id: 'second', name: 'Second collection' }
+      const delayed = Promise.withResolvers<{ entries: (typeof first)[] }>()
+      let refreshing = false
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'collections')
+          return refreshing ? delayed.promise : { entries: [first, second] }
+        return { entries: request.scope === 'library' ? [libraryItem] : [], totalCount: 1 }
+      })
+      useNavigationStore.setState({ pendingLiteratureCollectionId: first.id })
+      render(<LiteratureLibraryPage />)
+      await screen.findByRole('heading', { name: first.name })
+      refreshing = true
+      await act(async () => {
+        vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+          listener({ revision: 1, collectionIds: [first.id] })
+        )
+      })
+      await act(async () => {
+        useNavigationStore.setState({ pendingLiteratureCollectionId: second.id })
+      })
+      await screen.findByRole('heading', { name: second.name })
+      await act(async () => {
+        delayed.resolve({ entries: [second] })
+      })
+      expect(screen.getByRole('heading', { name: second.name })).not.toBeNull()
+      expect(screen.queryByRole('heading', { name: 'All references' })).toBeNull()
+    })
+
     it.each(['notification', 'reconnect'] as const)(
       'refreshes external metadata after %s while retaining an open draft',
       async (trigger) => {

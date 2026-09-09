@@ -1721,7 +1721,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }, [clearSelection, consumeLiteratureCollection, pendingLiteratureCollectionId])
 
   const collectionsGenerationRef = useRef(0)
-  const loadCollections = useCallback(async (): Promise<void> => {
+  const loadCollections = useCallback(async (): Promise<LiteratureCollectionView[] | undefined> => {
     const generation = ++collectionsGenerationRef.current
     const collections: LiteratureCollectionView[] = []
     let offset: number | undefined = 0
@@ -1732,6 +1732,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       offset = page.nextOffset
     } while (offset !== undefined)
     setCollections(collections)
+    return collections
   }, [])
 
   const inboxCountGeneration = useRef(0)
@@ -2004,11 +2005,25 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     [refreshItems]
   )
 
+  const currentCollectionId = useRef(collectionId)
+  useLayoutEffect(() => {
+    currentCollectionId.current = collectionId
+  }, [collectionId])
+
   useLiteratureChanges(() => {
     // Starting the new reads invalidates outstanding list/navigation requests immediately.
     void Promise.all([
       loadEntries(true, true),
-      loadCollections(),
+      loadCollections().then((collections) => {
+        const selectedId = currentCollectionId.current
+        if (
+          collections &&
+          selectedId &&
+          !collections.some((collection) => collection.id === selectedId)
+        ) {
+          selectLibrary()
+        }
+      }),
       loadInboxPendingCount(),
       loadProjectCounts(),
       (async () => {
