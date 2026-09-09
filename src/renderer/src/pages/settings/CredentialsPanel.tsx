@@ -1,3 +1,4 @@
+import { useFileCredentialNotice } from './use-file-credential-notice'
 import { BookOpen, Check, KeyRound, Server, Trash2, X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
@@ -60,6 +61,7 @@ export function CredentialsPanel({
   onOpenProvider
 }: CredentialsPanelProps): React.JSX.Element {
   const { t } = useTranslation()
+  const fileCredentialNotice = useFileCredentialNotice()
   const openAlex = useSettingsStore((state) => state.openAlex)
   const ncbi = useSettingsStore((state) => state.ncbi)
   const customServers = useSettingsStore((state) => state.customServers)
@@ -349,9 +351,10 @@ export function CredentialsPanel({
             disabled={busy}
           />
           <p className="text-xs text-muted-foreground">
-            {t(
-              'Stored encrypted on this computer. Secret values are never returned to the interface.'
-            )}
+            {fileCredentialNotice ??
+              t(
+                'Stored encrypted on this computer. Secret values are never returned to the interface.'
+              )}
           </p>
         </div>
         {!encryptionAvailable ? (
@@ -468,9 +471,10 @@ export function CredentialsPanel({
       <section>
         <h2 className="text-base font-semibold">{t('Services')}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          {t(
-            'API keys and credentials used by Open Science on your behalf, stored encrypted on this computer.'
-          )}
+          {fileCredentialNotice ??
+            t(
+              'API keys and credentials used by Open Science on your behalf, stored encrypted on this computer.'
+            )}
         </p>
         <div className="mt-4 divide-y divide-border rounded-xl border border-border">
           {services.map(({ id, label, description, configured, desktopOnly, Icon }) => {

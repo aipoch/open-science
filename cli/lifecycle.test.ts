@@ -20,6 +20,7 @@ import {
   runCli,
   reportCliError,
   statusCommand,
+  startCommand,
   stopCommand,
   terminateDaemon,
   urlCommand,
@@ -394,6 +395,39 @@ describe('headless startup', () => {
     } finally {
       await rm(directory, { recursive: true })
     }
+  })
+
+  it('rejects a credential store selection when a daemon is already running', async () => {
+    const deps = makeDeps()
+    await expect(startCommand({ credentialStore: 'file' }, deps)).rejects.toThrow('already running')
+    expect(deps.log).not.toHaveBeenCalled()
+  })
+
+  it.each(['darwin', 'win32'])('rejects file storage before startup on %s', (platform) => {
+    vi.stubGlobal('process', Object.create(process, { platform: { value: platform } }))
+    expect(() => parseCliArgs(['start', '--credential-store=file'])).toThrow(
+      'supported only on Linux'
+    )
+    expect(parseCliArgs(['start', '--credential-store=os']).options.credentialStore).toBe('os')
+  })
+
+  it('validates and forwards explicit credential storage without changing the default', () => {
+    vi.stubGlobal('process', Object.create(process, { platform: { value: 'linux' } }))
+    for (const args of [['--credential-store=file'], ['--credential-store', 'file']]) {
+      expect(parseCliArgs(['start', ...args]).options.credentialStore).toBe('file')
+    }
+    expect(() => parseCliArgs(['start', '--credential-store=auto'])).toThrow()
+    expect(() => parseCliArgs(['run', '--credential-store=file'])).toThrow()
+    expect(() =>
+      parseCliArgs(['start', '--credential-store=file', '--credential-store', 'os'])
+    ).toThrow()
+    expect(buildAppLaunchArgs(['app-root'], { credentialStore: 'file' }, 44100)).toEqual([
+      'app-root',
+      '--credential-store=file',
+      '--open-science-headless',
+      '--serve=44100'
+    ])
+    expect(buildAppLaunchArgs([], {}, 44100).join(' ')).not.toContain('credential-store')
   })
 
   it('places the no-sandbox runtime switch before the development app path', () => {

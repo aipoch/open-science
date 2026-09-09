@@ -5070,6 +5070,7 @@
     "PDF structure not yet validated.": "Structure du PDF pas encore validée.",
     "Attachment unavailable": "Pièce jointe indisponible",
     "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "Ce PDF est référencé par une discussion ou son historique de messages et ne peut pas être supprimé. Le dissocier de la discussion actuelle ne supprime pas les références de l’historique.",
+    "File credential storage is enabled. New and updated credentials are stored unencrypted in local application files. Existing encrypted credentials are not migrated.": "Le stockage des identifiants dans des fichiers est activé. Les identifiants nouveaux et mis à jour sont enregistrés sans chiffrement dans les fichiers locaux de l’application. Les identifiants chiffrés existants ne sont pas migrés.",
     "Dismissed": "Ignorées",
     "No dismissed references": "Aucune référence ignorée",
     "Dismissed references can be restored here.": "Les références ignorées peuvent être restaurées ici.",

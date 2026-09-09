@@ -1,3 +1,4 @@
+import { useFileCredentialNotice } from '../settings/use-file-credential-notice'
 import { useEffect, useId, useState } from 'react'
 import { Check, Settings2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -15,6 +16,7 @@ export const LiteratureOpenAlexCredential = ({
   onBusyChange: (busy: boolean) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const fileCredentialNotice = useFileCredentialNotice()
   const id = useId()
   const configured = useSettingsStore((state) => state.openAlex.hasApiKey)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
@@ -78,7 +80,8 @@ export const LiteratureOpenAlexCredential = ({
             placeholder={t('Paste your OpenAlex API key')}
           />
           <p className="text-xs text-muted-foreground">
-            {t('Stored encrypted on this computer and sent only to api.openalex.org.')}
+            {fileCredentialNotice ??
+              t('Stored encrypted on this computer and sent only to api.openalex.org.')}
           </p>
           {!encryptionAvailable ? (
             <p role="alert" className="text-xs text-danger-000">

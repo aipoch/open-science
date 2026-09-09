@@ -4756,6 +4756,7 @@
     "PDF structure not yet validated.": "PDF の構造は未検証です。",
     "Attachment unavailable": "添付ファイルを利用できません",
     "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "このPDFはチャットまたはメッセージ履歴で参照されているため、削除できません。現在のチャットからリンクを解除しても、履歴内の参照は削除されません。",
+    "File credential storage is enabled. New and updated credentials are stored unencrypted in local application files. Existing encrypted credentials are not migrated.": "ファイルへの認証情報の保存が有効です。新規および更新された認証情報は、ローカルのアプリファイルに暗号化せずに保存されます。既存の暗号化された認証情報は移行されません。",
     "Dismissed": "無視済み",
     "No dismissed references": "無視した文献はありません",
     "Dismissed references can be restored here.": "無視した文献はここで復元できます。",

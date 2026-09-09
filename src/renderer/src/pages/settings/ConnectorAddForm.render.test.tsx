@@ -1823,48 +1823,64 @@ describe('ConnectorAddForm (edit)', () => {
     )
   })
 
-  it('keeps a saved OAuth client secret when blank and removes it only explicitly', async () => {
-    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
-    useSettingsStore.setState({ ...createInitialSettingsState(), updateCustomServer })
-    const oauthServer = {
-      id: 'remote-static',
-      name: 'remote-static',
-      displayName: 'Remote static',
-      transport: 'streamable_http' as const,
-      enabled: false,
-      url: 'https://mcp.example.test',
-      oauth: {
-        authorizationServerUrl: 'https://auth.example.test',
-        clientId: 'registered-client',
-        hasTokens: false,
-        hasClientSecret: true
-      }
-    }
-    act(() => {
-      root.render(<ConnectorAddForm editServer={oauthServer} onDone={vi.fn()} onCancel={vi.fn()} />)
-    })
-
-    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Save changes'
-    )
-    await act(async () => save?.click())
-    expect(updateCustomServer).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        oauth: expect.not.objectContaining({ clientSecret: expect.anything() })
+  it.each(['os', 'file'] as const)(
+    'keeps and accurately describes a saved OAuth client secret in %s mode',
+    async (credentialStore) => {
+      const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+      useSettingsStore.setState({
+        ...createInitialSettingsState(),
+        updateCustomServer,
+        credentialStore
       })
-    )
+      const oauthServer = {
+        id: 'remote-static',
+        name: 'remote-static',
+        displayName: 'Remote static',
+        transport: 'streamable_http' as const,
+        enabled: false,
+        url: 'https://mcp.example.test',
+        oauth: {
+          authorizationServerUrl: 'https://auth.example.test',
+          clientId: 'registered-client',
+          hasTokens: false,
+          hasClientSecret: true
+        }
+      }
+      act(() => {
+        root.render(
+          <ConnectorAddForm editServer={oauthServer} onDone={vi.fn()} onCancel={vi.fn()} />
+        )
+      })
 
-    updateCustomServer.mockClear()
-    setValue('Client secret', 'replacement-that-must-not-be-saved')
-    const remove = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Remove saved client secret'
-    )
-    act(() => remove?.click())
-    await act(async () => save?.click())
-    expect(updateCustomServer).toHaveBeenCalledWith(
-      expect.objectContaining({ oauth: expect.objectContaining({ clientSecret: null }) })
-    )
-  })
+      expect(document.body.textContent?.includes('A client secret is saved securely.')).toBe(
+        credentialStore === 'os'
+      )
+      expect(
+        document.body.textContent?.includes('stored unencrypted in local application files')
+      ).toBe(credentialStore === 'file')
+
+      const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Save changes'
+      )
+      await act(async () => save?.click())
+      expect(updateCustomServer).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          oauth: expect.not.objectContaining({ clientSecret: expect.anything() })
+        })
+      )
+
+      updateCustomServer.mockClear()
+      setValue('Client secret', 'replacement-that-must-not-be-saved')
+      const remove = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Remove saved client secret'
+      )
+      act(() => remove?.click())
+      await act(async () => save?.click())
+      expect(updateCustomServer).toHaveBeenCalledWith(
+        expect.objectContaining({ oauth: expect.objectContaining({ clientSecret: null }) })
+      )
+    }
+  )
 
   it('shows None without a headers field for a remote server that has no authentication', () => {
     act(() => {

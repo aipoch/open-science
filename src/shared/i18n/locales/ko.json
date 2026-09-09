@@ -4754,6 +4754,7 @@
     "PDF structure not yet validated.": "PDF 구조가 아직 검증되지 않았습니다.",
     "Attachment unavailable": "첨부 파일 사용 불가",
     "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "이 PDF는 채팅 또는 메시지 기록에서 참조되고 있어 제거할 수 없습니다. 현재 채팅에서 연결을 해제해도 기록의 참조는 제거되지 않습니다.",
+    "File credential storage is enabled. New and updated credentials are stored unencrypted in local application files. Existing encrypted credentials are not migrated.": "파일 자격 증명 저장이 활성화되어 있습니다. 새 자격 증명과 업데이트된 자격 증명은 로컬 앱 파일에 암호화되지 않은 상태로 저장됩니다. 기존 암호화된 자격 증명은 이전되지 않습니다.",
     "Dismissed": "무시됨",
     "No dismissed references": "무시한 문헌이 없습니다",
     "Dismissed references can be restored here.": "무시한 문헌은 여기서 복원할 수 있습니다.",
