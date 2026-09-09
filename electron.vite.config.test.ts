@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import config from './electron.vite.config'
+import config, { resolveWsl2BashPreviewBuildEnabled } from './electron.vite.config'
 
 const resolve = config as (input: { command: 'serve' | 'build'; mode: string }) => {
   main?: { define?: Record<string, string> }
@@ -31,6 +31,22 @@ describe('electron Vite renderer configuration', () => {
       __OPEN_SCIENCE_WSL2_BASH_DEVELOPMENT_PREVIEW__: 'false'
     })
   })
+})
+
+describe('WSL2 Bash Preview build admission', () => {
+  it('enables Windows builds unless the rollback switch is set', () => {
+    expect(resolveWsl2BashPreviewBuildEnabled('win32', undefined)).toBe(true)
+    expect(resolveWsl2BashPreviewBuildEnabled('win32', '1')).toBe(true)
+    expect(resolveWsl2BashPreviewBuildEnabled('win32', '0')).toBe(false)
+  })
+
+  it.each(['darwin', 'linux'] as const)(
+    'keeps %s builds disabled even when the rollback switch is not set',
+    (platform) => {
+      expect(resolveWsl2BashPreviewBuildEnabled(platform, undefined)).toBe(false)
+      expect(resolveWsl2BashPreviewBuildEnabled(platform, '1')).toBe(false)
+    }
+  )
 })
 
 afterEach(() => vi.unstubAllEnvs())

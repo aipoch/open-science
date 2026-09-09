@@ -42,7 +42,8 @@ export const resolveAvailableShellRuntimeBinding = async (
   isWslReady: (selection: WslSelection) => Promise<boolean>,
   platform: NodeJS.Platform = process.platform
 ): Promise<ShellRuntimeBinding> => {
-  if (platform === 'win32' && settings.localShellRuntime === 'wsl2-bash') {
+  if (settings.localShellRuntime === 'wsl2-bash') {
+    if (platform !== 'win32') return defaultShellRuntimeBinding(platform)
     try {
       if (settings.activatedWslSelection && (await isWslReady(settings.activatedWslSelection))) {
         return resolveConfiguredShellRuntimeBinding(settings, platform)

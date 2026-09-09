@@ -4,11 +4,23 @@ import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+// Supported packages are built on native runners because they carry platform-native dependencies,
+// so the build host is also the package target. Keep non-Windows bundles disabled independently of
+// renderer visibility and the main-process runtime gate.
+export const resolveWsl2BashPreviewBuildEnabled = (
+  platform: NodeJS.Platform,
+  rollbackValue: string | undefined
+): boolean => platform === 'win32' && rollbackValue !== '0'
+
 export default defineConfig(({ command }) => ({
   main: {
     define: {
-      __OPEN_SCIENCE_WSL2_BASH_PREVIEW__:
-        process.env.OPEN_SCIENCE_BUILD_WSL2_BASH_PREVIEW === '0' ? 'false' : 'true',
+      __OPEN_SCIENCE_WSL2_BASH_PREVIEW__: resolveWsl2BashPreviewBuildEnabled(
+        process.platform,
+        process.env.OPEN_SCIENCE_BUILD_WSL2_BASH_PREVIEW
+      )
+        ? 'true'
+        : 'false',
       __OPEN_SCIENCE_WSL2_BASH_DEVELOPMENT_PREVIEW__:
         command === 'serve' && process.env.OPEN_SCIENCE_DEV_WSL2_BASH_PREVIEW === '1'
           ? 'true'

@@ -67,6 +67,25 @@ describe('resolveAvailableShellRuntimeBinding', () => {
       resolveAvailableShellRuntimeBinding(settings, async () => false, 'win32')
     ).resolves.toEqual({ kind: 'powershell', version: '5.1' })
   })
+
+  it.each(['darwin', 'linux'] as const)(
+    'ignores a retained WSL2 preference on %s and uses the native Shell',
+    async (platform) => {
+      const probe = vi.fn(async () => true)
+
+      await expect(
+        resolveAvailableShellRuntimeBinding(
+          {
+            localShellRuntime: 'wsl2-bash',
+            activatedWslSelection: { distro: 'Ubuntu-22.04', user: 'scientist' }
+          },
+          probe,
+          platform
+        )
+      ).resolves.toEqual({ kind: 'native-posix', shell: '/bin/sh' })
+      expect(probe).not.toHaveBeenCalled()
+    }
+  )
 })
 
 it.each([false, 'throw', 'missing'] as const)(
