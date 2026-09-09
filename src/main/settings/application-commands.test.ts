@@ -66,6 +66,7 @@ const expectedChannels = [
   'settings:preview-skill-zip',
   'settings:probe-wsl-setup',
   'settings:install-wsl-platform',
+  'settings:install-missing-wsl-dependencies',
   'settings:create-wsl-support-handoff',
   'settings:install-recommended-wsl-distro',
   'settings:open-wsl-terminal',
@@ -306,6 +307,33 @@ describe('Settings core application commands', () => {
     })
     expect(switchToPowerShell).toHaveBeenCalledOnce()
     expect(useWsl2Bash).toHaveBeenCalledOnce()
+  })
+
+  it('routes revision-bound WSL dependency installation only for a local caller', async () => {
+    const { dependencies, serviceMethod } = createDependencies()
+    const snapshot = { state: 'ready', distros: [], operationReference: 'dependencies-1' }
+    const request = { expectedRevision: 17 }
+    serviceMethod('installMissingWslDependencies').mockResolvedValue(snapshot)
+    const router = createApplicationCommandRouter()
+    registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsCoreApplicationCommands.installMissingWslDependencies,
+        invocation([request] as const)
+      )
+    ).resolves.toBe(snapshot)
+    expect(serviceMethod('installMissingWslDependencies')).toHaveBeenCalledWith(request)
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsCoreApplicationCommands.installMissingWslDependencies,
+        invocation([request] as const, 'remote')
+      )
+    ).rejects.toThrow(
+      'Channel only available from the local app: settings:install-missing-wsl-dependencies'
+    )
+    expect(serviceMethod('installMissingWslDependencies')).toHaveBeenCalledOnce()
   })
 
   it('installs the exact command inventory and dispatches a remote-safe preflight query', async () => {

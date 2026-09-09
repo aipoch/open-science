@@ -273,6 +273,28 @@ describe('WslSetupOwner', () => {
     await completion
   })
 
+  it('does not persist a different profile while a setup installation is running', async () => {
+    const installation = Promise.withResolvers<{ kind: 'uac-cancelled' }>()
+    const writeSelection = vi.fn()
+    const owner = makeOwner({
+      installer: { install: () => installation.promise },
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({ distro: 'Ubuntu-A', user: 'scientist-a' }),
+      writeSelection,
+      operationReference: () => 'install1'
+    })
+    const completion = owner.installPlatform()
+
+    await expect(owner.select({ distro: 'Ubuntu-B', user: 'scientist-b' })).resolves.toMatchObject({
+      state: 'failed',
+      errorCode: 'wsl_install_conflict'
+    })
+    expect(writeSelection).not.toHaveBeenCalled()
+
+    installation.resolve({ kind: 'uac-cancelled' })
+    await completion
+  })
+
   it('rejects a stale profile selection inside the owner before persistence', async () => {
     const writeSelection = vi.fn()
     const owner = makeOwner({
@@ -889,6 +911,185 @@ describe('WslSetupOwner', () => {
     expect(vi.mocked(runner.run).mock.calls.map(([args]) => args[0])).not.toContain('--install')
   })
 
+  it('keeps an interrupted dependency install blocked when a read-only probe still finds a missing dependency', async () => {
+    const journal = {
+      load: vi.fn(async () => ({
+        kind: 'install-runtime-dependencies' as const,
+        operationReference: 'dependencies1',
+        startedAt: 1,
+        selection: { distro: 'Ubuntu-22.04', user: 'scientist' }
+      })),
+      save: vi.fn(),
+      clear: vi.fn(async () => undefined)
+    }
+    const runner = makeRunner(
+      result('Default Version: 2'),
+      result('Ubuntu-22.04'),
+      result('* Ubuntu-22.04 Running 2'),
+      result('1000\nscientist\nhome-ok'),
+      result('/usr/bin/bash\n/usr/bin/python3\nmirrored')
+    )
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({ distro: 'Ubuntu-22.04', user: 'scientist' }),
+      writeSelection: vi.fn()
+    })
+
+    await expect(owner.reconcileInterruptedOperation()).resolves.toMatchObject({
+      operation: {
+        state: 'finished',
+        kind: 'install-runtime-dependencies',
+        outcome: 'interrupted',
+        operationReference: 'dependencies1'
+      },
+      snapshot: { state: 'failed', errorCode: 'wsl_install_interrupted' }
+    })
+    expect(journal.clear).not.toHaveBeenCalled()
+    const calls = vi.mocked(runner.run).mock.calls.map(([args]) => args)
+    expect(calls.some((args) => args.includes('/usr/bin/apt-get'))).toBe(false)
+    expect(JSON.stringify(calls)).not.toContain('"root"')
+  })
+
+  it('clears an interrupted dependency marker only after a read-only probe finds every dependency', async () => {
+    const journal = {
+      load: vi.fn(async () => ({
+        kind: 'install-runtime-dependencies' as const,
+        operationReference: 'dependencies1',
+        startedAt: 1,
+        selection: { distro: 'Ubuntu-22.04', user: 'scientist' }
+      })),
+      save: vi.fn(),
+      clear: vi.fn(async () => undefined)
+    }
+    const runner = makeRunner(
+      result('Default Version: 2'),
+      result('Ubuntu-22.04'),
+      result('* Ubuntu-22.04 Running 2'),
+      result('1000\nscientist\nhome-ok'),
+      result('/usr/bin/bash\n/usr/bin/bwrap\n/usr/bin/python3\nmirrored'),
+      result('ok'),
+      result('/mnt/c/science\nok')
+    )
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({ distro: 'Ubuntu-22.04', user: 'scientist' }),
+      writeSelection: vi.fn()
+    })
+
+    await expect(owner.reconcileInterruptedOperation()).resolves.toMatchObject({
+      operation: {
+        state: 'finished',
+        kind: 'install-runtime-dependencies',
+        outcome: 'completed',
+        operationReference: 'dependencies1'
+      },
+      snapshot: { state: 'ready' }
+    })
+    expect(journal.clear).toHaveBeenCalledOnce()
+    const calls = vi.mocked(runner.run).mock.calls.map(([args]) => args)
+    expect(calls.some((args) => args.includes('/usr/bin/apt-get'))).toBe(false)
+    expect(JSON.stringify(calls)).not.toContain('"root"')
+  })
+
+  it('reconciles an interrupted dependency install against its journal target after selection changes', async () => {
+    const journal = {
+      load: vi.fn(async () => ({
+        kind: 'install-runtime-dependencies' as const,
+        operationReference: 'dependencies1',
+        startedAt: 1,
+        selection: { distro: 'Ubuntu-A', user: 'scientist-a' }
+      })),
+      save: vi.fn(),
+      clear: vi.fn(async () => undefined)
+    }
+    const readSelection = vi.fn(async () => ({ distro: 'Ubuntu-B', user: 'scientist-b' }))
+    const runner: WslCommandRunner = {
+      run: vi.fn(async (args: readonly string[]) => {
+        const command = args.join(' ')
+        if (command === '--status') return result('Default Version: 2')
+        if (command === '--list --quiet') return result('Ubuntu-A\nUbuntu-B')
+        if (command === '--list --verbose') {
+          return result('  Ubuntu-A Running 2\n* Ubuntu-B Running 2')
+        }
+        if (command.includes('id -u; id -un;')) return result('1000\nscientist-a\nhome-ok')
+        if (command.includes('command -v bash; command -v bwrap;')) {
+          return result(
+            '/usr/bin/bash\n/usr/bin/bwrap\n/usr/bin/python3\n/usr/bin/apt-get\nmirrored'
+          )
+        }
+        if (command.includes('bwrap --unshare-all')) return result('ok')
+        if (command.includes('guest_path=$(wslpath')) return result('/mnt/c/science\nok')
+        return result('', 1, `unexpected WSL arguments: ${JSON.stringify(args)}`)
+      })
+    }
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection,
+      writeSelection: vi.fn()
+    })
+
+    await expect(owner.reconcileInterruptedOperation()).resolves.toMatchObject({
+      operation: { outcome: 'completed', operationReference: 'dependencies1' },
+      snapshot: {
+        state: 'ready',
+        selection: { distro: 'Ubuntu-A', user: 'scientist-a' }
+      }
+    })
+    expect(readSelection).not.toHaveBeenCalled()
+    const guestCalls = vi
+      .mocked(runner.run)
+      .mock.calls.map(([args]) => args)
+      .filter((args) => args.includes('--distribution'))
+    expect(guestCalls.length).toBeGreaterThan(0)
+    expect(
+      guestCalls.every((args) => args[args.indexOf('--distribution') + 1] === 'Ubuntu-A')
+    ).toBe(true)
+    expect(journal.clear).toHaveBeenCalledOnce()
+  })
+
+  it('keeps interrupted recovery blocked when its journal target is no longer installed', async () => {
+    const journal = {
+      load: vi.fn(async () => ({
+        kind: 'install-runtime-dependencies' as const,
+        operationReference: 'dependencies1',
+        startedAt: 1,
+        selection: { distro: 'Ubuntu-A', user: 'scientist-a' }
+      })),
+      save: vi.fn(),
+      clear: vi.fn(async () => undefined)
+    }
+    const readSelection = vi.fn(async () => ({ distro: 'Ubuntu-B', user: 'scientist-b' }))
+    const runner = makeRunner(
+      result('Default Version: 2'),
+      result('Ubuntu-B'),
+      result('* Ubuntu-B Running 2')
+    )
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection,
+      writeSelection: vi.fn()
+    })
+
+    await expect(owner.reconcileInterruptedOperation()).resolves.toMatchObject({
+      operation: { outcome: 'interrupted', operationReference: 'dependencies1' },
+      snapshot: {
+        state: 'failed',
+        errorCode: 'wsl_install_interrupted',
+        selection: { distro: 'Ubuntu-A', user: 'scientist-a' }
+      }
+    })
+    expect(readSelection).not.toHaveBeenCalled()
+    expect(journal.clear).not.toHaveBeenCalled()
+  })
+
   it('clears an interrupted marker only after a later read-only probe confirms the install', async () => {
     const journal = {
       load: vi.fn(async () => ({
@@ -994,16 +1195,17 @@ describe('WslSetupOwner', () => {
     vi.useRealTimers()
   })
 
-  it('launches WSL in a visible interactive Windows console with exact arguments', async () => {
+  it('launches WSL directly in an independent visible interactive console', async () => {
     const child = Object.assign(new EventEmitter(), { unref: vi.fn() })
     const spawnProcess = vi.fn(() => child) as unknown as typeof spawn
     const launch = createWslTerminalLauncher(spawnProcess).open(['--distribution', 'Ubuntu-22.04'])
 
-    expect(spawnProcess).toHaveBeenCalledWith(
-      'conhost.exe',
-      ['wsl.exe', '--distribution', 'Ubuntu-22.04'],
-      { detached: true, windowsHide: false, stdio: 'inherit', shell: false }
-    )
+    expect(spawnProcess).toHaveBeenCalledWith('wsl.exe', ['--distribution', 'Ubuntu-22.04'], {
+      detached: true,
+      windowsHide: false,
+      stdio: 'ignore',
+      shell: false
+    })
     child.emit('spawn')
     await expect(launch).resolves.toBeUndefined()
     expect(child.unref).toHaveBeenCalledOnce()
@@ -1625,14 +1827,13 @@ describe('WslSetupOwner', () => {
       readSelection: async () => ({ distro: 'Ubuntu', user: 'scientist' }),
       writeSelection: vi.fn()
     })
-    await expect(missing.probe()).resolves.toMatchObject({
+    const missingSnapshot = await missing.probe()
+    expect(missingSnapshot).toMatchObject({
       state: 'dependency-required',
-      errorCode: 'wsl_bwrap_missing',
-      suggestedCommand: 'sudo apt-get update && sudo apt-get install bubblewrap'
+      errorCode: 'wsl_bwrap_missing'
     })
-    expect(
-      JSON.stringify((missingRunner.run as ReturnType<typeof vi.fn>).mock.calls)
-    ).not.toContain('sudo apt-get')
+    expect(missingSnapshot).not.toHaveProperty('suggestedCommand')
+    expect(missingSnapshot).not.toHaveProperty('canInstallMissingDependencies')
 
     const missingPython = makeOwner({
       runner: makeRunner(
@@ -1649,8 +1850,7 @@ describe('WslSetupOwner', () => {
     await expect(missingPython.probe()).resolves.toMatchObject({
       state: 'dependency-required',
       errorCode: 'wsl_python3_missing',
-      readiness: { bash: true, bwrap: true, python3: false },
-      suggestedCommand: 'sudo apt-get update && sudo apt-get install python3'
+      readiness: { bash: true, bwrap: true, python3: false }
     })
     await expect(missingPython.requireLatestReadySelection()).rejects.toThrow('is not ready')
 
@@ -1667,6 +1867,519 @@ describe('WslSetupOwner', () => {
     await expect(unsupported.probe()).resolves.toMatchObject({
       state: 'failed',
       errorCode: 'wsl_workspace_path_unsupported'
+    })
+  })
+
+  it('offers managed dependency installation from the probed apt executable, not the distro name', async () => {
+    const owner = makeOwner({
+      runner: makeRunner(
+        result('Default Version: 2'),
+        result('Research OS'),
+        result('* Research OS Running 2'),
+        result('1000\nscientist\nhome-ok'),
+        result('/usr/bin/bash\n/usr/bin/python3\n/usr/bin/apt-get\nmirrored')
+      ),
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({ distro: 'Research OS', user: 'scientist' }),
+      writeSelection: vi.fn()
+    })
+
+    await expect(owner.probe()).resolves.toMatchObject({
+      state: 'dependency-required',
+      errorCode: 'wsl_bwrap_missing',
+      canInstallMissingDependencies: true,
+      selection: { distro: 'Research OS', user: 'scientist' }
+    })
+  })
+
+  it('does not journal or run root commands when the selected distro has no apt executable', async () => {
+    const journal = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined)
+    }
+    const runner = makeRunner(
+      result('Default Version: 2'),
+      result('Ubuntu-22.04'),
+      result('* Ubuntu-22.04 Running 2'),
+      result('1000\nscientist\nhome-ok'),
+      result('/usr/bin/bash\n/usr/bin/python3\nmirrored')
+    )
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({ distro: 'Ubuntu-22.04', user: 'scientist' }),
+      writeSelection: vi.fn()
+    })
+    await owner.probe()
+
+    await expect(
+      owner.installMissingDependencies(owner.getStatus().revision)
+    ).resolves.toMatchObject({
+      state: 'dependency-required',
+      errorCode: 'wsl_dependency_install_not_supported'
+    })
+    expect(journal.save).not.toHaveBeenCalled()
+    expect(journal.clear).not.toHaveBeenCalled()
+    const calls = vi.mocked(runner.run).mock.calls.map(([args]) => args)
+    expect(calls.some((args) => args.includes('/usr/bin/apt-get'))).toBe(false)
+    expect(JSON.stringify(calls)).not.toContain('"root"')
+  })
+
+  it('installs the missing fixed dependency as root and verifies the selected non-root profile', async () => {
+    let dependenciesInstalled = false
+    const mutationEvents: string[] = []
+    const journal = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => {
+        mutationEvents.push('journal-save')
+      }),
+      clear: vi.fn(async () => {
+        mutationEvents.push('journal-clear')
+      })
+    }
+    const runner: WslCommandRunner = {
+      run: vi.fn(async (args: readonly string[]) => {
+        if (args.length === 1 && args[0] === '--status') return result('Default Version: 2')
+        if (args.length === 2 && args[0] === '--list' && args[1] === '--quiet') {
+          return result('Ubuntu-22.04')
+        }
+        if (args.length === 2 && args[0] === '--list' && args[1] === '--verbose') {
+          return result('* Ubuntu-22.04 Running 2')
+        }
+        if (args.some((arg) => arg.includes('id -u; id -un;'))) {
+          return result('1000\nscientist\nhome-ok')
+        }
+        if (args.some((arg) => arg.includes('command -v bash; command -v bwrap;'))) {
+          return dependenciesInstalled
+            ? result('/usr/bin/bash\n/usr/bin/bwrap\n/usr/bin/python3\n/usr/bin/apt-get\nmirrored')
+            : result('/usr/bin/bash\n/usr/bin/python3\n/usr/bin/apt-get\nmirrored')
+        }
+        if (
+          args.join('\0') ===
+          [
+            '--distribution',
+            'Ubuntu-22.04',
+            '--user',
+            'root',
+            '--exec',
+            '/usr/bin/env',
+            '-i',
+            'DEBIAN_FRONTEND=noninteractive',
+            'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+            '/usr/bin/apt-get',
+            'update'
+          ].join('\0')
+        ) {
+          mutationEvents.push('apt-update')
+          return result()
+        }
+        if (
+          args.join('\0') ===
+          [
+            '--distribution',
+            'Ubuntu-22.04',
+            '--user',
+            'root',
+            '--exec',
+            '/usr/bin/env',
+            '-i',
+            'DEBIAN_FRONTEND=noninteractive',
+            'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+            '/usr/bin/apt-get',
+            'install',
+            '--yes',
+            '--no-install-recommends',
+            'bubblewrap'
+          ].join('\0')
+        ) {
+          mutationEvents.push('apt-install')
+          dependenciesInstalled = true
+          return result()
+        }
+        if (args.some((arg) => arg.includes('bwrap --unshare-all'))) return result('ok')
+        if (args.some((arg) => arg.includes('guest_path=$(wslpath'))) {
+          return result('/mnt/c/science\nok')
+        }
+        return result('', 1, `unexpected WSL arguments: ${JSON.stringify(args)}`)
+      })
+    }
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({ distro: 'Ubuntu-22.04', user: 'scientist' }),
+      writeSelection: vi.fn(),
+      operationReference: () => 'install1'
+    })
+
+    const missing = await owner.probe()
+    expect(missing).toMatchObject({
+      state: 'dependency-required',
+      errorCode: 'wsl_bwrap_missing',
+      selection: { distro: 'Ubuntu-22.04', user: 'scientist' }
+    })
+
+    await expect(
+      owner.installMissingDependencies(owner.getStatus().revision)
+    ).resolves.toMatchObject({
+      state: 'ready',
+      selection: { distro: 'Ubuntu-22.04', user: 'scientist' },
+      readiness: { bwrap: true, python3: true, namespaces: true, localWorkspace: true }
+    })
+    expect(owner.getStatus().operation).toMatchObject({
+      state: 'finished',
+      kind: 'install-runtime-dependencies',
+      outcome: 'completed'
+    })
+
+    const calls = (runner.run as ReturnType<typeof vi.fn>).mock.calls.map(
+      ([args]) => args as readonly string[]
+    )
+    const rootCalls = calls.filter((args) => args.includes('root'))
+    expect(rootCalls).toEqual([
+      [
+        '--distribution',
+        'Ubuntu-22.04',
+        '--user',
+        'root',
+        '--exec',
+        '/usr/bin/env',
+        '-i',
+        'DEBIAN_FRONTEND=noninteractive',
+        'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+        '/usr/bin/apt-get',
+        'update'
+      ],
+      [
+        '--distribution',
+        'Ubuntu-22.04',
+        '--user',
+        'root',
+        '--exec',
+        '/usr/bin/env',
+        '-i',
+        'DEBIAN_FRONTEND=noninteractive',
+        'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+        '/usr/bin/apt-get',
+        'install',
+        '--yes',
+        '--no-install-recommends',
+        'bubblewrap'
+      ]
+    ])
+    expect(JSON.stringify(rootCalls)).not.toMatch(/sudo|(?:ba)?sh.*-c/)
+    expect(journal.save).toHaveBeenCalledWith({
+      kind: 'install-runtime-dependencies',
+      operationReference: 'install1',
+      startedAt: expect.any(Number),
+      selection: { distro: 'Ubuntu-22.04', user: 'scientist' }
+    })
+    expect(mutationEvents).toEqual(['journal-save', 'apt-update', 'apt-install', 'journal-clear'])
+    const selectedUserChecks = calls.filter((args) =>
+      args.some(
+        (arg) =>
+          arg.includes('id -u; id -un;') ||
+          arg.includes('command -v bash; command -v bwrap;') ||
+          arg.includes('bwrap --unshare-all') ||
+          arg.includes('guest_path=$(wslpath')
+      )
+    )
+    expect(selectedUserChecks.length).toBeGreaterThan(0)
+    expect(
+      selectedUserChecks.every((args) => args[args.indexOf('--user') + 1] === 'scientist')
+    ).toBe(true)
+  })
+
+  it('rejects a stale dependency install before reading or writing the journal or running as root', async () => {
+    const journal = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined)
+    }
+    const runner = makeRunner(
+      result('Default Version: 2'),
+      result('Ubuntu-22.04'),
+      result('* Ubuntu-22.04 Running 2'),
+      result('1000\nscientist\nhome-ok'),
+      result('/usr/bin/bash\n/usr/bin/python3\n/usr/bin/apt-get\nmirrored')
+    )
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({ distro: 'Ubuntu-22.04', user: 'scientist' }),
+      writeSelection: vi.fn()
+    })
+    await owner.probe()
+
+    await expect(owner.installMissingDependencies(owner.getStatus().revision - 1)).rejects.toThrow(
+      WSL_SETUP_DIAGNOSTICS_STALE
+    )
+    expect(journal.load).not.toHaveBeenCalled()
+    expect(journal.save).not.toHaveBeenCalled()
+    expect(vi.mocked(runner.run).mock.calls.some(([args]) => args.includes('root'))).toBe(false)
+  })
+
+  it('joins concurrent dependency install requests behind one fixed root operation', async () => {
+    const update = Promise.withResolvers<ReturnType<typeof result>>()
+    let dependenciesInstalled = false
+    const journal = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined)
+    }
+    const runner: WslCommandRunner = {
+      run: vi.fn(async (args: readonly string[]) => {
+        const command = args.join(' ')
+        if (command === '--status') return result('Default Version: 2')
+        if (command === '--list --quiet') return result('Ubuntu-22.04')
+        if (command === '--list --verbose') return result('* Ubuntu-22.04 Running 2')
+        if (command.includes('id -u; id -un;')) return result('1000\nscientist\nhome-ok')
+        if (command.includes('command -v bash; command -v bwrap;')) {
+          return dependenciesInstalled
+            ? result('/usr/bin/bash\n/usr/bin/bwrap\n/usr/bin/python3\n/usr/bin/apt-get\nmirrored')
+            : result('/usr/bin/bash\n/usr/bin/python3\n/usr/bin/apt-get\nmirrored')
+        }
+        if (args.includes('/usr/bin/apt-get') && args.at(-1) === 'update') return update.promise
+        if (args.includes('/usr/bin/apt-get') && args.includes('install')) {
+          dependenciesInstalled = true
+          return result()
+        }
+        if (command.includes('bwrap --unshare-all')) return result('ok')
+        if (command.includes('guest_path=$(wslpath')) return result('/mnt/c/science\nok')
+        return result('', 1, `unexpected WSL arguments: ${JSON.stringify(args)}`)
+      })
+    }
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({ distro: 'Ubuntu-22.04', user: 'scientist' }),
+      writeSelection: vi.fn()
+    })
+    await owner.probe()
+    const revision = owner.getStatus().revision
+
+    const first = owner.installMissingDependencies(revision)
+    await vi.waitFor(() =>
+      expect(
+        vi.mocked(runner.run).mock.calls.filter(([args]) => args.includes('root'))
+      ).toHaveLength(1)
+    )
+    const joined = owner.installMissingDependencies(revision)
+    expect(joined).toBe(first)
+    update.resolve(result())
+
+    await expect(Promise.all([first, joined])).resolves.toEqual([
+      expect.objectContaining({ state: 'ready' }),
+      expect.objectContaining({ state: 'ready' })
+    ])
+    expect(vi.mocked(runner.run).mock.calls.filter(([args]) => args.includes('root'))).toHaveLength(
+      2
+    )
+    expect(journal.save).toHaveBeenCalledOnce()
+  })
+
+  it('does not journal or run root dependencies while another Settings install owns admission', async () => {
+    const installCoordinator = new SettingsInstallCoordinator()
+    const otherInstall = installCoordinator.tryAcquire('other-install')
+    const journal = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined)
+    }
+    const runner = makeRunner(
+      result('Default Version: 2'),
+      result('Ubuntu-22.04'),
+      result('* Ubuntu-22.04 Running 2'),
+      result('1000\nscientist\nhome-ok'),
+      result('/usr/bin/bash\n/usr/bin/python3\n/usr/bin/apt-get\nmirrored')
+    )
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      installCoordinator,
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({ distro: 'Ubuntu-22.04', user: 'scientist' }),
+      writeSelection: vi.fn()
+    })
+    await owner.probe()
+
+    await expect(
+      owner.installMissingDependencies(owner.getStatus().revision)
+    ).resolves.toMatchObject({ state: 'failed', errorCode: 'wsl_install_conflict' })
+    expect(journal.save).not.toHaveBeenCalled()
+    expect(vi.mocked(runner.run).mock.calls.some(([args]) => args.includes('root'))).toBe(false)
+    otherInstall?.release()
+  })
+
+  it('does not run apt when the dependency installation marker cannot be saved', async () => {
+    const journal = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => Promise.reject(new Error('disk unavailable'))),
+      clear: vi.fn(async () => undefined)
+    }
+    const runner = makeRunner(
+      result('Default Version: 2'),
+      result('Ubuntu-22.04'),
+      result('* Ubuntu-22.04 Running 2'),
+      result('1000\nscientist\nhome-ok'),
+      result('/usr/bin/bash\n/usr/bin/python3\n/usr/bin/apt-get\nmirrored')
+    )
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({ distro: 'Ubuntu-22.04', user: 'scientist' }),
+      writeSelection: vi.fn()
+    })
+    await owner.probe()
+
+    await expect(
+      owner.installMissingDependencies(owner.getStatus().revision)
+    ).resolves.toMatchObject({
+      state: 'failed',
+      errorCode: 'wsl_install_journal_unavailable'
+    })
+    const calls = vi.mocked(runner.run).mock.calls.map(([args]) => args)
+    expect(calls.some((args) => args.includes('/usr/bin/apt-get'))).toBe(false)
+    expect(JSON.stringify(calls)).not.toContain('"root"')
+    expect(journal.clear).not.toHaveBeenCalled()
+  })
+
+  it('clears the dependency installation marker after an explicit apt failure', async () => {
+    const journal = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined)
+    }
+    const runner = makeRunner(
+      result('Default Version: 2'),
+      result('Ubuntu-22.04'),
+      result('* Ubuntu-22.04 Running 2'),
+      result('1000\nscientist\nhome-ok'),
+      result('/usr/bin/bash\n/usr/bin/python3\n/usr/bin/apt-get\nmirrored'),
+      result('', 1, 'apt failed')
+    )
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({ distro: 'Ubuntu-22.04', user: 'scientist' }),
+      writeSelection: vi.fn()
+    })
+    await owner.probe()
+
+    await expect(
+      owner.installMissingDependencies(owner.getStatus().revision)
+    ).resolves.toMatchObject({
+      state: 'dependency-required',
+      errorCode: 'wsl_dependency_install_failed',
+      canInstallMissingDependencies: true
+    })
+    expect(journal.clear).toHaveBeenCalledOnce()
+    expect(owner.getStatus().operation).toMatchObject({
+      state: 'finished',
+      kind: 'install-runtime-dependencies',
+      outcome: 'failed'
+    })
+  })
+
+  it('keeps the journal and only reconciles with read-only probes after apt times out', async () => {
+    const journal = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined)
+    }
+    const runner = makeRunner(
+      result('Default Version: 2'),
+      result('Ubuntu-22.04'),
+      result('* Ubuntu-22.04 Running 2'),
+      result('1000\nscientist\nhome-ok'),
+      result('/usr/bin/bash\n/usr/bin/python3\n/usr/bin/apt-get\nmirrored'),
+      result('', 1, 'apt timed out', 'timeout'),
+      result('Default Version: 2'),
+      result('Ubuntu-22.04'),
+      result('* Ubuntu-22.04 Running 2'),
+      result('1000\nscientist\nhome-ok'),
+      result('/usr/bin/bash\n/usr/bin/python3\n/usr/bin/apt-get\nmirrored')
+    )
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({ distro: 'Ubuntu-22.04', user: 'scientist' }),
+      writeSelection: vi.fn()
+    })
+    await owner.probe()
+
+    await expect(
+      owner.installMissingDependencies(owner.getStatus().revision)
+    ).resolves.toMatchObject({
+      state: 'failed',
+      errorCode: 'wsl_install_interrupted',
+      failure: { stage: 'installation', code: 'wsl_install_interrupted', timedOut: true }
+    })
+    expect(journal.clear).not.toHaveBeenCalled()
+    const rootCallsAfterTimeout = vi
+      .mocked(runner.run)
+      .mock.calls.filter(([args]) => args.includes('root')).length
+    expect(rootCallsAfterTimeout).toBe(1)
+
+    await expect(
+      owner.installMissingDependencies(owner.getStatus().revision)
+    ).resolves.toMatchObject({
+      state: 'failed',
+      errorCode: 'wsl_install_interrupted'
+    })
+    expect(journal.clear).not.toHaveBeenCalled()
+    expect(vi.mocked(runner.run).mock.calls.filter(([args]) => args.includes('root'))).toHaveLength(
+      rootCallsAfterTimeout
+    )
+  })
+
+  it('fails closed when a completed dependency installation marker cannot be cleared', async () => {
+    const journal = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => undefined),
+      clear: vi.fn(async () => Promise.reject(new Error('disk unavailable')))
+    }
+    const runner = makeRunner(
+      result('Default Version: 2'),
+      result('Ubuntu-22.04'),
+      result('* Ubuntu-22.04 Running 2'),
+      result('1000\nscientist\nhome-ok'),
+      result('/usr/bin/bash\n/usr/bin/python3\n/usr/bin/apt-get\nmirrored'),
+      result(),
+      result(),
+      result('Default Version: 2'),
+      result('Ubuntu-22.04'),
+      result('* Ubuntu-22.04 Running 2'),
+      result('1000\nscientist\nhome-ok'),
+      result('/usr/bin/bash\n/usr/bin/bwrap\n/usr/bin/python3\nmirrored'),
+      result('ok'),
+      result('/mnt/c/science\nok')
+    )
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({ distro: 'Ubuntu-22.04', user: 'scientist' }),
+      writeSelection: vi.fn()
+    })
+    await owner.probe()
+
+    await expect(
+      owner.installMissingDependencies(owner.getStatus().revision)
+    ).resolves.toMatchObject({
+      state: 'failed',
+      errorCode: 'wsl_install_journal_unavailable'
+    })
+    expect(owner.getStatus()).toMatchObject({
+      operation: { state: 'finished', outcome: 'failed' },
+      snapshot: { state: 'failed', errorCode: 'wsl_install_journal_unavailable' }
     })
   })
 

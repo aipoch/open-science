@@ -26,7 +26,11 @@ import type {
   SetVisionModelRequest,
   ValidateProviderRequest
 } from '../../shared/settings'
-import type { OpenWslTerminalRequest, SelectWslProfileRequest } from '../../shared/wsl-setup'
+import type {
+  InstallMissingWslDependenciesRequest,
+  OpenWslTerminalRequest,
+  SelectWslProfileRequest
+} from '../../shared/wsl-setup'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
@@ -78,6 +82,7 @@ type CoreSettingsCommandStore = Pick<
   | 'installCodex'
   | 'installOpencode'
   | 'installNotebookNetwork'
+  | 'installMissingWslDependencies'
   | 'installRecommendedWslDistro'
   | 'installWslPlatform'
   | 'removeNotebookNetwork'
@@ -296,6 +301,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [],
     StoreResult<'installWslPlatform'>
   >('settings:install-wsl-platform'),
+  installMissingWslDependencies: defineApplicationCommand<
+    'settings:install-missing-wsl-dependencies',
+    readonly [request: InstallMissingWslDependenciesRequest],
+    StoreResult<'installMissingWslDependencies'>
+  >('settings:install-missing-wsl-dependencies'),
   createWslSupportHandoff: defineApplicationCommand<
     'settings:create-wsl-support-handoff',
     readonly [],
@@ -452,6 +462,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.previewSkillZip,
   settingsCoreApplicationCommands.probeWslSetup,
   settingsCoreApplicationCommands.installWslPlatform,
+  settingsCoreApplicationCommands.installMissingWslDependencies,
   settingsCoreApplicationCommands.createWslSupportHandoff,
   settingsCoreApplicationCommands.installRecommendedWslDistro,
   settingsCoreApplicationCommands.openWslTerminal,
@@ -600,6 +611,10 @@ const registerCoreSettingsApplicationCommands = (
       'settings:install-wsl-platform': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:install-wsl-platform')
         return dependencies.service.installWslPlatform()
+      },
+      'settings:install-missing-wsl-dependencies': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:install-missing-wsl-dependencies')
+        return dependencies.service.installMissingWslDependencies(args[0])
       },
       'settings:create-wsl-support-handoff': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:create-wsl-support-handoff')

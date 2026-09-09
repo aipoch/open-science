@@ -1,8 +1,7 @@
 import {
   CheckCircle2,
-  CircleMinus,
+  CircleHelp,
   CircleX,
-  ClipboardCopy,
   Download,
   LoaderCircle,
   MessagesSquare,
@@ -14,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { Input } from '@/components/ui/input'
 import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
 import { startWslSetupConversation } from '@/lib/wsl-support-handoff'
@@ -61,10 +61,10 @@ const statusCopy = (snapshot: WslSetupSnapshot, t: (key: string) => string): str
 }
 
 const recoveryCopy = (
-  errorCode: string | undefined,
+  snapshot: WslSetupSnapshot,
   t: (key: string) => string
 ): string | undefined => {
-  switch (errorCode) {
+  switch (snapshot.errorCode) {
     case 'wsl1_unsupported':
       return t('Convert the distribution to WSL2 in Windows, then check again.')
     case 'wsl_root_user':
@@ -82,12 +82,28 @@ const recoveryCopy = (
     case 'wsl_terminal_open_failed':
       return t('The distribution terminal could not be opened. Check again, then retry.')
     case 'wsl_bwrap_missing':
-      return t(
-        'Install bubblewrap in the distribution terminal. Open Science will not run sudo or a package manager.'
-      )
+    case 'wsl_bash_missing':
     case 'wsl_python3_missing':
+      return snapshot.canInstallMissingDependencies
+        ? t('Install the missing Linux dependencies to continue.')
+        : t(
+            'Automatic installation is unavailable for this distribution. Use its package manager or set up in conversation.'
+          )
+    case 'wsl_dependency_install_failed':
       return t(
-        'Install Python 3 in the distribution terminal. Open Science will not run sudo or a package manager.'
+        'Open Science could not install the missing Linux dependencies. Check the distribution’s package manager, then try again.'
+      )
+    case 'wsl_dependency_install_unconfirmed':
+      return t(
+        'Open Science could not confirm that the missing Linux dependencies were installed. Check again before retrying.'
+      )
+    case 'wsl_dependency_install_not_allowed':
+      return t(
+        'The selected WSL2 profile changed or is no longer eligible for dependency installation. Check again before retrying.'
+      )
+    case 'wsl_dependency_install_not_supported':
+      return t(
+        'Automatic installation is unavailable for this distribution. Use its package manager or set up in conversation.'
       )
     case 'wsl_install_interrupted':
       return t(
@@ -133,6 +149,9 @@ const operationCopy = (
 ): string => {
   if (operation.state !== 'running') return t('Checking WSL2 readiness…')
   if (operation.phase === 'verifying') return t('Verifying the current WSL2 setup…')
+  if (operation.kind === 'install-runtime-dependencies') {
+    return t('Installing Linux dependencies…')
+  }
   return operation.kind === 'install-platform'
     ? t('Installing the WSL2 platform in Windows…')
     : t('Installing {{distro}}…', { distro: RECOMMENDED_WSL_DISTRO })
@@ -157,7 +176,7 @@ export const WslLocalShellSection = ({
   const [user, setUser] = useState('')
   const [actionBusy, setBusy] = useState(false)
   const [hasSnapshot, setHasSnapshot] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [confirmDependencyInstall, setConfirmDependencyInstall] = useState(false)
   const [conversationError, setConversationError] = useState(false)
   const [shellSwitchResult, setShellSwitchResult] = useState<
     | { runtime: 'powershell'; result: SwitchToPowerShellResult }
@@ -297,17 +316,12 @@ export const WslLocalShellSection = ({
           ? 'unknown'
           : undefined
 
-  const openTerminal = async (withUser: boolean, requestedDistro?: string): Promise<void> => {
+  const openTerminal = async (requestedDistro?: string): Promise<void> => {
     const selectedDistro = requestedDistro ?? snapshot.selection?.distro ?? distro
     if (!selectedDistro) return
     setBusy(true)
     try {
-      apply(
-        await window.api.settings.openWslTerminal({
-          distro: selectedDistro,
-          ...(withUser && snapshot.selection?.user ? { user: snapshot.selection.user } : {})
-        })
-      )
+      apply(await window.api.settings.openWslTerminal({ distro: selectedDistro }))
     } catch {
       setSnapshot((current) => ({
         ...current,
@@ -329,10 +343,32 @@ export const WslLocalShellSection = ({
         ? RECOMMENDED_WSL_DISTRO
         : undefined
 
-  const copySuggestedCommand = async (): Promise<void> => {
-    if (!snapshot.suggestedCommand) return
-    await navigator.clipboard.writeText(snapshot.suggestedCommand)
-    setCopied(true)
+  const installMissingDependencies = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      const matchingStatus =
+        setupStatus?.snapshot?.operationReference === snapshot.operationReference
+          ? setupStatus
+          : await window.api.settings.getWslSetupStatus()
+      if (matchingStatus.snapshot?.operationReference !== snapshot.operationReference) {
+        if (matchingStatus.snapshot) apply(matchingStatus.snapshot)
+        return
+      }
+      apply(
+        await window.api.settings.installMissingWslDependencies({
+          expectedRevision: matchingStatus.revision
+        })
+      )
+    } catch {
+      setSnapshot((current) => ({
+        ...current,
+        state: 'dependency-required',
+        errorCode: 'wsl_dependency_install_unconfirmed'
+      }))
+    } finally {
+      setConfirmDependencyInstall(false)
+      setBusy(false)
+    }
   }
 
   const startSupportConversation = async (): Promise<void> => {
@@ -454,6 +490,16 @@ export const WslLocalShellSection = ({
     snapshot.selection !== undefined &&
     snapshot.activatedSelection?.distro === snapshot.selection.distro &&
     snapshot.activatedSelection.user === snapshot.selection.user
+  const canInstallMissingDependencies =
+    snapshot.state === 'dependency-required' &&
+    snapshot.canInstallMissingDependencies === true &&
+    [
+      'wsl_bash_missing',
+      'wsl_bwrap_missing',
+      'wsl_python3_missing',
+      'wsl_dependency_install_failed',
+      'wsl_dependency_install_unconfirmed'
+    ].includes(snapshot.errorCode ?? '')
   const powerShellSwitchButton = (
     <Button type="button" variant="outline" onClick={() => void switchToPowerShell()}>
       <SquareTerminal aria-hidden="true" />
@@ -557,7 +603,7 @@ export const WslLocalShellSection = ({
               icon={CircleX}
               tone={errorTone(snapshot.errorCode)}
               title={statusCopy(snapshot, t)}
-              description={recoveryCopy(snapshot.errorCode, t)}
+              description={recoveryCopy(snapshot, t)}
               errorCode={
                 snapshot.errorCode
                   ? `${snapshot.errorCode} · ${snapshot.operationReference}`
@@ -574,9 +620,21 @@ export const WslLocalShellSection = ({
               icon={CircleX}
               tone={errorTone(snapshot.errorCode)}
               title={statusCopy(snapshot, t)}
-              description={recoveryCopy(snapshot.errorCode, t)}
+              description={recoveryCopy(snapshot, t)}
               errorCode={`${snapshot.errorCode} · ${snapshot.operationReference}`}
               diagnosticsLabel={t('Diagnostics')}
+              primaryButton={
+                canInstallMissingDependencies
+                  ? {
+                      label:
+                        snapshot.errorCode === 'wsl_dependency_install_failed' ||
+                        snapshot.errorCode === 'wsl_dependency_install_unconfirmed'
+                          ? t('Try installation again')
+                          : t('Install missing dependencies'),
+                      onClick: () => setConfirmDependencyInstall(true)
+                    }
+                  : undefined
+              }
             />
           </div>
         ) : (
@@ -633,10 +691,7 @@ export const WslLocalShellSection = ({
 
         {!busy && firstInitializationDistro ? (
           <div className="mt-4">
-            <Button
-              type="button"
-              onClick={() => void openTerminal(false, firstInitializationDistro)}
-            >
+            <Button type="button" onClick={() => void openTerminal(firstInitializationDistro)}>
               <SquareTerminal aria-hidden="true" />
               {t('Open distribution terminal')}
             </Button>
@@ -645,40 +700,6 @@ export const WslLocalShellSection = ({
                 'Finish the distribution’s username and password prompts in the terminal. Open Science never enters credentials for you.'
               )}
             </p>
-          </div>
-        ) : null}
-
-        {!busy &&
-        (snapshot.errorCode === 'wsl_bwrap_missing' ||
-          snapshot.errorCode === 'wsl_python3_missing') ? (
-          <div className="mt-4 overflow-hidden rounded-lg border border-border bg-card shadow-sm">
-            {snapshot.suggestedCommand ? (
-              <>
-                <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-3 py-2.5">
-                  <SquareTerminal className="size-4 text-muted-foreground" aria-hidden="true" />
-                  <p className="text-sm font-medium text-foreground">
-                    {t('Run this command in the distribution terminal')}
-                  </p>
-                </div>
-                <pre className="overflow-x-auto whitespace-pre-wrap break-all bg-background px-3 py-3 font-mono text-xs leading-5 text-foreground">
-                  <code>{snapshot.suggestedCommand}</code>
-                </pre>
-                <div className="flex flex-wrap gap-2 border-t border-border bg-muted/20 px-3 py-3">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => void copySuggestedCommand()}
-                  >
-                    <ClipboardCopy aria-hidden="true" />
-                    {copied ? t('Copied') : t('Copy command')}
-                  </Button>
-                  <Button type="button" variant="outline" onClick={() => void openTerminal(true)}>
-                    <SquareTerminal aria-hidden="true" />
-                    {t('Open distribution terminal')}
-                  </Button>
-                </div>
-              </>
-            ) : null}
           </div>
         ) : null}
 
@@ -730,7 +751,7 @@ export const WslLocalShellSection = ({
                 ) : snapshot.readiness?.[key] === false ? (
                   <CircleX className="size-4 text-status-failure-foreground" aria-hidden="true" />
                 ) : (
-                  <CircleMinus className="size-4 text-status-info-foreground" aria-hidden="true" />
+                  <CircleHelp className="size-4 text-muted-foreground" aria-hidden="true" />
                 )}
                 {label}
                 {snapshot.readiness?.[key] === undefined ? (
@@ -861,6 +882,23 @@ export const WslLocalShellSection = ({
           </div>
         ) : null}
       </div>
+      <ConfirmActionDialog
+        open={confirmDependencyInstall}
+        title={t('Install missing Linux dependencies?')}
+        description={t(
+          'Open Science will run a one-time root installation in {{distro}} for missing Linux packages only. It will not change sudoers, and {{user}} will remain the selected non-root user for everyday and future runs.',
+          {
+            distro: snapshot.selection?.distro ?? '',
+            user: snapshot.selection?.user ?? ''
+          }
+        )}
+        confirmLabel={t('Install missing dependencies')}
+        cancelLabel={t('Cancel')}
+        loading={actionBusy || installBusy}
+        loadingLabel={t('Installing Linux dependencies…')}
+        onConfirm={() => void installMissingDependencies()}
+        onCancel={() => setConfirmDependencyInstall(false)}
+      />
     </SettingsSection>
   )
 }

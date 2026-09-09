@@ -96,9 +96,9 @@ export type WslSetupSnapshot = Readonly<{
   activatedSelection?: WslSelection
   selection?: WslSelection
   readiness?: WslReadiness
+  canInstallMissingDependencies?: true
   errorCode?: string
   failure?: WslSetupFailure
-  suggestedCommand?: string
   operationReference: string
 }>
 
@@ -116,7 +116,8 @@ export type WslPlatformInstallResult = Readonly<{
   snapshot: WslSetupSnapshot
 }>
 
-export type WslSetupOperationKind = 'install-platform' | 'install-recommended-distro'
+export type WslSetupOperationKind =
+  'install-platform' | 'install-recommended-distro' | 'install-runtime-dependencies'
 
 export type WslSetupOperationOutcome =
   'completed' | 'restart-required' | 'cancelled' | 'failed' | 'interrupted' | 'blocked'
@@ -216,6 +217,10 @@ export type WslSetupConversationBootstrap = Readonly<{
 export type SelectWslProfileRequest = Readonly<{
   distro: string
   user: string
+}>
+
+export type InstallMissingWslDependenciesRequest = Readonly<{
+  expectedRevision: number
 }>
 
 export type OpenWslTerminalRequest = Readonly<{

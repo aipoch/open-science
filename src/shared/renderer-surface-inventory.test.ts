@@ -227,6 +227,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'install-claude',
     'install-codebuddy',
     'install-codex',
+    'install-missing-wsl-dependencies',
     'install-notebook-network',
     'install-opencode',
     'install-recommended-wsl-distro',

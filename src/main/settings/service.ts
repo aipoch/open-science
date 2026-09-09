@@ -85,6 +85,7 @@ import type { PackageMirror } from '../../shared/mirror'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookNetworkSettings, NotebookNetworkStatus } from '../../shared/notebook-network'
 import type {
+  InstallMissingWslDependenciesRequest,
   OpenWslTerminalRequest,
   SelectWslProfileRequest,
   SwitchToPowerShellResult,
@@ -233,6 +234,7 @@ export type SettingsServiceOptions = {
     reconcileInterruptedOperation?(): Promise<WslSetupStatus>
     probe(): Promise<WslSetupSnapshot>
     installPlatform(): Promise<WslPlatformInstallResult>
+    installMissingDependencies(expectedRevision: number): Promise<WslSetupSnapshot>
     select(request: SelectWslProfileRequest): Promise<WslSetupSnapshot>
     installRecommendedDistro(): Promise<WslSetupSnapshot>
     openTerminal(request: OpenWslTerminalRequest): Promise<WslSetupSnapshot>
@@ -550,6 +552,14 @@ class SettingsService {
     this.requireWsl2Preview()
     if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
     return this.wslSetup.installPlatform()
+  }
+
+  installMissingWslDependencies(
+    request: InstallMissingWslDependenciesRequest
+  ): Promise<WslSetupSnapshot> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    return this.wslSetup.installMissingDependencies(request.expectedRevision)
   }
 
   selectWslProfile(request: SelectWslProfileRequest): Promise<WslSetupSnapshot> {

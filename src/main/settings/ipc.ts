@@ -67,7 +67,11 @@ import {
   type UpsertProviderRequest,
   type ValidateProviderRequest
 } from '../../shared/settings'
-import type { OpenWslTerminalRequest, SelectWslProfileRequest } from '../../shared/wsl-setup'
+import type {
+  InstallMissingWslDependenciesRequest,
+  OpenWslTerminalRequest,
+  SelectWslProfileRequest
+} from '../../shared/wsl-setup'
 import { SettingsService } from './service'
 import { connectorTemplateExportSelection } from './connector-template'
 import type { SettingsWorkflows } from './workflows'
@@ -351,6 +355,11 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMainHandle('settings:probe-wsl-setup', () => service.probeWslSetup())
   ipcMainHandle('settings:install-wsl-platform', () => service.installWslPlatform())
+  ipcMainHandle(
+    'settings:install-missing-wsl-dependencies',
+    (_event, request: InstallMissingWslDependenciesRequest) =>
+      service.installMissingWslDependencies(request)
+  )
   ipcMainHandle('settings:create-wsl-support-handoff', () => service.createWslSupportHandoff())
   ipcMainHandle('settings:select-wsl-profile', (_event, request: SelectWslProfileRequest) =>
     service.selectWslProfile(request)

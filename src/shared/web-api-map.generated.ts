@@ -242,6 +242,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.installClaude': 'settings:install-claude',
   'settings.installCodeBuddy': 'settings:install-codebuddy',
   'settings.installCodex': 'settings:install-codex',
+  'settings.installMissingWslDependencies': 'settings:install-missing-wsl-dependencies',
   'settings.installNotebookNetwork': 'settings:install-notebook-network',
   'settings.installOpencode': 'settings:install-opencode',
   'settings.installRecommendedWslDistro': 'settings:install-recommended-wsl-distro',

@@ -359,6 +359,7 @@ describe('SettingsService: Local Shell runtime', () => {
       wslSetup: {
         probe: vi.fn(),
         installPlatform: vi.fn(),
+        installMissingDependencies: vi.fn(),
         select: vi.fn(),
         installRecommendedDistro: vi.fn(),
         openTerminal: vi.fn(),
@@ -394,6 +395,7 @@ describe('SettingsService: Local Shell runtime', () => {
       wslSetup: {
         probe: vi.fn(),
         installPlatform: vi.fn(),
+        installMissingDependencies: vi.fn(),
         select: vi.fn(),
         installRecommendedDistro: vi.fn(),
         openTerminal: vi.fn(),
@@ -411,12 +413,39 @@ describe('SettingsService: Local Shell runtime', () => {
     })
   })
 
+  it('forwards a revision-bound missing dependency install through the WSL setup owner', async () => {
+    const snapshot = {
+      state: 'ready' as const,
+      distros: [],
+      operationReference: 'dependencies-1'
+    }
+    const installMissingDependencies = vi.fn(async () => snapshot)
+    const service = createService(undefined, {
+      wslSetup: {
+        probe: vi.fn(),
+        installPlatform: vi.fn(),
+        installMissingDependencies,
+        select: vi.fn(),
+        installRecommendedDistro: vi.fn(),
+        openTerminal: vi.fn(),
+        createSupportHandoff: vi.fn(),
+        requireLatestReadySelection: vi.fn()
+      }
+    })
+
+    await expect(service.installMissingWslDependencies({ expectedRevision: 17 })).resolves.toBe(
+      snapshot
+    )
+    expect(installMissingDependencies).toHaveBeenCalledWith(17)
+  })
+
   it('does not persist WSL2 Bash while the main-owned Preview gate is closed', async () => {
     const service = createService(undefined, {
       wsl2PreviewStatus: () => ({ available: false, reason: 'build-disabled' }),
       wslSetup: {
         probe: vi.fn(),
         installPlatform: vi.fn(),
+        installMissingDependencies: vi.fn(),
         select: vi.fn(),
         installRecommendedDistro: vi.fn(),
         openTerminal: vi.fn(),

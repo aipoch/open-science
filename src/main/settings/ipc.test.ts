@@ -51,6 +51,7 @@ type FakeSettingsService = Record<
   | 'installCodeBuddy'
   | 'installOpencode'
   | 'installCodex'
+  | 'installMissingWslDependencies'
   | 'uninstallClaude'
   | 'uninstallOpencode'
   | 'uninstallCodeBuddy'
@@ -140,6 +141,11 @@ const createFakeService = (): FakeSettingsService => ({
   installCodeBuddy: vi.fn().mockResolvedValue({ installId: 'cb', ok: true }),
   installOpencode: vi.fn().mockResolvedValue({ installId: 'oc', ok: true }),
   installCodex: vi.fn().mockResolvedValue({ installId: 'cx', ok: true }),
+  installMissingWslDependencies: vi.fn().mockResolvedValue({
+    state: 'ready',
+    distros: [],
+    operationReference: 'dependencies-1'
+  }),
   uninstallClaude: vi.fn().mockResolvedValue({
     snapshot: { claude: {}, providers: [], agentFrameworkId: 'claude-code' },
     activeBackendAffected: true
@@ -422,6 +428,7 @@ describe('settings IPC handlers', () => {
       'settings:cancel-isolated-claude-login',
       'settings:logout-isolated-claude',
       'settings:mark-onboarding-complete',
+      'settings:install-missing-wsl-dependencies',
       'settings:export-skill',
       'settings:preview-custom-server-template-export',
       'settings:select-custom-server-template',
@@ -665,6 +672,17 @@ describe('settings IPC handlers', () => {
 
     expect(service.useWsl2Bash).toHaveBeenCalledOnce()
     expect(onShellRuntimeRefresh).toHaveBeenCalledOnce()
+  })
+
+  it('forwards the revision-bound WSL dependency install request unchanged', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const request = { expectedRevision: 17 }
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+
+    await invoke('settings:install-missing-wsl-dependencies', request)
+
+    expect(service.installMissingWslDependencies).toHaveBeenCalledWith(request)
   })
 
   it('fires onConnectorsChanged after a connector is toggled', async () => {

@@ -89,6 +89,7 @@ export interface WslTerminalLauncher {
 
 export { RECOMMENDED_WSL_DISTRO }
 export const WSL_DISTRO_INSTALL_TIMEOUT_MS = 10 * 60_000
+export const WSL_DEPENDENCY_INSTALL_TIMEOUT_MS = 10 * 60_000
 export const WSL_SETUP_DIAGNOSTICS_STALE = 'WSL_SETUP_DIAGNOSTICS_STALE'
 
 const executeWsl: WslCommandRunner = {
@@ -162,10 +163,10 @@ export const createWslTerminalLauncher = (
 ): WslTerminalLauncher => ({
   open: (args) =>
     new Promise((resolve, reject) => {
-      const child = spawnProcess('conhost.exe', ['wsl.exe', ...args], {
+      const child = spawnProcess('wsl.exe', [...args], {
         detached: true,
         windowsHide: false,
-        stdio: 'inherit',
+        stdio: 'ignore',
         shell: false
       })
       child.once('error', reject)
@@ -315,6 +316,7 @@ export class WslSetupOwner {
   private revision = 0
   private activePlatformInstall: Promise<WslPlatformInstallResult> | undefined
   private activeRecommendedDistroInstall: Promise<WslSetupSnapshot> | undefined
+  private activeMissingDependencyInstall: Promise<WslSetupSnapshot> | undefined
   private reconciliation: Promise<void> | undefined
   private selectionTail: Promise<void> = Promise.resolve()
   private recoveryBlocked = false
@@ -370,7 +372,10 @@ export class WslSetupOwner {
   private async reconcileOperationRecord(record: WslSetupOperationRecord): Promise<void> {
     let snapshot: WslSetupSnapshot
     try {
-      snapshot = await this.runProbe(record.operationReference)
+      snapshot = await this.runProbe(
+        record.operationReference,
+        record.kind === 'install-runtime-dependencies' ? record.selection : undefined
+      )
     } catch {
       snapshot = setupSnapshot('failed', record.operationReference, [], {
         errorCode: 'wsl_install_interrupted'
@@ -379,8 +384,12 @@ export class WslSetupOwner {
     const confirmed =
       record.kind === 'install-platform'
         ? snapshot.state !== 'not-installed' && snapshot.state !== 'failed'
-        : snapshot.state === 'restart-required' ||
-          snapshot.distros.some((distro) => distro.name === RECOMMENDED_WSL_DISTRO)
+        : record.kind === 'install-runtime-dependencies'
+          ? snapshot.readiness?.bash === true &&
+            snapshot.readiness.bwrap === true &&
+            snapshot.readiness.python3 === true
+          : snapshot.state === 'restart-required' ||
+            snapshot.distros.some((distro) => distro.name === RECOMMENDED_WSL_DISTRO)
     if (!confirmed) {
       snapshot = {
         ...snapshot,
@@ -628,6 +637,235 @@ export class WslSetupOwner {
     return completion
   }
 
+  installMissingDependencies(expectedRevision: number): Promise<WslSetupSnapshot> {
+    if (this.activeMissingDependencyInstall) return this.activeMissingDependencyInstall
+    const completion = this.runMissingDependencyInstall(expectedRevision)
+    this.activeMissingDependencyInstall = completion
+    const clear = (): void => {
+      if (this.activeMissingDependencyInstall === completion) {
+        this.activeMissingDependencyInstall = undefined
+      }
+    }
+    completion.then(clear, clear)
+    return completion
+  }
+
+  private async runMissingDependencyInstall(expectedRevision: number): Promise<WslSetupSnapshot> {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== this.revision) {
+      throw new Error(WSL_SETUP_DIAGNOSTICS_STALE)
+    }
+    if (this.options.operationJournal && this.recoveryBlocked) return this.probe()
+    if (this.options.operationJournal) await this.reconcileInterruptedOperation()
+    const current = this.latestSnapshot
+    const selection = current?.selection
+    if (
+      current?.state !== 'dependency-required' ||
+      !selection ||
+      current.readiness?.wsl2 !== true ||
+      current.readiness.home !== true ||
+      !['wsl_bash_missing', 'wsl_bwrap_missing', 'wsl_python3_missing'].includes(
+        current.errorCode ?? ''
+      ) ||
+      !this.validName(selection.distro, 256) ||
+      !this.validName(selection.user, 128) ||
+      selection.user === 'root'
+    ) {
+      return this.remember(
+        setupSnapshot('failed', this.reference(), current?.distros ?? [], {
+          ...(selection ? { selection } : {}),
+          ...(current?.readiness ? { readiness: current.readiness } : {}),
+          errorCode: 'wsl_dependency_install_not_allowed'
+        })
+      )
+    }
+    if (current.canInstallMissingDependencies !== true) {
+      return this.remember(
+        setupSnapshot('dependency-required', this.reference(), current.distros, {
+          selection,
+          readiness: current.readiness,
+          errorCode: 'wsl_dependency_install_not_supported'
+        })
+      )
+    }
+
+    const operationReference = this.reference()
+    const startedAt = Date.now()
+    const lease = this.installCoordinator.tryAcquire(`wsl-dependencies:${operationReference}`)
+    if (!lease) {
+      return this.remember(
+        setupSnapshot('failed', operationReference, current.distros, {
+          selection,
+          readiness: current.readiness,
+          errorCode: 'wsl_install_conflict'
+        })
+      )
+    }
+
+    let outcome: WslSetupOperationOutcome = 'failed'
+    let journalSaved = false
+    let preserveJournal = false
+    const operationRecord = {
+      kind: 'install-runtime-dependencies' as const,
+      operationReference,
+      startedAt,
+      selection: Object.freeze({ distro: selection.distro, user: selection.user })
+    }
+    const settle = async (
+      candidate: WslSetupSnapshot,
+      terminalOutcome: WslSetupOperationOutcome
+    ): Promise<WslSetupSnapshot> => {
+      outcome = terminalOutcome
+      let snapshot = candidate
+      if (journalSaved) {
+        journalSaved = false
+        if (!(await this.clearOperationJournal(operationRecord))) {
+          outcome = 'failed'
+          snapshot = setupSnapshot('failed', operationReference, current.distros, {
+            selection,
+            readiness: current.readiness,
+            errorCode: 'wsl_install_journal_unavailable'
+          })
+        }
+      }
+      return this.remember(snapshot)
+    }
+    const interrupt = (result?: WslCommandResult): WslSetupSnapshot => {
+      preserveJournal = true
+      outcome = 'interrupted'
+      this.recoveryBlocked = true
+      this.recoveryRecord = operationRecord
+      return this.remember(
+        setupSnapshot('failed', operationReference, current.distros, {
+          selection,
+          readiness: current.readiness,
+          errorCode: 'wsl_install_interrupted',
+          failure: diagnosticFailure('installation', 'wsl_install_interrupted', result)
+        })
+      )
+    }
+    this.inProcessOperationReferences.add(operationReference)
+    try {
+      this.operation = Object.freeze({
+        state: 'running',
+        kind: 'install-runtime-dependencies',
+        phase: 'installing',
+        operationReference,
+        startedAt
+      })
+      this.statusChanged()
+
+      if (this.options.operationJournal) {
+        try {
+          await this.options.operationJournal.save(operationRecord)
+          journalSaved = true
+        } catch (error) {
+          this.log.warn('wsl setup operation journal could not be written', { error })
+          return this.remember(
+            setupSnapshot('failed', operationReference, current.distros, {
+              selection,
+              readiness: current.readiness,
+              errorCode: 'wsl_install_journal_unavailable'
+            })
+          )
+        }
+      }
+
+      const missingPackages = [
+        ...(current.readiness.bash === true ? [] : ['bash']),
+        ...(current.readiness.bwrap === true ? [] : ['bubblewrap']),
+        ...(current.readiness.python3 === true ? [] : ['python3'])
+      ]
+      const apt = [
+        '--distribution',
+        selection.distro,
+        '--user',
+        'root',
+        '--exec',
+        '/usr/bin/env',
+        '-i',
+        'DEBIAN_FRONTEND=noninteractive',
+        'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+        '/usr/bin/apt-get'
+      ]
+
+      const update = await this.runner.run([...apt, 'update'], {
+        timeoutMs: WSL_DEPENDENCY_INSTALL_TIMEOUT_MS
+      })
+      if (update.failure === 'timeout') return interrupt(update)
+      if (update.exitCode !== 0) {
+        const snapshot = await settle(
+          setupSnapshot('dependency-required', operationReference, current.distros, {
+            selection,
+            readiness: current.readiness,
+            canInstallMissingDependencies: true,
+            errorCode: 'wsl_dependency_install_failed',
+            failure: diagnosticFailure('installation', 'wsl_dependency_install_failed', update)
+          }),
+          'failed'
+        )
+        return snapshot
+      }
+
+      const install = await this.runner.run(
+        [...apt, 'install', '--yes', '--no-install-recommends', ...missingPackages],
+        { timeoutMs: WSL_DEPENDENCY_INSTALL_TIMEOUT_MS }
+      )
+      if (install.failure === 'timeout') return interrupt(install)
+      if (install.exitCode !== 0) {
+        const snapshot = await settle(
+          setupSnapshot('dependency-required', operationReference, current.distros, {
+            selection,
+            readiness: current.readiness,
+            canInstallMissingDependencies: true,
+            errorCode: 'wsl_dependency_install_failed',
+            failure: diagnosticFailure('installation', 'wsl_dependency_install_failed', install)
+          }),
+          'failed'
+        )
+        return snapshot
+      }
+
+      this.operation = Object.freeze({
+        state: 'running',
+        kind: 'install-runtime-dependencies',
+        phase: 'verifying',
+        operationReference,
+        startedAt
+      })
+      this.statusChanged()
+      const verified = await this.probeForOperation(operationReference, selection)
+      if (verified.state !== 'ready') {
+        const snapshot = await settle(
+          {
+            ...verified,
+            errorCode: 'wsl_dependency_install_unconfirmed'
+          },
+          'failed'
+        )
+        return snapshot
+      }
+      const snapshot = await settle(verified, 'completed')
+      return snapshot
+    } catch {
+      return interrupt()
+    } finally {
+      if (journalSaved && !preserveJournal) {
+        journalSaved = false
+        if (!(await this.clearOperationJournal(operationRecord))) {
+          outcome = 'failed'
+          this.latestSnapshot = setupSnapshot('failed', operationReference, current.distros, {
+            selection,
+            readiness: current.readiness,
+            errorCode: 'wsl_install_journal_unavailable'
+          })
+        }
+      }
+      this.inProcessOperationReferences.delete(operationReference)
+      this.finishOperation('install-runtime-dependencies', operationReference, startedAt, outcome)
+      lease.release()
+    }
+  }
+
   private async runRecommendedDistroInstall(): Promise<WslSetupSnapshot> {
     if (this.options.operationJournal) await this.reconcileInterruptedOperation()
     if (this.recoveryBlocked) {
@@ -848,6 +1086,18 @@ export class WslSetupOwner {
   }
 
   private async selectProfile(request: SelectWslProfileRequest): Promise<WslSetupSnapshot> {
+    if (this.operation.state === 'running') {
+      return setupSnapshot(
+        'failed',
+        this.operation.operationReference,
+        this.latestSnapshot?.distros ?? [],
+        {
+          ...(this.latestSnapshot?.selection ? { selection: this.latestSnapshot.selection } : {}),
+          ...(this.latestSnapshot?.readiness ? { readiness: this.latestSnapshot.readiness } : {}),
+          errorCode: 'wsl_install_conflict'
+        }
+      )
+    }
     const selection = { distro: request.distro.trim(), user: request.user.trim() }
     if (
       !selection.distro ||
@@ -1285,25 +1535,25 @@ export class WslSetupOwner {
     const dependencies = await this.inGuest(selection, [
       'sh',
       '-lc',
-      'command -v bash; command -v bwrap; test -x /usr/bin/python3 && /usr/bin/python3 -c "import sys; raise SystemExit(0 if sys.version_info.major == 3 else 1)" && printf "/usr/bin/python3\\n"; wslinfo --networking-mode'
+      'command -v bash; command -v bwrap; test -x /usr/bin/python3 && /usr/bin/python3 -c "import sys; raise SystemExit(0 if sys.version_info.major == 3 else 1)" && printf "/usr/bin/python3\\n"; test -x /usr/bin/apt-get && printf "/usr/bin/apt-get\\n"; wslinfo --networking-mode'
     ])
     const dependencyOutput = clean(dependencies.stdout)
     const bash = /(^|\n)\/[^\n]*bash(\n|$)/.test(dependencyOutput)
     const bwrap = /(^|\n)\/[^\n]*bwrap(\n|$)/.test(dependencyOutput)
     const python3 = dependencyOutput.split('\n').includes('/usr/bin/python3')
+    const canInstallMissingDependencies = dependencyOutput.split('\n').includes('/usr/bin/apt-get')
     if (!bash || !bwrap || !python3) {
       const errorCode = !bash
         ? 'wsl_bash_missing'
         : !bwrap
           ? 'wsl_bwrap_missing'
           : 'wsl_python3_missing'
-      const suggestedCommand = this.dependencyInstallCommand(selection.distro, errorCode)
       return setupSnapshot('dependency-required', operationReference, distros, {
         selection,
         readiness: this.readiness({ wsl2: true, home: true, bash, bwrap, python3 }),
+        ...(canInstallMissingDependencies ? { canInstallMissingDependencies: true as const } : {}),
         errorCode,
-        failure: diagnosticFailure('dependencies', errorCode, dependencies),
-        ...(suggestedCommand ? { suggestedCommand } : {})
+        failure: diagnosticFailure('dependencies', errorCode, dependencies)
       })
     }
 
@@ -1508,16 +1758,5 @@ export class WslSetupOwner {
 
   private validName(value: string, maxLength: number): boolean {
     return !!value && value.length <= maxLength && !/[\0\r\n]/.test(value)
-  }
-
-  private dependencyInstallCommand(distro: string, errorCode: string): string | undefined {
-    if (!/ubuntu|debian/i.test(distro)) return undefined
-    if (errorCode === 'wsl_bwrap_missing') {
-      return 'sudo apt-get update && sudo apt-get install bubblewrap'
-    }
-    if (errorCode === 'wsl_python3_missing') {
-      return 'sudo apt-get update && sudo apt-get install python3'
-    }
-    return undefined
   }
 }

@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Project } from '../../../../shared/projects'
-import type { WslPlatformInstallResult } from '../../../../shared/wsl-setup'
+import type { WslPlatformInstallResult, WslSetupSnapshot } from '../../../../shared/wsl-setup'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -16,6 +16,7 @@ let probe: ReturnType<typeof vi.fn>
 let select: ReturnType<typeof vi.fn>
 let install: ReturnType<typeof vi.fn>
 let installRecommended: ReturnType<typeof vi.fn>
+let installMissingDependencies: ReturnType<typeof vi.fn>
 let openTerminal: ReturnType<typeof vi.fn>
 let createSupportHandoff: ReturnType<typeof vi.fn>
 let switchToPowerShell: ReturnType<typeof vi.fn>
@@ -88,6 +89,13 @@ beforeEach(() => {
     state: 'distro-required',
     distros: [{ name: 'Ubuntu-22.04', version: 2, isDefault: true }],
     operationReference: 'feedface'
+  })
+  installMissingDependencies = vi.fn().mockResolvedValue({
+    state: 'ready',
+    distros: [{ name: 'Ubuntu-22.04', version: 2, isDefault: true }],
+    selection: { distro: 'Ubuntu-22.04', user: 'scientist' },
+    readiness: { wsl2: true, home: true, bash: true, bwrap: true, python3: true },
+    operationReference: 'cafebabe'
   })
   openTerminal = vi.fn().mockResolvedValue({
     state: 'first-launch-required',
@@ -165,6 +173,7 @@ beforeEach(() => {
       selectWslProfile: select,
       installWslPlatform: install,
       installRecommendedWslDistro: installRecommended,
+      installMissingWslDependencies: installMissingDependencies,
       openWslTerminal: openTerminal,
       createWslSupportHandoff: createSupportHandoff,
       switchLocalShellToPowerShell: switchToPowerShell,
@@ -192,6 +201,50 @@ afterEach(() => {
 })
 
 describe('WslLocalShellSection', () => {
+  const dependencySnapshot = (errorCode = 'wsl_bwrap_missing'): WslSetupSnapshot => ({
+    state: 'dependency-required',
+    distros: [{ name: 'Ubuntu-22.04', version: 2, isDefault: true }],
+    selection: { distro: 'Ubuntu-22.04', user: 'scientist' },
+    readiness: { wsl2: true, home: true, bash: true, bwrap: false, python3: true },
+    canInstallMissingDependencies: true,
+    errorCode,
+    operationReference: 'decafbad'
+  })
+
+  const withoutDependencyInstallCapability = (snapshot: WslSetupSnapshot): WslSetupSnapshot => {
+    const copy = { ...snapshot }
+    delete copy.canInstallMissingDependencies
+    return copy
+  }
+
+  it('requires confirmation before installing missing dependencies as root', async () => {
+    const snapshot = dependencySnapshot()
+    getWslSetupStatus.mockResolvedValue({
+      revision: 7,
+      snapshot,
+      operation: { state: 'idle' }
+    })
+    await act(async () => root.render(<WslLocalShellSection />))
+    await flush()
+
+    const installDependencies = [...container.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Install missing dependencies')
+    )
+    expect(installDependencies).toBeDefined()
+    expect(installMissingDependencies).not.toHaveBeenCalled()
+
+    await act(async () => installDependencies?.click())
+    await flush()
+
+    expect(installMissingDependencies).not.toHaveBeenCalled()
+    const dialog = document.body.querySelector('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain('Ubuntu-22.04')
+    expect(dialog?.textContent).toContain('scientist')
+    expect(dialog?.textContent).toContain('root')
+    expect(dialog?.textContent).toContain('sudoers')
+    expect(dialog?.textContent).toContain('future runs')
+  })
+
   it('clearly labels the unpackaged development admission', async () => {
     await act(async () => root.render(<WslLocalShellSection developmentPreview />))
     await flush()
@@ -666,62 +719,145 @@ describe('WslLocalShellSection', () => {
     expect(openTerminal).not.toHaveBeenCalled()
   })
 
-  it('offers a copyable bubblewrap command and opens the selected user terminal without running it', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText }
-    })
-    probe.mockResolvedValue({
-      state: 'dependency-required',
-      distros: [{ name: 'Ubuntu-22.04', version: 2, isDefault: true }],
-      selection: { distro: 'Ubuntu-22.04', user: 'scientist' },
-      readiness: { wsl2: true, home: true, bash: true, bwrap: false },
-      errorCode: 'wsl_bwrap_missing',
-      suggestedCommand: 'sudo apt-get update && sudo apt-get install bubblewrap',
-      operationReference: 'decafbad'
-    })
-    await renderAndCheck()
-
-    expect(container.textContent).toContain('Open Science will not run sudo or a package manager')
-    expect(container.textContent).toContain('Run this command in the distribution terminal')
-    expect(container.querySelector('pre code')?.textContent).toBe(
-      'sudo apt-get update && sudo apt-get install bubblewrap'
-    )
-    expect(container.textContent).toContain(
-      'sudo apt-get update && sudo apt-get install bubblewrap'
-    )
-    const copy = [...container.querySelectorAll('button')].find((button) =>
-      button.textContent?.includes('Copy command')
-    )
-    await act(async () => copy?.click())
-    expect(writeText).toHaveBeenCalledWith('sudo apt-get update && sudo apt-get install bubblewrap')
-
-    const launch = [...container.querySelectorAll('button')].find((button) =>
-      button.textContent?.includes('Open distribution terminal')
-    )
-    await act(async () => launch?.click())
+  it('installs against the revision bound to the confirmed snapshot without activating WSL2 Bash', async () => {
+    const snapshot = dependencySnapshot()
+    getWslSetupStatus.mockResolvedValue({ revision: 7, snapshot, operation: { state: 'idle' } })
+    await act(async () => root.render(<WslLocalShellSection />))
     await flush()
-    expect(openTerminal).toHaveBeenCalledWith({ distro: 'Ubuntu-22.04', user: 'scientist' })
+
+    const installDependencies = [...container.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Install missing dependencies')
+    )
+    await act(async () => installDependencies?.click())
+    await flush()
+    const dialog = document.body.querySelector('[role="alertdialog"]')
+    const confirm = [...(dialog?.querySelectorAll('button') ?? [])].find((button) =>
+      button.textContent?.includes('Install missing dependencies')
+    )
+    await act(async () => confirm?.click())
+    await flush()
+
+    expect(installMissingDependencies).toHaveBeenCalledWith({ expectedRevision: 7 })
+    expect(useWsl2Bash).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Use WSL2 Bash')
+    expect(container.textContent).not.toContain('sudo apt-get')
+    expect(container.textContent).not.toContain('Copy command')
   })
 
-  it('identifies an unusable absolute Python 3 dependency and offers its install command', async () => {
-    probe.mockResolvedValue({
-      state: 'dependency-required',
-      distros: [{ name: 'Ubuntu-22.04', version: 2, isDefault: true }],
-      selection: { distro: 'Ubuntu-22.04', user: 'scientist' },
-      readiness: { wsl2: true, home: true, bash: true, bwrap: true, python3: false },
-      errorCode: 'wsl_python3_missing',
-      suggestedCommand: 'sudo apt-get update && sudo apt-get install python3',
-      operationReference: 'decafbad'
-    })
+  it('refreshes a revision that is not yet bound to the manually checked snapshot', async () => {
+    const snapshot = dependencySnapshot()
+    probe.mockResolvedValue(snapshot)
+    getWslSetupStatus
+      .mockResolvedValueOnce({ revision: 0, operation: { state: 'idle' } })
+      .mockResolvedValueOnce({ revision: 11, snapshot, operation: { state: 'idle' } })
     await renderAndCheck()
 
-    expect(container.textContent).toContain('Python 3')
-    expect(container.textContent).toContain(
-      'Install Python 3 in the distribution terminal. Open Science will not run sudo or a package manager.'
+    const installDependencies = [...container.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Install missing dependencies')
     )
-    expect(container.textContent).toContain('sudo apt-get update && sudo apt-get install python3')
+    await act(async () => installDependencies?.click())
+    await flush()
+    const dialog = document.body.querySelector('[role="alertdialog"]')
+    const confirm = [...(dialog?.querySelectorAll('button') ?? [])].find((button) =>
+      button.textContent?.includes('Install missing dependencies')
+    )
+    await act(async () => confirm?.click())
+    await flush()
+
+    expect(installMissingDependencies).toHaveBeenCalledWith({ expectedRevision: 11 })
+  })
+
+  it.each(['wsl_bash_missing', 'wsl_bwrap_missing', 'wsl_python3_missing'])(
+    'offers one-click installation for %s without a sudo command or user terminal action',
+    async (errorCode) => {
+      const snapshot = dependencySnapshot(errorCode)
+      getWslSetupStatus.mockResolvedValue({ revision: 8, snapshot, operation: { state: 'idle' } })
+      await act(async () => root.render(<WslLocalShellSection />))
+      await flush()
+
+      expect(container.textContent).toContain('Install missing dependencies')
+      expect(container.textContent).not.toContain('sudo apt-get')
+      expect(container.textContent).not.toContain('Copy command')
+      expect(container.textContent).not.toContain('Open distribution terminal')
+    }
+  )
+
+  it('explains the manual recovery path when automatic dependency installation is unavailable', async () => {
+    const snapshot = withoutDependencyInstallCapability(dependencySnapshot())
+    getWslSetupStatus.mockResolvedValue({ revision: 8, snapshot, operation: { state: 'idle' } })
+    await act(async () => root.render(<WslLocalShellSection />))
+    await flush()
+
+    expect(container.textContent).toContain(
+      'Automatic installation is unavailable for this distribution. Use its package manager or set up in conversation.'
+    )
+    expect(container.textContent).not.toContain('Install missing dependencies')
+  })
+
+  it('shows dependency-specific progress while the root installation is running', async () => {
+    const snapshot = dependencySnapshot()
+    getWslSetupStatus.mockResolvedValue({
+      revision: 9,
+      snapshot,
+      operation: {
+        state: 'running',
+        kind: 'install-runtime-dependencies',
+        phase: 'installing',
+        operationReference: 'cafebabe',
+        startedAt: 1
+      }
+    })
+    await act(async () => root.render(<WslLocalShellSection />))
+    await flush()
+
+    expect(container.textContent).toContain('Installing Linux dependencies…')
+  })
+
+  it.each([
+    [
+      'wsl_dependency_install_failed',
+      'Open Science could not install the missing Linux dependencies.'
+    ],
+    [
+      'wsl_dependency_install_unconfirmed',
+      'Open Science could not confirm that the missing Linux dependencies were installed.'
+    ],
+    [
+      'wsl_dependency_install_not_allowed',
+      'The selected WSL2 profile changed or is no longer eligible for dependency installation.'
+    ],
+    [
+      'wsl_dependency_install_not_supported',
+      'Automatic installation is unavailable for this distribution.'
+    ],
+    ['wsl_install_journal_unavailable', 'Open Science could not safely record the installation.']
+  ])('explains dependency installation recovery for %s', async (errorCode, expectedCopy) => {
+    const candidate: WslSetupSnapshot = {
+      ...dependencySnapshot(errorCode),
+      state:
+        errorCode === 'wsl_dependency_install_failed' ||
+        errorCode === 'wsl_dependency_install_unconfirmed'
+          ? 'dependency-required'
+          : 'failed'
+    }
+    const snapshot: WslSetupSnapshot =
+      errorCode === 'wsl_dependency_install_not_supported'
+        ? withoutDependencyInstallCapability(candidate)
+        : candidate
+    getWslSetupStatus.mockResolvedValue({ revision: 10, snapshot, operation: { state: 'idle' } })
+    await act(async () => root.render(<WslLocalShellSection />))
+    await flush()
+
+    expect(container.textContent).toContain(expectedCopy)
+    if (snapshot.state === 'dependency-required') {
+      const retry = [...container.querySelectorAll('button')].find((button) =>
+        button.textContent?.includes('Try installation again')
+      )
+      await act(async () => retry?.click())
+      await flush()
+      expect(installMissingDependencies).not.toHaveBeenCalled()
+      expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull()
+    }
   })
 
   it('closes Settings and opens a normal project conversation with only safe WSL diagnostics', async () => {

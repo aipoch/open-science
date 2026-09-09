@@ -46,6 +46,7 @@ import type {
   SideChatStartResponse
 } from './side-chat'
 import type {
+  InstallMissingWslDependenciesRequest,
   OpenWslTerminalRequest,
   LocalShellRuntimePreference,
   SelectWslProfileRequest,
@@ -2105,6 +2106,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'settings:install-wsl-platform',
     LOCAL
   ]),
+  'settings.installMissingWslDependencies': callable<
+    (request: InstallMissingWslDependenciesRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:install-missing-wsl-dependencies', LOCAL]),
   'settings.createWslSupportHandoff': callable<() => Promise<WslSetupConversationBootstrap>>()(
     'settings',
     ['settings:create-wsl-support-handoff', LOCAL]

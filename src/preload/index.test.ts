@@ -565,6 +565,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.installClaude',
       'settings.installCodeBuddy',
       'settings.installCodex',
+      'settings.installMissingWslDependencies',
       'settings.installNotebookNetwork',
       'settings.installOpencode',
       'settings.installRecommendedWslDistro',
