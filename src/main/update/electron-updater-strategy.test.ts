@@ -332,35 +332,39 @@ describe('ElectronUpdaterStrategy', () => {
     expect(strategy.getStatus().state).toBe('ready')
   })
 
-  it('preserves in-place ready on check failure but accepts a strictly newer update', async () => {
-    const updater = new FakeUpdater()
-    const strategy = new ElectronUpdaterStrategy({
-      updater,
-      currentVersion: '0.2.0',
-      broadcast: vi.fn(),
-      fetchImpl: offlineFetch()
-    })
-    await strategy.check()
-    await strategy.download()
-    const readyStatus = strategy.getStatus()
-
-    updater.checkForUpdates = vi.fn(async () => {
-      updater.emit('error', new Error('offline'))
-    })
-    expect(await strategy.check()).toBe(readyStatus)
-
-    updater.checkForUpdates = vi.fn(async () => {
-      updater.emit('checking-for-update')
-      updater.emit('update-available', {
-        version: '0.4.0',
-        releaseNotes: 'newer notes',
-        files: [{ url: 'https://cdn/Open-Science-0.4.0.zip', size: 12000 }]
+  it.each(['darwin', 'win32', 'linux'] as const)(
+    'preserves in-place ready on check failure but accepts a strictly newer update on %s',
+    async (platform) => {
+      const updater = new FakeUpdater()
+      const strategy = new ElectronUpdaterStrategy({
+        updater,
+        platform,
+        currentVersion: '0.2.0',
+        broadcast: vi.fn(),
+        fetchImpl: offlineFetch()
       })
-    })
-    expect(await strategy.check()).toEqual(
-      expect.objectContaining({ state: 'available', latest: '0.4.0', totalBytes: 12000 })
-    )
-  })
+      await strategy.check()
+      await strategy.download()
+      const readyStatus = strategy.getStatus()
+
+      updater.checkForUpdates = vi.fn(async () => {
+        updater.emit('error', new Error('offline'))
+      })
+      expect(await strategy.check()).toBe(readyStatus)
+
+      updater.checkForUpdates = vi.fn(async () => {
+        updater.emit('checking-for-update')
+        updater.emit('update-available', {
+          version: '0.4.0',
+          releaseNotes: 'newer notes',
+          files: [{ url: 'https://cdn/Open-Science-0.4.0.zip', size: 12000 }]
+        })
+      })
+      const available = await strategy.check()
+      expect(available).toEqual(expect.objectContaining({ state: 'available', latest: '0.4.0' }))
+      expect(available.totalBytes).toBe(platform === 'linux' ? undefined : 12000)
+    }
+  )
 
   it('coalesces overlapping in-place checks onto the in-flight provider query', async () => {
     const updater = new FakeUpdater()
@@ -474,56 +478,60 @@ describe('ElectronUpdaterStrategy', () => {
     })
   })
 
-  it('preserves the offer and retries after a failed in-place download', async () => {
-    const updater = new FakeUpdater()
-    let starts = 0
-    updater.runDownload = async () => {
-      starts += 1
-      if (starts === 1) throw new Error('private updater diagnostic detail')
-      updater.emit('update-downloaded', { version: '0.3.0' })
-    }
-    const log = createLogSpy()
-    const strategy = new ElectronUpdaterStrategy({
-      updater,
-      currentVersion: '0.2.0',
-      broadcast: vi.fn(),
-      fetchImpl: offlineFetch(),
-      log
-    })
-    await strategy.check()
-    for (const level of ['debug', 'info', 'warn', 'error'] as const) {
-      vi.mocked(log[level]).mockClear()
-    }
-
-    const failed = await strategy.download()
-    const retry = await strategy.download()
-
-    expect.soft(failed).toEqual(
-      expect.objectContaining({
-        state: 'error',
-        current: '0.2.0',
-        latest: '0.3.0',
-        notes: 'notes',
-        totalBytes: 10000,
-        error: 'private updater diagnostic detail'
+  it.each(['darwin', 'win32', 'linux'] as const)(
+    'preserves the offer and retries after a failed in-place download on %s',
+    async (platform) => {
+      const updater = new FakeUpdater()
+      let starts = 0
+      updater.runDownload = async () => {
+        starts += 1
+        if (starts === 1) throw new Error('private updater diagnostic detail')
+        updater.emit('update-downloaded', { version: '0.3.0' })
+      }
+      const log = createLogSpy()
+      const strategy = new ElectronUpdaterStrategy({
+        updater,
+        platform,
+        currentVersion: '0.2.0',
+        broadcast: vi.fn(),
+        fetchImpl: offlineFetch(),
+        log
       })
-    )
-    expect.soft(retry.state).toBe('ready')
-    expect.soft(retry.error).toBeUndefined()
-    expect.soft(starts).toBe(2)
-    const records = diagnosticRecords(log)
-    expect(records).toEqual(
-      expect.arrayContaining([
+      await strategy.check()
+      for (const level of ['debug', 'info', 'warn', 'error'] as const) {
+        vi.mocked(log[level]).mockClear()
+      }
+
+      const failed = await strategy.download()
+      const retry = await strategy.download()
+
+      expect.soft(failed).toEqual(
         expect.objectContaining({
-          operation: 'update-download',
-          outcome: 'failed',
-          phase: 'transfer',
-          errorCategory: 'error'
+          state: 'error',
+          current: '0.2.0',
+          latest: '0.3.0',
+          notes: 'notes',
+          error: 'private updater diagnostic detail'
         })
-      ])
-    )
-    expect(JSON.stringify(records)).not.toContain('private updater diagnostic detail')
-  })
+      )
+      expect.soft(failed.totalBytes).toBe(platform === 'linux' ? undefined : 10000)
+      expect.soft(retry.state).toBe('ready')
+      expect.soft(retry.error).toBeUndefined()
+      expect.soft(starts).toBe(2)
+      const records = diagnosticRecords(log)
+      expect(records).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            operation: 'update-download',
+            outcome: 'failed',
+            phase: 'transfer',
+            errorCategory: 'error'
+          })
+        ])
+      )
+      expect(JSON.stringify(records)).not.toContain('private updater diagnostic detail')
+    }
+  )
 
   it('cancel aborts an in-flight download and resets the status to available', async () => {
     const updater = new FakeUpdater()
@@ -1373,31 +1381,35 @@ describe('ElectronUpdaterStrategy', () => {
     expect(status.totalBytes).toBeUndefined()
   })
 
-  it('preserves check-time totalBytes when download-progress omits total', async () => {
-    // Artifacts published with a size in the feed should keep that size even if a progress event
-    // arrives without a total field.
-    const updater = new FakeUpdater()
-    updater.checkForUpdates = vi.fn(async () => {
-      updater.emit('update-available', { version: '0.3.0', files: [{ size: 50000 }] })
-    })
-    updater.runDownload = async () => {
-      // Progress event intentionally omits total — must not clobber the known 50000.
-      updater.emit('download-progress', { percent: 10, transferred: 5000 })
-      updater.emit('update-downloaded', { version: '0.3.0' })
-    }
-    const strategy = new ElectronUpdaterStrategy({
-      updater,
-      currentVersion: '0.2.0',
-      broadcast: vi.fn(),
-      fetchImpl: offlineFetch()
-    })
-    await strategy.check()
-    expect(strategy.getStatus().totalBytes).toBe(50000)
+  it.each(['darwin', 'win32', 'linux'] as const)(
+    'preserves check-time totalBytes when download-progress omits total on %s',
+    async (platform) => {
+      // Preserve known estimates when progress omits total; Linux stays unknown without a format.
+      const updater = new FakeUpdater()
+      updater.checkForUpdates = vi.fn(async () => {
+        updater.emit('update-available', { version: '0.3.0', files: [{ size: 50000 }] })
+      })
+      updater.runDownload = async () => {
+        // Progress intentionally omits total, preserving the check-time estimate if known.
+        updater.emit('download-progress', { percent: 10, transferred: 5000 })
+        updater.emit('update-downloaded', { version: '0.3.0' })
+      }
+      const strategy = new ElectronUpdaterStrategy({
+        updater,
+        platform,
+        currentVersion: '0.2.0',
+        broadcast: vi.fn(),
+        fetchImpl: offlineFetch()
+      })
+      await strategy.check()
+      expect(strategy.getStatus().totalBytes).toBe(platform === 'linux' ? undefined : 50000)
 
-    const status = await strategy.download()
-    expect(status.totalBytes).toBe(50000)
-    expect(status.downloadedBytes).toBe(5000)
-  })
+      const status = await strategy.download()
+      // Progress uses the existing zero sentinel when neither source supplies a known total.
+      expect(status.totalBytes).toBe(platform === 'linux' ? 0 : 50000)
+      expect(status.downloadedBytes).toBe(5000)
+    }
+  )
 
   it('omits totalBytes when the updater feed has no artifact size', async () => {
     const updater = new FakeUpdater()
