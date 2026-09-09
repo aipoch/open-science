@@ -65,8 +65,12 @@ class FakeUpdater extends EventEmitter {
   quitAndInstall = vi.fn()
 }
 
-const markUpdateReady = (updater: FakeUpdater): void => {
-  updater.emit('update-downloaded', { version: '0.3.0' })
+const markUpdateReady = async (
+  strategy: ElectronUpdaterStrategy,
+  updater: FakeUpdater
+): Promise<void> => {
+  if (strategy.getStatus().state === 'idle') updater.emit('update-available', {})
+  await strategy.download()
 }
 
 // Fake fetch returning a version.json manifest, so notes hydration never touches the network.
@@ -746,7 +750,16 @@ describe('ElectronUpdaterStrategy', () => {
       installGate,
       markUpdateShutdown
     })
-    enterState(updater)
+    let finishDownload: (() => void) | undefined
+    let downloading: Promise<unknown> | undefined
+    if (state === 'downloading') {
+      updater.runDownload = () =>
+        new Promise<void>((resolve) => {
+          finishDownload = resolve
+        })
+      updater.emit('update-available', {})
+      downloading = strategy.download()
+    } else enterState(updater)
     expect(strategy.getStatus().state).toBe(state)
     const statusBeforeApply = strategy.getStatus()
     broadcast.mockClear()
@@ -759,6 +772,8 @@ describe('ElectronUpdaterStrategy', () => {
     expect(installGate).not.toHaveBeenCalled()
     expect(markUpdateShutdown).not.toHaveBeenCalled()
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    finishDownload?.()
+    await downloading
   })
 
   it('apply installs silently and relaunches (quitAndInstall(true, true))', async () => {
@@ -770,7 +785,7 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       log
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
     await strategy.apply()
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
     expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
@@ -793,7 +808,7 @@ describe('ElectronUpdaterStrategy', () => {
       currentVersion: '0.2.0',
       broadcast: vi.fn()
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     await strategy.apply({ relaunch: false })
 
@@ -813,7 +828,7 @@ describe('ElectronUpdaterStrategy', () => {
       installGate: vi.fn(async () => ({ completed: true, reaped: true })),
       releaseInstallHandoff
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
@@ -833,7 +848,7 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       installGate: createDurableInstallGate(backendTeardownGate, confirmRendererDurability)
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     await strategy.apply()
 
@@ -855,7 +870,7 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       installGate: createDurableInstallGate(backendTeardownGate, confirmRendererDurability)
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
@@ -866,7 +881,7 @@ describe('ElectronUpdaterStrategy', () => {
     )
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
     expect(status).toMatchObject({
-      state: 'error',
+      state: 'ready',
       error: 'Could not fully stop background processes before updating. Please try again.'
     })
   })
@@ -880,12 +895,12 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       installGate: createActiveResearchSafeInstallGate(() => ['delegated'], backendTeardownGate)
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
     expect(status).toMatchObject({
-      state: 'error',
+      state: 'ready',
       error: expect.stringMatching(/subagents are still running/i),
       blockedBy: ['delegated']
     })
@@ -905,12 +920,12 @@ describe('ElectronUpdaterStrategy', () => {
         backendTeardownGate
       )
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
     expect(status).toMatchObject({
-      state: 'error',
+      state: 'ready',
       error:
         'An Agent Runtime is still installing. Wait for it to finish before restarting to update.',
       blockedBy: ['settings-install']
@@ -931,12 +946,12 @@ describe('ElectronUpdaterStrategy', () => {
         backendTeardownGate
       )
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
     expect(status).toMatchObject({
-      state: 'error',
+      state: 'ready',
       error: expect.stringMatching(/research work is still running/i),
       blockedBy: ['agent', 'notebook', 'reviewer']
     })
@@ -960,7 +975,7 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast,
       installGate: gate
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const applying = strategy.apply()
     expect(strategy.getStatus().state).toBe('applying')
@@ -976,7 +991,7 @@ describe('ElectronUpdaterStrategy', () => {
     await strategy.check()
     await strategy.download()
     expect(updater.checkForUpdates).not.toHaveBeenCalled()
-    expect(updater.downloadUpdate).not.toHaveBeenCalled()
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
     expect(strategy.getStatus().state).toBe('applying')
 
     finishGate?.()
@@ -997,13 +1012,13 @@ describe('ElectronUpdaterStrategy', () => {
       releaseInstallHandoff,
       log
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
     expect(releaseInstallHandoff).toHaveBeenCalledOnce()
-    expect(status.state).toBe('error')
+    expect(status.state).toBe('ready')
     expect(diagnosticRecords(log)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1028,11 +1043,11 @@ describe('ElectronUpdaterStrategy', () => {
       installGate: () => Promise.reject(new Error('private teardown diagnostic detail')),
       log
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
-    expect(status.state).toBe('error')
+    expect(status.state).toBe('ready')
 
     const records = diagnosticRecords(log)
     expect(records).toEqual(
@@ -1060,7 +1075,7 @@ describe('ElectronUpdaterStrategy', () => {
           finishGate = () => resolve({ completed: true, reaped: true })
         })
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const applying = strategy.apply()
     updater.emit('error', new Error('stale download failure'))
@@ -1084,7 +1099,7 @@ describe('ElectronUpdaterStrategy', () => {
       releaseInstallHandoff,
       log
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     await strategy.apply()
     expect(currentApplicationShutdownTrigger()).toBe('update')
@@ -1116,7 +1131,7 @@ describe('ElectronUpdaterStrategy', () => {
       currentVersion: '0.2.0',
       broadcast: vi.fn()
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
@@ -1134,12 +1149,12 @@ describe('ElectronUpdaterStrategy', () => {
       installGate: vi.fn(async () => Promise.reject(new Error('teardown failed')))
     })
     await strategy.check()
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
-    expect(status.state).toBe('error')
+    expect(status.state).toBe('ready')
     expect(status.latest).toBe('0.3.0')
     expect(status.error).toContain('Please try again')
   })
@@ -1153,12 +1168,12 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       installGate: gate
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
-    expect(status.state).toBe('error')
+    expect(status.state).toBe('ready')
   })
 
   it('hydrates notes from the CDN manifest when the version matches', async () => {

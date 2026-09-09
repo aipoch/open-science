@@ -153,9 +153,11 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
 
                 {isApplying ? (
                   <div className="mt-4 rounded-lg border border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
-                    {t(
-                      "Open Science is stopping background tasks and will close to finish installing. The update may take a moment; please don't reopen the app during this step. The updated app will reopen automatically."
-                    )}
+                    {dialogStatus.applyKind === 'installer'
+                      ? t('Verifying installer…')
+                      : t(
+                          "Open Science is stopping background tasks and will close to finish installing. The update may take a moment; please don't reopen the app during this step. The updated app will reopen automatically."
+                        )}
                   </div>
                 ) : null}
 
@@ -174,7 +176,22 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                             ? t(
                                 'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
                               )
-                            : (dialogStatus.error ?? t('Update failed'))}
+                            : dialogStatus.error ===
+                                'Research work is still running. Stop it before restarting to update.'
+                              ? t(
+                                  'Research work is still running. Stop it before restarting to update.'
+                                )
+                              : dialogStatus.error ===
+                                  'Subagents are still running. Return to their tasks and stop them before restarting to update.'
+                                ? t(
+                                    'Subagents are still running. Return to their tasks and stop them before restarting to update.'
+                                  )
+                                : dialogStatus.error ===
+                                    'The installer is missing or has changed. Download the update again.'
+                                  ? t(
+                                      'The installer is missing or has changed. Download the update again.'
+                                    )
+                                  : (dialogStatus.error ?? t('Update failed'))}
                     </p>
                     {isBackgroundProcessError ? (
                       <p className="mt-2 text-xs text-muted-foreground">
@@ -225,7 +242,9 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                   className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground opacity-70"
                 >
                   <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
-                  {t('Preparing update…')}
+                  {dialogStatus.applyKind === 'installer'
+                    ? t('Verifying installer…')
+                    : t('Preparing update…')}
                 </button>
               ) : isReady ? (
                 <button

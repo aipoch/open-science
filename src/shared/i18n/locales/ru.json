@@ -5325,6 +5325,10 @@
     "Recheck saved conversations": "Повторно проверить сохранённые диалоги",
     "Some changes have not been saved.": "Некоторые изменения не сохранены.",
     "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "Однократное разрешение действует для следующего выполнения в этой среде, даже если код изменится. Во время этого выполнения разрешено несколько подключений к этому домену.",
-    "Next execution in this runtime": "Следующее выполнение в этой среде"
+    "Next execution in this runtime": "Следующее выполнение в этой среде",
+    "Research work is still running. Stop it before restarting to update.": "Исследовательские задачи ещё выполняются. Остановите их перед перезапуском для обновления.",
+    "Subagents are still running. Return to their tasks and stop them before restarting to update.": "Субагенты ещё работают. Вернитесь к их задачам и остановите их перед перезапуском для обновления.",
+    "The installer is missing or has changed. Download the update again.": "Установщик отсутствует или был изменён. Загрузите обновление ещё раз.",
+    "Verifying installer…": "Проверка установщика…"
   }
 }
