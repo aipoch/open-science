@@ -200,6 +200,16 @@ export type DelegationPolicy = 'allow' | 'deny'
 export type TurnIntent = 'plan-first'
 export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export type AgentFramework = 'claude-code' | 'opencode' | 'codex' | 'codebuddy'
+export type DoctorReport = {
+  ready: boolean
+  checks: {
+    daemon: { status: 'ready' }
+    runtime: { status: 'ready' | 'missing'; framework: AgentFramework }
+    provider: { status: 'ready' | 'missing' }
+    skills: { status: 'ready'; enabled: string[] }
+  }
+  next: Array<{ code: 'runtime_missing' | 'provider_missing' }>
+}
 export type AgentConfiguration = {
   providerId: string
   model?: string
@@ -457,6 +467,7 @@ export class OpenScienceClient {
     requestTimeoutMs?: number
   })
   health(options?: RequestOptions): Promise<unknown>
+  doctor(options?: RequestOptions): Promise<DoctorReport>
   listConnectors(options?: RequestOptions): Promise<ConnectorsSnapshot>
   getConnector(
     id: string,

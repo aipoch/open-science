@@ -18,6 +18,17 @@ import type {
   SubagentModelConfiguration
 } from './settings'
 
+export type TaskDoctorReport = Readonly<{
+  ready: boolean
+  checks: Readonly<{
+    daemon: Readonly<{ status: 'ready' }>
+    runtime: Readonly<{ status: 'ready' | 'missing'; framework: AgentFrameworkId }>
+    provider: Readonly<{ status: 'ready' | 'missing' }>
+    skills: Readonly<{ status: 'ready'; enabled: string[] }>
+  }>
+  next: ReadonlyArray<Readonly<{ code: 'runtime_missing' | 'provider_missing' }>>
+}>
+
 export const TASK_EVENT_STREAM_PROTOCOL_VERSION = 1 as const
 
 export type TaskRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'

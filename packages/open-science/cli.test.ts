@@ -29,6 +29,32 @@ const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
 ]
 
 describe('task CLI', () => {
+  it('requires JSON output for doctor', () => {
+    expect(() => parseCliArgs(['doctor'])).toThrow('doctor requires --json.')
+  })
+
+  it('prints the doctor readiness contract as valid JSON', async () => {
+    const report = {
+      ready: false,
+      checks: {
+        daemon: { status: 'ready' },
+        runtime: { status: 'missing', framework: 'codex' },
+        provider: { status: 'missing' },
+        skills: { status: 'ready', enabled: ['literature-review'] }
+      },
+      next: [{ code: 'runtime_missing' }, { code: 'provider_missing' }]
+    }
+    const log = vi.fn()
+
+    await runTaskCommand(parseCliArgs(['doctor', '--json']), {
+      connect: vi.fn().mockResolvedValue({ doctor: vi.fn().mockResolvedValue(report) }),
+      log,
+      stdinIsTTY: true
+    })
+
+    expect(JSON.parse(log.mock.calls[0][0])).toEqual(report)
+  })
+
   it('rejects ports that are not complete decimal values', () => {
     expect(() => parseCliArgs(['start', '--port', '44100xyz'])).toThrow('Invalid port: 44100xyz')
     expect(() => parseCliArgs(['start', '--port', '0'])).toThrow('Invalid port: 0')

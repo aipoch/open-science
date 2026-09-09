@@ -20,6 +20,8 @@ import type {
   UpdateDeviceCredentialRequest,
   DeviceCredentialsSnapshot,
   CreateDeviceCredentialResult,
+  Preflight,
+  SkillView,
   SettingsSnapshot
 } from '../../shared/settings'
 import type {
@@ -28,6 +30,7 @@ import type {
   StartTaskRunRequest,
   TaskProject,
   TaskAgentRouting,
+  TaskDoctorReport,
   TaskProjectSessionDefaults,
   TaskPlanResponseRequest,
   TaskRun,
@@ -227,6 +230,35 @@ class HeadlessTaskApi {
 
   listProjects(): Promise<TaskProject[]> {
     return this.runner.listProjects()
+  }
+
+  async doctor(): Promise<TaskDoctorReport> {
+    const [preflight, skills] = await Promise.all([
+      this.invoke('settings:get-preflight') as Promise<Preflight>,
+      this.invoke('settings:list-skills') as Promise<SkillView[]>
+    ])
+    const next: TaskDoctorReport['next'][number][] = []
+    if (!preflight.agentReady) next.push({ code: 'runtime_missing' })
+    if (!preflight.activeProviderReady) next.push({ code: 'provider_missing' })
+    return {
+      ready: preflight.agentReady && preflight.activeProviderReady,
+      checks: {
+        daemon: { status: 'ready' },
+        runtime: {
+          status: preflight.agentReady ? 'ready' : 'missing',
+          framework: preflight.agentFrameworkId
+        },
+        provider: { status: preflight.activeProviderReady ? 'ready' : 'missing' },
+        skills: {
+          status: 'ready',
+          enabled: skills
+            .filter((skill) => skill.enabled && skill.available !== false)
+            .map((skill) => skill.id)
+            .sort()
+        }
+      },
+      next
+    }
   }
 
   createProject(request: CreateTaskProjectRequest): Promise<TaskProject> {

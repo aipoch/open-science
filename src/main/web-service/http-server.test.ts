@@ -3955,6 +3955,16 @@ describe('startWebHttpServer', () => {
       ((event: import('../../shared/task-api').TaskRunProgressEvent) => void) | undefined
     const tasks = {
       runWithCallerContext: runWithCapturedCallerContext,
+      doctor: vi.fn().mockResolvedValue({
+        ready: false,
+        checks: {
+          daemon: { status: 'ready' },
+          runtime: { status: 'missing', framework: 'codex' },
+          provider: { status: 'ready' },
+          skills: { status: 'ready', enabled: ['literature-review'] }
+        },
+        next: [{ code: 'runtime_missing' }]
+      }),
       subscribeProgress: vi.fn((listener) => {
         publishProgress = listener
         return () => {
@@ -4064,6 +4074,21 @@ describe('startWebHttpServer', () => {
     servers.push(server)
     const base = `http://127.0.0.1:${server.port}`
     const headers = { authorization: 'Bearer test-token' }
+
+    const doctor = await fetch(`${base}/api/v1/doctor`, { headers })
+    expect(doctor.status).toBe(200)
+    expect(await doctor.json()).toEqual({
+      data: {
+        ready: false,
+        checks: {
+          daemon: { status: 'ready' },
+          runtime: { status: 'missing', framework: 'codex' },
+          provider: { status: 'ready' },
+          skills: { status: 'ready', enabled: ['literature-review'] }
+        },
+        next: [{ code: 'runtime_missing' }]
+      }
+    })
 
     const progressSocket = new WebSocket(
       `${base.replace('http:', 'ws:')}/api/v1/events?token=test-token`

@@ -237,6 +237,69 @@ const createComputePreferenceHarness = (
 }
 
 describe('HeadlessTaskApi adapter', () => {
+  it('projects read-only readiness checks and stable next-action codes', async () => {
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'settings:get-preflight') {
+        return {
+          claudeReady: true,
+          opencodeReady: true,
+          codebuddyReady: true,
+          codexReady: false,
+          agentFrameworkId: 'codex',
+          agentReady: false,
+          activeProviderReady: false
+        }
+      }
+      if (channel === 'settings:list-skills') {
+        return [
+          {
+            id: 'writing',
+            name: 'writing',
+            displayName: 'Writing',
+            description: 'Write reports.',
+            source: 'featured',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            enabled: true
+          },
+          {
+            id: 'literature-review',
+            name: 'literature-review',
+            displayName: 'Literature Review',
+            description: 'Review literature.',
+            source: 'featured',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            enabled: true,
+            available: true
+          },
+          {
+            id: 'unavailable',
+            name: 'unavailable',
+            displayName: 'Unavailable',
+            description: 'Unavailable skill.',
+            source: 'personal',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            enabled: true,
+            available: false,
+            availability: 'identity-conflict'
+          }
+        ]
+      }
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+
+    await expect(api.doctor()).resolves.toEqual({
+      ready: false,
+      checks: {
+        daemon: { status: 'ready' },
+        runtime: { status: 'missing', framework: 'codex' },
+        provider: { status: 'missing' },
+        skills: { status: 'ready', enabled: ['literature-review', 'writing'] }
+      },
+      next: [{ code: 'runtime_missing' }, { code: 'provider_missing' }]
+    })
+  })
+
   it('routes Project Session defaults through the Task-only persistence command', async () => {
     const invoke = vi.fn(
       async (channel: string, _callerContext: CallerContext, args: unknown[]) => {

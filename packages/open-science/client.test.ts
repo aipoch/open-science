@@ -55,6 +55,7 @@ describe('OpenScienceClient', () => {
     expect(Object.getOwnPropertyNames(OpenScienceClient.prototype).sort()).toEqual(
       [
         'constructor',
+        'doctor',
         'health',
         'listConnectors',
         'getConnector',
@@ -92,7 +93,7 @@ describe('OpenScienceClient', () => {
     )
   })
 
-  it('uses versioned endpoints for Session, Project-default, and Agent-routing configuration', async () => {
+  it('uses versioned endpoints for Doctor, Session, Project-default, and Agent-routing reads', async () => {
     const fetch = vi.fn().mockImplementation(async () => response(200, { data: { ok: true } }))
     const client = new OpenScienceClient({
       baseUrl: 'http://127.0.0.1:44100',
@@ -100,6 +101,7 @@ describe('OpenScienceClient', () => {
       fetch
     })
 
+    await client.doctor()
     await client.getProjectSessionDefaults('project/1')
     await client.updateProjectSessionDefaults('project/1', {
       expectedUpdatedAt: 2,
@@ -114,6 +116,7 @@ describe('OpenScienceClient', () => {
     await client.updateAgentRouting({ framework: 'codex' })
 
     expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      'http://127.0.0.1:44100/api/v1/doctor',
       'http://127.0.0.1:44100/api/v1/projects/project%2F1/session-defaults',
       'http://127.0.0.1:44100/api/v1/projects/project%2F1/session-defaults',
       'http://127.0.0.1:44100/api/v1/sessions/session%2F1/config',
@@ -122,6 +125,7 @@ describe('OpenScienceClient', () => {
       'http://127.0.0.1:44100/api/v1/settings/agent-routing'
     ])
     expect(fetch.mock.calls.map(([, options]) => options?.method ?? 'GET')).toEqual([
+      'GET',
       'GET',
       'PATCH',
       'GET',
