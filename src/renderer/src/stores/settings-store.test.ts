@@ -2625,3 +2625,62 @@ describe('settings store: setDefaultPermissionProfile', () => {
     )
   })
 })
+
+describe('overlapping authoritative updates', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  const deferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+    let resolve!: (v: T) => void
+    const promise = new Promise<T>((a) => {
+      resolve = a
+    })
+    return { promise, resolve }
+  }
+  const settings = (revision: number, notificationsEnabled: boolean): SettingsSnapshot => ({
+    ...snapshot([]),
+    revision,
+    notificationsEnabled
+  })
+
+  it.each(['load', 'provider', 'runtime'] as const)(
+    'preserves the committed preference after an overlapping %s snapshot and event',
+    async (source) => {
+      useSettingsStore.setState({ ...createInitialSettingsState(), isLoaded: true })
+      useSettingsStore.getState().acceptCommittedSnapshot(settings(1, true))
+      const read = deferred<ReturnType<typeof settings>>()
+      const write = deferred<ReturnType<typeof settings>>()
+      vi.stubGlobal('window', {
+        api: {
+          settings: {
+            getSettings: () => read.promise,
+            isEncryptionAvailable: async () => true,
+            setActiveProvider: () => read.promise,
+            detectOpencode: () => read.promise,
+            getPreflight: async () => createInitialSettingsState().preflight,
+            setNotificationsEnabled: () => write.promise
+          }
+        }
+      })
+      const store = useSettingsStore.getState()
+      const loading =
+        source === 'load'
+          ? store.load()
+          : source === 'provider'
+            ? store.setActiveProvider('provider')
+            : store.detectOpencode()
+      const saving = store.setNotificationsEnabled(false)
+      expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+      read.resolve(settings(1, true))
+      await loading
+      // Production publishes the committed event before returning the command response.
+      useSettingsStore.getState().acceptCommittedSnapshot(settings(2, false))
+      write.resolve(settings(2, false))
+      await saving
+      expect(useSettingsStore.getState()).toMatchObject({
+        settingsSnapshotRevision: 2,
+        notificationsEnabled: false,
+        settingsWriteError: undefined
+      })
+    }
+  )
+})

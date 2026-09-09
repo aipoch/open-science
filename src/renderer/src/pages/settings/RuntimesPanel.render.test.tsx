@@ -1281,3 +1281,56 @@ describe('RuntimesPanel packages dialog', () => {
     expect(occurrences(dialog, 'Conda: bio')).toBe(1)
   })
 })
+
+it('refreshes an open panel after another client changes policy and removes its listener', async () => {
+  let policy = true
+  const listeners = new Set<() => void>()
+  Object.assign(window.api.runtime, {
+    getAgentEnvironmentCreationEnabled: vi.fn(async () => policy),
+    onPolicyChanged: (listener: () => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }
+  })
+  await render()
+  const toggle = (): Element | null =>
+    container.querySelector('[aria-label="Let the Agent create environments"]')
+  expect(toggle()?.getAttribute('data-state')).toBe('checked')
+  policy = false
+  await act(async () => {
+    for (const listener of listeners) listener()
+  })
+  expect(toggle()?.getAttribute('data-state')).toBe('unchecked')
+  expect(listEnvironments).toHaveBeenCalledOnce()
+  await act(async () => root.render(null))
+  expect(listeners.size).toBe(0)
+})
+
+it('ignores a delayed local policy receipt after a newer remote change', async () => {
+  let policy = true
+  let finish!: (value: boolean) => void
+  const listeners = new Set<() => void>()
+  Object.assign(window.api.runtime, {
+    getAgentEnvironmentCreationEnabled: vi.fn(async () => policy),
+    setAgentEnvironmentCreationEnabled: vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve
+        })
+    ),
+    onPolicyChanged: (listener: () => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }
+  })
+  await render()
+  const toggle = (): Element | null =>
+    container.querySelector('[aria-label="Let the Agent create environments"]')
+  await click(toggle())
+  policy = true
+  await act(async () => {
+    for (const listener of listeners) listener()
+    finish(false)
+  })
+  expect(toggle()?.getAttribute('data-state')).toBe('checked')
+})

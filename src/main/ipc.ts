@@ -3977,6 +3977,7 @@ const createApplicationModules = async (
   // (getRuntimeRoot(<dataRoot>)); read lazily so a data-root switch is reflected without re-register.
   const runtimeWorkflows = createRuntimeWorkflows({
     settingsService,
+    onPolicyChanged: () => broadcastToRenderers('runtime:policy-changed', undefined),
     ...(notebookNetworkSandbox.supportsWindowsRuntimeAccess
       ? {
           setWindowsRuntimeAccess: (executable: string, authorized: boolean) =>

@@ -195,9 +195,7 @@ export const createSettingsPreferencesSlice = ({
           : undefined
       )
       if (!isCurrent) return
-      if (!accepted) {
-        setState({ [field]: confirmedValue } as Partial<SettingsPreferencesState>)
-      }
+      setState({ [field]: confirmedValue } as Partial<SettingsPreferencesState>)
       write.succeed()
     } catch (error) {
       const confirmedValue = write.complete()

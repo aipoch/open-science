@@ -213,9 +213,24 @@ const projectSessionMetadataAuthority = (
   ) {
     return current
   }
-  if (current.archivedAt === incoming.archivedAt && currentRevision === incomingRevision)
+  if (
+    current.archivedAt === incoming.archivedAt &&
+    currentRevision === incomingRevision &&
+    current.enabledComputeHosts === incoming.enabledComputeHosts &&
+    current.selectedComputeHosts === incoming.selectedComputeHosts &&
+    current.computeConcurrencyLimit === incoming.computeConcurrencyLimit
+  )
     return current
-  const projected = { ...current, revision: incomingRevision }
+  // These fields are main-owned in every full durable snapshot, including receipts for other
+  // domains. Project them before advancing the shared revision so a later Host receipt can be
+  // rejected without losing a change already present in the newer snapshot.
+  const projected = {
+    ...current,
+    revision: incomingRevision,
+    enabledComputeHosts: incoming.enabledComputeHosts && [...incoming.enabledComputeHosts],
+    selectedComputeHosts: incoming.selectedComputeHosts && [...incoming.selectedComputeHosts],
+    computeConcurrencyLimit: incoming.computeConcurrencyLimit
+  }
   if (incoming.archivedAt === undefined) delete projected.archivedAt
   else projected.archivedAt = incoming.archivedAt
   return projected
@@ -873,12 +888,17 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       }
 
       if (mode === 'compute-host-access-authority') {
+        if (sessionRevision(session) < sessionRevision(current)) {
+          if (archive === current) return state
+          return {
+            sessions: state.sessions.map((candidate) =>
+              candidate === current ? archive : candidate
+            )
+          } as Partial<State>
+        }
         const projected: ChatSession = {
           ...archive,
           revision: Math.max(sessionRevision(current), sessionRevision(session)),
-          enabledComputeHosts: session.enabledComputeHosts && [...session.enabledComputeHosts],
-          selectedComputeHosts: session.selectedComputeHosts && [...session.selectedComputeHosts],
-          computeConcurrencyLimit: session.computeConcurrencyLimit,
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
         markExternallyHydratedSession(projected, session)
@@ -1074,6 +1094,9 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         {
           ...projected,
           archivedAt: archive.archivedAt,
+          enabledComputeHosts: archive.enabledComputeHosts,
+          selectedComputeHosts: archive.selectedComputeHosts,
+          computeConcurrencyLimit: archive.computeConcurrencyLimit,
           branchContextResetRequired: archive.branchContextResetRequired,
           // Whole-Session saves and continuation acknowledgements do not own Delegation policy.
           // Keep the last dedicated mutation result even when a later ordinary projection carries

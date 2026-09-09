@@ -279,3 +279,34 @@ describe('memory store', () => {
     })
   })
 })
+
+it('refreshes a visible project name after a project update without a memory revision change', async () => {
+  const listeners = new Set<(project: { id: string }) => void>()
+  const before = {
+    ...snapshot(1),
+    projects: [{ projectId: 'project-a', name: 'Before', archived: false, entries: [] }]
+  }
+  const after = { ...before, projects: [{ ...before.projects[0], name: 'After', archived: true }] }
+  setMemoryApi({
+    snapshot: vi.fn().mockResolvedValueOnce(before).mockResolvedValueOnce(after),
+    onChanged: vi.fn(() => () => undefined)
+  })
+  Object.assign(window.api, {
+    projects: {
+      onUpdated: (listener: (project: { id: string }) => void) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      }
+    }
+  })
+  await useMemoryStore.getState().load()
+  const remove = useMemoryStore.getState().listen()
+  try {
+    for (const listener of listeners) listener({ id: 'project-a' })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(useMemoryStore.getState().projects).toEqual(after.projects)
+  } finally {
+    remove()
+  }
+})

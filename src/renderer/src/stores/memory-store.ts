@@ -139,9 +139,16 @@ export const useMemoryStore = create<MemoryStore>((set, get) => {
     clearAll: () => applyMutation(() => window.api.memory.clearAll()),
     listen: () => {
       if (!window.api?.memory) return () => undefined
-      return window.api.memory.onChanged(({ revision }) => {
+      const removeMemory = window.api.memory.onChanged(({ revision }) => {
         if (revision > get().revision) void get().load()
       })
+      const removeProject = window.api.projects?.onUpdated?.(({ id }) => {
+        if (get().projects.some((project) => project.projectId === id)) void get().load()
+      })
+      return () => {
+        removeMemory()
+        removeProject?.()
+      }
     }
   }
 })

@@ -110,9 +110,7 @@ const RuntimesPanel = ({
   const setBusy = useRuntimeSettingsStore((state) => state.setBusy)
   const setError = useRuntimeSettingsStore((state) => state.setError)
   const setEnablement = useRuntimeSettingsStore((state) => state.setEnablement)
-  const setAgentEnvironmentCreationEnabled = useRuntimeSettingsStore(
-    (state) => state.setAgentEnvironmentCreationEnabled
-  )
+  const refreshRuntimePolicy = useRuntimeSettingsStore((state) => state.refreshPolicy)
   const updatePackageCount = useRuntimeSettingsStore((state) => state.updatePackageCount)
   const [runtimeAccessMessage, setRuntimeAccessMessage] = useState<Record<string, string>>({})
   const setSandboxAccess = async (
@@ -188,7 +186,9 @@ const RuntimesPanel = ({
   }, [initEnv])
 
   useEffect(() => {
+    const remove = useRuntimeSettingsStore.getState().listen()
     void loadRuntimeSettings().catch(() => undefined)
+    return remove
   }, [loadRuntimeSettings])
 
   // Fetches the open dialog's package list; re-runs on Retry via packagesRetryNonce. A successful
@@ -334,10 +334,12 @@ const RuntimesPanel = ({
     setBusy(true)
     setError(null)
     try {
-      const enabled = await window.api.runtime.setAgentEnvironmentCreationEnabled({
+      await window.api.runtime.setAgentEnvironmentCreationEnabled({
         enabled: !agentEnvironmentCreationEnabled
       })
-      setAgentEnvironmentCreationEnabled(enabled)
+      // The write committed. A stale reply must not replace a newer remote policy; reread it.
+      // Refresh errors already have the panel's retryable load-error surface.
+      await refreshRuntimePolicy().catch(() => undefined)
     } catch (e) {
       setError(e instanceof Error ? e.message : t('Could not change Agent environment creation.'))
     } finally {

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { ErrorNotice } from '@/components/error-notice'
+import { useLiteratureChanges } from './useLiteratureChanges'
 import type { LiteratureSourceRecordView } from '../../../../shared/literature'
 
 const sourceLink = (value: string): string | undefined => {
@@ -62,12 +63,18 @@ const LiteratureSources = ({ itemId }: { itemId: string }): React.JSX.Element =>
   const [attempt, setAttempt] = useState(0)
   const [sources, setSources] = useState<LiteratureSourceRecordView[]>()
   const [failed, setFailed] = useState(false)
+  useLiteratureChanges(() => {
+    if (open) setAttempt((value) => value + 1)
+  })
   useEffect(() => {
     if (!open) return
     let cancelled = false
     void window.api.literature.sources(itemId).then(
       (records) => {
-        if (!cancelled) setSources(records)
+        if (!cancelled) {
+          setSources(records)
+          setFailed(false)
+        }
       },
       () => {
         if (!cancelled) setFailed(true)

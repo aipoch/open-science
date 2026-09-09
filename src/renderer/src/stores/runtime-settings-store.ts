@@ -29,7 +29,8 @@ type RuntimeSettingsState = {
   setBusy: (busy: boolean) => void
   setError: (error: string | null) => void
   setEnablement: (language: NotebookLanguage, enablement: RuntimeEnablement) => void
-  setAgentEnvironmentCreationEnabled: (enabled: boolean) => void
+  refreshPolicy: () => Promise<boolean>
+  listen: () => () => void
   updatePackageCount: (envId: string, count: number) => void
 }
 
@@ -38,19 +39,54 @@ let registryGeneration = 0
 let packageCountGeneration = 0
 const packageCountRequests: Partial<Record<NotebookLanguage, Promise<void>>> = {}
 
-const fetchRegistry = (): Promise<RuntimeRegistrySnapshot> =>
+const fetchRegistry = (): Promise<
+  Omit<RuntimeRegistrySnapshot, 'agentEnvironmentCreationEnabled'>
+> =>
   Promise.all([
     window.api.runtime.listEnvironments(),
     window.api.runtime.getEnablement('python'),
-    window.api.runtime.getEnablement('r'),
-    window.api.runtime.getAgentEnvironmentCreationEnabled()
-  ]).then(([envs, python, r, agentEnvironmentCreationEnabled]) => ({
+    window.api.runtime.getEnablement('r')
+  ]).then(([envs, python, r]) => ({
     envs,
-    enablement: { python, r },
-    agentEnvironmentCreationEnabled
+    enablement: { python, r }
   }))
 
 const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
+  let policyGeneration = 0
+  let policyRequest: Promise<boolean> | undefined
+  const readPolicy = (): Promise<boolean> => {
+    if (policyRequest) return policyRequest
+    const request = (async () => {
+      for (;;) {
+        const generation = policyGeneration
+        try {
+          const enabled = await window.api.runtime.getAgentEnvironmentCreationEnabled()
+          if (generation !== policyGeneration) continue
+          set({ agentEnvironmentCreationEnabled: enabled })
+          return enabled
+        } catch (error) {
+          if (generation !== policyGeneration) continue
+          set({ error: 'Could not load runtimes.' })
+          throw error
+        }
+      }
+    })().finally(() => {
+      if (policyRequest === request) policyRequest = undefined
+    })
+    policyRequest = request
+    return request
+  }
+  const refreshPolicy = (): Promise<boolean> => {
+    // Events and completed writes invalidate any read already in flight. A burst shares one
+    // request and gets a trailing read; it never repeats discovery or package inventory.
+    policyGeneration += 1
+    set({ error: null })
+    // A read can have settled just before this event while its finally cleanup is still queued.
+    // Wait through that cleanup before requesting authority again.
+    return policyRequest
+      ? policyRequest.catch(() => undefined).then(() => readPolicy())
+      : readPolicy()
+  }
   const loadPackageCounts = (snapshot: RuntimeRegistrySnapshot, generation: number): void => {
     for (const language of ['python', 'r'] as const) {
       if (!snapshot.envs[language].some((env) => env.runnable)) {
@@ -93,15 +129,17 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
   const refresh = (force: boolean): Promise<RuntimeRegistrySnapshot> => {
     const state = get()
     if (!force && state.loaded && state.envs) {
-      return Promise.resolve({
-        envs: state.envs,
+      set({ error: null })
+      return readPolicy().then((agentEnvironmentCreationEnabled) => ({
+        envs: state.envs!,
         enablement: state.enablement,
-        agentEnvironmentCreationEnabled: state.agentEnvironmentCreationEnabled
-      })
+        agentEnvironmentCreationEnabled
+      }))
     }
     if (registryRequest) return registryRequest
 
     const generation = ++registryGeneration
+    const policyAtStart = policyGeneration
     if (force) {
       packageCountGeneration += 1
       delete packageCountRequests.python
@@ -111,17 +149,21 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
       busy: state.loaded,
       error: null
     })
-    const request = fetchRegistry().then(
-      (snapshot) => {
+    const request = Promise.all([fetchRegistry(), readPolicy()]).then(
+      ([registry]) => {
+        // Discovery may finish after a newer policy read. Its receipt does not own policy state.
+        const snapshot = {
+          ...registry,
+          agentEnvironmentCreationEnabled: get().agentEnvironmentCreationEnabled
+        }
         if (generation === registryGeneration) {
           set({
             envs: snapshot.envs,
             enablement: snapshot.enablement,
-            agentEnvironmentCreationEnabled: snapshot.agentEnvironmentCreationEnabled,
             loaded: true,
             checkedAt: Date.now(),
             busy: false,
-            error: null,
+            error: policyAtStart === policyGeneration ? null : get().error,
             ...(force ? { packageCounts: {}, packageCountsLoaded: {} } : {})
           })
           loadPackageCounts(snapshot, generation)
@@ -163,8 +205,11 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
     setError: (error) => set({ error }),
     setEnablement: (language, enablement) =>
       set((state) => ({ enablement: { ...state.enablement, [language]: enablement } })),
-    setAgentEnvironmentCreationEnabled: (agentEnvironmentCreationEnabled) =>
-      set({ agentEnvironmentCreationEnabled }),
+    refreshPolicy,
+    listen: () =>
+      window.api.runtime.onPolicyChanged?.(() => {
+        void refreshPolicy().catch(() => undefined)
+      }) ?? (() => undefined),
     updatePackageCount: (envId, count) =>
       set((state) => ({ packageCounts: { ...state.packageCounts, [envId]: count } }))
   }
