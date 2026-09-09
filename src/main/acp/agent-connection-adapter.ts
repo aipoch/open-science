@@ -14,6 +14,7 @@ import type {
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { Readable, Writable } from 'node:stream'
+import { StringDecoder } from 'node:string_decoder'
 
 import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework'
 import { terminateProcessTree } from '../process-tree'
@@ -62,6 +63,7 @@ type AcpAgentConnectionHooks = Readonly<{
   onProcessTreeReaped: (reaped: boolean) => void
   markProcessExitExpected: (process: ChildProcessWithoutNullStreams, epoch: number) => void
   onProcessStderr: (text: string, context: AcpProcessEventContext) => void
+  onProcessStderrEnd?: (context: AcpProcessEventContext) => void
   onProcessError: (error: unknown, context: AcpProcessEventContext) => void
   onProcessExit: (
     code: number | null,
@@ -190,13 +192,21 @@ class AcpAgentConnectionAdapter {
       if (!process) throw new Error('ACP agent process did not spawn.')
       const spawnedProcess = process
       hooks.onBackendPublished(backendAttempt.publish())
+      const stderrDecoder = new StringDecoder('utf8')
+      const stderrContext = { process: spawnedProcess, framework, epoch: input.epoch }
+      let stderrEnded = false
       spawnedProcess.stderr.on('data', (data: Buffer) => {
-        hooks.onProcessStderr(data.toString('utf8').trim(), {
-          process: spawnedProcess,
-          framework,
-          epoch: input.epoch
-        })
+        if (!stderrEnded) hooks.onProcessStderr(stderrDecoder.write(data), stderrContext)
       })
+      const finishStderr = (): void => {
+        if (stderrEnded) return
+        stderrEnded = true
+        const tail = stderrDecoder.end()
+        if (tail) hooks.onProcessStderr(tail, stderrContext)
+        hooks.onProcessStderrEnd?.(stderrContext)
+      }
+      spawnedProcess.stderr.once('end', finishStderr)
+      spawnedProcess.stderr.once('close', finishStderr)
       spawnedProcess.on('error', (error) => {
         hooks.onProcessError(error, {
           process: spawnedProcess,

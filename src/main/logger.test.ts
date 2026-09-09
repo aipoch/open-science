@@ -5,12 +5,18 @@ import { join, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const renameFile = vi.hoisted(() => vi.fn())
+const { renameFile, appendLogFile, openLogFile } = vi.hoisted(() => ({
+  renameFile: vi.fn(),
+  appendLogFile: vi.fn(),
+  openLogFile: vi.fn()
+}))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>()
   renameFile.mockImplementation(original.rename)
-  return { ...original, rename: renameFile }
+  appendLogFile.mockImplementation(original.appendFile)
+  openLogFile.mockImplementation(original.open)
+  return { ...original, rename: renameFile, appendFile: appendLogFile, open: openLogFile }
 })
 
 import {
@@ -24,6 +30,7 @@ import {
   runWithDiagnosticCorrelation,
   writeFatalLogSync
 } from './logger'
+import { flushDiagnosticsWithTimeout } from './diagnostics/flush'
 import {
   ApplicationModuleDisposalTimeoutError,
   shutdownApplicationSurfaces
@@ -33,6 +40,9 @@ let logDir: string | undefined
 
 afterEach(async () => {
   vi.restoreAllMocks()
+  const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  appendLogFile.mockImplementation(fs.appendFile)
+  openLogFile.mockImplementation(fs.open)
   if (logDir) {
     await rm(logDir, { recursive: true, force: true })
     logDir = undefined
@@ -222,6 +232,8 @@ describe('logger: main-process boundary', () => {
             .soft(await getLogFileStatus())
             .toMatchObject({ lastWriteSucceeded: false, lastFailureCategory: 'rotation' })
           renameFile.mockImplementation(original.rename)
+          appendLogFile.mockImplementation(original.appendFile)
+          await expect(flushDiagnosticsWithTimeout(flushLogs, 1000)).resolves.toBe('failed')
           createLogger('diagnostics').error('rotation recovered', { detail: 'x'.repeat(150) })
           await flushLogs()
         }
@@ -234,6 +246,7 @@ describe('logger: main-process boundary', () => {
         })
       } finally {
         renameFile.mockImplementation(original.rename)
+        appendLogFile.mockImplementation(original.appendFile)
       }
     }
   )
@@ -1679,4 +1692,219 @@ describe('logger: rotation (auto-cleanup)', () => {
       lastFailureCategory: 'rotation'
     })
   })
+})
+
+describe('logger: stalled and interrupted writes', () => {
+  it('bounds pending records while reserving capacity for errors and reports discarded logs', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-queue-'))
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let release!: () => void
+    appendLogFile.mockClear()
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    appendLogFile.mockImplementationOnce(async (...args: Parameters<typeof fs.appendFile>) => {
+      await blocked
+      await fs.appendFile(...args)
+    })
+    initLogger({ logDir, mirrorToConsole: false, maxPendingBytes: 4096, maxPendingRecords: 8 })
+    const log = createLogger('queue')
+    log.info('first')
+    await vi.waitFor(() => expect(appendLogFile).toHaveBeenCalled())
+    for (let index = 0; index < 100; index++) log.info('burst', { index })
+    log.error('important error')
+    // Logging remains synchronous even while the disk cannot make progress.
+    release()
+    await flushLogs()
+    const records = (await readFile(join(logDir, 'main.log'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(records.filter((record) => record.msg === 'burst').length).toBeLessThan(8)
+    expect(records.some((record) => record.msg === 'important error')).toBe(true)
+    expect(
+      records.find((record) => record.msg === 'log records dropped')?.data.droppedRecords
+    ).toBeGreaterThan(0)
+    await expect(flushDiagnosticsWithTimeout(flushLogs, 1000)).resolves.toBe('failed')
+    log.info('after recovery')
+    await flushLogs()
+    expect(await readFile(join(logDir, 'main.log'), 'utf8')).toContain('after recovery')
+  })
+
+  it('does not report a lossless flush after a failed write followed by a successful write', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-flush-'))
+    initLogger({ logDir, mirrorToConsole: false })
+    appendLogFile.mockRejectedValueOnce(Object.assign(new Error('disk full'), { code: 'ENOSPC' }))
+    const log = createLogger('flush')
+    log.error('lost record')
+    await flushLogs()
+    log.info('recovery record')
+    await expect(flushDiagnosticsWithTimeout(flushLogs, 1000)).resolves.toBe('failed')
+    await expect(getLogFileStatus()).resolves.toMatchObject({ lastWriteSucceeded: true })
+  })
+
+  it.each(['zero bytes', 'partial JSON', 'missing newline', 'split UTF-8'])(
+    'keeps the next successful JSONL record readable after an append fails at %s',
+    async (boundary) => {
+      logDir = await mkdtemp(join(tmpdir(), 'os-logger-tail-'))
+      const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      initLogger({ logDir, mirrorToConsole: false })
+      const log = createLogger('tail')
+      log.info('preserved')
+      await flushLogs()
+      appendLogFile.mockImplementationOnce(async (path, line) => {
+        const bytes = Buffer.from(line)
+        const length =
+          boundary === 'zero bytes'
+            ? 0
+            : boundary === 'partial JSON'
+              ? 25
+              : boundary === 'missing newline'
+                ? bytes.length - 1
+                : bytes.indexOf(Buffer.from('测')) + 1
+        await fs.appendFile(path, bytes.subarray(0, length))
+        throw Object.assign(new Error('partial append'), { code: 'ENOSPC' })
+      })
+      log.error('interrupted 测')
+      await flushLogs()
+      log.info('recovered')
+      await flushLogs()
+      const records = (await readFile(join(logDir, 'main.log'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      expect(records.map((record) => record.msg)).toEqual(
+        expect.arrayContaining(['preserved', 'recovered'])
+      )
+    }
+  )
+
+  it('repairs a pre-existing incomplete tail without deleting complete historical lines', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-existing-tail-'))
+    await writeFile(join(logDir, 'main.log'), '{"msg":"historical"}\n{"msg":"incomplete')
+    initLogger({ logDir, mirrorToConsole: false })
+    createLogger('tail').info('new run')
+    await flushLogs()
+    const records = (await readFile(join(logDir, 'main.log'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(records.map((record) => record.msg)).toEqual(
+      expect.arrayContaining(['historical', 'new run'])
+    )
+  })
+})
+
+describe('logger: loss and recovery contracts', () => {
+  it('bounds pending UTF-8 bytes even when the record count remains below its limit', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-byte-budget-'))
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    appendLogFile.mockClear()
+    appendLogFile.mockImplementationOnce(async (...args: Parameters<typeof fs.appendFile>) => {
+      await blocked
+      await fs.appendFile(...args)
+    })
+    initLogger({ logDir, mirrorToConsole: false, maxPendingBytes: 4096, maxPendingRecords: 1000 })
+    const log = createLogger('bytes')
+    log.info('first')
+    await vi.waitFor(() => expect(appendLogFile).toHaveBeenCalledOnce())
+    for (let index = 0; index < 30; index++) log.info('payload', { text: '测'.repeat(200) })
+    for (let index = 0; index < 30; index++) log.error('error payload', { text: '测'.repeat(200) })
+    // Fatal logging stays synchronous and bypasses the bounded ordinary queue.
+    writeFatalLogSync('bytes', 'fatal marker')
+    expect(await readFile(join(logDir, 'main.log'), 'utf8')).toContain('fatal marker')
+    release()
+    await flushLogs()
+    const lines = (await readFile(join(logDir, 'main.log'), 'utf8')).trim().split('\n')
+    const records = lines.map((line) => JSON.parse(line))
+    const admittedBytes = lines
+      .filter((line) => !line.includes('log records dropped') && !line.includes('fatal marker'))
+      .reduce((sum, line) => sum + Buffer.byteLength(line) + 1, 0)
+    expect(admittedBytes).toBeLessThanOrEqual(4096)
+    expect(records.filter((record) => record.msg === 'error payload')).not.toHaveLength(0)
+    expect(
+      records.find((record) => record.msg === 'log records dropped')?.data.droppedRecords
+    ).toBeGreaterThan(0)
+  })
+
+  it('reports directory and inspection failures without rejecting ordinary log calls', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-io-failures-'))
+    const blocker = join(logDir, 'blocker')
+    await writeFile(blocker, 'not a directory')
+    initLogger({ logDir: join(blocker, 'logs'), mirrorToConsole: false })
+    expect(() => createLogger('io').error('cannot create directory')).not.toThrow()
+    await expect(flushDiagnosticsWithTimeout(flushLogs, 1000)).resolves.toBe('failed')
+    await expect(getLogFileStatus()).resolves.toMatchObject({ lastWriteSucceeded: false })
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    await fs.mkdir(join(logDir, 'as-directory'))
+    initLogger({ logDir, fileName: 'as-directory', mirrorToConsole: false })
+    createLogger('io').error('cannot inspect directory as log')
+    await expect(flushDiagnosticsWithTimeout(flushLogs, 1000)).resolves.toBe('failed')
+    await expect(getLogFileStatus()).resolves.toMatchObject({ lastFailureCategory: 'inspect' })
+  })
+
+  it('keeps overlapping flushes loss-aware and resets loss only with a new sink initialization', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-overlapping-flush-'))
+    initLogger({ logDir, mirrorToConsole: false })
+    appendLogFile.mockRejectedValueOnce(new Error('disk unavailable'))
+    createLogger('io').info('lost')
+    const first = flushDiagnosticsWithTimeout(flushLogs, 1000)
+    const second = flushDiagnosticsWithTimeout(flushLogs, 1000)
+    await expect(Promise.all([first, second])).resolves.toEqual(['failed', 'failed'])
+    initLogger({ logDir, mirrorToConsole: false })
+    createLogger('io').info('new initialization')
+    await expect(flushDiagnosticsWithTimeout(flushLogs, 1000)).resolves.toBe('flushed')
+  })
+})
+
+describe('logger: interrupted tail repair', () => {
+  it.each(['read', 'truncate'] as const)(
+    'does not append when tail %s fails, and retries after recovery',
+    async (operation) => {
+      logDir = await mkdtemp(join(tmpdir(), 'os-logger-tail-retry-'))
+      const path = join(logDir, 'main.log')
+      const original = '{"msg":"preserved"}\n{"partial":'
+      await writeFile(path, original)
+      const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      openLogFile.mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
+        const handle = await fs.open(...args)
+        return {
+          stat: handle.stat.bind(handle),
+          read:
+            operation === 'read'
+              ? async () => {
+                  throw new Error('read unavailable')
+                }
+              : handle.read.bind(handle),
+          truncate:
+            operation === 'truncate'
+              ? async () => {
+                  throw new Error('truncate unavailable')
+                }
+              : handle.truncate.bind(handle),
+          close: handle.close.bind(handle)
+        }
+      })
+      initLogger({ logDir, mirrorToConsole: false })
+      createLogger('tail').info('blocked write')
+      await expect(flushDiagnosticsWithTimeout(flushLogs, 1000)).resolves.toBe('failed')
+      expect(await readFile(path, 'utf8')).toBe(original)
+      createLogger('tail').info('recovered write')
+      await flushLogs()
+      const records = (await readFile(path, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      expect(records.map((record) => record.msg)).toEqual(
+        expect.arrayContaining(['preserved', 'recovered write'])
+      )
+      expect(
+        records.find((record) => record.msg === 'log records dropped')?.data.repairedTailBytes
+      ).toBe(11)
+    }
+  )
 })

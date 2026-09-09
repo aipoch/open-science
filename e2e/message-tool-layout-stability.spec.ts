@@ -12,7 +12,8 @@ const TOOL_STATUS_LAYOUT_SHIFT_PROMPT = 'Run the status-bearing layout stability
 const BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT =
   'Run the buffered text tool layout stability journey.'
 const TOOL_ORDER_PROMPT = 'Run the ordered slow tool journey.'
-const AGENT_STDERR_SUMMARY = 'Agent process stderr: 1 chunk, 22 bytes; raw output omitted.'
+// The stream byte count includes the fixture's terminating newline.
+const AGENT_STDERR_SUMMARY = 'Agent process stderr: 1 chunk, 23 bytes; raw output omitted.'
 
 // Windows CI stalls the first fake-agent turn when the window is shown from launch. Keep it hidden
 // until that reply arrives, then show it for requestAnimationFrame sampling. macOS already passes
