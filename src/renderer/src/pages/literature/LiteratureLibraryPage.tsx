@@ -1,4 +1,8 @@
 import {
+  LiteraturePdfBatchImportDialog,
+  type PdfImportDestination
+} from './LiteraturePdfBatchImportDialog'
+import {
   parseLiteratureDeletionError,
   type LiteratureDeletionDiagnostic
 } from '../../../../shared/literature-deletion'
@@ -1247,7 +1251,7 @@ const titleFromPdfFilename = (filename: string): string =>
     .replace(/\.pdf$/iu, '')
     .replace(/[_-]+/gu, ' ')
     .replace(/\s+/gu, ' ')
-    .trim()
+    .trim() || filename
 
 const LITERATURE_REVIEW_CTA_ATTENTION_KEY = 'open-science:literature-review-cta-attention-seen'
 
@@ -1363,6 +1367,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     file?: File
     pdfItem?: LiteratureItemView
   }>(undefined)
+  const [pdfBatch, setPdfBatch] = useState<{ files: File[]; destination: PdfImportDestination }>()
   const [pendingImportPdf, setPendingImportPdf] = useState<File>()
   const [pendingImportDraft, setPendingImportDraft] = useState<LiteratureItemInput>()
   const [isReadingImportMetadata, setIsReadingImportMetadata] = useState(false)
@@ -4124,15 +4129,27 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 <div>
                   <input
                     ref={importPdfInputRef}
+                    multiple
                     type="file"
                     accept="application/pdf,.pdf"
                     className="sr-only"
                     aria-label={t('Import PDF')}
                     onChange={(event) => {
-                      const file = event.currentTarget.files?.[0]
+                      const files = Array.from(event.currentTarget.files ?? [])
                       event.currentTarget.value = ''
-                      if (!file) return
-                      beginPdfImport(file)
+                      if (files.length > 1)
+                        setPdfBatch({
+                          files,
+                          destination: {
+                            name:
+                              selectedProject?.name ??
+                              selectedCollection?.name ??
+                              t('All references'),
+                            projectId,
+                            collectionId
+                          }
+                        })
+                      else if (files[0]) beginPdfImport(files[0])
                     }}
                   />
                   <input
@@ -5425,6 +5442,21 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         </Dialog.Portal>
       </Dialog.Root>
 
+      {pdfBatch ? (
+        <LiteraturePdfBatchImportDialog
+          {...pdfBatch}
+          createDraft={(file) => ({
+            ...emptyLiteratureItem(),
+            title: titleFromPdfFilename(file.name)
+          })}
+          onClose={() => {
+            setPdfBatch(undefined)
+            void loadEntries(true)
+            void loadCollections()
+            void loadProjectCounts()
+          }}
+        />
+      ) : null}
       {recordImport ? (
         <LiteratureRecordImportDialog
           recordImport={recordImport}

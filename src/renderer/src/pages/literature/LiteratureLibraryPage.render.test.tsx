@@ -6279,6 +6279,51 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 
+  it('opens one batch preview for multiple PDFs without creating references', async () => {
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const picker = screen.getByLabelText('Import PDF') as HTMLInputElement
+    expect(picker.multiple).toBe(true)
+    fireEvent.change(picker, {
+      target: {
+        files: [
+          new File(['%PDF-1.7'], 'first.pdf', { type: 'application/pdf' }),
+          new File(['%PDF-1.7'], 'second.pdf', { type: 'application/pdf' })
+        ]
+      }
+    })
+    const dialog = await screen.findByRole('dialog', { name: 'Import PDFs' })
+    expect(within(dialog).getByRole('checkbox', { name: 'Select first.pdf' })).not.toBeNull()
+    expect(within(dialog).getByRole('checkbox', { name: 'Select second.pdf' })).not.toBeNull()
+    expect(transact.mock.calls.filter(([command]) => command.kind === 'create-item')).toHaveLength(
+      0
+    )
+    await waitFor(() =>
+      expect(
+        (within(dialog).getByRole('button', { name: 'Import selected' }) as HTMLButtonElement)
+          .disabled
+      ).toBe(false)
+    )
+  })
+
+  it('imports PDFs with empty normalized stems using their original filenames', async () => {
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    fireEvent.change(screen.getByLabelText('Import PDF'), {
+      target: {
+        files: ['.pdf', '___---.PDF'].map(
+          (name) => new File(['%PDF-1.7'], name, { type: 'application/pdf' })
+        )
+      }
+    })
+    const dialog = await screen.findByRole('dialog', { name: 'Import PDFs' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import selected' }))
+    await waitFor(() => {
+      const created = transact.mock.calls.filter(([command]) => command.kind === 'create-item')
+      expect(created.map(([command]) => command.item.title)).toEqual(['.pdf', '___---.PDF'])
+    })
+  })
+
   it('falls back to the PDF filename when local metadata cannot be read', async () => {
     extractLiteraturePdfDraft.mockRejectedValueOnce(new Error('Unreadable PDF'))
 

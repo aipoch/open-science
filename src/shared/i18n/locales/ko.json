@@ -4847,6 +4847,14 @@
     "Source record saved: {{time}}": "출처 기록 저장 시간: {{time}}",
     "Saved source records, not a complete change history. Times show when each record was saved.": "저장된 출처 기록이며 전체 변경 이력은 아닙니다. 시간은 각 기록이 저장된 시점을 나타냅니다.",
     "Could not load metadata sources": "메타데이터 출처를 불러오지 못했습니다",
-    "No saved metadata sources for this reference.": "이 문헌에 저장된 메타데이터 출처가 없습니다."
+    "No saved metadata sources for this reference.": "이 문헌에 저장된 메타데이터 출처가 없습니다.",
+    "Import PDFs": "PDF 가져오기",
+    "Review the files, then import the selected PDFs. Keep this window open until the batch finishes.": "파일을 검토한 후 선택한 PDF를 가져오세요. 일괄 가져오기가 완료될 때까지 이 창을 열어 두세요.",
+    "The result could not be confirmed. Check your library before importing this file again.": "결과를 확인할 수 없습니다. 이 파일을 다시 가져오기 전에 라이브러리를 확인하세요.",
+    "The reference was kept. Retry to finish adding its PDF.": "문헌은 유지되었습니다. 다시 시도하여 PDF 추가를 완료하세요.",
+    "Retry unfinished": "미완료 항목 다시 시도",
+    "PDFs are attached to matching references. Identical attachments are reused; different PDFs are kept separately.": "PDF는 일치하는 문헌에 첨부됩니다. 동일한 첨부 파일은 재사용하고 서로 다른 PDF는 별도로 유지합니다.",
+    "{{completed}} / {{total}} completed": "{{completed}} / {{total}} 완료",
+    "Finishing the current operation before stopping. Completed references are kept.": "현재 작업을 완료한 후 중지합니다. 완료된 문헌은 유지됩니다."
   }
 }

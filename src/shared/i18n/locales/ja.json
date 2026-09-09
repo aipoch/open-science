@@ -4849,6 +4849,14 @@
     "Source record saved: {{time}}": "出典レコードの保存日時：{{time}}",
     "Saved source records, not a complete change history. Times show when each record was saved.": "保存済みの出典レコードであり、完全な変更履歴ではありません。日時は各レコードが保存された時刻を示します。",
     "Could not load metadata sources": "メタデータの出典を読み込めませんでした",
-    "No saved metadata sources for this reference.": "この文献には保存済みのメタデータの出典がありません。"
+    "No saved metadata sources for this reference.": "この文献には保存済みのメタデータの出典がありません。",
+    "Import PDFs": "PDF をインポート",
+    "Review the files, then import the selected PDFs. Keep this window open until the batch finishes.": "ファイルを確認して、選択した PDF をインポートします。一括インポートが完了するまで、このウィンドウを開いたままにしてください。",
+    "The result could not be confirmed. Check your library before importing this file again.": "結果を確認できませんでした。このファイルを再度インポートする前に、ライブラリを確認してください。",
+    "The reference was kept. Retry to finish adding its PDF.": "文献は保持されています。再試行して PDF の追加を完了してください。",
+    "Retry unfinished": "未完了の項目を再試行",
+    "PDFs are attached to matching references. Identical attachments are reused; different PDFs are kept separately.": "PDF は一致する文献に添付されます。同一の添付ファイルは再利用し、異なる PDF は個別に保持します。",
+    "{{completed}} / {{total}} completed": "{{completed}} / {{total}} 完了",
+    "Finishing the current operation before stopping. Completed references are kept.": "現在の操作を完了してから停止します。完了した文献は保持されます。"
   }
 }

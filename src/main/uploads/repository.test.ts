@@ -437,6 +437,76 @@ describe('upload repository', () => {
     await expect(readFile(again.path, 'utf8')).resolves.toBe('hello upload')
   })
 
+  it('publishes a batch without enqueueing competing SQLite writers', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
+    const attachments = await stageUploadFixtures(new UploadRepository(root), {
+      files: Array.from({ length: 10 }, (_, index) => ({
+        name: `research-${index}.md`,
+        content: Buffer.from('Research notes').toString('base64')
+      }))
+    })
+    let release!: (value: typeof client) => void
+    const ready = new Promise<typeof client>((resolve) => {
+      release = resolve
+    })
+    const getClient = vi.fn(() => ready)
+    const repository = new UploadRepository(root, { getClient })
+    const pending = repository.finalizePendingSessionUploads('session-1', attachments, 'project-1')
+    // Keep the first publication waiting at the database boundary. A batch must not queue
+    // every file behind SQLite's single writer before the first publication can finish.
+    const startedBeforeDatabaseReady = getClient.mock.calls.length
+    release(client)
+    const finalized = await pending
+    expect(startedBeforeDatabaseReady).toBe(1)
+    expect(finalized.map(({ id }) => id)).toEqual(attachments.map(({ id }) => id))
+    expect(await client.uploadFile.count()).toBe(10)
+    const retried = await repository.finalizePendingSessionUploads(
+      'session-1',
+      attachments,
+      'project-1'
+    )
+    expect(retried.map(({ versionId }) => versionId)).toEqual(
+      finalized.map(({ versionId }) => versionId)
+    )
+    expect(await client.uploadFile.count()).toBe(10)
+  })
+
+  it('keeps unstarted batch files staged and reuses committed files after a publication failure', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
+    const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const attachments = await stageUploadFixtures(repository, {
+      files: ['first.md', 'second.md', 'third.md'].map((name) => ({
+        name,
+        content: Buffer.from(name).toString('base64')
+      }))
+    })
+    await expect(
+      repository.finalizePendingSessionUploads(
+        'session-1',
+        [attachments[0], { ...attachments[1], sessionId: 'different-session' }, attachments[2]],
+        'project-1'
+      )
+    ).rejects.toThrow('different session')
+    expect(await client.uploadFile.count()).toBe(1)
+    await expect(readFile(attachments[2].path, 'utf8')).resolves.toBe('third.md')
+    const finalized = await repository.finalizePendingSessionUploads(
+      'session-1',
+      attachments,
+      'project-1'
+    )
+    expect(finalized.map(({ id }) => id)).toEqual(attachments.map(({ id }) => id))
+    expect(await client.uploadFile.count()).toBe(3)
+    expect(await client.uploadVersion.count()).toBe(3)
+  })
+
   it('registers each upload as an independent SQLite file with immutable v1 bytes', async () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
