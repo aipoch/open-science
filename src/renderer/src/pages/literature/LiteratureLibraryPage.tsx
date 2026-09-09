@@ -1251,7 +1251,7 @@ const titleFromPdfFilename = (filename: string): string =>
     .replace(/\.pdf$/iu, '')
     .replace(/[_-]+/gu, ' ')
     .replace(/\s+/gu, ' ')
-    .trim()
+    .trim() || filename
 
 const LITERATURE_REVIEW_CTA_ATTENTION_KEY = 'open-science:literature-review-cta-attention-seen'
 

@@ -6306,6 +6306,24 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 
+  it('imports PDFs with empty normalized stems using their original filenames', async () => {
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    fireEvent.change(screen.getByLabelText('Import PDF'), {
+      target: {
+        files: ['.pdf', '___---.PDF'].map(
+          (name) => new File(['%PDF-1.7'], name, { type: 'application/pdf' })
+        )
+      }
+    })
+    const dialog = await screen.findByRole('dialog', { name: 'Import PDFs' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import selected' }))
+    await waitFor(() => {
+      const created = transact.mock.calls.filter(([command]) => command.kind === 'create-item')
+      expect(created.map(([command]) => command.item.title)).toEqual(['.pdf', '___---.PDF'])
+    })
+  })
+
   it('falls back to the PDF filename when local metadata cannot be read', async () => {
     extractLiteraturePdfDraft.mockRejectedValueOnce(new Error('Unreadable PDF'))
 
