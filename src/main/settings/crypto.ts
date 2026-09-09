@@ -34,7 +34,7 @@ const encryptKey = (plaintext: string): string => {
   return `${KEY_REF_PREFIX}${ciphertext.toString('base64')}`
 }
 
-// Decrypts a stored keyRef. `plain:` is accepted only for backwards-compatible migration.
+// Reads legacy plain refs in explicit file mode or with an available OS vault.
 const decryptKey = (keyRef: string): string => {
   if (keyRef.startsWith(FILE_REF_PREFIX)) {
     if (getCredentialStore() !== 'file') {
@@ -48,14 +48,14 @@ const decryptKey = (keyRef: string): string => {
       throw new Error('Malformed file credential reference.')
     return bytes.toString('utf8')
   }
+  if (keyRef.startsWith(PLAIN_REF_PREFIX) && isCredentialStorageAvailable()) {
+    return Buffer.from(keyRef.slice(PLAIN_REF_PREFIX.length), 'base64').toString('utf8')
+  }
+
   if (!isEncryptionAvailable()) {
     throw new Error(
       'Secure credential storage is unavailable. Unlock the system keychain and retry.'
     )
-  }
-
-  if (keyRef.startsWith(PLAIN_REF_PREFIX)) {
-    return Buffer.from(keyRef.slice(PLAIN_REF_PREFIX.length), 'base64').toString('utf8')
   }
 
   if (!keyRef.startsWith(KEY_REF_PREFIX)) {

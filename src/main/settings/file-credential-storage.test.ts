@@ -52,6 +52,17 @@ describe('explicit file credentials without a keyring', () => {
     expect(() => decryptKey(ref)).toThrow()
   })
 
+  it('reads legacy plain refs without migrating them and retains the OS-mode gate', () => {
+    const ref = `plain:${Buffer.from('legacy-secret').toString('base64')}`
+    expect(() => decryptKey(ref)).toThrow()
+    configureCredentialStore(['--credential-store=file'], 'linux', true)
+    expect(decryptKey(ref)).toBe('legacy-secret')
+    expect(encryptKey('replacement-secret')).toMatch(/^file:v1:/)
+    expect(() => decryptKey('enc:unreadable')).toThrow()
+    configureCredentialStore([], 'linux', true)
+    expect(() => decryptKey(ref)).toThrow()
+  })
+
   it('preserves provider configuration and resolves a file key through the runtime projection', async () => {
     const root = await mkdtemp(join(tmpdir(), 'file-provider-'))
     try {

@@ -614,6 +614,7 @@ preference. The default (or `--credential-store=os`) requires OS protection. An 
 backend rejects explicit mode selection: stop it before restarting with the desired option. File
 mode is supported only by the Linux headless backend, not desktop launches or macOS/Windows.
 
+Legacy `plain:` refs remain readable in explicit file mode without rewriting them.
 Existing encrypted refs are not automatically migrated or downgraded. They still require the original
 OS vault to read, even in file mode; otherwise re-enter the credential. New/refreshed values saved in
 file mode use the file format. File refs require explicit file mode to read and are unreadable by
