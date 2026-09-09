@@ -11,11 +11,22 @@ on:
       tag:
         description: 'Release tag to mirror (e.g. v0.1.2)'
         required: true
+      mode:
+        description: 'Backfill versioned files only, or promote the stable channel'
+        required: true
+        type: choice
+        options: [backfill, promote]
+        default: backfill
       dry_run:
         description: 'Run local release transforms without AWS credentials or uploads'
         required: false
         type: boolean
         default: false
+
+# Serialize all writers to this repository's website channel, including delayed older runs.
+concurrency:
+  group: mirror-website-stable
+  cancel-in-progress: false
 
 # Only needs to read Release assets; it never writes back to the repo.
 permissions:
@@ -219,45 +230,14 @@ jobs:
               --cache-control "public, max-age=31536000, immutable" --only-show-errors
           done < <(find historical-blockmaps -type f -name '*-win-x64-setup.exe.blockmap' -print0)
 
-      # Installers go to an immutable, per-version path: re-running the same tag overwrites identical
-      # bytes (idempotent backfill). The immutable Cache-Control lets the CDN/browsers cache these
-      # large files forever without any purge. version.json is excluded here and published separately
-      # as the one mutable object. Bucket is a secret so it stays masked in the public Actions log, and
-      # --only-show-errors suppresses the per-file `upload: ... to s3://...` lines that would leak it.
+      # This command owns versioned uploads and optional monotonic channel promotion together.
+      # Its preflight runs before any mutable channel writes; rerun the same version to recover a
+      # partial promotion. Never use an older version as an implicit rollback.
       - name: Sync installers to versioned path
         if: ${{ !inputs.dry_run }}
         env:
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
           S3_PREFIX: ${{ vars.S3_PREFIX }}
           VERSION: ${{ steps.ref.outputs.version }}
-        run: |
-          aws s3 sync dist-assets/ \
-            "s3://$S3_BUCKET/$S3_PREFIX/releases/$VERSION/" --exclude "version.json" \
-            --cache-control "public, max-age=31536000, immutable" --only-show-errors
-
-      # The single mutable manifest, overwritten on every release; website + app read this path. no-cache
-      # keeps the CDN/browsers revalidating so a new version is picked up immediately without a purge.
-      - name: Upload version.json
-        if: ${{ !inputs.dry_run }}
-        env:
-          S3_BUCKET: ${{ secrets.S3_BUCKET }}
-          S3_PREFIX: ${{ vars.S3_PREFIX }}
-        run: |
-          aws s3 cp version.json \
-            "s3://$S3_BUCKET/$S3_PREFIX/version.json" \
-            --cache-control "no-cache" --content-type "application/json" --only-show-errors
-
-      # Publish the rewritten feeds to the channel root as mutable, no-cache objects (same policy as
-      # version.json), so the updater always sees the latest version immediately.
-      - name: Upload update feed to channel root
-        if: ${{ !inputs.dry_run }}
-        env:
-          S3_BUCKET: ${{ secrets.S3_BUCKET }}
-          S3_PREFIX: ${{ vars.S3_PREFIX }}
-        run: |
-          shopt -s nullglob
-          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/*-mac.yml; do
-            [ -f "$yml" ] || continue
-            aws s3 cp "$yml" "s3://$S3_BUCKET/$S3_PREFIX/$(basename "$yml")" \
-              --cache-control "no-cache" --content-type "text/yaml" --only-show-errors
-          done
+          MODE: ${{ inputs.mode }}
+        run: node scripts/publish-update-channel.mjs

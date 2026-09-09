@@ -5031,6 +5031,10 @@
     "Recheck saved conversations": "Gespeicherte Konversationen erneut prüfen",
     "Some changes have not been saved.": "Einige Änderungen wurden nicht gespeichert.",
     "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "Einmal erlauben gilt für die nächste Ausführung in dieser Laufzeitumgebung, auch wenn sich der Code ändert. Während dieser Ausführung sind mehrere Verbindungen zu dieser Domain erlaubt.",
-    "Next execution in this runtime": "Nächste Ausführung in dieser Laufzeitumgebung"
+    "Next execution in this runtime": "Nächste Ausführung in dieser Laufzeitumgebung",
+    "Research work is still running. Stop it before restarting to update.": "Forschungsaufgaben laufen noch. Beenden Sie sie, bevor Sie zum Aktualisieren neu starten.",
+    "Subagents are still running. Return to their tasks and stop them before restarting to update.": "Unteragenten laufen noch. Kehren Sie zu ihren Aufgaben zurück und beenden Sie sie, bevor Sie zum Aktualisieren neu starten.",
+    "The installer is missing or has changed. Download the update again.": "Das Installationsprogramm fehlt oder wurde verändert. Laden Sie das Update erneut herunter.",
+    "Verifying installer…": "Installationsprogramm wird überprüft…"
   }
 }
