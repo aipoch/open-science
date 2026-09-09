@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { WebEventConnectionPhase } from '../../../shared/web-event-connection'
 import { Button } from '@/components/ui/button'
+import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 import {
   dialogBodyClassName,
   dialogDescriptionClassName,
@@ -67,7 +68,15 @@ const WebEventRecoveryDialog = ({
           </div>
           {reloadAvailable ? (
             <div className={dialogFooterClassName}>
-              <Button type="button" onClick={() => window.location.reload()}>
+              <Button
+                type="button"
+                onClick={() =>
+                  previewLeaveGuards.requestAll(() => {
+                    // Let the confirmed editor discards commit before beforeunload runs.
+                    window.setTimeout(() => window.location.reload(), 0)
+                  })
+                }
+              >
                 <RefreshCw aria-hidden="true" />
                 {t('Reload', { context: 'window', ns: 'common' })}
               </Button>

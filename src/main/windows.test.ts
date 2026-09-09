@@ -21,12 +21,14 @@ const {
   ipcMainOnMock,
   ipcMainRemoveListenerMock,
   showMessageBoxMock,
+  showMessageBoxSyncMock,
   webFrameMainFromIdMock
 } = vi.hoisted(() => ({
   openExternalMock: vi.fn(async () => undefined),
   ipcMainOnMock: vi.fn(),
   ipcMainRemoveListenerMock: vi.fn(),
   showMessageBoxMock: vi.fn(),
+  showMessageBoxSyncMock: vi.fn(),
   webFrameMainFromIdMock: vi.fn()
 }))
 
@@ -214,7 +216,7 @@ vi.mock('electron', () => ({
     }
   },
   WebContentsView: class {},
-  dialog: { showMessageBox: showMessageBoxMock },
+  dialog: { showMessageBox: showMessageBoxMock, showMessageBoxSync: showMessageBoxSyncMock },
   ipcMain: { on: ipcMainOnMock, removeListener: ipcMainRemoveListenerMock },
   shell: { openExternal: openExternalMock },
   webFrameMain: { fromId: webFrameMainFromIdMock }
@@ -2079,4 +2081,19 @@ describe('createMainWindow close handling', () => {
     expect(resolveCloseAction).toHaveBeenCalledTimes(1)
     resolveFn('cancel')
   })
+})
+
+it.each([0, 1])('requires explicit discard to override an unsaved page unload: %s', (choice) => {
+  createMainWindow()
+  const window = lastWindow!
+  const event = { preventDefault: vi.fn() }
+  showMessageBoxSyncMock.mockReturnValueOnce(choice)
+  const handler = window.webContentsHandlers.get('will-prevent-unload')
+  expect(handler).toBeDefined()
+  handler!(event)
+  expect(showMessageBoxSyncMock).toHaveBeenCalledWith(
+    window,
+    expect.objectContaining({ defaultId: 0, cancelId: 0 })
+  )
+  expect(event.preventDefault).toHaveBeenCalledTimes(choice === 1 ? 1 : 0)
 })
