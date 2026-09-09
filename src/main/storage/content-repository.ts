@@ -384,30 +384,27 @@ class ContentRepository {
       createdAt: { lt: request.createdBefore },
       ...(request.contentIds ? { id: { in: [...new Set(request.contentIds)] } } : {})
     }
-    const [
-      candidates,
-      uploadReferences,
-      artifactReferences,
-      literatureReferences,
-      inboxReferences
-    ] = await Promise.all([
-      client.contentBlob.findMany({
-        where: candidateWhere,
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
-      }),
-      client.uploadVersion.findMany({
-        where: { contentBlobId: { not: null } },
-        select: { contentBlobId: true }
-      }),
-      client.artifactVersion.findMany({
-        where: { contentBlobId: { not: null } },
-        select: { contentBlobId: true }
-      }),
-      client.literatureAttachmentVersion.findMany({
-        select: { contentBlobId: true }
-      }),
-      client.literatureInboxPdf.findMany({ select: { contentBlobId: true } })
-    ])
+    const candidates = await client.contentBlob.findMany({
+      where: candidateWhere,
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
+    })
+    if (candidates.length === 0) return { removedIds: [], retainedIds: [], failedIds: [] }
+    const where = request.contentIds
+      ? { contentBlobId: { in: candidates.map(({ id }) => id) } }
+      : undefined
+    const [uploadReferences, artifactReferences, literatureReferences, inboxReferences] =
+      await Promise.all([
+        client.uploadVersion.findMany({
+          where: where ?? { contentBlobId: { not: null } },
+          select: { contentBlobId: true }
+        }),
+        client.artifactVersion.findMany({
+          where: where ?? { contentBlobId: { not: null } },
+          select: { contentBlobId: true }
+        }),
+        client.literatureAttachmentVersion.findMany({ where, select: { contentBlobId: true } }),
+        client.literatureInboxPdf.findMany({ where, select: { contentBlobId: true } })
+      ])
     const referencedIds = new Set(
       [
         ...uploadReferences,

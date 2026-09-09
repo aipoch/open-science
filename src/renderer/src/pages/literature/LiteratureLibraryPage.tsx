@@ -7,6 +7,8 @@ import { readLiteratureSelectionPage } from './literature-read-pages'
 import { LiteratureOversizedNotice } from './LiteratureOversizedNotice'
 import type { TFunction } from 'i18next'
 import { LiteratureAttachments } from './LiteratureAttachments'
+import { LiteratureAttachmentOperations } from './LiteratureAttachmentOperations'
+import { useAttachmentOperations } from './literature-attachment-operations'
 import { LITERATURE_JOB_MAX_ITEMS } from '../../../../shared/literature-jobs'
 import {
   LITERATURE_COLLECTION_NAME_CONFLICT,
@@ -1340,6 +1342,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [collections, setCollections] = useState<LiteratureCollectionView[]>([])
   const [projectItemCounts, setProjectItemCounts] = useState<Record<string, number>>({})
   const [selectedCandidate, setSelectedCandidate] = useState<LiteratureInboxCandidateView>()
+  const attachmentOperations = useAttachmentOperations((state) => state.operations)
   const [detailController] = useState(createLiteratureDetailController)
   const selectedItem = detailController.getSnapshot().item
   const selectedItemId = selectedItem?.id
@@ -3156,7 +3159,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       section === 'trash' ||
       entry.deletedAt !== undefined ||
       !version ||
-      version.availability === 'unavailable'
+      version.availability === 'unavailable' ||
+      useAttachmentOperations
+        .getState()
+        .operations.some((operation) => operation.itemId === entry.id && operation.pending)
     )
       return
     setPreviewItem({
@@ -4527,6 +4533,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               }}
             </LiteratureSelectionBoundary>
           </div>
+          <LiteratureAttachmentOperations
+            detailController={detailController}
+            onChanged={(operation) => {
+              if (!operation.item) return
+              const current = detailController.getSnapshot().item
+              const updated =
+                current?.id === operation.itemId
+                  ? { ...current, attachments: operation.item.attachments }
+                  : operation.item
+              detailController.replace(updated)
+              updateMetadataItem(updated)
+              void loadEntries(true)
+            }}
+          />
           {batchLookup ? (
             <LiteratureBatchLookupDialog
               key={batchLookup.jobId ?? `${batchLookup.mode}:${batchLookup.itemIds.join(',')}`}
@@ -5195,7 +5215,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                       })}
                                       disabled={
                                         section === 'trash' ||
-                                        attachmentVersion.availability === 'unavailable'
+                                        attachmentVersion.availability === 'unavailable' ||
+                                        attachmentOperations.some(
+                                          (operation) =>
+                                            operation.itemId === entry.id && operation.pending
+                                        )
                                       }
                                       onClick={() => previewFirstAttachment(entry)}
                                     >
@@ -6280,12 +6304,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         <LiteratureAttachments
                           key={selectedItem.id}
                           item={selectedItem}
-                          onChanged={(updated) => {
-                            if (detailController.getSnapshot().item?.id === updated.id)
-                              detailController.replace(updated)
-                            updateMetadataItem(updated)
-                            void loadEntries(true)
-                          }}
                           onPreview={(version) =>
                             setPreviewItem({
                               id: `literature:${version.id}`,

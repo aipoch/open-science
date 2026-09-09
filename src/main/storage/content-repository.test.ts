@@ -410,104 +410,264 @@ describe('content repository', () => {
     }
   })
 
-  it('sweeps only old unreferenced blobs and leaves referenced bytes intact', async () => {
+  it('limits targeted sweep reference reads to candidate content', async () => {
     const repository = await createRepository()
-    const createdAt = new Date('2026-08-30T00:00:00.000Z')
-    await publishFixture('orphan', 'content/project/orphan', Buffer.from('orphan'), createdAt)
-    await publishFixture('inbox-only', 'content/inbox/paper', Buffer.from('pending'), createdAt)
-    await client!.literatureInboxCandidate.create({
-      data: {
-        id: 'inbox',
-        dedupeKey: 'inbox',
-        itemType: 'journalArticle',
-        title: 'Pending paper',
-        candidateJson: '{}',
-        metadataChecksum: 'a'.repeat(64),
-        origin: 'agent',
-        pdfs: {
-          create: {
-            contentBlobId: 'inbox-only',
-            filename: 'paper.pdf',
-            sizeBytes: 7n,
-            checksum: sha256(Buffer.from('pending')),
-            pageCount: 1,
-            sourceUrl: 'https://example.test/paper'
-          }
-        }
-      }
-    })
-    await publishFixture('referenced', 'content/project/referenced', Buffer.from('kept'), createdAt)
-    await publishFixture(
-      'literature-only',
-      'content/literature/paper',
-      Buffer.from('paper'),
-      createdAt
-    )
-    await client!.fileOriginSession.create({
-      data: { projectId: 'project-1', sessionId: 'session-1' }
-    })
-    await client!.uploadFile.create({
-      data: {
-        id: 'upload-1',
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        filename: 'paper.pdf',
-        originalFilename: 'paper.pdf',
-        versions: {
-          create: {
-            id: 'upload-version-1',
-            versionNumber: 1,
-            state: 'ready',
-            contentStorageKey: 'content/project/referenced',
-            filename: 'paper.pdf',
-            originalFilename: 'paper.pdf',
-            contentType: 'application/pdf',
-            sizeBytes: 4n,
-            checksum: sha256(Buffer.from('kept')),
-            contentBlobId: 'referenced',
-            createdAt
-          }
-        }
-      }
-    })
-    await client!.literatureItem.create({
-      data: {
-        itemType: 'journalArticle',
-        title: 'Referenced paper',
-        attachments: {
-          create: {
-            kind: 'fullText',
-            versions: {
-              create: {
-                contentBlobId: 'literature-only',
-                versionNumber: 1,
-                filename: 'paper.pdf',
-                contentType: 'application/pdf',
-                sizeBytes: 5n,
-                checksum: sha256(Buffer.from('paper')),
-                pageCount: 2
+    for (const id of ['target', 'unrelated']) {
+      await publishFixture(id, `content/project/${id}`, Buffer.from(id))
+      await client!.literatureItem.create({
+        data: {
+          itemType: 'journalArticle',
+          title: id,
+          attachments: {
+            create: {
+              kind: 'fullText',
+              versions: {
+                create: {
+                  contentBlobId: id,
+                  versionNumber: 1,
+                  filename: 'paper.pdf',
+                  contentType: 'application/pdf',
+                  sizeBytes: BigInt(id.length),
+                  checksum: sha256(Buffer.from(id))
+                }
               }
             }
           }
         }
-      }
-    })
-
+      })
+    }
+    const queries = [
+      vi.spyOn(client!.uploadVersion, 'findMany'),
+      vi.spyOn(client!.artifactVersion, 'findMany'),
+      vi.spyOn(client!.literatureAttachmentVersion, 'findMany'),
+      vi.spyOn(client!.literatureInboxPdf, 'findMany')
+    ]
     await expect(
-      repository.sweep({ createdBefore: new Date('2026-08-31T00:00:00.000Z') })
-    ).resolves.toEqual({
-      removedIds: ['orphan'],
-      retainedIds: ['inbox-only', 'literature-only', 'referenced'],
-      failedIds: []
-    })
-    await expect(client!.contentBlob.findUnique({ where: { id: 'orphan' } })).resolves.toBeNull()
-    await expect(
-      readFile(resolveContentStorageKey(storageRoot!, 'content/project/orphan'))
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      readFile(resolveContentStorageKey(storageRoot!, 'content/project/referenced'), 'utf8')
-    ).resolves.toBe('kept')
+      repository.sweep({
+        contentIds: ['target'],
+        createdBefore: new Date('2026-08-31T00:00:00.000Z')
+      })
+    ).resolves.toEqual({ removedIds: [], retainedIds: ['target'], failedIds: [] })
+    // Observe real SQLite rows, not a mock that assumes the filter works.
+    expect(await queries[2].mock.results[0].value).toEqual([{ contentBlobId: 'target' }])
+    for (const query of queries) {
+      expect(query).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { contentBlobId: { in: ['target'] } }
+        })
+      )
+    }
   })
+
+  it('retains a reference published after targeted sweep prefiltering', async () => {
+    const repository = await createRepository()
+    await publishFixture('target', 'content/project/target', Buffer.from('target'))
+    const findMany = client!.literatureAttachmentVersion.findMany.bind(
+      client!.literatureAttachmentVersion
+    )
+    vi.spyOn(client!.literatureAttachmentVersion, 'findMany').mockImplementationOnce(
+      (query) =>
+        (async () => {
+          const before = await findMany(query)
+          await client!.literatureItem.create({
+            data: {
+              itemType: 'journalArticle',
+              title: 'Late reference',
+              attachments: {
+                create: {
+                  kind: 'fullText',
+                  versions: {
+                    create: {
+                      contentBlobId: 'target',
+                      versionNumber: 1,
+                      filename: 'paper.pdf',
+                      contentType: 'application/pdf',
+                      sizeBytes: 6n,
+                      checksum: sha256(Buffer.from('target'))
+                    }
+                  }
+                }
+              }
+            }
+          })
+          return before
+        })() as ReturnType<typeof findMany>
+    )
+    await expect(
+      repository.sweep({
+        contentIds: ['target'],
+        createdBefore: new Date('2026-08-31T00:00:00.000Z')
+      })
+    ).resolves.toEqual({ removedIds: [], retainedIds: ['target'], failedIds: [] })
+    await expect(
+      readFile(resolveContentStorageKey(storageRoot!, 'content/project/target'))
+    ).resolves.toEqual(Buffer.from('target'))
+  })
+
+  it('skips reference reads when a targeted sweep has no candidates', async () => {
+    const repository = await createRepository()
+    const queries = [
+      vi.spyOn(client!.uploadVersion, 'findMany'),
+      vi.spyOn(client!.artifactVersion, 'findMany'),
+      vi.spyOn(client!.literatureAttachmentVersion, 'findMany'),
+      vi.spyOn(client!.literatureInboxPdf, 'findMany')
+    ]
+    await expect(
+      repository.sweep({
+        contentIds: ['missing'],
+        createdBefore: new Date()
+      })
+    ).resolves.toEqual({ removedIds: [], retainedIds: [], failedIds: [] })
+    for (const query of queries) expect(query).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])(
+    'sweeps only old unreferenced blobs and leaves referenced bytes intact (targeted=%s)',
+    async (targeted) => {
+      const repository = await createRepository()
+      const createdAt = new Date('2026-08-30T00:00:00.000Z')
+      await publishFixture('orphan', 'content/project/orphan', Buffer.from('orphan'), createdAt)
+      await publishFixture('inbox-only', 'content/inbox/paper', Buffer.from('pending'), createdAt)
+      await client!.literatureInboxCandidate.create({
+        data: {
+          id: 'inbox',
+          dedupeKey: 'inbox',
+          itemType: 'journalArticle',
+          title: 'Pending paper',
+          candidateJson: '{}',
+          metadataChecksum: 'a'.repeat(64),
+          origin: 'agent',
+          pdfs: {
+            create: {
+              contentBlobId: 'inbox-only',
+              filename: 'paper.pdf',
+              sizeBytes: 7n,
+              checksum: sha256(Buffer.from('pending')),
+              pageCount: 1,
+              sourceUrl: 'https://example.test/paper'
+            }
+          }
+        }
+      })
+      await publishFixture(
+        'referenced',
+        'content/project/referenced',
+        Buffer.from('kept'),
+        createdAt
+      )
+      await publishFixture(
+        'literature-only',
+        'content/literature/paper',
+        Buffer.from('paper'),
+        createdAt
+      )
+      await client!.fileOriginSession.create({
+        data: { projectId: 'project-1', sessionId: 'session-1' }
+      })
+      await publishFixture(
+        'artifact-only',
+        'content/project/artifact',
+        Buffer.from('artifact'),
+        createdAt
+      )
+      await client!.artifactLineage.create({
+        data: {
+          id: 'artifact',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          normalizedFilename: 'result.pdf',
+          filename: 'result.pdf',
+          versions: {
+            create: {
+              id: 'artifact-version',
+              versionNumber: 1,
+              filename: 'result.pdf',
+              contentBlobId: 'artifact-only',
+              contentStorageKey: 'content/project/artifact',
+              sizeBytes: 8n,
+              checksum: sha256(Buffer.from('artifact')),
+              state: 'finalized',
+              originKind: 'legacy'
+            }
+          }
+        }
+      })
+      await client!.uploadFile.create({
+        data: {
+          id: 'upload-1',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          filename: 'paper.pdf',
+          originalFilename: 'paper.pdf',
+          versions: {
+            create: {
+              id: 'upload-version-1',
+              versionNumber: 1,
+              state: 'ready',
+              contentStorageKey: 'content/project/referenced',
+              filename: 'paper.pdf',
+              originalFilename: 'paper.pdf',
+              contentType: 'application/pdf',
+              sizeBytes: 4n,
+              checksum: sha256(Buffer.from('kept')),
+              contentBlobId: 'referenced',
+              createdAt
+            }
+          }
+        }
+      })
+      await client!.literatureItem.create({
+        data: {
+          itemType: 'journalArticle',
+          title: 'Referenced paper',
+          attachments: {
+            create: {
+              kind: 'fullText',
+              versions: {
+                create: {
+                  contentBlobId: 'literature-only',
+                  versionNumber: 1,
+                  filename: 'paper.pdf',
+                  contentType: 'application/pdf',
+                  sizeBytes: 5n,
+                  checksum: sha256(Buffer.from('paper')),
+                  pageCount: 2
+                }
+              }
+            }
+          }
+        }
+      })
+
+      await expect(
+        repository.sweep({
+          createdBefore: new Date('2026-08-31T00:00:00.000Z'),
+          ...(targeted
+            ? {
+                contentIds: [
+                  'orphan',
+                  'inbox-only',
+                  'referenced',
+                  'literature-only',
+                  'artifact-only'
+                ]
+              }
+            : {})
+        })
+      ).resolves.toEqual({
+        removedIds: ['orphan'],
+        retainedIds: ['artifact-only', 'inbox-only', 'literature-only', 'referenced'],
+        failedIds: []
+      })
+      await expect(client!.contentBlob.findUnique({ where: { id: 'orphan' } })).resolves.toBeNull()
+      await expect(
+        readFile(resolveContentStorageKey(storageRoot!, 'content/project/orphan'))
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(
+        readFile(resolveContentStorageKey(storageRoot!, 'content/project/referenced'), 'utf8')
+      ).resolves.toBe('kept')
+    }
+  )
 
   it('rejects traversal and platform-specific absolute storage keys', () => {
     expect(() => resolveContentStorageKey('/data', '../outside')).toThrow(/invalid/i)

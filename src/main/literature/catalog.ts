@@ -772,11 +772,9 @@ class LiteratureCatalog {
     private readonly getClient: LiteratureCatalogClientProvider,
     private readonly onTagAssignmentsChanged?: () => Promise<void>,
     private readonly content?: Pick<ContentRepository, 'verify' | 'sweep'>,
-    private readonly withAttachmentRemoval: (
-      remove: (
-        assertUnreferenced: (attachmentIds: readonly string[]) => void
-      ) => Promise<LiteratureCatalogReceipt>
-    ) => Promise<LiteratureCatalogReceipt> = async (remove) =>
+    private readonly withAttachmentRemoval: <Result>(
+      remove: (assertUnreferenced: (attachmentIds: readonly string[]) => void) => Promise<Result>
+    ) => Promise<Result> = async (remove) =>
       remove((attachmentIds) => {
         // Metadata-only clients may delete metadata, but cannot bypass attachment authority.
         if (attachmentIds.length) throw new Error('Literature attachment removal is unavailable.')
@@ -1314,21 +1312,33 @@ class LiteratureCatalog {
         duplicateGroups.delete(await this.getClient())
     }
   }
-  private deleteAttachment(
+  private async deleteAttachment(
     command: Extract<LiteratureCatalogCommand, { kind: 'delete-attachment' }>
   ): Promise<LiteratureCatalogReceipt> {
-    return this.withAttachmentRemoval((assertUnreferenced) =>
+    if (!this.content) throw new Error('Literature content operations are unavailable.')
+    // The session barrier protects reference confirmation and the deletion transaction only.
+    const contentIds = await this.withAttachmentRemoval((assertUnreferenced) =>
       this.deleteUnreferencedAttachment(command, assertUnreferenced)
     )
+    let cleanupPending = false
+    try {
+      const sweep = await this.content.sweep({
+        contentIds,
+        createdBefore: new Date(Date.now() + 1)
+      })
+      cleanupPending = sweep.failedIds.length > 0
+    } catch {
+      cleanupPending = true
+    }
+    return { kind: 'item', id: command.itemId, state: 'unlinked', cleanupPending }
   }
 
   private async deleteUnreferencedAttachment(
     command: Extract<LiteratureCatalogCommand, { kind: 'delete-attachment' }>,
     assertUnreferenced: (attachmentIds: readonly string[]) => void
-  ): Promise<LiteratureCatalogReceipt> {
-    if (!this.content) throw new Error('Literature content operations are unavailable.')
+  ): Promise<string[]> {
     const client = await this.getClient()
-    const contentIds = await client.$transaction(async (transaction) => {
+    return client.$transaction(async (transaction) => {
       const attachment = await transaction.literatureAttachment.findFirst({
         where: {
           id: command.attachmentId,
@@ -1342,17 +1352,6 @@ class LiteratureCatalog {
       await transaction.literatureAttachment.delete({ where: { id: command.attachmentId } })
       return attachment.versions.map(({ contentBlobId }) => contentBlobId)
     })
-    let cleanupPending = false
-    try {
-      const sweep = await this.content.sweep({
-        contentIds,
-        createdBefore: new Date(Date.now() + 1)
-      })
-      cleanupPending = sweep.failedIds.length > 0
-    } catch {
-      cleanupPending = true
-    }
-    return { kind: 'item', id: command.itemId, state: 'unlinked', cleanupPending }
   }
 
   private async verifyAttachment(
