@@ -200,6 +200,43 @@ describe('SkillDetailView', () => {
     expect(useSettingsStore.getState().setSkillEnabled).toHaveBeenCalledWith('a', false)
   })
 
+  it('shows an inoperable checked toggle with an explanation for required availability', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        getSkillDetail: vi.fn().mockResolvedValue({ ...detail, activationPolicy: 'always-on' })
+      }
+    }
+    useSettingsStore.setState({
+      skills: [{ ...detail, activationPolicy: 'always-on' }],
+      setSkillEnabled: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await act(async () => {
+      root.render(<SkillDetailView skillId="a" />)
+      await Promise.resolve()
+    })
+
+    const toggle = document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle Alpha"]')
+    expect(toggle?.getAttribute('data-state')).toBe('checked')
+    expect(toggle?.disabled).toBe(true)
+    expect(toggle?.className).toContain('pointer-events-none')
+    expect(document.body.textContent).not.toContain('Application required')
+    expect(document.body.textContent).not.toContain('Always enabled')
+
+    await act(async () => {
+      const trigger = document.body.querySelector<HTMLElement>(
+        '[data-testid="required-skill-toggle-tooltip"]'
+      )
+      const hover = new MouseEvent('pointermove', { bubbles: true })
+      Object.defineProperty(hover, 'pointerType', { value: 'mouse' })
+      trigger?.dispatchEvent(hover)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toContain(
+      'This built-in Skill supports core application features and is always enabled.'
+    )
+  })
+
   it('omits the agent access row when no agent uses the Skill', async () => {
     useSettingsStore.setState({
       ...createInitialSettingsState(),

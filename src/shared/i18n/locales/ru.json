@@ -4166,6 +4166,7 @@
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._many": "Используется {{count}} специалистами. Перед удалением уберите у них этот навык.",
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._other": "Используется {{count}} специалистами. Перед удалением уберите у них этот навык.",
     "Availability": "Доступность",
+    "This built-in Skill supports core application features and is always enabled.": "Этот встроенный Навык поддерживает основные функции приложения и всегда включён.",
     "Specialist access is configured on each Specialist.": "Доступ настраивается отдельно для каждого специалиста.",
     "Resolve Skill conflicts": "Решение конфликтов навыков",
     "Choose one version for every conflicting Skill before installing the Specialist.": "Выберите одну версию для каждого конфликтующего навыка до установки специалиста.",

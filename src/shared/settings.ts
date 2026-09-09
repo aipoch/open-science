@@ -1097,6 +1097,7 @@ export type EnvironmentCheckResult = {
 
 // A bundled skill's source category: app-bundled, imported from GitHub, or user-authored.
 export type SkillSource = 'featured' | 'imported' | 'personal'
+export type SkillActivationPolicy = 'always-on' | 'user-controlled'
 
 // Renderer-safe view of one bundled skill (no file contents).
 export type SkillView = {
@@ -1115,6 +1116,7 @@ export type SkillView = {
   source: SkillSource
   updatedAt: string
   enabled: boolean
+  activationPolicy?: SkillActivationPolicy
   // From the SKILL.md frontmatter; shown in the detail view's "Details" section when present.
   author?: string
   license?: string

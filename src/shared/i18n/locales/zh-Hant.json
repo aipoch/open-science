@@ -3858,6 +3858,7 @@
     "Used by {{name}}. Remove this Skill from that Specialist before deleting it.": "正由 {{name}} 使用。請先從該專家中移除此技能，再將其刪除。",
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._other": "正由 {{count}} 個專家使用。請先從這些專家中移除此技能，再將其刪除。",
     "Availability": "可用範圍",
+    "This built-in Skill supports core application features and is always enabled.": "此內建技能用於應用程式核心功能，始終保持啟用。",
     "Specialist access is configured on each Specialist.": "專家存取權限需在對應的專家中設定。",
     "Resolve Skill conflicts": "解決技能衝突",
     "Choose one version for every conflicting Skill before installing the Specialist.": "安裝專家前，請為每個衝突的技能選擇一個版本。",

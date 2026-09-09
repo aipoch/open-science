@@ -3781,6 +3781,7 @@
     "Used by {{name}}. Remove this Skill from that Specialist before deleting it.": "{{name}}에서 사용됩니다. 삭제하기 전에 스페셜리스트에서 스킬을 제거하세요.",
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._other": "스페셜리스트 {{count}}개에서 사용 중입니다. 이 스킬을 삭제하기 전에 해당 스페셜리스트에서 제거하세요.",
     "Availability": "가용성",
+    "This built-in Skill supports core application features and is always enabled.": "이 기본 제공 스킬은 애플리케이션의 핵심 기능을 지원하며 항상 활성화되어 있습니다.",
     "Specialist access is configured on each Specialist.": "각 스페셜리스트에서 액세스를 설정합니다.",
     "Resolve Skill conflicts": "스킬 충돌 해결",
     "Choose one version for every conflicting Skill before installing the Specialist.": "스페셜리스트를 설치하기 전에 충돌하는 모든 스킬에 대해 하나의 버전을 선택하세요.",

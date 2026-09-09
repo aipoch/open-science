@@ -43,6 +43,7 @@ import {
   type SpecialistUsage
 } from './specialist-resource-scope'
 import { SkillUsageAgents } from './SkillUsageAgents'
+import { RequiredSkillToggle } from './RequiredSkillToggle'
 import {
   ResourceTagBadges,
   ResourceTagMenu,
@@ -722,21 +723,27 @@ const SkillsPanel = ({
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             ) : null}
-                            <SettingsToggle
-                              enabled={skill.enabled}
-                              disabled={!available}
-                              aria-label={t('Toggle {{name}}', { name: skill.displayName })}
-                              title={
-                                !available
-                                  ? t('This Skill has an identity conflict and cannot be used.')
-                                  : skill.enabled
-                                    ? t('Available to Main Agent')
-                                    : t('Unavailable to Main Agent')
-                              }
-                              onToggle={() => {
-                                if (available) void toggleSkill(skill.id, !skill.enabled)
-                              }}
-                            />
+                            {skill.activationPolicy === 'always-on' ? (
+                              <RequiredSkillToggle
+                                label={t('Toggle {{name}}', { name: skill.displayName })}
+                              />
+                            ) : (
+                              <SettingsToggle
+                                enabled={skill.enabled}
+                                disabled={!available}
+                                aria-label={t('Toggle {{name}}', { name: skill.displayName })}
+                                title={
+                                  !available
+                                    ? t('This Skill has an identity conflict and cannot be used.')
+                                    : skill.enabled
+                                      ? t('Available to Main Agent')
+                                      : t('Unavailable to Main Agent')
+                                }
+                                onToggle={() => {
+                                  if (available) void toggleSkill(skill.id, !skill.enabled)
+                                }}
+                              />
+                            )}
                           </div>
                           {deleteError?.id === skill.id ? (
                             <p

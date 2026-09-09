@@ -61,6 +61,7 @@ import {
   buildVisionModelMutation
 } from './subagent-model-settings'
 import { relocateManagedRuntimeEnablement } from '../notebook/managed-runtime-relocation'
+import { isApplicationRequiredSkillId } from '../skills/activation-policy'
 
 type SkillMutationGuard = <T>(operation: () => Promise<T>) => Promise<T>
 type Write = Promise<StoredSettings>
@@ -748,6 +749,11 @@ class SettingsRepository {
   }
 
   async setSkillsEnabled(ids: string[], enabled: boolean): Promise<StoredSettings> {
+    if (!enabled) {
+      const requiredId = ids.find(isApplicationRequiredSkillId)
+      if (requiredId)
+        throw new Error(`Application-required Skill cannot be disabled: ${requiredId}`)
+    }
     const update = (): Promise<StoredSettings> =>
       this.mutate((settings) => {
         const disabled = new Set(settings.disabledSkillIds ?? [])

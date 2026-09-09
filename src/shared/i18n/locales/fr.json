@@ -4057,6 +4057,7 @@
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._other": "Utilisée par {{count}} spécialistes. Retirez cette compétence de ces spécialistes avant de la supprimer.",
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._many": "Utilisée par {{count}} spécialistes. Retirez cette compétence de ces spécialistes avant de la supprimer.",
     "Availability": "Disponibilité",
+    "This built-in Skill supports core application features and is always enabled.": "Cette Compétence intégrée prend en charge des fonctionnalités essentielles de l’application et reste toujours activée.",
     "Specialist access is configured on each Specialist.": "L'accès Spécialiste est configuré sur chaque Spécialiste.",
     "Resolve Skill conflicts": "Résoudre les conflits de compétences",
     "Choose one version for every conflicting Skill before installing the Specialist.": "Choisissez une version pour chaque compétence en conflit avant d'installer le spécialiste.",

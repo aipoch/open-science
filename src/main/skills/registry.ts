@@ -1,12 +1,13 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import type { SkillSource } from '../../shared/settings'
+import type { SkillActivationPolicy, SkillSource } from '../../shared/settings'
 import { createLogger } from '../logger'
 import { parseFrontmatter } from './frontmatter'
 import { resolveBundledSkillsRoot } from './resource-path'
 import { skillPackageCompatibility } from './skill-package-compatibility'
 import { readSkillHelperDescriptors, type SkillHelperDescriptor } from './registered-helper-catalog'
+import { trustedSkillActivationPolicy } from './activation-policy'
 
 const log = createLogger('skills')
 
@@ -33,6 +34,7 @@ export type BundledSkill = {
   // and Specialist picker surface. The source remains `featured`; exposure is a presentation rule,
   // not a fourth persisted Skill source.
   exposure?: 'catalog' | 'internal'
+  activationPolicy?: SkillActivationPolicy
   // Host-private executable descriptor metadata. Renderer projections deliberately omit this field.
   helpers?: readonly SkillHelperDescriptor[]
 }
@@ -43,6 +45,7 @@ type ManifestEntry = {
   source: SkillSource
   updatedAt: string
   exposure?: 'catalog' | 'internal'
+  activationPolicy?: SkillActivationPolicy
 }
 
 const SAFE_ID = /^[a-z0-9-]+$/
@@ -71,6 +74,9 @@ const readManifest = async (rootDir: string): Promise<ManifestEntry[]> => {
         (record?.exposure === undefined ||
           record?.exposure === 'catalog' ||
           record?.exposure === 'internal') &&
+        (record?.activationPolicy === undefined ||
+          record?.activationPolicy === 'user-controlled' ||
+          record?.activationPolicy === 'always-on') &&
         typeof record?.updatedAt === 'string'
       )
     })
@@ -120,6 +126,7 @@ class SkillRegistry {
           category: fields.category,
           requirements: fields.requirements,
           exposure: entry.exposure,
+          activationPolicy: trustedSkillActivationPolicy(entry.source, entry.activationPolicy),
           helpers: await readSkillHelperDescriptors(sourceDir)
         })
       } catch (error) {
