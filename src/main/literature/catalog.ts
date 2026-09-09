@@ -1440,7 +1440,20 @@ class LiteratureCatalog {
       select: { contentBlobId: true }
     })
     if (!version) throw new Error('Literature Attachment is unavailable.')
-    const verification = await this.content.verify(version.contentBlobId, { retry: true })
+    const verification = await this.content
+      .verify(version.contentBlobId, { retry: true })
+      .catch((error: unknown) => {
+        // Content verification persists permission-denied observations before rethrowing the OS error.
+        if (
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          (error.code === 'EACCES' || error.code === 'EPERM')
+        ) {
+          this.publishChanged({ itemIds: [command.itemId] })
+        }
+        throw error
+      })
     // Verification persists its observation before returning, including an unavailable result.
     // This invalidates that committed observation; it is not a successful verification notice.
     this.publishChanged({ itemIds: [command.itemId] })

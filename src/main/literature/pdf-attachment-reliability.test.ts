@@ -748,7 +748,7 @@ describe('Literature PDF attachment reliability', () => {
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     'records a permission-denied verification attempt and recovers after permission restoration',
     async () => {
-      const { importer, request, catalog, authority } = await setup()
+      const { importer, request, catalog, authority, changed } = await setup()
       const version = (await importer.import(request)).item.attachments[0].versions[0]
       const resolved = await authority.resolveVersion(version.id)
       const row = await client!.literatureAttachmentVersion.findUniqueOrThrow({
@@ -767,7 +767,11 @@ describe('Literature PDF attachment reliability', () => {
       try {
         await chmod(resolved!.path, 0o000)
         await expect(readFile(resolved!.path)).rejects.toMatchObject({ code: 'EACCES' })
+        changed.mockClear()
         await expect(catalog.transact(retry)).rejects.toThrow()
+        expect
+          .soft(changed)
+          .toHaveBeenCalledWith(expect.objectContaining({ itemIds: [request.itemId] }))
         const after = (await catalog.get(request.itemId))!.attachments[0].versions[0]
         expect.soft(after.availability).toBe('unavailable')
         expect.soft(after.verificationFailure).toBeTruthy()
@@ -785,6 +789,26 @@ describe('Literature PDF attachment reliability', () => {
       })
     }
   )
+
+  it('does not notify when the verification observation cannot be persisted', async () => {
+    const { catalog, importer, request, changed } = await setup()
+    const version = (await importer.import(request)).item.attachments[0].versions[0]
+    const failure = new Error('Observation write failed')
+    const persist = vi.spyOn(client!.contentBlob, 'updateMany').mockRejectedValueOnce(failure)
+    changed.mockClear()
+    try {
+      await expect(
+        catalog.transact({
+          kind: 'verify-attachment',
+          itemId: request.itemId,
+          versionId: version.id
+        })
+      ).rejects.toBe(failure)
+      expect(changed).not.toHaveBeenCalled()
+    } finally {
+      persist.mockRestore()
+    }
+  })
 
   it('invalidates other clients after attachment verification persists a changed observation', async () => {
     const { catalog, importer, request, authority, changed } = await setup()
