@@ -38,7 +38,8 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
   it(
     'propagates a native process exit code',
     async () => {
-      const result = await runPowerShell('cmd.exe /d /c exit 7 | Out-Null')
+      const executable = process.execPath.replaceAll("'", "''")
+      const result = await runPowerShell(`& '${executable}' -e 'process.exit(7)' | Out-Null`)
 
       expect(result.exitCode).toBe(7)
     },
@@ -76,7 +77,9 @@ Write-Output "__OPEN_SCIENCE_INTERNAL__=[$env:OPEN_SCIENCE_PSMODULEPATH]"
     async () => {
       const result = await runPowerShell('Write-Output "isolated" `')
 
-      expect(result.exitCode).toBe(1)
+      expect(result.exitCode).toBeNull()
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toMatch(/parse|syntax/i)
     },
     POWERSHELL_TEST_TIMEOUT_MS
   )

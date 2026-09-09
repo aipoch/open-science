@@ -257,7 +257,6 @@ const buildShellExecuteDoc = (platform: NodeJS.Platform = process.platform): str
 
   return [
     shellDescription,
-    'File discovery must stay inside the session cwd. Use explicit scoped paths such as `find . -name "chart.png"` or `rg --files .`; on Windows use `Get-ChildItem -LiteralPath . -Recurse -Filter "chart.png"`. Broad or unresolved search roots and directory-link following are rejected before workload execution. Use host.artifacts() in repl_execute for managed files. Native framework batch search tools are disabled; do not retry denied searches through another interpreter.',
     ...(platformContract ? [platformContract] : []),
     `Stateless: each call is a fresh process, so cwd, variables, jobs, and functions do not persist. It starts in the data-kernel workspace and shares the handoff directory exposed as ${handoffVariable}; do not resolve handoff relative to cwd.`,
     exitCodeContract,
