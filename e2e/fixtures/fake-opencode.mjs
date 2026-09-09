@@ -1249,6 +1249,18 @@ if (process.argv.includes('--version')) {
             })
             await delay(50)
           }
+          // Hold only the fake stream until the test has queued the follow-up through the UI.
+          const releaseFile = JSON.parse(prompt.split('Release file: ')[1])
+          const deadline = Date.now() + 30_000
+          while (true) {
+            try {
+              await readFile(releaseFile)
+              break
+            } catch (error) {
+              if (error.code !== 'ENOENT' || Date.now() >= deadline) throw error
+              await delay(50)
+            }
+          }
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
