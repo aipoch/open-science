@@ -74,6 +74,7 @@ const stateFromSnapshot = (
 }
 
 export const useMemoryStore = create<MemoryStore>((set, get) => {
+  let projectGeneration = 0
   const applySnapshot = (snapshot: MemorySnapshot): boolean => {
     const state = get()
     if (snapshot.revision < state.revision) return false
@@ -84,8 +85,12 @@ export const useMemoryStore = create<MemoryStore>((set, get) => {
   }
 
   const applyMutation = async (operation: () => Promise<MemorySnapshot>): Promise<void> => {
+    const generation = projectGeneration
     try {
-      applySnapshot(await operation())
+      const snapshot = await operation()
+      // Memory revisions do not order project metadata. Read again after a concurrent project event.
+      if (generation !== projectGeneration) await get().load()
+      else applySnapshot(snapshot)
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'memory' })
       throw error
@@ -143,7 +148,10 @@ export const useMemoryStore = create<MemoryStore>((set, get) => {
         if (revision > get().revision) void get().load()
       })
       const removeProject = window.api.projects?.onUpdated?.(({ id }) => {
-        if (get().projects.some((project) => project.projectId === id)) void get().load()
+        if (get().projects.some((project) => project.projectId === id)) {
+          projectGeneration += 1
+          void get().load()
+        }
       })
       return () => {
         removeMemory()

@@ -30,6 +30,7 @@ type RuntimeSettingsState = {
   setError: (error: string | null) => void
   setEnablement: (language: NotebookLanguage, enablement: RuntimeEnablement) => void
   refreshPolicy: () => Promise<boolean>
+  setAgentEnvironmentCreationEnabled: (enabled: boolean) => Promise<void>
   listen: () => () => void
   updatePackageCount: (envId: string, count: number) => void
 }
@@ -204,6 +205,13 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
     setEnablement: (language, enablement) =>
       set((state) => ({ enablement: { ...state.enablement, [language]: enablement } })),
     refreshPolicy,
+    setAgentEnvironmentCreationEnabled: async (enabled) => {
+      const generation = policyGeneration
+      const committed = await window.api.runtime.setAgentEnvironmentCreationEnabled({ enabled })
+      // A receipt is safe only while no policy event has superseded the write's starting point.
+      if (generation === policyGeneration) set({ agentEnvironmentCreationEnabled: committed })
+      await refreshPolicy().catch(() => undefined)
+    },
     listen: () =>
       window.api.runtime.onPolicyChanged?.(() => {
         void refreshPolicy().catch(() => undefined)
