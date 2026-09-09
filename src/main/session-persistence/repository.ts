@@ -142,6 +142,7 @@ type SessionLoadDiagnostics = {
 }
 
 type SessionScanOptions = {
+  quarantinedIsIncomplete?: boolean
   mode?: 'repair' | 'read-only'
   // Main-owned same-process mutations read durable authority without applying app-restart recovery.
   preserveRuntimeState?: boolean
@@ -827,6 +828,7 @@ class SessionRepository {
     }
     const { sessions, isComplete, warnings } = await this.readAllSessions({
       quarantineInvalidFiles,
+      quarantinedIsIncomplete: options.quarantinedIsIncomplete,
       scanMetrics
     })
     const projectIdsBySessionId = new Map<string, Set<string>>()
@@ -1484,6 +1486,7 @@ class SessionRepository {
   // Repair scans quarantine invalid data; read-only scans report it in place. I/O errors keep
   // reconciliation disabled until the next repair.
   private async readAllSessions(options: {
+    quarantinedIsIncomplete?: boolean
     quarantineInvalidFiles: boolean
     scanMetrics: SessionScanMetrics
   }): Promise<{
@@ -1498,13 +1501,22 @@ class SessionRepository {
     let isComplete = projectDirectories.isComplete
 
     for (const projectId of projectDirectories.names) {
+      const warningCount = warnings.length
       const project = await this.readProjectSessions(projectId, {
         missingDirectoryIsIncomplete: true,
         quarantineInvalidFiles: options.quarantineInvalidFiles,
+        quarantinedIsIncomplete: options.quarantinedIsIncomplete,
         warnings,
         scanMetrics: options.scanMetrics,
         sessionsBoundaryValidated: true
       })
+      if (
+        options.quarantinedIsIncomplete &&
+        !project.isComplete &&
+        warnings.length === warningCount
+      ) {
+        warnings.push({ kind: 'unreadable', projectId, fileName: '.', recovered: false })
+      }
       sessions.push(...project.sessions)
       isComplete &&= project.isComplete
     }

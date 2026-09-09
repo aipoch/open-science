@@ -1,3 +1,4 @@
+import { assertLiteratureAttachmentsUnreferenced } from './literature-attachment-removal'
 import { ProjectFilesReconciliationError } from '../project-files/repository'
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
 import type { ReconcilePendingArtifactsRequest } from '../../shared/artifacts'
@@ -90,7 +91,10 @@ import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
 import { mutateSessionDetailsAuthority } from './session-details-authority'
 const SESSION_CPU_TRACE_ENABLED = process.env.OPEN_SCIENCE_PERF_SESSION_TRACE === '1'
 type SessionMutationRepository = {
-  loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
+  loadAllWithDiagnostics(options?: {
+    mode?: 'repair' | 'read-only'
+    quarantinedIsIncomplete?: boolean
+  }): Promise<{
     result: LoadAllSessionsResult
     isComplete: boolean
     warnings?: SessionLoadWarning[]
@@ -537,29 +541,24 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     remove: () => Promise<Result>
   ): Promise<Result> {
     return this.operationScheduler.runGlobal(async () => {
-      // Deletion is infrequent. Read the existing authority instead of maintaining a second
-      // persistent reference index, and hold the barrier through the Catalog transaction.
-      const scan = await this.repository.loadAllWithDiagnostics({ mode: 'read-only' })
-      if (!scan.isComplete)
-        throw new Error('Cannot remove an attachment without a complete Session catalog.')
-      if (
-        scan.result.sessions.some((session) =>
-          [
-            ...(session.runtimeContext?.pdfContext?.bindings ?? []),
-            // The graph retains snapshots on inactive branches; session.messages is only
-            // the active projection when a graph exists.
-            ...(session.conversationGraph?.messages ?? session.messages).flatMap(
-              (message) => message.pdfContext?.bindings ?? []
-            )
-          ].some(
-            (binding) =>
-              binding.sourceKind === 'literature-attachment-version' &&
-              binding.sourceFileId === attachmentId
-          )
-        )
-      )
-        throw new Error('LITERATURE_ATTACHMENT_IN_USE')
+      const scan = await this.repository.loadAllWithDiagnostics({
+        mode: 'read-only',
+        quarantinedIsIncomplete: true
+      })
+      assertLiteratureAttachmentsUnreferenced(scan, [attachmentId])
       return remove()
+    })
+  }
+
+  withLiteratureAttachmentRemoval<Result>(
+    remove: (assertUnreferenced: (attachmentIds: readonly string[]) => void) => Promise<Result>
+  ): Promise<Result> {
+    return this.operationScheduler.runGlobal(async () => {
+      const scan = await this.repository.loadAllWithDiagnostics({
+        mode: 'read-only',
+        quarantinedIsIncomplete: true
+      })
+      return remove((attachmentIds) => assertLiteratureAttachmentsUnreferenced(scan, attachmentIds))
     })
   }
 

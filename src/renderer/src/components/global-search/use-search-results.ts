@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { resultId, type SearchCategory, type SearchResult } from './search-result'
 import type { LiteratureCollectionView, LiteratureItemView } from '../../../../shared/literature'
 import type { SearchFileFormat, SearchSort } from '../../../../shared/search-text'
+import { readLiteratureSelectionPage } from '@/pages/literature/literature-read-pages'
 
 export type SearchPage = {
   items: SearchResult[]
@@ -97,16 +98,19 @@ export const useSearchResults = (
         }
         let page: SearchPage = emptySearchPage()
         if (category === 'library') {
-          const result = await window.api.literature.search({
-            scope: 'global-search',
-            query,
-            projectId,
-            updatedAfter,
-            searchSort: sort,
-            entryKind,
-            limit: 10,
-            offset: append ? previous.offset : undefined
-          })
+          const result = await readLiteratureSelectionPage(
+            {
+              scope: 'global-search',
+              query,
+              projectId,
+              updatedAfter,
+              searchSort: sort,
+              entryKind,
+              limit: 10,
+              offset: append ? previous.offset : undefined
+            },
+            () => generation.current === version
+          )
           page = {
             ...page,
             items: result.entries.filter(isLibraryEntry).map((item) => ({ kind: 'library', item })),

@@ -18,7 +18,7 @@ export const LiteratureLibraryCount = memo(function LiteratureLibraryCount({
       pending.current = {
         revision,
         result: window.api.literature
-          .search({ scope: 'library', lifecycle: 'active', limit: 1 })
+          .search({ scope: 'library', lifecycle: 'active', countOnly: true })
           .then((page) => page.totalCount)
       }
     }

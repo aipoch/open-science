@@ -439,6 +439,8 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('Save to Literature Inbox?')
     expect(html).toContain('Corrective Retrieval Augmented Generation')
     expect(html).toContain('1 reference')
+    expect(html).not.toContain('Pending review:')
+    expect(html).not.toContain('Open Inbox')
     expect(html).not.toContain('open-science-library')
     expect(html).not.toContain('rawMetadata')
     expect(html).not.toContain('provider-secret')

@@ -233,6 +233,14 @@ const literatureSourceInputSchema = z
   })
   .strict()
 
+// Current persisted metadata evidence, not an application history. savedAt is the legacy
+// source-record write timestamp; it does not claim the time of network acquisition.
+const literatureSourceRecordViewSchema = literatureSourceInputSchema.extend({
+  id: nonEmptyTextSchema,
+  savedAt: z.number().int().nonnegative()
+})
+type LiteratureSourceRecordView = z.infer<typeof literatureSourceRecordViewSchema>
+
 const literatureCandidateOriginSchema = z
   .object({
     kind: nonEmptyTextSchema,
@@ -385,6 +393,8 @@ const literatureCatalogSearchRequestSchema = z
     searchSort: z.enum(['relevance', 'recent']).optional(),
     entryKind: z.enum(['paper', 'collection', 'pdf']).optional(),
     allItemIds: z.boolean().optional(),
+    countOnly: z.boolean().optional(),
+    itemIds: z.array(nonEmptyTextSchema).max(200).optional(),
     query: optionalTextSchema,
     projectId: optionalTextSchema,
     collectionId: optionalTextSchema,
@@ -403,6 +413,17 @@ const literatureCatalogSearchRequestSchema = z
   .refine((request) => !request.allItemIds || request.scope === 'library', {
     message: 'Complete item membership is only available for the library.'
   })
+  .refine((request) => request.itemIds === undefined || request.scope === 'library', {
+    message: 'Selected item membership is only available for the library.'
+  })
+  .refine(
+    (request) =>
+      !request.countOnly ||
+      ((request.scope === 'library' || request.scope === 'global-search') && !request.allItemIds),
+    {
+      message: 'Count-only queries require the library and cannot request item membership.'
+    }
+  )
 
 const literatureCatalogSearchPageSchema = z
   .object({
@@ -994,6 +1015,10 @@ const literatureApplicationCommandContracts = Object.freeze({
     validationCodec(z.tuple([literatureCatalogSearchRequestSchema])),
     validationCodec(literatureCatalogSearchPageSchema)
   ),
+  sources: defineApplicationCommandContract(
+    validationCodec(z.tuple([nonEmptyTextSchema])),
+    validationCodec(z.array(literatureSourceRecordViewSchema))
+  ),
   get: defineApplicationCommandContract(
     validationCodec(z.tuple([nonEmptyTextSchema])),
     validationCodec(literatureItemViewSchema.optional())
@@ -1224,6 +1249,7 @@ export type {
   LiteratureInboxCandidateView,
   LiteratureItemInput,
   LiteratureItemView,
+  LiteratureSourceRecordView,
   LiteratureMetadataCompletionRequest,
   LiteratureMetadataCompletionResult,
   LiteratureMetadataConflict,

@@ -62,6 +62,8 @@ const formatBytes = (bytes: number): string => {
 const CATEGORY_LABEL_KEYS = {
   artifacts: 'Artifacts',
   compute: 'Compute cache',
+  content: 'Shared content',
+  literature: 'Literature settings and tasks',
   delegation: 'Subagent workspaces',
   uploads: 'Uploads',
   runtime: 'Runtime',
@@ -75,6 +77,8 @@ const CATEGORY_LABEL_KEYS = {
 const CATEGORY_COLORS: Record<UsageCategoryKey, string> = {
   artifacts: 'bg-storage-artifacts',
   compute: 'bg-storage-compute',
+  content: 'bg-storage-content',
+  literature: 'bg-storage-literature',
   delegation: 'bg-storage-delegation',
   runtime: 'bg-storage-runtime',
   uploads: 'bg-storage-uploads',

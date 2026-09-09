@@ -7129,48 +7129,58 @@ describe('literature attachment removal and session persistence ordering', () =>
     expect(remove).not.toHaveBeenCalled()
   })
 
-  it('checks a queued binding after an earlier attachment removal completes', async () => {
-    const save = vi.fn()
-    const coordinator = new SessionPersistenceCoordinator(
-      createSessionRepository({
-        loadSessionWithDiagnostics: vi
-          .fn()
-          .mockResolvedValue({ status: 'found', session: createSession() }),
-        saveSession: save
-      }),
-      createFileIndex()
-    )
-    let release!: () => void
-    let entered!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const started = new Promise<void>((resolve) => {
-      entered = resolve
-    })
-    let removed = false
-    const removal = coordinator.withUnreferencedLiteratureAttachment('attachment', async () => {
-      entered()
-      await gate
-      removed = true
-    })
-    await started
-    const patch = coordinator.patchSessionRuntimeContext({
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      expectedRevision: 0,
-      patch: { pdfContext: undefined },
-      beforePersist: async () => {
-        await Promise.resolve()
-        if (removed) throw new Error('Source unavailable')
+  it.each(['single attachment', 'item batch'] as const)(
+    'checks a queued binding after %s removal completes',
+    async (kind) => {
+      const save = vi.fn()
+      const coordinator = new SessionPersistenceCoordinator(
+        createSessionRepository({
+          loadSessionWithDiagnostics: vi
+            .fn()
+            .mockResolvedValue({ status: 'found', session: createSession() }),
+          saveSession: save
+        }),
+        createFileIndex()
+      )
+      let release!: () => void
+      let entered!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const started = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      let removed = false
+      const remove = async (): Promise<void> => {
+        entered()
+        await gate
+        removed = true
       }
-    })
-    const rejected = expect(patch).rejects.toThrow('Source unavailable')
-    release()
-    await removal
-    await rejected
-    expect(save).not.toHaveBeenCalled()
-  })
+      const removal =
+        kind === 'single attachment'
+          ? coordinator.withUnreferencedLiteratureAttachment('attachment', remove)
+          : coordinator.withLiteratureAttachmentRemoval(async (assertUnreferenced) => {
+              assertUnreferenced(['attachment', 'other-attachment'])
+              await remove()
+            })
+      await started
+      const patch = coordinator.patchSessionRuntimeContext({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedRevision: 0,
+        patch: { pdfContext: undefined },
+        beforePersist: async () => {
+          await Promise.resolve()
+          if (removed) throw new Error('Source unavailable')
+        }
+      })
+      const rejected = expect(patch).rejects.toThrow('Source unavailable')
+      release()
+      await removal
+      await rejected
+      expect(save).not.toHaveBeenCalled()
+    }
+  )
 })
 
 const createSessionRepository = (

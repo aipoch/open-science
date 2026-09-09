@@ -1035,7 +1035,7 @@ const PermissionApprovalCard = ({
           ) : null}
         </div>
       ) : literatureSummary ? (
-        <WorkspaceLiteratureToolCard summary={literatureSummary} />
+        <WorkspaceLiteratureToolCard summary={literatureSummary} isApproval />
       ) : isNotebookNetworkApprovalRequest(request) ? (
         <NotebookNetworkApprovalDetail request={request} />
       ) : isSpecialistSwitchRequest(request) ? (

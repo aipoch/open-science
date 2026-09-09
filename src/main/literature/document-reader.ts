@@ -18,7 +18,7 @@ import type {
 
 const log = createLogger('literature-reading-context')
 const EXTRACTOR_FINGERPRINT = createHash('sha256')
-  .update('open-science-pdfjs-selectable-text-v1')
+  .update('open-science-pdfjs-verified-bytes-v2')
   .digest('hex')
 const DOCUMENT_BATCH_CHARS = 16_000
 const INDEX_CHUNK_CHARS = 5_000
@@ -320,9 +320,26 @@ class LiteratureDocumentReader {
     if (input.openContent) {
       const lease = await input.openContent()
       try {
-        extraction = await extractPdfText(lease.path, undefined, {
-          maxChars: MAX_EXTRACTED_CACHE_CHARS
-        })
+        extraction = await extractPdfText(
+          lease.path,
+          {
+            size: lease.size,
+            readBytes: async () => {
+              const bytes = await lease.readRange(0, lease.size)
+              // Validate the exact buffer PDF.js will consume, including replace-and-restore races.
+              if (
+                bytes.byteLength !== input.sizeBytes ||
+                createHash('sha256').update(bytes).digest('hex') !== input.checksum
+              ) {
+                throw new Error(
+                  'LINKED_PDF_UNAVAILABLE: PDF bytes do not match the immutable Version.'
+                )
+              }
+              return bytes
+            }
+          },
+          { maxChars: MAX_EXTRACTED_CACHE_CHARS }
+        )
         await lease.verifyUnchanged()
       } finally {
         await lease.close()

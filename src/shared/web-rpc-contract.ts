@@ -92,7 +92,8 @@ export const webRpcResponseSchema = z.discriminatedUnion('ok', [
       error: z
         .object({
           code: z.enum(WEB_RPC_ERROR_CODES),
-          message: z.string()
+          message: z.string(),
+          parameters: z.object({ macro: z.string() }).strict().optional()
         })
         .strict()
     })

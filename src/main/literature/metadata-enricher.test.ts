@@ -73,7 +73,11 @@ describe('LiteratureMetadataEnricher', () => {
   it('previews citation metadata without mutating the catalog', async () => {
     const applyMetadata = vi.fn()
     const enricher = new LiteratureMetadataEnricher(
-      { get: vi.fn().mockResolvedValue(view), applyMetadata },
+      {
+        getMetadataCommitReceipt: async () => null,
+        get: vi.fn().mockResolvedValue(view),
+        applyMetadata
+      },
       vi.fn().mockResolvedValue(
         new Response(JSON.stringify(crossrefResponse), {
           status: 200,
@@ -116,6 +120,7 @@ describe('LiteratureMetadataEnricher', () => {
     const applyMetadata = vi.fn()
     const enricher = new LiteratureMetadataEnricher(
       {
+        getMetadataCommitReceipt: async () => null,
         get: vi.fn().mockResolvedValue({
           ...view,
           item: { ...item, identifiers: [] }
@@ -157,6 +162,7 @@ describe('LiteratureMetadataEnricher', () => {
   it('keeps existing values and reports Crossref conflicts', async () => {
     const enricher = new LiteratureMetadataEnricher(
       {
+        getMetadataCommitReceipt: async () => null,
         get: vi.fn().mockResolvedValue({
           ...view,
           item: { ...item, containerTitle: 'User Journal', typeFields: { volume: '9' } }
@@ -182,7 +188,11 @@ describe('LiteratureMetadataEnricher', () => {
     const updated = { ...view, metadataRevision: 3 }
     const applyMetadata = vi.fn().mockResolvedValue(updated)
     const enricher = new LiteratureMetadataEnricher(
-      { get: vi.fn().mockResolvedValue(view), applyMetadata },
+      {
+        getMetadataCommitReceipt: async () => null,
+        get: vi.fn().mockResolvedValue(view),
+        applyMetadata
+      },
       vi.fn().mockResolvedValue(new Response(JSON.stringify(crossrefResponse), { status: 200 }))
     )
 
@@ -216,6 +226,7 @@ describe('LiteratureMetadataEnricher', () => {
       )
     const enricher = new LiteratureMetadataEnricher(
       {
+        getMetadataCommitReceipt: async () => null,
         get: vi.fn().mockResolvedValue({
           ...view,
           item: { ...item, containerTitle: 'User Journal', typeFields: { volume: '9' } }
@@ -246,7 +257,10 @@ describe('LiteratureMetadataEnricher', () => {
     const fetch = vi
       .fn()
       .mockImplementation(async () => new Response(JSON.stringify(crossrefResponse)))
-    const enricher = new LiteratureMetadataEnricher({ get, applyMetadata }, fetch)
+    const enricher = new LiteratureMetadataEnricher(
+      { getMetadataCommitReceipt: async () => null, get, applyMetadata },
+      fetch
+    )
     const review = await enricher.complete({ mode: 'preview', itemId: view.id })
     fetch.mockRejectedValue(new Error('Provider unavailable after review'))
     await enricher.complete({
@@ -277,7 +291,11 @@ const regressionEnricher = (
     item: input.item
   }))
   const enricher = new LiteratureMetadataEnricher(
-    { get: vi.fn().mockResolvedValue({ ...view, item: current }), applyMetadata },
+    {
+      getMetadataCommitReceipt: async () => null,
+      get: vi.fn().mockResolvedValue({ ...view, item: current }),
+      applyMetadata
+    },
     vi.fn().mockResolvedValue(response)
   )
   return { enricher, applyMetadata }

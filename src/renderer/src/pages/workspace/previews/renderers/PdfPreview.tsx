@@ -1417,8 +1417,11 @@ export const PdfPreviewContent = ({
 
         setDocumentState({ requestKey: resourceRequestKey, status: 'ready', document })
       } catch (error: unknown) {
-        if (!isUnavailableFileError(error)) console.error('Failed to load PDF preview', error)
-        if (!canceled) setDocumentState({ requestKey: resourceRequestKey, status: 'error', error })
+        // Closing or switching a preview can reject the PDF.js task while cleanup destroys it.
+        if (!canceled) {
+          if (!isUnavailableFileError(error)) console.error('Failed to load PDF preview', error)
+          setDocumentState({ requestKey: resourceRequestKey, status: 'error', error })
+        }
         await dispose()
       }
     })()

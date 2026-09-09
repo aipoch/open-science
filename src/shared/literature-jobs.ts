@@ -36,6 +36,28 @@ export const literatureJobSchema = z
     progress: z.object({ itemId: id, value: literatureFullTextProgressSchema }).optional()
   })
   .strict()
+// Review reads contain only displayed data. Full item snapshots remain private checkpoints
+// used by applyReviewed; clients cannot accidentally round-trip a partial item into the catalog.
+export const literatureJobRowViewSchema = literatureJobRowSchema.extend({
+  item: z
+    .object({
+      id,
+      metadataRevision: z.number().int().positive(),
+      item: z.object({ title: z.string() }).strict()
+    })
+    .strict()
+    .optional(),
+  metadata: literatureMetadataCompletionResultSchema.omit({ item: true }).optional()
+})
+export const literatureJobViewSchema = literatureJobSchema.extend({
+  rows: z.array(literatureJobRowViewSchema).min(1).max(LITERATURE_JOB_MAX_ITEMS),
+  rowOffset: z.number().int().nonnegative().optional(),
+  nextRowOffset: z.number().int().nonnegative().optional(),
+  totalRows: z.number().int().nonnegative().optional()
+})
+export type LiteratureJobView = z.infer<typeof literatureJobViewSchema>
+export type LiteratureJobRowView = z.infer<typeof literatureJobRowViewSchema>
+
 export const literatureJobRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }).strict(),
   z
@@ -50,6 +72,8 @@ export const literatureJobRequestSchema = z.discriminatedUnion('action', [
     .object({
       action: z.enum(['get', 'pause', 'resume', 'retry', 'remove']),
       ifUpdatedAt: z.number().finite().optional(),
+      rowOffset: z.number().int().nonnegative().optional(),
+      expectedUpdatedAt: z.number().finite().optional(),
       jobId: z.string().uuid()
     })
     .strict(),
@@ -79,7 +103,7 @@ export const literatureJobsContract = defineApplicationCommandContract(
   validationCodec(
     z
       .object({
-        jobs: z.array(literatureJobSchema).max(50),
+        jobs: z.array(literatureJobViewSchema).max(50),
         progress: literatureJobSchema.shape.progress.optional(),
         summaries: z
           .array(
@@ -114,12 +138,12 @@ export type LiteratureJobSummary = Omit<LiteratureJob, 'rows' | 'progress'> & {
   completedItemIds?: string[]
 }
 export type LiteratureJobsResult = {
-  jobs: LiteratureJob[]
+  jobs: LiteratureJobView[]
   summaries?: LiteratureJobSummary[]
   progress?: LiteratureJob['progress']
 }
 
-export function literatureJobProgress(job: LiteratureJob): {
+export function literatureJobProgress(job: LiteratureJobView): {
   processed: number
   phaseTotal: number
 } {

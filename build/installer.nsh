@@ -245,7 +245,8 @@ FunctionEnd
   # Checking only after uninstalling can reject the update with the old executable already gone.
   # A stale locked uninstaller must not turn a silent install into a false success or offer the unsafe
   # Ignore choice. OPEN_EXISTING keeps this check non-destructive; Retry lets the user release a
-  # transient lock, while silent installs take the Cancel path and return a failure code.
+  # transient lock. Unattended installs stay silent; a user-requested restart must explain failure
+  # even though electron-updater starts NSIS with /S and exits before observing the result.
   Function ensureExistingUninstallerIsWritable
     IfFileExists "$INSTDIR\${UNINSTALL_FILENAME}" ensureExistingUninstallerIsWritable_retry ensureExistingUninstallerIsWritable_done
 
@@ -258,9 +259,25 @@ FunctionEnd
       Return
 
     ensureExistingUninstallerIsWritable_failed:
-      DetailPrint `Cannot replace the existing uninstaller: "$INSTDIR\${UNINSTALL_FILENAME}".`
-      IfSilent ensureExistingUninstallerIsWritable_cancel
-      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(uninstallFailed)$\r$\n$INSTDIR\${UNINSTALL_FILENAME}" IDRETRY ensureExistingUninstallerIsWritable_retry
+      DetailPrint `Cannot replace the existing uninstaller: "$INSTDIR\${UNINSTALL_FILENAME}". Windows error: $R1.`
+      ${if} ${Silent}
+        # --updated + --force-run is the existing Restart to update handoff, including old clients.
+        # Plain /S and non-relaunching update jobs must not wait for someone to dismiss a dialog.
+        ${ifNot} ${isUpdated}
+          Goto ensureExistingUninstallerIsWritable_cancel
+        ${endif}
+        ${ifNot} ${isForceRun}
+          Goto ensureExistingUninstallerIsWritable_cancel
+        ${endif}
+      ${endif}
+      ${if} $R1 == 5
+        MessageBox MB_OK|MB_ICONEXCLAMATION|MB_SETFOREGROUND "Open Science could not finish updating.$\r$\n$\r$\nWindows denied access to:$\r$\n$INSTDIR\${UNINSTALL_FILENAME}$\r$\n$\r$\nClose this notice, then run the official Open Science installer as administrator to update this installation.$\r$\n$\r$\nWindows error: $R1"
+      ${elseif} $R1 == 32
+      ${orIf} $R1 == 33
+        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION|MB_SETFOREGROUND "Open Science could not finish updating.$\r$\n$\r$\nAnother process is using:$\r$\n$INSTDIR\${UNINSTALL_FILENAME}$\r$\n$\r$\nClose the process using this file, then choose Retry. Choose Cancel to stop this update.$\r$\n$\r$\nWindows error: $R1" IDRETRY ensureExistingUninstallerIsWritable_retry
+      ${else}
+        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION|MB_SETFOREGROUND "Open Science could not finish updating.$\r$\n$\r$\nWindows could not replace:$\r$\n$INSTDIR\${UNINSTALL_FILENAME}$\r$\n$\r$\nChoose Retry to try again, or Cancel to stop this update. If the problem continues, report the file path and Windows error below.$\r$\n$\r$\nWindows error: $R1" IDRETRY ensureExistingUninstallerIsWritable_retry
+      ${endif}
 
     ensureExistingUninstallerIsWritable_cancel:
       # customInit may already have moved nested user data outside the old installation.

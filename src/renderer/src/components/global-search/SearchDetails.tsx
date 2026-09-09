@@ -34,6 +34,7 @@ import {
 } from './search-result'
 import { SearchHighlight } from './SearchHighlight'
 import { SearchContentHighlight } from './SearchContentHighlight'
+import { readLiteratureSelectionPage } from '@/pages/literature/literature-read-pages'
 
 type Props = {
   result: SearchResult
@@ -226,14 +227,16 @@ export const SearchDetails = ({
       }
       void loadCollections()
     } else if (result.kind === 'library' && !('item' in result.item)) {
-      void window.api.literature
-        .search({
+      void readLiteratureSelectionPage(
+        {
           scope: 'library',
           collectionId: result.item.id,
           limit: 10,
           sortBy: 'updated',
           sortDirection: 'desc'
-        })
+        },
+        () => active
+      )
         .then((page) => {
           if (active) {
             setPapers(page.entries.filter((item): item is LiteratureItemView => 'item' in item))

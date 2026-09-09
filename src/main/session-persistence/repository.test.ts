@@ -1496,6 +1496,32 @@ describe('session persistence repository (per-session files)', () => {
     expect(readDirectoryEntries).toHaveBeenCalledWith(projectDir)
   })
 
+  it('locates unreadable project directories in a strict deletion scan', async () => {
+    const root = await createStorageRoot()
+    await new SessionRepository(root).saveSession(createSession())
+    const projectDir = join(root, 'sessions', 'project-a')
+    const repository = new SessionRepository(root, {
+      readDirectoryEntries: async (path) => {
+        if (path === projectDir) throw Object.assign(new Error('Read denied'), { code: 'EACCES' })
+        return readdir(path, { withFileTypes: true })
+      }
+    })
+    const scan = await repository.loadAllWithDiagnostics({
+      mode: 'read-only',
+      quarantinedIsIncomplete: true
+    })
+    expect(scan.isComplete).toBe(false)
+    expect(scan.warnings).toContainEqual({
+      kind: 'unreadable',
+      projectId: 'project-a',
+      fileName: '.',
+      recovered: false
+    })
+    await expect(readFile(join(projectDir, 'session-1.json'), 'utf8')).resolves.toContain(
+      'Saved conversation'
+    )
+  })
+
   it('rejects saving through a symbolic link at the active sessions root', async () => {
     const root = await createStorageRoot()
     const outside = await createExternalRoot()

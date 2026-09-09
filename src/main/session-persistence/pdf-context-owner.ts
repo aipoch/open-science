@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { LiteratureAttachmentUnavailableError } from '../literature/attachment-authority'
 
 import {
@@ -282,7 +282,21 @@ class SessionPdfContextOwner {
       if (input.openContent) {
         const lease = await input.openContent()
         try {
-          const pageCount = await inspectPdfPageCount(lease.path)
+          const pageCount = await inspectPdfPageCount(lease.path, {
+            size: lease.size,
+            readBytes: async () => {
+              const bytes = await lease.readRange(0, lease.size)
+              if (
+                bytes.byteLength !== input.sizeBytes ||
+                createHash('sha256').update(bytes).digest('hex') !== input.checksum
+              ) {
+                throw new LiteratureAttachmentUnavailableError(
+                  'Linked PDF bytes do not match their Version.'
+                )
+              }
+              return bytes
+            }
+          })
           await lease.verifyUnchanged()
           return pageCount
         } finally {

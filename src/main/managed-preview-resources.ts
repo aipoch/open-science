@@ -81,6 +81,7 @@ type ManagedPreviewResourcesOptions = {
   openNotebookInput?: (
     request: Extract<AcquireManagedPreviewRequest, { source: 'notebook-input' }>
   ) => Promise<ManagedPreviewTrustedLease>
+  openLiterature?: (reference: string) => Promise<ManagedPreviewTrustedLease>
   createId?: () => string
 }
 
@@ -619,6 +620,11 @@ class ManagedPreviewResources {
   private openTrustedLease(
     request: AcquireManagedPreviewRequest
   ): Promise<ManagedPreviewTrustedLease | undefined> {
+    if (request.source === 'literature') {
+      if (!this.options.openLiterature)
+        return Promise.reject(new Error('Literature preview lease is not configured.'))
+      return this.options.openLiterature(request.path)
+    }
     if (request.source === 'notebook-input') {
       if (!this.options.openNotebookInput) {
         return Promise.reject(new Error('Notebook input preview lease is not configured.'))

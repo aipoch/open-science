@@ -552,7 +552,7 @@ describe('workspace tool activity details', () => {
     expect(JSON.stringify(details)).not.toContain('Reference one')
   })
 
-  it('summarizes Library Inbox saves from the small presentation block', () => {
+  it('keeps historical save presentations neutral without original receipts', () => {
     const activity = createActivity({
       providerToolName: 'mcp__open-science-library__save_to_inbox',
       rawInput: {
@@ -592,12 +592,12 @@ describe('workspace tool activity details', () => {
           summary: {
             action: 'save',
             itemTitles: ['Paper A'],
-            itemCount: 1,
-            savedCount: 1
+            itemCount: 1
           }
         }
       ]
     })
+    expect(JSON.stringify(details)).not.toContain('savedCount')
     expect(JSON.stringify(details)).not.toContain('rawMetadata')
   })
 

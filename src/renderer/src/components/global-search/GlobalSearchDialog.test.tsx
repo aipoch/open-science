@@ -1,3 +1,4 @@
+import { LITERATURE_OVERSIZED_REFERENCE } from '../../../../shared/literature-export'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
@@ -958,47 +959,87 @@ describe('GlobalSearchDialog', () => {
     act(() => button('Open collection').click())
     expect(useNavigationStore.getState().view).toBe('library')
   })
-  it('opens a Library PDF in the existing file dialog from the preview tab', async () => {
-    vi.mocked(window.api.literature.search).mockResolvedValue({
-      entries: [
-        {
-          ...literature,
-          attachments: [
-            {
-              id: 'attachment',
-              kind: 'fullText',
-              title: 'Paper PDF',
-              sortOrder: 0,
-              createdAt: 1,
-              updatedAt: 1,
-              versions: [
-                {
-                  id: 'pdf-version',
-                  versionNumber: 1,
-                  filename: 'paper.pdf',
-                  contentType: 'application/pdf',
-                  sizeBytes: 500,
-                  checksum: 'a'.repeat(64),
-                  createdAt: 1
-                }
-              ]
-            }
-          ]
-        }
-      ],
-      totalCount: 1
+  it('fills recent collection literature across smaller transport pages', async () => {
+    vi.mocked(window.api.literature.search).mockImplementation(async (request) => {
+      if (request.scope === 'global-search') return { entries: [collection], totalCount: 1 }
+      if (request.scope !== 'library') return { entries: [] }
+      return request.offset
+        ? {
+            entries: [
+              { ...literature, id: 'later', item: { ...literature.item, title: 'Later paper' } }
+            ],
+            totalCount: 2
+          }
+        : { entries: [literature], nextOffset: 1, totalCount: 2 }
     })
     await renderSearch()
     clickRow('library')
-    act(() => button('Preview').click())
-    expect(document.querySelector('[data-testid="file-content"]')?.textContent).toBe('paper.pdf')
-    act(() => button('Open file').click())
-    expect(document.querySelector('[data-testid="library-file-dialog"]')?.textContent).toBe(
-      'paper.pdf'
-    )
-    expect(onClose).not.toHaveBeenCalled()
-    expect(useNavigationStore.getState().view).toBe('workspace')
+    await waitFor(() => expect(detail().textContent).toContain('Later paper'))
+    expect(detail().textContent).toContain(literature.item.title)
   })
+  it.each(['single', 'paged', 'oversized'])(
+    'opens a Library PDF from %s transport pages without leaving search',
+    async (kind) => {
+      const pdfRecord = {
+        ...literature,
+        attachments: [
+          {
+            id: 'attachment',
+            kind: 'fullText',
+            title: 'Paper PDF',
+            sortOrder: 0,
+            createdAt: 1,
+            updatedAt: 1,
+            versions: [
+              {
+                id: 'pdf-version',
+                versionNumber: 1,
+                filename: 'paper.pdf',
+                contentType: 'application/pdf',
+                sizeBytes: 500,
+                checksum: 'a'.repeat(64),
+                createdAt: 1
+              }
+            ]
+          }
+        ]
+      }
+      const encoded = JSON.stringify(pdfRecord)
+      window.api.literature.exportRecord = vi
+        .fn()
+        .mockResolvedValueOnce({
+          chunk: encoded.slice(0, 100),
+          digest: 'a'.repeat(64),
+          nextOffset: 100
+        })
+        .mockResolvedValueOnce({ chunk: encoded.slice(100), digest: 'a'.repeat(64) })
+      vi.mocked(window.api.literature.search).mockImplementation(async (request) => {
+        if (request.scope !== 'global-search') return { entries: [] }
+        if (request.countOnly) return { entries: [], totalCount: 1 }
+        if (kind === 'oversized') throw new Error(LITERATURE_OVERSIZED_REFERENCE + pdfRecord.id)
+        if (kind === 'paged' && !request.offset)
+          return {
+            entries: [
+              { ...literature, id: 'first', item: { ...literature.item, title: 'Another result' } }
+            ],
+            totalCount: 2,
+            nextOffset: 1
+          }
+        return { entries: [pdfRecord], totalCount: kind === 'paged' ? 2 : 1 }
+      })
+      await renderSearch()
+      await waitFor(() => expect(rows('library')).toHaveLength(kind === 'paged' ? 2 : 1))
+      clickRow('library', kind === 'paged' ? 1 : 0)
+      act(() => button('Preview').click())
+      expect(document.querySelector('[data-testid="file-content"]')?.textContent).toBe('paper.pdf')
+      act(() => button('Open file').click())
+      expect(document.querySelector('[data-testid="library-file-dialog"]')?.textContent).toBe(
+        'paper.pdf'
+      )
+      expect(onClose).not.toHaveBeenCalled()
+      expect(useNavigationStore.getState().view).toBe('workspace')
+    }
+  )
   it('excludes archived projects and pending/archived sessions from all sources', async () => {
     useProjectStore.setState((state) => ({
       projects: state.projects.map((item) =>

@@ -240,6 +240,151 @@ describe('MessageScrollerItem', () => {
     expect(viewport?.scrollTop).toBe(96)
   })
 
+  it('hides the end button at the bottom when fractional content height rounds down', async () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(
+        <MessageScrollerProvider>
+          <MessageScroller>
+            <MessageScrollerViewport>
+              <MessageScrollerContent>
+                <MessageScrollerItem messageId="fractional-message">
+                  Fractional message
+                </MessageScrollerItem>
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            <MessageScrollerButton />
+          </MessageScroller>
+        </MessageScrollerProvider>
+      )
+    })
+
+    const viewport = container.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]')
+    const item = container.querySelector<HTMLElement>('[data-message-id="fractional-message"]')
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-slot="message-scroller-button"]'
+    )
+    expect(viewport).not.toBeNull()
+    expect(item).not.toBeNull()
+    expect(button).not.toBeNull()
+
+    // The browser clamps scrollTop to the integer scrollHeight - clientHeight, while the
+    // scroller derives the content bottom from fractional layout rects. A fractional content
+    // height that rounds down must not keep the end state active once scrolled to the bottom.
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 200 },
+      scrollTop: { configurable: true, writable: true, value: 100 }
+    })
+    Object.defineProperty(item, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        top: -(viewport?.scrollTop ?? 0),
+        bottom: 200.5 - (viewport?.scrollTop ?? 0),
+        height: 200.5
+      })
+    })
+
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+    expect(button?.dataset.active).toBe('false')
+
+    // A sub-pixel move beyond the 0.5px edge threshold is still detected (#2007, #2145).
+    if (viewport) viewport.scrollTop = 99.4
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+    expect(button?.dataset.active).toBe('true')
+  })
+
+  it('resumes bottom following when scrolled back to a fractionally rounded bottom', async () => {
+    const resizeCallbacks = new Map<Element, ResizeObserverCallback>()
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        private readonly callback: ResizeObserverCallback
+
+        constructor(callback: ResizeObserverCallback) {
+          this.callback = callback
+        }
+
+        observe(target: Element): void {
+          resizeCallbacks.set(target, this.callback)
+        }
+
+        disconnect(): void {
+          /* no-op */
+        }
+      }
+    )
+
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(
+        <MessageScrollerProvider autoScroll>
+          <MessageScroller>
+            <MessageScrollerViewport>
+              <MessageScrollerContent>
+                <MessageScrollerItem messageId="streaming-message">
+                  Streaming message
+                </MessageScrollerItem>
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+          </MessageScroller>
+        </MessageScrollerProvider>
+      )
+    })
+
+    const viewport = container.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]')
+    const content = container.querySelector<HTMLElement>('[data-slot="message-scroller-content"]')
+    const item = container.querySelector<HTMLElement>('[data-message-id="streaming-message"]')
+    expect(viewport).not.toBeNull()
+    expect(content).not.toBeNull()
+    expect(item).not.toBeNull()
+
+    // Fractional layout height rounds down to the integer scrollHeight; the reader lands on the
+    // clamped integer maximum when scrolling back to the bottom.
+    let contentHeight = 200
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, get: () => contentHeight },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+      scrollTo: {
+        configurable: true,
+        value: ({ top }: ScrollToOptions) => {
+          if (typeof top === 'number' && viewport) viewport.scrollTop = top
+        }
+      }
+    })
+    Object.defineProperty(item, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        top: -(viewport?.scrollTop ?? 0),
+        bottom: contentHeight + 0.5 - (viewport?.scrollTop ?? 0),
+        height: contentHeight + 0.5
+      })
+    })
+
+    // Establish following at the bottom, scroll up to release it, then return to the clamped
+    // bottom.
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+    if (viewport) viewport.scrollTop = 90
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+    if (viewport) viewport.scrollTop = 100
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+
+    // Streaming growth must follow again from the bottom instead of staying paused.
+    contentHeight = 240
+    await act(async () => {
+      resizeCallbacks.get(content!)?.([], {} as ResizeObserver)
+    })
+
+    expect(viewport?.scrollTop).toBe(140)
+  })
+
   it('applies the bottom-follow correction synchronously when content resizes', async () => {
     const resizeCallbacks = new Map<Element, ResizeObserverCallback>()
     vi.stubGlobal(

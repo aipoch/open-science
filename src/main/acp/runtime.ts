@@ -281,7 +281,8 @@ type AcpRuntimeOptions = {
       sessionId: string
     }) => Promise<import('../literature/agent-pdf-acquisition').AgentPdfAcquisitionResult>
     resolveSaveReferences?: (
-      references: readonly string[]
+      references: readonly string[],
+      signal?: AbortSignal
     ) => Promise<readonly LiteratureLibraryDiscovery[]>
     searchLibrary: (request: {
       projectId: string
@@ -311,6 +312,7 @@ type AcpRuntimeOptions = {
       sessionId: string
       workspaceCwd: string
       filename: string
+      signal?: AbortSignal
     }) => Promise<string>
     formatReferences?: (request: {
       projectId: string
@@ -346,6 +348,7 @@ type AcpRuntimeOptions = {
       projectId: string
       sessionId: string
       candidates: readonly LiteratureLibraryDiscovery[]
+      signal?: AbortSignal
     }) => Promise<LiteratureLibrarySaveResult>
   }>
   sideChatRelays?: Readonly<{

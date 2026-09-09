@@ -2691,6 +2691,32 @@ describe('PdfPreviewContent', () => {
     consoleError.mockRestore()
   })
 
+  it('releases a canceled PDF load without reporting worker destruction as a failure', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let rejectLoadingTask!: (error: Error) => void
+    const promise = new Promise((_, reject) => {
+      rejectLoadingTask = reject
+    })
+    const destroyLoadingTask = vi.fn(async () => {
+      rejectLoadingTask(new Error('Worker was destroyed'))
+    })
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise,
+      destroy: destroyLoadingTask
+    } as never)
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/report.pdf" name="report.pdf" source="local" />
+      )
+    })
+    await act(async () => root.render(null))
+    expect(destroyLoadingTask).toHaveBeenCalledTimes(1)
+    expect(window.api.previewResources.release).toHaveBeenCalledExactlyOnceWith({
+      resourceId: 'resource-1'
+    })
+    expect(consoleError).not.toHaveBeenCalled()
+  })
+
   it('destroys the loading task when PDF parsing fails', async () => {
     const destroyLoadingTask = vi.fn().mockResolvedValue(undefined)
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)

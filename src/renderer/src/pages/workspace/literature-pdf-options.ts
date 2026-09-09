@@ -1,3 +1,4 @@
+import { readLiteratureSelectionPage } from '../literature/literature-read-pages'
 import {
   createLiteratureAttachmentVersionReference,
   type LiteratureAttachmentVersionView,
@@ -97,7 +98,7 @@ export const searchLiteraturePdfOptions = async (
   const options: LiteraturePdfOption[] = []
   let offset: number | undefined
   do {
-    const page = await window.api.literature.search({
+    const page = await readLiteratureSelectionPage({
       scope: 'library',
       ...(query.trim() ? { query: query.trim() } : {}),
       ...(projectId ? { projectId } : {}),
@@ -138,7 +139,7 @@ export const searchLiteratureMentionOptions = async (
   query: string,
   { projectId }: { projectId?: string } = {}
 ): Promise<LiteratureMentionOption[]> => {
-  const page = await window.api.literature.search({
+  const page = await readLiteratureSelectionPage({
     scope: 'library',
     ...(query.trim() ? { query: query.trim() } : {}),
     ...(projectId ? { projectId } : {}),
@@ -152,7 +153,7 @@ export const searchLiteratureMentionOptions = async (
 export const searchLiteratureCollectionMentionOptions = async (
   query: string
 ): Promise<LiteratureCollectionMentionOption[]> => {
-  const page = await window.api.literature.search({
+  const page = await readLiteratureSelectionPage({
     scope: 'collections',
     ...(query.trim() ? { query: query.trim() } : {}),
     limit: 20
