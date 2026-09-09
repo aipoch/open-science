@@ -99,6 +99,7 @@ type PreviewFileSurfaceProps = PreviewInteractionPort & {
   item: PreviewFileItem
   allowReadingContext?: boolean
   onReadWithAgent?: (item: PreviewFileItem) => void
+  onPdfPageCountChange?: (pageCount: number | undefined) => void
   contentKey?: string
   renderContent?: boolean
   tooltipClassName?: string
@@ -630,6 +631,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       item,
       allowReadingContext = true,
       onReadWithAgent,
+      onPdfPageCountChange,
       contentKey,
       renderContent = true,
       tooltipClassName,
@@ -900,9 +902,14 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       previewContentKey
     ])
     const [pdfPageCount, setPdfPageCount] = useState<{ key: string; count: number }>()
-    const hidePdfReadingEntry =
-      contentItem.format === 'pdf' &&
-      (pdfPageCount?.key !== pdfPageCountKey || pdfPageCount.count <= 1)
+    const confirmedPdfPageCount =
+      contentItem.format === 'pdf' && pdfPageCount?.key === pdfPageCountKey
+        ? pdfPageCount.count
+        : undefined
+    useEffect(() => {
+      onPdfPageCountChange?.(confirmedPdfPageCount)
+    }, [confirmedPdfPageCount, onPdfPageCountChange])
+    const hidePdfReadingEntry = contentItem.format === 'pdf' && (confirmedPdfPageCount ?? 0) <= 1
     const visiblePdfContextAction =
       hidePdfReadingEntry && pdfContextAction?.state === 'link' ? undefined : pdfContextAction
     const reportPdfReadingPosition = useCallback(
