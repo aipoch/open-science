@@ -24,7 +24,7 @@ try {
   const updated = { ...record, pid: process.pid, commandIdentityMarker: receiptId }
   const temporary = `${activePath}.${process.pid}.tmp`
   fs.writeFileSync(temporary, `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o600 })
-  const descriptor = fs.openSync(temporary, 'r')
+  const descriptor = fs.openSync(temporary, 'r+')
   try {
     fs.fsyncSync(descriptor)
   } finally {

@@ -5,6 +5,8 @@ import type { SkillView } from '../../../../../shared/settings'
 import { resolveLocalPath } from '../../../../../shared/local-fs'
 import { cn } from '@/lib/utils'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { constrainMessageClipboard, readMessageClipboard } from './message-clipboard'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
@@ -457,6 +459,7 @@ export const ComposerEditor = ({
   const { t } = useTranslation()
 
   const editorRef = useRef<HTMLDivElement>(null)
+  const [pasteStatus, setPasteStatus] = useState<{ scope: string; message: string }>()
   const historyDescriptionId = useId()
   const historyStatusId = useId()
   const mentionListboxId = useId()
@@ -494,6 +497,7 @@ export const ComposerEditor = ({
     disabled: disabled || docSessionCount(doc) >= MAX_COMPOSER_SESSION_MENTIONS
   })
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
+  const pasteScope = `${mentionPreviewContext?.projectId ?? activeProjectId}:${mentionPreviewContext?.sessionId ?? ''}`
   const mentionPopupOpen = mention.active || artifactMention.active || sessionMention.active
   const undoCaretRef = useRef<ComposerCaretPosition | undefined>(undefined)
 
@@ -755,11 +759,61 @@ export const ComposerEditor = ({
   }
 
   const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>): void => {
+    setPasteStatus(undefined)
     const activeRoot = editorRef.current
     undoCaretRef.current = activeRoot ? currentCaretPosition(activeRoot) : undefined
     // Forward first so the panel can route file attachments to its intake.
     onPaste(event)
     if (disabled || event.isDefaultPrevented()) return
+    const messageFragment = readMessageClipboard(
+      event.clipboardData?.getData('text/html') ?? '',
+      event.clipboardData?.getData('text/plain') ?? '',
+      mentionPreviewContext?.projectId ?? activeProjectId
+    )
+    const selected = activeRoot ? selectedRangeIn(activeRoot) : undefined
+    if (messageFragment && activeRoot && selected) {
+      event.preventDefault()
+      const catalog = useSettingsStore.getState()
+      if (messageFragment.nodes.some((node) => node.type === 'skill') && !catalog.skillsLoaded) {
+        setPasteStatus({
+          scope: pasteScope,
+          message: t('Skills are loading. Paste again shortly.')
+        })
+        void catalog.loadSkills().catch(() => {
+          setPasteStatus({
+            scope: pasteScope,
+            message: t('Could not load Skills. Try pasting again.')
+          })
+        })
+        return
+      }
+      const { selection, range } = selected
+      range.deleteContents()
+      const skills = useSettingsStore
+        .getState()
+        .skills.filter(
+          (skill) =>
+            skill.available !== false &&
+            (allowedSkillIds ? allowedSkillIds.includes(skill.id) : skill.enabled)
+        )
+      const fragment = constrainMessageClipboard(
+        messageFragment,
+        domToDoc(activeRoot),
+        new Set(skills.map((skill) => skill.id))
+      )
+      const staging = document.createElement('div')
+      applyDocToDom(staging, fragment)
+      const inserted = document.createDocumentFragment()
+      inserted.append(...staging.childNodes)
+      const last = inserted.lastChild
+      range.insertNode(inserted)
+      if (last) range.setStartAfter(last)
+      range.collapse(true)
+      selection.removeAllRanges()
+      selection.addRange(range)
+      emitDocFromDom()
+      return
+    }
     const internalFragment = parseComposerClipboardFragment(
       event.clipboardData?.getData(PASTED_TEXT_CLIPBOARD_TYPE) ?? ''
     )
@@ -913,6 +967,11 @@ export const ComposerEditor = ({
           emitDocFromDom()
         }}
       />
+      {pasteStatus?.scope === pasteScope ? (
+        <div role="status" className="text-xs text-muted-foreground">
+          {pasteStatus.message}
+        </div>
+      ) : null}
       <span id={historyDescriptionId} className="sr-only">
         {t('At the start of the input, use Up and Down Arrow to browse prompt history.')}
       </span>

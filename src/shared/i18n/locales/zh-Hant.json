@@ -104,6 +104,8 @@
   },
   "renderer": {
     "Cancellation request failed": "取消請求失敗",
+    "Skills are loading. Paste again shortly.": "正在載入技能，請稍後再次貼上。",
+    "Could not load Skills. Try pasting again.": "無法載入技能，請嘗試再次貼上。",
     "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "此 TIFF 超過 {{limit}} MiB 的預覽限制。請下載或使用外部應用程式開啟。",
     "Shared content": "共用內容",
     "Literature settings and tasks": "文獻設定與任務",
