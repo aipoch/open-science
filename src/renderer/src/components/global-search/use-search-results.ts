@@ -3,6 +3,7 @@ import { resultId, type SearchCategory, type SearchResult } from './search-resul
 import type { LiteratureCollectionView, LiteratureItemView } from '../../../../shared/literature'
 import type { SearchFileFormat, SearchSort } from '../../../../shared/search-text'
 import { readLiteratureSelectionPage } from '@/pages/literature/literature-read-pages'
+import { useLiteratureChanges } from '@/pages/literature/useLiteratureChanges'
 
 export type SearchPage = {
   items: SearchResult[]
@@ -58,6 +59,7 @@ export const useSearchResults = (
     pagesRef.current = pages
   }, [pages])
   const generation = useRef(0)
+  const libraryGeneration = useRef(0)
   const pending = useRef(new Set<RemoteCategory>())
   useLayoutEffect(() => {
     const version = generation
@@ -72,6 +74,10 @@ export const useSearchResults = (
     async (category: RemoteCategory, append = false) => {
       if (!open || !ready || pending.current.has(category)) return
       const version = generation.current
+      const libraryVersion = libraryGeneration.current
+      const isCurrent = (): boolean =>
+        generation.current === version &&
+        (category !== 'library' || libraryGeneration.current === libraryVersion)
       const previous = append ? pagesRef.current[category] : emptySearchPage()
       if (append && !hasMoreSearchResults(category, previous)) return
       pending.current.add(category)
@@ -109,7 +115,7 @@ export const useSearchResults = (
               limit: 10,
               offset: append ? previous.offset : undefined
             },
-            () => generation.current === version
+            isCurrent
           )
           page = {
             ...page,
@@ -159,7 +165,7 @@ export const useSearchResults = (
             incomplete: !result.isIndexComplete
           }
         }
-        if (generation.current !== version) return
+        if (!isCurrent()) return
         const previousIds = new Set(previous.items.map(resultId))
         setPages((state) => ({
           ...state,
@@ -174,17 +180,25 @@ export const useSearchResults = (
           }
         }))
       } catch {
-        if (generation.current === version)
+        if (isCurrent())
           setPages((state) => ({
             ...state,
             [category]: { ...previous, loading: false, error: true }
           }))
       } finally {
-        if (generation.current === version) pending.current.delete(category)
+        if (isCurrent()) pending.current.delete(category)
       }
     },
     [open, ready, query, scopeKey, clientId]
   )
+
+  useLiteratureChanges(() => {
+    if (!open || !ready) return
+    // Supersede an in-flight Library page after a mutation without resetting other categories.
+    libraryGeneration.current++
+    pending.current.delete('library')
+    void load('library')
+  })
 
   useEffect(() => {
     if (!open || !ready) return

@@ -75,6 +75,39 @@ const selectFilter = async (name: string, option: string): Promise<void> => {
 }
 
 describe('GlobalSearchDialog', () => {
+  it.each([false, true])(
+    'refreshes Library changes without accepting stale results (pending: %s)',
+    async (pending) => {
+      let notify: () => void = () => undefined
+      window.api.literature.onChanged = vi.fn((listener) => {
+        notify = () => listener({ revision: 1 })
+        return () => undefined
+      })
+      let resolveOld!: (page: { entries: (typeof literature)[]; totalCount: number }) => void
+      const oldPage = { entries: [literature], totalCount: 1 }
+      vi.mocked(window.api.literature.search).mockReturnValueOnce(
+        pending ? new Promise((resolve) => (resolveOld = resolve)) : Promise.resolve(oldPage)
+      )
+      await renderSearch()
+      await waitFor(() => expect(window.api.literature.search).toHaveBeenCalled())
+      const updated = { ...literature, item: { ...literature.item, title: 'Updated reference' } }
+      vi.mocked(window.api.literature.search).mockResolvedValue({
+        entries: [updated],
+        totalCount: 1
+      })
+      const fileRequests = vi.mocked(window.api.projectFiles.searchArtifacts).mock.calls.length
+      await act(async () => notify())
+      await waitFor(() => expect(rows('library')[0]?.textContent).toContain('Updated reference'))
+      if (pending) await act(async () => resolveOld(oldPage))
+      expect(rows('library')[0]?.textContent).toContain('Updated reference')
+      expect(window.api.projectFiles.searchArtifacts).toHaveBeenCalledTimes(fileRequests)
+      await renderSearch(false)
+      const libraryRequests = vi.mocked(window.api.literature.search).mock.calls.length
+      await act(async () => notify())
+      expect(window.api.literature.search).toHaveBeenCalledTimes(libraryRequests)
+    }
+  )
+
   it('loads complete long messages from the real search excerpt', async () => {
     const content =
       '## Opening heading\n\n' + 'Context sentence.\n\n'.repeat(500) + '**sin** final paragraph.'

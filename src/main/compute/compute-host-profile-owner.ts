@@ -93,24 +93,6 @@ const waitForRetry = (delayMs: number, signal?: AbortSignal): Promise<void> => {
   })
 }
 
-const buildDetailsSkeleton = (probe: ProbeResult): string => {
-  const lines: string[] = ['## Resources', '']
-  if (probe.detectedScheduler && probe.detectedScheduler !== 'none') {
-    lines.push(
-      'The CPU, memory and GPU values below describe the SSH login host, not a scheduler allocation.',
-      'Inspect scheduler partitions and provider guidance before requesting compute resources.',
-      ''
-    )
-  }
-  if (probe.cpus != null) lines.push(`cpus: ${probe.cpus}`)
-  if (probe.memMib != null) lines.push(`mem: ${Math.round(probe.memMib / 1024)} GB`)
-  if (probe.gpus && probe.gpus.length > 0) {
-    lines.push(`gpus: ${probe.gpus.map((gpu) => `${gpu.count}x ${gpu.type}`).join(', ')}`)
-  }
-  if (probe.detectedScheduler) lines.push(`scheduler: ${probe.detectedScheduler}`)
-  return lines.join('\n')
-}
-
 const hostNotFound = (providerId: string): Error =>
   new Error(`No compute host found with provider id "${providerId}".`)
 
@@ -284,17 +266,7 @@ export class ComputeHostProfileOwner {
   async getDetails(providerId: string): Promise<ComputeHostDetails> {
     const host = await this.repository.get(providerId)
     if (!host) throw hostNotFound(providerId)
-    if (host.detailsDoc) {
-      return { doc: host.detailsDoc, isSkeleton: false, probeResult: host.probeResult }
-    }
-    if (!host.probeResult?.ok) {
-      return { doc: '', isSkeleton: false, probeResult: host.probeResult }
-    }
-    return {
-      doc: buildDetailsSkeleton(host.probeResult),
-      isSkeleton: true,
-      probeResult: host.probeResult
-    }
+    return { doc: host.detailsDoc, probeResult: host.probeResult }
   }
 
   async replaceDetails(

@@ -122,7 +122,7 @@ describe('ComputeService host profile facade', () => {
     })
     await expect(service.getDetails('ssh:biowulf')).resolves.toEqual({
       doc: 'current details',
-      isSkeleton: false
+      probeResult: undefined
     })
     await service.replaceDetails('ssh:biowulf', {
       text: 'replacement',

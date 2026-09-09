@@ -348,8 +348,11 @@ const literatureInboxCandidateViewSchema = z
   })
   .strict()
 
+const LITERATURE_COLLECTION_REVISION_CONFLICT = 'literature_collection_revision_conflict'
+
 const literatureCollectionViewSchema = z
   .object({
+    revision: z.number().int().positive(),
     id: nonEmptyTextSchema,
     name: nonEmptyTextSchema.max(LITERATURE_COLLECTION_NAME_MAX_LENGTH),
     description: z.string().max(LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH),
@@ -544,6 +547,7 @@ const literatureCatalogCommandSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('update-collection'),
+      expectedRevision: z.number().int().positive(),
       collectionId: nonEmptyTextSchema,
       name: nonEmptyTextSchema.max(LITERATURE_COLLECTION_NAME_MAX_LENGTH),
       description: z.string().trim().max(LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH)
@@ -1191,6 +1195,7 @@ export {
   literatureCatalogReceiptSchema,
   literatureCatalogSearchPageSchema,
   literatureCatalogSearchRequestSchema,
+  LITERATURE_COLLECTION_REVISION_CONFLICT,
   literatureCollectionViewSchema,
   literatureFilterSchema,
   literatureCreatorInputSchema,
@@ -1271,3 +1276,11 @@ export type {
   LiteraturePdfImportRequest,
   LiteratureSourceInput
 }
+
+// Invalidation hints only; clients re-read authoritative records rather than applying event content.
+export type LiteratureChangedEvent = Readonly<{
+  revision: number
+  itemIds?: readonly string[]
+  collectionIds?: readonly string[]
+  candidateIds?: readonly string[]
+}>

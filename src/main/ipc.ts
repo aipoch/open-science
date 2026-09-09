@@ -1786,7 +1786,8 @@ const createApplicationModules = async (
     () => getProjectDbClient(configRoot),
     () => tagService.notifyAssignmentsChanged(),
     contentRepository,
-    (remove) => sessionPersistenceCoordinator.withLiteratureAttachmentRemoval(remove)
+    (remove) => sessionPersistenceCoordinator.withLiteratureAttachmentRemoval(remove),
+    (event) => applicationEvents.publish('literature:changed', event)
   )
   const literatureCitationStyles = new LiteratureCitationStyleLibrary(
     join(resolveDataRoot(), 'literature', 'citation-styles')

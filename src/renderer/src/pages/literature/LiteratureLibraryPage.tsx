@@ -1,10 +1,15 @@
 import {
+  LiteraturePdfBatchImportDialog,
+  type PdfImportDestination
+} from './LiteraturePdfBatchImportDialog'
+import {
   parseLiteratureDeletionError,
   type LiteratureDeletionDiagnostic
 } from '../../../../shared/literature-deletion'
 import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
 import { readLiteratureSelectionPage } from './literature-read-pages'
 import { LiteratureOversizedNotice } from './LiteratureOversizedNotice'
+import { useLiteratureChanges } from './useLiteratureChanges'
 import type { TFunction } from 'i18next'
 import { LiteratureSources } from './LiteratureSources'
 import { LiteratureAttachments } from './LiteratureAttachments'
@@ -666,12 +671,12 @@ function LiteratureAddMenu({
             <span className="text-xs text-muted-foreground">{t('Create metadata manually')}</span>
           </span>
         </DropdownMenuItem>
-        <DropdownMenuItem className="gap-2.5" aria-label={t('Import PDF')} onSelect={onImportPdf}>
+        <DropdownMenuItem className="gap-2.5" aria-label={t('Import PDFs')} onSelect={onImportPdf}>
           <FilePlus2 className="size-4 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex flex-col">
-            <span>{t('Import PDF')}</span>
+            <span>{t('Import PDFs')}</span>
             <span className="text-xs text-muted-foreground">
-              {t('Create a reference from a PDF')}
+              {t('Create references from PDF files')}
             </span>
           </span>
         </DropdownMenuItem>
@@ -1247,7 +1252,7 @@ const titleFromPdfFilename = (filename: string): string =>
     .replace(/\.pdf$/iu, '')
     .replace(/[_-]+/gu, ' ')
     .replace(/\s+/gu, ' ')
-    .trim()
+    .trim() || filename
 
 const LITERATURE_REVIEW_CTA_ATTENTION_KEY = 'open-science:literature-review-cta-attention-seen'
 
@@ -1363,6 +1368,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     file?: File
     pdfItem?: LiteratureItemView
   }>(undefined)
+  const [pdfBatch, setPdfBatch] = useState<{ files: File[]; destination: PdfImportDestination }>()
   const [pendingImportPdf, setPendingImportPdf] = useState<File>()
   const [pendingImportDraft, setPendingImportDraft] = useState<LiteratureItemInput>()
   const [isReadingImportMetadata, setIsReadingImportMetadata] = useState(false)
@@ -1544,6 +1550,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       0
     )
 
+  const [removedDetailItemId, setRemovedDetailItemId] = useState<string>()
   const detailInteractionRef = useRef(0)
   const openSelectedItemDetail = useCallback(
     (item: LiteratureItemView, initiator?: HTMLElement): void => {
@@ -1554,6 +1561,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           (document.activeElement instanceof HTMLElement ? document.activeElement : null)
       }
       detailInteractionRef.current += 1
+      setRemovedDetailItemId(undefined)
+      setError(undefined)
       detailController.open(item)
     },
     [detailController]
@@ -1650,7 +1659,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       clearSelection()
       setError(undefined)
       setLinkedItemError(undefined)
-      void window.api.literature.get(itemId).then(
+      void detailController.read(itemId).then(
         (item) => {
           if (!active) return
           if (detailInteractionRef.current !== interaction) {
@@ -1676,7 +1685,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     return () => {
       active = false
     }
-  }, [clearSelection, consumeLiteratureItem, openSelectedItemDetail, pendingLiteratureItemId, t])
+  }, [
+    clearSelection,
+    consumeLiteratureItem,
+    detailController,
+    openSelectedItemDetail,
+    pendingLiteratureItemId,
+    t
+  ])
 
   useEffect(() => {
     if (!pendingLiteratureProjectId) return
@@ -1705,7 +1721,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }, [clearSelection, consumeLiteratureCollection, pendingLiteratureCollectionId])
 
   const collectionsGenerationRef = useRef(0)
-  const loadCollections = useCallback(async (): Promise<void> => {
+  const loadCollections = useCallback(async (): Promise<LiteratureCollectionView[] | undefined> => {
     const generation = ++collectionsGenerationRef.current
     const collections: LiteratureCollectionView[] = []
     let offset: number | undefined = 0
@@ -1716,15 +1732,19 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       offset = page.nextOffset
     } while (offset !== undefined)
     setCollections(collections)
+    return collections
   }, [])
 
+  const inboxCountGeneration = useRef(0)
   const loadInboxPendingCount = useCallback(async (): Promise<void> => {
+    const generation = ++inboxCountGeneration.current
     const page = await window.api.literature.search({
       scope: 'inbox',
       inboxState: 'pending',
       limit: 1
     })
-    setInboxPendingCount(page.totalCount ?? page.entries.length)
+    if (generation === inboxCountGeneration.current)
+      setInboxPendingCount(page.totalCount ?? page.entries.length)
   }, [])
 
   const projectCountsGenerationRef = useRef(0)
@@ -1897,6 +1917,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     (failed: boolean): void => setError(failed ? t('Literature could not be loaded.') : undefined),
     [t]
   )
+  const receiveItems = useCallback(
+    (updated: LiteratureItemView[]): void => {
+      updated.forEach((item) => detailController.replace(item))
+    },
+    [detailController]
+  )
   const entriesRequest = useMemo(() => buildEntriesRequest(), [buildEntriesRequest])
   const {
     oversizedItemId,
@@ -1910,6 +1936,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     request: entriesRequest,
     scopeKey: entriesKey,
     onPage: receiveEntries,
+    onItems: receiveItems,
     onEmptyPage: setEntriesOffset,
     onError: receiveEntriesError
   })
@@ -1924,6 +1951,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
   const metadata = useLiteratureMetadata(detailController, updateMetadataItem)
   const { changeMode: changeDetailMode } = metadata
+  const detailModeRef = useRef(metadata.mode)
+  useLayoutEffect(() => {
+    detailModeRef.current = metadata.mode
+  }, [metadata.mode])
 
   const closeSelectedItemDetail = useCallback((): void => {
     if (addingPdfRef.current) return
@@ -1932,6 +1963,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     detailSelectOpenRef.current = false
     childLayerDismissGuardUntilRef.current = 0
     detailController.close()
+    setRemovedDetailItemId(undefined)
     startTransition(() => {
       setPdfError(undefined)
       changeDetailMode('view')
@@ -1939,35 +1971,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       setCollectionLinkError(undefined)
     })
   }, [changeDetailMode, detailController])
-
-  useEffect(() => {
-    let request = 0
-    const refreshOpenDetail = (): void => {
-      const snapshot = detailController.getSnapshot()
-      if (!snapshot.open || !snapshot.item) return
-      const currentRequest = ++request
-      void window.api.literature.get(snapshot.item.id).then(
-        (item) => {
-          if (
-            currentRequest !== request ||
-            detailController.getSnapshot().generation !== snapshot.generation
-          )
-            return
-          if (!item || item.id !== snapshot.item?.id || item.deletedAt !== undefined) {
-            setPreviewItem(undefined)
-            closeSelectedItemDetail()
-            void reloadEntries(true, true)
-          }
-        },
-        () => undefined
-      )
-    }
-    window.addEventListener('focus', refreshOpenDetail)
-    return () => {
-      request += 1
-      window.removeEventListener('focus', refreshOpenDetail)
-    }
-  }, [closeSelectedItemDetail, detailController, reloadEntries])
 
   const appliedTagRevision = useRef(tagRevision)
   useEffect(() => {
@@ -1986,31 +1989,62 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const loadEntries = useCallback(
     (force = false, preservePage = false): Promise<void> => {
       if (force) {
+        detailController.invalidate()
         setDuplicatesRevision((value) => value + 1)
         setLibraryCountRevision((value) => value + 1)
       }
       return reloadEntries(force, preservePage)
     },
-    [reloadEntries]
+    [detailController, reloadEntries]
   )
   const receiveBackgroundItems = useCallback(
     (itemIds: string[]): void => {
       setDuplicatesRevision((value) => value + 1)
-      void Promise.allSettled(itemIds.map((id) => window.api.literature.get(id))).then(
-        (results) => {
-          const updated = results.flatMap((result) =>
-            result.status === 'fulfilled' && result.value ? [result.value] : []
-          )
-          void refreshItems(itemIds, updated)
-          // Data publication follows item identity/revision, not the opening that started the read.
-          updated.forEach((item) => detailController.replace(item))
-          if (results.some((result) => result.status === 'rejected'))
-            setError(t('Literature could not be loaded.'))
-        }
-      )
+      void refreshItems(itemIds, undefined, true)
     },
-    [detailController, refreshItems, t]
+    [refreshItems]
   )
+
+  const currentCollectionId = useRef(collectionId)
+  useLayoutEffect(() => {
+    currentCollectionId.current = collectionId
+  }, [collectionId])
+
+  useLiteratureChanges(() => {
+    // Starting the new reads invalidates outstanding list/navigation requests immediately.
+    void Promise.all([
+      loadEntries(true, true),
+      loadCollections().then((collections) => {
+        const selectedId = currentCollectionId.current
+        if (
+          collections &&
+          selectedId &&
+          !collections.some((collection) => collection.id === selectedId)
+        ) {
+          selectLibrary()
+        }
+      }),
+      loadInboxPendingCount(),
+      loadProjectCounts(),
+      (async () => {
+        const snapshot = detailController.getSnapshot()
+        if (!snapshot.open || !snapshot.item) return
+        const latest = await detailController.read(snapshot.item.id)
+        if (detailController.getSnapshot().generation !== snapshot.generation) return
+        if (!latest || latest.id !== snapshot.item.id || latest.deletedAt !== undefined) {
+          // Read the current mode after awaiting: an edit may have started during the refresh.
+          if (detailModeRef.current === 'view') {
+            setPreviewItem(undefined)
+            closeSelectedItemDetail()
+          } else setRemovedDetailItemId(snapshot.item.id)
+          setError(t('This reference is no longer in your Library.'))
+        } else {
+          setRemovedDetailItemId((id) => (id === latest.id ? undefined : id))
+          detailController.replace(latest)
+        }
+      })()
+    ]).catch(() => setError(t('Literature could not be loaded.')))
+  })
 
   useEffect(() => {
     const loadNavigation = async (): Promise<void> => {
@@ -2487,7 +2521,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       })
       // An attachment receipt may predate metadata edits in a reopened detail. Re-read rather
       // than using metadataRevision as an attachment version or rolling metadata backwards.
-      const updated = await window.api.literature.get(current.id).catch(() => undefined)
+      const updated = await detailController.read(current.id).catch(() => undefined)
       detailController.replace(updated ?? receipt.item)
       await loadEntries(true)
     } catch (error) {
@@ -2648,7 +2682,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       persisted = true
       const reload = async (): Promise<LiteratureItemView> => {
         try {
-          const updated = await window.api.literature.get(entry.id)
+          const updated = await detailController.read(entry.id)
           if (!updated) throw new Error('Literature Item is unavailable after updating.')
           await refreshItems([updated.id], [updated])
           detailController.replace(updated)
@@ -2784,7 +2818,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           await window.api.literature.importPdf({ itemId: pending.id, attachment: staged })
         ).item
       }
-      const created = pending.pdfItem ?? (await window.api.literature.get(pending.id))
+      const created = pending.pdfItem ?? (await detailController.read(pending.id))
       if (!created) throw new Error('Literature Item is unavailable after creating.')
       setItems((entries) =>
         entries.some((entry) => entry.id === created.id)
@@ -2800,7 +2834,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       // Retain the existing PDF-error detail recovery only once destination linking has completed.
       const created =
         pending?.file && !pending.destination && !pending.pdfItem
-          ? await window.api.literature.get(pending.id).catch(() => undefined)
+          ? await detailController.read(pending.id).catch(() => undefined)
           : undefined
       if (created) {
         closeItemEditor()
@@ -3254,8 +3288,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       if (!selection.allMatchingSelected) {
         entries = await Promise.all(
           [...selection.selectedIds].map(async (id) => {
-            const entry =
-              items.find((item) => item.id === id) ?? (await window.api.literature.get(id))
+            const entry = items.find((item) => item.id === id) ?? (await detailController.read(id))
             if (!entry || !isItem(entry)) throw new Error('Selected reference unavailable')
             return entry
           })
@@ -3307,7 +3340,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         const activeIds: string[] = []
         for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
           const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
-          const entries = await Promise.all(batch.map((id) => window.api.literature.get(id)))
+          const entries = await Promise.all(batch.map((id) => detailController.read(id)))
           entries.forEach((entry, index) => {
             // get resolves merged aliases; never redirect the original association intent.
             if (
@@ -4124,15 +4157,27 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 <div>
                   <input
                     ref={importPdfInputRef}
+                    multiple
                     type="file"
                     accept="application/pdf,.pdf"
                     className="sr-only"
-                    aria-label={t('Import PDF')}
+                    aria-label={t('Import PDFs')}
                     onChange={(event) => {
-                      const file = event.currentTarget.files?.[0]
+                      const files = Array.from(event.currentTarget.files ?? [])
                       event.currentTarget.value = ''
-                      if (!file) return
-                      beginPdfImport(file)
+                      if (files.length > 1)
+                        setPdfBatch({
+                          files,
+                          destination: {
+                            name:
+                              selectedProject?.name ??
+                              selectedCollection?.name ??
+                              t('All references'),
+                            projectId,
+                            collectionId
+                          }
+                        })
+                      else if (files[0]) beginPdfImport(files[0])
                     }}
                   />
                   <input
@@ -5425,6 +5470,21 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         </Dialog.Portal>
       </Dialog.Root>
 
+      {pdfBatch ? (
+        <LiteraturePdfBatchImportDialog
+          {...pdfBatch}
+          createDraft={(file) => ({
+            ...emptyLiteratureItem(),
+            title: titleFromPdfFilename(file.name)
+          })}
+          onClose={() => {
+            setPdfBatch(undefined)
+            void loadEntries(true)
+            void loadCollections()
+            void loadProjectCounts()
+          }}
+        />
+      ) : null}
       {recordImport ? (
         <LiteratureRecordImportDialog
           recordImport={recordImport}
@@ -5958,11 +6018,15 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         key={`${selectedItem.id}:${metadata.editBase?.metadataRevision}`}
                         item={metadata.editBase?.item ?? selectedItem.item}
                         saving={metadata.saving || metadata.awaitingReload}
-                        saveDisabled={metadata.externallyUpdated()}
+                        saveDisabled={
+                          metadata.externallyUpdated() || removedDetailItemId === selectedItem.id
+                        }
                         error={
-                          metadata.awaitingReload || metadata.externallyUpdated()
-                            ? undefined
-                            : metadata.error
+                          removedDetailItemId === selectedItem.id
+                            ? t('This reference is no longer in your Library.')
+                            : metadata.awaitingReload || metadata.externallyUpdated()
+                              ? undefined
+                              : metadata.error
                         }
                         className="min-h-0 flex-1 max-h-none"
                         onCancel={() => changeDetailMode('view')}
@@ -6307,6 +6371,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           </p>
                         ) : null}
                         <LiteratureAttachments
+                          readItem={detailController.read}
                           key={selectedItem.id}
                           item={selectedItem}
                           onPreview={(version) =>
@@ -6366,12 +6431,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       </LiteratureDetailBoundary>
       <CollectionEditorDialog
         ref={collectionEditorRef}
-        onSaved={({ id, name, description }) => {
-          if (id) {
+        onSaved={({ id, revision, name, description }) => {
+          if (id && revision !== undefined) {
             setCollections((current) =>
               current.map((collection) =>
-                collection.id === id
-                  ? { ...collection, name, description, updatedAt: Date.now() }
+                collection.id === id && collection.revision <= revision
+                  ? { ...collection, revision, name, description, updatedAt: Date.now() }
                   : collection
               )
             )

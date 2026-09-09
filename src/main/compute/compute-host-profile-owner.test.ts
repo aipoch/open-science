@@ -579,7 +579,7 @@ describe('ComputeHostProfileOwner.probe', () => {
 })
 
 // ---------------------------------------------------------------------------
-// ComputeHostProfileOwner.getDetails — skeleton synthesis and pass-through
+// ComputeHostProfileOwner.getDetails — persisted document and probe metadata
 // ---------------------------------------------------------------------------
 
 describe('ComputeHostProfileOwner.getDetails', () => {
@@ -591,15 +591,22 @@ describe('ComputeHostProfileOwner.getDetails', () => {
     timedOut: false
   })
 
-  it('returns detailsDoc as-is when it is non-empty', async () => {
-    const { repo } = makeRepo(sampleHost({ detailsDoc: '## Resources\ncpus: 8' }))
+  it('returns the persisted document independently from probe metadata', async () => {
+    const probeResult = {
+      ok: true,
+      probedAt: '2026-01-01T00:00:00Z',
+      exitCode: 0,
+      errorTail: null,
+      cpus: 8,
+      detectedScheduler: 'slurm' as const
+    }
+    const { repo } = makeRepo(sampleHost({ detailsDoc: 'Use the long queue.', probeResult }))
     const service = new ComputeHostProfileOwner(fakeRunner, repo)
     const result = await service.getDetails('ssh:biowulf')
-    expect(result.doc).toBe('## Resources\ncpus: 8')
-    expect(result.isSkeleton).toBe(false)
+    expect(result).toEqual({ doc: 'Use the long queue.', probeResult })
   })
 
-  it('returns a skeleton from probeResult when detailsDoc is empty', async () => {
+  it('returns an empty persisted document independently from probe metadata', async () => {
     const probeResult = {
       ok: true,
       probedAt: '2026-01-01T00:00:00Z',
@@ -612,38 +619,9 @@ describe('ComputeHostProfileOwner.getDetails', () => {
     }
     const { repo } = makeRepo(sampleHost({ detailsDoc: '', probeResult }))
     const service = new ComputeHostProfileOwner(fakeRunner, repo)
-    const result = await service.getDetails('ssh:biowulf')
-    expect(result.isSkeleton).toBe(true)
-    expect(result.doc).toContain('## Resources')
-    expect(result.doc).toContain('cpus:')
-    expect(result.doc).toContain('mem:')
-    expect(result.doc).toContain('gpus:')
-    expect(result.doc).toContain('scheduler:')
-  })
+    const details = await service.getDetails('ssh:biowulf')
 
-  it('returns a skeleton with only available fields when some are missing', async () => {
-    const probeResult = {
-      ok: true,
-      probedAt: '2026-01-01T00:00:00Z',
-      exitCode: 0,
-      errorTail: null,
-      cpus: 8
-    }
-    const { repo } = makeRepo(sampleHost({ detailsDoc: '', probeResult }))
-    const service = new ComputeHostProfileOwner(fakeRunner, repo)
-    const result = await service.getDetails('ssh:biowulf')
-    expect(result.isSkeleton).toBe(true)
-    expect(result.doc).toContain('cpus: 8')
-    expect(result.doc).not.toContain('gpus:')
-    expect(result.doc).not.toContain('mem:')
-  })
-
-  it('returns empty string with isSkeleton=false when no probeResult and detailsDoc is empty', async () => {
-    const { repo } = makeRepo(sampleHost({ detailsDoc: '', probeResult: undefined }))
-    const service = new ComputeHostProfileOwner(fakeRunner, repo)
-    const result = await service.getDetails('ssh:biowulf')
-    expect(result.doc).toBe('')
-    expect(result.isSkeleton).toBe(false)
+    expect(details).toEqual({ doc: '', probeResult })
   })
 
   it('throws when the host does not exist', async () => {

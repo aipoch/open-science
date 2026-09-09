@@ -321,6 +321,108 @@ describe('useLiteratureEntries', () => {
     })
     expect(onPage.mock.lastCall?.[0].entries[0].metadataRevision).toBe(3)
   })
+  it.each(['attachments', 'collectionIds', 'projectIds'] as const)(
+    'keeps newer %s when an earlier read with the same metadata revision completes',
+    async (field) => {
+      const original: LiteratureItemView = {
+        id: 'a',
+        item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Reference' }),
+        attachments: [],
+        collectionIds: [],
+        projectIds: [],
+        metadataRevision: 1,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const updated: LiteratureItemView = {
+        ...original,
+        ...(field === 'attachments'
+          ? {
+              attachments: [
+                {
+                  id: 'attachment-new',
+                  kind: 'fullText',
+                  title: '',
+                  sortOrder: 0,
+                  createdAt: 2,
+                  updatedAt: 2,
+                  versions: [
+                    {
+                      id: 'version-new',
+                      versionNumber: 1,
+                      filename: 'new.pdf',
+                      contentType: 'application/pdf',
+                      sizeBytes: 128,
+                      checksum: 'a'.repeat(64),
+                      createdAt: 2
+                    }
+                  ]
+                }
+              ]
+            }
+          : { [field]: ['new-relation'] })
+      }
+      search.mockResolvedValue({ entries: [original], totalCount: 1 })
+      let finish!: (item: LiteratureItemView) => void
+      window.api.literature.get = vi.fn(
+        () =>
+          new Promise<LiteratureItemView>((resolve) => {
+            finish = resolve
+          })
+      )
+      const { result, onPage } = setup()
+      await act(async () => {})
+      let pending!: Promise<void>
+      act(() => {
+        pending = result.current.refreshItems(['a'])
+      })
+      await act(() => result.current.refreshItems(['a'], [updated]))
+      expect(onPage.mock.lastCall?.[0].entries[0][field]).toEqual(updated[field])
+      await act(async () => {
+        finish(original)
+        await pending
+      })
+      expect(onPage.mock.lastCall?.[0].entries[0][field]).toEqual(updated[field])
+    }
+  )
+
+  it('keeps independent item reads when another item is updated', async () => {
+    const first: LiteratureItemView = {
+      id: 'a',
+      item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'A' }),
+      attachments: [],
+      collectionIds: [],
+      projectIds: [],
+      metadataRevision: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const second = { ...first, id: 'b', item: { ...first.item, title: 'B' } }
+    search.mockResolvedValue({ entries: [first, second], totalCount: 2 })
+    let finish!: (item: LiteratureItemView) => void
+    window.api.literature.get = vi.fn(
+      () =>
+        new Promise<LiteratureItemView>((resolve) => {
+          finish = resolve
+        })
+    )
+    const { result, onPage } = setup()
+    await act(async () => {})
+    let pending!: Promise<void>
+    act(() => {
+      pending = result.current.refreshItems(['b'])
+    })
+    await act(() => result.current.refreshItems(['a'], [{ ...first, collectionIds: ['new-a'] }]))
+    await act(async () => {
+      finish({ ...second, projectIds: ['new-b'] })
+      await pending
+    })
+    expect(onPage.mock.lastCall?.[0].entries).toMatchObject([
+      { id: 'a', collectionIds: ['new-a'] },
+      { id: 'b', projectIds: ['new-b'] }
+    ])
+  })
+
   it('retains the displayed page during a failed background refresh and retries its dirty cache', async () => {
     const item: LiteratureItemView = {
       id: 'a',

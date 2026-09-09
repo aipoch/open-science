@@ -23,7 +23,7 @@ it('upgrades historical permissions without inferring descriptions or changing a
     await client.$executeRawUnsafe('ALTER TABLE "PermissionGrant" DROP COLUMN "approvalSummary"')
     await client.$executeRawUnsafe('DROP TABLE IF EXISTS "LiteratureMetadataCommitReceipt"')
     await client.$executeRawUnsafe(
-      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt')"
+      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision')"
     )
     const before = await client.$queryRawUnsafe(
       'SELECT id, capabilityKind, capabilityKey, qualifierMode, qualifierValue, scopeKind, projectId, sessionId, fingerprint, revision, createdAt FROM "PermissionGrant"'
@@ -39,7 +39,8 @@ it('upgrades historical permissions without inferring descriptions or changing a
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
         '0038_literature_search_text',
-        '0039_literature_metadata_commit_receipt'
+        '0039_literature_metadata_commit_receipt',
+        '0040_literature_collection_revision'
       ]
     })
     const after = await client.$queryRawUnsafe<Array<Record<string, unknown>>>(

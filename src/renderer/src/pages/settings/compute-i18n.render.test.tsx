@@ -51,10 +51,10 @@ const approvalRequest: ComputeApproval = {
 
 // Stub window.api.compute.detailsGet so ComputeHostDetail does not hit real IPC. Only the api
 // property is replaced — Radix's portal and tooltip layers need the real jsdom window.
-const stubDetailsGet = (doc: string, isSkeleton = false): void => {
+const stubDetailsGet = (doc: string): void => {
   ;(window as unknown as { api: { compute: Record<string, unknown> } }).api = {
     compute: {
-      detailsGet: vi.fn().mockResolvedValue({ doc, isSkeleton }),
+      detailsGet: vi.fn().mockResolvedValue({ doc }),
       deletionStatus: vi.fn().mockResolvedValue({ blockedByJobs: false })
     }
   }

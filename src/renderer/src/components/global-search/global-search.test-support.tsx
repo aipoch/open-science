@@ -76,6 +76,7 @@ export const literature: LiteratureItemView = {
 }
 export const collection = {
   id: 'collection',
+  revision: 1,
   name: 'Wave collection',
   description: 'Wave references',
   itemCount: 12,

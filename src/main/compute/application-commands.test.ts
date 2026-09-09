@@ -51,7 +51,7 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
     delete: vi.fn(async () => undefined),
     sshConfigAliases: vi.fn(async () => ['cluster']),
     probe: vi.fn(async () => ({ ok: true })),
-    detailsGet: vi.fn(async () => ({ doc: '# Cluster', isSkeleton: false })),
+    detailsGet: vi.fn(async () => ({ doc: '# Cluster' })),
     detailsSave: vi.fn(async () => undefined),
     scratchSet: vi.fn(async () => undefined),
     scratchClear: vi.fn(async () => undefined),

@@ -1,6 +1,46 @@
 import { expect } from '@playwright/test'
 import { suppressWorkspaceStarNudge, test } from './fixtures/electron-app'
 
+test('refreshes global search when another renderer edits a Library collection', async ({
+  app
+}) => {
+  const page = await app.completeOnboarding()
+  await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+  const other = await app.openAdditionalRenderer()
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Global search' })
+  await dialog.getByRole('combobox', { name: 'Global search' }).fill('Shared collection')
+  await dialog.locator('[data-category="library"]').click()
+  const created = await other.evaluate(() =>
+    window.api.literature.transact({ kind: 'create-collection', name: 'Shared collection' })
+  )
+  const row = dialog.getByRole('listbox').getByRole('option')
+  await expect(row).toHaveCount(1)
+  await expect(row).toContainText('Shared collection')
+  await other.evaluate(async (id) => {
+    const result = await window.api.literature.search({
+      scope: 'global-search',
+      query: 'Shared collection'
+    })
+    const collection = result.entries.find((entry) => 'id' in entry && entry.id === id)!
+    if (!('revision' in collection)) throw new Error('Collection revision is missing')
+    await window.api.literature.transact({
+      kind: 'update-collection',
+      collectionId: id,
+      expectedRevision: collection.revision,
+      name: 'Shared collection revised',
+      description: ''
+    })
+  }, created.id)
+  await expect(row).toContainText('Shared collection revised')
+  await other.evaluate(
+    (id) => window.api.literature.transact({ kind: 'delete-collection', collectionId: id }),
+    created.id
+  )
+  await expect(row).toHaveCount(0)
+  await expect(dialog).toBeVisible()
+})
+
 test('opens a Library PDF from search without leaving the current results', async ({
   app
 }, testInfo) => {

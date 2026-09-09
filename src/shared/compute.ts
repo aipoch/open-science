@@ -84,11 +84,10 @@ export type ProbeResult = {
   detectedScheduler?: 'slurm' | 'pbs' | 'lsf' | 'none'
 }
 
-// Complete details read at the compute-owner boundary. Renderer IPC deliberately projects only
-// doc + isSkeleton, while agent RPC separately serializes probeResult to its public wire shape.
+// Complete details read at the compute-owner boundary. The document is always the exact persisted
+// user/agent-authored text; structured resources remain independent probe metadata.
 export type ComputeHostDetails = {
   doc: string
-  isSkeleton: boolean
   probeResult: ProbeResult | undefined
 }
 

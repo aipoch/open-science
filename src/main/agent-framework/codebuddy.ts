@@ -51,7 +51,8 @@ const recordValue = (value: unknown): Record<string, unknown> =>
 // Keep the native capability surface deliberately narrow. Agent, Skill, Workflow, TaskOutput,
 // TaskStop, WebFetch, and WebSearch stay absent so native capabilities cannot bypass Open Science's
 // lifecycle, Skill routing, Connector ownership, and permission owners.
-const CODEBUDDY_LOCAL_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep']
+// Glob/Grep bypass the app's scope checks; discovery uses the Notebook Shell instead.
+const CODEBUDDY_LOCAL_TOOLS = ['Read', 'Write', 'Edit']
 const CODEBUDDY_CLEANUP_PERIOD_DAYS = 7
 const CODEBUDDY_NETWORK_DENY_RULES = [
   'Bash(curl:*)',

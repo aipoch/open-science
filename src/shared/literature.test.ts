@@ -180,11 +180,16 @@ describe('Literature Collection contracts', () => {
     expect(
       literatureCatalogCommandSchema.parse({
         kind: 'update-collection',
+        expectedRevision: 1,
         collectionId: 'collection-1',
         name: 'Included studies',
         description: 'Final synthesis set.'
       })
-    ).toMatchObject({ kind: 'update-collection', collectionId: 'collection-1' })
+    ).toMatchObject({
+      kind: 'update-collection',
+      expectedRevision: 1,
+      collectionId: 'collection-1'
+    })
     expect(
       literatureCatalogCommandSchema.parse({
         kind: 'delete-collection',
@@ -193,6 +198,7 @@ describe('Literature Collection contracts', () => {
     ).toEqual({ kind: 'delete-collection', collectionId: 'collection-1' })
     expect(
       literatureCollectionViewSchema.parse({
+        revision: 1,
         id: 'collection-1',
         name: 'Included studies',
         description: 'Final synthesis set.',
