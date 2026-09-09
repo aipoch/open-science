@@ -130,7 +130,20 @@ describe('SessionPdfContextOwner', () => {
       const literature = new LiteratureAttachmentAuthority({
         getClient: async () =>
           ({ literatureAttachmentVersion: { findUnique } }) as unknown as PrismaClient,
-        content: { verify }
+        content: {
+          verify,
+          openLease: vi.fn(async (id: string) => ({
+            checksum: id,
+            path: `/managed/${id}.pdf`,
+            size: 42,
+            versionToken: 1,
+            snapshot: { dev: 0n, ino: 1n, size: 42n, mtimeNs: 1n },
+            read: vi.fn(),
+            readRange: vi.fn(),
+            verifyUnchanged: vi.fn(),
+            close: vi.fn()
+          }))
+        }
       })
       const owner = new SessionPdfContextOwner({
         sources: new SessionPdfSourceResolver({
@@ -157,7 +170,7 @@ describe('SessionPdfContextOwner', () => {
           sources: [sources[1]],
           unavailableSources: [sources[0]]
         })
-        expect(findUnique).toHaveBeenCalledTimes(2)
+        expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'good' } }))
       }
     }
   )
@@ -379,7 +392,7 @@ describe('SessionPdfContextOwner', () => {
     const owner = new SessionPdfContextOwner({
       sources: new SessionPdfSourceResolver({
         inputs,
-        literature: { resolveVersion: vi.fn() }
+        literature: { resolveVersion: vi.fn(), openContent: vi.fn() }
       }),
       sessions: { readSessionRuntimeContext, patchSessionRuntimeContext }
     })
