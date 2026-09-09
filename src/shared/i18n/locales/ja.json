@@ -3771,6 +3771,7 @@
     "Used by {{name}}. Remove this Skill from that Specialist before deleting it.": "{{name}} が使用しています。削除する前に、そのスペシャリストからこのスキルを取り除いてください。",
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._other": "{{count}} 件のスペシャリストが使用しています。削除する前に、これらのスペシャリストからこのスキルを取り除いてください。",
     "Availability": "利用範囲",
+    "This built-in Skill supports core application features and is always enabled.": "この組み込みスキルはアプリケーションの中核機能を支えるため、常に有効です。",
     "Specialist access is configured on each Specialist.": "スペシャリストへのアクセスは、各スペシャリストで設定します。",
     "Resolve Skill conflicts": "スキルの競合を解決",
     "Choose one version for every conflicting Skill before installing the Specialist.": "スペシャリストをインストールする前に、競合するすべてのスキルのバージョンを選択してください。",

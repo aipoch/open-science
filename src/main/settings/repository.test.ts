@@ -1492,6 +1492,20 @@ describe('settings repository: v2 official providers & activeModel migration', (
     expect((await repository.getSettings()).disabledSkillIds).toBeUndefined()
   })
 
+  it('rejects disabling an application-required Skill and atomically rejects a mixed batch', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.setSkillEnabled('ordinary', false)
+
+    await expect(repository.setSkillEnabled('customize', false)).rejects.toThrow(
+      'Application-required Skill cannot be disabled: customize'
+    )
+    await expect(
+      repository.setSkillsEnabled(['ordinary-2', 'skill-creator'], false)
+    ).rejects.toThrow('Application-required Skill cannot be disabled: skill-creator')
+
+    expect((await repository.getSettings()).disabledSkillIds).toEqual(['ordinary'])
+  })
+
   it('serializes Main Skill enablement with package Skill replacement', async () => {
     const root = await createStorageRoot()
     const owner = skillMutationOwnerFor(root)

@@ -174,6 +174,7 @@ const SkillDetailView = ({
 
       <ResourceAvailability
         mainEnabled={enabled}
+        mainRequired={(skill?.activationPolicy ?? detail.activationPolicy) === 'always-on'}
         mainToggleLabel={t('Toggle {{name}}', { name })}
         usages={usages}
         onToggleMain={() => void toggleSkill()}

@@ -4057,6 +4057,7 @@
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._other": "Usada por {{count}} especialistas. Retire esta habilidad de esos especialistas antes de eliminarla.",
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._many": "Usada por {{count}} especialistas. Retire esta habilidad de esos especialistas antes de eliminarla.",
     "Availability": "Disponibilidad",
+    "This built-in Skill supports core application features and is always enabled.": "Esta Habilidad integrada admite funciones esenciales de la aplicación y siempre está habilitada.",
     "Specialist access is configured on each Specialist.": "El acceso se configura por separado para cada especialista.",
     "Resolve Skill conflicts": "Resolver conflictos de habilidades",
     "Choose one version for every conflicting Skill before installing the Specialist.": "Elija una versión para cada habilidad en conflicto antes de instalar el especialista.",
