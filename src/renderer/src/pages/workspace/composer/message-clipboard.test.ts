@@ -104,6 +104,19 @@ describe('message clipboard', () => {
     expect(writeText).not.toHaveBeenCalled()
   })
 
+  it('accepts native clipboard newline conversion without changing reference identities', async () => {
+    const multiline = [...parts, { type: 'text' as const, text: '\nsecond line\nthird line' }]
+    const sourceText = docToText(docFromMessageParts(multiline))
+    await copyMessageToClipboard(sourceText, multiline, 'project')
+    expect(
+      readMessageClipboard(
+        clipboard.get('text/html')!,
+        sourceText.replaceAll('\n', '\r\n'),
+        'project'
+      )
+    ).toEqual(docFromMessageParts(multiline))
+  })
+
   it('does not restore references across projects, origins, or mismatched text', async () => {
     await copyMessageToClipboard(text, parts, 'project')
     const html = clipboard.get('text/html')!

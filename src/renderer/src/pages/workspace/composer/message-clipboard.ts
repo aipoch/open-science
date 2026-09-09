@@ -11,6 +11,9 @@ import {
 
 const MESSAGE_ATTRIBUTE = 'data-open-science-message'
 
+// Native clipboards may translate line endings (notably CRLF on Windows).
+const normalizeClipboardText = (text: string): string => text.replace(/\r\n?/g, '\n').trim()
+
 // HTML is the interoperable clipboard carrier; its markup is never inserted into the editor.
 // The plain representation remains useful in other apps and when rich clipboard writes fail.
 export const copyMessageToClipboard = async (
@@ -22,7 +25,8 @@ export const copyMessageToClipboard = async (
   if (
     projectId &&
     parts?.some((part) => part.type !== 'text') &&
-    docToText(docFromMessageParts([...parts])).trim() === text.trim() &&
+    normalizeClipboardText(docToText(docFromMessageParts([...parts]))) ===
+      normalizeClipboardText(text) &&
     clipboard.write &&
     typeof ClipboardItem !== 'undefined'
   ) {
@@ -77,7 +81,10 @@ export const readMessageClipboard = (
     const parts = sanitizeMessageParts(candidate.parts)
     if (parts.length !== candidate.parts.length) return undefined
     const doc = docFromMessageParts(parts)
-    if (!parts.some((part) => part.type !== 'text') || docToText(doc).trim() !== text.trim()) {
+    if (
+      !parts.some((part) => part.type !== 'text') ||
+      normalizeClipboardText(docToText(doc)) !== normalizeClipboardText(text)
+    ) {
       return undefined
     }
     return doc
