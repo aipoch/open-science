@@ -564,6 +564,133 @@ napi_value PublishNoReplace(napi_env env, napi_callback_info info) {
 #endif
 }
 
+// Bind deletion to an opened parent, not a path checked earlier by JavaScript.
+napi_value RemoveAnchoredFile(napi_env env, napi_callback_info info) {
+  size_t argc = 5;
+  napi_value argv[5];
+  std::string root, relative_parent, filename;
+  std::vector<std::string> components;
+  uint64_t expected_dev = 0, expected_ino = 0;
+  bool dev_lossless = false, ino_lossless = false;
+  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 5 ||
+      !ReadString(env, argv[0], &root) || !ReadString(env, argv[1], &relative_parent) ||
+      !ReadString(env, argv[2], &filename) || root.empty() ||
+      root.find('\0') != std::string::npos || relative_parent.find('\0') != std::string::npos ||
+      filename.find('\0') != std::string::npos ||
+      !SplitRelativePath(relative_parent, &components) || !IsSimpleName(filename) ||
+      napi_get_value_bigint_uint64(env, argv[3], &expected_dev, &dev_lossless) != napi_ok ||
+      napi_get_value_bigint_uint64(env, argv[4], &expected_ino, &ino_lossless) != napi_ok ||
+      !dev_lossless || !ino_lossless) {
+    return ThrowError(env, "Invalid anchored removal arguments.", "EINVAL");
+  }
+#ifdef _WIN32
+  // Denying delete sharing pins every directory while the child is opened. OPEN_REPARSE_POINT
+  // rejects junctions at every level; deletion then targets the opened file handle itself.
+  std::wstring path = Utf8ToWide(root);
+  std::vector<HANDLE> directories;
+  auto close_directories = [&]() {
+    for (HANDLE handle : directories) CloseHandle(handle);
+  };
+  for (size_t index = 0; index <= components.size(); ++index) {
+    const std::wstring previous_parent = path;
+    if (index != 0) {
+      if (path.back() != L'\\' && path.back() != L'/') path.push_back(L'\\');
+      const auto component = Utf8ToWide(components[index - 1]);
+      if (component.empty()) {
+        close_directories();
+        return ThrowError(env, "Invalid removal directory.", "EINVAL");
+      }
+      path.append(component);
+    }
+    HANDLE handle = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES | FILE_TRAVERSE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+      const DWORD error = GetLastError();
+      close_directories();
+      return ThrowError(env, "Could not anchor the removal directory.", WindowsErrorCode(error));
+    }
+    directories.push_back(handle);
+    BY_HANDLE_FILE_INFORMATION attributes{};
+    if (!GetFileInformationByHandle(handle, &attributes) ||
+        (attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+        (attributes.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 || IsRemoteHandle(handle)) {
+      close_directories();
+      return ThrowError(env, "Unsafe removal directory.", "ELOOP");
+    }
+    if (index == components.size() &&
+        (attributes.dwVolumeSerialNumber != expected_dev ||
+         ((static_cast<uint64_t>(attributes.nFileIndexHigh) << 32) |
+          attributes.nFileIndexLow) != expected_ino)) {
+      close_directories();
+      return ThrowError(env, "Removal directory changed.", "ESTALE");
+    }
+    const auto anchored = HandlePath(handle);
+    if (anchored.empty() || (index != 0 && !SamePath(ParentPath(anchored), previous_parent))) {
+      close_directories();
+      return ThrowError(env, "Removal directory escaped its parent.", "ELOOP");
+    }
+    path = anchored;
+  }
+  const auto name = Utf8ToWide(filename);
+  if (name.empty()) {
+    close_directories();
+    return ThrowError(env, "Invalid removal filename.", "EINVAL");
+  }
+  HANDLE file = CreateFileW((path + L"\\" + name).c_str(), DELETE | FILE_READ_ATTRIBUTES,
+      FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+      FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+  if (file == INVALID_HANDLE_VALUE) {
+    const DWORD error = GetLastError();
+    close_directories();
+    return ThrowError(env, "Could not open the removal file.", WindowsErrorCode(error));
+  }
+  BY_HANDLE_FILE_INFORMATION attributes{};
+  const bool safe = GetFileInformationByHandle(file, &attributes) &&
+      (attributes.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) == 0 &&
+      SamePath(ParentPath(HandlePath(file)), path);
+  FILE_DISPOSITION_INFO disposition{TRUE};
+  const bool removed = safe && SetFileInformationByHandle(file, FileDispositionInfo,
+      &disposition, sizeof(disposition));
+  const DWORD error = GetLastError();
+  CloseHandle(file);
+  close_directories();
+  if (!removed) return ThrowError(env, "Anchored removal failed.", safe ? WindowsErrorCode(error) : "ELOOP");
+#else
+  int parent = open(root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (parent < 0) return ThrowError(env, "Could not anchor the storage root.", PosixErrorCode(errno));
+  for (const auto& component : components) {
+    const int next = openat(parent, component.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    const int error = errno;
+    close(parent);
+    if (next < 0) return ThrowError(env, "Could not anchor the removal directory.", PosixErrorCode(error));
+    parent = next;
+  }
+  struct stat directory_info {};
+  if (fstat(parent, &directory_info) != 0 ||
+      static_cast<uint64_t>(directory_info.st_dev) != expected_dev ||
+      static_cast<uint64_t>(directory_info.st_ino) != expected_ino) {
+    close(parent);
+    return ThrowError(env, "Removal directory changed.", "ESTALE");
+  }
+  struct stat file_info {};
+  const int inspected = fstatat(parent, filename.c_str(), &file_info, AT_SYMLINK_NOFOLLOW);
+  const int inspection_error = errno;
+  if (inspected != 0 || !S_ISREG(file_info.st_mode)) {
+    close(parent);
+    return ThrowError(env, "Unsafe removal file.", inspected != 0 ? PosixErrorCode(inspection_error) : "ELOOP");
+  }
+  // unlinkat never follows a replacement leaf symlink and never removes a directory.
+  const int removed = unlinkat(parent, filename.c_str(), 0);
+  const int error = errno;
+  close(parent);
+  if (removed != 0) return ThrowError(env, "Anchored removal failed.", PosixErrorCode(error));
+#endif
+  napi_value undefined;
+  napi_get_undefined(env, &undefined);
+  return undefined;
+}
+
 napi_value Init(napi_env env, napi_value exports) {
   napi_value publish;
   napi_create_function(
@@ -573,6 +700,9 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_create_function(
       env, "inspectPath", NAPI_AUTO_LENGTH, InspectPath, nullptr, &inspect_path);
   napi_set_named_property(env, exports, "inspectPath", inspect_path);
+  napi_value remove;
+  napi_create_function(env, "removeAnchoredFile", NAPI_AUTO_LENGTH, RemoveAnchoredFile, nullptr, &remove);
+  napi_set_named_property(env, exports, "removeAnchoredFile", remove);
   return exports;
 }
 

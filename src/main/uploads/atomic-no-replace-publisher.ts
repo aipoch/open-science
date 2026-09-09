@@ -1,14 +1,7 @@
 import { createRequire } from 'node:module'
 import { isAbsolute, relative, sep } from 'node:path'
 
-type NativePublisherBinding = {
-  publishNoReplace: (
-    rootPath: string,
-    relativeParentPath: string,
-    sourceName: string,
-    destinationName: string
-  ) => void
-}
+type NativePublisherBinding = typeof import('@aipoch/safe-file-publisher-native')
 
 const require = createRequire(import.meta.url)
 let binding: NativePublisherBinding | undefined
@@ -35,4 +28,13 @@ export const publishNoReplace = (
     throw error
   }
   loadBinding().publishNoReplace(rootPath, relativeParentPath, sourceName, destinationName)
+}
+
+export const removeAnchoredFile = (
+  rootPath: string,
+  relativeParentPath: string,
+  filename: string,
+  parent: { dev: bigint; ino: bigint }
+): void => {
+  loadBinding().removeAnchoredFile(rootPath, relativeParentPath, filename, parent.dev, parent.ino)
 }

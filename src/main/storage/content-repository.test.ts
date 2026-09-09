@@ -19,10 +19,16 @@ import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { literatureItemInputSchema } from '../../shared/literature'
+import { removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
 import { LiteratureCatalog } from '../literature/catalog'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { markContentBlobAvailable, registerContentBlob } from './content-blob-registry'
 import { ContentRepository, resolveContentStorageKey } from './content-repository'
+
+vi.mock('../uploads/atomic-no-replace-publisher', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../uploads/atomic-no-replace-publisher')>()
+  return { ...original, removeAnchoredFile: vi.fn(original.removeAnchoredFile) }
+})
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>()
@@ -54,6 +60,15 @@ describe('content repository', () => {
     const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
     vi.mocked(copyFile).mockReset().mockImplementation(fs.copyFile)
     vi.mocked(lstat).mockReset().mockImplementation(fs.lstat)
+    vi.mocked(removeAnchoredFile)
+      .mockReset()
+      .mockImplementation(
+        (
+          await vi.importActual<typeof import('../uploads/atomic-no-replace-publisher')>(
+            '../uploads/atomic-no-replace-publisher'
+          )
+        ).removeAnchoredFile
+      )
     await client?.$disconnect()
     if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
   })
@@ -872,7 +887,9 @@ describe('content repository', () => {
         createdAt: new Date(1)
       }
     })
-    vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('denied'), { code: 'EACCES' }))
+    vi.mocked(removeAnchoredFile).mockImplementationOnce(() => {
+      throw Object.assign(new Error('denied'), { code: 'EACCES' })
+    })
     await expect(repository.sweep({ createdBefore: new Date() })).rejects.toMatchObject({
       code: 'EACCES'
     })
@@ -893,6 +910,33 @@ describe('content repository', () => {
     await symlink(outside, join(blobs, 'aa'), process.platform === 'win32' ? 'junction' : 'dir')
     await repository.sweep({ createdBefore: new Date() })
     expect(await readFile(join(outside, filename), 'utf8')).toBe('keep')
+  })
+
+  it('preserves outside bytes when a publication parent is swapped after the final path check', async () => {
+    const repository = await createRepository()
+    const directory = join(storageRoot!, 'content', 'blobs', 'aa')
+    const outside = join(storageRoot!, 'outside')
+    const filename = `${'a'.repeat(64)}.01234567-89ab-4def-8123-456789abcdef.tmp`
+    const temporary = join(directory, filename)
+    await mkdir(directory, { recursive: true })
+    await mkdir(outside)
+    await writeFile(temporary, 'owned')
+    await writeFile(join(outside, filename), 'outside user bytes')
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let checks = 0
+    vi.mocked(lstat).mockImplementation((...args) => {
+      if (String(args[0]) !== temporary || ++checks !== 2) return fs.lstat(...args)
+      return (async () => {
+        const current = await fs.lstat(temporary)
+        await rename(directory, `${directory}-held`)
+        await symlink(outside, directory, process.platform === 'win32' ? 'junction' : 'dir')
+        return current
+      })() as ReturnType<typeof lstat>
+    })
+    const result = await repository.sweep({ createdBefore: new Date(0) }).catch((error) => error)
+    expect(await readFile(join(outside, filename), 'utf8')).toBe('outside user bytes')
+    expect(result).toBeInstanceOf(Error)
+    expect(await readFile(join(`${directory}-held`, filename), 'utf8')).toBe('owned')
   })
 
   it('refuses a replaced publication directory before unlinking a same-named file', async () => {

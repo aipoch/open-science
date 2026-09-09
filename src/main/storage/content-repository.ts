@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
+import { type BigIntStats, createReadStream } from 'node:fs'
 import { copyFile, link, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+
+import { removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
 
 import type { PrismaClient } from '@prisma/client'
 import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
@@ -545,9 +547,9 @@ class ContentRepository {
   private async sweepPublicationFiles(): Promise<void> {
     const root = resolve(this.options.storageRoot)
     const directories = [root, join(root, 'content'), join(root, 'content', 'blobs')]
-    const snapshots: Awaited<ReturnType<typeof lstat>>[] = []
+    const snapshots: BigIntStats[] = []
     for (const directory of directories) {
-      const snapshot = await lstat(directory).catch((error: unknown) => {
+      const snapshot = await lstat(directory, { bigint: true }).catch((error: unknown) => {
         if (missingFile(error)) return undefined
         throw error
       })
@@ -561,7 +563,7 @@ class ContentRepository {
     for (const prefix of await readdir(blobsRoot)) {
       if (!/^[a-f0-9]{2}$/.test(prefix)) continue
       const directory = join(blobsRoot, prefix)
-      const snapshot = await lstat(directory)
+      const snapshot = await lstat(directory, { bigint: true })
       if (!snapshot.isDirectory() || snapshot.isSymbolicLink()) continue
       for (const filename of await readdir(directory)) {
         const match = publicationFilename.exec(filename)
@@ -574,7 +576,7 @@ class ContentRepository {
           // remove a same-named file, and never recursively remove an unexpected directory.
           for (const [index, path] of [...directories, directory].entries()) {
             const expected = [...snapshots, snapshot][index]
-            const current = await lstat(path)
+            const current = await lstat(path, { bigint: true })
             if (
               !current.isDirectory() ||
               current.isSymbolicLink() ||
@@ -592,7 +594,9 @@ class ContentRepository {
             fileFingerprint(current) !== fileFingerprint(file)
           )
             continue
-          if (!activePublicationFiles.has(filename)) await rm(temporary, { force: true })
+          if (!activePublicationFiles.has(filename)) {
+            removeAnchoredFile(root, relative(root, directory), filename, snapshot)
+          }
         } catch (error) {
           // Another sweep or publisher can have removed this exact temporary file already.
           if (!missingFile(error)) throw error

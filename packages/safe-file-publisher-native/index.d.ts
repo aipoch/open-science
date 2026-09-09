@@ -11,3 +11,11 @@ export type StoragePathCapabilities = {
 }
 
 export function inspectPath(path: string): StoragePathCapabilities
+
+export function removeAnchoredFile(
+  rootPath: string,
+  relativeParentPath: string,
+  filename: string,
+  parentDev: bigint,
+  parentIno: bigint
+): void
