@@ -28,6 +28,7 @@ import type {
 } from '../../shared/settings'
 import type {
   InstallMissingWslDependenciesRequest,
+  InstallWslDistroRequest,
   OpenWslTerminalRequest,
   SelectWslProfileRequest
 } from '../../shared/wsl-setup'
@@ -313,7 +314,7 @@ const settingsCoreApplicationCommands = Object.freeze({
   >('settings:create-wsl-support-handoff'),
   installRecommendedWslDistro: defineApplicationCommand<
     'settings:install-recommended-wsl-distro',
-    readonly [],
+    readonly [request: InstallWslDistroRequest],
     StoreResult<'installRecommendedWslDistro'>
   >('settings:install-recommended-wsl-distro'),
   openWslTerminal: defineApplicationCommand<
@@ -620,9 +621,9 @@ const registerCoreSettingsApplicationCommands = (
         requireLocalCaller(callerContext, 'settings:create-wsl-support-handoff')
         return dependencies.service.createWslSupportHandoff()
       },
-      'settings:install-recommended-wsl-distro': ({ callerContext }) => {
+      'settings:install-recommended-wsl-distro': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:install-recommended-wsl-distro')
-        return dependencies.service.installRecommendedWslDistro()
+        return dependencies.service.installRecommendedWslDistro(args[0])
       },
       'settings:open-wsl-terminal': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:open-wsl-terminal')

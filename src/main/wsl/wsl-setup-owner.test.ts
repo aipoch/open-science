@@ -789,15 +789,15 @@ describe('WslSetupOwner', () => {
     }
   )
 
-  it('installs only the recommended distro after an explicit request and returns a fresh OS probe', async () => {
+  it('installs the requested supported distro after an explicit request and returns a fresh OS probe', async () => {
     const runner = makeRunner(
       result('Default Version: 2'),
       result(''),
       result(''),
       result('', 0),
       result('Default Version: 2'),
-      result('Ubuntu-22.04'),
-      result('* Ubuntu-22.04 Stopped 2')
+      result('FedoraLinux-44'),
+      result('* FedoraLinux-44 Stopped 2')
     )
     const log = { info: vi.fn(), warn: vi.fn() }
     const owner = makeOwner({
@@ -808,17 +808,17 @@ describe('WslSetupOwner', () => {
       log
     })
 
-    const snapshot = await owner.installRecommendedDistro()
+    const snapshot = await owner.installRecommendedDistro('FedoraLinux-44')
 
-    expect(RECOMMENDED_WSL_DISTRO).toBe('Ubuntu-22.04')
+    expect(RECOMMENDED_WSL_DISTRO).toBe('Ubuntu-24.04')
     expect(runner.run).toHaveBeenNthCalledWith(
       4,
-      ['--install', '--distribution', 'Ubuntu-22.04', '--no-launch'],
+      ['--install', '--distribution', 'FedoraLinux-44', '--no-launch'],
       { timeoutMs: WSL_DISTRO_INSTALL_TIMEOUT_MS }
     )
     expect(snapshot).toMatchObject({
       state: 'distro-required',
-      distros: [{ name: 'Ubuntu-22.04', version: 2 }]
+      distros: [{ name: 'FedoraLinux-44', version: 2 }]
     })
     const operation = owner.getStatus().operation
     expect(operation.state).toBe('finished')
@@ -826,7 +826,7 @@ describe('WslSetupOwner', () => {
     expect(snapshot.operationReference).toBe(operation.operationReference)
     expect(runner.run).toHaveBeenCalledTimes(7)
     expect(JSON.stringify([...log.info.mock.calls, ...log.warn.mock.calls])).not.toContain(
-      'Ubuntu-22.04'
+      'FedoraLinux-44'
     )
   })
 
@@ -1170,8 +1170,8 @@ describe('WslSetupOwner', () => {
       result(''),
       result(''),
       result('Default Version: 2'),
-      result('Ubuntu-22.04'),
-      result('* Ubuntu-22.04 Stopped 2')
+      result('Ubuntu-24.04'),
+      result('* Ubuntu-24.04 Stopped 2')
     ]
     const runner: WslCommandRunner = {
       run: vi.fn(async (_args, options) => {
@@ -1242,14 +1242,14 @@ describe('WslSetupOwner', () => {
       result(''),
       result('', 0),
       result('Default Version: 2'),
-      result('Ubuntu-22.04'),
-      result('* Ubuntu-22.04 Stopped 2'),
+      result('Ubuntu-24.04'),
+      result('* Ubuntu-24.04 Stopped 2'),
       result('Default Version: 2'),
-      result('Ubuntu-22.04'),
-      result('* Ubuntu-22.04 Stopped 2'),
+      result('Ubuntu-24.04'),
+      result('* Ubuntu-24.04 Stopped 2'),
       result('Default Version: 2'),
-      result('Ubuntu-22.04'),
-      result('* Ubuntu-22.04 Stopped 2')
+      result('Ubuntu-24.04'),
+      result('* Ubuntu-24.04 Stopped 2')
     )
     const terminal: WslTerminalLauncher = { open: vi.fn(async () => undefined) }
     const writeSelection = vi.fn()
@@ -1264,13 +1264,13 @@ describe('WslSetupOwner', () => {
     const installed = await owner.installRecommendedDistro()
     expect(installed).toMatchObject({
       state: 'distro-required',
-      distros: [{ name: 'Ubuntu-22.04', version: 2 }]
+      distros: [{ name: 'Ubuntu-24.04', version: 2 }]
     })
     expect(installed).not.toHaveProperty('selection')
-    const initialized = await owner.openTerminal({ distro: 'Ubuntu-22.04' })
+    const initialized = await owner.openTerminal({ distro: 'Ubuntu-24.04' })
     expect(initialized).toMatchObject({ state: 'distro-required' })
     expect(initialized).not.toHaveProperty('selection')
-    expect(terminal.open).toHaveBeenCalledWith(['--distribution', 'Ubuntu-22.04'])
+    expect(terminal.open).toHaveBeenCalledWith(['--distribution', 'Ubuntu-24.04'])
     expect(writeSelection).not.toHaveBeenCalled()
   })
 

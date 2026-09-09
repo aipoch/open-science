@@ -10,6 +10,13 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { WslLocalShellSection } from './WslLocalShellSection'
 
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = (): boolean => false
+  Element.prototype.setPointerCapture = (): void => undefined
+  Element.prototype.releasePointerCapture = (): void => undefined
+}
+if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = (): void => undefined
+
 let container: HTMLDivElement
 let root: Root
 let probe: ReturnType<typeof vi.fn>
@@ -87,7 +94,7 @@ beforeEach(() => {
   })
   installRecommended = vi.fn().mockResolvedValue({
     state: 'distro-required',
-    distros: [{ name: 'Ubuntu-22.04', version: 2, isDefault: true }],
+    distros: [{ name: 'Ubuntu-24.04', version: 2, isDefault: true }],
     operationReference: 'feedface'
   })
   installMissingDependencies = vi.fn().mockResolvedValue({
@@ -635,36 +642,68 @@ describe('WslLocalShellSection', () => {
     const readiness = container.querySelector('[aria-label="Readiness checks"]')
     expect(readiness?.querySelector('svg.text-status-success-foreground')).not.toBeNull()
     expect(readiness?.querySelector('svg.text-status-failure-foreground')).not.toBeNull()
-    expect(readiness?.querySelector('svg.text-status-info-foreground')).not.toBeNull()
+    expect(readiness?.querySelector('svg.text-status-info-foreground')).toBeNull()
     expect(readiness?.querySelector('svg.text-primary')).toBeNull()
     expect(readiness?.querySelector('svg.text-destructive')).toBeNull()
-    expect(readiness?.querySelector('svg.text-muted-foreground')).toBeNull()
+    expect(readiness?.querySelector('svg.text-muted-foreground')).not.toBeNull()
   })
 
-  it('requires an explicit click to install the recommended distro, then opens first launch interactively', async () => {
+  it('offers the supported distros, recommends Ubuntu 24.04, and installs the selected distro', async () => {
     probe.mockResolvedValue({
       state: 'distro-required',
       distros: [],
       errorCode: 'wsl_distro_missing',
       operationReference: 'deadbeef'
     })
+    installRecommended.mockResolvedValue({
+      state: 'distro-required',
+      distros: [{ name: 'FedoraLinux-44', version: 2, isDefault: true }],
+      operationReference: 'feedface'
+    })
     await renderAndCheck()
 
+    const distroSelect = container.querySelector<HTMLButtonElement>(
+      '[aria-label="WSL2 distribution"]'
+    )
+    expect(distroSelect?.textContent).toContain('Ubuntu 24.04 LTS (recommended)')
+    act(() => {
+      distroSelect?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      distroSelect?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).map((option) =>
+        option.textContent?.trim()
+      )
+    ).toEqual([
+      'Ubuntu 24.04 LTS (recommended)',
+      'Debian 13',
+      'Ubuntu 22.04 LTS',
+      'Kali Linux',
+      'openSUSE',
+      'Fedora'
+    ])
+    const fedora = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (option) => option.textContent?.trim() === 'Fedora'
+    )
+    act(() => {
+      fedora?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
+      fedora?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
     const install = [...container.querySelectorAll('button')].find((button) =>
-      button.textContent?.includes('Install Ubuntu-22.04')
+      button.textContent?.includes('Install Fedora')
     )
     expect(install).toBeDefined()
     expect(installRecommended).not.toHaveBeenCalled()
     await act(async () => install?.click())
     await flush()
 
-    expect(installRecommended).toHaveBeenCalledOnce()
+    expect(installRecommended).toHaveBeenCalledWith({ distro: 'FedoraLinux-44' })
     const launch = [...container.querySelectorAll('button')].find((button) =>
       button.textContent?.includes('Open distribution terminal')
     )
     await act(async () => launch?.click())
     await flush()
-    expect(openTerminal).toHaveBeenCalledWith({ distro: 'Ubuntu-22.04' })
+    expect(openTerminal).toHaveBeenCalledWith({ distro: 'FedoraLinux-44' })
   })
 
   it('opens the selected distro for first launch when the recommended distro is absent', async () => {

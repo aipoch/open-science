@@ -4348,6 +4348,7 @@
     "Choose a non-root Linux user with an existing home directory, then check again.": "選擇具有現有主目錄的非 root Linux 使用者，然後重新檢查。",
     "Linux home directory": "Linux 主目錄",
     "Install {{distro}}": "安裝 {{distro}}",
+    "{{distro}} (recommended)": "{{distro}}（建議）",
     "Installation starts only after you choose this action.": "只有在您選擇此操作後才會開始安裝。",
     "Finish the distribution’s username and password prompts in the terminal. Open Science never enters credentials for you.": "請在終端機中完成發行版的使用者名稱和密碼提示。Open Science 絕不會代您輸入憑證。",
     "Install the missing Linux dependencies to continue.": "請安裝缺少的 Linux 相依套件以繼續。",

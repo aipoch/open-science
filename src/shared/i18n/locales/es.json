@@ -4653,6 +4653,7 @@
     "Choose a non-root Linux user with an existing home directory, then check again.": "Seleccione un usuario de Linux que no sea root y que tenga un directorio principal existente; luego vuelva a comprobar.",
     "Linux home directory": "Directorio principal de Linux",
     "Install {{distro}}": "Instalar {{distro}}",
+    "{{distro}} (recommended)": "{{distro}} (recomendado)",
     "Installation starts only after you choose this action.": "La instalación solo se inicia después de elegir esta acción.",
     "Finish the distribution’s username and password prompts in the terminal. Open Science never enters credentials for you.": "Complete las solicitudes de nombre de usuario y contraseña de la distribución en el terminal. Open Science nunca introduce credenciales por usted.",
     "Install the missing Linux dependencies to continue.": "Instale las dependencias de Linux que faltan para continuar.",

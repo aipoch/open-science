@@ -29,10 +29,12 @@ import {
 } from '@/components/ui/select'
 import {
   RECOMMENDED_WSL_DISTRO,
+  WSL_INSTALL_DISTROS,
   type SwitchToPowerShellResult,
   type UseWsl2BashResult,
   type Wsl2BashPreviewStatus,
   type WslReadiness,
+  type WslInstallDistroName,
   type WslSetupOperation,
   type WslSetupSnapshot
 } from '../../../../shared/wsl-setup'
@@ -173,6 +175,7 @@ export const WslLocalShellSection = ({
     operationReference: '--------'
   })
   const [distro, setDistro] = useState('')
+  const [installDistro, setInstallDistro] = useState<WslInstallDistroName>(RECOMMENDED_WSL_DISTRO)
   const [user, setUser] = useState('')
   const [actionBusy, setBusy] = useState(false)
   const [hasSnapshot, setHasSnapshot] = useState(false)
@@ -294,7 +297,7 @@ export const WslLocalShellSection = ({
   const installRecommended = async (): Promise<void> => {
     setBusy(true)
     try {
-      apply(await window.api.settings.installRecommendedWslDistro())
+      apply(await window.api.settings.installRecommendedWslDistro({ distro: installDistro }))
     } catch {
       setSnapshot((current) => ({
         ...current,
@@ -337,11 +340,12 @@ export const WslLocalShellSection = ({
     snapshot.state === 'first-launch-required'
       ? snapshot.selection?.distro
       : snapshot.state === 'distro-required' &&
-          snapshot.distros.some(
-            (item) => item.name === RECOMMENDED_WSL_DISTRO && item.version === 2
-          )
-        ? RECOMMENDED_WSL_DISTRO
+          snapshot.distros.some((item) => item.name === installDistro && item.version === 2)
+        ? installDistro
         : undefined
+  const installDistroLabel =
+    WSL_INSTALL_DISTROS.find((candidate) => candidate.name === installDistro)?.label ??
+    installDistro
 
   const installMissingDependencies = async (): Promise<void> => {
     setBusy(true)
@@ -678,12 +682,31 @@ export const WslLocalShellSection = ({
         ) : null}
 
         {!busy && snapshot.state === 'distro-required' && snapshot.distros.length === 0 ? (
-          <div className="mt-4">
+          <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+            <SettingsField label={t('WSL2 distribution')}>
+              <Select
+                value={installDistro}
+                onValueChange={(value) => setInstallDistro(value as WslInstallDistroName)}
+              >
+                <SelectTrigger aria-label={t('WSL2 distribution')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {WSL_INSTALL_DISTROS.map((candidate) => (
+                    <SelectItem key={candidate.name} value={candidate.name}>
+                      {candidate.name === RECOMMENDED_WSL_DISTRO
+                        ? t('{{distro}} (recommended)', { distro: candidate.label })
+                        : candidate.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingsField>
             <Button type="button" onClick={() => void installRecommended()}>
               <Download aria-hidden="true" />
-              {t('Install {{distro}}', { distro: RECOMMENDED_WSL_DISTRO })}
+              {t('Install {{distro}}', { distro: installDistroLabel })}
             </Button>
-            <p className="mt-2 text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground sm:col-span-2">
               {t('Installation starts only after you choose this action.')}
             </p>
           </div>

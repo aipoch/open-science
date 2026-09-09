@@ -4781,6 +4781,7 @@
     "Choose a non-root Linux user with an existing home directory, then check again.": "Выберите пользователя Linux без прав root с существующим домашним каталогом, затем повторите проверку.",
     "Linux home directory": "Домашний каталог Linux",
     "Install {{distro}}": "Установить {{distro}}",
+    "{{distro}} (recommended)": "{{distro}} (рекомендуется)",
     "Installation starts only after you choose this action.": "Установка начнётся только после выбора этого действия.",
     "Finish the distribution’s username and password prompts in the terminal. Open Science never enters credentials for you.": "Завершите ввод имени пользователя и пароля дистрибутива в терминале. Open Science никогда не вводит учётные данные вместо вас.",
     "Install the missing Linux dependencies to continue.": "Установите недостающие зависимости Linux, чтобы продолжить.",

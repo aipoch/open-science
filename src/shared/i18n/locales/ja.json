@@ -4347,6 +4347,7 @@
     "Choose a non-root Linux user with an existing home directory, then check again.": "既存のホームディレクトリを持つ root 以外の Linux ユーザーを選択して、もう一度確認してください。",
     "Linux home directory": "Linux ホームディレクトリ",
     "Install {{distro}}": "{{distro}} をインストール",
+    "{{distro}} (recommended)": "{{distro}}（推奨）",
     "Installation starts only after you choose this action.": "この操作を選択した場合にのみインストールが開始されます。",
     "Finish the distribution’s username and password prompts in the terminal. Open Science never enters credentials for you.": "ターミナルでディストリビューションのユーザー名とパスワードの入力を完了してください。Open Science が認証情報を代わりに入力することはありません。",
     "Install the missing Linux dependencies to continue.": "続行するには、不足している Linux の依存関係をインストールしてください。",

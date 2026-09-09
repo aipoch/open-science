@@ -47,6 +47,7 @@ import type {
 } from './side-chat'
 import type {
   InstallMissingWslDependenciesRequest,
+  InstallWslDistroRequest,
   OpenWslTerminalRequest,
   LocalShellRuntimePreference,
   SelectWslProfileRequest,
@@ -2124,10 +2125,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'settings:use-wsl2-bash',
     LOCAL
   ]),
-  'settings.installRecommendedWslDistro': callable<() => Promise<WslSetupSnapshot>>()('settings', [
-    'settings:install-recommended-wsl-distro',
-    LOCAL
-  ]),
+  'settings.installRecommendedWslDistro': callable<
+    (request: InstallWslDistroRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:install-recommended-wsl-distro', LOCAL]),
   'settings.openWslTerminal': callable<
     (request: OpenWslTerminalRequest) => Promise<WslSetupSnapshot>
   >()('settings', ['settings:open-wsl-terminal', LOCAL]),

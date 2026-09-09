@@ -4345,6 +4345,7 @@
     "Choose a non-root Linux user with an existing home directory, then check again.": "기존 홈 디렉터리가 있는 루트가 아닌 Linux 사용자를 선택한 후 다시 확인하세요.",
     "Linux home directory": "Linux 홈 디렉터리",
     "Install {{distro}}": "{{distro}} 설치",
+    "{{distro}} (recommended)": "{{distro}}(권장)",
     "Installation starts only after you choose this action.": "이 작업을 선택한 경우에만 설치가 시작됩니다.",
     "Finish the distribution’s username and password prompts in the terminal. Open Science never enters credentials for you.": "터미널에서 배포판의 사용자 이름 및 비밀번호 입력을 완료하세요. Open Science는 사용자를 대신하여 자격 증명을 입력하지 않습니다.",
     "Install the missing Linux dependencies to continue.": "계속하려면 누락된 Linux 종속성을 설치하세요.",

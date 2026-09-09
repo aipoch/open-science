@@ -14,7 +14,13 @@ type WslSetupOperationRecordBase = Readonly<{
 export type WslSetupOperationRecord =
   | Readonly<
       WslSetupOperationRecordBase & {
-        kind: Exclude<WslSetupOperationKind, 'install-runtime-dependencies'>
+        kind: 'install-platform'
+      }
+    >
+  | Readonly<
+      WslSetupOperationRecordBase & {
+        kind: 'install-recommended-distro'
+        distro?: string
       }
     >
   | Readonly<
@@ -29,6 +35,7 @@ type SerializedOperation = Readonly<{
   operationReference: string
   startedAt: number
   selection?: unknown
+  distro?: unknown
 }>
 
 export type WslSetupOperationJournal = {
@@ -82,6 +89,18 @@ const decode = (contents: string): WslSetupOperationRecord | undefined => {
       operationReference: operation.operationReference,
       startedAt: operation.startedAt,
       selection: Object.freeze({ distro: selection.distro, user: selection.user })
+    })
+  }
+  if (operation.kind === 'install-recommended-distro') {
+    if (operation.distro !== undefined && !validSelectionPart(operation.distro, 256)) {
+      throw new Error('WSL setup operation journal contains an invalid operation.')
+    }
+    return Object.freeze({
+      kind: operation.kind,
+      operationReference: operation.operationReference,
+      startedAt: operation.startedAt,
+      // Version 1 records created before distro selection always installed Ubuntu 22.04.
+      distro: operation.distro ?? 'Ubuntu-22.04'
     })
   }
   return Object.freeze({

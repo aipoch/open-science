@@ -223,9 +223,24 @@ export type InstallMissingWslDependenciesRequest = Readonly<{
   expectedRevision: number
 }>
 
+export const WSL_INSTALL_DISTROS = [
+  { name: 'Ubuntu-24.04', label: 'Ubuntu 24.04 LTS' },
+  { name: 'Debian', label: 'Debian 13' },
+  { name: 'Ubuntu-22.04', label: 'Ubuntu 22.04 LTS' },
+  { name: 'kali-linux', label: 'Kali Linux' },
+  { name: 'openSUSE-Tumbleweed', label: 'openSUSE' },
+  { name: 'FedoraLinux-44', label: 'Fedora' }
+] as const
+
+export type WslInstallDistroName = (typeof WSL_INSTALL_DISTROS)[number]['name']
+
+export type InstallWslDistroRequest = Readonly<{
+  distro: WslInstallDistroName
+}>
+
 export type OpenWslTerminalRequest = Readonly<{
   distro: string
   user?: string
 }>
 
-export const RECOMMENDED_WSL_DISTRO = 'Ubuntu-22.04'
+export const RECOMMENDED_WSL_DISTRO: WslInstallDistroName = 'Ubuntu-24.04'

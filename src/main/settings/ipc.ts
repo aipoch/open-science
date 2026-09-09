@@ -69,6 +69,7 @@ import {
 } from '../../shared/settings'
 import type {
   InstallMissingWslDependenciesRequest,
+  InstallWslDistroRequest,
   OpenWslTerminalRequest,
   SelectWslProfileRequest
 } from '../../shared/wsl-setup'
@@ -368,8 +369,9 @@ const registerSettingsIpcHandlers = ({
     workflows.localShell.switchToPowerShell()
   )
   ipcMainHandle('settings:use-wsl2-bash', () => workflows.localShell.useWsl2Bash())
-  ipcMainHandle('settings:install-recommended-wsl-distro', () =>
-    service.installRecommendedWslDistro()
+  ipcMainHandle(
+    'settings:install-recommended-wsl-distro',
+    (_event, request: InstallWslDistroRequest) => service.installRecommendedWslDistro(request)
   )
   ipcMainHandle('settings:open-wsl-terminal', (_event, request: OpenWslTerminalRequest) =>
     service.openWslTerminal(request)

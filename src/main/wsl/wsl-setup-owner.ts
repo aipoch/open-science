@@ -4,6 +4,7 @@ import { arch, release } from 'node:os'
 
 import {
   RECOMMENDED_WSL_DISTRO,
+  WSL_INSTALL_DISTROS,
   WSL_PLATFORM_OWNERSHIP,
   WSL_SETUP_DIAGNOSTICS_SCHEMA_VERSION,
   type OpenWslTerminalRequest,
@@ -389,7 +390,7 @@ export class WslSetupOwner {
             snapshot.readiness.bwrap === true &&
             snapshot.readiness.python3 === true
           : snapshot.state === 'restart-required' ||
-            snapshot.distros.some((distro) => distro.name === RECOMMENDED_WSL_DISTRO)
+            snapshot.distros.some((distro) => distro.name === (record.distro ?? 'Ubuntu-22.04'))
     if (!confirmed) {
       snapshot = {
         ...snapshot,
@@ -624,9 +625,16 @@ export class WslSetupOwner {
     }
   }
 
-  installRecommendedDistro(): Promise<WslSetupSnapshot> {
+  installRecommendedDistro(distro: string = RECOMMENDED_WSL_DISTRO): Promise<WslSetupSnapshot> {
+    if (!WSL_INSTALL_DISTROS.some((candidate) => candidate.name === distro)) {
+      return Promise.resolve(
+        setupSnapshot('failed', this.reference(), [], {
+          errorCode: 'wsl_distro_install_not_allowed'
+        })
+      )
+    }
     if (this.activeRecommendedDistroInstall) return this.activeRecommendedDistroInstall
-    const completion = this.runRecommendedDistroInstall()
+    const completion = this.runRecommendedDistroInstall(distro)
     this.activeRecommendedDistroInstall = completion
     const clear = (): void => {
       if (this.activeRecommendedDistroInstall === completion) {
@@ -866,7 +874,7 @@ export class WslSetupOwner {
     }
   }
 
-  private async runRecommendedDistroInstall(): Promise<WslSetupSnapshot> {
+  private async runRecommendedDistroInstall(distro: string): Promise<WslSetupSnapshot> {
     if (this.options.operationJournal) await this.reconcileInterruptedOperation()
     if (this.recoveryBlocked) {
       return (
@@ -906,7 +914,8 @@ export class WslSetupOwner {
         const cleared = await this.clearOperationJournal({
           kind: 'install-recommended-distro',
           operationReference,
-          startedAt
+          startedAt,
+          distro
         })
         if (!cleared) {
           terminalOutcome = 'failed'
@@ -942,7 +951,8 @@ export class WslSetupOwner {
         await this.options.operationJournal?.save({
           kind: 'install-recommended-distro',
           operationReference,
-          startedAt
+          startedAt,
+          distro
         })
         journalSaved = this.options.operationJournal !== undefined
       } catch (error) {
@@ -954,10 +964,9 @@ export class WslSetupOwner {
         )
       }
       this.log.info('wsl distro install started', { operationReference })
-      const result = await this.runner.run(
-        ['--install', '--distribution', RECOMMENDED_WSL_DISTRO, '--no-launch'],
-        { timeoutMs: WSL_DISTRO_INSTALL_TIMEOUT_MS }
-      )
+      const result = await this.runner.run(['--install', '--distribution', distro, '--no-launch'], {
+        timeoutMs: WSL_DISTRO_INSTALL_TIMEOUT_MS
+      })
       this.operation = Object.freeze({
         state: 'running',
         kind: 'install-recommended-distro',
@@ -969,7 +978,7 @@ export class WslSetupOwner {
       const fresh = await this.probeForOperation(operationReference)
       if (
         fresh.state === 'restart-required' ||
-        fresh.distros.some((item) => item.name === RECOMMENDED_WSL_DISTRO)
+        fresh.distros.some((item) => item.name === distro)
       ) {
         const outcome = fresh.state === 'restart-required' ? 'restart-required' : 'completed'
         this.log.info('wsl distro install completed', {
@@ -999,7 +1008,8 @@ export class WslSetupOwner {
         const record = {
           kind: 'install-recommended-distro' as const,
           operationReference,
-          startedAt
+          startedAt,
+          distro
         }
         if (!(await this.clearOperationJournal(record))) {
           terminalOutcome = 'failed'
