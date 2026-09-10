@@ -1,5 +1,6 @@
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 
@@ -705,6 +706,11 @@ test('parks an upward message on branch switch and resumes it after restart and 
     })
     .toBe('queued')
   expect(sessionId).toEqual(expect.any(String))
+
+  // Reproduce a slow CI branch switch: the old fixture released Main after two seconds,
+  // allowing the queued message to be accepted before its branch became inactive.
+  // The release-file barrier must keep it parked regardless of this scheduling delay.
+  await delay(5_000)
 
   await Promise.all([
     page.waitForEvent('domcontentloaded'),
