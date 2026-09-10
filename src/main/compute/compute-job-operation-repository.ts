@@ -4,6 +4,13 @@ import type { Prisma, PrismaClient } from '@prisma/client'
 
 import type { ComputeJobStatus } from '../../shared/compute'
 
+// Match upload publication's admission budget on the shared single-connection SQLite client.
+// Execution deadlines and rollback behavior remain Prisma defaults.
+const runOperationTransaction = <Result>(
+  client: Pick<PrismaClient, '$transaction'>,
+  operation: (transaction: Prisma.TransactionClient) => Promise<Result>
+): Promise<Result> => client.$transaction(operation, { maxWait: 10_000 })
+
 type OperationClient = Pick<PrismaClient, '$transaction' | 'computeJobOperation'>
 type OperationClientProvider = () => Promise<OperationClient>
 
@@ -117,7 +124,7 @@ class ComputeJobOperationRepository {
     | { found: true; jobStatus: ComputeJobStatus; record: ComputeJobOperationRecord }
   > {
     const client = await this.getClient()
-    return client.$transaction(async (transaction) => {
+    return runOperationTransaction(client, async (transaction) => {
       const job = await transaction.computeJob.findFirst({
         where: {
           id: jobId,
@@ -183,7 +190,7 @@ class ComputeJobOperationRepository {
     claimToken: string
   ): Promise<ClaimedComputeJobOperation | null> {
     const client = await this.getClient()
-    return client.$transaction(async (transaction) => {
+    return runOperationTransaction(client, async (transaction) => {
       switch (kind) {
         case 'cancel': {
           const terminal = await transaction.computeJobOperation.findFirst({
@@ -256,7 +263,7 @@ class ComputeJobOperationRepository {
     remoteWorkdirAbsent = false
   ): Promise<boolean> {
     const client = await this.getClient()
-    return client.$transaction(async (transaction) => {
+    return runOperationTransaction(client, async (transaction) => {
       switch (claim.operation.kind) {
         case 'cancel': {
           const terminalized = await transaction.computeJob.updateMany({
@@ -316,7 +323,7 @@ class ComputeJobOperationRepository {
     now: Date
   ): Promise<boolean> {
     const client = await this.getClient()
-    return client.$transaction(async (transaction) => {
+    return runOperationTransaction(client, async (transaction) => {
       const job = await transaction.computeJob.findFirst({
         where: {
           id: jobId,

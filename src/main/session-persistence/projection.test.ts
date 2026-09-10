@@ -25,6 +25,7 @@ import { ProjectRepository } from '../projects/repository'
 import { buildSessionProjection, SessionProjectionRepository } from './projection'
 import { SessionAuxiliaryTurnUsageRecorder } from './auxiliary-turn-usage'
 import { SessionRepository } from './repository'
+import { ComputeJobOperationRepository } from '../compute/compute-job-operation-repository'
 import type { SessionLoadDiagnostic } from './repository'
 
 const createDeferred = <Value>(): {
@@ -326,6 +327,65 @@ describe('Session projection', () => {
 
     expect(buildSessionProjection(pending).summary.needsStartupRecovery).toBe(true)
   })
+
+  it('lets a session save and cancellation recovery wait for an active database transaction', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'session-transaction-admission-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const operations = new ComputeJobOperationRepository(async () => client!)
+    const entered = createDeferred<void>()
+    const release = createDeferred<void>()
+    const active = client.$transaction(async (tx) => {
+      await tx.$queryRawUnsafe('SELECT 1')
+      entered.resolve()
+      await release.promise
+    })
+    await entered.promise
+    // This is shorter than Prisma's existing five-second transaction execution budget, but
+    // exceeds its implicit two-second admission budget on this single-connection database.
+    const timer = setTimeout(() => release.resolve(), 2_500)
+    try {
+      const results = await Promise.allSettled([
+        repository.saveSession(session('waiting-session')),
+        operations.claimNext('cancel', new Date(), 30_000, 'waiting-cancellation')
+      ])
+      const failures = results.flatMap((result) =>
+        result.status === 'rejected'
+          ? [{ code: result.reason?.code, message: String(result.reason) }]
+          : []
+      )
+      expect(failures, JSON.stringify(failures)).toEqual([])
+      expect(await client.session.findUnique({ where: { id: 'waiting-session' } })).toMatchObject({
+        title: 'Session waiting-session'
+      })
+      expect(results[1]).toEqual({ status: 'fulfilled', value: null })
+    } finally {
+      clearTimeout(timer)
+      release.resolve()
+      await active
+    }
+  }, 15_000)
+
+  it('saves sessions while cancellation recovery polls the shared database', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'session-recovery-contention-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const operations = new ComputeJobOperationRepository(async () => client!)
+    const results = await Promise.allSettled(
+      Array.from({ length: 40 }, async (_, index) => {
+        if (index % 2) return operations.claimNext('cancel', new Date(), 30_000, `claim-${index}`)
+        return repository.saveSession(session(`concurrent-${index}`))
+      })
+    )
+    expect(results.filter((result) => result.status === 'rejected')).toEqual([])
+    expect(await client.session.count()).toBe(20)
+  }, 30_000)
 
   it('allocates a global number and serves summaries and usage without Session JSON', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-projection-'))

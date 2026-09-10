@@ -14,6 +14,13 @@ import {
   type SessionUsageProjection
 } from '../../shared/session-persistence'
 
+// Match upload publication's admission budget on the shared single-connection SQLite client.
+// Execution deadlines and rollback behavior remain Prisma defaults.
+const runProjectionTransaction = <Result>(
+  client: Pick<PrismaClient, '$transaction'>,
+  operation: (transaction: Prisma.TransactionClient) => Promise<Result>
+): Promise<Result> => client.$transaction(operation, { maxWait: 10_000 })
+
 const PROJECTION_STATE_ID = 'session-projection'
 const PROJECTION_VERSION = 4
 const SESSION_NUMBER_SEQUENCE_ID = 'global'
@@ -595,7 +602,7 @@ export class SessionProjectionRepository {
     const client = await this.client()
     const projection = buildSessionProjection(session)
     assertProjectionStorageShape(projection)
-    const number = await client.$transaction(async (tx) => {
+    const number = await runProjectionTransaction(client, async (tx) => {
       const project = await tx.project.findFirst({
         where: { id: session.projectId, deletedAt: null },
         select: { id: true }
@@ -651,7 +658,7 @@ export class SessionProjectionRepository {
     const projection = buildSessionProjection(session)
     assertProjectionStorageShape(projection)
     const client = await this.client()
-    await client.$transaction(async (tx) => {
+    await runProjectionTransaction(client, async (tx) => {
       const project = await tx.project.findFirst({
         where: { id: session.projectId, deletedAt: null },
         select: { id: true }
@@ -680,7 +687,7 @@ export class SessionProjectionRepository {
     const projection = buildSessionProjection(session)
     assertProjectionStorageShape(projection)
     const client = await this.client()
-    await client.$transaction(async (tx) => {
+    await runProjectionTransaction(client, async (tx) => {
       const existing = await tx.session.findUnique({ where: { id: session.id } })
       if (!existing) throw new Error('Pending Session projection identity is missing.')
       if (existing.deletedAtMs !== null) {
@@ -702,7 +709,7 @@ export class SessionProjectionRepository {
     operation: 'save' | 'delete' = 'save'
   ): Promise<void> {
     const client = await this.client()
-    await client.$transaction(async (tx) => {
+    await runProjectionTransaction(client, async (tx) => {
       if (operation === 'delete') {
         const existing = await tx.session.findUnique({
           where: { id: sessionId },
@@ -722,7 +729,7 @@ export class SessionProjectionRepository {
 
   async commitDelete(projectId: string, sessionId: string): Promise<void> {
     const client = await this.client()
-    await client.$transaction(async (tx) => {
+    await runProjectionTransaction(client, async (tx) => {
       const existing = await tx.session.findUnique({
         where: { id: sessionId },
         select: { projectId: true }
