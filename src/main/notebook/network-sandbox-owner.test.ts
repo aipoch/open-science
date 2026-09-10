@@ -269,6 +269,55 @@ describe('NotebookNetworkSandboxOwner', () => {
     wrapped.cleanup()
   })
 
+  it('scopes derived package mirror access to the installer process', async () => {
+    const requestDecision = vi.fn()
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision,
+      platform: 'linux'
+    })
+    const invocation = {
+      executable: '/usr/bin/python',
+      args: ['script.py'],
+      env: { PATH: '/usr/bin' },
+      cwd: '/workspace',
+      commandText: 'python script.py',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      runtime: 'python' as const,
+      filesystem: {
+        readOnlyRoots: ['/usr/bin'],
+        readWriteRoots: ['/workspace'],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    }
+
+    const installer = await owner.wrap({
+      ...invocation,
+      allowedNetworkHosts: ['packages.example.org']
+    })
+    const installerRequest = backend.request!
+    const notebook = await owner.wrap(invocation)
+    const notebookRequest = backend.request!
+
+    const endInstaller = installer.beginExecution?.()
+    await expect(installerRequest({ host: 'packages.example.org', port: 443 })).resolves.toBe(true)
+    await expect(installerRequest({ host: 'redirect.example.org', port: 443 })).resolves.toBe(false)
+    endInstaller?.()
+    const endNotebook = notebook.beginExecution?.()
+    await expect(notebookRequest({ host: 'packages.example.org', port: 443 })).resolves.toBe(false)
+    endNotebook?.()
+    expect(requestDecision).not.toHaveBeenCalled()
+    expect(backend.updatePolicy).not.toHaveBeenCalled()
+
+    installer.cleanup()
+    notebook.cleanup()
+    await owner.dispose()
+  })
+
   it('applies allow-once to every matching connection in the next command only', async () => {
     const requestDecision = vi.fn().mockResolvedValue('allowOnce')
     const persistAlwaysAllow = vi.fn()

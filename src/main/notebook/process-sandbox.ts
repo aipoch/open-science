@@ -7,6 +7,8 @@ export type NotebookSandboxInvocation = Readonly<{
   sessionId: string
   projectId: string
   runtime: 'python' | 'r' | 'repl' | 'bash'
+  /** Exact public hostnames granted only to this wrapped process. */
+  allowedNetworkHosts?: readonly string[]
   localRpcSocketPath?: string
   inheritedFileDescriptorCount?: number
   filesystem: Readonly<{
