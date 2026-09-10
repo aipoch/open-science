@@ -352,19 +352,6 @@ describe('RuntimesPanel', () => {
     window.api.platform = 'win32'
     window.api.settings.getWsl2BashPreviewStatus = vi.fn().mockResolvedValue({
       available: true,
-      reason: 'available'
-    })
-
-    await render()
-
-    expect(container.querySelector('[data-testid="wsl2-preview-section"]')).not.toBeNull()
-    expect(container.querySelector('[data-preview-available="true"]')).not.toBeNull()
-  })
-
-  it('labels the explicitly admitted unpackaged flow as Development Preview', async () => {
-    window.api.platform = 'win32'
-    window.api.settings.getWsl2BashPreviewStatus = vi.fn().mockResolvedValue({
-      available: true,
       reason: 'available',
       development: true
     })
@@ -372,6 +359,7 @@ describe('RuntimesPanel', () => {
     await render()
 
     expect(container.querySelector('[data-testid="wsl2-preview-section"]')).not.toBeNull()
+    expect(container.querySelector('[data-preview-available="true"]')).not.toBeNull()
     expect(container.querySelector('[data-preview-development="true"]')).not.toBeNull()
   })
 

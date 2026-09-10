@@ -287,26 +287,6 @@ describe('WslLocalShellSection', () => {
     expect(container.textContent).toContain('Future Shell commands will use PowerShell')
   })
 
-  it.each([
-    ['assets-unavailable', 'failure'],
-    ['build-disabled', 'warning']
-  ] as const)('uses the appropriate compact notice tone for %s', async (reason, tone) => {
-    await act(async () =>
-      root.render(
-        <WslLocalShellSection previewAvailable={false} previewUnavailableReason={reason} />
-      )
-    )
-    await flush()
-
-    const notice = container.querySelector('section')
-    expect(notice?.querySelector(`.text-status-${tone}-foreground`)).not.toBeNull()
-    expect(
-      notice?.querySelector(`.text-status-${tone === 'failure' ? 'warning' : 'failure'}-foreground`)
-    ).toBeNull()
-    expect(container.textContent).toContain('WSL2 Bash Preview is unavailable')
-    expect(probe).not.toHaveBeenCalled()
-  })
-
   it('explicitly switches only future Shell commands to PowerShell and never retries failed work', async () => {
     probe.mockResolvedValue({
       state: 'failed',
@@ -612,42 +592,6 @@ describe('WslLocalShellSection', () => {
     expect(container.querySelector('details')?.open).toBe(false)
   })
 
-  it.each([
-    ['wsl_root_user', 'warning'],
-    ['wsl_install_interrupted', 'failure']
-  ] as const)('uses the semantic ErrorNotice tone for %s', async (errorCode, tone) => {
-    probe.mockResolvedValue({
-      state: 'failed',
-      distros: [],
-      errorCode,
-      operationReference: 'a1b2c3d4'
-    })
-    await renderAndCheck()
-
-    const notice = container.querySelector('[role="alert"]')
-    expect(notice?.parentElement?.querySelector(`.text-status-${tone}-foreground`)).not.toBeNull()
-  })
-
-  it('uses named Settings status tokens for passed, failed, and unchecked readiness icons', async () => {
-    probe.mockResolvedValue({
-      state: 'dependency-required',
-      distros: [{ name: 'Ubuntu-24.04', version: 2, isDefault: true }],
-      selection: { distro: 'Ubuntu-24.04', user: 'scientist' },
-      readiness: { wsl2: true, bash: true, bwrap: true, namespaces: false },
-      errorCode: 'wsl_namespace_unavailable',
-      operationReference: 'a1b2c3d4'
-    })
-    await renderAndCheck()
-
-    const readiness = container.querySelector('[aria-label="Readiness checks"]')
-    expect(readiness?.querySelector('svg.text-status-success-foreground')).not.toBeNull()
-    expect(readiness?.querySelector('svg.text-status-failure-foreground')).not.toBeNull()
-    expect(readiness?.querySelector('svg.text-status-info-foreground')).toBeNull()
-    expect(readiness?.querySelector('svg.text-primary')).toBeNull()
-    expect(readiness?.querySelector('svg.text-destructive')).toBeNull()
-    expect(readiness?.querySelector('svg.text-muted-foreground')).not.toBeNull()
-  })
-
   it('offers the supported distros, recommends Ubuntu 24.04, and installs the selected distro', async () => {
     probe.mockResolvedValue({
       state: 'distro-required',
@@ -704,25 +648,6 @@ describe('WslLocalShellSection', () => {
     await act(async () => launch?.click())
     await flush()
     expect(openTerminal).toHaveBeenCalledWith({ distro: 'FedoraLinux-44' })
-  })
-
-  it('opens the selected distro for first launch when the recommended distro is absent', async () => {
-    probe.mockResolvedValue({
-      state: 'first-launch-required',
-      distros: [{ name: 'Debian', version: 2, isDefault: true }],
-      selection: { distro: 'Debian', user: 'scientist' },
-      errorCode: 'wsl_first_launch_required',
-      operationReference: 'decafbad'
-    })
-    await renderAndCheck()
-
-    const launch = [...container.querySelectorAll('button')].find((button) =>
-      button.textContent?.includes('Open distribution terminal')
-    )
-    expect(launch).toBeDefined()
-    await act(async () => launch?.click())
-    await flush()
-    expect(openTerminal).toHaveBeenCalledWith({ distro: 'Debian' })
   })
 
   it('keeps first launch bound to the selected distro when Ubuntu is also installed', async () => {

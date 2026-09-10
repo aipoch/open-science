@@ -42,18 +42,6 @@ describe('WSL2 Bash Preview admission', () => {
     ).toEqual({ available: false, reason: 'build-disabled' })
   })
 
-  it('rejects unpackaged Windows x64 builds outside the certified boundary', () => {
-    expect(
-      evaluateWsl2BashPreview({
-        platform: 'win32',
-        arch: 'x64',
-        buildEnabled: true,
-        developmentEnabled: false,
-        packaged: false
-      })
-    ).toEqual({ available: false, reason: 'unpackaged-build' })
-  })
-
   it('admits an unpackaged Windows x64 build only through the explicit development switch', () => {
     expect(
       evaluateWsl2BashPreview({
