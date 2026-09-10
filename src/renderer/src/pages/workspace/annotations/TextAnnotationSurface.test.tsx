@@ -666,14 +666,135 @@ describe('TextAnnotationSurface annotate trigger', () => {
 
     // A real browser collapses the selection on mousedown before the click
     // lands, and the button's mouseup bubbles back into the surface.
-    window.getSelection()?.removeAllRanges()
-    await act(async () => trigger!.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+    await act(async () => {
+      trigger!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+      window.getSelection()?.removeAllRanges()
+      trigger!.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }))
+      trigger!.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+      trigger!.click()
+    })
 
-    const surviving = annotateTrigger()
-    expect(surviving).toBe(trigger)
-
-    await act(async () => surviving?.click())
     expect(document.querySelector('textarea')).not.toBeNull()
+  })
+
+  it('shows one trigger when a drag starts in one of several surfaces and ends outside it', async () => {
+    await act(async () =>
+      root.render(
+        <>
+          <TextAnnotationSurface
+            source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+            activeAnnotations={[]}
+            onAdd={vi.fn()}
+            onError={vi.fn()}
+          >
+            <p data-testid="first-surface">first selectable reply</p>
+          </TextAnnotationSurface>
+          <TextAnnotationSurface
+            source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-2' }}
+            activeAnnotations={[]}
+            onAdd={vi.fn()}
+            onError={vi.fn()}
+          >
+            <p data-testid="second-surface">second selectable reply</p>
+          </TextAnnotationSurface>
+        </>
+      )
+    )
+
+    const target = container.querySelector<HTMLElement>('[data-testid="second-surface"]')!
+    const range = document.createRange()
+    range.selectNodeContents(target.firstChild!)
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      configurable: true,
+      value: () =>
+        ({
+          left: 10,
+          right: 120,
+          top: 20,
+          bottom: 40,
+          width: 110,
+          height: 20,
+          x: 10,
+          y: 20,
+          toJSON: () => ({})
+        }) as DOMRect
+    })
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+
+    // The pointer is released in the transcript's empty space, outside the
+    // surface where the drag began. React's surface-level mouseup never fires.
+    await act(async () => document.body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+
+    expect(document.querySelectorAll('[data-annotation-trigger]')).toHaveLength(1)
+  })
+
+  it('clears a stale trigger when the browser collapses the native selection', async () => {
+    const paragraph = await renderSurface()
+    await commitSelection(paragraph)
+    expect(annotateTrigger()).toBeDefined()
+
+    window.getSelection()?.removeAllRanges()
+    await act(async () => document.dispatchEvent(new Event('selectionchange')))
+
+    expect(annotateTrigger()).toBeUndefined()
+  })
+
+  it('updates an existing draft when the native selection changes within the surface', async () => {
+    const onAdd = vi.fn<(annotation: TextAnnotation) => undefined>(() => undefined)
+    await act(async () =>
+      root.render(
+        <TextAnnotationSurface
+          source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+          activeAnnotations={[]}
+          onAdd={onAdd}
+          onError={vi.fn()}
+        >
+          <p>first second</p>
+        </TextAnnotationSurface>
+      )
+    )
+    const text = container.querySelector('p')!.firstChild!
+    const selectOffsets = (start: number, end: number): void => {
+      const range = document.createRange()
+      range.setStart(text, start)
+      range.setEnd(text, end)
+      Object.defineProperty(range, 'getBoundingClientRect', {
+        configurable: true,
+        value: () =>
+          ({
+            left: 10,
+            right: 120,
+            top: 20,
+            bottom: 40,
+            width: 110,
+            height: 20,
+            x: 10,
+            y: 20,
+            toJSON: () => ({})
+          }) as DOMRect
+      })
+      const selected = window.getSelection()!
+      selected.removeAllRanges()
+      selected.addRange(range)
+    }
+
+    selectOffsets(0, 5)
+    await act(async () =>
+      container.querySelector('p')!.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    )
+    expect(annotateTrigger()).toBeDefined()
+
+    selectOffsets(6, 12)
+    await act(async () => document.dispatchEvent(new Event('selectionchange')))
+    await act(async () => annotateTrigger()?.click())
+    const confirm = Array.from(document.querySelectorAll('button'))
+      .filter((button) => button.textContent === 'Annotate')
+      .at(-1)
+    await act(async () => confirm?.click())
+
+    expect(onAdd.mock.calls[0]?.[0].quote).toBe('second')
   })
 
   it('keeps the note editor open while typing a note', async () => {
@@ -723,6 +844,12 @@ describe('TextAnnotationSurface annotate trigger', () => {
     await act(async () =>
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     )
+    await act(async () =>
+      container
+        .querySelector<HTMLElement>('[data-annotation-surface]')
+        ?.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', bubbles: true }))
+    )
+    await act(async () => document.dispatchEvent(new Event('selectionchange')))
     expect(annotateTrigger()).toBeDefined()
     expect(document.querySelector('textarea')).toBeNull()
   })
