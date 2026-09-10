@@ -1,3 +1,5 @@
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 
@@ -185,7 +187,6 @@ const seedDelegatedWork = async (page: Page, projectId: string): Promise<void> =
           eventIds: [],
           agentFrameId: frameId,
           introducedOnBranchId: branchId,
-          revisionRootMessageId: messageId,
           runtimeSegmentId,
           createdAt,
           updatedAt: createdAt
@@ -843,7 +844,7 @@ test('parks an upward message on branch switch and resumes it after restart and 
     .toBe('accepted')
 })
 
-test('recovers a post-fence receipt persistence failure as uncertain after restart', async ({
+test('recovers a post-fence receipt persistence failure as uncertain after process termination', async ({
   app
 }) => {
   test.setTimeout(180_000)
@@ -882,7 +883,7 @@ test('recovers a post-fence receipt persistence failure as uncertain after resta
     })
     .toEqual({ sessionStatus: 'idle', dispatchStarted: true })
   expect(sessionId).toEqual(expect.any(String))
-  page = await app.restart()
+  page = await app.restartAfterCrash()
   await openProjectSession(page, 'Reliable failure window release gate', RELIABLE_FAILURE_PROMPT)
   const messageId = await page.evaluate(
     async ({ projectId, sessionId }) => {
@@ -923,22 +924,14 @@ test('fairly schedules two upward lanes with a concurrent real user prompt', asy
   const projectId = await createProject(page, 'Reliable fairness release gate')
 
   const composer = page.getByRole('textbox', { name: 'Ask anything' })
-  await composer.fill(RELIABLE_FAIRNESS_PROMPT)
+  const releaseFile = join(await app.createTestDirectory('fairness-admission'), 'release')
+  await composer.fill(`${RELIABLE_FAIRNESS_PROMPT}\nRelease file: ${JSON.stringify(releaseFile)}`)
   await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.getByText('Two upward lanes are queued.')).toBeVisible({ timeout: 120_000 })
-  await page.evaluate(
-    ({ projectId, text }) => {
-      const run = async (): Promise<void> => {
-        const loaded = await window.api.sessions.loadAll()
-        const session = loaded.sessions.find((candidate) => candidate.projectId === projectId)!
-        await window.api.acp.sendPrompt({ sessionId: session.id, text })
-      }
-      ;(
-        globalThis as typeof globalThis & { fairnessUserPrompt?: Promise<void> }
-      ).fairnessUserPrompt = run()
-    },
-    { projectId, text: RELIABLE_FAIRNESS_USER_PROMPT }
-  )
+  await expect(page.getByText('Two upward lanes are starting.')).toBeVisible({ timeout: 120_000 })
+  await composer.fill(RELIABLE_FAIRNESS_USER_PROMPT)
+  await page.getByTestId('composer-queue-submit').click()
+  await expect(page.getByTestId('composer-queue-trigger')).toBeVisible()
+  await writeFile(releaseFile, '')
 
   await expect(page.getByText('Main rendered reliable fairness child A.')).toBeVisible({
     timeout: 120_000
@@ -950,8 +943,6 @@ test('fairly schedules two upward lanes with a concurrent real user prompt', asy
     timeout: 120_000
   })
   const evidence = await page.evaluate(async (projectId) => {
-    await (globalThis as typeof globalThis & { fairnessUserPrompt?: Promise<void> })
-      .fairnessUserPrompt
     const loaded = await window.api.sessions.loadAll()
     const commands =
       loaded.sessions.find((candidate) => candidate.projectId === projectId)?.runtimeContext
@@ -1004,9 +995,9 @@ test('stops only the active branch and exposes a retryable partial failure', asy
   await page.getByRole('button', { name: 'Stop subagents' }).click()
   await expectDurableChildStatus(page, BRANCH_B_CHILD, 'cancelled')
   await expectDurableChildStatus(page, BRANCH_B_CHILD_TWO, 'running')
-  await expect(page.getByRole('alert')).toContainText(
-    'One or more Subagent Attempts could not be stopped.'
-  )
+  await expect(
+    page.getByRole('alert', { name: /One or more Subagent Attempts could not be stopped/ })
+  ).toContainText('One or more Subagent Attempts could not be stopped.')
   await page.getByRole('textbox', { name: 'Ask anything' }).fill('Send gate restored after Stop.')
   await expect(page.getByRole('button', { name: 'Send message' })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Stop subagents' })).toBeEnabled()
@@ -1124,16 +1115,7 @@ test('ships one durable, scalable, keyboard-operable persisted Subagent surface'
   await expect
     .poll(() =>
       page.evaluate(async (projectId) => {
-        const bridge = globalThis as unknown as {
-          api: {
-            preview: {
-              load: (request: { projectId: string }) => Promise<{
-                subagents?: { selectedAgentFrameId?: string }
-              } | null>
-            }
-          }
-        }
-        return (await bridge.api.preview.load({ projectId }))?.subagents?.selectedAgentFrameId
+        return (await window.api.preview.load({ projectId }))?.state.subagents?.selectedAgentFrameId
       }, projectId)
     )
     .toBe('release-child-05')
