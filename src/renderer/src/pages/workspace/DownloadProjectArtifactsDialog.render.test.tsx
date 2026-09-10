@@ -45,7 +45,7 @@ const files: ProjectFileItem[] = [
 
 let container: HTMLElement
 let root: Root
-let readExportFiles: ReturnType<typeof vi.fn>
+let readExportFiles: ReturnType<typeof vi.fn<(request: unknown) => Promise<ProjectFileItem[]>>>
 let saveProjectArtifacts: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
@@ -63,7 +63,8 @@ beforeEach(() => {
         artifactGroupCount: 2,
         isIndexComplete: true
       }),
-      readExportFiles,
+      readExportFiles: (request: { category?: string }) =>
+        request.category === 'hidden' ? Promise.resolve([]) : readExportFiles(request),
       repairIndex: vi.fn().mockResolvedValue(undefined)
     },
     saveProjectArtifacts

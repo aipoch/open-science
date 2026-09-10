@@ -441,7 +441,10 @@ describe('createWebServiceController', () => {
     await h.controller.ensureStarted(44100, { attached: true })
     const restartedTasks = h.lastOptions().tasks!
     expect(restartedTasks).toBe(firstTasks)
-    expect(restartedTasks.getRun(run.id)).toMatchObject({ id: run.id, sessionId: run.sessionId })
+    expect(await restartedTasks.getRun(run.id)).toMatchObject({
+      id: run.id,
+      sessionId: run.sessionId
+    })
   })
 
   it('recovers a terminal Task run after the Web service controller is reconstructed', async () => {
@@ -538,10 +541,10 @@ describe('createWebServiceController', () => {
         project: project.id,
         prompt: 'Research across a restart.'
       })
-      await vi.waitFor(() => {
-        expect(first.lastOptions().tasks!.getRun(started.id).status).toBe('completed')
+      await vi.waitFor(async () => {
+        expect((await first.lastOptions().tasks!.getRun(started.id)).status).toBe('completed')
       })
-      const terminal = first.lastOptions().tasks!.getRun(started.id)
+      const terminal = await first.lastOptions().tasks!.getRun(started.id)
       expect(terminal.status).toBe('completed')
       await first.controller.dispose()
 
@@ -558,7 +561,7 @@ describe('createWebServiceController', () => {
       await second.controller.ensureStarted(44101, { attached: false })
       await second.lastOptions().waitUntilTasksReady?.()
 
-      expect(second.lastOptions().tasks!.getRun(started.id)).toMatchObject({
+      expect(await second.lastOptions().tasks!.getRun(started.id)).toMatchObject({
         id: started.id,
         sessionId: started.sessionId,
         projectId: project.id,
@@ -597,7 +600,7 @@ describe('createWebServiceController', () => {
       await h.lastOptions().waitUntilTasksReady?.()
       const tasks = h.lastOptions().tasks!
 
-      expect(tasks.getRun('run-interrupted')).toMatchObject({
+      expect(await tasks.getRun('run-interrupted')).toMatchObject({
         status: 'failed',
         failureCode: 'process_restarted',
         error: 'Run interrupted because Open Science restarted.'

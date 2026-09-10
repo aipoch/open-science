@@ -1,4 +1,6 @@
-import { randomUUID } from 'node:crypto'
+import { realpath } from 'node:fs/promises'
+import { basename, relative, resolve, sep } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   parseVersionHistoryCursor,
   versionHistoryPage,
@@ -78,6 +80,7 @@ type ManagedLogicalFile = {
 }
 
 type ResolvedManagedFileVersion = {
+  hiddenAccess?: boolean
   logicalFile: ManagedLogicalFile
   version: ManagedFileVersionRecord
 }
@@ -249,6 +252,49 @@ class ManagedFileVersionService {
       options.versionFileOperator ??
       new NodeVersionFileOperator({ storageRoot: options.storageRoot })
     this.diffTaskRunner = options.diffTaskRunner ?? new ManagedTextDiffTaskRunner()
+  }
+
+  // Source labels are not authority: local/legacy paths that resolve into managed artifact storage
+  // must obey the same policy as logical Version reads, including symlink aliases.
+  async assertArtifactPathVisible(path: string): Promise<void> {
+    const [absolute, root] = await Promise.all([realpath(path), realpath(this.options.storageRoot)])
+    const key = relative(root, absolute)
+    if (key === '..' || key.startsWith(`..${sep}`)) return
+    const parts = key.split(sep)
+    if (parts[0] !== 'artifacts' && parts[0] !== 'notebook-inputs') return
+    const client = await this.options.getClient()
+    const hidden = await client.artifactLineage.findMany({
+      where: { hiddenAt: { not: null } },
+      select: {
+        id: true,
+        projectId: true,
+        sessionId: true,
+        normalizedFilename: true,
+        versions: { select: { id: true, contentStorageKey: true } }
+      }
+    })
+    for (const file of hidden) {
+      const exact = file.versions.some(
+        (version) => resolve(root, version.contentStorageKey) === absolute
+      )
+      const legacy =
+        parts[0] === 'artifacts' &&
+        parts[1] === file.projectId &&
+        parts[2] === file.sessionId &&
+        normalizeArtifactFilename(basename(absolute)) === file.normalizedFilename
+      const staged =
+        parts[0] === 'notebook-inputs' &&
+        parts[1] === file.projectId &&
+        parts[3] === 'artifact-version' &&
+        file.versions.some(
+          (version) =>
+            createHash('sha256').update(`artifact-version\0${version.id}`).digest('hex') ===
+            parts[4]
+        )
+      if (exact || legacy || staged || (parts[0] === 'artifacts' && parts.includes(file.id))) {
+        operationError('FILE_NOT_FOUND', 'Artifact file is not available in this view.')
+      }
+    }
   }
 
   async adoptLegacyArtifact(request: AdoptLegacyArtifactRequest): Promise<AdoptedLegacyArtifact> {
@@ -546,6 +592,19 @@ class ManagedFileVersionService {
     }
   }
 
+  // Only the Hidden browser/export adapters call this; ordinary IPC and model reads never opt in.
+  async openHiddenArtifactVersion(
+    request: { projectId: string; fileId: string },
+    versionId?: string
+  ): Promise<ManagedFileReadLease> {
+    return this.openVersionLease(
+      await this.resolveRecord(
+        { ...request, source: 'artifact', versionId },
+        { hiddenAccess: true }
+      )
+    )
+  }
+
   async openLatest(request: ManagedFileIdentity): Promise<ManagedFileReadLease> {
     return this.openVersionLease(await this.resolveRecord(request))
   }
@@ -633,12 +692,12 @@ class ManagedFileVersionService {
 
   private async resolveRecord(
     request: ManagedFileIdentity & { versionId?: string },
-    options: { unpublished?: boolean } = {}
+    options: { unpublished?: boolean; hiddenAccess?: boolean } = {}
   ): Promise<ResolvedManagedFileVersion> {
     this.assertIdentity(request)
     const client = await this.options.getClient()
     const logicalFile = await this.loadLogicalFile(client, request)
-    await this.assertReadable(client, logicalFile)
+    await this.assertReadable(client, logicalFile, options.hiddenAccess)
     const headVersionId = logicalFile.currentVersionId
     if (!options.unpublished) {
       if (!headVersionId) {
@@ -676,7 +735,7 @@ class ManagedFileVersionService {
     } else if (version.state !== COMPLETE_STATE.upload) {
       operationError('VERSION_NOT_FOUND', 'Managed file version write has not completed.')
     }
-    return { logicalFile, version }
+    return { logicalFile, version, hiddenAccess: options.hiddenAccess }
   }
 
   async saveTextEdit(request: ManagedFileVersionSaveTextEditRequest): Promise<SaveTextEditResult> {
@@ -1046,10 +1105,26 @@ class ManagedFileVersionService {
     }
   }
 
+  private async assertArtifactVisibility(
+    client: PrismaClient | Prisma.TransactionClient,
+    file: ManagedLogicalFile,
+    hiddenAccess = false
+  ): Promise<void> {
+    if (file.source !== 'artifact') return
+    const lineage = await client.artifactLineage.findUnique({
+      where: { id: file.id },
+      select: { hiddenAt: true }
+    })
+    if (Boolean(lineage?.hiddenAt) !== hiddenAccess) {
+      operationError('FILE_NOT_FOUND', 'Artifact file is not available in this view.')
+    }
+  }
+
   private async assertFileWritable(
     client: PrismaClient,
     logicalFile: ManagedLogicalFile
   ): Promise<void> {
+    await this.assertArtifactVisibility(client, logicalFile)
     const projection = await client.managedFile.findUnique({
       where: {
         projectId_source_sourceFileId: {
@@ -1065,8 +1140,10 @@ class ManagedFileVersionService {
 
   private async assertReadable(
     client: PrismaClient | Prisma.TransactionClient,
-    logicalFile: ManagedLogicalFile
+    logicalFile: ManagedLogicalFile,
+    hiddenAccess = false
   ): Promise<void> {
+    await this.assertArtifactVisibility(client, logicalFile, hiddenAccess)
     const [project, deleting, origin, sync, projection] = await Promise.all([
       client.project.findUnique({
         where: { id: logicalFile.projectId },
@@ -1376,6 +1453,13 @@ class ManagedFileVersionService {
       size: BigInt(operatorLease.sizeBytes),
       mtimeNs: BigInt(versionToken) * 1_000_000n
     }
+    // Revalidate held leases so hiding revokes pre-existing previews and delayed exports.
+    const assertVisible = async (): Promise<void> =>
+      this.assertArtifactVisibility(
+        await this.options.getClient(),
+        resolved.logicalFile,
+        resolved.hiddenAccess
+      )
     return {
       ...resolved,
       path: operatorLease.localPath,
@@ -1383,16 +1467,30 @@ class ManagedFileVersionService {
       versionToken,
       snapshot,
       read: async (buffer, offset, length, position) => {
+        await assertVisible()
         if (position >= operatorLease.sizeBytes || length <= 0) return { bytesRead: 0 }
         const end = Math.min(position + length, operatorLease.sizeBytes)
         const bytes = await operatorLease.readRange(position, end)
         buffer.set(bytes, offset)
         return { bytesRead: bytes.byteLength }
       },
-      readRange: operatorLease.readRange,
-      copyTo: (destinationPath, options) => operatorLease.copyTo(destinationPath, options),
-      assertCanCopyTo: operatorLease.assertCanCopyTo,
-      verifyUnchanged: operatorLease.verifyUnchanged,
+      readRange: async (begin, end) => {
+        await assertVisible()
+        return operatorLease.readRange(begin, end)
+      },
+      copyTo: async (destinationPath, options) => {
+        await assertVisible()
+        await operatorLease.copyTo(destinationPath, options)
+        await assertVisible()
+      },
+      assertCanCopyTo: async (destinationPath) => {
+        await assertVisible()
+        await operatorLease.assertCanCopyTo?.(destinationPath)
+      },
+      verifyUnchanged: async () => {
+        await assertVisible()
+        await operatorLease.verifyUnchanged()
+      },
       close: operatorLease.close
     }
   }

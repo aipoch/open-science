@@ -842,7 +842,7 @@ class ArtifactProvenanceRepository {
       where: {
         id: versionId,
         state: { in: ['pending', 'finalized'] },
-        artifact: { is: { projectId } }
+        artifact: { is: { projectId, hiddenAt: null } }
       },
       select: { artifactId: true, artifact: { select: { sessionId: true } } }
     })
@@ -893,7 +893,7 @@ class ArtifactProvenanceRepository {
         id: { in: versionIds },
         originKind: 'agent_generated',
         state: 'finalized',
-        artifact: { is: { projectId } }
+        artifact: { is: { projectId, hiddenAt: null } }
       },
       include: { artifact: true }
     })
@@ -994,7 +994,7 @@ class ArtifactProvenanceRepository {
         id: versionId,
         artifactId,
         state: { in: ['pending', 'finalized'] },
-        artifact: { is: { projectId, sessionId: appSessionId } }
+        artifact: { is: { projectId, sessionId: appSessionId, hiddenAt: null } }
       },
       select: {
         id: true,

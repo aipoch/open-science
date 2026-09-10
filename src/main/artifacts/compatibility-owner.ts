@@ -20,6 +20,7 @@ import { ARTIFACTS_DIR, PENDING_DIR, RUNS_DIR, SAFE_SEGMENT_PATTERN } from './st
 const log = createLogger('artifacts:repository')
 
 type ArtifactCompatibilityOwnerOptions = {
+  assertPathVisible?: (path: string) => Promise<void>
   storage: ArtifactStorageAccess
   readRunMarkerForRecovery: (markerPath: string) => Promise<ArtifactRunMarkerReadResult>
 }
@@ -73,6 +74,7 @@ class ArtifactCompatibilityOwner {
     }
     assertPathInsideArtifactRoot(resolvedArtifactRoot, resolvedFilePath)
     if (!(await stat(resolvedFilePath)).isFile()) throw new Error('Artifact path is not a file.')
+    await this.options.assertPathVisible?.(resolvedFilePath)
     return resolvedFilePath
   }
 
@@ -121,6 +123,7 @@ class ArtifactCompatibilityOwner {
     if (!isPathInsideRoot(resolvedSessionRoot, resolvedFilePath)) {
       throw new Error('Artifact file is outside the declaring session.')
     }
+    await this.options.assertPathVisible?.(resolvedFilePath)
     return resolvedFilePath
   }
 }

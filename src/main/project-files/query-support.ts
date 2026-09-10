@@ -15,7 +15,7 @@ const MAX_PAGE_LIMIT = 100
 
 type FileCursor = {
   version: 2
-  kind: 'all' | 'uploads' | 'sessionArtifacts'
+  kind: 'all' | 'hidden' | 'uploads' | 'sessionArtifacts'
   projectId: string
   sessionId?: string
   queryKey: string
@@ -50,6 +50,7 @@ type NormalizedSearch = {
 type CatalogCursor = { sortAtMs: string; seq: number }
 
 type AuthoritativeCatalogQuery = {
+  hidden?: boolean
   projectIds: string[]
   source?: ProjectFileSource
   sourceFileId?: string
@@ -64,6 +65,7 @@ type AuthoritativeOverviewCounts = {
   uploadCount: bigint
   artifactCount: bigint
   artifactGroupCount: bigint
+  hiddenArtifactCount: bigint
 }
 
 type AuthoritativeArtifactGroupRow = {
@@ -301,6 +303,10 @@ const authoritativeCatalogCte = (projectIds: string[]): Prisma.Sql => {
 const authoritativeCatalogPredicates = (
   query: Omit<AuthoritativeCatalogQuery, 'projectIds' | 'limit'>
 ): Prisma.Sql => {
+  // All ordinary catalog consumers share this predicate, including search, groups and exports.
+  const hiddenPredicate = query.hidden
+    ? Prisma.sql`AND file."source" = 'artifact' AND EXISTS (SELECT 1 FROM "ArtifactLineage" AS hidden WHERE hidden."id" = file."sourceFileId" AND hidden."projectId" = file."projectId" AND hidden."hiddenAt" IS NOT NULL)`
+    : Prisma.sql`AND NOT EXISTS (SELECT 1 FROM "ArtifactLineage" AS hidden WHERE file."source" = 'artifact' AND hidden."id" = file."sourceFileId" AND hidden."projectId" = file."projectId" AND hidden."hiddenAt" IS NOT NULL)`
   const sourcePredicate = query.source
     ? Prisma.sql`AND file."source" = ${query.source}`
     : Prisma.empty
@@ -323,6 +329,7 @@ const authoritativeCatalogPredicates = (
       )`
     : Prisma.empty
   return Prisma.sql`
+    ${hiddenPredicate}
     ${sourcePredicate}
     ${sourceFilePredicate}
     ${sessionPredicate}
@@ -377,7 +384,7 @@ const getAuthoritativeOverviewCounts = async (
   client: ProjectFilesClient,
   projectId: string,
   search: NormalizedSearch | undefined
-): Promise<[number, number, number, number]> => {
+): Promise<[number, number, number, number, number]> => {
   const predicates = authoritativeCatalogPredicates({ search })
   const rows = await client.$queryRaw<AuthoritativeOverviewCounts[]>(Prisma.sql`
     ${authoritativeCatalogCte([projectId])}
@@ -386,7 +393,8 @@ const getAuthoritativeOverviewCounts = async (
       COALESCE(SUM(CASE WHEN file."source" = 'upload' THEN 1 ELSE 0 END), 0) AS "uploadCount",
       COALESCE(SUM(CASE WHEN file."source" = 'artifact' THEN 1 ELSE 0 END), 0) AS "artifactCount",
       COUNT(DISTINCT CASE WHEN file."source" = 'artifact' THEN file."sessionId" END)
-        AS "artifactGroupCount"
+        AS "artifactGroupCount",
+      (SELECT COUNT(*) FROM "AuthoritativeFile" AS file WHERE 1 = 1 ${authoritativeCatalogPredicates({ search, hidden: true })}) AS "hiddenArtifactCount"
     FROM "AuthoritativeFile" AS file
     WHERE 1 = 1
       ${predicates}
@@ -396,7 +404,8 @@ const getAuthoritativeOverviewCounts = async (
     toSafeCount(counts?.totalCount ?? 0n, 'catalog total count'),
     toSafeCount(counts?.uploadCount ?? 0n, 'catalog upload count'),
     toSafeCount(counts?.artifactCount ?? 0n, 'catalog artifact count'),
-    toSafeCount(counts?.artifactGroupCount ?? 0n, 'catalog artifact group count')
+    toSafeCount(counts?.artifactGroupCount ?? 0n, 'catalog artifact group count'),
+    toSafeCount(counts?.hiddenArtifactCount ?? 0n, 'catalog hidden artifact count')
   ]
 }
 
@@ -408,6 +417,7 @@ const listAuthoritativeFiles = async (
     queryAuthoritativeFiles(client, query),
     countAuthoritativeFiles(client, {
       projectIds: query.projectIds,
+      hidden: query.hidden,
       source: query.source,
       sessionId: query.sessionId,
       search: query.search
@@ -633,6 +643,7 @@ export {
   normalizeSearch,
   requireIdentifier,
   queryAuthoritativeFiles,
+  countAuthoritativeFiles,
   toOriginProjection,
   toProjectFileItem,
   toSafeCount

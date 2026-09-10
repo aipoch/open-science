@@ -1184,7 +1184,7 @@ const handleTaskApiRequest = async (
       const runMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)$/)
       if (runMatch && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, { data: tasks.getRun(decodeURIComponent(runMatch[1])) })
+        json(response, 200, { data: await tasks.getRun(decodeURIComponent(runMatch[1])) })
         return true
       }
       const cancelRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/cancel$/)

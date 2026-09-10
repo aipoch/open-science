@@ -4888,6 +4888,14 @@
     "Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.": "远程模型 URL 必须使用 HTTPS。HTTP 仅允许用于 localhost 或回环地址。",
     "Load media from {{domains}}": "加载来自 {{domains}} 的媒体",
     "Images in Mermaid diagrams are blocked": "已阻止 Mermaid 图表中的图片",
-    "Use a separate Markdown image to load it explicitly.": "请使用单独的 Markdown 图片，以便手动加载。"
+    "Use a separate Markdown image to load it explicitly.": "请使用单独的 Markdown 图片，以便手动加载。",
+    "Hidden": "已隐藏",
+    "Hide {{name}}": "隐藏 {{name}}",
+    "Unhide {{name}}": "取消隐藏 {{name}}",
+    "Could not change file visibility.": "无法更改文件可见性。",
+    "Could not load project files.": "无法加载项目文件。",
+    "Could not load file preview.": "无法加载文件预览。",
+    "Download this file to view it.": "请下载此文件以查看。",
+    "Preview truncated.": "预览已截断。"
   }
 }

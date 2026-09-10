@@ -231,7 +231,7 @@ class ArtifactProvenanceReadModel {
     const client = await this.options.getClient()
     const visible = {
       artifactId,
-      artifact: { is: { projectId, sessionId: appSessionId } },
+      artifact: { is: { projectId, sessionId: appSessionId, hiddenAt: null } },
       OR: [
         { originKind: 'agent_generated', state: { in: ['pending', 'finalized'] } },
         { originKind: { in: ['user_edit', 'legacy'] }, state: 'finalized' }
@@ -241,7 +241,7 @@ class ArtifactProvenanceReadModel {
       include: { originSession: true }
     }> | null> =>
       client.artifactLineage.findFirst({
-        where: { id: artifactId, projectId, sessionId: appSessionId },
+        where: { id: artifactId, projectId, sessionId: appSessionId, hiddenAt: null },
         include: { originSession: true }
       })
     let lineage = await findLineage()
@@ -351,7 +351,7 @@ class ArtifactProvenanceReadModel {
           artifactId,
           originKind: 'agent_generated',
           state: { in: ['pending', 'finalized'] },
-          artifact: { is: { projectId, sessionId: appSessionId } }
+          artifact: { is: { projectId, sessionId: appSessionId, hiddenAt: null } }
         },
         include: {
           artifact: true,
@@ -375,6 +375,22 @@ class ArtifactProvenanceReadModel {
       `Artifact Version evidence is corrupt: ${versionId}`
     )
     const evidence = JSON.parse(evidenceMirror) as ArtifactVersionEvidence
+    // Validate the immutable evidence before projecting visibility. Stored history remains intact.
+    const hiddenInputVersions = new Set(
+      (
+        await client.artifactVersion.findMany({
+          where: {
+            id: {
+              in: evidence.inputs
+                .filter((input) => input.source_kind === 'artifact-version')
+                .map((input) => input.input_file_version_id)
+            },
+            artifact: { hiddenAt: { not: null } }
+          },
+          select: { id: true }
+        })
+      ).map((input) => input.id)
+    )
     validateArtifactCoreEvidence(evidence, version)
     const contentStatus = await this.options.inspectVersionContent(version)
     const literature = version.literatureManifest
@@ -407,7 +423,9 @@ class ArtifactProvenanceReadModel {
       })
       validateArtifactExecutionInputs(persistedExecution, evidence, version.inputs)
       const projectedInputs = await Promise.all(
-        persistedExecution.inputFiles.map((input) => this.projectExecutionInput(input))
+        persistedExecution.inputFiles
+          .filter((input) => !hiddenInputVersions.has(input.inputFileVersionId))
+          .map((input) => this.projectExecutionInput(input))
       )
       execution = options?.includePrivateHelperSource
         ? { ...persistedExecution, inputFiles: projectedInputs }
@@ -625,7 +643,12 @@ class ArtifactProvenanceReadModel {
         version.artifact.sessionId
       ),
       contentStatus,
-      evidence,
+      evidence: {
+        ...evidence,
+        inputs: evidence.inputs.filter(
+          (input) => !hiddenInputVersions.has(input.input_file_version_id)
+        )
+      },
       literature,
       execution,
       messages,
@@ -648,7 +671,7 @@ class ArtifactProvenanceReadModel {
       where: {
         id: versionId,
         artifactId,
-        artifact: { is: { projectId, sessionId: appSessionId } },
+        artifact: { is: { projectId, sessionId: appSessionId, hiddenAt: null } },
         OR: [
           { originKind: 'agent_generated', state: { in: ['pending', 'finalized'] } },
           { originKind: { in: ['user_edit', 'legacy'] }, state: 'finalized' }

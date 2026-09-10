@@ -7,6 +7,7 @@ import {
   File,
   Folder,
   Monitor,
+  EyeOff,
   Paperclip,
   Plus,
   Server
@@ -34,6 +35,7 @@ import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { GrantedLocalRoot } from '../../../../shared/local-fs'
 import type { ProjectFileItem } from '../../../../shared/project-files'
 
+import { ArtifactHideButton } from './HiddenArtifactFiles'
 import { ArtifactPreview } from './artifact-preview'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
@@ -55,6 +57,7 @@ const ProjectFilesFilterIcon = ({
   kind: ProjectFilesFilterOption['kind']
   className: string
 }): React.JSX.Element => {
+  if (kind === 'hidden') return <EyeOff className={className} aria-hidden="true" />
   if (kind === 'uploads') {
     return <Paperclip className={className} strokeWidth={1.8} aria-hidden="true" />
   }
@@ -144,6 +147,9 @@ const FileActionButtons = ({
         className
       )}
     >
+      {source === 'artifact' ? (
+        <ArtifactHideButton projectId={projectId} fileId={fileId} name={name} />
+      ) : null}
       <ManagedFileDownloadButton
         source={source}
         path={path}
@@ -497,7 +503,9 @@ const ProjectFilesFilterMenu = ({
   const hosts = useComputeStore((state) => state.hosts)
   const openSettingsToCompute = useSettingsStore((state) => state.openSettingsToCompute)
   const grantedRoots = useGrantedFoldersStore((state) => state.roots)
-  const fixedOptions = options.filter((option) => option.kind !== 'session')
+  const fixedOptions = options.filter(
+    (option) => option.kind !== 'session' && option.kind !== 'hidden'
+  )
   const sessionOptions = options.filter((option) => option.kind === 'session')
   const visibleSessionOptions = showAllSessions
     ? sessionOptions
@@ -624,6 +632,16 @@ const ProjectFilesFilterMenu = ({
                   })}
             </DropdownMenuItem>
           ) : null}
+          {options
+            .filter((option) => option.kind === 'hidden')
+            .map((option) => (
+              <FilterMenuItem
+                key={option.id}
+                option={option}
+                isSelected={option.id === selectedOptionId}
+                onSelect={onSelect}
+              />
+            ))}
         </DropdownMenuGroup>
 
         {/* "This computer" section: browse files on the machine Kiro runs on */}

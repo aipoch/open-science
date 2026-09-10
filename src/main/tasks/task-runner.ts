@@ -224,6 +224,9 @@ type TaskReviewerPort = {
 }
 
 type TaskRunnerDependencies = {
+  getHiddenArtifactIds?: (
+    projectId: string
+  ) => Promise<import('../../shared/project-files').HiddenArtifactIdentity[]>
   projects: TaskProjectPort
   sessions: TaskSessionPort
   previewResources: TaskPreviewResourcePort
@@ -1190,7 +1193,15 @@ class TaskRunner {
   }
 
   async listArtifacts(sessionId: string): Promise<PersistedArtifact[]> {
-    return [...((await this.findSession(sessionId)).artifacts ?? [])]
+    const session = await this.findSession(sessionId)
+    const hidden = new Set(
+      ((await this.dependencies.getHiddenArtifactIds?.(session.projectId)) ?? []).flatMap(
+        (file) => [file.fileId, ...file.versionIds]
+      )
+    )
+    return (session.artifacts ?? []).filter(
+      (file) => !hidden.has(file.artifactId ?? file.id) && !hidden.has(file.versionId ?? file.id)
+    )
   }
 
   async acquireArtifact(artifactId: string): Promise<AcquiredTaskArtifact> {

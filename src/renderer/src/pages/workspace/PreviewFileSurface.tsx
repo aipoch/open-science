@@ -1,3 +1,4 @@
+import { useArtifactHiddenState, usePreviewPathVisibility } from './use-artifact-hidden-state'
 import { useVersionHistoryPages } from './use-version-history-pages'
 import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
 import { unwrapProvenanceRead } from '../../../../shared/provenance-read-result'
@@ -625,7 +626,7 @@ const ManagedVersionNavigation = ({
 
 // The content slot is shared by both presentations so every supported file type follows the same
 // renderer path. Callers can temporarily suppress it while another surface owns the preview.
-const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfaceProps>(
+const VisiblePreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfaceProps>(
   (
     {
       item,
@@ -1805,6 +1806,31 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
   }
 )
 
+VisiblePreviewFileSurface.displayName = 'VisiblePreviewFileSurface'
+
+// Unmount the entire content owner when visibility is revoked, removing cached bytes and embeds.
+const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfaceProps>(
+  (props, ref) => {
+    const hidden = useArtifactHiddenState(props.item.projectId)
+    const { t } = useTranslation()
+    const item = props.item
+    const pathAllowed = usePreviewPathVisibility(
+      item.source === 'local' || (!item.source && !item.managedFileId && !item.artifactId)
+        ? item.path
+        : undefined
+    )
+    const denied =
+      !pathAllowed ||
+      (item.source !== 'upload' &&
+        item.source !== 'local' &&
+        item.source !== 'literature' &&
+        (!hidden.ready ||
+          hidden.ids.has(item.managedFileId ?? item.artifactId ?? item.id) ||
+          hidden.ids.has(item.selectedVersionId ?? '')))
+    if (denied) return <div className="p-4 text-sm text-text-300">{t('File unavailable')}</div>
+    return <VisiblePreviewFileSurface {...props} ref={ref} />
+  }
+)
 PreviewFileSurface.displayName = 'PreviewFileSurface'
 
 export { PreviewFileSurface }
