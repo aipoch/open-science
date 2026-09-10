@@ -8,6 +8,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      verify_only:
+        description: Verify tests and coverage without building or publishing packages.
+        type: boolean
+        default: false
 
 # Required to create a Release and upload assets.
 permissions:
@@ -49,11 +54,14 @@ jobs:
   build:
     needs: release-preflight
     uses: ./.github/workflows/build.yml
+    with:
+      verify_only: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_only }}
     secrets: inherit
 
   # Exercise the exact uploaded packages in separate native jobs. A failed matrix leg can be retried
   # against the immutable build artifact without repeating installation, packaging, or signing.
   package-smoke:
+    if: ${{ !inputs.verify_only }}
     needs: build
     uses: ./.github/workflows/package-smoke.yml
 
