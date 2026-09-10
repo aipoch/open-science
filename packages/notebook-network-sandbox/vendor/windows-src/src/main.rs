@@ -2302,10 +2302,18 @@ mod windows_host {
         }
         let mut changed = false;
         for snapshot in &mut state.snapshots {
-            if !Path::new(&snapshot.path).exists()
-                || !directories
-                    .iter()
-                    .any(|path| paths_equal(path, Path::new(&snapshot.path)))
+            if !Path::new(&snapshot.path).exists() {
+                continue;
+            }
+            // Runtime receipts use canonical paths, while command snapshots retain the caller's
+            // spelling (including short names, junctions, and extended-length prefixes).
+            let canonical = fs::canonicalize(&snapshot.path)
+                .with_context(|| format!("resolve runtime ACL snapshot {}", snapshot.path))?;
+            let canonical = canonical.to_string_lossy();
+            let canonical = canonical.strip_prefix(r"\\?\").unwrap_or(&canonical);
+            if !directories
+                .iter()
+                .any(|path| paths_equal(path, Path::new(canonical)))
             {
                 continue;
             }
@@ -3365,8 +3373,10 @@ mod windows_host {
                             )
                             .unwrap();
                         }
-                        let snapshot = capture_acl_snapshot(&parent.to_string_lossy()).unwrap();
+                        let mut snapshot = capture_acl_snapshot(&parent.to_string_lossy()).unwrap();
                         let original = snapshot.clone();
+                        // The same directory can enter a command lease under another Windows spelling.
+                        snapshot.path = format!(r"\\?\{}", snapshot.path);
                         let lease_id = new_lease_id().unwrap();
                         let capability_name = command_capability_name(installation_id, &lease_id);
                         let capability = CommandCapability::new(capability_name.clone()).unwrap();
@@ -3382,7 +3392,7 @@ mod windows_host {
                             capability_name,
                             capability_sid: sid_text(capability.sid()).unwrap(),
                             grants: vec![AclLeaseGrant {
-                                path: parent.to_string_lossy().into_owned(),
+                                path: snapshot.path.clone(),
                                 access: AclGrant::ModifyTree,
                                 protected_boundary: false,
                             }],
@@ -3504,6 +3514,7 @@ mod windows_host {
                 ),
             ] {
                 let mut snapshot = original.clone();
+                snapshot.path = format!(r"\\?\{}", snapshot.path);
                 snapshot.dacl_sddl.push_str(&aces);
                 write_acl_state(
                     &root,
