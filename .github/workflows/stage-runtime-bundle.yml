@@ -139,8 +139,8 @@ jobs:
           aws configure set default.region "$S3_REGION"
 
       # The operator explicitly chooses the version, which must match DEFAULT_ENV_VERSION on this ref.
-      # Publishing the same version again replaces its objects; matrix jobs remain serialized across
-      # workflow runs so two publishes cannot race the same manifest.
+      # Same-version retries must have identical bytes. A changed pack requires a new env version;
+      # the workflow lock keeps separate runs from racing the same manifest.
       # Publishes EACH curated pack file (`<language>-<version>.tar.zst`) + the shared manifest.json as
       # discrete objects, so a consumer fetches only the pack(s) it needs. Pack files are uploaded before
       # the manifest so consumers never observe a manifest that points to a missing object.
@@ -152,21 +152,4 @@ jobs:
           S3_PREFIX: ${{ vars.S3_PREFIX }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          # Channel-agnostic namespace = first segment of S3_PREFIX (e.g. "open-science/app/stable" ->
-          # "open-science"), so the env-version-keyed bundle is a sibling of the app release channel,
-          # not nested under it. Must stay in sync with the download path in build.yml.
-          ns="${S3_PREFIX%%/*}"
-          base="s3://$S3_BUCKET${ns:+/$ns}/runtime-bundle/$VERSION/${{ matrix.subdir }}"
-          key_prefix="${ns:+$ns/}runtime-bundle/$VERSION/${{ matrix.subdir }}"
-          if aws s3api head-object --bucket "$S3_BUCKET" --key "$key_prefix/manifest.json" >/dev/null 2>&1; then
-            echo "::warning::overwriting runtime bundle version $VERSION at $key_prefix"
-          fi
-          shopt -s nullglob
-          archives=(resources/default-envs/*.tar.zst)
-          for archive in "${archives[@]}"; do
-            aws s3 cp "$archive" "$base/$(basename "$archive")" \
-              --cache-control "public, max-age=31536000, immutable" --only-show-errors
-          done
-          aws s3 cp resources/default-envs/manifest.json "$base/manifest.json" \
-            --cache-control "public, max-age=31536000, immutable" --only-show-errors
-          echo "published manifest.json + ${#archives[@]} pack archives to ${ns:+$ns/}runtime-bundle/$VERSION/${{ matrix.subdir }}/"
+          node scripts/publish-release-assets.mjs runtime resources/default-envs "${{ matrix.subdir }}"

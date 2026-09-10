@@ -480,6 +480,21 @@ jobs:
             npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" "${unsigned_args[@]}" --publish never
           fi
 
+      # Keep each native feed unique even when notarization is skipped. The installed app still
+      # polls latest-mac.yml; only the publication job combines the two architecture artifacts.
+      - name: Preserve architecture-specific mac update feed
+        if: ${{ matrix.platform == 'mac' }}
+        shell: bash
+        env:
+          ARCH: ${{ matrix.bin_arch }}
+        run: |
+          if [ -f dist/latest-mac.yml ]; then
+            mv dist/latest-mac.yml "dist/$ARCH-mac.yml"
+          elif [ "${{ inputs.nightly }}" != "true" ]; then
+            echo "Missing macOS update feed" >&2
+            exit 1
+          fi
+
       - name: Clean up macOS signing keychain
         if: ${{ always() && steps.mac_signing.outputs.keychain != '' }}
         shell: bash

@@ -552,8 +552,8 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(previous.run).toContain('gh release download')
     expect(previous.run).toContain('*-win-x64-setup.exe.blockmap')
     expect(previous.run).not.toContain('Get-AuthenticodeSignature')
-    expect(previous.run).toContain("$_.tagName -like 'v*'")
-    expect(previous.run).toContain('$_.tagName -ne $env:CURRENT_TAG')
+    expect(previous.run).toContain('gh api --paginate --slurp')
+    expect(previous.run).toContain('$version -lt $current')
     expect(findStep(upgrade, 'Certify Windows electron-updater differential update')).toMatchObject(
       {
         id: 'updater',
@@ -713,7 +713,9 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(historical.run).toContain('historical-blockmaps/$version/$name')
     expect(historical.run).toContain('gzip -t "$target"')
     const backfill = findStep(mirror, 'Backfill historical Windows blockmaps')
-    expect(backfill.run).toContain('releases/$version/$(basename "$blockmap")')
+    expect(backfill.run).toContain(
+      'scripts/publish-release-assets.mjs blockmaps historical-blockmaps'
+    )
     for (const sideEffectStep of [
       'Configure AWS credentials',
       'Collect historical Windows blockmaps',

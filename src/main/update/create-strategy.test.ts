@@ -27,6 +27,8 @@ vi.mock('electron', () => ({
   shell: { openExternal: vi.fn(async () => {}), openPath: vi.fn(async () => '') }
 }))
 vi.mock('electron-updater', () => ({
+  AppImageUpdater: class {},
+  DebUpdater: class {},
   CancellationToken: class {
     cancelled = false
     cancel(): void {
