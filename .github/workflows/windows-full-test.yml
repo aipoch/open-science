@@ -153,7 +153,7 @@ jobs:
           -Exe packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe
           -Mode Full
 
-      - name: Test smoke fixture with a UDP-excluded gateway port
+      - name: Test smoke fixture with a UDP-occupied gateway port
         if: ${{ always() && steps.build_native.outcome == 'success' }}
         shell: powershell
         run: >-
