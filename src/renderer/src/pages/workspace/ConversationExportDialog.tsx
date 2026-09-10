@@ -17,7 +17,7 @@ import { flushSessionPersistence } from '@/lib/session-persistence/session-persi
 import { cn } from '@/lib/utils'
 import type { ChatSession } from '@/stores/session-store'
 import {
-  createConversationExportDocument,
+  serializeConversationExportContent,
   hashConversationExportContent,
   createConversationExportTurns,
   type ConversationExportFormat,
@@ -67,9 +67,10 @@ const ConversationExportDialogContent = ({
   const turns = useMemo(() => createConversationExportTurns(session.messages), [session.messages])
   const conversationChanged = useMemo(() => {
     if (!currentSession) return true
-    const snapshot = createConversationExportDocument(session, 0)
-    const current = createConversationExportDocument(currentSession, 0)
-    return JSON.stringify(snapshot) !== JSON.stringify(current)
+    return (
+      serializeConversationExportContent(session) !==
+      serializeConversationExportContent(currentSession)
+    )
   }, [currentSession, session])
   const validSelectedPromptIds = turns.flatMap((turn) =>
     selectedPromptIds.has(turn.promptMessageId) ? [turn.promptMessageId] : []
