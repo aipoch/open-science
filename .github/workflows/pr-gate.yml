@@ -447,6 +447,11 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Install Linux migration metadata tools
+        # The real migration tests verify ACLs and extended attributes before committing a move.
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes acl attr
       - name: Test complete suite shard
         id: unit_macos_shard
         continue-on-error: true
