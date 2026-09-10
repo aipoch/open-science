@@ -279,10 +279,13 @@ const makeTreeWritable = async (root: string): Promise<void> => {
 }
 
 const waitForRendererReady = async (page: Page): Promise<void> => {
-  await page.waitForLoadState('domcontentloaded')
+  const deadline = performance.now() + 90_000
+  const remainingTimeout = (): number => Math.max(1, deadline - performance.now())
+  await page.waitForLoadState('domcontentloaded', { timeout: remainingTimeout() })
   // A fresh Windows profile can spend longer than the general assertion budget applying the real
   // schema manifest under runner I/O contention (58s observed before application composition).
-  // Leave room for that composition while keeping startup bounded within the 120s test budget.
+  // Share one renderer-readiness budget so settings cannot add another full wait before
+  // the journey begins under the 120s test budget.
   await expect
     .poll(
       () =>
@@ -293,10 +296,12 @@ const waitForRendererReady = async (page: Page): Promise<void> => {
           // Preserve startup diagnostics when a migration blocks before the journey can begin.
           return await bridge.api.databaseStartup.getState()
         }),
-      { timeout: 90_000 }
+      { timeout: remainingTimeout() }
     )
     .toMatchObject({ phase: 'ready' })
-  await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
+  await page
+    .getByTestId('settings-startup-loading')
+    .waitFor({ state: 'hidden', timeout: remainingTimeout() })
 }
 
 const applyHiddenWindowPresentation = async (

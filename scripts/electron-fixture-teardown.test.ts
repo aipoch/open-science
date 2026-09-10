@@ -13,6 +13,7 @@ const boundary = vi.hoisted(() => ({
   reap: vi.fn(),
   rendererFailure: vi.fn(),
   ready: vi.fn(),
+  settingsWait: vi.fn(),
   realPolling: false,
   readyAt: 0,
   evaluated: vi.fn()
@@ -51,6 +52,7 @@ beforeEach(() => {
   boundary.readyAt = 0
   boundary.rendererFailure.mockImplementation(() => undefined)
   boundary.ready.mockResolvedValue(undefined)
+  boundary.settingsWait.mockResolvedValue(undefined)
   close.mockResolvedValue(undefined)
   boundary.reap.mockResolvedValue({ reaped: false })
   boundary.launch.mockImplementation(async ({ env }) => {
@@ -66,6 +68,10 @@ beforeEach(() => {
         return { phase: performance.now() >= boundary.readyAt ? 'ready' : 'starting' }
       },
       getByText: () => ({ waitFor: async () => undefined }),
+      getByTestId: (testId: string) => ({
+        waitFor:
+          testId === 'settings-startup-loading' ? boundary.settingsWait : async () => undefined
+      }),
       reload: async () => undefined
     }
     return {
@@ -243,5 +249,55 @@ it.each([true, false])(
     else await expect(operation).rejects.toThrow('crash simulation did not reap')
     expect(boundary.reap).toHaveBeenCalledOnce()
     expect(boundary.launch).toHaveBeenCalledTimes(reaped ? 2 : 1)
+  }
+)
+
+it.each([true, false])(
+  'shares the startup deadline with settings loading (finishes=%s)',
+  async (finishes) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    boundary.realPolling = true
+    boundary.readyAt = 80_000
+    boundary.settingsWait.mockImplementationOnce(
+      ({ timeout }: { timeout: number }) =>
+        new Promise<void>((resolve, reject) => {
+          const success = setTimeout(
+            () => {
+              clearTimeout(failure)
+              resolve()
+            },
+            finishes ? 5_000 : 20_000
+          )
+          const failure = setTimeout(() => {
+            clearTimeout(success)
+            reject(new Error('Settings startup deadline exceeded'))
+          }, timeout)
+        })
+    )
+    const journey = vi.fn(async () => undefined)
+    const operation = boundary
+      .fixture({ windowMode: 'hidden' }, journey, {
+        status: finishes ? 'passed' : 'failed',
+        expectedStatus: 'passed',
+        attach
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error
+      )
+    await vi.waitFor(() => expect(boundary.evaluated).toHaveBeenCalled())
+    await vi.advanceTimersByTimeAsync(110_000)
+    expect(boundary.settingsWait).toHaveBeenCalled()
+    if (finishes) {
+      expect(await operation).toBeUndefined()
+      expect(journey).toHaveBeenCalledOnce()
+    } else {
+      expect(String(await operation)).toContain('Settings startup deadline exceeded')
+      expect(journey).not.toHaveBeenCalled()
+      expect(attach).toHaveBeenCalledWith(
+        'startup-main-process-log',
+        expect.objectContaining({ contentType: 'text/plain' })
+      )
+    }
   }
 )
