@@ -12,17 +12,26 @@ const boundary = vi.hoisted(() => ({
   launch: vi.fn(),
   reap: vi.fn(),
   rendererFailure: vi.fn(),
-  ready: vi.fn()
+  ready: vi.fn(),
+  realPolling: false,
+  readyAt: 0,
+  evaluated: vi.fn()
 }))
-vi.mock('@playwright/test', () => ({
-  test: {
-    extend: (fixtures: { app: typeof boundary.fixture }) => {
-      boundary.fixture = fixtures.app
-      return {}
+vi.mock('@playwright/test', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@playwright/test')>()
+  return {
+    test: {
+      extend: (fixtures: { app: typeof boundary.fixture }) => {
+        boundary.fixture = fixtures.app
+        return {}
+      }
+    },
+    expect: {
+      poll: (...args: Parameters<typeof actual.expect.poll>) =>
+        boundary.realPolling ? actual.expect.poll(...args) : { toMatchObject: boundary.ready }
     }
-  },
-  expect: { poll: () => ({ toMatchObject: boundary.ready }) }
-}))
+  }
+})
 vi.mock('playwright', () => ({ _electron: { launch: boundary.launch } }))
 vi.mock('../src/main/process-tree', () => ({ terminateProcessTree: boundary.reap }))
 vi.mock('../e2e/fixtures/renderer-failure-gate', () => ({
@@ -38,6 +47,8 @@ const close = vi.fn()
 const attach = vi.fn()
 beforeEach(() => {
   vi.clearAllMocks()
+  boundary.realPolling = false
+  boundary.readyAt = 0
   boundary.rendererFailure.mockImplementation(() => undefined)
   boundary.ready.mockResolvedValue(undefined)
   close.mockResolvedValue(undefined)
@@ -50,7 +61,10 @@ beforeEach(() => {
     const page = {
       emulateMedia: async () => undefined,
       waitForLoadState: async () => undefined,
-      evaluate: async () => ({ phase: 'ready' }),
+      evaluate: async () => {
+        boundary.evaluated()
+        return { phase: performance.now() >= boundary.readyAt ? 'ready' : 'starting' }
+      },
       getByText: () => ({ waitFor: async () => undefined }),
       reload: async () => undefined
     }
@@ -166,4 +180,50 @@ it('attaches startup diagnostics before disposing a failed renderer launch', asy
     expect.objectContaining({ contentType: 'text/plain' })
   )
   expect(existsSync(root)).toBe(false)
+})
+
+it('allows a fresh profile to finish initialization after a minute of migration work', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+  boundary.realPolling = true
+  boundary.readyAt = 65_000
+  const install = vi.fn(async () => undefined)
+  const operation = boundary
+    .fixture({ windowMode: 'hidden' }, install, {
+      status: 'passed',
+      expectedStatus: 'passed',
+      attach
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error
+    )
+  await vi.waitFor(() => expect(boundary.evaluated).toHaveBeenCalled())
+  await vi.advanceTimersByTimeAsync(70_000)
+  expect(await operation).toBeUndefined()
+  expect(install).toHaveBeenCalledOnce()
+})
+
+it('still fails with diagnostics when initialization never finishes', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+  boundary.realPolling = true
+  boundary.readyAt = Number.POSITIVE_INFINITY
+  const install = vi.fn(async () => undefined)
+  const operation = boundary
+    .fixture({ windowMode: 'hidden' }, install, {
+      status: 'failed',
+      expectedStatus: 'passed',
+      attach
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error
+    )
+  await vi.waitFor(() => expect(boundary.evaluated).toHaveBeenCalled())
+  await vi.advanceTimersByTimeAsync(100_000)
+  expect(String(await operation)).toContain('while waiting on the predicate')
+  expect(install).not.toHaveBeenCalled()
+  expect(attach).toHaveBeenCalledWith(
+    'startup-main-process-log',
+    expect.objectContaining({ contentType: 'text/plain' })
+  )
 })
