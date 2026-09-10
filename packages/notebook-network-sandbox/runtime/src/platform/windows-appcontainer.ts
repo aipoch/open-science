@@ -347,13 +347,12 @@ const removeWindowsAppContainer = async (
   return elevated
 }
 
-const setWindowsRuntimeAccess = async (
+const getWindowsRuntimeAccess = async (
   hostPath: string,
   installationId: string,
   ownershipRoot: string,
-  executable: string,
-  authorized: boolean
-): Promise<{ cancelled: boolean }> => {
+  executable: string
+): Promise<{ authorized: boolean; registered: boolean }> => {
   const status = await runCapture(hostPath, [
     'runtime-access-status',
     installationId,
@@ -371,7 +370,17 @@ const setWindowsRuntimeAccess = async (
   ) {
     throw new Error('AppContainer host returned invalid runtime access status.')
   }
-  const access = current as { authorized: boolean; registered: boolean }
+  return current as { authorized: boolean; registered: boolean }
+}
+
+const setWindowsRuntimeAccess = async (
+  hostPath: string,
+  installationId: string,
+  ownershipRoot: string,
+  executable: string,
+  authorized: boolean
+): Promise<{ cancelled: boolean }> => {
+  const access = await getWindowsRuntimeAccess(hostPath, installationId, ownershipRoot, executable)
   if ((authorized && access.authorized) || (!authorized && !access.registered))
     return { cancelled: false }
   const prepared = await runCapture(hostPath, [
@@ -486,6 +495,7 @@ export {
   connectionProbeSpecification,
   installWindowsAppContainer,
   setWindowsRuntimeAccess,
+  getWindowsRuntimeAccess,
   removeWindowsAppContainer,
   readAppContainerStatus,
   loopbackPortAvailable,

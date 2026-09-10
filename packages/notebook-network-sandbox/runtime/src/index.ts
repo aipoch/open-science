@@ -2,6 +2,7 @@ export {
   NotebookNetworkRuntime,
   installWindows,
   setWindowsRuntimeAccess,
+  getWindowsRuntimeAccess,
   removeWindows,
   statusForPlatform,
   type NetworkAskCallback,

@@ -591,6 +591,7 @@ const createApplicationModules = async (
   }
   const notebookNetworkSandbox = await modules.add(undefined, () => {
     const capability = new NotebookNetworkSandboxOwner({
+      allowRuntimeAccessPrompt: !headless,
       resourceRoot: app.isPackaged
         ? join(process.resourcesPath, 'notebook-network-sandbox')
         : join(app.getAppPath(), 'packages', 'notebook-network-sandbox', 'vendor'),

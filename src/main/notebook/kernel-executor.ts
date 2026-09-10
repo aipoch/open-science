@@ -29,7 +29,7 @@ import {
   buildNotebookKernelEnvironment,
   environmentPathRoots
 } from './process-environment'
-import type { NotebookProcessSandbox } from './process-sandbox'
+import { NotebookRuntimeAccessCancelledError, type NotebookProcessSandbox } from './process-sandbox'
 import {
   notebookWorkloadCacheEnv,
   notebookWorkloadCacheRoot,
@@ -368,6 +368,18 @@ const errorToExecutionResult = (
   kernelDispatched = false,
   helperModulesInitialized: readonly string[] = []
 ): NotebookExecutionResult => {
+  if (error instanceof NotebookRuntimeAccessCancelledError) {
+    return {
+      status: 'cancelled',
+      kernelDispatched,
+      stdout: '',
+      stderr: error.message,
+      traceback: '',
+      cwdAfter: request.cwd,
+      outputs: [],
+      workingFiles: []
+    }
+  }
   if (error instanceof NotebookExecutionCancelledError) {
     return {
       status: 'cancelled',
@@ -928,6 +940,17 @@ class NotebookKernelExecutor implements NotebookExecutor {
     if (this.processSandbox && (!sessionId || !projectId)) {
       throw new Error('Notebook network sandbox requires Session and Project context.')
     }
+    // Admission routes external R and the managed default through DEFAULT_R_ENV. Named,
+    // agent-created environments have no per-runtime durable ACL removal workflow.
+    if (kind === 'r' && env === DEFAULT_R_ENV) {
+      await this.processSandbox?.ensureRuntimeAccess?.({
+        executable: invocation.executable,
+        runtime: kind,
+        sessionId: sessionId!,
+        signal: request.signal
+      })
+    }
+    if (request.signal?.aborted) throw new NotebookExecutionCancelledError()
     const sandboxed = this.processSandbox
       ? await this.processSandbox.wrap({
           executable: invocation.executable,

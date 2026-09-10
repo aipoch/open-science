@@ -4,6 +4,7 @@ import {
   NotebookNetworkRuntime,
   installWindows,
   setWindowsRuntimeAccess,
+  getWindowsRuntimeAccess,
   removeWindows,
   statusForPlatform,
   type SandboxDependencyCheck,
@@ -214,6 +215,15 @@ class NotebookNetworkSandbox {
     const result = await installWindows(config)
     if (!result.cancelled && this.#initialized) await this.#backend.refreshWindowsProtection()
     return { cancelled: result.cancelled === true }
+  }
+
+  async getWindowsRuntimeAccess(
+    executable: string
+  ): Promise<{ authorized: boolean; registered: boolean }> {
+    if (process.platform !== 'win32')
+      throw new Error('R runtime access is only available on Windows.')
+    if (this.#initializing) await this.#initializing
+    return getWindowsRuntimeAccess(createRuntimeConfig(this.#options), executable)
   }
 
   async setWindowsRuntimeAccess(
