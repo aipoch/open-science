@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 
 import { LITERATURE_CITATION_STYLES, type LiteratureItemInput } from '../../shared/literature'
 import { LiteratureCitationFormatter } from './citation-formatter'
+import { toCslItem } from '../../shared/literature-csl'
 import { citationResourceDirectory, LiteratureCitationStyleLibrary } from './citation-style-library'
 
 const reference: LiteratureItemInput = {
@@ -31,6 +32,58 @@ const reference: LiteratureItemInput = {
 }
 
 describe('LiteratureCitationFormatter', () => {
+  it('renders the journal abbreviation without replacing the article title in a short-title style', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-pubmed-csl-'))
+    try {
+      const styles = new LiteratureCitationStyleLibrary(join(root, 'styles'))
+      const styleId = await styles.import(`<?xml version="1.0"?>
+<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0" class="in-text">
+  <info><title>PubMed metadata regression</title><id>https://example.test/pubmed</id></info>
+  <citation><layout><choose><if variable="title-short"><text variable="title-short"/></if><else><text variable="title"/></else></choose></layout></citation>
+  <bibliography><layout><group delimiter=" | "><text variable="title"/><text variable="container-title-short"/></group></layout></bibliography>
+</style>`)
+      const formatter = new LiteratureCitationFormatter(styles)
+      const { items } = await formatter.parseReferences(
+        'PMID- 12345678\nTI  - A useful paper\nJT  - Journal of Useful Results\nTA  - J Useful Results\n'
+      )
+      const [formatted] = await formatter.formatReferences(
+        [{ id: 'paper', item: items[0]! }],
+        styleId,
+        'en-US'
+      )
+      expect(formatted?.inText).toBe('A useful paper')
+      expect(formatted?.reference).toContain('J Useful Results')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves a PubMed day through RIS export and reimport', async () => {
+    const formatter = new LiteratureCitationFormatter()
+    const { items } = await formatter.parseReferences(
+      'PMID- 12345678\nTI  - Dated paper\nDP  - 2024 Jan 15\n'
+    )
+    const ris = await formatter.exportReferences([{ id: 'dated', item: items[0]! }], 'ris')
+    const imported = await formatter.parseReferences(ris)
+    expect(imported.errors).toEqual([])
+    expect(imported.items[0]?.issuedText).toBe('2024-1-15')
+  })
+
+  it('projects PubMed publication dates and journal abbreviations into the correct citation fields', async () => {
+    const parsed = await new LiteratureCitationFormatter().parseReferences(
+      'PMID- 12345678\nTI  - A useful paper\nDP  - 2024 Jan 15\nJT  - Journal of Useful Results\nTA  - J Useful Results\n'
+    )
+    const record = parsed.items[0]!
+    expect(record.issuedText).toBe('2024 Jan 15')
+    expect(record.shortTitle).toBe('')
+    expect(toCslItem('paper', record)).toMatchObject({
+      issued: { 'date-parts': [[2024, 1, 15]] },
+      'container-title': 'Journal of Useful Results',
+      'container-title-short': 'J Useful Results'
+    })
+    expect(toCslItem('paper', record)).not.toHaveProperty('title-short')
+  })
+
   it.each([
     [
       'CN  - Research Consortium',
@@ -313,10 +366,15 @@ PMC - PMC1234567
           issuedText: '2024 Jan',
           issuedYear: 2024,
           containerTitle: 'Journal of Useful Results',
-          shortTitle: 'J Useful Results',
+          shortTitle: '',
           language: 'eng',
           url: 'https://pubmed.ncbi.nlm.nih.gov/12345678/',
-          typeFields: { volume: '12', issue: '3', pages: '44-58' },
+          typeFields: {
+            volume: '12',
+            issue: '3',
+            pages: '44-58',
+            journalAbbreviation: 'J Useful Results'
+          },
           creators: [
             {
               nameMode: 'person',
