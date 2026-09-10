@@ -154,20 +154,131 @@ const operationCopy = (
   if (operation.kind === 'install-runtime-dependencies') {
     return t('Installing Linux dependencies…')
   }
-  return operation.kind === 'install-platform'
-    ? t('Installing the WSL2 platform in Windows…')
-    : t('Installing {{distro}}…', { distro: RECOMMENDED_WSL_DISTRO })
+  if (operation.kind === 'install-platform') {
+    return t('Installing the WSL2 platform in Windows…')
+  }
+  return t('Installing {{distro}}…', { distro: RECOMMENDED_WSL_DISTRO })
+}
+
+type InstallFailure = 'uac-cancelled' | 'spawn-failed' | 'unknown'
+type Translate = (key: string) => string
+
+const installFailure = (errorCode: string | undefined): InstallFailure | undefined => {
+  switch (errorCode) {
+    case 'wsl_install_uac_cancelled':
+      return 'uac-cancelled'
+    case 'wsl_install_spawn_failed':
+      return 'spawn-failed'
+    case 'wsl_install_unknown':
+    case 'wsl_install_conflict':
+      return 'unknown'
+    default:
+      return undefined
+  }
+}
+
+const installFailureTitle = (failure: InstallFailure, t: Translate): string => {
+  switch (failure) {
+    case 'uac-cancelled':
+      return t('WSL2 installation was cancelled in Windows.')
+    case 'spawn-failed':
+      return t('Open Science could not start the WSL2 installer.')
+    case 'unknown':
+      return t('Windows did not confirm the WSL2 installation result.')
+  }
+}
+
+const installFailureDescription = (failure: InstallFailure, t: Translate): string => {
+  if (failure === 'unknown') {
+    return t(
+      'Check again to read the current Windows state. Installation will not run again automatically.'
+    )
+  }
+  return t('No installation command will run again unless you choose to retry it.')
+}
+
+const operationErrorReference = (snapshot: WslSetupSnapshot): string | undefined =>
+  snapshot.errorCode ? `${snapshot.errorCode} · ${snapshot.operationReference}` : undefined
+
+const dependencyInstallLabel = (errorCode: string, t: Translate): string => {
+  if (
+    errorCode === 'wsl_dependency_install_failed' ||
+    errorCode === 'wsl_dependency_install_unconfirmed'
+  ) {
+    return t('Try installation again')
+  }
+  return t('Install missing dependencies')
+}
+
+const firstInitializationDistro = (
+  snapshot: WslSetupSnapshot,
+  selectedInstallDistro: WslInstallDistroName
+): string | undefined => {
+  if (snapshot.state === 'first-launch-required') return snapshot.selection?.distro
+  if (
+    snapshot.state === 'distro-required' &&
+    snapshot.distros.some((item) => item.name === selectedInstallDistro && item.version === 2)
+  ) {
+    return selectedInstallDistro
+  }
+  return undefined
+}
+
+const INSTALLABLE_DEPENDENCY_ERRORS = new Set([
+  'wsl_bash_missing',
+  'wsl_bwrap_missing',
+  'wsl_python3_missing',
+  'wsl_dependency_install_failed',
+  'wsl_dependency_install_unconfirmed'
+])
+
+const canInstallMissingDependencies = (snapshot: WslSetupSnapshot): boolean =>
+  snapshot.state === 'dependency-required' &&
+  snapshot.canInstallMissingDependencies === true &&
+  INSTALLABLE_DEPENDENCY_ERRORS.has(snapshot.errorCode ?? '')
+
+const StatusIndicator = ({
+  busy,
+  state
+}: {
+  busy: boolean
+  state: WslSetupSnapshot['state']
+}): React.JSX.Element => {
+  if (busy) {
+    return (
+      <LoaderCircle
+        className="size-4 animate-spin text-status-info-foreground"
+        aria-hidden="true"
+      />
+    )
+  }
+  if (state === 'ready') {
+    return <CheckCircle2 className="size-4 text-status-success-foreground" aria-hidden="true" />
+  }
+  return <CircleX className="size-4 text-status-failure-foreground" aria-hidden="true" />
+}
+
+const ReadinessIndicator = ({ value }: { value: boolean | undefined }): React.JSX.Element => {
+  if (value === true) {
+    return <CheckCircle2 className="size-4 text-status-success-foreground" aria-hidden="true" />
+  }
+  if (value === false) {
+    return <CircleX className="size-4 text-status-failure-foreground" aria-hidden="true" />
+  }
+  return <CircleHelp className="size-4 text-muted-foreground" aria-hidden="true" />
+}
+
+type WslLocalShellSectionProps = {
+  previewAvailable?: boolean
+  developmentPreview?: boolean
+  previewUnavailableReason?: Wsl2BashPreviewStatus['reason']
 }
 
 export const WslLocalShellSection = ({
   previewAvailable = true,
   developmentPreview = false,
   previewUnavailableReason
-}: {
-  previewAvailable?: boolean
-  developmentPreview?: boolean
-  previewUnavailableReason?: Wsl2BashPreviewStatus['reason']
-}): React.JSX.Element => {
+}: WslLocalShellSectionProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [snapshot, setSnapshot] = useState<WslSetupSnapshot>({
     state: 'checking',
@@ -309,15 +420,7 @@ export const WslLocalShellSection = ({
     }
   }
 
-  const installFailure =
-    snapshot.errorCode === 'wsl_install_uac_cancelled'
-      ? 'uac-cancelled'
-      : snapshot.errorCode === 'wsl_install_spawn_failed'
-        ? 'spawn-failed'
-        : snapshot.errorCode === 'wsl_install_unknown' ||
-            snapshot.errorCode === 'wsl_install_conflict'
-          ? 'unknown'
-          : undefined
+  const currentInstallFailure = installFailure(snapshot.errorCode)
 
   const openTerminal = async (requestedDistro?: string): Promise<void> => {
     const selectedDistro = requestedDistro ?? snapshot.selection?.distro ?? distro
@@ -336,13 +439,7 @@ export const WslLocalShellSection = ({
     }
   }
 
-  const firstInitializationDistro =
-    snapshot.state === 'first-launch-required'
-      ? snapshot.selection?.distro
-      : snapshot.state === 'distro-required' &&
-          snapshot.distros.some((item) => item.name === installDistro && item.version === 2)
-        ? installDistro
-        : undefined
+  const initializationDistro = firstInitializationDistro(snapshot, installDistro)
   const installDistroLabel =
     WSL_INSTALL_DISTROS.find((candidate) => candidate.name === installDistro)?.label ??
     installDistro
@@ -434,6 +531,14 @@ export const WslLocalShellSection = ({
     }
   }
 
+  const retryShellSwitch = (): void => {
+    if (shellSwitchFailed === 'wsl2-bash') {
+      void activateWsl2Bash()
+      return
+    }
+    void switchToPowerShell()
+  }
+
   if (!previewAvailable) {
     return (
       <SettingsSection separated title={t('Local Shell')}>
@@ -485,7 +590,7 @@ export const WslLocalShellSection = ({
   const isErrorSurface =
     awaitingManualCheck ||
     (!busy &&
-      (installFailure !== undefined ||
+      (currentInstallFailure !== undefined ||
         snapshot.state === 'not-installed' ||
         snapshot.state === 'failed' ||
         snapshot.errorCode !== undefined))
@@ -494,22 +599,115 @@ export const WslLocalShellSection = ({
     snapshot.selection !== undefined &&
     snapshot.activatedSelection?.distro === snapshot.selection.distro &&
     snapshot.activatedSelection.user === snapshot.selection.user
-  const canInstallMissingDependencies =
-    snapshot.state === 'dependency-required' &&
-    snapshot.canInstallMissingDependencies === true &&
-    [
-      'wsl_bash_missing',
-      'wsl_bwrap_missing',
-      'wsl_python3_missing',
-      'wsl_dependency_install_failed',
-      'wsl_dependency_install_unconfirmed'
-    ].includes(snapshot.errorCode ?? '')
+  const dependencyInstallAvailable = canInstallMissingDependencies(snapshot)
   const powerShellSwitchButton = (
     <Button type="button" variant="outline" onClick={() => void switchToPowerShell()}>
       <SquareTerminal aria-hidden="true" />
       {t('Switch to PowerShell')}
     </Button>
   )
+
+  let statusSurface: React.JSX.Element
+  if (awaitingManualCheck) {
+    statusSurface = (
+      <div className="flex justify-center">
+        <ErrorNotice
+          role="status"
+          icon={RefreshCw}
+          tone="teal"
+          title={t('WSL2 status has not been checked yet.')}
+          description={t(
+            'Run a check when you want to refresh the available distributions and setup status.'
+          )}
+        />
+      </div>
+    )
+  } else if (currentInstallFailure && !busy) {
+    statusSurface = (
+      <div className="flex justify-center">
+        <ErrorNotice
+          role="alert"
+          icon={CircleX}
+          tone={currentInstallFailure === 'spawn-failed' ? 'red' : 'amber'}
+          title={installFailureTitle(currentInstallFailure, t)}
+          description={installFailureDescription(currentInstallFailure, t)}
+          errorCode={`${snapshot.errorCode ?? 'wsl_install_unknown'} · ${snapshot.operationReference}`}
+          diagnosticsLabel={t('Diagnostics')}
+          secondaryButton={{ label: t('Check again'), onClick: () => void probe() }}
+          primaryButton={{
+            label: t('Try installation again'),
+            onClick: () => void installWslPlatform()
+          }}
+        />
+      </div>
+    )
+  } else if (snapshot.state === 'not-installed' && !busy) {
+    statusSurface = (
+      <div className="flex justify-center">
+        <ErrorNotice
+          role="alert"
+          icon={CircleX}
+          tone="amber"
+          title={statusCopy(snapshot, t)}
+          description={t(
+            'Windows will ask for administrator approval. Open Science installs only the WSL2 platform, without a distribution.'
+          )}
+          errorCode={operationErrorReference(snapshot)}
+          diagnosticsLabel={t('Diagnostics')}
+          secondaryButton={{ label: t('Check again'), onClick: () => void probe() }}
+          primaryButton={{ label: t('Install WSL2'), onClick: () => void installWslPlatform() }}
+        />
+      </div>
+    )
+  } else if (snapshot.state === 'failed' && !busy) {
+    statusSurface = (
+      <div className="flex justify-center">
+        <ErrorNotice
+          role="alert"
+          icon={CircleX}
+          tone={errorTone(snapshot.errorCode)}
+          title={statusCopy(snapshot, t)}
+          description={recoveryCopy(snapshot, t)}
+          errorCode={operationErrorReference(snapshot)}
+          diagnosticsLabel={t('Diagnostics')}
+          primaryButton={{ label: t('Check again'), onClick: () => void probe() }}
+        />
+      </div>
+    )
+  } else if (snapshot.errorCode && !busy) {
+    statusSurface = (
+      <div className="flex justify-center">
+        <ErrorNotice
+          role="alert"
+          icon={CircleX}
+          tone={errorTone(snapshot.errorCode)}
+          title={statusCopy(snapshot, t)}
+          description={recoveryCopy(snapshot, t)}
+          errorCode={operationErrorReference(snapshot)}
+          diagnosticsLabel={t('Diagnostics')}
+          primaryButton={
+            dependencyInstallAvailable
+              ? {
+                  label: dependencyInstallLabel(snapshot.errorCode, t),
+                  onClick: () => setConfirmDependencyInstall(true)
+                }
+              : undefined
+          }
+        />
+      </div>
+    )
+  } else {
+    statusSurface = (
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <StatusIndicator busy={busy} state={snapshot.state} />
+        <span role="status">
+          {installBusy && setupStatus
+            ? operationCopy(setupStatus.operation, t)
+            : statusCopy(snapshot, t)}
+        </span>
+      </div>
+    )
+  }
 
   return (
     <SettingsSection
@@ -539,127 +737,7 @@ export const WslLocalShellSection = ({
         className={isErrorSurface ? '' : 'rounded-lg border border-border bg-card p-4'}
         data-testid="wsl-local-shell"
       >
-        {awaitingManualCheck ? (
-          <div className="flex justify-center">
-            <ErrorNotice
-              role="status"
-              icon={RefreshCw}
-              tone="teal"
-              title={t('WSL2 status has not been checked yet.')}
-              description={t(
-                'Run a check when you want to refresh the available distributions and setup status.'
-              )}
-            />
-          </div>
-        ) : installFailure && !busy ? (
-          <div className="flex justify-center">
-            <ErrorNotice
-              role="alert"
-              icon={CircleX}
-              tone={installFailure === 'spawn-failed' ? 'red' : 'amber'}
-              title={
-                installFailure === 'uac-cancelled'
-                  ? t('WSL2 installation was cancelled in Windows.')
-                  : installFailure === 'spawn-failed'
-                    ? t('Open Science could not start the WSL2 installer.')
-                    : t('Windows did not confirm the WSL2 installation result.')
-              }
-              description={
-                installFailure === 'unknown'
-                  ? t(
-                      'Check again to read the current Windows state. Installation will not run again automatically.'
-                    )
-                  : t('No installation command will run again unless you choose to retry it.')
-              }
-              errorCode={`${snapshot.errorCode ?? 'wsl_install_unknown'} · ${snapshot.operationReference}`}
-              diagnosticsLabel={t('Diagnostics')}
-              secondaryButton={{ label: t('Check again'), onClick: () => void probe() }}
-              primaryButton={{
-                label: t('Try installation again'),
-                onClick: () => void installWslPlatform()
-              }}
-            />
-          </div>
-        ) : snapshot.state === 'not-installed' && !busy ? (
-          <div className="flex justify-center">
-            <ErrorNotice
-              role="alert"
-              icon={CircleX}
-              tone="amber"
-              title={statusCopy(snapshot, t)}
-              description={t(
-                'Windows will ask for administrator approval. Open Science installs only the WSL2 platform, without a distribution.'
-              )}
-              errorCode={
-                snapshot.errorCode
-                  ? `${snapshot.errorCode} · ${snapshot.operationReference}`
-                  : undefined
-              }
-              diagnosticsLabel={t('Diagnostics')}
-              secondaryButton={{ label: t('Check again'), onClick: () => void probe() }}
-              primaryButton={{ label: t('Install WSL2'), onClick: () => void installWslPlatform() }}
-            />
-          </div>
-        ) : snapshot.state === 'failed' && !busy ? (
-          <div className="flex justify-center">
-            <ErrorNotice
-              role="alert"
-              icon={CircleX}
-              tone={errorTone(snapshot.errorCode)}
-              title={statusCopy(snapshot, t)}
-              description={recoveryCopy(snapshot, t)}
-              errorCode={
-                snapshot.errorCode
-                  ? `${snapshot.errorCode} · ${snapshot.operationReference}`
-                  : undefined
-              }
-              diagnosticsLabel={t('Diagnostics')}
-              primaryButton={{ label: t('Check again'), onClick: () => void probe() }}
-            />
-          </div>
-        ) : snapshot.errorCode && !busy ? (
-          <div className="flex justify-center">
-            <ErrorNotice
-              role="alert"
-              icon={CircleX}
-              tone={errorTone(snapshot.errorCode)}
-              title={statusCopy(snapshot, t)}
-              description={recoveryCopy(snapshot, t)}
-              errorCode={`${snapshot.errorCode} · ${snapshot.operationReference}`}
-              diagnosticsLabel={t('Diagnostics')}
-              primaryButton={
-                canInstallMissingDependencies
-                  ? {
-                      label:
-                        snapshot.errorCode === 'wsl_dependency_install_failed' ||
-                        snapshot.errorCode === 'wsl_dependency_install_unconfirmed'
-                          ? t('Try installation again')
-                          : t('Install missing dependencies'),
-                      onClick: () => setConfirmDependencyInstall(true)
-                    }
-                  : undefined
-              }
-            />
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 text-sm font-medium">
-            {busy ? (
-              <LoaderCircle
-                className="size-4 animate-spin text-status-info-foreground"
-                aria-hidden="true"
-              />
-            ) : snapshot.state === 'ready' ? (
-              <CheckCircle2 className="size-4 text-status-success-foreground" aria-hidden="true" />
-            ) : (
-              <CircleX className="size-4 text-status-failure-foreground" aria-hidden="true" />
-            )}
-            <span role="status">
-              {installBusy && setupStatus
-                ? operationCopy(setupStatus.operation, t)
-                : statusCopy(snapshot, t)}
-            </span>
-          </div>
-        )}
+        {statusSurface}
 
         {!busy &&
         setupStatus?.operation.state === 'finished' &&
@@ -712,9 +790,9 @@ export const WslLocalShellSection = ({
           </div>
         ) : null}
 
-        {!busy && firstInitializationDistro ? (
+        {!busy && initializationDistro ? (
           <div className="mt-4">
-            <Button type="button" onClick={() => void openTerminal(firstInitializationDistro)}>
+            <Button type="button" onClick={() => void openTerminal(initializationDistro)}>
               <SquareTerminal aria-hidden="true" />
               {t('Open distribution terminal')}
             </Button>
@@ -766,16 +844,7 @@ export const WslLocalShellSection = ({
           <ul className="mt-4 grid gap-2 text-sm sm:grid-cols-2" aria-label={t('Readiness checks')}>
             {checks.map(([key, label]) => (
               <li key={key} className="flex items-center gap-2">
-                {snapshot.readiness?.[key] === true ? (
-                  <CheckCircle2
-                    className="size-4 text-status-success-foreground"
-                    aria-hidden="true"
-                  />
-                ) : snapshot.readiness?.[key] === false ? (
-                  <CircleX className="size-4 text-status-failure-foreground" aria-hidden="true" />
-                ) : (
-                  <CircleHelp className="size-4 text-muted-foreground" aria-hidden="true" />
-                )}
+                <ReadinessIndicator value={snapshot.readiness?.[key]} />
                 {label}
                 {snapshot.readiness?.[key] === undefined ? (
                   <span className="text-xs text-muted-foreground">{t('Not checked')}</span>
@@ -852,10 +921,7 @@ export const WslLocalShellSection = ({
               diagnosticsLabel={t('Diagnostics')}
               primaryButton={{
                 label: t('Try switching again'),
-                onClick: () =>
-                  void (shellSwitchFailed === 'wsl2-bash'
-                    ? activateWsl2Bash()
-                    : switchToPowerShell())
+                onClick: retryShellSwitch
               }}
             />
           </div>

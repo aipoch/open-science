@@ -66,6 +66,7 @@ export const SkillMentionPopup = ({
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const generatedListboxId = useId()
   const resolvedListboxId = listboxId ?? generatedListboxId
+  const isWindows = window.api?.platform === 'win32'
 
   // Catalog ownership stays in the store; only this popup's retry feedback is local.
   useEffect(() => {
@@ -80,7 +81,7 @@ export const SkillMentionPopup = ({
   }, [skillsLoaded, skills.length, loadSkills, retryAttempt])
 
   useEffect(() => {
-    if (window.api?.platform !== 'win32') return
+    if (!isWindows) return
     const getStatus = window.api?.settings?.getWsl2BashPreviewStatus
     if (!getStatus) return
     let active = true
@@ -94,7 +95,7 @@ export const SkillMentionPopup = ({
     return () => {
       active = false
     }
-  }, [])
+  }, [isWindows])
 
   const visibleSkills = useMemo(() => {
     const allowed = allowedSkillIds ? new Set(allowedSkillIds) : undefined
@@ -136,16 +137,14 @@ export const SkillMentionPopup = ({
     )
   }, [visibleSkills, query])
 
-  const productCommandMatches = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    return (
-      window.api?.platform === 'win32' &&
-      onSelectWslSetup !== undefined &&
-      (needle.length === 0 ||
-        '/setup-wsl'.includes(needle) ||
-        'set up or repair wsl2 bash'.includes(needle))
-    )
-  }, [onSelectWslSetup, query])
+  const productCommandNeedle = query.trim().toLowerCase()
+  const productCommandMatches =
+    isWindows &&
+    onSelectWslSetup !== undefined &&
+    (productCommandNeedle.length === 0 ||
+      '/setup-wsl'.includes(productCommandNeedle) ||
+      'set up or repair wsl2 bash'.includes(productCommandNeedle))
+  const wslSetupOptionIndex = matches.length
   const optionCount = matches.length + (productCommandMatches ? 1 : 0)
 
   const [activeIndex, setActiveIndex] = useState(0)
@@ -193,7 +192,7 @@ export const SkillMentionPopup = ({
       ) {
         if (
           productCommandMatches &&
-          safeIndex === matches.length &&
+          safeIndex === wslSetupOptionIndex &&
           wslStatus?.available !== false
         ) {
           event.preventDefault()
@@ -218,6 +217,7 @@ export const SkillMentionPopup = ({
     optionCount,
     productCommandMatches,
     safeIndex,
+    wslSetupOptionIndex,
     onSelect,
     onSelectWslSetup,
     onClose,
@@ -283,15 +283,14 @@ export const SkillMentionPopup = ({
           </li>
         )}
         {matches.map(({ skill, positions }, index) => {
-          const optionIndex = index
-          const isActive = optionIndex === safeIndex
+          const isActive = index === safeIndex
           return (
             <li
               key={skill.id}
-              id={`${resolvedListboxId}-option-${optionIndex}`}
+              id={`${resolvedListboxId}-option-${index}`}
               role="option"
               aria-selected={isActive}
-              onMouseEnter={() => setActiveIndex(optionIndex)}
+              onMouseEnter={() => setActiveIndex(index)}
               // Keep the editor focused/caret intact so the mention stays open long enough for the click.
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => onSelect(skill)}
@@ -316,23 +315,21 @@ export const SkillMentionPopup = ({
         })}
         {productCommandMatches ? (
           <li
-            id={`${resolvedListboxId}-option-${matches.length}`}
+            id={`${resolvedListboxId}-option-${wslSetupOptionIndex}`}
             role="option"
-            aria-selected={safeIndex === matches.length}
+            aria-selected={safeIndex === wslSetupOptionIndex}
             aria-disabled={wslStatus?.available === false}
             data-testid="product-command-setup-wsl"
-            onMouseEnter={() => setActiveIndex(matches.length)}
+            onMouseEnter={() => setActiveIndex(wslSetupOptionIndex)}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               if (wslStatus?.available !== false) onSelectWslSetup?.()
             }}
-            className={`w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-sm text-text-100 hover:bg-bg-200 hover:text-text-000 transition-colors ${wslStatus?.available === false ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}${safeIndex === matches.length ? ' bg-bg-200 !text-text-000' : ''}`}
+            className={`w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-sm text-text-100 hover:bg-bg-200 hover:text-text-000 transition-colors ${wslStatus?.available === false ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}${safeIndex === wslSetupOptionIndex ? ' bg-bg-200 !text-text-000' : ''}`}
           >
             <SquareTerminal className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="truncate font-medium text-sm">/setup-wsl</span>
-              </div>
+              <div className="truncate font-medium text-sm">/setup-wsl</div>
               <div className="text-xs text-text-300 line-clamp-2 mt-0.5">
                 {wslStatus && !wslStatus.available
                   ? t('WSL2 setup is unavailable on this system ({{reason}}).', {

@@ -43,7 +43,7 @@ class WslSetupSessionOwner {
   }
 
   mintLocalToken(): string {
-    if ((this.options.platform ?? process.platform) !== 'win32') {
+    if (!this.isWindows()) {
       throw new Error('WSL setup Sessions are only available on Windows.')
     }
     this.pruneExpired()
@@ -76,7 +76,7 @@ class WslSetupSessionOwner {
         const sessions = new Set(await this.sessions())
         sessions.add(sessionId)
         await this.persist(sessions)
-        this.loaded = Promise.resolve(sessions)
+        this.rememberSessions(sessions)
       } catch (error) {
         if (match.pending.expiresAt > this.now()) this.pending.set(id, match.pending)
         else this.pending.delete(id)
@@ -98,7 +98,7 @@ class WslSetupSessionOwner {
       const sessions = new Set(await this.sessions())
       sessions.delete(sessionId)
       await this.persist(sessions)
-      this.loaded = Promise.resolve(sessions)
+      this.rememberSessions(sessions)
       if (match.pending.expiresAt > this.now()) {
         this.pending.set(match.id, {
           digest: match.pending.digest,
@@ -111,14 +111,14 @@ class WslSetupSessionOwner {
   }
 
   async isBound(sessionId: string): Promise<boolean> {
-    if ((this.options.platform ?? process.platform) !== 'win32') return false
+    if (!this.isWindows()) return false
     return (await this.sessions()).has(sessionId)
   }
 
   async projectSessionSummaries<T extends Readonly<{ id: string }>>(
     summaries: readonly T[]
   ): Promise<Array<T & Readonly<{ wslSetup?: true }>>> {
-    if ((this.options.platform ?? process.platform) !== 'win32') return [...summaries]
+    if (!this.isWindows()) return [...summaries]
     const sessions = await this.sessions()
     return summaries.map((summary) =>
       sessions.has(summary.id) ? { ...summary, wslSetup: true as const } : summary
@@ -130,7 +130,7 @@ class WslSetupSessionOwner {
       const sessions = new Set(await this.sessions())
       if (!sessions.delete(sessionId)) return
       await this.persist(sessions)
-      this.loaded = Promise.resolve(sessions)
+      this.rememberSessions(sessions)
     })
   }
 
@@ -142,7 +142,7 @@ class WslSetupSessionOwner {
       )
       if (retained.size === sessions.size) return
       await this.persist(retained)
-      this.loaded = Promise.resolve(retained)
+      this.rememberSessions(retained)
     })
   }
 
@@ -160,6 +160,10 @@ class WslSetupSessionOwner {
     )
   }
 
+  private rememberSessions(sessionIds: Set<string>): void {
+    this.loaded = Promise.resolve(sessionIds)
+  }
+
   private enqueue(operation: () => Promise<void>): Promise<void> {
     const result = this.mutationTail.then(operation, operation)
     this.mutationTail = result.catch(() => undefined)
@@ -173,7 +177,7 @@ class WslSetupSessionOwner {
   private matchingPendingToken(
     token: unknown
   ): Readonly<{ id: string; pending: PendingToken }> | undefined {
-    if ((this.options.platform ?? process.platform) !== 'win32' || typeof token !== 'string') {
+    if (!this.isWindows() || typeof token !== 'string') {
       return undefined
     }
     this.pruneExpired()
@@ -185,9 +189,10 @@ class WslSetupSessionOwner {
     if (!pending || (pending.expiresAt <= this.now() && !pending.preparedSessionId))
       return undefined
     const actual = this.digest(secret)
-    return actual.length === pending.digest.length && timingSafeEqual(actual, pending.digest)
-      ? { id, pending }
-      : undefined
+    if (actual.length !== pending.digest.length || !timingSafeEqual(actual, pending.digest)) {
+      return undefined
+    }
+    return { id, pending }
   }
 
   private pruneExpired(): void {
@@ -199,6 +204,10 @@ class WslSetupSessionOwner {
 
   private now(): number {
     return (this.options.now ?? Date.now)()
+  }
+
+  private isWindows(): boolean {
+    return (this.options.platform ?? process.platform) === 'win32'
   }
 }
 

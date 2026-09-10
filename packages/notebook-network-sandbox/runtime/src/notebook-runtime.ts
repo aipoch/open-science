@@ -72,6 +72,9 @@ type SandboxProcessOutcome = Readonly<{
 
 type SandboxCleanupReason = 'exit' | 'cancel' | 'timeout' | 'spawn-failed'
 
+const cleanupComplete = (result: SandboxCleanupResult): boolean =>
+  result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
+
 type NetworkWrapRequest = Readonly<{
   target?: NotebookSandboxTarget
   command: string
@@ -259,7 +262,7 @@ const wrap = async (
         const cleanup = await cleanupAfterCommand(request.commandId, 'spawn-failed', {
           processesTerminated: true
         })
-        if (!Object.values(cleanup).every(Boolean)) {
+        if (!cleanupComplete(cleanup)) {
           throw new Error(
             'SHELL_CLEANUP_INCOMPLETE: WSL2 shell preparation cleanup could not be verified.',
             { cause: error }
@@ -364,22 +367,20 @@ const closeContext = async (
   ])
   const platformResult =
     temporaryResources.status === 'fulfilled' ? temporaryResources.value : false
-  const platformProcessesTerminated =
+  const platformCleanup =
     typeof platformResult === 'object'
-      ? platformResult.processesTerminated
-      : platformResult !== false
-  const platformNetworkClosed =
-    typeof platformResult === 'object' ? platformResult.networkClosed : platformResult !== false
-  const platformTemporaryResourcesRemoved =
-    typeof platformResult === 'object'
-      ? platformResult.temporaryResourcesRemoved
-      : platformResult !== false
+      ? platformResult
+      : {
+          processesTerminated: platformResult !== false,
+          networkClosed: platformResult !== false,
+          temporaryResourcesRemoved: platformResult !== false
+        }
   return {
     processesTerminated: context.platformOwnsProcesses
-      ? platformProcessesTerminated
-      : platformProcessesTerminated && processOutcome.processesTerminated,
-    networkClosed: network.status === 'fulfilled' && platformNetworkClosed,
-    temporaryResourcesRemoved: platformTemporaryResourcesRemoved
+      ? platformCleanup.processesTerminated
+      : platformCleanup.processesTerminated && processOutcome.processesTerminated,
+    networkClosed: network.status === 'fulfilled' && platformCleanup.networkClosed,
+    temporaryResourcesRemoved: platformCleanup.temporaryResourcesRemoved
   }
 }
 
@@ -398,7 +399,7 @@ const cleanupAfterCommand = async (
   }
   const task = closeContext(context, reason, processOutcome)
     .then((result) => {
-      if (Object.values(result).every(Boolean)) {
+      if (cleanupComplete(result)) {
         commandContexts.delete(commandId)
         violations.forget(commandId)
       }
@@ -431,7 +432,7 @@ const reset = async (): Promise<void> => {
     ...active.map(([id, context]) =>
       closeContext(context, 'cancel', { processesTerminated: false }).then((result) => {
         const complete = context.platformOwnsProcesses
-          ? Object.values(result).every(Boolean)
+          ? cleanupComplete(result)
           : result.networkClosed && result.temporaryResourcesRemoved
         if (!complete) return
         commandContexts.delete(id)

@@ -82,7 +82,11 @@ export const runPackagedWsl2RestartCertification = async (
   }
 
   const cleanup = await prepared.cleanup('spawn-failed', { processesTerminated: true })
-  if (!Object.values(cleanup).every(Boolean)) {
+  if (
+    !cleanup.processesTerminated ||
+    !cleanup.networkClosed ||
+    !cleanup.temporaryResourcesRemoved
+  ) {
     throw new Error('SHELL_CLEANUP_INCOMPLETE: Packaged WSL2 certification cleanup failed.')
   }
   if (preparationError) throw preparationError

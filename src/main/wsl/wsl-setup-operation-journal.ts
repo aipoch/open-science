@@ -55,59 +55,68 @@ const validSelectionPart = (value: unknown, maxLength: number): value is string 
   value.length <= maxLength &&
   !/[\0\r\n]/.test(value)
 
+const isOperationKind = (value: unknown): value is WslSetupOperationKind =>
+  value === 'install-platform' ||
+  value === 'install-recommended-distro' ||
+  value === 'install-runtime-dependencies'
+
+const isSerializedOperation = (value: unknown): value is SerializedOperation => {
+  if (!value || typeof value !== 'object') return false
+  const operation = value as Partial<SerializedOperation>
+  return (
+    isOperationKind(operation.kind) &&
+    typeof operation.operationReference === 'string' &&
+    operation.operationReference.length > 0 &&
+    typeof operation.startedAt === 'number' &&
+    Number.isFinite(operation.startedAt)
+  )
+}
+
+const invalidOperation = (): Error =>
+  new Error('WSL setup operation journal contains an invalid operation.')
+
 const decode = (contents: string): WslSetupOperationRecord | undefined => {
   const value = JSON.parse(contents) as Partial<JournalDocument>
   if (value.version !== JOURNAL_VERSION || !('operation' in value)) {
     throw new Error('WSL setup operation journal has an invalid format.')
   }
   if (value.operation === null) return undefined
-  const operation = value.operation as SerializedOperation | undefined
-  if (
-    !operation ||
-    (operation.kind !== 'install-platform' &&
-      operation.kind !== 'install-recommended-distro' &&
-      operation.kind !== 'install-runtime-dependencies') ||
-    typeof operation.operationReference !== 'string' ||
-    !operation.operationReference ||
-    typeof operation.startedAt !== 'number' ||
-    !Number.isFinite(operation.startedAt)
-  ) {
-    throw new Error('WSL setup operation journal contains an invalid operation.')
-  }
-  if (operation.kind === 'install-runtime-dependencies') {
-    const selection = operation.selection as Partial<WslSelection> | null | undefined
-    if (
-      !selection ||
-      !validSelectionPart(selection.distro, 256) ||
-      !validSelectionPart(selection.user, 128) ||
-      selection.user === 'root'
-    ) {
-      throw new Error('WSL setup operation journal contains an invalid operation.')
-    }
-    return Object.freeze({
-      kind: operation.kind,
-      operationReference: operation.operationReference,
-      startedAt: operation.startedAt,
-      selection: Object.freeze({ distro: selection.distro, user: selection.user })
-    })
-  }
-  if (operation.kind === 'install-recommended-distro') {
-    if (operation.distro !== undefined && !validSelectionPart(operation.distro, 256)) {
-      throw new Error('WSL setup operation journal contains an invalid operation.')
-    }
-    return Object.freeze({
-      kind: operation.kind,
-      operationReference: operation.operationReference,
-      startedAt: operation.startedAt,
-      // Version 1 records created before distro selection always installed Ubuntu 22.04.
-      distro: operation.distro ?? 'Ubuntu-22.04'
-    })
-  }
-  return Object.freeze({
-    kind: operation.kind,
+  if (!isSerializedOperation(value.operation)) throw invalidOperation()
+  const operation = value.operation
+  const base = {
     operationReference: operation.operationReference,
     startedAt: operation.startedAt
-  })
+  }
+  switch (operation.kind) {
+    case 'install-runtime-dependencies': {
+      const selection = operation.selection as Partial<WslSelection> | null | undefined
+      if (
+        !selection ||
+        !validSelectionPart(selection.distro, 256) ||
+        !validSelectionPart(selection.user, 128) ||
+        selection.user === 'root'
+      ) {
+        throw invalidOperation()
+      }
+      return Object.freeze({
+        ...base,
+        kind: operation.kind,
+        selection: Object.freeze({ distro: selection.distro, user: selection.user })
+      })
+    }
+    case 'install-recommended-distro':
+      if (operation.distro !== undefined && !validSelectionPart(operation.distro, 256)) {
+        throw invalidOperation()
+      }
+      return Object.freeze({
+        ...base,
+        kind: operation.kind,
+        // Version 1 records created before distro selection always installed Ubuntu 22.04.
+        distro: operation.distro ?? 'Ubuntu-22.04'
+      })
+    case 'install-platform':
+      return Object.freeze({ ...base, kind: operation.kind })
+  }
 }
 
 export class FileWslSetupOperationJournal implements WslSetupOperationJournal {

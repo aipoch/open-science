@@ -316,6 +316,30 @@ class NotebookExecutionTimeoutError extends Error {
   }
 }
 
+const kernelExitReason = (code: number | null, signal: NodeJS.Signals | null): string => {
+  if (code !== null) return ` with exit code ${code}`
+  if (signal) return ` after signal ${signal}`
+  return ''
+}
+
+const kernelExitError = (
+  proc: ProcState,
+  code: number | null,
+  signal: NodeJS.Signals | null
+): Error => {
+  const pending = proc.pending
+  if (pending?.timeout?.timedOut && pending.timeoutMs !== undefined) {
+    return new NotebookExecutionTimeoutError(
+      `Notebook execution timed out after ${pending.timeoutMs}ms.`
+    )
+  }
+  const stderr = proc.annotateStderr(proc.stderrTail).trim()
+  return new Error(
+    `Notebook kernel process exited${kernelExitReason(code, signal)}.` +
+      (stderr ? `\n${stderr}` : '')
+  )
+}
+
 class NotebookExecutionCancelledError extends Error {
   constructor() {
     super('Notebook execution was cancelled.')
@@ -864,20 +888,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       this.disarmIdleTimer(proc)
       this.procs.delete(key)
       proc.readline.close()
-      const pending = proc.pending
-      const terminationError =
-        pending?.timeout?.timedOut && pending.timeoutMs !== undefined
-          ? new NotebookExecutionTimeoutError(
-              `Notebook execution timed out after ${pending.timeoutMs}ms.`
-            )
-          : (() => {
-              const reason =
-                code !== null ? ` with exit code ${code}` : signal ? ` after signal ${signal}` : ''
-              const stderr = proc.annotateStderr(proc.stderrTail).trim()
-              return new Error(
-                `Notebook kernel process exited${reason}.` + (stderr ? `\n${stderr}` : '')
-              )
-            })()
+      const terminationError = kernelExitError(proc, code, signal)
       proc.terminationError = terminationError
       // Publish the crash as soon as the direct child exits. Process-tree and sandbox cleanup still
       // gate settlement of any in-flight execution, but status observers should not have to wait for

@@ -115,6 +115,11 @@ const GUEST_CLEANUP_TIMEOUT_MS = 5_000
 
 const normalizeCapture = (value: string): string => value.replaceAll('\0', '')
 
+const commandExitCode = (error: unknown): number => {
+  if (!error || typeof error !== 'object' || !('code' in error)) return error ? 1 : 0
+  return typeof error.code === 'number' ? error.code : 1
+}
+
 const markerValue = (output: string, marker: string): string | undefined => {
   const prefix = `${MARKER_PREFIX}${marker}:`
   return normalizeCapture(output)
@@ -412,9 +417,8 @@ const defaultRunGuest: WslGuestCommandRunner = ({ distro, user, args, timeoutMs,
           reject(error)
           return
         }
-        const exitCode = error && typeof error.code === 'number' ? error.code : error ? 1 : 0
         resolve({
-          exitCode,
+          exitCode: commandExitCode(error),
           stdout: Buffer.from(stdout).toString('utf8'),
           stderr: Buffer.from(stderr).toString('utf8')
         })
@@ -617,6 +621,19 @@ const durableFixturePaths = (
 const isMissingPathError = (error: unknown): boolean =>
   Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
 
+const pathExists = async (
+  path: string,
+  operations: WslFilesystemSpikeFixtureOperations
+): Promise<boolean> => {
+  try {
+    await operations.stat(path)
+    return true
+  } catch (error) {
+    if (isMissingPathError(error)) return false
+    throw error
+  }
+}
+
 const directoryIdentity = async (
   path: string,
   operations: WslFilesystemSpikeFixtureOperations
@@ -781,15 +798,7 @@ const removeOwnedFixture = async (
       if (cleanupRoot.state === 'removed') continue
       if (cleanupRoot.state === 'absent') {
         const ownedPathExists = await Promise.all(
-          [stagingPath, root, quarantine].map(async (path) => {
-            try {
-              await operations.stat(path)
-              return true
-            } catch (error) {
-              if (isMissingPathError(error)) return false
-              throw error
-            }
-          })
+          [stagingPath, root, quarantine].map((path) => pathExists(path, operations))
         )
         if (ownedPathExists.some(Boolean)) throw new Error('unowned fixture path exists')
         await updateRootState(name, { state: 'removed', identity: undefined })
@@ -797,13 +806,7 @@ const removeOwnedFixture = async (
       }
       if (!cleanupRoot.identity) throw new Error('missing fixture directory identity')
       if (cleanupRoot.state === 'staging') {
-        let stagingExists = true
-        try {
-          await operations.stat(stagingPath)
-        } catch (error) {
-          if (isMissingPathError(error)) stagingExists = false
-          else throw error
-        }
+        const stagingExists = await pathExists(stagingPath, operations)
         if (stagingExists) {
           await removeIdentityBoundTree(stagingPath, cleanupRoot.identity, operations)
           await updateRootState(name, { state: 'removed', identity: undefined })
@@ -817,16 +820,7 @@ const removeOwnedFixture = async (
       }
       const expectedIdentity = cleanupRoot.identity
       if (!expectedIdentity) throw new Error('missing fixture directory identity')
-      let quarantineExists = true
-      try {
-        await operations.stat(quarantine)
-      } catch (error) {
-        if (isMissingPathError(error)) {
-          quarantineExists = false
-        } else {
-          throw error
-        }
-      }
+      let quarantineExists = await pathExists(quarantine, operations)
       if (cleanupRoot.state === 'quarantined') {
         if (quarantineExists) {
           await removeIdentityBoundTree(quarantine, expectedIdentity, operations)
@@ -835,16 +829,7 @@ const removeOwnedFixture = async (
         continue
       }
       if (!quarantineExists) {
-        let rootExists = true
-        try {
-          await operations.stat(root)
-        } catch (error) {
-          if (isMissingPathError(error)) {
-            rootExists = false
-          } else {
-            throw error
-          }
-        }
+        const rootExists = await pathExists(root, operations)
         if (!rootExists) {
           await updateRootState(name, { state: 'removed', identity: undefined })
           continue
@@ -1102,6 +1087,112 @@ const unavailable = (
   phase: Extract<WslFilesystemCapabilityResult, { kind: 'unavailable' }>['phase']
 ): WslFilesystemCapabilityResult => ({ kind: 'unavailable', code, phase })
 
+type GuestFixturePaths = readonly [string, string, string, string]
+
+const mapFixturePaths = async (
+  runGuest: WslGuestCommandRunner,
+  request: WslFilesystemSpikeRequest,
+  fixture: WslFilesystemSpikeFixture
+): Promise<GuestFixturePaths | undefined> => {
+  const hostPaths = [
+    fixture.workspace,
+    fixture.readWriteRoot,
+    fixture.readOnlyRoot,
+    fixture.unauthorizedRoot
+  ] as const
+  const guestPaths: string[] = []
+  for (const hostPath of hostPaths) {
+    const mapped = await run(runGuest, request, [
+      '/bin/sh',
+      '-c',
+      pathScript,
+      'path-map',
+      win32.resolve(hostPath)
+    ])
+    const guestPath = mapped.exitCode === 0 ? markerValue(mapped.stdout, 'PATH') : undefined
+    if (!guestPath?.startsWith('/')) return undefined
+    guestPaths.push(guestPath)
+  }
+  return [guestPaths[0]!, guestPaths[1]!, guestPaths[2]!, guestPaths[3]!]
+}
+
+const probeFilesystemFixture = async (
+  runGuest: WslGuestCommandRunner,
+  request: WslFilesystemSpikeRequest,
+  fixture: WslFilesystemSpikeFixture,
+  guestHome: string
+): Promise<WslFilesystemCapabilityResult> => {
+  const guestPaths = await mapFixturePaths(runGuest, request, fixture)
+  if (!guestPaths) return unavailable('wsl_workspace_unreachable', 'path-map')
+
+  const [guestWorkspace, guestReadWrite, guestReadOnly, guestUnauthorized] = guestPaths
+  const caseProbe = join(guestReadOnly, 'input.txt')
+    .toLocaleLowerCase('en-US')
+    .replaceAll('\\', '/')
+  let sandbox: WslGuestCommandResult
+  try {
+    sandbox = await run(runGuest, request, [
+      '/bin/sh',
+      '-c',
+      sandboxScript,
+      'sandbox',
+      guestWorkspace,
+      guestReadWrite,
+      guestReadOnly,
+      guestUnauthorized,
+      caseProbe,
+      guestHome
+    ])
+  } catch {
+    return unavailable('wsl_sandbox_policy_failed', 'sandbox')
+  }
+  const evidence = markerFields(markerValue(sandbox.stdout, 'RESULT'))
+  const required = [
+    'rw_read',
+    'rw_write',
+    'ro_read',
+    'ro_write_blocked',
+    'unauthorized_hidden',
+    'home_hidden',
+    'mount_hidden',
+    'media_hidden',
+    'interop_blocked',
+    'unicode_space'
+  ]
+  const caseBehavior = evidence.get('case')
+  if (
+    sandbox.exitCode !== 0 ||
+    required.some((key) => evidence.get(key) !== '1') ||
+    (caseBehavior !== 'insensitive' && caseBehavior !== 'sensitive')
+  ) {
+    return unavailable('wsl_sandbox_policy_failed', 'sandbox')
+  }
+
+  return {
+    kind: 'ready',
+    code: 'wsl_filesystem_sandbox_reusable',
+    evidence: {
+      architecture: 'x86_64',
+      authorizedRead: true,
+      authorizedWrite: true,
+      readOnlyWriteBlocked: true,
+      unauthorizedReadBlocked: true,
+      sensitiveMountsHidden: true,
+      windowsInteropBlocked: true,
+      unicodeAndSpacesSupported: true,
+      caseBehavior
+    }
+  }
+}
+
+const fixtureProbeFailure = (error: unknown): WslFilesystemCapabilityResult => {
+  if (error instanceof WslFixtureCleanupError) {
+    return unavailable('wsl_cleanup_incomplete', 'cleanup')
+  }
+  if (error instanceof WslFixtureBusyError) return unavailable('wsl_fixture_busy', 'cleanup')
+  return unavailable('wsl_workspace_unreachable', 'path-map')
+}
+
 const probeWslFilesystemSandboxReuse = async (
   request: WslFilesystemSpikeRequest,
   dependencies: Readonly<{
@@ -1155,96 +1246,10 @@ const probeWslFilesystemSandboxReuse = async (
   let fixture: WslFilesystemSpikeFixture | undefined
   let capabilityResult: WslFilesystemCapabilityResult
   try {
-    capabilityResult = await (async (): Promise<WslFilesystemCapabilityResult> => {
-      fixture = await (dependencies.createFixture ?? createFixture)(request.workspace)
-      const hostPaths = [
-        fixture.workspace,
-        fixture.readWriteRoot,
-        fixture.readOnlyRoot,
-        fixture.unauthorizedRoot
-      ]
-      const guestPaths: string[] = []
-      for (const hostPath of hostPaths) {
-        const mapped = await run(runGuest, request, [
-          '/bin/sh',
-          '-c',
-          pathScript,
-          'path-map',
-          win32.resolve(hostPath)
-        ])
-        const guestPath = mapped.exitCode === 0 ? markerValue(mapped.stdout, 'PATH') : undefined
-        if (!guestPath?.startsWith('/')) {
-          return unavailable('wsl_workspace_unreachable', 'path-map')
-        }
-        guestPaths.push(guestPath)
-      }
-
-      const [guestWorkspace, guestReadWrite, guestReadOnly, guestUnauthorized] = guestPaths
-      const caseProbe = join(guestReadOnly, 'input.txt')
-        .toLocaleLowerCase('en-US')
-        .replaceAll('\\', '/')
-      let sandbox: WslGuestCommandResult
-      try {
-        sandbox = await run(runGuest, request, [
-          '/bin/sh',
-          '-c',
-          sandboxScript,
-          'sandbox',
-          guestWorkspace,
-          guestReadWrite,
-          guestReadOnly,
-          guestUnauthorized,
-          caseProbe,
-          guestHome
-        ])
-      } catch {
-        return unavailable('wsl_sandbox_policy_failed', 'sandbox')
-      }
-      const evidence = markerFields(markerValue(sandbox.stdout, 'RESULT'))
-      const required = [
-        'rw_read',
-        'rw_write',
-        'ro_read',
-        'ro_write_blocked',
-        'unauthorized_hidden',
-        'home_hidden',
-        'mount_hidden',
-        'media_hidden',
-        'interop_blocked',
-        'unicode_space'
-      ]
-      const caseBehavior = evidence.get('case')
-      if (
-        sandbox.exitCode !== 0 ||
-        required.some((key) => evidence.get(key) !== '1') ||
-        (caseBehavior !== 'insensitive' && caseBehavior !== 'sensitive')
-      ) {
-        return unavailable('wsl_sandbox_policy_failed', 'sandbox')
-      }
-
-      return {
-        kind: 'ready',
-        code: 'wsl_filesystem_sandbox_reusable',
-        evidence: {
-          architecture: 'x86_64',
-          authorizedRead: true,
-          authorizedWrite: true,
-          readOnlyWriteBlocked: true,
-          unauthorizedReadBlocked: true,
-          sensitiveMountsHidden: true,
-          windowsInteropBlocked: true,
-          unicodeAndSpacesSupported: true,
-          caseBehavior
-        }
-      }
-    })()
+    fixture = await (dependencies.createFixture ?? createFixture)(request.workspace)
+    capabilityResult = await probeFilesystemFixture(runGuest, request, fixture, guestHome)
   } catch (error) {
-    capabilityResult =
-      error instanceof WslFixtureCleanupError
-        ? unavailable('wsl_cleanup_incomplete', 'cleanup')
-        : error instanceof WslFixtureBusyError
-          ? unavailable('wsl_fixture_busy', 'cleanup')
-          : unavailable('wsl_workspace_unreachable', 'path-map')
+    capabilityResult = fixtureProbeFailure(error)
   }
   try {
     await fixture?.cleanup()

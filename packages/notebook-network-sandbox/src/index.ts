@@ -66,6 +66,17 @@ const sharesCleanupDomain = (
   return left.distro === right.distro && left.user === right.user
 }
 
+const cleanupComplete = (result: NotebookSandboxCleanupResult): boolean =>
+  result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
+
+const initializationFailureReason = (
+  status: Exclude<NotebookNetworkSandboxStatus, { kind: 'ready' }>
+): string => {
+  if (status.kind === 'setupRequired') return status.reasons.join('; ')
+  if (status.kind === 'unsupported') return `unsupported platform: ${status.platform}`
+  return status.message
+}
+
 const dependencyStatus = (
   platform: NodeJS.Platform,
   result: SandboxDependencyCheck
@@ -119,13 +130,9 @@ class NotebookNetworkSandbox {
     this.#initializing = (async () => {
       const status = await this.status()
       if (status.kind !== 'ready' && process.platform !== 'win32') {
-        const reason =
-          status.kind === 'setupRequired'
-            ? status.reasons.join('; ')
-            : status.kind === 'unsupported'
-              ? `unsupported platform: ${status.platform}`
-              : status.message
-        throw new Error(`Notebook network sandbox is not ready: ${reason}`)
+        throw new Error(
+          `Notebook network sandbox is not ready: ${initializationFailureReason(status)}`
+        )
       }
 
       await this.#backend.initialize(createRuntimeConfig(this.#options), async (request) => {
@@ -207,7 +214,7 @@ class NotebookNetworkSandbox {
         { processesTerminated: true },
         'spawn-failed'
       ).catch(() => undefined)
-      if (!cleanup || !Object.values(cleanup).every(Boolean)) {
+      if (!cleanup || !cleanupComplete(cleanup)) {
         throw new Error(
           'SHELL_CLEANUP_INCOMPLETE: Shell preparation cleanup could not be verified.',
           { cause: error }
@@ -231,7 +238,7 @@ class NotebookNetworkSandbox {
         if (cleanupPromise) return cleanupPromise
         cleanupPromise = this.#releaseCommand(commandId, processOutcome, reason).then(
           (result) => {
-            if (!Object.values(result).every(Boolean)) cleanupPromise = undefined
+            if (!cleanupComplete(result)) cleanupPromise = undefined
             return result
           },
           (error) => {
@@ -331,7 +338,7 @@ class NotebookNetworkSandbox {
         this.#releaseCommand(commandId, { processesTerminated: !command.prepared })
       )
     )
-    if (results.some((result) => !Object.values(result).every(Boolean))) {
+    if (results.some((result) => !cleanupComplete(result))) {
       throw new Error('Notebook network sandbox cleanup was incomplete.')
     }
     try {
@@ -367,7 +374,7 @@ class NotebookNetworkSandbox {
         command.cleanupRequest.processOutcome
       )
       .then((result) => {
-        if (Object.values(result).every(Boolean)) this.#forgetCommand(commandId)
+        if (cleanupComplete(result)) this.#forgetCommand(commandId)
         return result
       })
   }
@@ -387,7 +394,7 @@ class NotebookNetworkSandbox {
         )
       )
     )
-    if (results.some((result) => !Object.values(result).every(Boolean))) {
+    if (results.some((result) => !cleanupComplete(result))) {
       throw new Error('SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.')
     }
   }

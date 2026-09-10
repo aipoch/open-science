@@ -91,7 +91,7 @@ describe('SkillMentionPopup', () => {
     await act(async () => {
       root.render(
         <SkillMentionPopup
-          query="setup-wsl"
+          query=""
           onSelect={vi.fn()}
           onSelectWslSetup={onSelectWslSetup}
           onClose={vi.fn()}
@@ -108,7 +108,6 @@ describe('SkillMentionPopup', () => {
     expect(command?.querySelector('svg')).not.toBeNull()
     act(() => command?.click())
     expect(onSelectWslSetup).toHaveBeenCalledOnce()
-    delete (window as unknown as { api?: unknown }).api
   })
 
   it.each(['darwin', 'linux'])('does not offer the WSL setup command on %s', async (platform) => {
@@ -136,7 +135,6 @@ describe('SkillMentionPopup', () => {
 
     expect(document.body.querySelector('[data-testid="product-command-setup-wsl"]')).toBeNull()
     expect(getStatus).not.toHaveBeenCalled()
-    delete (window as unknown as { api?: unknown }).api
   })
 
   it('shows the exact Specialist scope and only Main-enabled Skills for Main', () => {

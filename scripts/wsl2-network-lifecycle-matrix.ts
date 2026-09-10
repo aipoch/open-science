@@ -1040,7 +1040,9 @@ const lifecycleCase = async (
 ): Promise<LifecycleResult> => {
   const receipt = `${guestRoot}/${name}.receipt`
   const readyReceipt = `${guestRoot}/${name}.ready`
-  const mode = name === 'normalExit' ? 'normal' : name === 'nonZeroExit' ? 'nonzero' : 'descendants'
+  let mode: 'normal' | 'nonzero' | 'descendants' = 'descendants'
+  if (name === 'normalExit') mode = 'normal'
+  else if (name === 'nonZeroExit') mode = 'nonzero'
   const startedAt = Date.now()
   let cleanupSucceeded = true
   const cleanupStatuses: Array<number | null> = []

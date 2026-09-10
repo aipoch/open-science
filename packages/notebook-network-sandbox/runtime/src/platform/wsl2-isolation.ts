@@ -54,6 +54,15 @@ type Wsl2ReleaseResult = Readonly<{
   temporaryResourcesRemoved: boolean
 }>
 
+type MappedFilesystemLayout = Readonly<{
+  cwd: string
+  readOnlyRoots: string[]
+  readWriteRoots: string[]
+  deniedReadRoots: string[]
+  deniedWriteRoots: string[]
+  privateRoot?: string
+}>
+
 type Wsl2Launch = Readonly<{
   argv: string[]
   env: NodeJS.ProcessEnv
@@ -602,6 +611,17 @@ const reconcileProfile = (request: Wsl2LaunchRequest): Promise<void> => {
 
 const unique = <T>(values: readonly T[]): T[] => [...new Set(values)]
 
+const cleanupComplete = (result: Wsl2ReleaseResult): boolean =>
+  result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
+
+const containsPosixPath = (parent: string, child: string): boolean =>
+  child === parent || child.startsWith(parent.endsWith('/') ? parent : `${parent}/`)
+
+const containsWindowsPath = (parent: string, child: string): boolean => {
+  const relative = win32.relative(parent, child)
+  return relative === '' || (!relative.startsWith('..') && !win32.isAbsolute(relative))
+}
+
 const mountParents = (path: string): string[] => {
   const parents: string[] = []
   let parent = posix.dirname(path)
@@ -612,13 +632,11 @@ const mountParents = (path: string): string[] => {
   return parents.reverse()
 }
 
-const wsl2Launch = async (request: Wsl2LaunchRequest): Promise<Wsl2Launch> => {
-  validateTarget(request.target)
-  request.signal?.throwIfAborted()
-  await reconcileProfile(request)
-  request.signal?.throwIfAborted()
+const createLaunchPathMapper = (
+  request: Wsl2LaunchRequest
+): ((path: string) => Promise<string>) => {
   const mapPath = request.mapPath ?? defaultPathMapper(request.target)
-  const map = async (path: string): Promise<string> => {
+  return async (path: string): Promise<string> => {
     try {
       const mapped = await mapPath(path, request.signal)
       request.signal?.throwIfAborted()
@@ -629,51 +647,171 @@ const wsl2Launch = async (request: Wsl2LaunchRequest): Promise<Wsl2Launch> => {
       throw new Error('WSL2 sandbox path mapping failed.')
     }
   }
+}
 
-  const cwd = await map(request.cwd)
-  const readOnlyRoots = await Promise.all(unique(request.filesystem.readOnlyRoots).map(map))
-  const readWriteRoots = await Promise.all(unique(request.filesystem.readWriteRoots).map(map))
-  const deniedReadRoots = await Promise.all(unique(request.filesystem.deniedReadRoots).map(map))
-  const deniedWriteRoots = await Promise.all(unique(request.filesystem.deniedWriteRoots).map(map))
-  const privateRoot = request.filesystem.privateRoot
-    ? await map(request.filesystem.privateRoot)
-    : undefined
-  const contains = (parent: string, child: string): boolean =>
-    child === parent || child.startsWith(parent.endsWith('/') ? parent : `${parent}/`)
-  const exposedRoots = [...readOnlyRoots, ...readWriteRoots]
-  const needsExplicitDeny = (path: string): boolean =>
-    !privateRoot ||
-    !contains(privateRoot, path) ||
-    exposedRoots.some((root) => contains(root, path))
-  const explicitDeniedReadRoots = deniedReadRoots.filter(needsExplicitDeny)
-  const explicitDeniedWriteRoots = deniedWriteRoots.filter(needsExplicitDeny)
+const mapFilesystemLayout = async (
+  request: Wsl2LaunchRequest,
+  map: (path: string) => Promise<string>
+): Promise<MappedFilesystemLayout> => ({
+  cwd: await map(request.cwd),
+  readOnlyRoots: await Promise.all(unique(request.filesystem.readOnlyRoots).map(map)),
+  readWriteRoots: await Promise.all(unique(request.filesystem.readWriteRoots).map(map)),
+  deniedReadRoots: await Promise.all(unique(request.filesystem.deniedReadRoots).map(map)),
+  deniedWriteRoots: await Promise.all(unique(request.filesystem.deniedWriteRoots).map(map)),
+  ...(request.filesystem.privateRoot
+    ? { privateRoot: await map(request.filesystem.privateRoot) }
+    : {})
+})
 
-  const guestEnvironment: Record<string, string> = {
+const createGuestEnvironment = async (
+  request: Wsl2LaunchRequest,
+  map: (path: string) => Promise<string>
+): Promise<Record<string, string>> => {
+  const environment: Record<string, string> = {
     HOME: '/tmp/open-science-home',
     LANG: 'C.UTF-8',
     LC_ALL: 'C.UTF-8',
     PATH: '/usr/bin:/bin'
   }
-  const token = `open-science-execution-${randomUUID()}`
-  const receipt = `/tmp/.open-science-execution-${token.slice('open-science-execution-'.length)}.receipt`
-  guestEnvironment.OPEN_SCIENCE_WSL_EXECUTION_TOKEN = token
-  const hostContains = (parent: string, child: string): boolean => {
-    const relative = win32.relative(parent, child)
-    return relative === '' || (!relative.startsWith('..') && !win32.isAbsolute(relative))
-  }
   for (const [key, value] of Object.entries(request.pathEnvironment ?? {})) {
     if (!value) continue
-    if (Object.hasOwn(guestEnvironment, key)) {
+    if (Object.hasOwn(environment, key)) {
       throw new Error('WSL2 sandbox path environment key is reserved.')
     }
     if (
       !WINDOWS_PATH.test(value) ||
-      !request.filesystem.readWriteRoots.some((root) => hostContains(root, value))
+      !request.filesystem.readWriteRoots.some((root) => containsWindowsPath(root, value))
     ) {
       throw new Error('WSL2 sandbox path environment is not writable.')
     }
-    guestEnvironment[key] = await map(value)
+    environment[key] = await map(value)
   }
+  return environment
+}
+
+const buildBubblewrapArguments = (
+  filesystem: MappedFilesystemLayout,
+  guestEnvironment: Readonly<Record<string, string>>,
+  bridgeSocketPath: string,
+  credentials: GatewayCredentials,
+  command: string
+): string[] => {
+  const { cwd, readOnlyRoots, readWriteRoots, deniedReadRoots, deniedWriteRoots, privateRoot } =
+    filesystem
+  const exposedRoots = [...readOnlyRoots, ...readWriteRoots]
+  const needsExplicitDeny = (path: string): boolean =>
+    !privateRoot ||
+    !containsPosixPath(privateRoot, path) ||
+    exposedRoots.some((root) => containsPosixPath(root, path))
+  const explicitDeniedReadRoots = deniedReadRoots.filter(needsExplicitDeny)
+  const explicitDeniedWriteRoots = deniedWriteRoots.filter(needsExplicitDeny)
+
+  const args = [
+    '/usr/bin/bwrap',
+    '--die-with-parent',
+    '--new-session',
+    // Includes the fresh network namespace that the guest bridge crosses explicitly.
+    '--unshare-all',
+    '--cap-drop',
+    'ALL',
+    '--ro-bind',
+    '/',
+    '/',
+    '--tmpfs',
+    '/run',
+    '--dir',
+    '/run/open-science-notebook',
+    '--bind',
+    bridgeSocketPath,
+    '/run/open-science-notebook/gateway.sock',
+    '--tmpfs',
+    '/home',
+    '--tmpfs',
+    '/mnt',
+    '--tmpfs',
+    '/media',
+    '--tmpfs',
+    '/tmp',
+    '--dir',
+    '/tmp/open-science-home',
+    '--dev',
+    '/dev',
+    '--proc',
+    '/proc'
+  ]
+
+  const coveredBySensitiveRoot = (path: string): boolean =>
+    ['/home', '/mnt', '/media'].some((root) => containsPosixPath(root, path))
+  const sensitiveRoots = unique([
+    '/home',
+    '/mnt',
+    '/media',
+    ...(privateRoot && !coveredBySensitiveRoot(privateRoot) ? [privateRoot] : [])
+  ])
+  const mountDestinations = unique([
+    ...readOnlyRoots,
+    ...readWriteRoots,
+    ...explicitDeniedReadRoots,
+    ...explicitDeniedWriteRoots
+  ])
+  const visibleParents = unique(mountDestinations.flatMap(mountParents)).filter(
+    (parent) => parent !== '/home' && parent !== '/mnt' && parent !== '/media'
+  )
+  for (const parent of visibleParents) args.push('--dir', parent)
+  // Writable and hidden directories need concrete destinations. Read-only binds can point to files,
+  // so bubblewrap creates those destinations from the source type when the bind is applied.
+  for (const root of readWriteRoots) args.push('--dir', root)
+  for (const root of explicitDeniedReadRoots) args.push('--dir', root)
+
+  // Ancestor binds must precede descendant binds. Denies are applied afterward so a narrower grant
+  // cannot reopen a subtree owned by a denied ancestor.
+  const mountPriority = { readOnly: 0, readWrite: 1 } as const
+  const allowedMounts = [
+    ...readOnlyRoots.map((path) => ({ kind: 'readOnly' as const, path })),
+    ...readWriteRoots.map((path) => ({ kind: 'readWrite' as const, path }))
+  ].sort((left, right) => {
+    const depth = left.path.split('/').length - right.path.split('/').length
+    return depth || mountPriority[left.kind] - mountPriority[right.kind]
+  })
+  for (const mount of allowedMounts) {
+    args.push(mount.kind === 'readOnly' ? '--ro-bind' : '--bind', mount.path, mount.path)
+  }
+  for (const root of explicitDeniedWriteRoots) args.push('--ro-bind', root, root)
+  for (const root of explicitDeniedReadRoots) args.push('--tmpfs', root)
+  // This remount is non-recursive: explicit writable child mounts remain writable while ungranted
+  // siblings under the sensitive scaffolding become read-only.
+  for (const root of sensitiveRoots) args.push('--remount-ro', root)
+  args.push('--clearenv')
+  for (const [key, value] of Object.entries(guestEnvironment)) {
+    args.push('--setenv', key, value)
+  }
+  args.push(
+    '--chdir',
+    cwd,
+    '--',
+    '/usr/bin/python3',
+    '-c',
+    sandboxGatewayLauncher,
+    '/run/open-science-notebook/gateway.sock',
+    '3128',
+    credentials.username,
+    credentials.password,
+    command
+  )
+  return args
+}
+
+const wsl2Launch = async (request: Wsl2LaunchRequest): Promise<Wsl2Launch> => {
+  validateTarget(request.target)
+  request.signal?.throwIfAborted()
+  await reconcileProfile(request)
+  request.signal?.throwIfAborted()
+  const map = createLaunchPathMapper(request)
+  const filesystem = await mapFilesystemLayout(request, map)
+  const guestEnvironment = await createGuestEnvironment(request, map)
+  const token = `open-science-execution-${randomUUID()}`
+  const receipt = `/tmp/.open-science-execution-${token.slice('open-science-execution-'.length)}.receipt`
+  guestEnvironment.OPEN_SCIENCE_WSL_EXECUTION_TOKEN = token
 
   if (!request.gatewayPort || !request.gatewayCredentials) {
     throw new Error('WSL2 network gateway is unavailable.')
@@ -711,7 +849,7 @@ const wsl2Launch = async (request: Wsl2LaunchRequest): Promise<Wsl2Launch> => {
     })
     releasePromise = attempt.then(
       (result) => {
-        if (!Object.values(result).every(Boolean)) releasePromise = undefined
+        if (!cleanupComplete(result)) releasePromise = undefined
         return result
       },
       (error) => {
@@ -735,7 +873,7 @@ const wsl2Launch = async (request: Wsl2LaunchRequest): Promise<Wsl2Launch> => {
   ownBridge(openedBridge)
   if (request.signal?.aborted) {
     const cleanup = await release('cancel')
-    if (!Object.values(cleanup).every(Boolean)) {
+    if (!cleanupComplete(cleanup)) {
       throw new Error(
         'SHELL_CLEANUP_INCOMPLETE: WSL2 bridge preparation cleanup could not be verified.'
       )
@@ -743,100 +881,11 @@ const wsl2Launch = async (request: Wsl2LaunchRequest): Promise<Wsl2Launch> => {
     request.signal.throwIfAborted()
   }
 
-  const bwrap = [
-    '/usr/bin/bwrap',
-    '--die-with-parent',
-    '--new-session',
-    // Includes a fresh network namespace. Issue 06 deliberately has no gateway bridge.
-    '--unshare-all',
-    '--cap-drop',
-    'ALL',
-    '--ro-bind',
-    '/',
-    '/',
-    '--tmpfs',
-    '/run',
-    '--dir',
-    '/run/open-science-notebook',
-    '--bind',
+  const bwrap = buildBubblewrapArguments(
+    filesystem,
+    guestEnvironment,
     openedBridge.socketPath,
-    '/run/open-science-notebook/gateway.sock',
-    '--tmpfs',
-    '/home',
-    '--tmpfs',
-    '/mnt',
-    '--tmpfs',
-    '/media',
-    '--tmpfs',
-    '/tmp',
-    '--dir',
-    '/tmp/open-science-home',
-    '--dev',
-    '/dev',
-    '--proc',
-    '/proc'
-  ]
-
-  const coveredBySensitiveRoot = (path: string): boolean =>
-    ['/home', '/mnt', '/media'].some((root) => path === root || path.startsWith(`${root}/`))
-  const sensitiveRoots = unique([
-    '/home',
-    '/mnt',
-    '/media',
-    ...(privateRoot && !coveredBySensitiveRoot(privateRoot) ? [privateRoot] : [])
-  ])
-  const mountDestinations = unique([
-    ...readOnlyRoots,
-    ...readWriteRoots,
-    ...explicitDeniedReadRoots,
-    ...explicitDeniedWriteRoots
-  ])
-  const visibleParents = unique(mountDestinations.flatMap(mountParents)).filter(
-    (parent) => parent !== '/home' && parent !== '/mnt' && parent !== '/media'
-  )
-  for (const parent of visibleParents) bwrap.push('--dir', parent)
-  // Materialize writable/hidden directories. Read-only binds may refer to either files or
-  // directories, so let bwrap create those destinations with the correct source type below.
-  for (const root of readWriteRoots) bwrap.push('--dir', root)
-  for (const root of explicitDeniedReadRoots) bwrap.push('--dir', root)
-  // A later bind on an ancestor hides an earlier descendant mount. Apply allowed parents before
-  // their more-specific children; then apply denies last because a denied ancestor owns its entire
-  // subtree and must not be reopened by a narrower grant.
-  const mountPriority = { readOnly: 0, readWrite: 1 } as const
-  const allowedMounts = [
-    ...readOnlyRoots.map((path) => ({ kind: 'readOnly' as const, path })),
-    ...readWriteRoots.map((path) => ({ kind: 'readWrite' as const, path }))
-  ].sort((left, right) => {
-    const depth = left.path.split('/').length - right.path.split('/').length
-    return depth || mountPriority[left.kind] - mountPriority[right.kind]
-  })
-  for (const mount of allowedMounts) {
-    if (mount.kind === 'readOnly') {
-      bwrap.push('--ro-bind', mount.path, mount.path)
-    } else {
-      bwrap.push('--bind', mount.path, mount.path)
-    }
-  }
-  for (const root of explicitDeniedWriteRoots) bwrap.push('--ro-bind', root, root)
-  for (const root of explicitDeniedReadRoots) bwrap.push('--tmpfs', root)
-  // Seal the scaffolding only after all bind destinations exist. This remount is non-recursive:
-  // explicit writable child mounts remain writable, while ungranted siblings stay read-only.
-  for (const root of sensitiveRoots) bwrap.push('--remount-ro', root)
-  bwrap.push('--clearenv')
-  for (const [key, value] of Object.entries(guestEnvironment)) {
-    bwrap.push('--setenv', key, value)
-  }
-  bwrap.push(
-    '--chdir',
-    cwd,
-    '--',
-    '/usr/bin/python3',
-    '-c',
-    sandboxGatewayLauncher,
-    '/run/open-science-notebook/gateway.sock',
-    '3128',
-    request.gatewayCredentials.username,
-    request.gatewayCredentials.password,
+    request.gatewayCredentials,
     request.command
   )
 

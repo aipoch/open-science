@@ -93,6 +93,24 @@ export const WSL_DISTRO_INSTALL_TIMEOUT_MS = 10 * 60_000
 export const WSL_DEPENDENCY_INSTALL_TIMEOUT_MS = 10 * 60_000
 export const WSL_SETUP_DIAGNOSTICS_STALE = 'WSL_SETUP_DIAGNOSTICS_STALE'
 
+const decodeCommandOutput = (value: Buffer): string => {
+  const sample = value.subarray(0, Math.min(value.length, 64))
+  const nullBytes = [...sample].filter((byte) => byte === 0).length
+  return value.toString(nullBytes > sample.length / 4 ? 'utf16le' : 'utf8')
+}
+
+const commandExitCode = (error: unknown): number => {
+  if (!error || typeof error !== 'object' || !('code' in error)) return error ? 1 : 0
+  return typeof error.code === 'number' ? error.code : 1
+}
+
+const commandFailure = (error: unknown): WslCommandResult['failure'] => {
+  if (!error || typeof error !== 'object') return undefined
+  if ('code' in error && error.code === 'ENOENT') return 'not-found'
+  if ('killed' in error && error.killed === true) return 'timeout'
+  return undefined
+}
+
 const executeWsl: WslCommandRunner = {
   run: (args, options) =>
     new Promise((resolve) => {
@@ -101,27 +119,12 @@ const executeWsl: WslCommandRunner = {
         [...args],
         { windowsHide: true, timeout: options?.timeoutMs ?? 15_000, encoding: 'buffer' },
         (error, stdout, stderr) => {
-          const exitCode =
-            typeof (error as NodeJS.ErrnoException & { code?: unknown })?.code === 'number'
-              ? ((error as NodeJS.ErrnoException & { code: number }).code ?? 1)
-              : error
-                ? 1
-                : 0
-          const decode = (value: Buffer): string => {
-            const sample = value.subarray(0, Math.min(value.length, 64))
-            const nullBytes = [...sample].filter((byte) => byte === 0).length
-            return value.toString(nullBytes > sample.length / 4 ? 'utf16le' : 'utf8')
-          }
-          const code = (error as NodeJS.ErrnoException | null)?.code
+          const failure = commandFailure(error)
           resolve({
-            stdout: decode(stdout),
-            stderr: decode(stderr),
-            exitCode,
-            ...(code === 'ENOENT'
-              ? { failure: 'not-found' as const }
-              : (error as (NodeJS.ErrnoException & { killed?: boolean }) | null)?.killed
-                ? { failure: 'timeout' as const }
-                : {})
+            stdout: decodeCommandOutput(stdout),
+            stderr: decodeCommandOutput(stderr),
+            exitCode: commandExitCode(error),
+            ...(failure ? { failure } : {})
           })
         }
       )
@@ -152,7 +155,7 @@ const elevatedWslPlatformInstaller: WslPlatformInstaller = {
           else
             resolve({
               kind: 'exited',
-              exitCode: typeof code === 'number' ? code : error ? 1 : 0
+              exitCode: commandExitCode(error)
             })
         }
       )
@@ -200,31 +203,35 @@ const diagnosticFailure = (
   stage: WslSetupFailure['stage'],
   code: string,
   result?: WslCommandResult
-): WslSetupFailure => ({
-  stage,
-  code,
-  ...(result ? { exitCode: result.exitCode } : {}),
-  ...(result?.failure === 'timeout' ? { timedOut: true } : {}),
-  ...(result && boundedWslDiagnosticText(result.stdout)
-    ? { stdout: boundedWslDiagnosticText(result.stdout) }
-    : {}),
-  ...(result && boundedWslDiagnosticText(result.stderr)
-    ? { stderr: boundedWslDiagnosticText(result.stderr) }
-    : {})
-})
+): WslSetupFailure => {
+  const stdout = result && boundedWslDiagnosticText(result.stdout)
+  const stderr = result && boundedWslDiagnosticText(result.stderr)
+  return {
+    stage,
+    code,
+    ...(result ? { exitCode: result.exitCode } : {}),
+    ...(result?.failure === 'timeout' ? { timedOut: true } : {}),
+    ...(stdout ? { stdout } : {}),
+    ...(stderr ? { stderr } : {})
+  }
+}
+
+const diagnosticCheckState = (
+  value: boolean | undefined,
+  applicable: boolean
+): WslDiagnosticCheck['state'] => {
+  if (!applicable) return 'not-applicable'
+  if (value === true) return 'pass'
+  if (value === false) return 'fail'
+  return 'not-checked'
+}
 
 const check = (
   value: boolean | undefined,
   applicable: boolean,
   extra: Partial<Omit<WslDiagnosticCheck, 'state'>> = {}
 ): WslDiagnosticCheck => ({
-  state: !applicable
-    ? 'not-applicable'
-    : value === true
-      ? 'pass'
-      : value === false
-        ? 'fail'
-        : 'not-checked',
+  state: diagnosticCheckState(value, applicable),
   ...extra
 })
 
@@ -306,6 +313,118 @@ const supportErrorCode = (snapshot: WslSetupSnapshot): string => {
   }[snapshot.state]
 }
 
+const interruptedOperationConfirmed = (
+  record: WslSetupOperationRecord,
+  snapshot: WslSetupSnapshot
+): boolean => {
+  switch (record.kind) {
+    case 'install-platform':
+      return snapshot.state !== 'not-installed' && snapshot.state !== 'failed'
+    case 'install-runtime-dependencies':
+      return (
+        snapshot.readiness?.bash === true &&
+        snapshot.readiness.bwrap === true &&
+        snapshot.readiness.python3 === true
+      )
+    case 'install-recommended-distro':
+      return (
+        snapshot.state === 'restart-required' ||
+        snapshot.distros.some((distro) => distro.name === (record.distro ?? 'Ubuntu-22.04'))
+      )
+  }
+}
+
+const volumeErrorCode = (
+  volume: Exclude<WindowsVolumeProbeResult, { kind: 'local-ntfs' }>
+): string => {
+  switch (volume.kind) {
+    case 'not-local':
+      return 'wsl_workspace_not_local'
+    case 'not-ntfs':
+      return 'wsl_workspace_not_ntfs'
+    case 'unavailable':
+      return 'wsl_workspace_volume_unavailable'
+  }
+}
+
+const missingDependencyErrorCode = (bash: boolean, bwrap: boolean): string => {
+  if (!bash) return 'wsl_bash_missing'
+  if (!bwrap) return 'wsl_bwrap_missing'
+  return 'wsl_python3_missing'
+}
+
+const supportFailure = (snapshot: WslSetupSnapshot): WslSetupFailure | undefined => {
+  if (snapshot.failure) return snapshot.failure
+  if (snapshot.state === 'failed' || snapshot.state === 'dependency-required') {
+    return diagnosticFailure('platform', supportErrorCode(snapshot))
+  }
+  return undefined
+}
+
+const supportRecheck = (snapshot: WslSetupSnapshot, resultUnknown: boolean): string[] => {
+  if (resultUnknown) return ['platform', 'distribution', 'target', 'dependencies', 'networking']
+  if (snapshot.state === 'ready') return []
+  return ['target', 'dependencies', 'networking']
+}
+
+type DependencyVersions = Readonly<{ bash?: string; bwrap?: string; python3?: string }>
+type DefaultDistroUser = Readonly<{ user: string; isRoot: boolean }>
+
+const supportChecks = (
+  readiness: WslReadiness | undefined,
+  platformApplicable: boolean,
+  dependencyVersions: DependencyVersions
+): WslSupportHandoff['checks'] => ({
+  wsl2: check(readiness?.wsl2, platformApplicable),
+  home: check(readiness?.home, platformApplicable),
+  bash: check(readiness?.bash, platformApplicable, {
+    ...(dependencyVersions.bash ? { version: dependencyVersions.bash } : {})
+  }),
+  bwrap: check(readiness?.bwrap, platformApplicable, {
+    ...(dependencyVersions.bwrap ? { version: dependencyVersions.bwrap } : {})
+  }),
+  python3: check(readiness?.python3, platformApplicable, {
+    ...(dependencyVersions.python3 ? { version: dependencyVersions.python3 } : {}),
+    ...(readiness?.python3 !== undefined ? { path: '/usr/bin/python3' } : {})
+  }),
+  mirroredNetworking: check(readiness?.mirroredNetworking, platformApplicable),
+  namespaces: check(readiness?.namespaces, platformApplicable),
+  localWorkspace: check(readiness?.localWorkspace, platformApplicable)
+})
+
+const supportCapabilities = (readiness: WslReadiness | undefined): WslReadiness => ({
+  ...(typeof readiness?.wsl2 === 'boolean' ? { wsl2: readiness.wsl2 } : {}),
+  ...(typeof readiness?.home === 'boolean' ? { home: readiness.home } : {}),
+  ...(typeof readiness?.bash === 'boolean' ? { bash: readiness.bash } : {}),
+  ...(typeof readiness?.bwrap === 'boolean' ? { bwrap: readiness.bwrap } : {}),
+  ...(typeof readiness?.python3 === 'boolean' ? { python3: readiness.python3 } : {}),
+  ...(typeof readiness?.mirroredNetworking === 'boolean'
+    ? { mirroredNetworking: readiness.mirroredNetworking }
+    : {}),
+  ...(typeof readiness?.namespaces === 'boolean' ? { namespaces: readiness.namespaces } : {}),
+  ...(typeof readiness?.localWorkspace === 'boolean'
+    ? { localWorkspace: readiness.localWorkspace }
+    : {})
+})
+
+const supportDistros = (
+  snapshot: WslSetupSnapshot,
+  defaultUsers: ReadonlyMap<string, DefaultDistroUser>,
+  distroRelease: string | undefined
+): readonly WslDistro[] =>
+  snapshot.distros.map((distro) => {
+    const defaultUser = defaultUsers.get(distro.name)
+    return Object.freeze({
+      ...distro,
+      ...(defaultUser
+        ? { defaultUser: defaultUser.user, defaultUserIsRoot: defaultUser.isRoot }
+        : {}),
+      ...(distro.name === snapshot.selection?.distro && distroRelease
+        ? { release: distroRelease }
+        : {})
+    })
+  })
+
 export class WslSetupOwner {
   private readonly runner: WslCommandRunner
   private readonly installer: WslPlatformInstaller
@@ -382,15 +501,7 @@ export class WslSetupOwner {
         errorCode: 'wsl_install_interrupted'
       })
     }
-    const confirmed =
-      record.kind === 'install-platform'
-        ? snapshot.state !== 'not-installed' && snapshot.state !== 'failed'
-        : record.kind === 'install-runtime-dependencies'
-          ? snapshot.readiness?.bash === true &&
-            snapshot.readiness.bwrap === true &&
-            snapshot.readiness.python3 === true
-          : snapshot.state === 'restart-required' ||
-            snapshot.distros.some((distro) => distro.name === (record.distro ?? 'Ubuntu-22.04'))
+    const confirmed = interruptedOperationConfirmed(record, snapshot)
     if (!confirmed) {
       snapshot = {
         ...snapshot,
@@ -1190,6 +1301,71 @@ export class WslSetupOwner {
     return Object.freeze({ distro: saved.distro, user: saved.user })
   }
 
+  private async collectDefaultDistroUsers(
+    distros: readonly WslDistro[]
+  ): Promise<ReadonlyMap<string, DefaultDistroUser>> {
+    const defaultUsers = new Map<string, DefaultDistroUser>()
+    for (const distro of distros) {
+      if (distro.version !== 2) continue
+      const identity = await this.runner.run([
+        '--distribution',
+        distro.name,
+        '--exec',
+        'sh',
+        '-lc',
+        'id -un; id -u'
+      ])
+      const [user, uid, ...extra] = clean(identity.stdout).split('\n')
+      if (
+        identity.exitCode === 0 &&
+        extra.length === 0 &&
+        this.validName(user ?? '', 128) &&
+        /^\d+$/.test(uid ?? '')
+      ) {
+        defaultUsers.set(distro.name, { user, isRoot: uid === '0' })
+      }
+    }
+    return defaultUsers
+  }
+
+  private async collectSupportRuntimeDetails(
+    snapshot: WslSetupSnapshot,
+    selectedDistro: WslDistro | undefined
+  ): Promise<
+    Readonly<{
+      linuxKernelVersion: string
+      distroRelease?: string
+      dependencyVersions: DependencyVersions
+    }>
+  > {
+    if (!snapshot.selection || selectedDistro?.version !== 2) {
+      return { linuxKernelVersion: 'unknown', dependencyVersions: {} }
+    }
+    const details = await this.inGuest(snapshot.selection, [
+      'sh',
+      '-lc',
+      'printf "kernel=%s\\n" "$(uname -r 2>/dev/null)"; printf "distroRelease=%s\\n" "$(. /etc/os-release 2>/dev/null && printf %s "$VERSION_ID")"; printf "bash=%s\\n" "$(bash --version 2>/dev/null | head -n 1)"; printf "bwrap=%s\\n" "$(bwrap --version 2>/dev/null)"; printf "python3=%s\\n" "$(/usr/bin/python3 --version 2>/dev/null)"'
+    ])
+    if (details.exitCode !== 0) {
+      return { linuxKernelVersion: 'unknown', dependencyVersions: {} }
+    }
+    const values = new Map(
+      clean(details.stdout)
+        .split('\n')
+        .map((line) => line.split(/=(.*)/s).slice(0, 2) as [string, string])
+    )
+    const distroRelease = values.get('distroRelease') || undefined
+    return {
+      linuxKernelVersion: values.get('kernel') || 'unknown',
+      ...(distroRelease ? { distroRelease } : {}),
+      dependencyVersions: {
+        ...(values.get('bash') ? { bash: values.get('bash') } : {}),
+        ...(values.get('bwrap') ? { bwrap: values.get('bwrap') } : {}),
+        ...(values.get('python3') ? { python3: values.get('python3') } : {})
+      }
+    }
+  }
+
   async createSupportHandoff(): Promise<WslSupportHandoff> {
     const snapshot = this.latestSnapshot
     const revision = this.revision
@@ -1252,57 +1428,16 @@ export class WslSetupOwner {
       ? snapshot.distros.find((distro) => distro.name === snapshot.selection?.distro)
       : undefined
     const readiness = snapshot.readiness
-    const defaultUsers = new Map<string, Readonly<{ user: string; isRoot: boolean }>>()
-    for (const distro of snapshot.distros) {
-      if (distro.version !== 2) continue
-      const identity = await this.runner.run([
-        '--distribution',
-        distro.name,
-        '--exec',
-        'sh',
-        '-lc',
-        'id -un; id -u'
-      ])
-      const [user, uid, ...extra] = clean(identity.stdout).split('\n')
-      if (
-        identity.exitCode === 0 &&
-        extra.length === 0 &&
-        this.validName(user ?? '', 128) &&
-        /^\d+$/.test(uid ?? '')
-      ) {
-        defaultUsers.set(distro.name, { user, isRoot: uid === '0' })
-      }
-    }
-    let linuxKernelVersion = 'unknown'
-    let distroRelease: string | undefined
-    let dependencyVersions: Readonly<{ bash?: string; bwrap?: string; python3?: string }> = {}
-    if (snapshot.selection && selectedDistro?.version === 2) {
-      const details = await this.inGuest(snapshot.selection, [
-        'sh',
-        '-lc',
-        'printf "kernel=%s\\n" "$(uname -r 2>/dev/null)"; printf "distroRelease=%s\\n" "$(. /etc/os-release 2>/dev/null && printf %s "$VERSION_ID")"; printf "bash=%s\\n" "$(bash --version 2>/dev/null | head -n 1)"; printf "bwrap=%s\\n" "$(bwrap --version 2>/dev/null)"; printf "python3=%s\\n" "$(/usr/bin/python3 --version 2>/dev/null)"'
-      ])
-      if (details.exitCode === 0) {
-        const values = new Map(
-          clean(details.stdout)
-            .split('\n')
-            .map((line) => line.split(/=(.*)/s).slice(0, 2) as [string, string])
-        )
-        linuxKernelVersion = values.get('kernel') || 'unknown'
-        distroRelease = values.get('distroRelease') || undefined
-        dependencyVersions = {
-          ...(values.get('bash') ? { bash: values.get('bash') } : {}),
-          ...(values.get('bwrap') ? { bwrap: values.get('bwrap') } : {}),
-          ...(values.get('python3') ? { python3: values.get('python3') } : {})
-        }
-      }
-    }
+    const defaultUsers = await this.collectDefaultDistroUsers(snapshot.distros)
+    const { linuxKernelVersion, distroRelease, dependencyVersions } =
+      await this.collectSupportRuntimeDetails(snapshot, selectedDistro)
     const platformApplicable = snapshot.state !== 'not-installed'
     const lastOperation = this.operation.state === 'idle' ? undefined : this.operation.kind
     const resultUnknown =
       this.recoveryBlocked ||
       (this.operation.state === 'finished' &&
         (this.operation.outcome === 'interrupted' || this.operation.outcome === 'failed'))
+    const failure = supportFailure(snapshot)
     return {
       schemaVersion: WSL_SETUP_DIAGNOSTICS_SCHEMA_VERSION,
       guide,
@@ -1321,72 +1456,22 @@ export class WslSetupOwner {
         linuxKernelVersion,
         installState: snapshot.state
       },
-      distros: snapshot.distros.map((distro) =>
-        Object.freeze({
-          ...distro,
-          ...(defaultUsers.get(distro.name)
-            ? {
-                defaultUser: defaultUsers.get(distro.name)?.user,
-                defaultUserIsRoot: defaultUsers.get(distro.name)?.isRoot
-              }
-            : {}),
-          ...(distro.name === snapshot.selection?.distro && distroRelease
-            ? { release: distroRelease }
-            : {})
-        })
-      ),
+      distros: supportDistros(snapshot, defaultUsers, distroRelease),
       ...(snapshot.selection ? { selectedTarget: Object.freeze({ ...snapshot.selection }) } : {}),
       ...(snapshot.activatedSelection
         ? { activatedTarget: Object.freeze({ ...snapshot.activatedSelection }) }
         : {}),
       currentBackend: snapshot.activeRuntime ?? 'unknown',
-      checks: {
-        wsl2: check(readiness?.wsl2, platformApplicable),
-        home: check(readiness?.home, platformApplicable),
-        bash: check(readiness?.bash, platformApplicable, {
-          ...(dependencyVersions.bash ? { version: dependencyVersions.bash } : {})
-        }),
-        bwrap: check(readiness?.bwrap, platformApplicable, {
-          ...(dependencyVersions.bwrap ? { version: dependencyVersions.bwrap } : {})
-        }),
-        python3: check(readiness?.python3, platformApplicable, {
-          ...(dependencyVersions.python3 ? { version: dependencyVersions.python3 } : {}),
-          ...(readiness?.python3 !== undefined ? { path: '/usr/bin/python3' } : {})
-        }),
-        mirroredNetworking: check(readiness?.mirroredNetworking, platformApplicable),
-        namespaces: check(readiness?.namespaces, platformApplicable),
-        localWorkspace: check(readiness?.localWorkspace, platformApplicable)
-      },
-      ...(snapshot.failure
-        ? { failure: snapshot.failure }
-        : snapshot.state === 'failed' || snapshot.state === 'dependency-required'
-          ? { failure: diagnosticFailure('platform', supportErrorCode(snapshot)) }
-          : {}),
+      checks: supportChecks(readiness, platformApplicable, dependencyVersions),
+      ...(failure ? { failure } : {}),
       operation: this.operation,
       recovery: {
         ...(lastOperation ? { lastOperation } : {}),
         restartRequired: snapshot.state === 'restart-required',
         resultUnknown,
-        recheck: resultUnknown
-          ? ['platform', 'distribution', 'target', 'dependencies', 'networking']
-          : snapshot.state === 'ready'
-            ? []
-            : ['target', 'dependencies', 'networking']
+        recheck: supportRecheck(snapshot, resultUnknown)
       },
-      capabilities: {
-        ...(typeof readiness?.wsl2 === 'boolean' ? { wsl2: readiness.wsl2 } : {}),
-        ...(typeof readiness?.home === 'boolean' ? { home: readiness.home } : {}),
-        ...(typeof readiness?.bash === 'boolean' ? { bash: readiness.bash } : {}),
-        ...(typeof readiness?.bwrap === 'boolean' ? { bwrap: readiness.bwrap } : {}),
-        ...(typeof readiness?.python3 === 'boolean' ? { python3: readiness.python3 } : {}),
-        ...(typeof readiness?.mirroredNetworking === 'boolean'
-          ? { mirroredNetworking: readiness.mirroredNetworking }
-          : {}),
-        ...(typeof readiness?.namespaces === 'boolean' ? { namespaces: readiness.namespaces } : {}),
-        ...(typeof readiness?.localWorkspace === 'boolean'
-          ? { localWorkspace: readiness.localWorkspace }
-          : {})
-      },
+      capabilities: supportCapabilities(readiness),
       versions: {
         wsl: softwareVersion,
         distribution: selectedDistro ? (String(selectedDistro.version) as '1' | '2') : 'unknown'
@@ -1473,12 +1558,7 @@ export class WslSetupOwner {
     }
     const volume = await this.options.volumeProbe(workspacePath)
     if (volume.kind !== 'local-ntfs') {
-      const errorCode =
-        volume.kind === 'not-local'
-          ? 'wsl_workspace_not_local'
-          : volume.kind === 'not-ntfs'
-            ? 'wsl_workspace_not_ntfs'
-            : 'wsl_workspace_volume_unavailable'
+      const errorCode = volumeErrorCode(volume)
       return setupSnapshot('failed', operationReference, distros, {
         selection,
         readiness: this.readiness({ wsl2: true, localWorkspace: false }),
@@ -1553,11 +1633,7 @@ export class WslSetupOwner {
     const python3 = dependencyOutput.split('\n').includes('/usr/bin/python3')
     const canInstallMissingDependencies = dependencyOutput.split('\n').includes('/usr/bin/apt-get')
     if (!bash || !bwrap || !python3) {
-      const errorCode = !bash
-        ? 'wsl_bash_missing'
-        : !bwrap
-          ? 'wsl_bwrap_missing'
-          : 'wsl_python3_missing'
+      const errorCode = missingDependencyErrorCode(bash, bwrap)
       return setupSnapshot('dependency-required', operationReference, distros, {
         selection,
         readiness: this.readiness({ wsl2: true, home: true, bash, bwrap, python3 }),

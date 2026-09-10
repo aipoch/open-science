@@ -424,12 +424,11 @@ const collectPortablePosixProcessTable = (): Promise<PosixProcessTable> =>
     })
   })
 
-const collectPosixProcessTable = (): Promise<PosixProcessTable> =>
-  process.platform === 'linux'
-    ? collectLinuxProcessTable()
-    : process.platform === 'darwin'
-      ? Promise.resolve(collectDarwinProcessTable())
-      : collectPortablePosixProcessTable()
+const collectPosixProcessTable = (): Promise<PosixProcessTable> => {
+  if (process.platform === 'linux') return collectLinuxProcessTable()
+  if (process.platform === 'darwin') return Promise.resolve(collectDarwinProcessTable())
+  return collectPortablePosixProcessTable()
+}
 
 const samePosixIdentity = (
   expected: PosixProcessIdentity,

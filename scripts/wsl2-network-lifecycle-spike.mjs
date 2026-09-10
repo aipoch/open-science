@@ -442,7 +442,9 @@ const main = () => {
   const evidence = collectWsl2SpikeEvidence(distro, user)
   const result = evaluateWsl2SpikeEvidence(evidence)
   process.stdout.write(`${JSON.stringify({ evidence, result }, null, 2)}\n`)
-  process.exitCode = result.status === 'passed' ? 0 : result.status === 'unsupported' ? 2 : 1
+  if (result.status === 'passed') process.exitCode = 0
+  else if (result.status === 'unsupported') process.exitCode = 2
+  else process.exitCode = 1
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) main()

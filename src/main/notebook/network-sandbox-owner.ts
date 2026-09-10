@@ -74,6 +74,35 @@ const sameCleanupDomain = (left: NotebookSandboxTarget, right: NotebookSandboxTa
   return right.kind === 'wsl2' && left.distro === right.distro && left.user === right.user
 }
 
+const cleanupComplete = (result: NotebookSandboxCleanupResult): boolean =>
+  result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
+
+const statusLogFields = (status: NotebookNetworkStatus): Record<string, unknown> => {
+  switch (status.kind) {
+    case 'ready':
+      return { kind: status.kind, warningCount: status.warnings.length, warnings: status.warnings }
+    case 'setupRequired':
+      return {
+        kind: status.kind,
+        platform: status.platform,
+        reasonCount: status.reasons.length,
+        reasons: status.reasons
+      }
+    case 'unsupported':
+      return { kind: status.kind, platform: status.platform }
+    case 'error':
+      return { kind: status.kind, reason: status.reason }
+    default:
+      return { kind: status.kind }
+  }
+}
+
+const statusLogLevel = (status: NotebookNetworkStatus): 'error' | 'info' | 'warn' => {
+  if (status.kind === 'error') return 'error'
+  if (status.kind === 'ready') return 'info'
+  return 'warn'
+}
+
 type NotebookCommandRuntime = NotebookSandboxInvocation['runtime']
 
 const executionGrantKey = (sessionId: string, runtime: NotebookCommandRuntime): string =>
@@ -316,7 +345,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         const cleanup = await wrapped
           .cleanup('spawn-failed', { processesTerminated: true })
           .catch(() => undefined)
-        if (!cleanup || !Object.values(cleanup).every(Boolean)) {
+        if (!cleanup || !cleanupComplete(cleanup)) {
           throw new Error(
             'SHELL_CLEANUP_INCOMPLETE: Shell preparation cleanup could not be verified.',
             { cause: error }
@@ -373,8 +402,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           (error) => ({ status: 'rejected' as const, reason: error })
         )
         const backendComplete =
-          sandboxCleanup.status === 'fulfilled' &&
-          Object.values(sandboxCleanup.value).every(Boolean)
+          sandboxCleanup.status === 'fulfilled' && cleanupComplete(sandboxCleanup.value)
         const temporaryCleanup = backendComplete
           ? await this.removeCommandTemporaryRoot(commandTempRoot, receipt).then(
               () => ({ status: 'fulfilled' as const }),
@@ -397,7 +425,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         this.log.info('sandbox cleanup completed', {
           executionReference: invocation.executionReference,
           phase: 'sandbox-cleanup',
-          result: Object.values(result).every(Boolean) ? 'complete' : 'incomplete',
+          result: cleanupComplete(result) ? 'complete' : 'incomplete',
           platform: this.platform,
           target: invocation.target?.kind ?? 'native',
           runtime: invocation.runtime,
@@ -409,7 +437,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       })()
       cleanupPromise = cleanupPromise.then(
         (result) => {
-          if (Object.values(result).every(Boolean)) {
+          if (cleanupComplete(result)) {
             this.pendingCommandCleanups.delete(pendingCleanup)
           } else {
             this.pendingCommandCleanups.add(pendingCleanup)
@@ -770,23 +798,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const signature = JSON.stringify(status)
     if (signature === this.lastStatusSignature) return status
     this.lastStatusSignature = signature
-    const fields =
-      status.kind === 'ready'
-        ? { kind: status.kind, warningCount: status.warnings.length, warnings: status.warnings }
-        : status.kind === 'setupRequired'
-          ? {
-              kind: status.kind,
-              platform: status.platform,
-              reasonCount: status.reasons.length,
-              reasons: status.reasons
-            }
-          : status.kind === 'unsupported'
-            ? { kind: status.kind, platform: status.platform }
-            : status.kind === 'error'
-              ? { kind: status.kind, reason: status.reason }
-              : { kind: status.kind }
-    const level = status.kind === 'error' ? 'error' : status.kind === 'ready' ? 'info' : 'warn'
-    this.log[level]('sandbox status changed', { ...fields, ...extraFields })
+    const level = statusLogLevel(status)
+    this.log[level]('sandbox status changed', { ...statusLogFields(status), ...extraFields })
     return status
   }
 
@@ -796,7 +809,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     )
     if (pending.length === 0) return
     const results = await Promise.all(pending.map((cleanup) => cleanup.retry()))
-    if (results.some((result) => !Object.values(result).every(Boolean))) {
+    if (results.some((result) => !cleanupComplete(result))) {
       throw new Error('SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.')
     }
   }
