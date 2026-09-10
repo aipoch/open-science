@@ -4886,6 +4886,14 @@
     "Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.": "원격 모델 URL은 HTTPS를 사용해야 합니다. HTTP는 localhost 또는 루프백 주소에만 허용됩니다.",
     "Load media from {{domains}}": "{{domains}}에서 미디어 불러오기",
     "Images in Mermaid diagrams are blocked": "Mermaid 다이어그램의 이미지가 차단되었습니다",
-    "Use a separate Markdown image to load it explicitly.": "별도의 Markdown 이미지를 사용하여 직접 불러오세요."
+    "Use a separate Markdown image to load it explicitly.": "별도의 Markdown 이미지를 사용하여 직접 불러오세요.",
+    "Hidden": "숨김",
+    "Hide {{name}}": "{{name}} 숨기기",
+    "Unhide {{name}}": "{{name}} 숨김 해제",
+    "Could not change file visibility.": "파일 표시 설정을 변경할 수 없습니다.",
+    "Could not load project files.": "프로젝트 파일을 불러올 수 없습니다.",
+    "Could not load file preview.": "파일 미리보기를 불러올 수 없습니다.",
+    "Download this file to view it.": "이 파일을 보려면 다운로드하세요.",
+    "Preview truncated.": "미리보기가 잘렸습니다."
   }
 }

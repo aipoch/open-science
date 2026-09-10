@@ -66,6 +66,7 @@ const inferMimeType = (filePath: string, fallback?: string): string =>
   'application/octet-stream'
 
 type ManagedPreviewResourcesOptions = {
+  assertPathVisible?: (path: string) => Promise<void>
   resolvePath: (
     source: 'literature' | 'local',
     request: Extract<AcquireManagedPreviewRequest, { source: 'literature' | 'local' }>
@@ -229,6 +230,7 @@ class ManagedPreviewResources {
             : (() => {
                 throw new Error('Managed preview lease is unavailable.')
               })()
+      if (!trustedLease) await this.options.assertPathVisible?.(filePath)
       const fileSnapshot = trustedLease
         ? {
             size: trustedLease.size,
@@ -404,6 +406,7 @@ class ManagedPreviewResources {
   ): Promise<ManagedPreviewRangeResult> {
     // IPC reads are intentionally bounded so PDF.js cannot transfer an entire large file at once.
     const resource = this.getOwnedResource(ownerId, request.resourceId)
+    if (!resource.trustedLease) await this.options.assertPathVisible?.(resource.filePath)
     const { begin, end } = request
 
     if (!Number.isSafeInteger(begin) || !Number.isSafeInteger(end) || begin < 0 || end <= begin) {
@@ -492,14 +495,36 @@ class ManagedPreviewResources {
       }
     }
 
-    if (!resource.strictSnapshot && !resource.strictObservation) {
+    await this.options.assertPathVisible?.(resource.filePath)
+    if (
+      !resource.strictSnapshot &&
+      !resource.strictObservation &&
+      !this.options.assertPathVisible
+    ) {
       return { filePath: resource.filePath, mimeType: resource.mimeType }
     }
 
     // Open first and fstat the same handle that will be streamed. Holding the handle pins the
     // admitted inode while the protocol caps the response to the approved byte count.
     const fileHandle = await open(resource.filePath, 'r')
+    const guardedHandle: PreviewProtocolFileHandle = {
+      read: async (buffer, offset, length, position) => {
+        await this.options.assertPathVisible?.(resource.filePath)
+        return fileHandle.read(buffer, offset, length, position)
+      },
+      close: () => fileHandle.close()
+    }
     try {
+      if (!resource.strictSnapshot && !resource.strictObservation) {
+        return {
+          fileHandle: guardedHandle,
+          mimeType: resource.mimeType,
+          size: resource.size,
+          verifyUnchanged: async () => {
+            await this.options.assertPathVisible?.(resource.filePath)
+          }
+        }
+      }
       const observation = resource.strictObservation
       if (observation) {
         const fileStat = await fileHandle.stat()
@@ -518,6 +543,7 @@ class ManagedPreviewResources {
           )
         }
         const verifyUnchanged = async (): Promise<void> => {
+          await this.options.assertPathVisible?.(resource.filePath)
           const finalStat = await fileHandle.stat()
           if (
             !finalStat.isFile() ||
@@ -535,7 +561,7 @@ class ManagedPreviewResources {
           }
         }
         return {
-          fileHandle,
+          fileHandle: guardedHandle,
           mimeType: resource.mimeType,
           size: resource.size,
           verifyUnchanged
@@ -556,6 +582,7 @@ class ManagedPreviewResources {
       }
 
       const verifyUnchanged = async (): Promise<void> => {
+        await this.options.assertPathVisible?.(resource.filePath)
         const finalStat = await fileHandle.stat({ bigint: true })
         if (
           !finalStat.isFile() ||
@@ -570,7 +597,7 @@ class ManagedPreviewResources {
       }
 
       return {
-        fileHandle,
+        fileHandle: guardedHandle,
         mimeType: resource.mimeType,
         size: resource.size,
         verifyUnchanged

@@ -42,6 +42,25 @@ class ProjectFilesReconciliationError extends AggregateError {
 // Owns every Project Files projection mutation and its completeness state. The public repository
 // delegates here while retaining the stable caller interface and the query orchestration for FI2.
 class ProjectFilesMutationOwner {
+  async setArtifactHidden(
+    request: import('../../shared/project-files').SetArtifactHiddenRequest
+  ): Promise<void> {
+    if (
+      typeof request.hidden !== 'boolean' ||
+      !request.projectId?.trim() ||
+      !request.fileId?.trim()
+    ) {
+      throw new Error('Invalid artifact visibility request.')
+    }
+    const client = await this.getClient()
+    // Update the durable lineage, never the rebuildable Files projection or Session JSON.
+    const updated = await client.artifactLineage.updateMany({
+      where: { id: request.fileId, projectId: request.projectId },
+      data: { hiddenAt: request.hidden ? new Date() : null }
+    })
+    if (updated.count !== 1) throw new Error('Artifact file was not found.')
+  }
+
   private readonly incompleteSessions = new Map<string, string>()
   private readonly incompleteProjects = new Set<string>()
   private isReconciliationIncomplete = false

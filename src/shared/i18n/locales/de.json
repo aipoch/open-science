@@ -5042,6 +5042,14 @@
     "Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.": "URLs für entfernte Modelle müssen HTTPS verwenden. HTTP ist nur für localhost oder Loopback-Adressen erlaubt.",
     "Load media from {{domains}}": "Medien von {{domains}} laden",
     "Images in Mermaid diagrams are blocked": "Bilder in Mermaid-Diagrammen sind blockiert",
-    "Use a separate Markdown image to load it explicitly.": "Verwenden Sie ein separates Markdown-Bild, um es ausdrücklich zu laden."
+    "Use a separate Markdown image to load it explicitly.": "Verwenden Sie ein separates Markdown-Bild, um es ausdrücklich zu laden.",
+    "Hidden": "Ausgeblendet",
+    "Hide {{name}}": "{{name}} ausblenden",
+    "Unhide {{name}}": "{{name}} einblenden",
+    "Could not change file visibility.": "Die Sichtbarkeit der Datei konnte nicht geändert werden.",
+    "Could not load project files.": "Die Projektdateien konnten nicht geladen werden.",
+    "Could not load file preview.": "Die Dateivorschau konnte nicht geladen werden.",
+    "Download this file to view it.": "Laden Sie diese Datei herunter, um sie anzuzeigen.",
+    "Preview truncated.": "Vorschau gekürzt."
   }
 }

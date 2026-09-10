@@ -607,6 +607,7 @@ describe('ManagedFileIndexRepository', () => {
       uploadCount: 1,
       artifactCount: 2,
       artifactGroupCount: 1,
+      hiddenArtifactCount: 0,
       isIndexComplete: true
     })
 
@@ -1746,6 +1747,7 @@ describe('ManagedFileIndexRepository', () => {
       totalCount: 2,
       artifactCount: 2,
       artifactGroupCount: 2,
+      hiddenArtifactCount: 0,
       isIndexComplete: true
     })
     await expect(
@@ -1765,6 +1767,7 @@ describe('ManagedFileIndexRepository', () => {
       totalCount: 1,
       artifactCount: 1,
       artifactGroupCount: 1,
+      hiddenArtifactCount: 0,
       isIndexComplete: true
     })
     await expect(
@@ -2647,6 +2650,7 @@ describe('ManagedFileIndexRepository', () => {
       uploadCount: 0,
       artifactCount: 0,
       artifactGroupCount: 0,
+      hiddenArtifactCount: 0,
       isIndexComplete: true
     })
     expect(queryRaw).toHaveBeenCalledTimes(1)
@@ -2752,6 +2756,7 @@ describe('ManagedFileIndexRepository', () => {
       uploadCount: 1,
       artifactCount: 3,
       artifactGroupCount: 2,
+      hiddenArtifactCount: 0,
       isIndexComplete: true
     })
     const allMatches = await repository.listFiles({
@@ -2796,6 +2801,7 @@ describe('ManagedFileIndexRepository', () => {
       uploadCount: 0,
       artifactCount: 1,
       artifactGroupCount: 1,
+      hiddenArtifactCount: 0,
       isIndexComplete: true
     })
     await expect(
