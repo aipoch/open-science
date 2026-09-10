@@ -1524,7 +1524,7 @@ if (process.argv.includes('--version')) {
               content: { type: 'text', text: 'Branch park upward message queued.' }
             }
           })
-          await delay(2_000)
+          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]))
           reply = 'Reliable branch park source turn completed.'
         } else if (prompt.includes(RELIABLE_BRANCH_WAKE_PROMPT)) {
           const receipt = controlResultValue(

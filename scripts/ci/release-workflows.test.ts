@@ -54,6 +54,7 @@ describe('release and scheduled workflow topology', () => {
     const plan = windows.jobs.plan
     const job = windows.jobs.windows_full_test
     const sandbox = windows.jobs.notebook_sandbox
+    const wslSetup = windows.jobs.wsl_setup
     const test = step(job, 'Test complete suite shard')
     const sandboxSmoke = step(sandbox, 'Test AppContainer ownership and removal lifecycle')
 
@@ -67,7 +68,7 @@ describe('release and scheduled workflow topology', () => {
     expect(schedule).toEqual([{ cron: '47 * * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'full',
-      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions']
+      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'wsl-setup', 'regressions']
     })
     expect(windows.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(plan).toMatchObject({
@@ -91,6 +92,19 @@ describe('release and scheduled workflow topology', () => {
     expect(sandboxSmoke.run).toContain('vendor/windows-src/ci/smoke.ps1')
     expect(sandboxSmoke.run).toContain('vendor/windows/x64/notebook-appcontainer-host.exe')
     expect(sandboxSmoke.run).toContain('-Mode Full')
+    expect(wslSetup).toMatchObject({
+      needs: 'plan',
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'wsl-setup') }}",
+      'runs-on': 'windows-latest',
+      'timeout-minutes': 20
+    })
+    expect(step(wslSetup, 'Build WSL setup conversation preview').run).toBe(
+      'node scripts/build-wsl-setup-e2e.mjs'
+    )
+    expect(step(wslSetup, 'Run WSL setup conversation')).toMatchObject({
+      env: { OPEN_SCIENCE_E2E_WSL_SETUP: '1' },
+      run: 'npm run test:e2e:wsl-setup -- --workers=1 --fail-on-flaky-tests --global-timeout=300000'
+    })
     expect(test.if).toBe("${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}")
     const regressions = step(job, 'Test recent Windows regressions')
     expect(regressions.if).toBe(

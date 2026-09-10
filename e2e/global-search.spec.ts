@@ -454,6 +454,9 @@ test('opens uploaded files from search using the existing file preview dialog', 
   for (const outsidePreview of [false, true]) {
     await preview.getByText('Verified file preview content.').click({ button: 'right' })
     await expect(menu).toBeVisible()
+    // Radix installs its outside-pointer listener on the next macrotask so the opening gesture
+    // cannot immediately dismiss the menu. Cross that boundary before exercising dismissal.
+    await page.evaluate(() => new Promise<void>((resolve) => window.setTimeout(resolve, 10)))
     const bounds = (await preview.boundingBox())!
     await page.mouse.click(
       outsidePreview ? 5 : bounds.x + bounds.width - 30,

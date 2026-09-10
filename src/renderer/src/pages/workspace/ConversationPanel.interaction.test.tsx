@@ -696,6 +696,9 @@ const createPanelDefaults = (): PanelProps => ({
       disabled: false,
       running: false,
       request: vi.fn()
+    },
+    wslSetup: {
+      start: vi.fn().mockResolvedValue(true)
     }
   },
   sessionTools: {
@@ -705,9 +708,6 @@ const createPanelDefaults = (): PanelProps => ({
   },
   subagents: {
     stop: vi.fn()
-  },
-  wslSetup: {
-    start: vi.fn().mockResolvedValue(true)
   }
 })
 
@@ -2631,7 +2631,7 @@ describe('ConversationPanel composer intake', () => {
         availability: { submit: true },
         actions: { submit: { draft: submit } }
       },
-      wslSetup: { start }
+      workflows: { wslSetup: { start } }
     })
 
     await act(async () => {

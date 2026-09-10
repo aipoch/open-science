@@ -1102,17 +1102,14 @@ export const terminateProcessTree = async (
   signal?: NodeJS.Signals,
   log?: ProcessTreeLogger
 ): Promise<ProcessTreeKillResult> => {
+  const trackedTree = trackedPosixProcessTrees.get(child)
+  const ownedGroup = ownedPosixProcessGroups.get(child)
   const result = await (process.platform === 'win32'
     ? terminateWindowsTree(child, signal, log)
-    : trackedPosixProcessTrees.has(child)
-      ? terminateTrackedPosixProcessTree(
-          child,
-          trackedPosixProcessTrees.get(child)!,
-          signal,
-          log
-        )
-      : ownedPosixProcessGroups.has(child)
-        ? terminateOwnedPosixProcessGroup(ownedPosixProcessGroups.get(child)!, signal, log)
+    : trackedTree
+      ? terminateTrackedPosixProcessTree(child, trackedTree, signal, log)
+      : ownedGroup
+        ? terminateOwnedPosixProcessGroup(ownedGroup, signal, log)
         : terminatePosixTree(child, signal, log))
   if (result.reaped) {
     const callback = processTreeReapCallbacks.get(child)

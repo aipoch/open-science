@@ -1439,6 +1439,9 @@ const WorkspacePage = ({
                 disabledReason: saveAsSkillAvailability.disabledReason,
                 running: activeSessionSaveAsSkillRunning,
                 request: requestSaveAsSkill
+              },
+              wslSetup: {
+                start: () => startWslSetupConversation(scopedProjectId, t)
               }
             }}
             sessionTools={{
@@ -1460,9 +1463,6 @@ const WorkspacePage = ({
                 )
                 await window.api.acp.cancel({ sessionId: activeSession.id, scope: 'subagents' })
               }
-            }}
-            wslSetup={{
-              start: () => startWslSetupConversation(scopedProjectId, t)
             }}
           />
         )}

@@ -373,6 +373,10 @@ type ConversationPanelSaveAsSkill = {
   request: () => void
 }
 
+type ConversationPanelWslSetup = {
+  start: () => Promise<boolean>
+}
+
 type ConversationPanelWorkflows = {
   artifactFinalization: {
     running: boolean
@@ -380,6 +384,7 @@ type ConversationPanelWorkflows = {
   }
   review: ConversationPanelReview
   saveAsSkill: ConversationPanelSaveAsSkill
+  wslSetup: ConversationPanelWslSetup
 }
 
 type ConversationPanelSessionTools = {
@@ -392,10 +397,6 @@ type ConversationPanelSessionTools = {
 type ConversationPanelSubagents = {
   unavailable?: DelegatedWorkUnavailableReason
   stop: () => void | Promise<void>
-}
-
-type ConversationPanelWslSetup = {
-  start: () => Promise<boolean>
 }
 
 type StopSubmissionState = Readonly<{
@@ -417,7 +418,6 @@ type ConversationPanelProps = {
   workflows: ConversationPanelWorkflows
   sessionTools: ConversationPanelSessionTools
   subagents: ConversationPanelSubagents
-  wslSetup: ConversationPanelWslSetup
 }
 
 // Middle chat surface owns the visible conversation and local message composer UI.
@@ -434,8 +434,7 @@ const ConversationPanel = ({
   contextWindow,
   workflows,
   sessionTools,
-  subagents,
-  wslSetup
+  subagents
 }: ConversationPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const { activeSession, composerFocusKey, canEditDraft, actionError, sideChatDisabledReason } =
@@ -915,7 +914,7 @@ const ConversationPanel = ({
         )
         return
       }
-      if (!(await wslSetup.start())) {
+      if (!(await workflows.wslSetup.start())) {
         onSetComposerError(t('Open Science could not open the WSL2 setup conversation.'))
       }
     } catch {
