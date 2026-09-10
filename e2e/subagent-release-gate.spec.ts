@@ -960,7 +960,9 @@ test('fairly schedules two upward lanes with a concurrent real user prompt', asy
   ])
 })
 
-test('stops only the active branch and exposes a retryable partial failure', async ({ app }) => {
+test('stops only the active branch and exposes a retryable partial failure', async ({
+  app
+}, testInfo) => {
   test.setTimeout(180_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
@@ -1014,6 +1016,7 @@ test('stops only the active branch and exposes a retryable partial failure', asy
   await expectRenderedChildStatus(page, BRANCH_A_CHILD, 'running')
   await page.getByRole('button', { name: 'Stop subagents' }).click()
   await expectDurableChildStatus(page, BRANCH_A_CHILD, 'cancelled')
+  await page.screenshot({ path: testInfo.outputPath('stopped-selected-branch.png') })
 })
 
 test('inherits a real root Specialist when profile is omitted and preserves its label after restart', async ({
