@@ -2937,8 +2937,19 @@ describe('SettingsService: preflight & spawn config', () => {
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: true
+      }),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
     const service = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexAuth,
       resolveCodexProxyEnvironment: () =>
         Promise.resolve({
           HTTP_PROXY: 'http://proxy.example.test:3128',

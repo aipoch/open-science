@@ -524,7 +524,10 @@ class ProviderAuthLifecycleOwner {
   }
 
   async isProviderKeyUsable(provider: StoredProvider): Promise<boolean> {
-    if (isCodexSubscriptionProvider(provider.type)) return true
+    if (isCodexSubscriptionProvider(provider.type)) {
+      const mode = resolveCodexSubscriptionType(provider) === 'codex-shared' ? 'shared' : 'isolated'
+      return (await this.codexAuth.getStatus(mode)).authenticated
+    }
     if (provider.type === 'claude-shared') {
       if (provider.disconnectedAt !== undefined) return false
       return this.getClaudeSharedAuthStatus()

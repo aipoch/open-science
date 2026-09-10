@@ -129,6 +129,46 @@ describe('ProviderAuthLifecycleOwner', () => {
     await rm(dir, { recursive: true, force: true })
   })
 
+  const storeCodexProvider = async (
+    authMode: 'isolated' | 'imported'
+  ): Promise<Awaited<ReturnType<typeof repository.getSettings>>['providers'][number]> => {
+    await repository.deleteProvider(CLAUDE_SHARED_PROVIDER_ID)
+    await repository.upsertProvider({
+      id: CODEX_SUBSCRIPTION_PROVIDER_ID,
+      type: 'codex-isolated',
+      codexAuthMode: authMode,
+      name: 'Codex subscription',
+      apiEndpoints: ['responses']
+    })
+    return (await repository.getSettings()).providers[0]
+  }
+
+  it('accepts a valid app-owned Codex credential', async () => {
+    const stored = await storeCodexProvider('isolated')
+
+    await expect(owner.isProviderKeyUsable(stored)).resolves.toBe(true)
+    expect(codexAuth.getStatus).toHaveBeenCalledWith('isolated')
+  })
+
+  it('rejects a missing app-owned Codex credential', async () => {
+    vi.mocked(codexAuth.getStatus).mockResolvedValueOnce({
+      mode: 'isolated',
+      supported: true,
+      authenticated: false
+    })
+    const stored = await storeCodexProvider('isolated')
+
+    await expect(owner.isProviderKeyUsable(stored)).resolves.toBe(false)
+    expect(codexAuth.getStatus).toHaveBeenCalledWith('isolated')
+  })
+
+  it('keeps imported app-owned Codex credentials usable after external logout', async () => {
+    const stored = await storeCodexProvider('imported')
+
+    await expect(owner.isProviderKeyUsable(stored)).resolves.toBe(true)
+    expect(codexAuth.getStatus).toHaveBeenCalledWith('shared')
+  })
+
   it('coalesces shared status reads and invalidates them across logout and login', async () => {
     const stored = (await repository.getSettings()).providers[0]
     const firstStatus = deferred<ClaudeSharedAuthStatus>()

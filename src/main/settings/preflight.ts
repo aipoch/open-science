@@ -21,7 +21,8 @@ export type PreflightInput = {
   codexPathExists: boolean
   // The selected framework, resolved (default applied) by the caller.
   agentFrameworkId: AgentFrameworkId
-  // Whether a provider's credentials are usable (codex subscriptions always; custom must decrypt).
+  // Whether a provider's current credentials are usable (subscription auth is checked by its owner;
+  // custom credentials must still decrypt).
   isProviderKeyUsable: (provider: StoredProvider) => boolean
   // Whether the active provider can actually drive the selected framework (endpoint + provider-type
   // compatibility). Resolved by the caller, which has the vendor registry to derive official apiTypes.
