@@ -87,6 +87,8 @@ export async function publishBundle(p, save, progress, inventory, syncDirectory)
     const source = join(p.from, path)
     const backup = join(p.backup, path)
     const staged = join(p.stage, path)
+    p.publishIntents = [...new Set([...(p.publishIntents ?? []), path])]
+    await save()
     if (before && !(await inspect(backup))) {
       await verifyMember(p.from, path, before, inventory)
       await durableMkdir(dirname(backup), syncDirectory)
@@ -108,6 +110,7 @@ export async function publishBundle(p, save, progress, inventory, syncDirectory)
 }
 
 export async function verifyBundleRollback(p, status, inventory) {
+  const hadRollbackSnapshot = Array.isArray(p.rollbackOriginals)
   for (const path of p.files) {
     const before = entryAt(p.original, path)
     const after = entryAt(p.published, path)
@@ -119,10 +122,28 @@ export async function verifyBundleRollback(p, status, inventory) {
       if (await inspect(join(p.to, path))) await verifyMember(p.to, path, after, inventory)
     } else if (before) {
       const restoring = status === 'rolling-back' && p.restoreIntents?.includes(path)
-      if (!restoring && !['preparing', 'prepared', 'publishing'].includes(status))
+      let unpublished =
+        p.rollbackOriginals?.includes(path) ||
+        (['preparing', 'prepared', 'publishing'].includes(status) &&
+          !p.publishIntents?.includes(path))
+      // Version-1 interrupted rollback has no per-file snapshot. An intact staging member
+      // plus the exact original is a positive witness that this member was never published.
+      if (
+        !restoring &&
+        !unpublished &&
+        ['publishing', 'rolling-back'].includes(status) &&
+        !hadRollbackSnapshot &&
+        (!p.published || (await inspect(join(p.stage, path))))
+      ) {
+        if (p.published) await verifyMember(p.stage, path, after ?? before, inventory)
+        unpublished = true
+      }
+      if (!restoring && !unpublished)
         throw new Error(`Original backup is missing: ${join(p.backup, path)}`)
       await verifyMember(p.from, path, before, inventory)
-      if (restoring && after) await verifyMember(parked, path, after, inventory)
+      if (restoring && after && !(await inspect(join(p.stage, path))))
+        await verifyMember(parked, path, after, inventory)
+      if (unpublished) p.rollbackOriginals = [...new Set([...(p.rollbackOriginals ?? []), path])]
     } else if (await inspect(join(p.to, path))) {
       await verifyMember(p.to, path, after, inventory)
     } else if (after && status === 'committed') {

@@ -4,19 +4,55 @@ import { documentKind, transformDocument } from './references.mjs'
 import { createReadStream } from 'node:fs'
 import { readFile, readlink, readdir, rm } from 'node:fs/promises'
 import { dirname, join, resolve, win32 } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import { inside, inspect, remapPath } from './paths.mjs'
 
-async function mentions(file, needles) {
-  const longest = Math.max(...needles.map((n) => n.length))
+// Scan executable/opaque state conservatively, but verify any alternate-case root against
+// the filesystem just as structured-reference migration does. Similar prefixes are not roots.
+function referenceNeedles(variants, platform) {
+  return variants.flatMap((from) => [
+    { from, text: from, decode: (s) => s },
+    { from, text: from.replaceAll('\\', '/'), decode: (s) => s },
+    {
+      from,
+      text: pathToFileURL(from, { windows: platform === 'win32' }).href,
+      decode: (s) => fileURLToPath(s, { windows: platform === 'win32' })
+    },
+    { from, text: JSON.stringify(from).slice(1, -1), decode: (s) => JSON.parse(`"${s}"`) }
+  ])
+}
+function containsReference(buffer, needles, platform, complete = true) {
+  for (const text of [
+    buffer.toString('utf8'),
+    buffer.toString('utf16le'),
+    buffer.subarray(1).toString('utf16le')
+  ]) {
+    const folded = text.toLowerCase()
+    for (const needle of needles) {
+      let offset = -1
+      while ((offset = folded.indexOf(needle.text.toLowerCase(), offset + 1)) !== -1) {
+        const end = offset + needle.text.length
+        if (end === text.length && !complete) continue
+        if (end < text.length && /[\p{L}\p{N}._-]/u.test(text[end])) continue
+        const candidate = needle.decode(text.slice(offset, end))
+        if (inside(needle.from, candidate, platform)) return true
+      }
+    }
+  }
+  return false
+}
+async function mentions(file, needles, platform) {
+  const longest = Math.max(...needles.map((n) => Buffer.byteLength(n.text) * 2)) + 4
   let tail = Buffer.alloc(0)
   for await (const chunk of createReadStream(file)) {
     const buffer = Buffer.concat([tail, chunk])
-    if (needles.some((n) => buffer.includes(n))) return true
-    tail = buffer.subarray(Math.max(0, buffer.length - longest))
+    if (containsReference(buffer, needles, platform, false)) return true
+    // An even byte offset preserves UTF-16 alignment across stream chunks.
+    const start = Math.max(0, buffer.length - longest)
+    tail = buffer.subarray(start - (start % 2))
   }
-  return false
+  return containsReference(tail, needles, platform)
 }
 
 // Retirement is a separate, fail-closed operation after environment rebuilding and third-party
@@ -65,19 +101,19 @@ export async function auditAliases(
     }
   }
   const roots = [
-    ...new Set([...journal.participants.map((p) => p.to), ...journal.mappings.map((m) => m.to)])
+    ...new Set(
+      [
+        journal.configRoot,
+        ...journal.participants.map((p) => p.to),
+        ...journal.mappings.map((m) => m.to)
+      ].filter(Boolean)
+    )
   ]
   for (const root of roots) {
+    if (!(await inspect(root))) continue
     const p = { to: root }
     const entries = await inventory(p.to)
-    const needles = variants
-      .flatMap((from) => [
-        from,
-        from.replaceAll('\\', '/'),
-        pathToFileURL(from, { windows: journal.platform === 'win32' }).href,
-        JSON.stringify(from).slice(1, -1)
-      ])
-      .flatMap((s) => [Buffer.from(s), Buffer.from(s, 'utf16le')])
+    const needles = referenceNeedles(variants, journal.platform)
     if (!needles.length) continue
     for (const e of entries) {
       const file = join(p.to, e.path)
@@ -103,9 +139,9 @@ export async function auditAliases(
         // These maps are runtime identity policy, not executable paths. Installation grants are
         // intentionally not inherited; disabled new IDs were copied during reference migration.
         delete settings.notebookRuntimeEnablement
-        if (needles.some((n) => Buffer.from(JSON.stringify(settings)).includes(n)))
+        if (containsReference(Buffer.from(JSON.stringify(settings)), needles, journal.platform))
           blockers.push({ path: file, reason: 'remaining-settings-reference' })
-      } else if (e.type === 'file' && (await mentions(file, needles))) {
+      } else if (e.type === 'file' && (await mentions(file, needles, journal.platform))) {
         blockers.push({ path: file, reason: 'remaining-path-reference' })
       }
     }
@@ -180,9 +216,7 @@ export async function removeAuditedAliases(journal, inventory) {
 // User documents are not scanned or rewritten for this decision.
 export async function needsRuntimeAlias(map) {
   const variants = [map.from, ...(map.fromAliases ?? [])]
-  const needles = variants
-    .flatMap((from) => [from, from.replaceAll('\\', '/'), pathToFileURL(from).href])
-    .flatMap((s) => [Buffer.from(s), Buffer.from(s, 'utf16le')])
+  const needles = referenceNeedles(variants, process.platform)
   async function visit(path) {
     const stat = await inspect(path)
     if (!stat) return false
@@ -190,7 +224,7 @@ export async function needsRuntimeAlias(map) {
       const target = resolve(dirname(path), await readlink(path))
       return variants.some((from) => inside(from, target))
     }
-    if (stat.isFile()) return mentions(path, needles)
+    if (stat.isFile()) return mentions(path, needles, process.platform)
     if (!stat.isDirectory()) throw new Error(`Unsupported runtime node: ${path}`)
     for (const name of await readdir(path)) if (await visit(join(path, name))) return true
     return false

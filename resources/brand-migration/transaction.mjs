@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
+import { createReadStream, realpathSync } from 'node:fs'
 import {
   access,
+  link,
+  readFile,
   lstat,
   mkdir,
   open,
@@ -14,7 +16,8 @@ import {
 } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { acquireKernelGuard } from './lock-guard.mjs'
 import { metadataDigest } from './metadata.mjs'
 import {
   changedReferenceFiles,
@@ -26,7 +29,7 @@ import {
 } from './reference-bundle.mjs'
 import { validateJournal } from './journal.mjs'
 import { auditAliases, removeAuditedAliases, needsRuntimeAlias } from './retirement.mjs'
-import { discover, inside, inspect, readJson, assertPlainAncestors } from './paths.mjs'
+import { discover, inside, inspect, readJson, assertPlainAncestors, remapPath } from './paths.mjs'
 import {
   documentKind,
   rewriteDatabase,
@@ -143,57 +146,145 @@ function alive(pid) {
   }
 }
 
-// An abandoned lock is never silently stolen. The explicit recovery command verifies its PID is
-// dead; a separate recovery directory serializes competing recovery attempts.
+// Logical leases survive application startup. The kernel guard protects lease recovery and
+// releases automatically if the recovering process dies, including before any metadata write.
 async function lock(
   stateDir,
   recover,
   ownerPid = process.pid,
   ownerKind = 'offline',
-  profile = {}
+  profile = {},
+  incomplete = [],
+  progress = () => {},
+  requireGuard = true
 ) {
   await assertPlainAncestors(stateDir)
   await mkdir(stateDir, { recursive: true, mode: 0o700 })
+  const guardPath = join(stateDir, 'lock-guard')
+  const guardStat = await inspect(guardPath)
+  if (guardStat && (!guardStat.isFile() || guardStat.nlink !== 1))
+    throw new Error('Unsafe kernel lock file')
+  let guard
+  const ensureGuard = async () => {
+    guard ??= await acquireKernelGuard(guardPath)
+  }
+  if (requireGuard) await ensureGuard()
   const path = join(stateDir, 'lock')
   const token = randomUUID()
   async function acquire() {
-    const handle = await open(path, 'wx', 0o600)
+    const prepared = join(stateDir, `lock-owner-${token}`)
+    await durableJson(prepared, {
+      pid: ownerPid,
+      workerPid: process.pid,
+      token,
+      ownerKind: 'transaction'
+    })
     try {
-      await handle.writeFile(
-        JSON.stringify({ pid: ownerPid, workerPid: process.pid, token, ownerKind: 'transaction' })
-      )
-      await handle.sync()
+      await link(prepared, path)
+      await syncDirectory(stateDir)
     } finally {
-      await handle.close()
+      await rm(prepared)
+      await syncDirectory(stateDir)
     }
+  }
+  async function recoverNode(node, directory = false) {
+    const stat = await inspect(node)
+    if (!stat) return
+    if (
+      stat.isSymbolicLink() ||
+      (directory ? !stat.isDirectory() : !stat.isFile()) ||
+      (!directory && ![1, 2].includes(stat.nlink))
+    )
+      throw new Error(`Unsafe migration lock: ${node}`)
+    const entries = directory ? (await readdir(node)).sort() : []
+    if (entries.some((name) => name !== 'owner.json'))
+      throw new Error(`Unknown recovery lock contents: ${node}`)
+    const metadata = directory ? join(node, 'owner.json') : node
+    const metaStat = await inspect(metadata)
+    if (metaStat && (!metaStat.isFile() || (directory && metaStat.nlink !== 1)))
+      throw new Error(`Unsafe lock metadata: ${metadata}`)
+    const bytes = metaStat ? await readFile(metadata) : Buffer.alloc(0)
+    let owner
+    try {
+      owner = JSON.parse(bytes.toString('utf8'))
+    } catch {
+      /* explicit fingerprint recovery below */
+    }
+    const known =
+      Number.isSafeInteger(owner?.pid) &&
+      owner.pid > 0 &&
+      typeof owner.token === 'string' &&
+      owner.token.length > 0 &&
+      (owner.workerPid === undefined ||
+        (Number.isSafeInteger(owner.workerPid) && owner.workerPid > 0))
+    if (known && (alive(owner.pid) || (owner.workerPid && alive(owner.workerPid))))
+      throw new Error(`Migration lock owner is active: ${owner.pid}`)
+    if (!directory && stat.nlink === 2) {
+      const paired =
+        known && /^[a-f0-9-]{36}$/.test(owner.token)
+          ? await inspect(join(stateDir, `lock-owner-${owner.token}`))
+          : undefined
+      if (
+        !paired?.isFile() ||
+        paired.dev !== stat.dev ||
+        paired.ino !== stat.ino ||
+        paired.nlink !== 2
+      )
+        throw new Error(`Unowned lock hardlink: ${node}`)
+    }
+    const fingerprint = createHash('sha256')
+      .update(JSON.stringify([stat.dev, stat.ino, stat.mtimeMs, entries]))
+      .update(bytes)
+      .digest('hex')
+    if (!known && !incomplete.includes(fingerprint))
+      throw new Error(
+        `Incomplete lock metadata: ${node}; stop all old migrators and writers, then retry --recover-lock --recover-incomplete-lock ${fingerprint}. The inspected lock will be preserved in quarantine.`
+      )
+    assertNoOpenFiles([node])
+    guard.assertHeld()
+    const current = await lstat(node)
+    if (current.dev !== stat.dev || current.ino !== stat.ino || current.mtimeMs !== stat.mtimeMs)
+      throw new Error('Migration lock identity changed during recovery')
+    await rename(node, `${node}.abandoned-${randomUUID()}`)
+    await syncDirectory(stateDir)
+    await progress({ phase: directory ? 'recovery-lock-quarantined' : 'lock-quarantined' })
   }
   try {
-    await acquire()
-  } catch (e) {
-    if (e.code !== 'EEXIST') throw e
-    if (!recover)
-      throw new Error(
-        `Migration lock exists; stop the owner or use --recover-lock after a crash: ${path}`
-      )
-    const recovery = join(stateDir, 'lock-recovery')
-    await mkdir(recovery)
-    try {
-      const owner = await readJson(path)
-      if (alive(owner.pid) || (owner.workerPid && alive(owner.workerPid)))
-        throw new Error(`Migration lock owner is active: ${owner.pid}`)
-      await rm(path)
-      await acquire()
-    } finally {
-      await rm(recovery, { recursive: true })
+    if (await inspect(join(stateDir, 'lock-recovery'))) {
+      if (!recover)
+        throw new Error('Recovery lock exists; use --recover-lock after stopping its owner')
+      await ensureGuard()
+      await recoverNode(join(stateDir, 'lock-recovery'), true)
     }
+    try {
+      await acquire()
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error
+      if (!recover)
+        throw new Error(
+          `Migration lock exists; stop the owner or use --recover-lock after a crash: ${path}`
+        )
+      await ensureGuard()
+      await recoverNode(path)
+      await acquire()
+    }
+  } catch (error) {
+    await guard?.release()
+    throw error
   }
   const release = async () => {
-    const owner = await readJson(path)
-    if (owner.token !== token) throw new Error('Migration lock identity changed')
-    await rm(path)
+    try {
+      const owner = await readJson(path)
+      if (owner.token !== token) throw new Error('Migration lock identity changed')
+      await rm(path)
+      await syncDirectory(stateDir)
+    } finally {
+      await guard?.release()
+    }
   }
   const handoff = async (userData) => {
     if (ownerKind !== 'application') return
+    guard?.assertHeld()
     await durableJson(path, {
       pid: ownerPid,
       token,
@@ -201,12 +292,84 @@ async function lock(
       ...profile,
       userData
     })
+    await guard?.release()
   }
-  return { release, handoff, lease: { path, token } }
+  return {
+    release,
+    handoff,
+    ensureGuard,
+    assertHeld: () => guard?.assertHeld(),
+    lease: { path, token }
+  }
+}
+
+// lsof enumerates cwd, regular descriptors and mapped executable/library files, including
+// paths outside argv and roots renamed into backups. A failed or incomplete probe is not empty.
+export function assertNoOpenFiles(roots, probe = spawnSync) {
+  if (process.platform === 'win32')
+    throw new Error(
+      'Reliable Windows directory/handle inspection is unavailable; migration is blocked. Use a verified native occupancy provider before migrating on Windows.'
+    )
+  const canonicalRoots = roots
+    .map((root) => {
+      try {
+        return realpathSync(root)
+      } catch (error) {
+        if (error.code === 'ENOENT') return root
+        throw error
+      }
+    })
+    .map((root) => ({ root, folded: root.toLowerCase() }))
+  const result = probe(
+    process.platform === 'darwin' ? '/usr/sbin/lsof' : 'lsof',
+    ['-nP', '-F0pcfn'],
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 30000 }
+  )
+  if (
+    result.error ||
+    result.status !== 0 ||
+    result.stderr?.trim() ||
+    !result.stdout?.endsWith('\n')
+  )
+    throw new Error(
+      `Cannot verify migration file occupancy: ${result.error?.message ?? result.stderr?.trim() ?? 'incomplete lsof output'}`
+    )
+  let pid = 0
+  let descriptor = ''
+  let processes = 0
+  for (const raw of result.stdout.split('\0')) {
+    const field = raw.replace(/^\n/, '')
+    if (!field || field === '\n') continue
+    const value = field.slice(1)
+    if (field[0] === 'p') {
+      pid = Number(value)
+      descriptor = ''
+      processes++
+      if (!Number.isSafeInteger(pid) || pid <= 0)
+        throw new Error('Invalid occupancy process record')
+    } else if (field[0] === 'f') {
+      descriptor = value
+      if (descriptor === 'NOFD') throw new Error(`Cannot inspect open files of PID ${pid}`)
+    } else if (field[0] === 'n') {
+      if (!pid || !descriptor) throw new Error('Incomplete occupancy descriptor record')
+      if (pid === process.pid) continue
+      const path = value.replace(/ \(deleted\)$/, '')
+      if (
+        path.startsWith('/') &&
+        canonicalRoots.some(
+          ({ root, folded }) => path.toLowerCase().startsWith(folded) && inside(root, path)
+        )
+      )
+        throw new Error(
+          `Migration paths are occupied (PID ${pid}, ${descriptor}); close the writer or leave its cwd first`
+        )
+    }
+  }
+  if (!processes) throw new Error('Empty occupancy process inventory')
 }
 
 export function assertNoProcesses(roots, ignoredPids = []) {
-  const ignore = new Set([process.pid, process.ppid, ...ignoredPids])
+  const ignore = new Set([process.pid, ...ignoredPids])
   let rows
   if (process.platform === 'win32') {
     const raw = execFileSync(
@@ -257,6 +420,7 @@ export function assertNoProcesses(roots, ignoredPids = []) {
         `Application or child process is using migration paths (PID ${pid}); close it first`
       )
   }
+  assertNoOpenFiles(roots)
 }
 
 async function inspectDocuments(root, entries, plan) {
@@ -339,12 +503,22 @@ export async function planMigration(options) {
     await assertPlainAncestors(map.to)
     const old = await inspect(map.from)
     const next = await inspect(map.to)
-    if (old && next) blockers.push(`Path conflict: both ${map.from} and ${map.to} exist`)
+    const targetHandling =
+      old && next
+        ? !(await readdir(map.to)).length
+          ? 'empty'
+          : map.kind === 'logs'
+            ? 'logs'
+            : undefined
+        : undefined
+    if (old && next && !targetHandling)
+      blockers.push(`Path conflict: both ${map.from} and ${map.to} exist`)
     if (map.from !== map.to && (inside(map.from, map.to) || inside(map.to, map.from)))
       blockers.push(`Overlapping migration roots: ${map.from}`)
     mappings.push({
       ...map,
-      state: old ? (next ? 'conflict' : 'move') : next ? 'use-new' : 'initialize'
+      ...(targetHandling ? { targetHandling } : {}),
+      state: old ? (next && !targetHandling ? 'conflict' : 'move') : next ? 'use-new' : 'initialize'
     })
   }
   if (mappings.filter((m) => m.kind === 'data' && ['move', 'use-new'].includes(m.state)).length > 1)
@@ -354,6 +528,8 @@ export async function planMigration(options) {
       if (parent === child) continue
       if (inside(parent.from, child.from) && !inside(parent.to, child.to))
         blockers.push(`Unsupported nested mapping: ${child.from}`)
+      if (child.targetHandling && inside(parent.from, child.from))
+        blockers.push(`Nested target requires explicit reconciliation: ${child.to}`)
       if (parent.to === child.to && parent.from !== child.from)
         blockers.push(`Duplicate migration target: ${child.to}`)
     }
@@ -369,7 +545,8 @@ async function buildJournal(plan) {
   const candidates = activeMaps.map((m) => ({
     from: m.state === 'move' ? m.from : m.to,
     to: m.to,
-    stationary: m.state === 'use-new'
+    stationary: m.state === 'use-new',
+    targetHandling: m.targetHandling
   }))
   if (await inspect(plan.configRoot))
     candidates.push({ from: plan.configRoot, to: plan.configRoot, stationary: true })
@@ -407,18 +584,28 @@ async function buildJournal(plan) {
     const required = (volumeBytes.get(volume) ?? 0) + bytes * 1.1 + 1024 * 1024
     volumeBytes.set(volume, required)
     if (disk.bavail * disk.bsize < required) throw new Error(`Insufficient disk space at ${r.to}`)
+    let previousTarget
+    if (r.targetHandling) {
+      const targetOriginal = await inventory(r.to)
+      if (r.targetHandling === 'empty' && targetOriginal.length !== 1)
+        throw new Error(`Integrity mismatch or new writes at ${r.to}`)
+      const backup = `${r.to}.brand-existing-${id}`
+      if (await inspect(backup)) throw new Error(`Existing-target backup conflict: ${backup}`)
+      previousTarget = { kind: r.targetHandling, backup, original: targetOriginal }
+    }
     participants.push({
       from: r.from,
       to: r.to,
       ...(files ? { files } : {}),
       stage: `${r.to}.brand-stage-${id}`,
       backup: `${r.from}.brand-backup-${id}`,
+      ...(previousTarget ? { previousTarget } : {}),
       original,
       published: undefined
     })
   }
   return {
-    version: 1,
+    version: 2,
     id,
     home: plan.home,
     configRoot: plan.configRoot,
@@ -452,7 +639,8 @@ async function ensureAliases(journal) {
   }
 }
 
-async function publish(journal, save, progress) {
+async function publish(journal, save, progress, checkWriters) {
+  checkWriters()
   journal.status = 'publishing'
   await save()
   for (const p of journal.participants) {
@@ -463,6 +651,18 @@ async function publish(journal, save, progress) {
       continue
     }
     // A saved publishing intent makes either side of each rename recoverable after process death.
+    if (p.previousTarget) {
+      const target = p.previousTarget
+      if (!(await inspect(target.backup))) {
+        if ((await inspect(p.backup)) || !(await inspect(p.stage)))
+          throw new Error(`Existing-target backup is missing: ${target.backup}`)
+        await verify(p.to, target.original)
+        await rename(p.to, target.backup)
+        await syncDirectory(dirname(p.to))
+        await progress({ phase: 'target-backed-up', path: p.to })
+      }
+      await verify(target.backup, target.original)
+    }
     if (!(await inspect(p.backup))) {
       await verify(p.from, p.original)
       await rename(p.from, p.backup)
@@ -478,8 +678,20 @@ async function publish(journal, save, progress) {
     await save()
     await progress({ phase: 'root-published', path: p.to })
   }
-  for (const p of journal.participants) await verify(p.backup, p.original, p)
+  checkWriters()
+  for (const p of journal.participants) {
+    await verify(p.to, p.published, p)
+    await verify(p.backup, p.original, p)
+    if (p.previousTarget) await verify(p.previousTarget.backup, p.previousTarget.original)
+  }
   await ensureAliases(journal)
+  await progress({ phase: 'before-commit' })
+  for (const p of journal.participants) {
+    await verify(p.to, p.published, p)
+    await verify(p.backup, p.original, p)
+    if (p.previousTarget) await verify(p.previousTarget.backup, p.previousTarget.original)
+  }
+  checkWriters()
   journal.status = 'committed'
   journal.committedAt = new Date().toISOString()
   await save()
@@ -489,6 +701,7 @@ async function prepare(journal, save, progress, copy) {
   for (const p of journal.participants) {
     if (await inspect(p.stage)) await rm(p.stage, { recursive: true })
     await verify(p.from, p.original, p)
+    if (p.previousTarget) await verify(p.to, p.previousTarget.original)
     if (p.files) await copyBundle(p, copy, verify, syncDirectory)
     else {
       await copy(p.from, p.stage)
@@ -534,7 +747,10 @@ async function prepare(journal, save, progress, copy) {
     await save()
   }
   // Detect source writes during a long cross-filesystem copy before touching any original root.
-  for (const p of journal.participants) await verify(p.from, p.original, p)
+  for (const p of journal.participants) {
+    await verify(p.from, p.original, p)
+    if (p.previousTarget) await verify(p.to, p.previousTarget.original)
+  }
   journal.status = 'prepared'
   await save()
 }
@@ -550,6 +766,21 @@ async function rollback(journal, save, progress) {
     }
     const backup = await inspect(p.backup)
     const parked = `${p.stage}.rolled-back`
+    let originalTargetInPlace = false
+    if (p.previousTarget) {
+      const target = p.previousTarget
+      if (await inspect(target.backup)) {
+        await verify(target.backup, target.original)
+        // Until the source was backed up, or after it was restored, the destination must be free.
+        if (!backup && (await inspect(p.to)))
+          throw new Error(`Unexpected target beside existing-target backup: ${p.to}`)
+      } else {
+        if (backup || journal.status === 'committed')
+          throw new Error(`Existing-target backup is missing: ${target.backup}`)
+        await verify(p.to, target.original)
+        originalTargetInPlace = true
+      }
+    }
     if (backup) {
       await verify(p.backup, p.original)
       if (await inspect(parked)) await verify(parked, expected(p))
@@ -565,13 +796,23 @@ async function rollback(journal, save, progress) {
       await verify(parked, expected(p))
       await verify(p.from, p.original)
     } else {
-      if (!['preparing', 'prepared', 'publishing', 'rolling-back'].includes(journal.status))
+      if (
+        !['preparing', 'prepared', 'publishing'].includes(journal.status) &&
+        !(
+          journal.status === 'rolling-back' &&
+          (p.rollbackOriginalInPlace ||
+            p.restoreIntent ||
+            (!p.rollbackSnapshot && (!p.published || (await inspect(p.stage)))))
+        )
+      )
         throw new Error(`Original backup is missing: ${p.backup}`)
       // A not-yet-published root is recoverable only while its exact original remains.
       await verify(p.from, p.original)
-      if (p.from !== p.to && (await inspect(p.to)))
+      if (p.from !== p.to && !originalTargetInPlace && (await inspect(p.to)))
         throw new Error(`Unexpected target without backup: ${p.to}`)
+      p.rollbackOriginalInPlace = true
     }
+    p.rollbackSnapshot = true
   }
   journal.status = 'rolling-back'
   await save()
@@ -593,6 +834,8 @@ async function rollback(journal, save, progress) {
       continue
     }
     if (await inspect(p.backup)) {
+      p.restoreIntent = true
+      await save()
       if (await inspect(p.to)) {
         if (await inspect(`${p.stage}.rolled-back`))
           throw new Error(`Rollback parking conflict: ${p.to}`)
@@ -607,14 +850,53 @@ async function rollback(journal, save, progress) {
       await save()
       await progress({ phase: 'rollback-root-restored', path: p.from })
     }
+    if (p.previousTarget && (await inspect(p.previousTarget.backup))) {
+      if (await inspect(p.to)) throw new Error(`Rollback target conflict: ${p.to}`)
+      p.previousTarget.restoreIntent = true
+      await save()
+      await rename(p.previousTarget.backup, p.to)
+      await syncDirectory(dirname(p.to))
+      p.previousTarget.restored = true
+      await save()
+      await progress({ phase: 'rollback-target-restored', path: p.to })
+    }
   }
   journal.status = 'rolled-back'
   await save()
 }
 
+// A receipt records roots that existed at that transaction, not all future legacy roots.
+async function assertCoveredRoots(plan, journal) {
+  for (const m of plan.mappings) {
+    if (!(await inspect(m.from))) continue
+    const covered = journal.mappings.some(
+      (prior) => [prior.from, ...(prior.fromAliases ?? [])].includes(m.from) && prior.to === m.to
+    )
+    if (!covered && remapPath(m.from, journal.mappings, plan.platform) !== m.to)
+      throw new Error(
+        `Legacy uncovered root appeared: ${m.from} -> ${m.to}; startup blocked. ` +
+          'Keep this journal. If rollback verification succeeds, use --rollback, then --execute --restart-after-rollback to include the new root; see docs/brand-path-migration.md.'
+      )
+  }
+}
+
+function requiresKernelGuard(plan, options) {
+  if (options.rollback || options.retireAliases || options.resume || options.restartAfterRollback)
+    return true
+  if (plan.journal)
+    return (
+      plan.journal.status !== 'committed' ||
+      plan.journal.mappings.length > 0 ||
+      plan.journal.participants.length > 0
+    )
+  return plan.mappings.some((m) => m.state !== 'initialize')
+}
+
 export async function runMigration(options, deps = {}) {
   const progress = deps.onProgress ?? (() => {})
   const plan = await planMigration(options)
+  if (plan.journal?.status === 'committed' && !options.rollback)
+    await assertCoveredRoots(plan, plan.journal)
   if (options.auditAliases) return auditAliases(plan.journal, inventory)
   if (!options.execute && !options.rollback && !options.resume && !options.retireAliases)
     return plan
@@ -635,13 +917,20 @@ export async function runMigration(options, deps = {}) {
   const {
     release: unlock,
     handoff,
-    lease
+    lease,
+    assertHeld,
+    ensureGuard: requireKernelGuard
   } = await lock(
     plan.stateDir,
     options.recoverLock,
     options.startupOwner,
     options.startupOwner ? 'application' : 'offline',
-    { userData: plan.userData, relayEligible: !options.allowMultiInstance }
+    { userData: plan.userData, relayEligible: !options.allowMultiInstance },
+    options.recoverIncompleteLock,
+    progress,
+    // Pure initialization and its empty committed receipt move no user files. Atomic lease
+    // creation suffices; any abandoned-lock recovery still acquires the kernel guard above.
+    requiresKernelGuard(plan, options)
   )
   let retainLease = false
   const finish = async (value) => {
@@ -654,13 +943,34 @@ export async function runMigration(options, deps = {}) {
     return value
   }
   try {
+    await progress({ phase: 'lease-acquired' })
     let current = await planMigration(options)
+    if (requiresKernelGuard(current, options)) await requireKernelGuard()
     if (current.blockers.length) throw new Error(current.blockers.join('\n'))
     const journalFile = join(plan.stateDir, 'journal.json')
     let journal = current.journal
+    if (journal?.version === 1) {
+      // Upgrade under the lease before any online adapter can write new recovery fields.
+      if (journal.id !== undefined && !/^[a-f0-9-]{36}$/.test(journal.id))
+        throw new Error('Invalid version-1 receipt identity')
+      const id = journal.id ?? randomUUID()
+      const archive = join(plan.stateDir, `journal-${id}.version-1.json`)
+      const archived = await inspect(archive)
+      if (archived) {
+        if (!archived.isFile() || archived.nlink !== 1)
+          throw new Error(`Unsafe version-1 receipt archive: ${archive}`)
+        if (JSON.stringify(await readJson(archive)) !== JSON.stringify(journal))
+          throw new Error(`Version-1 receipt archive conflict: ${archive}`)
+      } else await durableJson(archive, journal)
+      journal = { ...journal, version: 2, id, platform: journal.platform ?? plan.platform }
+      await durableJson(journalFile, journal)
+    }
     if (journal?.status === 'rolled-back' && options.rollback) return journal
     if (journal?.protectedMigration?.status === 'publishing') {
-      ;(deps.assertNoProcesses ?? assertNoProcesses)([current.configRoot], options.ignorePids)
+      ;(deps.assertNoProcesses ?? assertNoProcesses)(
+        [current.configRoot],
+        [...(options.ignorePids ?? []), ...(options.startupOwner ? [options.startupOwner] : [])]
+      )
       const { finishProtectedPublication } = await import('./online.mjs')
       await finishProtectedPublication(journal, () => durableJson(journalFile, journal), progress)
     }
@@ -696,15 +1006,8 @@ export async function runMigration(options, deps = {}) {
           throw new Error(`Legacy data appeared beside adopted root: ${m.from}`)
         if (!(await inspect(m.to))) throw new Error(`Adopted root is unavailable: ${m.to}`)
       }
+      await assertCoveredRoots(current, journal)
       await ensureAliases(journal)
-      // A normalized fresh-install receipt must not hide data later written by a downgraded app.
-      if (!journal.mappings.length)
-        for (const m of current.mappings) {
-          if (await inspect(m.from))
-            throw new Error(
-              `Legacy data appeared after initialization: ${m.from}; reconcile before startup`
-            )
-        }
       return await finish(journal)
     }
     if (journal?.status === 'rolled-back') {
@@ -731,15 +1034,30 @@ export async function runMigration(options, deps = {}) {
     }
     const busyRoots = [
       current.configRoot,
-      ...(journal?.participants ?? current.mappings).flatMap((p) => [p.from, p.to])
+      ...(journal?.participants ?? current.mappings).flatMap((p) =>
+        [
+          p.from,
+          p.to,
+          p.stage,
+          p.backup,
+          p.stage && `${p.stage}.rolled-back`,
+          p.previousTarget?.backup
+        ].filter(Boolean)
+      )
     ]
-    ;(deps.assertNoProcesses ?? assertNoProcesses)(busyRoots, options.ignorePids)
+    if (journal || current.mappings.some((m) => m.state !== 'initialize'))
+      (deps.assertNoProcesses ?? assertNoProcesses)(busyRoots, [
+        ...(options.ignorePids ?? []),
+        ...(options.startupOwner ? [options.startupOwner] : [])
+      ])
     if (!journal) {
       if (options.rollback || options.resume) throw new Error('No migration journal exists')
       journal = await buildJournal(current)
       if (!journal) {
         journal = {
-          version: 1,
+          version: 2,
+          id: randomUUID(),
+          platform: plan.platform,
           home: plan.home,
           configRoot: plan.configRoot,
           status: 'committed',
@@ -752,7 +1070,13 @@ export async function runMigration(options, deps = {}) {
       }
       await durableJson(journalFile, journal)
     }
-    const save = () => durableJson(journalFile, journal)
+    const save = () => {
+      assertHeld()
+      journal.version = 2
+      journal.id ??= randomUUID()
+      journal.platform ??= plan.platform
+      return durableJson(journalFile, journal)
+    }
     if (options.rollback) {
       await rollback(journal, save, progress)
       return journal
@@ -761,7 +1085,34 @@ export async function runMigration(options, deps = {}) {
       throw new Error('Interrupted rollback; resume with --rollback')
     if (journal.status === 'preparing')
       await prepare(journal, save, progress, deps.copyTree ?? copyTree)
-    await publish(journal, save, progress)
+    const checkWriters = () => {
+      assertHeld()
+      ;(deps.assertNoProcesses ?? ((roots) => assertNoOpenFiles(roots)))(
+        [
+          current.configRoot,
+          ...journal.participants.flatMap((p) =>
+            [
+              p.from,
+              p.to,
+              p.stage,
+              p.backup,
+              `${p.stage}.rolled-back`,
+              p.previousTarget?.backup
+            ].filter(Boolean)
+          )
+        ],
+        [...(options.ignorePids ?? []), ...(options.startupOwner ? [options.startupOwner] : [])]
+      )
+    }
+    await publish(
+      journal,
+      save,
+      async (event) => {
+        await progress(event)
+        checkWriters()
+      },
+      checkWriters
+    )
     return await finish(journal)
   } finally {
     if (!retainLease) await unlock()

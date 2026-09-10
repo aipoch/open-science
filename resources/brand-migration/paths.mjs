@@ -1,4 +1,5 @@
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
+import { statSync } from 'node:fs'
 import { dirname, join, resolve, win32, posix } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -13,13 +14,40 @@ export const inspect = async (path) => {
   }
 }
 export const readJson = async (path) => JSON.parse(await readFile(path, 'utf8'))
-export const inside = (root, value, platform = process.platform) => {
+// A differently-cased prefix is accepted only when this host resolves both spellings to
+// the same directory. This also works on case-sensitive macOS volumes and per-directory
+// case-sensitive Windows trees; a simulated foreign platform uses its lexical rules only.
+export function relativeInside(root, value, platform = process.platform) {
   const path = platform === 'win32' ? win32 : posix
   const normalized = path.normalize(value)
   const base = path.normalize(root)
-  const rel = path.relative(base, normalized)
-  return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel))
+  let rel = path.relative(base, normalized)
+  const contained =
+    rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel))
+  const prefix = normalized.slice(0, base.length)
+  const boundary = normalized.length === base.length || normalized[base.length] === path.sep
+  if (
+    prefix !== base &&
+    boundary &&
+    prefix.toLowerCase() === base.toLowerCase() &&
+    platform === process.platform
+  ) {
+    try {
+      const a = statSync(base)
+      const b = statSync(prefix)
+      if (!a.isDirectory() || !b.isDirectory() || a.dev !== b.dev || a.ino !== b.ino)
+        return undefined
+      rel = normalized.slice(base.length).replace(/^[/\\]/, '')
+      return rel
+    } catch (error) {
+      if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error
+      return undefined
+    }
+  }
+  return contained ? rel : undefined
 }
+export const inside = (root, value, platform = process.platform) =>
+  relativeInside(root, value, platform) !== undefined
 
 // Match path components, never text substrings. File URLs retain URI escaping and UNC authority.
 export function remapPath(value, mappings, platform = process.platform) {
@@ -40,8 +68,9 @@ export function remapPath(value, mappings, platform = process.platform) {
     ...(m.fromAliases ?? []).map((from) => ({ from, to: m.to }))
   ])
   for (const { from, to } of variants.sort((a, b) => b.from.length - a.from.length)) {
-    if (!inside(from, raw, platform)) continue
-    const next = path.join(to, path.relative(from, raw))
+    const rel = relativeInside(from, raw, platform)
+    if (rel === undefined) continue
+    const next = path.join(to, rel)
     return uri ? pathToFileURL(next, { windows: platform === 'win32' }).href : next
   }
   return value

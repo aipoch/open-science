@@ -12,7 +12,10 @@ import {
 import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// Real process inventories and repeated durable rollback/commit cycles need an integration budget.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 30_000 })
 
 const roots: string[] = []
 async function fixture(): Promise<{ home: string; config: string; old: string; next: string }> {
@@ -141,6 +144,236 @@ describe('offline brand migration', () => {
   })
 })
 
+describe('existing migration targets', () => {
+  async function targetFixture(kind: 'empty' | 'logs' = 'empty'): Promise<
+    Awaited<ReturnType<typeof fixture>> & {
+      from: string
+      to: string
+      options: { home: string; appData: string; mode: string; platform?: string; execute: boolean }
+    }
+  > {
+    const f = await fixture()
+    const from = kind === 'logs' ? join(f.home, 'Library', 'Logs', 'Open Science (DEV)') : f.old
+    const to = kind === 'logs' ? join(f.home, 'Library', 'Logs', 'Open-Science (DEV)') : f.next
+    await mkdir(from, { recursive: true })
+    await mkdir(to, { recursive: true, mode: 0o750 })
+    if (kind === 'logs') {
+      await writeFile(join(from, 'main.log'), 'old log\n')
+      await writeFile(join(to, 'main.log'), 'new log\n')
+    }
+    const options = {
+      home: f.home,
+      appData: join(f.home, 'appData'),
+      mode: 'dev',
+      ...(kind === 'logs' ? { platform: 'darwin' } : {}),
+      execute: true
+    }
+    return { ...f, from, to, options }
+  }
+
+  it('plans an empty target without writes, then preserves it through commit and rollback', async () => {
+    const f = await targetFixture()
+    const stat = await lstat(f.to)
+    const plan = cli(f.home)
+    expect(plan.value.blockers).toEqual([])
+    expect(plan.value.mappings).toContainEqual(
+      expect.objectContaining({ from: f.from, state: 'move', targetHandling: 'empty' })
+    )
+    expect(await readdir(f.to)).toEqual([])
+    await expect(lstat(`${f.config}.brand-migration`)).rejects.toMatchObject({ code: 'ENOENT' })
+    const result = cli(f.home, '--execute')
+    expect(result.status, result.output).toBe(0)
+    const journal = JSON.parse(
+      await readFile(join(`${f.config}.brand-migration`, 'journal.json'), 'utf8')
+    )
+    const p = journal.participants.find((p) => p.to === f.to)
+    expect(result.value.existingTargetBackups).toContainEqual({
+      from: f.to,
+      backup: p.previousTarget.backup,
+      kind: 'empty'
+    })
+    expect(await readdir(p.previousTarget.backup)).toEqual([])
+    expect((await lstat(p.previousTarget.backup)).ino).toBe(stat.ino)
+    expect((await lstat(p.previousTarget.backup)).mode).toBe(stat.mode)
+    expect(await readFile(join(f.to, 'uploads', 'paper.txt'), 'utf8')).toBe('research\n')
+    expect(cli(f.home, '--execute').value.id).toBe(result.value.id)
+    expect(cli(f.home, '--rollback').value.status).toBe('rolled-back')
+    expect((await lstat(f.to)).ino).toBe(stat.ino)
+    expect(await readdir(f.to)).toEqual([])
+    expect(await readFile(join(f.from, 'uploads', 'paper.txt'), 'utf8')).toBe('research\n')
+  })
+
+  it.each(['dev', 'packaged'])(
+    'handles an empty %s profile but still rejects a nonempty profile',
+    async (mode) => {
+      const f = await fixture()
+      const profile = mode === 'dev' ? 'Open Science (DEV)' : 'Open Science'
+      const from = join(f.home, 'appData', profile)
+      const to = join(f.home, 'appData', profile.replace('Open Science', 'Open-Science'))
+      await mkdir(from, { recursive: true })
+      await writeFile(join(from, 'Preferences'), 'old preferences')
+      await mkdir(to)
+      expect(cli(f.home, '--mode', mode).value.blockers).toEqual([])
+      await writeFile(join(to, 'Preferences'), 'independent preferences')
+      expect(cli(f.home, '--mode', mode, '--execute').output).toContain('Path conflict')
+      expect(await readFile(join(to, 'Preferences'), 'utf8')).toBe('independent preferences')
+    }
+  )
+
+  it('preserves both versions of same-name logs without merging their contents', async () => {
+    const f = await targetFixture('logs')
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    const result = await runMigration(f.options)
+    const p = result.participants.find((p) => p.to === f.to)
+    expect(result.status).toBe('committed')
+    expect(p.previousTarget.kind).toBe('logs')
+    expect(await readFile(join(p.previousTarget.backup, 'main.log'), 'utf8')).toBe('new log\n')
+    expect(await readFile(join(p.backup, 'main.log'), 'utf8')).toBe('old log\n')
+    expect(await readFile(join(f.to, 'main.log'), 'utf8')).toBe('old log\n')
+    await runMigration({ ...f.options, execute: false, rollback: true })
+    expect(await readFile(join(f.to, 'main.log'), 'utf8')).toBe('new log\n')
+    expect(await readFile(join(f.from, 'main.log'), 'utf8')).toBe('old log\n')
+  })
+
+  it('rechecks an empty target after copying and refuses new writes before moving originals', async () => {
+    const f = await targetFixture()
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    await expect(
+      runMigration(f.options, {
+        async onProgress(event: { phase: string }) {
+          if (event.phase === 'copied') await writeFile(join(f.to, 'new-user-file'), 'keep')
+        }
+      })
+    ).rejects.toThrow('new writes')
+    expect((await lstat(f.from)).isSymbolicLink()).toBe(false)
+    expect(await readFile(join(f.to, 'new-user-file'), 'utf8')).toBe('keep')
+  })
+
+  it.each(['target-backed-up', 'source-backed-up', 'root-published'])(
+    'recovers both log trees after interruption at %s',
+    async (phase) => {
+      const f = await targetFixture('logs')
+      const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+      await expect(
+        runMigration(f.options, {
+          onProgress(event: { phase: string; path?: string }) {
+            if (event.phase === phase && [f.from, f.to].includes(event.path ?? ''))
+              throw new Error('injected interruption')
+          }
+        })
+      ).rejects.toThrow('injected interruption')
+      const result = await runMigration({ ...f.options, execute: false, resume: true })
+      expect(result.status).toBe('committed')
+      const p = result.participants.find((p) => p.to === f.to)
+      expect(await readFile(join(p.previousTarget.backup, 'main.log'), 'utf8')).toBe('new log\n')
+      expect(await readFile(join(f.to, 'main.log'), 'utf8')).toBe('old log\n')
+    }
+  )
+
+  it.each(['copied', 'target-backed-up', 'source-backed-up', 'root-published'])(
+    'rolls back both log trees after interruption at %s',
+    async (phase) => {
+      const f = await targetFixture('logs')
+      const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+      await expect(
+        runMigration(f.options, {
+          onProgress(event: { phase: string; path?: string }) {
+            if (
+              event.phase === phase &&
+              (phase === 'copied' || [f.from, f.to].includes(event.path ?? ''))
+            )
+              throw new Error('injected interruption')
+          }
+        })
+      ).rejects.toThrow('injected interruption')
+      const result = await runMigration({ ...f.options, execute: false, rollback: true })
+      expect(result.status).toBe('rolled-back')
+      expect(await readFile(join(f.from, 'main.log'), 'utf8')).toBe('old log\n')
+      expect(await readFile(join(f.to, 'main.log'), 'utf8')).toBe('new log\n')
+    }
+  )
+
+  it.each(['rollback-root-parked', 'rollback-root-restored', 'rollback-target-restored'])(
+    'resumes interrupted rollback at %s',
+    async (phase) => {
+      const f = await targetFixture('logs')
+      const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+      await runMigration(f.options)
+      const rollback = { ...f.options, execute: false, rollback: true }
+      await expect(
+        runMigration(rollback, {
+          onProgress(event: { phase: string; path?: string }) {
+            if (event.phase === phase && [f.from, f.to].includes(event.path ?? ''))
+              throw new Error('injected interruption')
+          }
+        })
+      ).rejects.toThrow('injected interruption')
+      expect((await runMigration(rollback)).status).toBe('rolled-back')
+      expect(await readFile(join(f.from, 'main.log'), 'utf8')).toBe('old log\n')
+      expect(await readFile(join(f.to, 'main.log'), 'utf8')).toBe('new log\n')
+    }
+  )
+
+  it('refuses rollback before any root changes if the existing-target backup was modified', async () => {
+    const f = await targetFixture('logs')
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    const result = await runMigration(f.options)
+    const p = result.participants.find((p) => p.to === f.to)
+    await writeFile(join(p.previousTarget.backup, 'main.log'), 'later write')
+    await expect(runMigration({ ...f.options, execute: false, rollback: true })).rejects.toThrow(
+      'new writes'
+    )
+    expect((await lstat(f.old)).isSymbolicLink()).toBe(true)
+    expect(await readFile(join(f.to, 'main.log'), 'utf8')).toBe('old log\n')
+  })
+
+  it('leaves both originals intact after a copy failure and can resume', async () => {
+    const f = await targetFixture()
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    await expect(
+      runMigration(f.options, {
+        copyTree() {
+          throw new Error('injected copy failure')
+        }
+      })
+    ).rejects.toThrow('injected copy failure')
+    expect(await readdir(f.to)).toEqual([])
+    expect(await readFile(join(f.from, 'uploads', 'paper.txt'), 'utf8')).toBe('research\n')
+    expect((await runMigration({ ...f.options, execute: false, resume: true })).status).toBe(
+      'committed'
+    )
+  })
+
+  it('rejects a forged existing-target backup path without touching either generation', async () => {
+    const f = await targetFixture()
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    const result = await runMigration(f.options)
+    const p = result.participants.find((p) => p.to === f.to)
+    p.previousTarget.backup = f.config
+    await writeFile(join(`${f.config}.brand-migration`, 'journal.json'), JSON.stringify(result))
+    await expect(runMigration({ ...f.options, execute: false, rollback: true })).rejects.toThrow(
+      'Invalid journal existing target'
+    )
+    expect((await lstat(f.old)).isSymbolicLink()).toBe(true)
+    expect(await readFile(join(f.to, 'uploads', 'paper.txt'), 'utf8')).toBe('research\n')
+  })
+
+  it('rejects a missing existing-target backup before rolling back any participant', async () => {
+    const f = await targetFixture()
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    const result = await runMigration(f.options)
+    const p = result.participants.find((p) => p.to === f.to)
+    await rm(p.previousTarget.backup, { recursive: true })
+    await expect(runMigration({ ...f.options, execute: false, rollback: true })).rejects.toThrow(
+      'Existing-target backup is missing'
+    )
+    expect((await lstat(f.old)).isSymbolicLink()).toBe(true)
+    expect(JSON.parse(await readFile(join(f.config, 'settings.json'), 'utf8')).dataRoot).toBe(
+      f.next
+    )
+  })
+})
+
 describe('migration reference boundaries and recovery', () => {
   it('preserves casing and remaps only exact absolute roots including Windows and file URIs', async () => {
     const { remapPath, hyphenateBrand } = await import('../resources/brand-migration/paths.mjs')
@@ -238,6 +471,78 @@ describe('real SQLite and filesystem transaction', () => {
     db.close()
     return (file = join(f.config, 'open-science.db')) => new DatabaseSync(file)
   }
+  it.each(['database-before-commit', 'root-published'])(
+    'recovers the empty profile and conflicting logs together with the real DB after %s',
+    async (phase) => {
+      const f = await fixture()
+      const openDb = await database(f)
+      const profileFrom = join(f.home, 'appData', 'Open Science (DEV)')
+      const profileTo = join(f.home, 'appData', 'Open-Science (DEV)')
+      const logsFrom = join(f.home, 'Library', 'Logs', 'Open Science (DEV)')
+      const logsTo = join(f.home, 'Library', 'Logs', 'Open-Science (DEV)')
+      for (const path of [profileFrom, profileTo, logsFrom, logsTo])
+        await mkdir(path, { recursive: true })
+      await writeFile(join(profileFrom, 'Preferences'), 'historical preferences')
+      await writeFile(join(logsFrom, 'main.log'), 'old logs')
+      await writeFile(join(logsTo, 'main.log'), 'new logs')
+      const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+      const options = {
+        home: f.home,
+        appData: join(f.home, 'appData'),
+        mode: 'dev',
+        platform: 'darwin'
+      }
+      await expect(
+        runMigration(
+          { ...options, execute: true },
+          {
+            onProgress(event: { phase: string; path?: string }) {
+              if (event.phase === phase && (phase !== 'root-published' || event.path === profileTo))
+                throw new Error('injected DB and filesystem interruption')
+            }
+          }
+        )
+      ).rejects.toThrow('injected DB and filesystem interruption')
+      let db = openDb()
+      try {
+        expect(db.prepare('SELECT path FROM GrantedLocalRoot').get()).toEqual({ path: f.old })
+      } finally {
+        db.close()
+      }
+      const result = await runMigration({ ...options, resume: true })
+      expect(result.status).toBe('committed')
+      expect(await readFile(join(profileTo, 'Preferences'), 'utf8')).toBe('historical preferences')
+      expect(await readFile(join(f.next, 'uploads', 'paper.txt'), 'utf8')).toBe('research\n')
+      db = openDb()
+      try {
+        expect(db.prepare('SELECT id,path FROM GrantedLocalRoot').all()).toEqual([
+          { id: 'grant', path: f.next }
+        ])
+        expect(db.prepare('SELECT id,description FROM Project').all()).toEqual([
+          { id: 'p', description: f.old }
+        ])
+        expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+      } finally {
+        db.close()
+      }
+      await runMigration({ ...options, rollback: true })
+      expect(await readdir(profileTo)).toEqual([])
+      expect(await readFile(join(profileFrom, 'Preferences'), 'utf8')).toBe(
+        'historical preferences'
+      )
+      expect(await readFile(join(logsTo, 'main.log'), 'utf8')).toBe('new logs')
+      expect(await readFile(join(logsFrom, 'main.log'), 'utf8')).toBe('old logs')
+      db = openDb()
+      try {
+        expect(db.prepare('SELECT id,path FROM GrantedLocalRoot').all()).toEqual([
+          { id: 'grant', path: f.old }
+        ])
+        expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+      } finally {
+        db.close()
+      }
+    }
+  )
   it('updates actual schema columns in a transaction without changing content, IDs or relations', async () => {
     const f = await fixture()
     const openDb = await database(f)
@@ -1248,4 +1553,800 @@ it('blocks alias retirement while a Windows registry PATH still depends on the o
   expect(audit.blockers).toEqual([
     { path: 'C:\\Users\\fixture\\Open Science\\bin', reason: 'User-PATH-reference' }
   ])
+})
+
+describe('deep review migration regressions', () => {
+  async function writer(cwd: string): Promise<import('node:child_process').ChildProcess> {
+    const { spawn } = await import('node:child_process')
+    const { once } = await import('node:events')
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        `
+      const fs = require('node:fs');
+      const fd = fs.openSync('uploads/paper.txt', 'a');
+      process.on('message', () => { fs.writeSync(fd, 'child-write\\n'); process.send('written'); });
+      process.send('ready');
+    `
+      ],
+      { cwd, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+    )
+    await once(child, 'message')
+    return child
+  }
+  async function stop(child: import('node:child_process').ChildProcess): Promise<void> {
+    const { once } = await import('node:events')
+    const exited = once(child, 'exit')
+    child.kill()
+    await exited
+  }
+
+  it('blocks a real writer whose cwd and open handle are absent from its command line', async () => {
+    const f = await fixture()
+    const child = await writer(f.old)
+    try {
+      const result = cli(f.home, '--execute')
+      expect(result.status, result.output).not.toBe(0)
+      expect(result.output).toMatch(/using migration paths|occupied/)
+      const { once } = await import('node:events')
+      const written = once(child, 'message')
+      child.send('write')
+      await written
+      expect(await readFile(join(f.old, 'uploads', 'paper.txt'), 'utf8')).toBe(
+        'research\nchild-write\n'
+      )
+      await expect(lstat(f.next)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await stop(child)
+    }
+  })
+
+  it('rechecks writers acquired after copying and before publication', async () => {
+    const f = await fixture()
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    let child: import('node:child_process').ChildProcess | undefined
+    try {
+      await expect(
+        runMigration(
+          { home: f.home, appData: join(f.home, 'appData'), mode: 'dev', execute: true },
+          {
+            async onProgress(event: { phase: string }) {
+              if (event.phase === 'references-prepared' && !child) child = await writer(f.old)
+            }
+          }
+        )
+      ).rejects.toThrow(/using migration paths|occupied/)
+      expect((await lstat(f.old)).isSymbolicLink()).toBe(false)
+    } finally {
+      if (child) await stop(child)
+    }
+  })
+
+  it('maps a proven alternate-case SQLite path and preserves access after alias retirement', async (ctx) => {
+    const f = await fixture()
+    const alternate = join(f.home, 'OPENSCIENCE-DEV')
+    const alternateStat = await lstat(alternate).catch(() => undefined)
+    if (!alternateStat || alternateStat.ino !== (await lstat(f.old)).ino) return ctx.skip()
+    const { DatabaseSync } = await import('node:sqlite')
+    const dbPath = join(f.config, 'open-science.db')
+    const original = join(alternate, 'uploads', 'paper.txt')
+    expect(await readFile(original, 'utf8')).toBe('research\n')
+    const db = new DatabaseSync(dbPath)
+    db.exec('CREATE TABLE GrantedLocalRoot(id TEXT PRIMARY KEY,path TEXT)')
+    db.prepare('INSERT INTO GrantedLocalRoot VALUES (?,?)').run('kept-id', original)
+    db.close()
+    const result = cli(f.home, '--execute')
+    expect(result.status, result.output).toBe(0)
+    const after = new DatabaseSync(dbPath, { readOnly: true })
+    const row = after.prepare('SELECT id,path FROM GrantedLocalRoot').get()
+    after.close()
+    expect(row).toEqual({ id: 'kept-id', path: join(f.next, 'uploads', 'paper.txt') })
+    const retired = cli(f.home, '--retire-aliases')
+    expect(retired.status, retired.output).toBe(0)
+    expect(await readFile(String(row!.path), 'utf8')).toBe('research\n')
+  })
+
+  it('recovers rollback interrupted again before any reference was published', async () => {
+    const f = await fixture()
+    const original = await readFile(join(f.config, 'settings.json'), 'utf8')
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    const options = { home: f.home, appData: join(f.home, 'appData'), mode: 'dev' }
+    await expect(
+      runMigration(
+        { ...options, execute: true },
+        {
+          onProgress(event: { phase: string }) {
+            if (event.phase === 'copied') throw new Error('first interruption')
+          }
+        }
+      )
+    ).rejects.toThrow('first interruption')
+    await expect(
+      runMigration(
+        { ...options, rollback: true },
+        {
+          onProgress(event: { phase: string }) {
+            if (event.phase === 'rollback-aliases-removed') throw new Error('second interruption')
+          }
+        }
+      )
+    ).rejects.toThrow('second interruption')
+    expect((await runMigration({ ...options, rollback: true })).status).toBe('rolled-back')
+    expect((await runMigration({ ...options, rollback: true })).status).toBe('rolled-back')
+    expect(await readFile(join(f.config, 'settings.json'), 'utf8')).toBe(original)
+    expect(await readFile(join(f.old, 'uploads', 'paper.txt'), 'utf8')).toBe('research\n')
+  })
+
+  it('recovers a dead recovery owner while preserving the abandoned lock identity', async () => {
+    const f = await fixture()
+    const state = `${f.config}.brand-migration`
+    await mkdir(join(state, 'lock-recovery'), { recursive: true })
+    await writeFile(
+      join(state, 'lock'),
+      JSON.stringify({ pid: 2147483647, workerPid: 2147483647, token: 'legacy-lock' })
+    )
+    await writeFile(
+      join(state, 'lock-recovery', 'owner.json'),
+      JSON.stringify({ pid: 2147483647, workerPid: 2147483647, token: 'dead-recovery' })
+    )
+    const result = cli(f.home, '--execute', '--recover-lock')
+    expect(result.status, result.output).toBe(0)
+    expect(result.value.status).toBe('committed')
+  })
+
+  it.each(['dev', 'packaged'])(
+    'does not hide a later legacy %s profile behind a committed data receipt',
+    async (mode) => {
+      const f = await fixture()
+      const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+      const options = { home: f.home, appData: join(f.home, 'appData'), mode, execute: true }
+      if (mode === 'packaged') {
+        const { rename } = await import('node:fs/promises')
+        await rename(f.old, join(f.home, 'OpenScience'))
+      }
+      await runMigration(options)
+      const profile = join(options.appData, mode === 'dev' ? 'Open Science (DEV)' : 'Open Science')
+      await mkdir(profile, { recursive: true })
+      await writeFile(join(profile, 'Preferences'), 'historical preferences')
+      await expect(runMigration(options)).rejects.toThrow(/uncovered|Legacy.*appeared/)
+      expect(await readFile(join(profile, 'Preferences'), 'utf8')).toBe('historical preferences')
+    }
+  )
+})
+
+describe('hardening recovery boundaries', () => {
+  const optionsFor = (
+    f: Awaited<ReturnType<typeof fixture>>
+  ): { home: string; appData: string; mode: string } => ({
+    home: f.home,
+    appData: join(f.home, 'appData'),
+    mode: 'dev'
+  })
+
+  it.each(['reference-backed-up', 'reference-published', 'source-backed-up', 'before-commit'])(
+    'survives two rollback interruptions after %s with a real database and both target generations',
+    async (phase) => {
+      const f = await fixture()
+      await mkdir(f.next)
+      const { DatabaseSync } = await import('node:sqlite')
+      const dbPath = join(f.config, 'open-science.db')
+      const db = new DatabaseSync(dbPath)
+      db.exec(
+        'PRAGMA foreign_keys=ON; CREATE TABLE GrantedLocalRoot(id TEXT PRIMARY KEY,path TEXT); CREATE TABLE Related(id TEXT PRIMARY KEY,rootId TEXT REFERENCES GrantedLocalRoot(id));'
+      )
+      db.prepare('INSERT INTO GrantedLocalRoot VALUES (?,?)').run(
+        'root-id',
+        join(f.old, 'uploads/paper.txt')
+      )
+      db.exec("INSERT INTO Related VALUES ('child-id','root-id')")
+      db.close()
+      const settings = await readFile(join(f.config, 'settings.json'), 'utf8')
+      const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+      const options = optionsFor(f)
+      await expect(
+        runMigration(
+          { ...options, execute: true },
+          {
+            onProgress(e: { phase: string }) {
+              if (e.phase === phase) throw new Error('publication interruption')
+            }
+          }
+        )
+      ).rejects.toThrow('publication interruption')
+      for (const stopAt of ['rollback-aliases-removed', 'rollback-root-restored']) {
+        await expect(
+          runMigration(
+            { ...options, rollback: true },
+            {
+              onProgress(e: { phase: string }) {
+                if (e.phase === stopAt) throw new Error('repeated rollback interruption')
+              }
+            }
+          )
+        ).rejects.toThrow('repeated rollback interruption')
+      }
+      expect((await runMigration({ ...options, rollback: true })).status).toBe('rolled-back')
+      expect((await runMigration({ ...options, rollback: true })).status).toBe('rolled-back')
+      expect(await readFile(join(f.config, 'settings.json'), 'utf8')).toBe(settings)
+      expect(await readFile(join(f.old, 'uploads/paper.txt'), 'utf8')).toBe('research\n')
+      expect(await readdir(f.next)).toEqual([])
+      const restored = new DatabaseSync(dbPath, { readOnly: true })
+      expect(restored.prepare('SELECT * FROM GrantedLocalRoot').all()).toEqual([
+        { id: 'root-id', path: join(f.old, 'uploads/paper.txt') }
+      ])
+      expect(restored.prepare('SELECT * FROM Related').all()).toEqual([
+        { id: 'child-id', rootId: 'root-id' }
+      ])
+      expect(restored.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+      restored.close()
+    }
+  )
+
+  it('recovers the legacy v1 pre-publication rolling-back receipt with no reference stage', async () => {
+    const f = await fixture()
+    await mkdir(join(f.home, 'appData', 'Open Science (DEV)'), { recursive: true })
+    await writeFile(join(f.home, 'appData', 'Open Science (DEV)', 'Preferences'), 'legacy profile')
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    await expect(
+      runMigration(
+        { ...optionsFor(f), execute: true },
+        {
+          onProgress(e: { phase: string }) {
+            if (e.phase === 'copied') throw new Error('crash')
+          }
+        }
+      )
+    ).rejects.toThrow('crash')
+    const file = join(`${f.config}.brand-migration`, 'journal.json')
+    const journal = JSON.parse(await readFile(file, 'utf8'))
+    journal.version = 1
+    journal.status = 'rolling-back'
+    await writeFile(file, JSON.stringify(journal))
+    expect((await runMigration({ ...optionsFor(f), rollback: true })).status).toBe('rolled-back')
+    expect(JSON.parse(await readFile(file, 'utf8')).version).toBe(2)
+  })
+
+  it('rejects a changed original after a pre-publication rollback interruption', async () => {
+    const f = await fixture()
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    await expect(
+      runMigration(
+        { ...optionsFor(f), execute: true },
+        {
+          onProgress(e: { phase: string }) {
+            if (e.phase === 'copied') throw new Error('crash')
+          }
+        }
+      )
+    ).rejects.toThrow('crash')
+    await expect(
+      runMigration(
+        { ...optionsFor(f), rollback: true },
+        {
+          onProgress(e: { phase: string }) {
+            if (e.phase === 'rollback-aliases-removed') throw new Error('crash')
+          }
+        }
+      )
+    ).rejects.toThrow('crash')
+    await writeFile(join(f.config, 'settings.json'), '{"changed":true}')
+    await expect(runMigration({ ...optionsFor(f), rollback: true })).rejects.toThrow(
+      /Integrity mismatch/
+    )
+    expect(await readFile(join(f.config, 'settings.json'), 'utf8')).toBe('{"changed":true}')
+  })
+
+  it.each(['root-published', 'before-commit'])(
+    'detects a closed writer changing published content at %s',
+    async (phase) => {
+      const f = await fixture()
+      const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+      await expect(
+        runMigration(
+          { ...optionsFor(f), execute: true },
+          {
+            async onProgress(e: { phase: string; path?: string }) {
+              if (e.phase === phase && (phase === 'before-commit' || e.path === f.next))
+                await writeFile(join(f.next, 'uploads/paper.txt'), 'new user write')
+            }
+          }
+        )
+      ).rejects.toThrow(/Integrity mismatch/)
+      const journal = JSON.parse(
+        await readFile(join(`${f.config}.brand-migration`, 'journal.json'), 'utf8')
+      )
+      expect(journal.status).not.toBe('committed')
+      expect(await readFile(join(f.next, 'uploads/paper.txt'), 'utf8')).toBe('new user write')
+      expect(
+        await readFile(join(journal.participants[0].backup, 'uploads/paper.txt'), 'utf8')
+      ).toBe('research\n')
+    }
+  )
+
+  it('blocks a real descriptor after its process leaves the old cwd', async () => {
+    const f = await fixture()
+    const { spawn } = await import('node:child_process')
+    const { once } = await import('node:events')
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        "const fs=require('node:fs'); const fd=fs.openSync('uploads/paper.txt','a'); process.chdir('..'); process.on('message',()=>{}); process.send(fd);"
+      ],
+      { cwd: f.old, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+    )
+    await once(child, 'message')
+    try {
+      const result = cli(f.home, '--execute')
+      expect(result.status).not.toBe(0)
+      expect(result.output).toMatch(/occupied/)
+    } finally {
+      const exited = once(child, 'exit')
+      child.kill()
+      await exited
+    }
+  })
+
+  it('fails closed on unreadable, failed, empty or truncated occupancy probes', async () => {
+    const { assertNoOpenFiles } = await import('../resources/brand-migration/transaction.mjs')
+    for (const result of [
+      { status: 1, stdout: '', stderr: '' },
+      { status: 0, stdout: 'p123\0fcwd\0n/tmp\0\n', stderr: 'permission denied' },
+      { status: 0, stdout: 'p123\0fcwd\0n/tmp', stderr: '' },
+      { status: 0, stdout: '\n', stderr: '' },
+      { status: 0, stdout: 'p123\0fNOFD\0\n', stderr: '' }
+    ])
+      expect(() => assertNoOpenFiles(['/tmp/fixture'], () => result)).toThrow()
+  })
+
+  it.each(['', '{"pid":', 'empty-recovery'])(
+    'requires identity approval for incomplete legacy lock %j',
+    async (contents) => {
+      const f = await fixture()
+      const state = `${f.config}.brand-migration`
+      await mkdir(state)
+      const path = join(state, contents === 'empty-recovery' ? 'lock-recovery' : 'lock')
+      if (contents === 'empty-recovery') await mkdir(path)
+      else await writeFile(path, contents)
+      const refused = cli(f.home, '--execute', '--recover-lock')
+      expect(refused.status).not.toBe(0)
+      const fingerprint = refused.output.match(/--recover-incomplete-lock ([a-f0-9]{64})/)?.[1]
+      expect(fingerprint).toBeTruthy()
+      expect(
+        cli(f.home, '--execute', '--recover-lock', '--recover-incomplete-lock', '0'.repeat(64))
+          .status
+      ).not.toBe(0)
+      const result = cli(
+        f.home,
+        '--execute',
+        '--recover-lock',
+        '--recover-incomplete-lock',
+        fingerprint!
+      )
+      expect(result.status, result.output).toBe(0)
+      expect(
+        (await readdir(state)).some((name) =>
+          name.startsWith(`${contents === 'empty-recovery' ? 'lock-recovery' : 'lock'}.abandoned-`)
+        )
+      ).toBe(true)
+    }
+  )
+
+  it('serializes two recovery processes and survives consecutive recovery interruptions', async () => {
+    const f = await fixture()
+    const state = `${f.config}.brand-migration`
+    await mkdir(join(state, 'lock-recovery'), { recursive: true })
+    const dead = JSON.stringify({ pid: 2147483647, workerPid: 2147483647, token: 'dead' })
+    await writeFile(join(state, 'lock'), dead)
+    await writeFile(join(state, 'lock-recovery', 'owner.json'), dead)
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    for (const phase of ['recovery-lock-quarantined', 'lock-quarantined']) {
+      await expect(
+        runMigration(
+          { ...optionsFor(f), execute: true, recoverLock: true },
+          {
+            onProgress(e: { phase: string }) {
+              if (e.phase !== phase) return
+              const contender = cli(f.home, '--execute', '--recover-lock')
+              expect(contender.status).not.toBe(0)
+              expect(contender.output).toMatch(/kernel lock unavailable or active/)
+              throw new Error('recovery interruption')
+            }
+          }
+        )
+      ).rejects.toThrow('recovery interruption')
+    }
+    expect(cli(f.home, '--execute', '--recover-lock').status).toBe(0)
+    expect((await readdir(state)).filter((name) => name.includes('.abandoned-'))).toHaveLength(2)
+  })
+
+  it('does not reclaim an active recovery-directory owner', async () => {
+    const f = await fixture()
+    const state = `${f.config}.brand-migration`
+    await mkdir(join(state, 'lock-recovery'), { recursive: true })
+    await writeFile(
+      join(state, 'lock-recovery', 'owner.json'),
+      JSON.stringify({ pid: process.pid, token: 'live' })
+    )
+    expect(cli(f.home, '--execute', '--recover-lock').output).toMatch(/owner is active/)
+    expect(await readdir(join(state, 'lock-recovery'))).toEqual(['owner.json'])
+  })
+
+  it('rediscovers an explicit legacy root added after a custom-profile transaction', async () => {
+    const f = await fixture()
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    const options = {
+      ...optionsFor(f),
+      userData: join(f.home, 'user-selected-profile'),
+      execute: true
+    }
+    await runMigration(options)
+    const from = join(f.home, 'chosen-old'),
+      to = join(f.home, 'chosen-new')
+    await mkdir(from)
+    await writeFile(join(from, 'keep'), 'custom data')
+    const journalFile = join(`${f.config}.brand-migration`, 'journal.json')
+    const journal = await readFile(journalFile, 'utf8')
+    await expect(runMigration({ ...options, maps: [{ from, to }] })).rejects.toThrow(/uncovered/)
+    expect(await readFile(journalFile, 'utf8')).toBe(journal)
+    expect((await runMigration(options)).status).toBe('committed')
+  })
+
+  it('keeps an alternate-case database reference as a retirement blocker if reintroduced after commit', async (ctx) => {
+    const f = await fixture()
+    const upper = join(f.home, 'OPENSCIENCE-DEV')
+    if (!(await lstat(upper).catch(() => undefined))) return ctx.skip()
+    expect(cli(f.home, '--execute').status).toBe(0)
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(join(f.config, 'open-science.db'))
+    db.exec('CREATE TABLE GrantedLocalRoot(id TEXT PRIMARY KEY,path TEXT)')
+    db.prepare('INSERT INTO GrantedLocalRoot VALUES (?,?)').run(
+      'legacy',
+      join(upper, 'uploads/paper.txt')
+    )
+    db.close()
+    expect(cli(f.home, '--audit-aliases').value.blockers).toContainEqual(
+      expect.objectContaining({ reason: 'GrantedLocalRoot.path' })
+    )
+    expect(cli(f.home, '--retire-aliases').status).not.toBe(0)
+    expect(await readFile(join(upper, 'uploads/paper.txt'), 'utf8')).toBe('research\n')
+  })
+})
+
+describe('independent hardening review regressions', () => {
+  it('rolls back a saved reference publication intent before the first rename', async () => {
+    const f = await fixture()
+    const { inventory, copyTree, syncDirectory } =
+      await import('../resources/brand-migration/transaction.mjs')
+    const { bundleInventory, publishBundle, verifyBundleRollback } =
+      await import('../resources/brand-migration/reference-bundle.mjs')
+    const p = {
+      from: f.config,
+      to: f.config,
+      files: ['settings.json'],
+      stage: join(f.home, 'stage'),
+      backup: join(f.home, 'backup'),
+      original: await bundleInventory(f.config, ['settings.json'], inventory),
+      published: undefined as unknown
+    }
+    await copyTree(f.config, p.stage)
+    p.published = await bundleInventory(p.stage, p.files, inventory)
+    await expect(
+      publishBundle(
+        p,
+        async () => {
+          throw new Error('intent persisted then crash')
+        },
+        () => {},
+        inventory,
+        syncDirectory
+      )
+    ).rejects.toThrow('intent persisted then crash')
+    await expect(verifyBundleRollback(p, 'publishing', inventory)).resolves.toBeUndefined()
+  })
+
+  it('recovers its own two-link atomic lock publication window', async () => {
+    const f = await fixture()
+    const { link } = await import('node:fs/promises')
+    const token = 'bf5b192a-27d1-4d3f-a4ab-a340739c8270'
+    const state = `${f.config}.brand-migration`
+    await mkdir(state)
+    const prepared = join(state, `lock-owner-${token}`)
+    await writeFile(
+      prepared,
+      JSON.stringify({ pid: 2147483647, workerPid: 2147483647, token, ownerKind: 'transaction' })
+    )
+    await link(prepared, join(state, 'lock'))
+    const result = cli(f.home, '--execute', '--recover-lock')
+    expect(result.status, result.output).toBe(0)
+    expect(JSON.parse(await readFile(prepared, 'utf8')).token).toBe(token)
+  })
+
+  it('retains aliases used before shell punctuation and encoded URI separators', async () => {
+    const f = await fixture()
+    await writeFile(join(f.old, 'launcher.sh'), `cd ${f.old};\n`)
+    expect(cli(f.home, '--execute').status).toBe(0)
+    expect(cli(f.home, '--audit-aliases').value.blockers).toContainEqual(
+      expect.objectContaining({ reason: 'remaining-path-reference' })
+    )
+    expect(cli(f.home, '--retire-aliases').status).not.toBe(0)
+  })
+})
+
+it('includes a later profile through verified rollback/restart while preserving the earlier receipt', async () => {
+  const f = await fixture()
+  const first = cli(f.home, '--execute')
+  expect(first.status).toBe(0)
+  const oldProfile = join(f.home, 'appData', 'Open Science (DEV)')
+  await mkdir(oldProfile, { recursive: true })
+  await writeFile(join(oldProfile, 'Preferences'), '{"history":"kept"}')
+  expect(cli(f.home, '--execute').status).not.toBe(0)
+  expect(cli(f.home, '--rollback').status).toBe(0)
+  const second = cli(f.home, '--execute', '--restart-after-rollback')
+  expect(second.status, second.output).toBe(0)
+  expect(await readFile(join(f.home, 'appData', 'Open-Science (DEV)', 'Preferences'), 'utf8')).toBe(
+    '{"history":"kept"}'
+  )
+  expect(await readFile(join(f.next, 'uploads/paper.txt'), 'utf8')).toBe('research\n')
+  const archived = join(`${f.config}.brand-migration`, `journal-${first.value.id}.rolled-back.json`)
+  expect(JSON.parse(await readFile(archived, 'utf8')).status).toBe('rolled-back')
+  expect(cli(f.home, '--execute').status).toBe(0)
+})
+
+it('distinguishes native case identity and foreign-platform lexical simulations', async (ctx) => {
+  const f = await fixture()
+  const { remapPath } = await import('../resources/brand-migration/paths.mjs')
+  const maps = [{ from: f.old, to: f.next }]
+  expect(remapPath(`${f.old}-other/file`, maps)).toBe(`${f.old}-other/file`)
+  if (process.platform === 'darwin') {
+    // Linux case sensitivity is a lexical simulation here, not a Linux filesystem run.
+    expect(remapPath(join(f.home, 'OPENSCIENCE-DEV/file'), maps, 'linux')).toBe(
+      join(f.home, 'OPENSCIENCE-DEV/file')
+    )
+  }
+  expect(remapPath('c:\\OLD\\child', [{ from: 'C:\\Old', to: 'C:\\New' }], 'win32')).toBe(
+    'C:\\New\\child'
+  )
+  const upper = join(f.home, 'OPENSCIENCE-DEV')
+  const stat = await lstat(upper).catch(() => undefined)
+  if (!stat || stat.ino !== (await lstat(f.old)).ino) return ctx.skip()
+  const { pathToFileURL } = await import('node:url')
+  expect(remapPath(pathToFileURL(join(upper, 'uploads/paper.txt')).href, maps)).toBe(
+    pathToFileURL(join(f.next, 'uploads/paper.txt')).href
+  )
+})
+
+it('can recover a later profile from an empty legacy initialization receipt without discarding it', async () => {
+  const f = await fixture()
+  await rm(f.old, { recursive: true })
+  await rm(f.config, { recursive: true })
+  expect(cli(f.home, '--execute').status).toBe(0)
+  const file = join(`${f.config}.brand-migration`, 'journal.json')
+  const legacy = JSON.parse(await readFile(file, 'utf8'))
+  legacy.version = 1
+  delete legacy.id
+  delete legacy.platform
+  await writeFile(file, JSON.stringify(legacy))
+  const profile = join(f.home, 'appData', 'Open Science (DEV)')
+  await mkdir(profile, { recursive: true })
+  await writeFile(join(profile, 'Preferences'), 'later history')
+  expect(cli(f.home, '--execute').status).not.toBe(0)
+  expect(cli(f.home, '--rollback').status).toBe(0)
+  const result = cli(f.home, '--execute', '--restart-after-rollback')
+  expect(result.status, result.output).toBe(0)
+  expect(await readFile(join(f.home, 'appData', 'Open-Science (DEV)', 'Preferences'), 'utf8')).toBe(
+    'later history'
+  )
+})
+
+it('recovers every member of an unprepared v1 reference bundle', async () => {
+  const f = await fixture()
+  const { DatabaseSync } = await import('node:sqlite')
+  const db = new DatabaseSync(join(f.config, 'open-science.db'))
+  db.exec('CREATE TABLE GrantedLocalRoot(id TEXT PRIMARY KEY,path TEXT)')
+  db.close()
+  const { inventory } = await import('../resources/brand-migration/transaction.mjs')
+  const { bundleInventory, verifyBundleRollback } =
+    await import('../resources/brand-migration/reference-bundle.mjs')
+  const files = ['settings.json', 'open-science.db']
+  const p = {
+    from: f.config,
+    to: f.config,
+    files,
+    stage: join(f.home, 'absent-stage'),
+    backup: join(f.home, 'absent-backup'),
+    original: await bundleInventory(f.config, files, inventory)
+  }
+  await expect(verifyBundleRollback(p, 'rolling-back', inventory)).resolves.toBeUndefined()
+})
+
+it.each([1, 65535])('audits opaque UTF-16 prefixes at byte offset %i', async (offset) => {
+  const f = await fixture()
+  await writeFile(
+    join(f.old, 'binary-prefix'),
+    Buffer.concat([Buffer.alloc(offset), Buffer.from(f.old + '/bin/tool\0', 'utf16le')])
+  )
+  expect(cli(f.home, '--execute').status).toBe(0)
+  expect(cli(f.home, '--audit-aliases').value.blockers).toContainEqual(
+    expect.objectContaining({ reason: 'remaining-path-reference' })
+  )
+})
+
+it('detects a descriptor acquired in the renamed backup and resumes only after it closes', async () => {
+  const f = await fixture()
+  const { spawn } = await import('node:child_process')
+  const { once } = await import('node:events')
+  const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+  const options = { home: f.home, appData: join(f.home, 'appData'), mode: 'dev' }
+  let child: import('node:child_process').ChildProcess | undefined
+  try {
+    await expect(
+      runMigration(
+        { ...options, execute: true },
+        {
+          async onProgress(e: { phase: string; path?: string }) {
+            if (e.phase !== 'source-backed-up' || e.path !== f.old) return
+            const journal = JSON.parse(
+              await readFile(join(`${f.config}.brand-migration`, 'journal.json'), 'utf8')
+            )
+            child = spawn(
+              process.execPath,
+              [
+                '-e',
+                "const fs=require('node:fs'); fs.openSync('uploads/paper.txt','a'); process.chdir('..'); process.on('message',()=>{}); process.send('ready');"
+              ],
+              { cwd: journal.participants[0].backup, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+            )
+            await once(child, 'message')
+          }
+        }
+      )
+    ).rejects.toThrow(/occupied/)
+  } finally {
+    if (child) {
+      const exited = once(child, 'exit')
+      child.kill()
+      await exited
+    }
+  }
+  expect((await runMigration({ ...options, resume: true })).status).toBe('committed')
+  expect(await readFile(join(f.next, 'uploads/paper.txt'), 'utf8')).toBe('research\n')
+})
+
+it('releases the kernel guard after recovering processes really exit mid-recovery twice', async () => {
+  const f = await fixture()
+  const state = `${f.config}.brand-migration`
+  await mkdir(join(state, 'lock-recovery'), { recursive: true })
+  const dead = JSON.stringify({ pid: 2147483647, workerPid: 2147483647, token: 'abandoned' })
+  await writeFile(join(state, 'lock'), dead)
+  await writeFile(join(state, 'lock-recovery', 'owner.json'), dead)
+  const { pathToFileURL } = await import('node:url')
+  const { resolve } = await import('node:path')
+  const moduleUrl = pathToFileURL(resolve('resources/brand-migration/transaction.mjs')).href
+  for (const phase of ['recovery-lock-quarantined', 'lock-quarantined']) {
+    let status = 0
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `
+        import { runMigration } from ${JSON.stringify(moduleUrl)};
+        let input=''; for await (const chunk of process.stdin) input+=chunk;
+        const { options, phase } = JSON.parse(input);
+        await runMigration(options, { onProgress(e) { if(e.phase === phase) process.exit(72); } });
+      `
+        ],
+        {
+          input: JSON.stringify({
+            options: {
+              home: f.home,
+              appData: join(f.home, 'appData'),
+              mode: 'dev',
+              execute: true,
+              recoverLock: true
+            },
+            phase
+          }),
+          stdio: ['pipe', 'pipe', 'pipe']
+        }
+      )
+    } catch (error) {
+      status = (error as { status: number }).status
+    }
+    expect(status).toBe(72)
+  }
+  const result = cli(f.home, '--execute', '--recover-lock')
+  expect(result.status, result.output).toBe(0)
+  expect((await readdir(state)).filter((name) => name.includes('.abandoned-'))).toHaveLength(2)
+})
+
+it('initializes and reopens a fresh profile without offline-only probe tools', async () => {
+  const f = await fixture()
+  await rm(f.old, { recursive: true })
+  await rm(f.config, { recursive: true })
+  for (let n = 0; n < 2; n++) {
+    const result = execFileSync(
+      process.execPath,
+      [
+        'scripts/migrate-brand-paths.mjs',
+        '--home',
+        f.home,
+        '--app-data',
+        join(f.home, 'appData'),
+        '--mode',
+        'dev',
+        '--execute'
+      ],
+      { encoding: 'utf8', env: { ...process.env, PATH: '' } }
+    )
+    expect(JSON.parse(result).status).toBe('committed')
+  }
+})
+
+it('requires the kernel guard when restarting an empty rolled-back receipt with new legacy data', async () => {
+  const f = await fixture()
+  await rm(f.old, { recursive: true })
+  await rm(f.config, { recursive: true })
+  expect(cli(f.home, '--execute').status).toBe(0)
+  expect(cli(f.home, '--rollback').status).toBe(0)
+  await mkdir(f.old)
+  await writeFile(join(f.old, 'keep'), 'later data')
+  const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+  const { acquireKernelGuard } = await import('../resources/brand-migration/lock-guard.mjs')
+  let improperlyAcquired = false
+  await runMigration(
+    {
+      home: f.home,
+      appData: join(f.home, 'appData'),
+      mode: 'dev',
+      execute: true,
+      restartAfterRollback: true
+    },
+    {
+      async onProgress(e: { phase: string }) {
+        if (e.phase !== 'copied') return
+        let other: Awaited<ReturnType<typeof acquireKernelGuard>> | undefined
+        try {
+          other = await acquireKernelGuard(join(`${f.config}.brand-migration`, 'lock-guard'))
+          improperlyAcquired = true
+        } catch (error) {
+          expect(String(error)).toMatch(/kernel lock unavailable or active/)
+        } finally {
+          await other?.release()
+        }
+      }
+    }
+  )
+  expect(improperlyAcquired).toBe(false)
+})
+
+it('replans and acquires the guard if a legacy root appears while the lease is acquired', async () => {
+  const f = await fixture()
+  await rm(f.old, { recursive: true })
+  await rm(f.config, { recursive: true })
+  const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+  const { acquireKernelGuard } = await import('../resources/brand-migration/lock-guard.mjs')
+  let checked = false
+  await runMigration(
+    { home: f.home, appData: join(f.home, 'appData'), mode: 'dev', execute: true },
+    {
+      async onProgress(e: { phase: string }) {
+        if (e.phase === 'lease-acquired') {
+          await mkdir(f.old)
+          await writeFile(join(f.old, 'keep'), 'late data')
+        }
+        if (e.phase === 'copied') {
+          await expect(
+            acquireKernelGuard(join(`${f.config}.brand-migration`, 'lock-guard'))
+          ).rejects.toThrow(/kernel lock unavailable or active/)
+          checked = true
+        }
+      }
+    }
+  )
+  expect(checked).toBe(true)
+  expect(await readFile(join(f.next, 'keep'), 'utf8')).toBe('late data')
 })

@@ -50,7 +50,13 @@ The default standalone action only returns a plan. Execution classifies each map
 - Old only: inventory, copy to a private sibling stage, verify, migrate references, then publish.
 - New only: adopt that root without copying or replacing it. Only changed supported JSON and DB/WAL files enter a reference-bundle transaction; unrelated files and root inodes stay in place. Installed runtimes with old prefixes receive a recorded, audited transition alias.
 - Neither: initialize using the new default; do not manufacture old data.
-- Both: stop with both exact paths. No merge, overwrite, deletion, or silent preference.
+- Both, new directory empty: the plan reports `targetHandling: "empty"`. Preserve that directory
+  in a separate backup, then migrate the old tree. Empty means no entries, including hidden files.
+- Both, known macOS application log roots: the plan reports `targetHandling: "logs"`. Preserve
+  the complete existing new log tree separately, then publish the old logs at the new location.
+  Same-name logs are never overwritten or concatenated; both histories remain accessible.
+- Both, any other nonempty target (including an Electron profile or data root): stop with both
+  exact paths. Nested roots with existing targets also require explicit reconciliation.
 
 Each source tree is inventoried before copying and rechecked before any source rename. Native copy
 preserves file bytes, directory layout, permissions, ACLs and extended attributes; hashes,
@@ -67,6 +73,15 @@ its destination on the destination filesystem. Originals are never deleted. Dura
 precedes publication; file and directory fsync is used where supported. A crash between any root
 rename is resumed from the journal. A failed copy or database transaction leaves originals usable;
 a partial publication blocks normal startup until resumed or rolled back.
+
+An existing empty target or known log target is inventoried under the same migration lock and
+rechecked after staging and immediately before publication. Its original directory is renamed to
+`<new-root>.brand-existing-<transaction-id>` before the source is backed up. This preserves its
+inode, contents and metadata. The durable receipt records both original manifests before any root
+moves. Execution and subsequent dry-run output list these additional archives in
+`existingTargetBackups`; `backups` lists the original source backups. Neither archive is deleted
+automatically. Unexpected writes, missing archives or changed manifests stop recovery instead of
+choosing another tree. Startup uses this same logic automatically, before its writers open.
 
 For stationary roots, only affected files move to the private backup bundle; the root itself stays in place. Every new backup/parking ancestor is persisted before originals move, and cross-directory renames synchronize both parent directories on POSIX.
 
@@ -156,6 +171,10 @@ string replacement. Explicit `--dry-run` cannot be combined with a writing actio
 Resume reuses the saved transaction and validates derived stage/backup paths before touching them.
 Rollback verifies original backups and the published/parked generation, restores originals, and
 retains the newer tree as `<stage>.rolled-back`. Interrupted rollback resumes with `--rollback`.
+If an existing target was archived, rollback also restores that original target to its original
+name, after restoring the old source. Both pre-migration trees are therefore recovered, including
+the empty target or the independent new logs. All backups are checked before rollback changes any
+participant, and interruptions between either restoration step use the same `--rollback` command.
 Rollback refuses when newer files/changes exist; retain both generations and reconcile those changes
 before any restoration. It is not a destructive reset of an app that has already resumed work.
 A completed rollback retains its receipt. Re-run with `--execute --restart-after-rollback`: it archives the old receipt inside the same state directory and starts a new transaction. Normal startup therefore sees the new committed receipt; original backups and parked generations are retained.
@@ -203,3 +222,100 @@ reviewed technical contracts; they do not justify creating research data in old 
 Certificate subjects and third-party names (including Open Science Framework) remain exact. Original
 screenshots and historical benchmark entries must not be edited to fabricate a different historical
 product label; current application renders and newly generated baselines use the normalized brand.
+
+## Occupancy, interrupted recovery, and later legacy roots
+
+The offline precondition includes Notebook kernels, external Python/R interpreters, terminal
+shells, editors, and other processes with a working directory or an open descriptor in any
+participating tree. Notebook and shell launchers pass paths through `cwd`, independently of their
+command lines. A parent terminal is not exempt: change its working directory out of the trees
+before running the CLI. The application startup coordinator is exempt from the executable-name
+check only; another process's open files are never exempted by that flag. No process is killed.
+
+On macOS/Linux the helper requires `lsof` and consumes its NUL-delimited cwd, descriptor, and mapped
+file records. Failed, truncated, empty or permission-denied inspections stop the operation. It checks
+originals, stages, destinations, original backups, existing-target backups and rollback parking
+locations. Checks run before preparation, before publication, at publication boundaries and before
+the committed receipt is saved. All published targets and both kinds of backups are reverified at
+commit. Renaming a root does not make an already-open POSIX descriptor safe: the backup is checked
+under its new name too. These checks and the application lease do not prevent an arbitrary external
+program from reopening a path in the future. Keep all such writers stopped throughout migration,
+recovery and retirement; the tool does not claim a mandatory filesystem-wide write lock.
+
+**Platform capability limit:** actual Windows migration currently stops because command-line
+inspection does not prove that directory/file handles are unused. There is no fallback that silently
+accepts PowerShell `Win32_Process` as sufficient. Windows path and URI algorithms can be tested on
+another host, but that is not Windows handle or application validation. Linux also requires its
+native metadata tools and sufficient visibility for the occupancy probe; a missing tool is an error.
+
+Pure initialization and repeated empty-receipt startup use the atomic logical lease without
+requiring offline probe tools. Any abandoned-lock recovery still requires the kernel guard.
+Lock recovery is serialized by a kernel lock held by a small child process. On POSIX this requires
+`python3` with `fcntl`; the guard is released when the helper exits or its parent pipe closes, even
+if a recovery is interrupted. The `lock-guard` file is permanent and must not be deleted: retaining
+one inode is part of mutual exclusion. Logical lock metadata is fully written and synchronized
+before its name is atomically linked into place. A verified pair of self-owned hardlinks left by an
+interruption is recoverable; unknown hardlinks and symlinks are refused. Active owner or worker PIDs
+block recovery, including a reused PID that cannot safely be distinguished from the original owner.
+
+`--recover-lock` preserves dead legacy `lock` and `lock-recovery` nodes as
+`<node>.abandoned-<UUID>` after checking ownership and current identity. It does not delete the
+abandoned evidence. Empty or truncated legacy metadata cannot establish an owner automatically.
+The error prints an exact SHA-256 identity fingerprint and an explicit recovery command. After
+stopping all old migration processes and writers, use that fingerprint; a changed node or wrong
+fingerprint is refused. This is operator-authorized recovery of an inspected unknown owner, not a
+PID liveness inference. For the disposable fixture above:
+
+```sh
+node scripts/migrate-brand-paths.mjs --home /absolute/fixture --app-data /absolute/fixture/appData --mode dev --resume --recover-lock --recover-incomplete-lock <fingerprint-from-error>
+```
+
+Use `--execute` instead of `--resume` if no journal was created yet. Repeat
+`--recover-incomplete-lock` when separately inspected incomplete nodes each require a fingerprint.
+Do not remove a lock directory or the kernel guard by hand to bypass these checks.
+
+New and updated recovery receipts use **journal version 2**. Version 1 remains readable. The new
+receipt records per-member publication/restoration intents and the exact originals verified to be
+in place at rollback entry. Directory and existing-target restoration intents are persisted before
+renaming either original back. An intent does not by itself prove a rename occurred. Recovery checks
+the actual source, stage, backup and parked manifests. For old interrupted version-1 rollbacks,
+an unprepared participant with no published manifest, or a still-staged verified member together
+with its exact original, provides evidence of non-publication. A missing backup after actual
+publication remains an error. A version-1 receipt is preserved as `journal-<id>.version-1.json` and upgraded under the lease
+before writable processing or online adapters; older binaries
+that understand only version 1 must not be used for recovery. No database schema or record identity
+changes with this journal version.
+
+Repeated pre-publication, partial-publication and committed rollback interruptions all use the
+same `--rollback --recover-lock` command. Original contents must still match, and published/parked
+contents must match wherever they exist. Backups are not considered restored merely because a
+copy exists or the global status says `rolling-back`.
+
+Every committed launch, resume and alias operation rediscovers supported defaults and explicitly
+supplied mappings. A legacy root absent from the committed receipt is an error if it later appears.
+A verified alias belonging to an existing mapping is distinguished from a new independent tree.
+The helper stops before startup can initialize an empty new profile. It does not delete a receipt
+and silently start a new transaction.
+
+When the previously committed generation has not acquired newer writes, the supported way to
+include a later legacy profile/root is a verified rollback followed by a new transaction. This
+preserves the first receipt as `journal-<id>.rolled-back.json` in the same state directory and keeps
+its backup/parked generations. Keep the same mode, overrides and explicit maps on both commands:
+
+```sh
+node scripts/migrate-brand-paths.mjs --home /absolute/fixture --app-data /absolute/fixture/appData --mode dev --rollback --recover-lock
+node scripts/migrate-brand-paths.mjs --home /absolute/fixture --app-data /absolute/fixture/appData --mode dev --execute --restart-after-rollback --recover-lock
+```
+
+If rollback reports newer writes or conflicting contents, neither command overwrites them. Keep
+both generations and the journal and reconcile those changes before retrying verified rollback.
+Automatic merging of divergent histories is intentionally not provided. Do not use a different
+`--state-dir` to bypass the receipt that protects a live installation.
+
+Case matching uses actual filesystem identity for differently-cased roots on the current host.
+Both spellings must resolve to the same directory (`dev` and `ino`), with a complete component
+boundary. macOS is not assumed universally case-insensitive. Structured database/document migration,
+symlink auditing and opaque executable-prefix auditing use this rule consistently; file URIs are
+decoded before comparison. Retirement also inspects the configuration database even if that root
+needed no reference bundle in the original transaction. Reintroduced legacy paths block retirement.
+Similar names such as `OpenScience-DEV-other` remain independent paths.

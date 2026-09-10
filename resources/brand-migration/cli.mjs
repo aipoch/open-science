@@ -26,6 +26,11 @@ export async function main(argv = process.argv.slice(2)) {
       options.startupOwner = Number(argv[++i])
       if (!Number.isSafeInteger(options.startupOwner) || options.startupOwner !== process.ppid)
         throw new Error('Startup owner must be the parent process')
+    } else if (flag === '--recover-incomplete-lock') {
+      const fingerprint = argv[++i]
+      if (!/^[a-f0-9]{64}$/.test(fingerprint ?? ''))
+        throw new Error('Expected an inspected lock SHA-256 fingerprint')
+      ;(options.recoverIncompleteLock ??= []).push(fingerprint)
     } else if (flag === '--audit-aliases') options.auditAliases = true
     else if (flag === '--retire-aliases') options.retireAliases = true
     else if (flag === '--execute') options.execute = true
@@ -41,7 +46,7 @@ export async function main(argv = process.argv.slice(2)) {
       options.maps.push(pair)
     } else if (flag === '--help') {
       console.log(
-        'Usage: node scripts/migrate-brand-paths.mjs [--mode dev|packaged] [--home PATH] [--app-data PATH] [--config-root PATH] [--user-data PATH] [--map JSON] [--execute|--resume|--rollback] [--recover-lock] [--restart-after-rollback] [--audit-aliases|--retire-aliases] [--state-dir PATH] [--data-parent PATH]\nWithout an action this command only prints a dry-run plan. Stop all app and runtime processes before execution.'
+        'Usage: node scripts/migrate-brand-paths.mjs [--mode dev|packaged] [--home PATH] [--app-data PATH] [--config-root PATH] [--user-data PATH] [--map JSON] [--execute|--resume|--rollback] [--recover-lock] [--recover-incomplete-lock SHA256] [--restart-after-rollback] [--audit-aliases|--retire-aliases] [--state-dir PATH] [--data-parent PATH]\nWithout an action this command only prints a dry-run plan. Stop all app and runtime processes before execution.'
       )
       return
     } else throw new Error(`Unknown argument: ${flag}`)
@@ -61,6 +66,8 @@ export async function main(argv = process.argv.slice(2)) {
     (options.execute || options.resume || options.rollback || options.retireAliases)
   )
     throw new Error('--dry-run cannot be combined with a write action')
+  if (options.recoverIncompleteLock && !options.recoverLock)
+    throw new Error('--recover-incomplete-lock requires --recover-lock')
   if (options.restartAfterRollback && !options.execute)
     throw new Error('--restart-after-rollback requires --execute')
   if (process.platform === 'win32') {
@@ -76,12 +83,18 @@ export async function main(argv = process.argv.slice(2)) {
   const result = await runMigration(options)
   // Manifests stay in the private receipt; stdout is a concise operator-facing plan/result.
   const { journal, participants, ...summary } = result
+  const existingTargetBackups = (participants ?? journal?.participants ?? []).flatMap((p) =>
+    p.previousTarget
+      ? [{ from: p.to, backup: p.previousTarget.backup, kind: p.previousTarget.kind }]
+      : []
+  )
   console.log(
     JSON.stringify(
       {
         ...summary,
         ...(journal ? { status: journal.status, mappings: journal.mappings } : {}),
-        ...(participants ? { backups: participants.map((p) => p.backup) } : {})
+        ...(participants ? { backups: participants.map((p) => p.backup) } : {}),
+        ...(existingTargetBackups.length ? { existingTargetBackups } : {})
       },
       null,
       2

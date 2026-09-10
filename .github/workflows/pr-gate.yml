@@ -451,7 +451,7 @@ jobs:
         # The real migration tests verify ACLs and extended attributes before committing a move.
         run: |
           sudo apt-get update
-          sudo apt-get install --yes acl attr
+          sudo apt-get install --yes acl attr lsof python3
       - name: Test complete suite shard
         id: unit_macos_shard
         continue-on-error: true
