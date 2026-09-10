@@ -1,0 +1,13 @@
+import '../assets/main.css'
+import { createRoot } from 'react-dom/client'
+import { initI18n } from '@/i18n'
+import { resolveLocaleFromTags } from '../../../shared/locale'
+import { MigrationProgress } from './migration-progress'
+
+// Initialize only translations and the isolated progress surface, never the normal app bootstrap.
+initI18n(resolveLocaleFromTags(navigator.languages))
+if (matchMedia('(prefers-color-scheme: dark)').matches)
+  document.documentElement.classList.add('dark')
+createRoot(document.getElementById('root')!).render(
+  <MigrationProgress bridge={window.migrationProgress} />
+)

@@ -4884,6 +4884,22 @@
     "Verifying installer…": "正在驗證安裝程式…",
     "Open-Science couldn't display this page": "Open-Science 無法顯示此頁面",
     "Background work may still be running. Reloading may lose unsaved changes on this page.": "背景工作可能仍在執行。重新載入可能會遺失此頁面上未儲存的變更。",
-    "Reload page": "重新載入頁面"
+    "Reload page": "重新載入頁面",
+    "Migration progress is unavailable.": "無法取得遷移進度。",
+    "Scanning local files…": "正在掃描本機檔案…",
+    "Copying local files…": "正在複製本機檔案…",
+    "Verifying files and permissions…": "正在驗證檔案與權限…",
+    "Updating saved file references…": "正在更新已儲存的檔案參照…",
+    "Saving verified files…": "正在儲存已驗證的檔案…",
+    "Finishing data migration…": "正在完成資料遷移…",
+    "Checking local data…": "正在檢查本機資料…",
+    "Local data migration could not finish": "本機資料遷移未能完成",
+    "Migration stopped before the application opened its data.": "遷移已停止，應用程式尚未開啟資料。",
+    "Keep the migration journal and backups. Close other app and runtime processes, then restart to resume. If the error persists, copy the diagnostics for help.": "請保留遷移記錄與備份。關閉其他應用程式實例及執行階段程序，然後重新啟動以繼續遷移。如果錯誤持續發生，請複製診斷資訊以尋求協助。",
+    "Upgrading local data": "正在升級本機資料",
+    "Items checked: {{completed}}": "已檢查項目：{{completed}}",
+    "Items checked: {{completed}} / {{total}}": "已檢查項目：{{completed}} / {{total}}",
+    "Elapsed: {{time}}": "已用時間：{{time}}",
+    "Waiting for the current operation to report progress…": "正在等待目前操作回報進度…"
   }
 }

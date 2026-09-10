@@ -43,6 +43,7 @@ export const prepareBrandPathMigration = (
     '--startup-owner',
     String(process.pid)
   ]
+  if (!app.commandLine.hasSwitch('open-science-headless')) args.push('--show-progress-window')
   if (!app.isPackaged && process.env.OPEN_SCIENCE_ALLOW_MULTI_INSTANCE === '1')
     args.push('--allow-multi-instance')
   if (isolatedRoot) args.push('--data-parent', isolatedRoot)
@@ -63,6 +64,8 @@ export const prepareBrandPathMigration = (
   const result = spawnSync(process.execPath, args, {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: '' },
     encoding: 'utf8',
+    // Keep the receipt machine-readable, but do not buffer live diagnostics until migration ends.
+    stdio: ['ignore', 'pipe', 'inherit'],
     windowsHide: true,
     maxBuffer: 8 * 1024 * 1024
   })

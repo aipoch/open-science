@@ -319,3 +319,36 @@ symlink auditing and opaque executable-prefix auditing use this rule consistentl
 decoded before comparison. Retirement also inspects the configuration database even if that root
 needed no reference bundle in the original transaction. Reintroduced legacy paths block retirement.
 Similar names such as `OpenScience-DEV-other` remain independent paths.
+
+## Visible startup migration
+
+Normal application startup now opens a separate progress window before the offline worker begins
+its plan and inventory. This window uses the existing brand animation, translation catalogs and
+`ErrorNotice` presentation, but never imports the business application bootstrap. Its Electron
+`userData`, `sessionData`, logs, crash dumps and disk cache point to a newly created temporary tree;
+the window uses a nonpersistent session partition. The formal application remains before `ready`
+until migration and the progress helper have finished, so displaying progress does not open the
+profile being moved. Packaged startup routes the helper before normal application initialization.
+
+The window displays the current phase, root, actual inventory count and elapsed time. Inventory
+counts belong to the current scan, not a global completion percentage. Native copying and metadata
+inspection do not provide reliable fine-grained totals: those phases remain indeterminate. After
+10 seconds without an update, the window explicitly says it is waiting for the current operation.
+A separate helper heartbeat keeps elapsed time and console diagnostics visible even when the
+worker is inside a synchronous native copy. Scanning, copying, verification, reference updates,
+durable writes and publication still use the same migration implementation and journal.
+
+The standalone CLI streams `[brand-migration]` diagnostics to **stderr** while keeping **stdout**
+a JSON plan/receipt. The application forwards stderr live instead of buffering it until exit.
+The internal `--show-progress-window` option requires the validated startup owner; regular offline
+CLI invocations and `--open-science-headless` startup remain terminal-only. The helper acknowledges a painted renderer before migration
+starts. Known helper process IDs are exempt only from the executable-name scan; their open file
+handles remain subject to the regular occupancy guard.
+
+Closing the window or quitting its helper is prevented while migration is active. On migration
+failure, the original transaction remains recoverable and the error stays visible with **Copy
+diagnostics** and **Close**. The page advises retaining the journal/backups and using the recovery
+procedures above; it does not execute a reset, rollback or deletion. An unexpected worker disconnect
+also leaves an error surface. Successful completion closes the helper and allows the formal app to
+continue. Temporary UI files are removed on a normal helper exit; forced OS termination can leave
+an isolated `open-science-migration-ui-*` temporary directory, containing UI caches only.

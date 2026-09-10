@@ -5200,6 +5200,22 @@
     "Verifying installer…": "Verificando el instalador…",
     "Open-Science couldn't display this page": "Open-Science no pudo mostrar esta página",
     "Background work may still be running. Reloading may lose unsaved changes on this page.": "Es posible que las tareas en segundo plano sigan en ejecución. Al volver a cargar, pueden perderse los cambios sin guardar de esta página.",
-    "Reload page": "Volver a cargar la página"
+    "Reload page": "Volver a cargar la página",
+    "Migration progress is unavailable.": "El progreso de la migración no está disponible.",
+    "Scanning local files…": "Buscando archivos locales…",
+    "Copying local files…": "Copiando archivos locales…",
+    "Verifying files and permissions…": "Verificando archivos y permisos…",
+    "Updating saved file references…": "Actualizando las referencias guardadas de archivos…",
+    "Saving verified files…": "Guardando los archivos verificados…",
+    "Finishing data migration…": "Finalizando la migración de datos…",
+    "Checking local data…": "Comprobando los datos locales…",
+    "Local data migration could not finish": "No se pudo completar la migración de datos locales",
+    "Migration stopped before the application opened its data.": "La migración se detuvo antes de que la aplicación abriera sus datos.",
+    "Keep the migration journal and backups. Close other app and runtime processes, then restart to resume. If the error persists, copy the diagnostics for help.": "Conserve el registro de migración y las copias de seguridad. Cierre las demás instancias de la aplicación y los procesos de ejecución, y reinicie para reanudar. Si el error persiste, copie los diagnósticos para solicitar ayuda.",
+    "Upgrading local data": "Actualizando los datos locales",
+    "Items checked: {{completed}}": "Elementos comprobados: {{completed}}",
+    "Items checked: {{completed}} / {{total}}": "Elementos comprobados: {{completed}} / {{total}}",
+    "Elapsed: {{time}}": "Tiempo transcurrido: {{time}}",
+    "Waiting for the current operation to report progress…": "Esperando a que la operación actual informe del progreso…"
   }
 }

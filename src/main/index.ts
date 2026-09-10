@@ -41,7 +41,19 @@ const bootstrapLog = createLogger('bootstrap')
 let startupDiagnostics: DiagnosticOperation | undefined
 let startupFlush: import('./diagnostics/flush').DiagnosticFlush = flushLogs
 
-if (shouldRunArtifactMcpServer) {
+if (process.argv.includes('--brand-migration-progress-window')) {
+  // Packaged Electron always enters this bundle. Route its disposable progress helper before
+  // any normal startup imports, profile selection, logging or migration can run.
+  const { app } = createRequire(import.meta.url)('electron') as typeof import('electron')
+  createRequire(import.meta.url)(
+    join(
+      app.getAppPath().replace(/\.asar$/, '.asar.unpacked'),
+      'resources',
+      'brand-migration',
+      'progress-window.cjs'
+    )
+  )
+} else if (shouldRunArtifactMcpServer) {
   // Reuse the packaged entry point as a Node stdio MCP server; import it only in this mode.
   void import('./artifacts/mcp-server')
     .then(({ runArtifactMcpServer }) => runArtifactMcpServer())

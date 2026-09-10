@@ -2350,3 +2350,51 @@ it('replans and acquires the guard if a legacy root appears while the lease is a
   expect(checked).toBe(true)
   expect(await readFile(join(f.next, 'keep'), 'utf8')).toBe('late data')
 })
+
+describe('visible migration progress', () => {
+  it('reports scanning and copying before a root has finished copying', async () => {
+    const f = await fixture()
+    const { runMigration, copyTree } = await import('../resources/brand-migration/transaction.mjs')
+    const events: Array<{ phase: string; path?: string; completed?: number }> = []
+    await runMigration(
+      { home: f.home, appData: join(f.home, 'appData'), mode: 'dev', execute: true },
+      {
+        onProgress: (event) => events.push(event),
+        copyTree: async (from, to) => {
+          expect(events.some((e) => e.phase === 'scanning' && e.completed! > 0)).toBe(true)
+          expect(events.at(-1)).toMatchObject({
+            phase: 'copying',
+            path: from === f.old ? f.old : f.config
+          })
+          await copyTree(from, to)
+        }
+      }
+    )
+    expect(events.some((e) => e.phase === 'verifying')).toBe(true)
+    expect(events.at(-1)).toMatchObject({ phase: 'completed' })
+  })
+
+  it('streams CLI stages to stderr while keeping stdout a parseable receipt', async () => {
+    const f = await fixture()
+    const { spawnSync } = await import('node:child_process')
+    const result = spawnSync(
+      process.execPath,
+      [
+        'scripts/migrate-brand-paths.mjs',
+        '--home',
+        f.home,
+        '--app-data',
+        join(f.home, 'appData'),
+        '--mode',
+        'dev',
+        '--execute'
+      ],
+      { encoding: 'utf8' }
+    )
+    expect(result.status, result.stderr).toBe(0)
+    expect(JSON.parse(result.stdout).status).toBe('committed')
+    expect(result.stderr).toContain('[brand-migration]')
+    expect(result.stderr).toContain('scanning')
+    expect(result.stderr).toContain('completed')
+  })
+})

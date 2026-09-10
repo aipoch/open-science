@@ -1,6 +1,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { readJson } from './paths.mjs'
 import { runMigration } from './transaction.mjs'
 
 export async function main(argv = process.argv.slice(2)) {
@@ -31,7 +32,8 @@ export async function main(argv = process.argv.slice(2)) {
       if (!/^[a-f0-9]{64}$/.test(fingerprint ?? ''))
         throw new Error('Expected an inspected lock SHA-256 fingerprint')
       ;(options.recoverIncompleteLock ??= []).push(fingerprint)
-    } else if (flag === '--audit-aliases') options.auditAliases = true
+    } else if (flag === '--show-progress-window') options.showProgressWindow = true
+    else if (flag === '--audit-aliases') options.auditAliases = true
     else if (flag === '--retire-aliases') options.retireAliases = true
     else if (flag === '--execute') options.execute = true
     else if (flag === '--resume') options.resume = true
@@ -80,7 +82,55 @@ export async function main(argv = process.argv.slice(2)) {
       : process.platform === 'win32'
         ? process.env.APPDATA
         : (process.env.XDG_CONFIG_HOME ?? join(options.home, '.config'))
-  const result = await runMigration(options)
+  if (options.showProgressWindow && !options.startupOwner)
+    throw new Error('The progress window requires an application startup owner')
+  const ui = options.showProgressWindow
+    ? await (
+        await import('./startup-progress.mjs')
+      ).openProgressWindow(
+        (
+          await readJson(
+            join(
+              options.configRoot ??
+                join(
+                  options.home,
+                  options.mode === 'dev' ? '.open-science-project' : '.open-science'
+                ),
+              'settings.json'
+            )
+          ).catch(() => undefined)
+        )?.localePreference
+      )
+    : undefined
+  // Ignore only our known UI processes in the executable scan; the open-file guard still checks
+  // every helper descriptor. The isolated UI must never hold a migration root.
+  if (ui) options.ignorePids = ui.pids
+  let last = { phase: 'checking' }
+  const startedAt = Date.now()
+  const logProgress = (event) => {
+    last = event
+    process.stderr.write(
+      `[brand-migration] ${JSON.stringify({ ...event, elapsedMs: Date.now() - startedAt })}\n`
+    )
+    ui?.update(event)
+  }
+  const heartbeat = setInterval(() => {
+    process.stderr.write(
+      `[brand-migration] ${JSON.stringify({ ...last, heartbeat: true, elapsedMs: Date.now() - startedAt })}\n`
+    )
+  }, 10000)
+  heartbeat.unref()
+  let result
+  try {
+    result = await runMigration(options, { onProgress: logProgress })
+    await ui?.complete()
+  } catch (error) {
+    process.stderr.write(`Brand migration stopped: ${error.message}\n`)
+    await ui?.fail(error)
+    throw error
+  } finally {
+    clearInterval(heartbeat)
+  }
   // Manifests stay in the private receipt; stdout is a concise operator-facing plan/result.
   const { journal, participants, ...summary } = result
   const existingTargetBackups = (participants ?? journal?.participants ?? []).flatMap((p) =>

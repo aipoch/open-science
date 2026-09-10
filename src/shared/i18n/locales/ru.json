@@ -5333,6 +5333,22 @@
     "Verifying installer…": "Проверка установщика…",
     "Open-Science couldn't display this page": "Open-Science не удалось отобразить эту страницу",
     "Background work may still be running. Reloading may lose unsaved changes on this page.": "Фоновые задачи могут всё ещё выполняться. При перезагрузке несохранённые изменения на этой странице могут быть потеряны.",
-    "Reload page": "Перезагрузить страницу"
+    "Reload page": "Перезагрузить страницу",
+    "Migration progress is unavailable.": "Сведения о ходе переноса недоступны.",
+    "Scanning local files…": "Сканирование локальных файлов…",
+    "Copying local files…": "Копирование локальных файлов…",
+    "Verifying files and permissions…": "Проверка файлов и разрешений…",
+    "Updating saved file references…": "Обновление сохранённых ссылок на файлы…",
+    "Saving verified files…": "Сохранение проверенных файлов…",
+    "Finishing data migration…": "Завершение переноса данных…",
+    "Checking local data…": "Проверка локальных данных…",
+    "Local data migration could not finish": "Не удалось завершить перенос локальных данных",
+    "Migration stopped before the application opened its data.": "Перенос остановлен до открытия данных приложением.",
+    "Keep the migration journal and backups. Close other app and runtime processes, then restart to resume. If the error persists, copy the diagnostics for help.": "Сохраните журнал переноса и резервные копии. Закройте другие экземпляры приложения и процессы сред выполнения, затем перезапустите приложение для продолжения. Если ошибка повторяется, скопируйте диагностические данные для обращения за помощью.",
+    "Upgrading local data": "Обновление локальных данных",
+    "Items checked: {{completed}}": "Проверено элементов: {{completed}}",
+    "Items checked: {{completed}} / {{total}}": "Проверено элементов: {{completed}} / {{total}}",
+    "Elapsed: {{time}}": "Прошло времени: {{time}}",
+    "Waiting for the current operation to report progress…": "Ожидание сведений о ходе текущей операции…"
   }
 }

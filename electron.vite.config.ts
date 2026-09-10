@@ -51,6 +51,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/renderer/index.html'),
+          'migration-progress': resolve('src/renderer/migration-progress.html'),
           'office-preview': resolve('src/renderer/office-preview.html'),
           'reviewer-paged-preview': resolve('src/renderer/reviewer-paged-preview.html')
         }

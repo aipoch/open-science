@@ -18,6 +18,7 @@ import { constants } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { acquireKernelGuard } from './lock-guard.mjs'
+import { reportProgress, withMigrationProgress } from './progress.mjs'
 import { metadataDigest } from './metadata.mjs'
 import {
   changedReferenceFiles,
@@ -68,7 +69,8 @@ async function digest(file) {
 
 // Never follow nested symlinks. Their targets, directory layout, mode, timestamp and every file's
 // bytes are inventoried; special nodes are refused because they cannot be safely snapshotted.
-export async function inventory(root) {
+export async function inventory(root, phase = 'scanning') {
+  await reportProgress({ phase, path: root, completed: 0 }, true)
   const entries = []
   const hardlinks = new Map()
   async function visit(path) {
@@ -97,9 +99,15 @@ export async function inventory(root) {
         sha256: await digest(full)
       })
     } else throw new Error(`Unsupported special file blocks migration: ${full}`)
+    await reportProgress({ phase, path: root, completed: entries.length })
   }
   await visit('')
+  await reportProgress({ phase: 'metadata', path: root })
   entries[0].metadata = metadataDigest(root)
+  await reportProgress(
+    { phase, path: root, completed: entries.length, total: entries.length },
+    true
+  )
   return entries
 }
 const signature = (entries) =>
@@ -111,8 +119,8 @@ const signature = (entries) =>
   )
 export async function verify(root, expected, participant) {
   const actual = participant?.files
-    ? await bundleInventory(root, participant.files, inventory)
-    : await inventory(root)
+    ? await bundleInventory(root, participant.files, (path) => inventory(path, 'verifying'))
+    : await inventory(root, 'verifying')
   if (signature(actual) !== signature(expected))
     throw new Error(`Integrity mismatch or new writes at ${root}`)
 }
@@ -702,6 +710,7 @@ async function prepare(journal, save, progress, copy) {
     if (await inspect(p.stage)) await rm(p.stage, { recursive: true })
     await verify(p.from, p.original, p)
     if (p.previousTarget) await verify(p.to, p.previousTarget.original)
+    await progress({ phase: 'copying', path: p.from })
     if (p.files) await copyBundle(p, copy, verify, syncDirectory)
     else {
       await copy(p.from, p.stage)
@@ -719,6 +728,7 @@ async function prepare(journal, save, progress, copy) {
       await symlink(m.to, old, process.platform === 'win32' ? 'junction' : 'dir')
     }
     const entries = await inventory(p.stage)
+    await progress({ phase: 'references', path: p.to })
     await rewriteDocuments(p.stage, entries, journal.mappings, journal.platform)
     // Nested data roots have their own notebook/run.json paths relative to that root.
     for (const m of journal.mappings.filter((m) => m.to !== p.to && inside(p.to, m.to))) {
@@ -742,6 +752,7 @@ async function prepare(journal, save, progress, copy) {
     p.published = p.files
       ? await bundleInventory(p.stage, p.files, inventory)
       : await inventory(p.stage)
+    await progress({ phase: 'syncing', path: p.to })
     await syncTree(p.stage, p.published)
     await progress({ phase: 'references-prepared', path: p.stage })
     await save()
@@ -893,7 +904,16 @@ function requiresKernelGuard(plan, options) {
 }
 
 export async function runMigration(options, deps = {}) {
-  const progress = deps.onProgress ?? (() => {})
+  return withMigrationProgress(deps.onProgress ?? (() => {}), async () => {
+    await reportProgress({ phase: 'checking' })
+    const result = await migrate(options, deps)
+    await reportProgress({ phase: 'completed' })
+    return result
+  })
+}
+
+async function migrate(options, deps) {
+  const progress = reportProgress
   const plan = await planMigration(options)
   if (plan.journal?.status === 'committed' && !options.rollback)
     await assertCoveredRoots(plan, plan.journal)
