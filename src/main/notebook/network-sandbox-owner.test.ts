@@ -9,12 +9,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
 import type { Logger } from '../logger'
+import type { NotebookSandboxCleanupReason, NotebookSandboxProcessOutcome } from './process-sandbox'
 
 const backend = vi.hoisted(() => ({
   request: undefined as
     ((request: { host: string; port?: number }) => Promise<boolean>) | undefined,
   initialize: vi.fn().mockResolvedValue(undefined),
-  cleanup: vi.fn(),
+  cleanup: vi.fn().mockResolvedValue({
+    processesTerminated: true,
+    networkClosed: true,
+    temporaryResourcesRemoved: true
+  }),
   resetNetworkConnections: vi.fn(),
   wrap: vi.fn(),
   updatePolicy: vi.fn(),
@@ -66,50 +71,6 @@ const runVerification = async (verification: Verification): Promise<void> => {
   })
 }
 
-it.each([undefined, true] as const)(
-  'preserves the native job capability in the executor adapter (%s)',
-  async (windowsJobObject) => {
-    const root = await mkdtemp(join(tmpdir(), 'os-job-capability-'))
-    fixtureDirectories.push(root)
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: root,
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow: vi.fn(),
-      requestDecision: vi.fn()
-    })
-    backend.wrap.mockResolvedValueOnce({
-      argv: ['host'],
-      env: {},
-      windowsJobObject,
-      annotateStderr: (stderr: string) => stderr,
-      resetNetworkConnections: backend.resetNetworkConnections,
-      cleanup: backend.cleanup
-    })
-    try {
-      const wrapped = await owner.wrap({
-        executable: process.execPath,
-        args: [],
-        env: {},
-        cwd: root,
-        commandText: 'workload',
-        sessionId: 'session',
-        projectId: 'project',
-        runtime: 'r',
-        filesystem: {
-          readOnlyRoots: [],
-          readWriteRoots: [root],
-          deniedReadRoots: [],
-          deniedWriteRoots: []
-        }
-      })
-      expect(wrapped.windowsJobObject).toBe(windowsJobObject)
-      wrapped.cleanup()
-    } finally {
-      await owner.dispose()
-    }
-  }
-)
-
 const createCapturingLogger = (): { logger: Logger; records: unknown[] } => {
   const records: unknown[] = []
   const capture = (message: string, data?: unknown): void => {
@@ -135,9 +96,15 @@ beforeEach(() => {
   backend.rKernelProtocolProbe.mockResolvedValue(true)
   backend.installWindows.mockResolvedValue({ cancelled: false })
   backend.removeWindows.mockResolvedValue({ cancelled: false })
+  backend.cleanup.mockImplementation(async (processOutcome) => ({
+    processesTerminated: processOutcome.processesTerminated,
+    networkClosed: true,
+    temporaryResourcesRemoved: true
+  }))
   backend.wrap.mockImplementation(
     async (command: {
       env?: NodeJS.ProcessEnv
+      superviseProcessTree?: boolean
       onNetworkAccessRequest: (request: {
         host: string
         port?: number
@@ -154,10 +121,13 @@ beforeEach(() => {
           env: process.env,
           annotateStderr: (stderr: string) => stderr,
           resetNetworkConnections: backend.resetNetworkConnections,
-          cleanup: backend.cleanup
+          confirmProcessTreeTermination: async () => true,
+          cleanup: (
+            _reason: NotebookSandboxCleanupReason,
+            outcome: NotebookSandboxProcessOutcome
+          ) => backend.cleanup(outcome)
         }
       const controller = new AbortController()
-      let cleaned = false
       backend.request = ({ host, port }) =>
         command.onNetworkAccessRequest({
           host,
@@ -167,13 +137,17 @@ beforeEach(() => {
       return {
         argv: ['/sandbox/sh', '-c', 'wrapped'],
         env: { HTTPS_PROXY: 'http://127.0.0.1:4567' },
+        ...(command.superviseProcessTree
+          ? { confirmProcessTreeTermination: async () => true }
+          : {}),
         annotateStderr: (stderr: string) => stderr,
         resetNetworkConnections: backend.resetNetworkConnections,
-        cleanup: () => {
-          if (cleaned) return
-          cleaned = true
+        cleanup: async (
+          _reason: NotebookSandboxCleanupReason,
+          processOutcome: NotebookSandboxProcessOutcome
+        ) => {
           controller.abort(new Error('Notebook process ended.'))
-          backend.cleanup()
+          return backend.cleanup(processOutcome)
         }
       }
     }
@@ -239,7 +213,9 @@ describe('NotebookNetworkSandboxOwner', () => {
       env: command.env,
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
-      cleanup: backend.cleanup
+      confirmProcessTreeTermination: async () => true,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
     }))
     try {
       await expect(
@@ -253,6 +229,155 @@ describe('NotebookNetworkSandboxOwner', () => {
       vi.unstubAllEnvs()
       await owner.dispose()
     }
+  })
+
+  it('reconciles exact durable command temp receipts left by a prior host process', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'os-network-temp-recovery-'))
+    fixtureDirectories.push(fixtureRoot)
+    const managedRoot = join(fixtureRoot, 'managed-command-temp')
+    const commandId = '01234567-89ab-4cde-8fab-0123456789ab'
+    const commandRoot = join(managedRoot, `command-${commandId}`)
+    const receipt = join(managedRoot, `command-${commandId}.receipt`)
+    const nativeId = '11234567-89ab-4cde-8fab-0123456789ab'
+    const nativeRoot = join(managedRoot, `command-${nativeId}`)
+    const nativeReceipt = `${nativeRoot}.receipt`
+    await mkdir(commandRoot, { recursive: true })
+    await mkdir(nativeRoot, { recursive: true })
+    await writeFile(
+      receipt,
+      `v1 command-${commandId} wsl2 profile-1 Ubuntu-22.04 open-science-spike\n`
+    )
+    await writeFile(nativeReceipt, `v1 command-${nativeId} native\n`)
+    await writeFile(join(commandRoot, 'left-by-crash.txt'), 'temporary')
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: fixtureRoot,
+      temporaryRoot: managedRoot,
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      requestDecision: async () => 'deny'
+    })
+
+    await owner.initialize()
+
+    expect(existsSync(commandRoot)).toBe(true)
+    const wrapped = await owner.wrap({
+      target: {
+        kind: 'wsl2',
+        profileId: 'profile-1',
+        distro: 'Ubuntu-22.04',
+        user: 'open-science-spike'
+      },
+      executable: '/bin/bash',
+      args: ['-c', 'true'],
+      env: {},
+      cwd: 'C:\\workspace',
+      commandText: 'true',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      runtime: 'bash',
+      filesystem: {
+        readOnlyRoots: [],
+        readWriteRoots: ['C:\\workspace'],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    })
+
+    expect(existsSync(commandRoot)).toBe(false)
+    expect(existsSync(receipt)).toBe(false)
+    expect(existsSync(nativeRoot)).toBe(true)
+    expect(existsSync(nativeReceipt)).toBe(true)
+    await wrapped.cleanup('exit', { processesTerminated: true })
+    await owner.dispose()
+  })
+
+  it('does not reconcile a live temp root during an overlapping same-profile WSL wrap', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'os-network-overlapping-wsl-'))
+    fixtureDirectories.push(fixtureRoot)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: fixtureRoot,
+      temporaryRoot: join(fixtureRoot, 'managed-command-temp'),
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      requestDecision: async () => 'deny'
+    })
+    const invocation = {
+      target: {
+        kind: 'wsl2' as const,
+        profileId: 'profile-1',
+        distro: 'Ubuntu-22.04',
+        user: 'open-science-spike'
+      },
+      executable: '/bin/bash',
+      args: ['-c', 'sleep 30'],
+      env: {},
+      cwd: 'C:\\workspace',
+      commandText: 'sleep 30',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      runtime: 'bash' as const,
+      filesystem: {
+        readOnlyRoots: [] as string[],
+        readWriteRoots: ['C:\\workspace'],
+        deniedReadRoots: [] as string[],
+        deniedWriteRoots: [] as string[]
+      }
+    }
+
+    const first = await owner.wrap(invocation)
+    const firstRoot = backend.wrap.mock.calls.at(-1)?.[0].env.TMPDIR as string
+    const second = await owner.wrap({ ...invocation, commandText: 'sleep 31' })
+
+    expect(existsSync(firstRoot)).toBe(true)
+    expect(existsSync(`${firstRoot}.receipt`)).toBe(true)
+    await first.cleanup('cancel', { processesTerminated: true })
+    expect(existsSync(firstRoot)).toBe(false)
+    await second.cleanup('cancel', { processesTerminated: true })
+    await owner.dispose()
+  })
+
+  it('removes durable command temp ownership after verified preparation cleanup', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'os-network-preparation-cleanup-'))
+    fixtureDirectories.push(fixtureRoot)
+    const managedRoot = join(fixtureRoot, 'managed-command-temp')
+    let commandTempRoot = ''
+    backend.wrap.mockImplementationOnce(async (command: { env: NodeJS.ProcessEnv }) => {
+      commandTempRoot = command.env.TMPDIR!
+      const cause = new Error('runtime unavailable')
+      throw Object.assign(new Error(cause.message, { cause }), {
+        name: 'NotebookSandboxPreparationError',
+        cleanupComplete: true as const
+      })
+    })
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: fixtureRoot,
+      temporaryRoot: managedRoot,
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      requestDecision: async () => 'deny'
+    })
+
+    await expect(
+      owner.wrap({
+        executable: '/bin/sh',
+        args: ['-c', 'true'],
+        env: {},
+        cwd: '/workspace',
+        commandText: 'true',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        runtime: 'bash',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: ['/workspace'],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+    ).rejects.toThrow('runtime unavailable')
+    expect(existsSync(commandTempRoot)).toBe(false)
+    expect(existsSync(`${commandTempRoot}.receipt`)).toBe(false)
+    await owner.dispose()
   })
 
   it('quotes executable arguments without allowing shell interpolation', () => {
@@ -294,6 +419,7 @@ describe('NotebookNetworkSandboxOwner', () => {
       sessionId: 'session-1',
       projectId: 'project-1',
       runtime: 'python',
+      superviseProcessTree: true,
       filesystem: {
         readOnlyRoots: ['D:\\runtime'],
         readWriteRoots: ['D:\\workspace'],
@@ -306,11 +432,62 @@ describe('NotebookNetworkSandboxOwner', () => {
       expect.objectContaining({
         command: "& 'D:\\runtime\\python.exe' 'D:\\app\\python_loop.py'",
         executable: 'D:\\runtime\\python.exe',
-        args: ['D:\\app\\python_loop.py']
+        args: ['D:\\app\\python_loop.py'],
+        superviseProcessTree: true
       })
     )
+    await expect(wrapped.confirmProcessTreeTermination?.()).resolves.toBe(true)
 
-    wrapped.cleanup()
+    await wrapped.cleanup('exit', { processesTerminated: true })
+  })
+
+  it('scopes derived package mirror access to the installer process', async () => {
+    const requestDecision = vi.fn()
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision,
+      platform: 'linux'
+    })
+    const invocation = {
+      executable: '/usr/bin/python',
+      args: ['script.py'],
+      env: { PATH: '/usr/bin' },
+      cwd: '/workspace',
+      commandText: 'python script.py',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      runtime: 'python' as const,
+      filesystem: {
+        readOnlyRoots: ['/usr/bin'],
+        readWriteRoots: ['/workspace'],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    }
+
+    const installer = await owner.wrap({
+      ...invocation,
+      allowedNetworkHosts: ['packages.example.org']
+    })
+    const installerRequest = backend.request!
+    const notebook = await owner.wrap(invocation)
+    const notebookRequest = backend.request!
+
+    const endInstaller = installer.beginExecution?.()
+    await expect(installerRequest({ host: 'packages.example.org', port: 443 })).resolves.toBe(true)
+    await expect(installerRequest({ host: 'redirect.example.org', port: 443 })).resolves.toBe(false)
+    endInstaller?.()
+    const endNotebook = notebook.beginExecution?.()
+    await expect(notebookRequest({ host: 'packages.example.org', port: 443 })).resolves.toBe(false)
+    endNotebook?.()
+    expect(requestDecision).not.toHaveBeenCalled()
+    expect(backend.updatePolicy).not.toHaveBeenCalled()
+
+    await installer.cleanup('exit', { processesTerminated: true })
+    await notebook.cleanup('exit', { processesTerminated: true })
+    await owner.dispose()
   })
 
   it('applies allow-once to every matching connection in the next command only', async () => {
@@ -327,7 +504,7 @@ describe('NotebookNetworkSandboxOwner', () => {
     const wrapped = await owner.wrap({
       executable: '/usr/bin/python',
       args: ['loop.py'],
-      env: { PATH: '/usr/bin' },
+      env: { PATH: 'C:\\Windows\\System32' },
       cwd: '/workspace',
       commandText: 'python loop.py',
       sessionId: 'session-1',
@@ -348,14 +525,12 @@ describe('NotebookNetworkSandboxOwner', () => {
     expect(backend.wrap).toHaveBeenCalledWith(
       expect.objectContaining({
         env: expect.objectContaining({
-          TMPDIR: expect.stringContaining('open-science-notebook-'),
-          TEMP: expect.stringContaining('open-science-notebook-'),
-          TMP: expect.stringContaining('open-science-notebook-')
+          TMPDIR: expect.stringContaining('open-science-notebook'),
+          TEMP: expect.stringContaining('open-science-notebook'),
+          TMP: expect.stringContaining('open-science-notebook')
         }),
         filesystem: expect.objectContaining({
-          readWriteRoots: expect.arrayContaining([
-            expect.stringContaining('open-science-notebook-')
-          ])
+          readWriteRoots: expect.arrayContaining([expect.stringContaining('open-science-notebook')])
         })
       })
     )
@@ -412,7 +587,7 @@ describe('NotebookNetworkSandboxOwner', () => {
     const nextExecution = wrapped.beginExecution?.()
     await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
     nextExecution?.()
-    wrapped.cleanup()
+    await wrapped.cleanup('exit', { processesTerminated: true })
 
     const nextCommand = await owner.wrap({
       executable: '/usr/bin/python',
@@ -431,7 +606,7 @@ describe('NotebookNetworkSandboxOwner', () => {
       }
     })
     await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    nextCommand.cleanup()
+    await nextCommand.cleanup('exit', { processesTerminated: true })
     const commandTempRoot = backend.wrap.mock.calls[0]?.[0].env.TMPDIR as string
     await vi.waitFor(() => expect(existsSync(commandTempRoot)).toBe(false))
     await owner.dispose()
@@ -477,7 +652,7 @@ describe('NotebookNetworkSandboxOwner', () => {
       })
     ).resolves.toEqual({ hostname: 'data.example.org', status: 'unavailable' })
     expect(requestDecision).toHaveBeenCalledOnce()
-    wrapped.cleanup()
+    await wrapped.cleanup('exit', { processesTerminated: true })
     await owner.dispose()
 
     const serialized = JSON.stringify(records)
@@ -608,8 +783,8 @@ describe('NotebookNetworkSandboxOwner', () => {
       expect.objectContaining({ hostname: 'data.example.org', runtime: 'bash' })
     )
 
-    python.cleanup()
-    bash.cleanup()
+    await python.cleanup('exit', { processesTerminated: true })
+    await bash.cleanup('exit', { processesTerminated: true })
     await owner.dispose()
   })
 
@@ -680,10 +855,10 @@ describe('NotebookNetworkSandboxOwner', () => {
     await expect(retryRequest({ host: 'data.example.org', port: 443 })).resolves.toBe(true)
     endRetry?.()
 
-    first.cleanup()
-    second.cleanup()
-    unrelated.cleanup()
-    retry.cleanup()
+    await first.cleanup('exit', { processesTerminated: true })
+    await second.cleanup('exit', { processesTerminated: true })
+    await unrelated.cleanup('exit', { processesTerminated: true })
+    await retry.cleanup('exit', { processesTerminated: true })
     await owner.dispose()
   })
 
@@ -733,7 +908,7 @@ describe('NotebookNetworkSandboxOwner', () => {
     expect(backend.updatePolicy).toHaveBeenCalledWith(
       expect.objectContaining({ allowedDomains: expect.arrayContaining(['data.example.org']) })
     )
-    wrapped.cleanup()
+    await wrapped.cleanup('exit', { processesTerminated: true })
     await owner.dispose()
   })
 
@@ -797,11 +972,281 @@ describe('NotebookNetworkSandboxOwner', () => {
         deniedWriteRoots: []
       }
     })
-    wrapped.cleanup()
-    wrapped.cleanup()
+    const firstCleanup = wrapped.cleanup('exit', { processesTerminated: true })
+    const secondCleanup = wrapped.cleanup('cancel', { processesTerminated: true })
+    await expect(firstCleanup).resolves.toEqual({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    })
+    await expect(secondCleanup).resolves.toEqual({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    })
+    expect(firstCleanup).toBe(secondCleanup)
     expect(backend.cleanup).toHaveBeenCalledOnce()
     await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
     expect(requestDecision).not.toHaveBeenCalled()
+    await owner.dispose()
+  })
+
+  it('retains the command temp root until backend teardown succeeds and retries the same root', async () => {
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn().mockResolvedValue('deny'),
+      platform: 'linux'
+    })
+    backend.cleanup
+      .mockResolvedValueOnce({
+        processesTerminated: false,
+        networkClosed: true,
+        temporaryResourcesRemoved: false
+      })
+      .mockResolvedValueOnce({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+    const wrapped = await owner.wrap({
+      executable: '/bin/sh',
+      args: ['-c', 'sleep 30'],
+      env: {},
+      cwd: '/workspace',
+      commandText: 'sleep 30',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      runtime: 'bash',
+      filesystem: {
+        readOnlyRoots: [],
+        readWriteRoots: ['/workspace'],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    })
+    const commandTempRoot = backend.wrap.mock.calls.at(-1)?.[0].env.TMPDIR as string
+    const commandTempReceipt = `${commandTempRoot}.receipt`
+
+    await expect(wrapped.cleanup('cancel', { processesTerminated: false })).resolves.toEqual({
+      processesTerminated: false,
+      networkClosed: true,
+      temporaryResourcesRemoved: false
+    })
+    expect(existsSync(commandTempRoot)).toBe(true)
+    expect(existsSync(commandTempReceipt)).toBe(true)
+    const next = await owner.wrap({
+      executable: '/bin/sh',
+      args: ['-c', 'true'],
+      env: {},
+      cwd: '/workspace',
+      commandText: 'true',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      runtime: 'bash',
+      filesystem: {
+        readOnlyRoots: [],
+        readWriteRoots: ['/workspace'],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    })
+    expect(existsSync(commandTempRoot)).toBe(false)
+    expect(existsSync(commandTempReceipt)).toBe(false)
+    await next.cleanup('exit', { processesTerminated: true })
+    await owner.dispose()
+  })
+
+  it('does not block a native kernel when cleanup remains incomplete for the previous WSL2 kernel', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'os-network-wsl2-to-native-'))
+    fixtureDirectories.push(fixtureRoot)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      temporaryRoot: fixtureRoot,
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn().mockResolvedValue('deny'),
+      platform: 'win32'
+    })
+    backend.cleanup.mockResolvedValue({
+      processesTerminated: false,
+      networkClosed: false,
+      temporaryResourcesRemoved: false
+    })
+    const invocation = {
+      executable: '/bin/bash',
+      args: ['-c', 'true'],
+      env: {},
+      cwd: 'C:\\workspace',
+      commandText: 'true',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      runtime: 'bash' as const,
+      filesystem: {
+        readOnlyRoots: [],
+        readWriteRoots: ['C:\\workspace'],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    }
+
+    const wsl2 = await owner.wrap({
+      ...invocation,
+      target: {
+        kind: 'wsl2',
+        profileId: 'profile-1',
+        distro: 'Ubuntu-22.04',
+        user: 'researcher'
+      }
+    })
+    await expect(wsl2.cleanup('timeout', { processesTerminated: false })).resolves.toEqual({
+      processesTerminated: false,
+      networkClosed: false,
+      temporaryResourcesRemoved: false
+    })
+
+    await expect(
+      owner.wrap({
+        ...invocation,
+        executable: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+        args: ['-NoProfile', '-Command', 'Write-Output ready'],
+        commandText: 'Write-Output ready',
+        target: { kind: 'native' }
+      })
+    ).resolves.toMatchObject({ executable: '/sandbox/sh' })
+    expect(backend.cleanup).toHaveBeenCalledTimes(1)
+    expect(backend.wrap).toHaveBeenCalledTimes(2)
+    await owner.dispose()
+  })
+
+  it('retries only the old WSL2 resource and blocks another kernel for the same profile', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'os-network-same-wsl2-retry-'))
+    fixtureDirectories.push(fixtureRoot)
+    const cleanupTargets: string[] = []
+    backend.wrap.mockImplementation(async (command: { target: { kind: string } }) => ({
+      argv: ['/sandbox/sh', '-c', 'wrapped'],
+      env: {},
+      annotateStderr: (stderr: string) => stderr,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      cleanup: async () => {
+        cleanupTargets.push(command.target.kind)
+        return {
+          processesTerminated: false,
+          networkClosed: false,
+          temporaryResourcesRemoved: false
+        }
+      }
+    }))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      temporaryRoot: fixtureRoot,
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn().mockResolvedValue('deny'),
+      platform: 'win32'
+    })
+    const invocation = {
+      target: {
+        kind: 'wsl2' as const,
+        profileId: 'profile-1',
+        distro: 'Ubuntu-22.04',
+        user: 'researcher'
+      },
+      executable: '/bin/bash',
+      args: ['-c', 'true'],
+      env: {},
+      cwd: 'C:\\workspace',
+      commandText: 'true',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      runtime: 'bash' as const,
+      filesystem: {
+        readOnlyRoots: [],
+        readWriteRoots: ['C:\\workspace'],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    }
+    const first = await owner.wrap(invocation)
+
+    await first.cleanup('timeout', { processesTerminated: false })
+    await expect(owner.wrap(invocation)).rejects.toThrow(
+      'SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.'
+    )
+    expect(cleanupTargets).toEqual(['wsl2', 'wsl2'])
+    expect(backend.wrap).toHaveBeenCalledTimes(1)
+    await owner.dispose()
+  })
+
+  it('defaults to native and forwards an explicit WSL2 sandbox target', async () => {
+    const { logger, records } = createCapturingLogger()
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn().mockResolvedValue('deny'),
+      platform: 'win32',
+      logger
+    })
+    const invocation = {
+      executable: '/usr/bin/python',
+      args: ['script.py'],
+      env: { PATH: 'C:\\Windows\\System32' },
+      pathEnvironment: { UV_CACHE_DIR: 'C:\\workspace\\cache\\uv' },
+      cwd: 'C:\\workspace',
+      commandText: 'python script.py',
+      executionReference: 'execution-safe-reference',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      runtime: 'python' as const,
+      filesystem: {
+        readOnlyRoots: ['/usr/bin'],
+        readWriteRoots: ['C:\\workspace'],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    }
+
+    const native = await owner.wrap(invocation)
+    const target = {
+      kind: 'wsl2' as const,
+      profileId: 'profile-1',
+      distro: 'Ubuntu',
+      user: 'researcher'
+    }
+    const wsl2 = await owner.wrap({ ...invocation, target })
+
+    expect(backend.wrap.mock.calls[0]?.[0]).toMatchObject({ target: { kind: 'native' } })
+    expect(backend.wrap.mock.calls[1]?.[0]).toMatchObject({
+      target,
+      pathEnvironment: { UV_CACHE_DIR: 'C:\\workspace\\cache\\uv' }
+    })
+    expect(backend.wrap.mock.calls[1]?.[0]?.command).toBe("'/usr/bin/python' 'script.py'")
+    expect(backend.wrap.mock.calls[1]?.[0]?.filesystem.readOnlyRoots).not.toContain(
+      'C:\\Windows\\System32'
+    )
+    await native.cleanup('exit', { processesTerminated: true })
+    backend.cleanup.mockResolvedValueOnce({
+      processesTerminated: false,
+      networkClosed: false,
+      temporaryResourcesRemoved: false
+    })
+    await expect(wsl2.cleanup('timeout', { processesTerminated: false })).resolves.toEqual({
+      processesTerminated: false,
+      networkClosed: false,
+      temporaryResourcesRemoved: false
+    })
+    const diagnosticText = JSON.stringify(records)
+    expect(diagnosticText).toContain('sandbox cleanup completed')
+    expect(diagnosticText).toContain('sandbox process prepared')
+    expect(diagnosticText).toContain('execution-safe-reference')
+    expect(diagnosticText).toContain('"phase":"sandbox-cleanup"')
+    expect(diagnosticText).toContain('"result":"incomplete"')
+    expect(diagnosticText).toContain('"incompleteStageCount":3')
+    expect(diagnosticText).not.toContain('python script.py')
+    expect(diagnosticText).not.toContain('C:\\\\workspace')
+    expect(diagnosticText).not.toContain('researcher')
     await owner.dispose()
   })
 
@@ -863,7 +1308,7 @@ describe('NotebookNetworkSandboxOwner', () => {
         })
       })
     )
-    wrapped.cleanup()
+    await wrapped.cleanup('exit', { processesTerminated: true })
     await owner.dispose()
   })
 
@@ -898,7 +1343,7 @@ describe('NotebookNetworkSandboxOwner', () => {
     })
 
     expect(backend.wrap.mock.calls.at(-1)?.[0].filesystem.deniedWriteRoots).toContain(gitPointer)
-    wrapped.cleanup()
+    await wrapped.cleanup('exit', { processesTerminated: true })
     await owner.dispose()
   })
 
@@ -952,7 +1397,7 @@ describe('NotebookNetworkSandboxOwner', () => {
     expect(decisionSignal?.aborted).toBe(true)
     await expect(result).resolves.toEqual({ hostname: 'data.example.org', status: 'denied' })
     expect(persistAlwaysAllow).not.toHaveBeenCalled()
-    wrapped.cleanup()
+    await wrapped.cleanup('exit', { processesTerminated: true })
     await owner.dispose()
   })
 })
@@ -1021,7 +1466,9 @@ it('authorizes missing R access before the original Notebook cell is dispatched'
       env: command.env,
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
-      cleanup: backend.cleanup
+      confirmProcessTreeTermination: async () => true,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
     }
   })
   const owner = new NotebookNetworkSandboxOwner({
@@ -1123,6 +1570,124 @@ describe('R startup authorization admission', () => {
       persistAlwaysAllow: vi.fn(),
       requestDecision: vi.fn()
     })
+
+  it('does not report verified R access when sandbox cleanup remains incomplete', async () => {
+    const owner = createOwner()
+    backend.wrap.mockResolvedValue({
+      argv: [process.execPath, '-e', 'console.log("OPEN_SCIENCE_R_ACCESS_OK")'],
+      env: process.env,
+      annotateStderr: (stderr: string) => stderr,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      confirmProcessTreeTermination: async () => true,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
+    })
+    backend.cleanup.mockResolvedValue({
+      processesTerminated: false,
+      networkClosed: false,
+      temporaryResourcesRemoved: false
+    })
+    try {
+      await expect(owner.setWindowsRuntimeAccess(request.executable, true)).rejects.toThrow()
+    } finally {
+      await owner.dispose()
+    }
+  })
+
+  it('retains the probe directory and blocks admission without process termination proof', async () => {
+    const owner = createOwner()
+    const confirm = vi.fn().mockResolvedValue(false)
+    backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
+    backend.wrap.mockResolvedValue({
+      argv: [process.execPath, '-e', 'console.log("OPEN_SCIENCE_R_ACCESS_OK")'],
+      env: process.env,
+      confirmProcessTreeTermination: confirm,
+      annotateStderr: (stderr: string) => stderr,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
+    })
+    try {
+      await expect(owner.ensureRuntimeAccess(request)).rejects.toThrow(
+        'cleanup could not be confirmed'
+      )
+      const cwd = backend.wrap.mock.calls[0]![0].cwd as string
+      fixtureDirectories.push(cwd)
+      expect(existsSync(cwd)).toBe(true)
+      expect(confirm).toHaveBeenCalledOnce()
+      expect(backend.cleanup).toHaveBeenCalledWith({
+        processesTerminated: false,
+        confirmTermination: confirm
+      })
+      expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
+    } finally {
+      await owner.dispose()
+    }
+  })
+
+  it('cleans up cancellation before a contained probe starts without requiring a termination proof', async () => {
+    const owner = createOwner()
+    const confirm = vi.fn().mockResolvedValue(false)
+    backend.setWindowsRuntimeAccess.mockResolvedValue({ cancelled: true })
+    backend.wrap.mockResolvedValue({
+      argv: ['never-launched.exe'],
+      env: process.env,
+      confirmProcessTreeTermination: confirm,
+      annotateStderr: (stderr: string) => stderr,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
+    })
+    try {
+      await expect(owner.setWindowsRuntimeAccess(request.executable, true)).resolves.toEqual({
+        cancelled: true
+      })
+      const cwd = backend.wrap.mock.calls[0]![0].cwd as string
+      expect(existsSync(cwd)).toBe(false)
+      expect(confirm).not.toHaveBeenCalled()
+      expect(backend.cleanup).toHaveBeenCalledWith({
+        processesTerminated: true,
+        confirmTermination: confirm
+      })
+    } finally {
+      await owner.dispose()
+    }
+  })
+
+  it('retains temporary resources after a started authorization verifier fails without proof', async () => {
+    const owner = createOwner()
+    const confirm = vi.fn().mockResolvedValue(false)
+    backend.wrap.mockResolvedValue({
+      argv: [process.execPath, '-e', 'console.log("OPEN_SCIENCE_R_ACCESS_OK")'],
+      env: process.env,
+      confirmProcessTreeTermination: confirm,
+      annotateStderr: (stderr: string) => stderr,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
+    })
+    backend.setWindowsRuntimeAccess.mockImplementation(
+      async (_executable, _authorized, verification: Verification) => {
+        await runVerification(verification)
+        throw new Error('verification interrupted after elevation')
+      }
+    )
+    try {
+      await expect(owner.setWindowsRuntimeAccess(request.executable, true)).rejects.toThrow(
+        'cleanup could not be confirmed'
+      )
+      const cwd = backend.wrap.mock.calls[0]![0].cwd as string
+      fixtureDirectories.push(cwd)
+      expect(existsSync(cwd)).toBe(true)
+      expect(confirm).toHaveBeenCalledOnce()
+      expect(backend.cleanup).toHaveBeenCalledWith({
+        processesTerminated: false,
+        confirmTermination: confirm
+      })
+    } finally {
+      await owner.dispose()
+    }
+  })
 
   it('does not prompt while data migration is preparing', async () => {
     const owner = createOwner()
@@ -1279,7 +1844,9 @@ describe('R startup authorization admission', () => {
       env: process.env,
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
-      cleanup: backend.cleanup
+      confirmProcessTreeTermination: async () => true,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
     })
     try {
       await expect(owner.ensureRuntimeAccess(request)).resolves.toBeUndefined()
@@ -1301,7 +1868,9 @@ describe('R startup authorization admission', () => {
       env: process.env,
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
-      cleanup: backend.cleanup
+      confirmProcessTreeTermination: async () => true,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
     })
     try {
       await expect(owner.ensureRuntimeAccess(request)).rejects.toThrow()
@@ -1351,7 +1920,9 @@ describe('R startup authorization admission', () => {
       env: process.env,
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
-      cleanup: backend.cleanup
+      confirmProcessTreeTermination: async () => true,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
     }))
     try {
       await expect(owner.ensureRuntimeAccess(request)).rejects.toThrow(

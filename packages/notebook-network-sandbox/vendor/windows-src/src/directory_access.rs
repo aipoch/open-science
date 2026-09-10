@@ -7,9 +7,7 @@ use windows::Win32::{
     Security::{
         ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION_DS, ACL_SIZE_INFORMATION,
         AclSizeInformation, AddAccessAllowedAceEx, AddAce,
-        Authorization::{
-            ConvertStringSidToSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT,
-        },
+        Authorization::{ConvertStringSidToSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT},
         DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation, GetLengthSid,
         GetSecurityDescriptorControl, INHERITED_ACE, InitializeAcl, InitializeSecurityDescriptor,
         PSECURITY_DESCRIPTOR, PSID, SE_DACL_AUTO_INHERIT_REQ, SE_DACL_AUTO_INHERITED,
@@ -200,9 +198,13 @@ fn access(path: &str, identity: &str, change: Option<bool>, allow_existing: bool
             SECURITY_DESCRIPTOR_CONTROL(mask),
             SECURITY_DESCRIPTOR_CONTROL((original_control & mask) | inheritance_request),
         )?;
-        SetFileSecurityW(PCWSTR(name.as_ptr()), DACL_SECURITY_INFORMATION, updated_ptr)
-            .ok()
-            .with_context(|| format!("update runtime directory permissions: {path}"))?;
+        SetFileSecurityW(
+            PCWSTR(name.as_ptr()),
+            DACL_SECURITY_INFORMATION,
+            updated_ptr,
+        )
+        .ok()
+        .with_context(|| format!("update runtime directory permissions: {path}"))?;
     }
     Ok(add)
 }

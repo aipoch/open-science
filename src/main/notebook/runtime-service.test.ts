@@ -4069,6 +4069,7 @@ describe('notebook runtime service', () => {
 
     it('routes one admitted call through the shell process port and preserves its public result', async () => {
       const root = await createStorageRoot()
+      const info = vi.fn()
       const execute = vi.fn<NotebookShellProcess['execute']>().mockResolvedValue({
         stdout: 'partial output',
         stderr: 'command failed',
@@ -4081,7 +4082,14 @@ describe('notebook runtime service', () => {
         dataRoot: root,
         projectId: 'default-project',
         repository,
-        shellProcess: { execute }
+        logger: { info, warn: vi.fn(), error: vi.fn() },
+        shellProcess: { execute },
+        shellRuntimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        }
       })
 
       const result = await service.executeShell({
@@ -4095,6 +4103,7 @@ describe('notebook runtime service', () => {
         command: 'opaque command',
         runId: expect.any(String),
         cwd: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+        executionReference: expect.any(String),
         handoffDir: join(root, 'notebooks', 'default-project', 'session-1', 'handoff'),
         notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
         inputRoot: getNotebookInputRoot(root, 'default-project', 'session-1'),
@@ -4104,7 +4113,13 @@ describe('notebook runtime service', () => {
         runtimeRoot: getRuntimeRoot(root),
         sessionId: 'session-1',
         timeoutMs: 321,
-        signal: expect.any(AbortSignal)
+        signal: expect.any(AbortSignal),
+        runtimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        }
       })
       expect(result).toEqual({
         stdout: 'partial output',
@@ -4115,8 +4130,195 @@ describe('notebook runtime service', () => {
       const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
       expect(state.runs[0]).toMatchObject({
         status: 'failed',
+        shellRuntime: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        },
         text: { stdout: 'partial output', stderr: 'command failed' }
       })
+      expect(info).toHaveBeenCalledWith(
+        'shell execution completed',
+        expect.objectContaining({
+          runtime: 'wsl2-bash',
+          profileReference: 'profile-1',
+          stage: 'execution',
+          status: 'failed',
+          exitCode: 9,
+          stdoutByteCount: 14,
+          stderrByteCount: 14,
+          outputByteCount: 28,
+          truncated: true
+        })
+      )
+      const diagnosticText = JSON.stringify(info.mock.calls)
+      expect(diagnosticText).not.toContain('opaque command')
+      expect(diagnosticText).not.toContain('partial output')
+      expect(diagnosticText).not.toContain('command failed')
+      expect(diagnosticText).not.toContain(root)
+      expect(diagnosticText).not.toContain('Ubuntu-22.04')
+      expect(diagnosticText).not.toContain('researcher')
+    })
+
+    it('rejects an idempotent Shell retry that changes its captured runtime', async () => {
+      const root = await createStorageRoot()
+      const execute = vi
+        .fn<NotebookShellProcess['execute']>()
+        .mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute }
+      })
+      const request = {
+        sessionId: 'runtime-retry',
+        workspaceCwd: root,
+        command: 'echo hello',
+        executionInvocationId: 'same-invocation'
+      }
+      await service.executeShell({
+        ...request,
+        shellRuntime: { kind: 'powershell', version: '5.1' }
+      })
+      await expect(
+        service.executeShell({
+          ...request,
+          shellRuntime: {
+            kind: 'wsl2-bash',
+            profileId: 'profile-1',
+            distro: 'Ubuntu',
+            user: 'researcher'
+          }
+        })
+      ).rejects.toThrow()
+      expect(execute).toHaveBeenCalledOnce()
+    })
+
+    it('preserves unavailable Shell results on durable retries', async () => {
+      const root = await createStorageRoot()
+      const unavailable = {
+        stdout: '',
+        stderr: 'unavailable',
+        exitCode: null,
+        runtimeStatus: 'unavailable' as const,
+        errorCode: 'shell-runtime-unavailable' as const,
+        recovery: { execution: 'not-started', retryAfter: 'runtime-ready' } as const
+      }
+      const execute = vi.fn<NotebookShellProcess['execute']>().mockResolvedValue(unavailable)
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute }
+      })
+      const request = {
+        sessionId: 'unavailable-retry',
+        workspaceCwd: root,
+        command: 'echo hello',
+        executionInvocationId: 'same-invocation'
+      }
+      expect(await service.executeShell(request)).toEqual(unavailable)
+      expect(await service.executeShell(request)).toEqual(unavailable)
+      expect(execute).toHaveBeenCalledOnce()
+    })
+
+    it('blocks unmanaged WSL Bash detachment on a Windows host', async () => {
+      const root = await createStorageRoot()
+      const execute = vi.fn<NotebookShellProcess['execute']>()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute },
+        platform: 'win32',
+        shellRuntimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu',
+          user: 'researcher'
+        }
+      })
+      await expect(
+        service.executeShell({
+          sessionId: 'wsl-detached',
+          workspaceCwd: root,
+          command: 'sleep 30 &'
+        })
+      ).rejects.toMatchObject({ detail: { code: 'UNMANAGED_SHELL_BACKGROUND_BLOCKED' } })
+      expect(execute).not.toHaveBeenCalled()
+    })
+
+    it('records a selected but unavailable WSL runtime as failed without falling back', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        platform: 'win32',
+        shellRuntimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        }
+      })
+
+      await expect(
+        service.executeShell({
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          command: 'Write-Output should-not-run'
+        })
+      ).resolves.toMatchObject({
+        exitCode: null,
+        runtimeStatus: 'unavailable',
+        errorCode: 'shell-runtime-unavailable'
+      })
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.runs[0]).toMatchObject({
+        status: 'failed',
+        shellRuntime: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        }
+      })
+    })
+
+    it('uses the captured WSL POSIX dialect for mutation detection on a Windows host', async () => {
+      const root = await createStorageRoot()
+      const execute = vi.fn<NotebookShellProcess['execute']>()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        platform: 'win32',
+        shellProcess: { execute },
+        shellRuntimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        }
+      })
+
+      const result = await service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'tool=python3; mode=-m; action=venv; "$tool" "$mode" "$action" analysis-env'
+      })
+
+      expect(result).toMatchObject({ exitCode: 1 })
+      expect(result.stderr).toMatch(/manage_packages/)
+      expect(execute).not.toHaveBeenCalled()
     })
 
     it('durably queues shell calls when the bounded project capacity is occupied', async () => {
@@ -4405,12 +4607,20 @@ describe('notebook runtime service', () => {
         runtimeSegmentId: 'runtime-child',
         promptMessageId: 'message-child'
       }
+      // A previously initialized child Frame can reach shell admission before a cold root Frame.
+      await service.state({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        provenanceContext: childContext
+      })
+
       const first = service.executeShell({
         sessionId: 'session-1',
         workspaceCwd: root,
         command: 'first',
         provenanceContext: rootContext
       })
+      await firstStarted.promise
       const queued = service.executeShell({
         sessionId: 'session-1',
         workspaceCwd: root,
@@ -4418,7 +4628,7 @@ describe('notebook runtime service', () => {
         provenanceContext: childContext
       })
 
-      await firstStarted.promise
+      const settledRuns = Promise.allSettled([first, queued])
       expect(entered).toEqual(['first'])
       const shutdown = service.shutdownSession('session-1')
       await shutdown
@@ -4429,7 +4639,7 @@ describe('notebook runtime service', () => {
         await vi.waitFor(() => expect(entered).toHaveLength(2))
         releases.get('must-not-start')?.()
       }
-      await Promise.allSettled([first, queued])
+      await settledRuns
 
       expect(activeWasCancelled).toBe(true)
       expect(entered).toEqual(['first'])
@@ -5912,11 +6122,12 @@ describe('notebook runtime service', () => {
           }
         }
       )
+      const repository = new NotebookRunRepository(root)
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
         projectId: 'default-project',
-        repository: new NotebookRunRepository(root),
+        repository,
         executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
       })
       const request = { sessionId: 'session-1', workspaceCwd: root, cellId: 'cell-b' }
@@ -5941,11 +6152,29 @@ describe('notebook runtime service', () => {
             })
           )
           await blockerStarted.promise
+          // Real durable admission may exceed vi.waitFor's one-second default under CI load.
+          const appendRun = repository.appendOrGetRun.bind(repository)
+          vi.spyOn(repository, 'appendOrGetRun').mockImplementationOnce(async (input) => {
+            await new Promise((resolve) => setTimeout(resolve, 1250))
+            return appendRun(input)
+          })
           // Data runs have no public queued-state projection. Observe the existing queue entry
           // without replacing its behavior so rewriting happens strictly after admission.
+          const admitted = createDeferred<void>()
+          const enqueueExecution = NotebookSessionAggregate.prototype.enqueueExecution
           enqueue = vi.spyOn(NotebookSessionAggregate.prototype, 'enqueueExecution')
-          pending.push(service.runCell(request))
-          await vi.waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1))
+          enqueue.mockImplementation(function (
+            this: NotebookSessionAggregate,
+            ...args: Parameters<typeof enqueueExecution>
+          ) {
+            const result = enqueueExecution.apply(this, args)
+            admitted.resolve()
+            return result
+          })
+          const queuedRun = service.runCell(request)
+          pending.push(queuedRun)
+          await Promise.race([admitted.promise, queuedRun])
+          expect(enqueue).toHaveBeenCalledTimes(1)
           enqueue.mockRestore()
           await expect(
             service.beginCodeCell({ ...request, language: requestedLanguage })

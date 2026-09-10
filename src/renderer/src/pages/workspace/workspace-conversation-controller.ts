@@ -530,6 +530,9 @@ const useWorkspaceConversationController = (
               current.newConversationDelegationPolicyOverride
             ),
             forcedSkillIds,
+            ...(wasNewConversation && snapshot.setupSessionToken
+              ? { setupSessionToken: snapshot.setupSessionToken }
+              : {}),
             ...(mode === 'plan-first' ? { turnIntent: 'plan-first' as const } : {}),
             specialistId: draftSpecialistId,
             ...(wasNewConversation && computeHosts.length > 0

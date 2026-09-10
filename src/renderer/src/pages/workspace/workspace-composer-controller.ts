@@ -1,5 +1,13 @@
 import type { PdfReadingPositionSource } from '../../../../shared/session-pdf-context'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore
+} from 'react'
 
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import {
@@ -17,7 +25,7 @@ import {
   type SessionPdfContextSource
 } from '../../../../shared/session-persistence'
 import { buildCustomizePrefillDoc } from '@/lib/customize-chat'
-import type { CustomizePrefillIntent } from '@/stores/navigation-store'
+import type { CustomizePrefillIntent, WslSupportPrefillIntent } from '@/stores/navigation-store'
 import {
   pendingPdfContextBindingId,
   pendingPdfContextSelections,
@@ -78,6 +86,7 @@ const samePdfContextSources = (
   left.every((source, index) => pdfContextSourceKey(source) === pdfContextSourceKey(right[index]))
 
 export type ComposerSendSnapshot = {
+  setupSessionToken?: string
   queuedEdit?: ComposerDraft['queuedEdit']
   draftKey: string
   version: number
@@ -101,7 +110,9 @@ type WorkspaceComposerControllerInput = {
   newConversationDraftKey: string
   activeProjectId: string | undefined
   pendingCustomizePrefill: CustomizePrefillIntent | undefined
+  pendingWslSupportPrefill?: WslSupportPrefillIntent | undefined
   onCustomizePrefillApplied: () => void
+  onWslSupportPrefillApplied?: () => void
   historyEntries: ComposerHistoryEntry[]
   activeSession: ComposerSessionContext | undefined
   historyPolicy: {
@@ -132,6 +143,7 @@ type WorkspaceComposerController = {
     historyStatus: string
     isHistoryBrowsing: boolean
     isUploading: boolean
+    isWslSetupDraft: boolean
     caretRequest: { key: number; position: ComposerCaretPosition } | undefined
     readingContext: {
       bindings: ComposerReadingContextBinding[]
@@ -142,6 +154,7 @@ type WorkspaceComposerController = {
   }
   actions: {
     cancelQueuedEdit?: () => void
+    discardWslSetupDraft: () => boolean
     changeDoc: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
     addAnnotation: (annotation: Annotation) => AnnotationValidationError | undefined
     updateAnnotationNote: (id: string, note: string) => AnnotationValidationError | undefined
@@ -176,6 +189,28 @@ type WorkspaceComposerController = {
   }
 }
 
+class SetupSessionTokenStore {
+  private value: string | undefined
+  private readonly listeners = new Set<() => void>()
+
+  constructor(initialValue: string | undefined) {
+    this.value = initialValue
+  }
+
+  readonly getSnapshot = (): string | undefined => this.value
+
+  readonly subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  set(token: string | undefined): void {
+    if (this.value === token) return
+    this.value = token
+    this.listeners.forEach((listener) => listener())
+  }
+}
+
 const blank = (): ComposerDraft => ({
   doc: emptyDoc,
   annotations: [],
@@ -189,7 +224,9 @@ const useWorkspaceComposerController = ({
   newConversationDraftKey,
   activeProjectId,
   pendingCustomizePrefill,
+  pendingWslSupportPrefill,
   onCustomizePrefillApplied,
+  onWslSupportPrefillApplied = () => undefined,
   historyEntries,
   activeSession,
   historyPolicy,
@@ -204,6 +241,23 @@ const useWorkspaceComposerController = ({
   const [initialDraft] = useState(() => draftsRef.current[currentDraftKey] ?? blank())
   const [queuedEdit, setQueuedEdit] = useState(initialDraft.queuedEdit)
   const queuedEditRef = useRef<ComposerDraft['queuedEdit']>(initialDraft.queuedEdit)
+  const setupSessionTokenRef = useRef(initialDraft.setupSessionToken)
+  const setupSessionTokenStore = useMemo(
+    () => new SetupSessionTokenStore(initialDraft.setupSessionToken),
+    [initialDraft.setupSessionToken]
+  )
+  const setupSessionToken = useSyncExternalStore(
+    setupSessionTokenStore.subscribe,
+    setupSessionTokenStore.getSnapshot,
+    setupSessionTokenStore.getSnapshot
+  )
+  const setActiveSetupSessionToken = useCallback(
+    (token: string | undefined): void => {
+      setupSessionTokenRef.current = token
+      setupSessionTokenStore.set(token)
+    },
+    [setupSessionTokenStore]
+  )
   const setActiveQueuedEdit = useCallback((intent: ComposerDraft['queuedEdit']): void => {
     queuedEditRef.current = intent
     setQueuedEdit(intent)
@@ -213,7 +267,11 @@ const useWorkspaceComposerController = ({
   const [historyBrowsingKey, setHistoryBrowsingKey] = useState<string>()
   const [historyStatus, setHistoryStatus] = useState('')
   const [skillCatalogReady, setSkillCatalogReady] = useState(historyPolicy.skillCatalogReady)
-  const appliedCustomizePrefillRef = useRef<CustomizePrefillIntent>(undefined)
+  const appliedConversationPrefillRef = useRef<{
+    kind: 'customize' | 'wsl-support'
+    projectId: string
+    requestId: number
+  }>(undefined)
   const [caretRequest, setCaretRequest] = useState<{
     key: number
     position: ComposerCaretPosition
@@ -764,6 +822,7 @@ const useWorkspaceComposerController = ({
       delete draftsRef.current[previousDraftKey]
     } else {
       draftsRef.current[previousDraftKey] = {
+        setupSessionToken: setupSessionTokenRef.current,
         doc: outgoingHistory?.scratch ?? doc,
         annotations,
         attachments,
@@ -783,6 +842,7 @@ const useWorkspaceComposerController = ({
     activateDraftAttachments(nextDraft)
     setActiveAutomaticReadingEnabled(nextDraft.automaticReadingEnabled)
     setActiveQueuedEdit(nextDraft.queuedEdit)
+    setActiveSetupSessionToken(nextDraft.setupSessionToken)
     activeDraftKeyRef.current = currentDraftKey
     delete draftsRef.current[currentDraftKey]
   }, [
@@ -795,6 +855,7 @@ const useWorkspaceComposerController = ({
     draftsRef,
     setActiveAutomaticReadingEnabled,
     setActiveQueuedEdit,
+    setActiveSetupSessionToken,
     activateDraftAttachments,
     setActiveAnnotations,
     setActiveDoc,
@@ -803,20 +864,38 @@ const useWorkspaceComposerController = ({
 
   // Save the outgoing draft and activate the target before applying its prefill.
   useLayoutEffect(() => {
+    const pendingConversationPrefill = pendingWslSupportPrefill
+      ? { ...pendingWslSupportPrefill, kind: 'wsl-support' as const }
+      : pendingCustomizePrefill
+        ? {
+            ...pendingCustomizePrefill,
+            kind: 'customize' as const,
+            doc: buildCustomizePrefillDoc(pendingCustomizePrefill.goal)
+          }
+        : undefined
+    const applied = appliedConversationPrefillRef.current
     if (
-      !pendingCustomizePrefill ||
-      pendingCustomizePrefill.projectId !== activeProjectId ||
+      !pendingConversationPrefill ||
+      pendingConversationPrefill.projectId !== activeProjectId ||
       currentDraftKey !== newConversationDraftKey ||
-      appliedCustomizePrefillRef.current?.requestId === pendingCustomizePrefill.requestId
+      (applied?.kind === pendingConversationPrefill.kind &&
+        applied.projectId === pendingConversationPrefill.projectId &&
+        applied.requestId === pendingConversationPrefill.requestId)
     )
       return
-    appliedCustomizePrefillRef.current = pendingCustomizePrefill
+    appliedConversationPrefillRef.current = pendingConversationPrefill
     clearHistory(currentDraftKey)
     clearPastedTextUndo(currentDraftKey)
     clearUndo(currentDraftKey)
     markChanged(currentDraftKey)
-    setActiveDoc(buildCustomizePrefillDoc(pendingCustomizePrefill.goal))
-    onCustomizePrefillApplied()
+    setActiveDoc(pendingConversationPrefill.doc)
+    if (pendingConversationPrefill.kind === 'wsl-support') {
+      setActiveSetupSessionToken(pendingConversationPrefill.setupSessionToken)
+      onWslSupportPrefillApplied()
+    } else {
+      setActiveSetupSessionToken(undefined)
+      onCustomizePrefillApplied()
+    }
   }, [
     activeProjectId,
     clearHistory,
@@ -826,8 +905,11 @@ const useWorkspaceComposerController = ({
     markChanged,
     newConversationDraftKey,
     onCustomizePrefillApplied,
+    onWslSupportPrefillApplied,
     pendingCustomizePrefill,
-    setActiveDoc
+    pendingWslSupportPrefill,
+    setActiveDoc,
+    setActiveSetupSessionToken
   ])
 
   const navigateHistory = useCallback(
@@ -1043,6 +1125,7 @@ const useWorkspaceComposerController = ({
         })
         .slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - includedDurableBindings.length))
       return {
+        setupSessionToken: setupSessionTokenRef.current,
         draftKey: activeDraftKeyRef.current,
         version: versionsRef.current[activeDraftKeyRef.current] ?? 0,
         doc: docRef.current,
@@ -1109,6 +1192,7 @@ const useWorkspaceComposerController = ({
       clearUndo(draftKey)
       delete draftsRef.current[draftKey]
       if (activeDraftKeyRef.current !== draftKey) return true
+      setActiveSetupSessionToken(undefined)
       setActiveDoc(emptyDoc)
       setActiveQueuedEdit(undefined)
       setActiveAnnotations([])
@@ -1128,6 +1212,7 @@ const useWorkspaceComposerController = ({
       setActiveDoc,
       setActiveAutomaticReadingEnabled,
       setActiveQueuedEdit,
+      setActiveSetupSessionToken,
       setError
     ]
   )
@@ -1160,6 +1245,7 @@ const useWorkspaceComposerController = ({
       clearPastedTextUndo(snapshot.draftKey)
       clearHistory(snapshot.draftKey)
       if (activeDraftKeyRef.current === snapshot.draftKey) {
+        setActiveSetupSessionToken(snapshot.setupSessionToken)
         setActiveQueuedEdit(snapshot.queuedEdit)
         setActiveDoc(snapshot.doc)
         setActiveAnnotations([...snapshot.annotations])
@@ -1168,6 +1254,7 @@ const useWorkspaceComposerController = ({
         return true
       }
       draftsRef.current[snapshot.draftKey] = {
+        setupSessionToken: snapshot.setupSessionToken,
         queuedEdit: snapshot.queuedEdit,
         doc: snapshot.doc,
         annotations: [...snapshot.annotations],
@@ -1187,6 +1274,7 @@ const useWorkspaceComposerController = ({
       clearHistory,
       markChanged,
       setActiveQueuedEdit,
+      setActiveSetupSessionToken,
       releaseHistoryResources,
       setActiveAttachments,
       setActiveAnnotations,
@@ -1236,6 +1324,7 @@ const useWorkspaceComposerController = ({
       historyStatus,
       isHistoryBrowsing: historyBrowsingKey === currentDraftKey,
       isUploading,
+      isWslSetupDraft: setupSessionToken !== undefined,
       caretRequest,
       // The live reading position stays out of the view: the chip no longer displays it, and
       // captureSend snapshots it straight from the store.
@@ -1254,6 +1343,10 @@ const useWorkspaceComposerController = ({
         clearHistory(activeDraftKeyRef.current)
         markChanged()
         setActiveQueuedEdit(undefined)
+      },
+      discardWslSetupDraft: (): boolean => {
+        if (setupSessionTokenRef.current === undefined) return false
+        return clearDraft(activeDraftKeyRef.current)
       },
       changeDoc,
       addAnnotation,
@@ -1313,6 +1406,7 @@ const useWorkspaceComposerController = ({
         delete versionsRef.current[draftKey]
         deletedDraftKeysRef.current.add(draftKey)
         if (activeDraftKeyRef.current !== draftKey) return
+        setActiveSetupSessionToken(undefined)
         clearHistory(draftKey)
         setActiveDoc(emptyDoc)
         setActiveQueuedEdit(undefined)

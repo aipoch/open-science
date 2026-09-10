@@ -42,6 +42,7 @@ import { useProjectStore } from '@/stores/project-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
+import { startWslSetupConversation } from '@/lib/wsl-support-handoff'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
 import { NotificationBell } from '@/components/NotificationBell'
@@ -193,7 +194,13 @@ const HomePage = ({
   const openSession = useNavigationStore((state) => state.openSession)
   const openLibrary = useNavigationStore((state) => state.openLibrary)
   const pendingProjectCreation = useNavigationStore((state) => state.pendingProjectCreation)
+  const pendingWslSetupAfterProjectCreation = useNavigationStore(
+    (state) => state.pendingWslSetupAfterProjectCreation
+  )
   const consumeProjectCreation = useNavigationStore((state) => state.consumeProjectCreation)
+  const consumeWslSetupProjectCreation = useNavigationStore(
+    (state) => state.consumeWslSetupProjectCreation
+  )
   const openSettings = useSettingsStore((state) => state.openSettings)
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
@@ -205,7 +212,19 @@ const HomePage = ({
     openCreateDialog,
     openEditDialog,
     dialogProps: projectFormDialogProps
-  } = useProjectFormDialog()
+  } = useProjectFormDialog({
+    onCreateCancelled: consumeWslSetupProjectCreation,
+    onCreated: (project) => {
+      if (!pendingWslSetupAfterProjectCreation) {
+        openProject(project.id, 'user')
+        return
+      }
+      consumeWslSetupProjectCreation()
+      void startWslSetupConversation(project.id, t).catch(() => {
+        openProject(project.id, 'user')
+      })
+    }
+  })
 
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>(undefined)
   const [isDeletingProject, setIsDeletingProject] = useState(false)

@@ -260,6 +260,34 @@ it('stops the waiting verifier when the user cancels UAC', async () => {
   expect(host.spawn.mock.calls.filter(([program]) => program === 'powershell.exe')).toHaveLength(1)
 })
 
+it('does not classify an interrupted verifier as cancellation before the probe started', async () => {
+  const controller = new AbortController()
+  reply({ authorized: false, registered: false })
+  reply(null)
+  const verifier = verifierReply()
+  host.spawn.mockImplementationOnce(() => {
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough()
+    })
+    queueMicrotask(() => {
+      controller.abort()
+      child.stderr.end('verification interrupted after elevation')
+      child.emit('close', 1)
+    })
+    return child
+  })
+  reply(null)
+  await expect(
+    setWindowsRuntimeAccess('host.exe', 'installation', 'owner-root', 'Rscript.exe', true, {
+      ...verification,
+      signal: controller.signal
+    })
+  ).rejects.toThrow('verification interrupted after elevation')
+  expect(verifier.kill).toHaveBeenCalledOnce()
+  expect(host.spawn.mock.calls.at(-1)?.[1][0]).toBe('cancel-setup')
+})
+
 it('refuses a verifier belonging to another installation before preparing permissions', async () => {
   reply({ authorized: false, registered: false })
   await expect(

@@ -303,6 +303,22 @@ export class NotebookRecoveryCoordinator {
         if (record.kind === 'install') nextStartupBlockedRuntimeIds.add(record.runtimeId)
         if (record.targetPath) nextStartupBlockedPrefixes.add(record.targetPath)
       },
+      canDiscardPendingArchivePublication: async (record) => {
+        if (
+          record.kind !== 'materialize' ||
+          !/^create-(python|r)$/.test(record.phase) ||
+          !record.targetPath ||
+          !isDirectChild(join(this.runtimeRoot, 'envs'), record.targetPath)
+        ) {
+          return false
+        }
+        try {
+          await lstat(record.targetPath)
+          return false
+        } catch (error) {
+          return (error as NodeJS.ErrnoException).code === 'ENOENT'
+        }
+      },
       publishArchives: async (record) => {
         const publish = this.deps.publishWorkingCacheArchives ?? publishRecoveredMicromambaArchives
         await publish(this.runtimeRoot, record.archivePublications ?? [])

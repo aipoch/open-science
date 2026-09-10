@@ -1,8 +1,9 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
-import { access } from 'node:fs/promises'
+import { randomBytes, randomUUID } from 'node:crypto'
+import { access, readFile, rm } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { createServer, type Server } from 'node:net'
+import { join } from 'node:path'
 
 import { proxyEnvironment } from './proxy-environment.js'
 import { normalizeFilesystemLayout, type FilesystemLayoutInput } from './filesystem-layout.js'
@@ -81,6 +82,16 @@ type WindowsStandardLaunchRequest = Readonly<
     | 'localRpcSocketPath'
   >
 >
+
+type WindowsSupervisedLaunchRequest = Readonly<
+  WindowsStandardLaunchRequest & Pick<WindowsLaunchRequest, 'cwd' | 'hostPath'>
+>
+
+type ProcessTreeTerminationProof = Readonly<{
+  path: string
+  token: string
+  confirm: () => Promise<boolean>
+}>
 
 type AppContainerStatus = Readonly<{
   profileExists: boolean
@@ -539,7 +550,6 @@ const setWindowsRuntimeAccess = async (
           `${error instanceof Error ? error.message : String(error)}\nR access repair is required: ${cleanup instanceof Error ? cleanup.message : String(cleanup)}`
         )
       }
-      if (verification.signal?.aborted) return { cancelled: true }
       throw error
     }
   }
@@ -552,9 +562,37 @@ const setWindowsRuntimeAccess = async (
   return result
 }
 
+const createProcessTreeTerminationProof = (
+  env: NodeJS.ProcessEnv,
+  cwd: string
+): ProcessTreeTerminationProof => {
+  const token = randomUUID()
+  const path = join(
+    env.TEMP ?? env.TMP ?? cwd,
+    `.open-science-process-tree-terminated-${token}.proof`
+  )
+  return {
+    path,
+    token,
+    confirm: async () => {
+      try {
+        return (await readFile(path, 'utf8')) === token
+      } catch {
+        return false
+      } finally {
+        await rm(path, { force: true }).catch(() => undefined)
+      }
+    }
+  }
+}
+
 const windowsLaunch = (
   request: WindowsLaunchRequest
-): { argv: string[]; env: NodeJS.ProcessEnv; windowsJobObject: true } => {
+): {
+  argv: string[]
+  env: NodeJS.ProcessEnv
+  confirmProcessTreeTermination: () => Promise<boolean>
+} => {
   const shell: WindowsShell =
     typeof request.shell === 'object'
       ? request.shell
@@ -571,6 +609,7 @@ const windowsLaunch = (
       : { executable: request.executable, args: [...(request.args ?? [])] }
     : { executable: shell.path, args: childArgs }
   const layout = normalizeFilesystemLayout(request.filesystem)
+  const proof = createProcessTreeTerminationProof(request.env, request.cwd)
   const specification = Buffer.from(
     JSON.stringify({
       executable: directInvocation.executable,
@@ -582,7 +621,9 @@ const windowsLaunch = (
       readOnlyRoots: layout.readOnlyRoots,
       readWriteRoots: layout.readWriteRoots,
       deniedReadRoots: layout.deniedReadRoots,
-      deniedWriteRoots: layout.deniedWriteRoots
+      deniedWriteRoots: layout.deniedWriteRoots,
+      terminationProofPath: proof.path,
+      terminationProofToken: proof.token
     }),
     'utf8'
   ).toString('base64url')
@@ -600,7 +641,6 @@ const windowsLaunch = (
     delete env.OPEN_SCIENCE_MCP_RPC_SOCKET_PATH
   }
   return {
-    windowsJobObject: true,
     argv: [
       request.hostPath,
       'launch',
@@ -608,7 +648,8 @@ const windowsLaunch = (
       request.ownershipRoot,
       specification
     ],
-    env
+    env,
+    confirmProcessTreeTermination: proof.confirm
   }
 }
 
@@ -642,6 +683,40 @@ const windowsStandardLaunch = (
   return { argv, env }
 }
 
+const windowsSupervisedLaunch = (
+  request: WindowsSupervisedLaunchRequest
+): {
+  argv: string[]
+  env: NodeJS.ProcessEnv
+  confirmProcessTreeTermination: () => Promise<boolean>
+} => {
+  // This path does not apply AppContainer capabilities or ACLs. It only asks the bundled host to
+  // contain an opted-in standard-mode worker and its helpers in a kill-on-close Job Object.
+  const direct = windowsStandardLaunch(request)
+  const [executable, ...args] = direct.argv
+  if (!executable) throw new Error('Windows supervisor received an empty command.')
+  const proof = createProcessTreeTerminationProof(direct.env, request.cwd)
+  const specification = Buffer.from(
+    JSON.stringify({
+      executable,
+      arguments: args,
+      cwd: request.cwd,
+      readOnlyRoots: [],
+      readWriteRoots: [],
+      deniedReadRoots: [],
+      deniedWriteRoots: [],
+      terminationProofPath: proof.path,
+      terminationProofToken: proof.token
+    }),
+    'utf8'
+  ).toString('base64url')
+  return {
+    argv: [request.hostPath, 'supervise', specification],
+    env: direct.env,
+    confirmProcessTreeTermination: proof.confirm
+  }
+}
+
 export {
   checkWindowsAppContainer,
   connectionProbeSpecification,
@@ -653,6 +728,7 @@ export {
   loopbackPortAvailable,
   windowsElevationScript,
   windowsLaunch,
+  windowsSupervisedLaunch,
   windowsStandardLaunch
 }
 export type {

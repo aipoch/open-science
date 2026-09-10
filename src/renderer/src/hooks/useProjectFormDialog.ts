@@ -35,6 +35,7 @@ type UseProjectFormDialogResult = {
 
 type UseProjectFormDialogOptions = {
   onCreated?: (project: Project) => void
+  onCreateCancelled?: () => void
 }
 
 // Owns the create/edit Project form state machine shared by the Home page and the Workspace sidebar
@@ -90,6 +91,7 @@ const useProjectFormDialog = (
   const closeFormDialog = (): void => {
     if (isSubmitting) return
 
+    if (formState?.mode === 'create') options.onCreateCancelled?.()
     setFormState(null)
   }
 

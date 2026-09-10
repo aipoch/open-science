@@ -2,7 +2,7 @@ import { transactLiterature } from './literature/transact'
 import { createSpecialistApplicationOwner } from './specialist/application-commands'
 import { basename, dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 
 import {
   app,
@@ -307,7 +307,18 @@ import { registerLocalFsIpcHandlers } from './local-fs/ipc'
 import { GrantedLocalRootsRepository } from './local-fs/granted-roots-repository'
 import { LocalFsService } from './local-fs/service'
 import { SettingsService } from './settings/service'
+import { SettingsInstallCoordinator } from './settings/settings-install-coordinator'
 import { SettingsRepository } from './settings/repository'
+import { WslSetupOwner } from './wsl/wsl-setup-owner'
+import { WslSetupSessionOwner } from './wsl/wsl-setup-session-owner'
+import { openWslSetupPowerShellTerminal } from './wsl/wsl-setup-terminal'
+import { FileWslSetupOperationJournal } from './wsl/wsl-setup-operation-journal'
+import { initializeWsl2BashPreview, wsl2BashPreviewStatus } from './wsl/wsl2-preview-gate'
+import { runPackagedWsl2RestartCertification } from './wsl/wsl2-packaged-restart-certification'
+import { certifyNativeShell } from './notebook/native-shell-certification'
+import { resolveAvailableShellRuntimeBinding } from './notebook/configured-shell-runtime'
+import type { WslSetupStatus } from '../shared/wsl-setup'
+import { probeWindowsVolume } from './wsl/windows-volume-probe'
 import { SettingsSnapshotCommitOwner } from './settings/settings-snapshot-commit-owner'
 import type { SettingsDocumentStore } from './settings/document-store'
 import { NetworkProxyRuntime } from './settings/network-proxy-runtime'
@@ -560,6 +571,52 @@ const createApplicationModules = async (
     settingsStore ?? resolveConfigRoot(),
     (operation) => specialistPackageSkillAdapter.runMutationExclusive(operation)
   )
+  initializeWsl2BashPreview({
+    platform: process.platform,
+    arch: process.arch,
+    packaged: app.isPackaged,
+    resourcesPath: process.resourcesPath
+  })
+  const settingsInstallCoordinator = new SettingsInstallCoordinator()
+  const wslSetupSessions = new WslSetupSessionOwner(resolveConfigRoot())
+  const wslRuntimeReconciliation: { current?: (status: WslSetupStatus) => void } = {}
+  const wslSetup = new WslSetupOwner({
+    // Managed workspaces, handoff data, and caches live below this local NTFS mount root. The
+    // execution adapter will still validate each invocation's concrete authorized paths.
+    workspacePath: resolveDataRoot,
+    volumeProbe: probeWindowsVolume,
+    readSelection: async () => (await settingsRepository.getSettings()).wslSelection,
+    readActivation: async () => {
+      const settings = await settingsRepository.getSettings()
+      return {
+        runtime: settings.localShellRuntime,
+        selection: settings.activatedWslSelection
+      }
+    },
+    writeSelection: (selection) => settingsRepository.setWslSelection(selection),
+    installCoordinator: settingsInstallCoordinator,
+    operationJournal: new FileWslSetupOperationJournal(resolveConfigRoot()),
+    previewStatus: wsl2BashPreviewStatus,
+    onStatusChanged: (status) => {
+      applicationEvents.publish('settings:wsl-setup-changed', status)
+      wslRuntimeReconciliation.current?.(status)
+    }
+  })
+  const getAvailableShellRuntimeBinding = async (): Promise<
+    Awaited<ReturnType<typeof resolveAvailableShellRuntimeBinding>>
+  > =>
+    resolveAvailableShellRuntimeBinding(
+      await settingsRepository.getSettings(),
+      async (selection) => {
+        if (!wsl2BashPreviewStatus().available) return false
+        const snapshot = await wslSetup.probe(selection)
+        return (
+          snapshot.state === 'ready' &&
+          snapshot.selection?.distro === selection.distro &&
+          snapshot.selection?.user === selection.user
+        )
+      }
+    )
   const networkProxyRuntime = new NetworkProxyRuntime({
     setProxy: (config) => session.defaultSession.setProxy(config)
   })
@@ -595,6 +652,7 @@ const createApplicationModules = async (
       resourceRoot: app.isPackaged
         ? join(process.resourcesPath, 'notebook-network-sandbox')
         : join(app.getAppPath(), 'packages', 'notebook-network-sandbox', 'vendor'),
+      temporaryRoot: join(app.getPath('userData'), 'notebook-command-temp'),
       getSettings: async () => {
         const service = settingsServiceRef.current
         if (!service) throw new Error('Settings are not ready.')
@@ -666,6 +724,7 @@ const createApplicationModules = async (
   const settingsService = await modules.add(undefined, () => {
     const capability = new SettingsService({
       repository: settingsRepository,
+      installCoordinator: settingsInstallCoordinator,
       skillRuntimeMcpEntryPath: mainEntryPath,
       openAlexFetch: netFetchStandard,
       applyNetworkProxy: async (settings) => {
@@ -685,6 +744,12 @@ const createApplicationModules = async (
       getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
       installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
       removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
+      wslSetup,
+      wslSetupSessions,
+      ensureDefaultWslSetupWorkspace: async () => {
+        const settings = await settingsRepository.getSettings()
+        if (!settings.dataRoot?.trim()) await mkdir(resolveDataRoot(), { recursive: true })
+      },
       resolveCodexProxyEnvironment: () =>
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
@@ -715,6 +780,23 @@ const createApplicationModules = async (
   const storedSettings = await settingsService.getStoredSettings()
   const storageLog = createLogger('storage')
   await networkProxyRuntime.apply(storedSettings.networkProxy)
+  await certifyNativeShell({
+    appPackaged: app.isPackaged,
+    headless,
+    storageRoot: resolveConfigRoot(),
+    environment: process.env,
+    processSandbox: notebookNetworkSandbox
+  })
+  await runPackagedWsl2RestartCertification({
+    appPackaged: app.isPackaged,
+    headless,
+    platform: process.platform,
+    arch: process.arch,
+    previewAvailable: wsl2BashPreviewStatus().available,
+    storageRoot: resolveConfigRoot(),
+    environment: process.env,
+    processSandbox: notebookNetworkSandbox
+  })
   // Prime the data-root cache from settings before any data repository is constructed below. A change
   // to this value only takes effect after a restart, so reading it once here is sufficient.
   initDataRoot(storedSettings.dataRoot)
@@ -1538,7 +1620,16 @@ const createApplicationModules = async (
   const projectFilesHandlers = createProjectFilesHandlers(
     projectFilesRepository,
     sessionPersistenceCoordinator,
-    projectDeletionCoordinator
+    projectDeletionCoordinator,
+    (file) =>
+      managedFileVersionService.openVersion(
+        {
+          source: file.source,
+          projectId: file.projectId,
+          fileId: file.sourceFileId
+        },
+        file.sourceVersionId
+      )
   )
   const managedFileVersionHandlers = createManagedFileVersionHandlers(managedFileVersionService, {
     withDataRootWrite,
@@ -1560,6 +1651,18 @@ const createApplicationModules = async (
   })
   const loadAllSessions = (): Promise<LoadAllSessionsResult> => sessionCatalogHydration.loadAll()
   const sessionProjectionDiagnostics = new SessionProjectionDiagnostics()
+  let wslSetupSessionsReconciliation: Promise<void> | undefined
+  const reconcileWslSetupSessions = async (sessions: readonly SessionSummary[]): Promise<void> => {
+    wslSetupSessionsReconciliation ??= wslSetupSessions.reconcileBoundSessions(
+      new Set(sessions.map((session) => session.id))
+    )
+    try {
+      await wslSetupSessionsReconciliation
+    } catch (error) {
+      wslSetupSessionsReconciliation = undefined
+      throw error
+    }
+  }
   const ensureSessionProjection = async (): Promise<{
     result?: LoadAllSessionsResult
     sessions: SessionSummary[]
@@ -1572,15 +1675,18 @@ const createApplicationModules = async (
       const result = recovery.result
       const sessions = await sessionRepository.summarizeReadOnlyAuthority(result)
       await sessionPersistenceCoordinator.replaceSessionMetadata(sessions, false)
-      return { result, sessions }
+      return { result, sessions: await wslSetupSessions.projectSessionSummaries(sessions) }
     }
     const projection = await sessionRepository.ensureSessionProjection(loadAllSessions)
     const result = projection.result
-    await sessionPersistenceCoordinator.replaceSessionMetadata(
-      projection.sessions,
-      result ? canReconcileSessionAbsences(result) : true
-    )
-    return { ...projection, result }
+    const catalogComplete = result ? canReconcileSessionAbsences(result) : true
+    await sessionPersistenceCoordinator.replaceSessionMetadata(projection.sessions, catalogComplete)
+    if (catalogComplete) await reconcileWslSetupSessions(projection.sessions)
+    return {
+      ...projection,
+      result,
+      sessions: await wslSetupSessions.projectSessionSummaries(projection.sessions)
+    }
   }
   const uncoordinatedSessionPersistenceBackend: SessionPersistenceBackend = {
     loadAll: loadAllSessions,
@@ -2224,17 +2330,8 @@ const createApplicationModules = async (
     artifactRepository.resolveManagedFilePath({ path })
   )
   const sessionLimitPersistence = {
-    load: async (): Promise<readonly (readonly [string, number])[]> => {
-      const catalog = await loadAllSessions()
-      if (!canReconcileSessionAbsences(catalog)) {
-        throw new Error('Session concurrency limits could not be restored authoritatively.')
-      }
-      return catalog.sessions.flatMap((session) =>
-        session.computeConcurrencyLimit === undefined
-          ? []
-          : [[session.id, session.computeConcurrencyLimit] as const]
-      )
-    },
+    resolve: (sessionId: string, expectedProjectId?: string) =>
+      sessionRepository.loadComputePolicy(expectedProjectId, sessionId),
     save: async (sessionId: string, limit: number): Promise<void> => {
       const session = await withDataRootWrite(async () => {
         const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
@@ -2448,7 +2545,8 @@ const createApplicationModules = async (
       settingsService,
       permissionGrantRegistry,
       specialistService,
-      sessionPersistenceCoordinator
+      sessionPersistenceCoordinator,
+      getShellRuntimeBinding: getAvailableShellRuntimeBinding
     },
     notebookRpcServer: requireNotebookRpcServer,
     readSession: ({ projectId, sessionId }) => sessionRepository.loadSession(projectId, sessionId),
@@ -2614,7 +2712,8 @@ const createApplicationModules = async (
                   `Attempt ${delivery.sourceAttemptId}]\n\n${delivery.text}`,
                 suppressUserMessage: true,
                 provenanceContext: {
-                  promptMessageId: delivery.rootPromptMessageId,
+                  // Suppressed continuations create no user node; replies retain the durable origin.
+                  promptMessageId: delivery.originMessageId,
                   originMessageId: delivery.originMessageId,
                   rootFrameId: graph.rootFrameId,
                   agentFrameId: graph.rootFrameId,
@@ -2864,7 +2963,11 @@ const createApplicationModules = async (
       delegatedWorkService: delegatedWork.host,
       skillsService: hostSkillsService,
       hostModel: hostModelService,
-      hostViewImage: hostViewImageService
+      hostViewImage: hostViewImageService,
+      wslSetup,
+      wslSetupSessions,
+      wslSetupPreviewAvailable: () => wsl2BashPreviewStatus().available,
+      openWslSetupPowerShellTerminal
     }),
     createNotebookLocalRpcModule
   )
@@ -3057,6 +3160,8 @@ const createApplicationModules = async (
       managedFileVersions: managedFileVersionService,
       uploadRepository,
       notebookRpcServer,
+      wslSetupSessions,
+      getShellRuntimeBinding: getAvailableShellRuntimeBinding,
       peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
       authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
         conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
@@ -3333,7 +3438,17 @@ const createApplicationModules = async (
           } finally {
             markComputeResultAuthorityReady()
           }
-          await jobPoller.start()
+          // Catalog hydration also restores non-Compute projections and enabled Host selections.
+          // Keep those startup effects, but never make dispatch depend on catalog completeness.
+          await Promise.all([
+            jobPoller.start(),
+            loadAllSessions().catch((error) => {
+              createLogger('session-persistence').warn(
+                'Startup Session hydration failed',
+                errorLogFields(error)
+              )
+            })
+          ])
         },
         disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
         dispose: () => jobPoller.stop()
@@ -3710,6 +3825,9 @@ const createApplicationModules = async (
         void sideChatRuntime.requestProviderReconnect()
       }
     },
+    localShell: {
+      requestShellRuntimeRefresh: () => runtime.requestShellCapabilityRefresh()
+    },
     skills: {
       requestSkillsReload: () => void runtime.requestSkillsReload(),
       notifySkillCatalogChanged: requestSkillCatalogRefresh,
@@ -3734,6 +3852,23 @@ const createApplicationModules = async (
     },
     appearance: { applyAppIconVariant: onAppIconVariantChanged ?? (() => undefined) }
   })
+  wslRuntimeReconciliation.current = (status) => {
+    if (!status.snapshot || status.operation.state === 'running') return
+    void settingsWorkflows.localShell
+      .fallbackAfterWslProbe(status.snapshot, async () => {
+        // Discard an observation superseded while the serialized Shell switch was queued.
+        if (wslSetup.getStatus().revision !== status.revision) return {}
+        return settingsRepository.getSettings()
+      })
+      .then(async (changed) => {
+        if (changed) {
+          await settingsSnapshotCommits.currentSnapshotAfter(Promise.resolve())
+          await wslSetup.probe()
+        }
+      })
+      .catch((error) => createLogger('wsl-setup').warn('PowerShell fallback failed', { error }))
+  }
+  wslRuntimeReconciliation.current(wslSetup.getStatus())
   declareElectronAdapter('settings', () =>
     registerSettingsIpcHandlers({
       service: settingsService,
@@ -3790,7 +3925,7 @@ const createApplicationModules = async (
       resolveSources: resolveDeliverySources
     })
   )
-  // Wire session deletion to the binding store so stale in-memory bindings do not accumulate.
+  // Wire Session deletion to the binding stores so stale capabilities cannot reappear on restart.
   // The renderer calls sessions:delete-session (via sessionPersistenceBackend) and acp:delete-session
   // separately; both paths should clear the binding. Override the backend deleteSession callback here
   // so all durable-path deletions — regardless of whether the ACP session was attached — clear the
@@ -3798,8 +3933,10 @@ const createApplicationModules = async (
   const originalDeleteSession =
     sessionPersistenceBackend.deleteSession.bind(sessionPersistenceBackend)
   sessionPersistenceBackend.deleteSession = withSessionDeletionCleanup(
-    originalDeleteSession,
-    (_projectId, sessionId) => sessionSpecialistReconfiguration.clearSession(sessionId)
+    withSessionDeletionCleanup(originalDeleteSession, (_projectId, sessionId) =>
+      sessionSpecialistReconfiguration.clearSession(sessionId)
+    ),
+    (_projectId, sessionId) => wslSetupSessions.forget(sessionId)
   )
   const sessionPersistenceHandlers = createSessionPersistenceHandlersWithAttributionAuthority(
     sessionPersistenceBackend,
@@ -4520,6 +4657,7 @@ const createApplicationModules = async (
       runtime: settingsWorkflows.runtime,
       service: settingsService,
       appearance: settingsWorkflows.appearance,
+      localShell: settingsWorkflows.localShell,
       snapshotCommits: settingsSnapshotCommits,
       emitInstallEvent: (event) => broadcastToRenderers(SETTINGS_INSTALL_LOG_CHANNEL, event),
       listAppIconPreviews

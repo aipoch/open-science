@@ -1,3 +1,4 @@
+import type { MessageSearchRequest, MessageSearchPage } from './message-search'
 import type {
   LiteratureExportRecordRequest,
   LiteratureExportRecordResult
@@ -45,6 +46,20 @@ import type {
   SideChatStartRequest,
   SideChatStartResponse
 } from './side-chat'
+import type {
+  InstallMissingWslDependenciesRequest,
+  InstallWslDistroRequest,
+  OpenWslTerminalRequest,
+  LocalShellRuntimePreference,
+  SelectWslProfileRequest,
+  SwitchToPowerShellResult,
+  UseWsl2BashResult,
+  WslPlatformInstallResult,
+  Wsl2BashPreviewStatus,
+  WslSetupSnapshot,
+  WslSetupStatus,
+  WslSetupConversationBootstrap
+} from './wsl-setup'
 import type { SourcePreviewLoadState } from './source-preview'
 import type { ArtifactLiteratureManifest } from './artifact-literature'
 import type {
@@ -1690,6 +1705,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.loadAll': callable<() => Promise<LoadAllSessionsResult>>()('sessions', [
     'sessions:load-all'
   ]),
+  'sessions.searchMessages': callable<
+    (request: MessageSearchRequest) => Promise<MessageSearchPage>
+  >()('sessions', ['sessions:search-messages']),
   'sessions.loadOne': callable<
     (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   >()('sessions', ['sessions:load-one']),
@@ -1931,6 +1949,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'settings',
     ['settings:changed', EVENT]
   ),
+  'settings.onWslSetupChanged': callable<
+    (listener: (status: WslSetupStatus) => void) => () => void
+  >()('settings', ['settings:wsl-setup-changed', ELECTRON_EVENT]),
   'settings.onConnectorApprovalRequest': callable<
     (listener: AcpListener<ConnectorApprovalRequest>) => RemoveListener
   >()('settings', ['connectors:approval-request', EVENT]),
@@ -2071,6 +2092,49 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'settings',
     ['settings:get-notebook-network-status', LOCAL]
   ),
+  'settings.getWsl2BashPreviewStatus': callable<() => Promise<Wsl2BashPreviewStatus>>()(
+    'settings',
+    ['settings:get-wsl2-bash-preview-status', LOCAL]
+  ),
+  'settings.getWslSetupStatus': callable<() => Promise<WslSetupStatus>>()('settings', [
+    'settings:get-wsl-setup-status',
+    LOCAL
+  ]),
+  'settings.getLocalShellRuntimePreference': callable<
+    () => Promise<LocalShellRuntimePreference | undefined>
+  >()('settings', ['settings:get-local-shell-runtime-preference', LOCAL]),
+  'settings.probeWslSetup': callable<() => Promise<WslSetupSnapshot>>()('settings', [
+    'settings:probe-wsl-setup',
+    LOCAL
+  ]),
+  'settings.installWslPlatform': callable<() => Promise<WslPlatformInstallResult>>()('settings', [
+    'settings:install-wsl-platform',
+    LOCAL
+  ]),
+  'settings.installMissingWslDependencies': callable<
+    (request: InstallMissingWslDependenciesRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:install-missing-wsl-dependencies', LOCAL]),
+  'settings.createWslSupportHandoff': callable<() => Promise<WslSetupConversationBootstrap>>()(
+    'settings',
+    ['settings:create-wsl-support-handoff', LOCAL]
+  ),
+  'settings.selectWslProfile': callable<
+    (request: SelectWslProfileRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:select-wsl-profile', LOCAL]),
+  'settings.switchLocalShellToPowerShell': callable<() => Promise<SwitchToPowerShellResult>>()(
+    'settings',
+    ['settings:switch-local-shell-to-powershell', LOCAL]
+  ),
+  'settings.useWsl2Bash': callable<() => Promise<UseWsl2BashResult>>()('settings', [
+    'settings:use-wsl2-bash',
+    LOCAL
+  ]),
+  'settings.installRecommendedWslDistro': callable<
+    (request: InstallWslDistroRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:install-recommended-wsl-distro', LOCAL]),
+  'settings.openWslTerminal': callable<
+    (request: OpenWslTerminalRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:open-wsl-terminal', LOCAL]),
   'settings.installNotebookNetwork': callable<() => Promise<NotebookNetworkStatus>>()('settings', [
     'settings:install-notebook-network',
     LOCAL

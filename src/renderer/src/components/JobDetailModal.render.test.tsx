@@ -127,6 +127,26 @@ afterEach(() => {
 })
 
 describe('JobDetailModal — detail view', () => {
+  it('explains a queued policy blocker and clears it on a recovered job update', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({ status: 'queued', queue_blocked_reason: 'session_policy_unavailable' })
+    useSessionJobStore.getState().applyUpdate(job)
+    act(() => {
+      root.render(
+        <JobDetailModal open={true} sessionId="sess-1" initialJob={job} onClose={vi.fn()} />
+      )
+    })
+    expect(container.textContent).toContain(
+      'Session compute settings could not be read. Dispatch retries automatically.'
+    )
+    act(() => {
+      useSessionJobStore
+        .getState()
+        .applyUpdate({ ...job, status: 'submitted', queue_blocked_reason: undefined })
+    })
+    expect(container.textContent).not.toContain('Session compute settings could not be read.')
+  })
+
   it('requests cancellation with the complete owner tuple and disables while cancelling', async () => {
     const { JobDetailModal } = await import('./JobDetailModal')
     const job = makeJob()

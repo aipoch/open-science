@@ -256,7 +256,9 @@ describe('Office behavior through real parsers and adapters', () => {
   })
 
   it('preserves original sheet identity and hidden flags across blank sheets', async () => {
-    await renderWorkbook(workbookBytes('xlsx', false, true), 'xlsx')
+    const outcome = await renderWorkbook(workbookBytes('xlsx', false, true), 'xlsx')
+    // The startup probe also emits sheets; wait for the actual workbook's first paint.
+    await vi.waitFor(() => expect(outcome.state).toBe('ready'))
     const context = ParserWorker.instances[0].context
     expect(context.workbook?.SheetNames).toEqual(['Visible', 'Hidden'])
     expect(context.sheets).toEqual([

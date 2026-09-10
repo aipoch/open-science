@@ -527,7 +527,8 @@ const sendIntentKeys = [
   'agentConfiguration',
   'memoryEnabled',
   'delegationPolicy',
-  'preserveSelection'
+  'preserveSelection',
+  'setupSessionToken'
 ] as const
 const ownerDependencyNames = (path: string): string[] => {
   const targets = new Set(importsFrom(path).map((reference) => reference.target))

@@ -298,7 +298,8 @@ test('loads managed image previews from Project files', async ({ app }) => {
 
 test.describe('Workspace dividers', () => {
   test.beforeEach(async ({ app }) => {
-    const page = await app.completeOnboarding()
+    await app.completeOnboarding()
+    const page = await app.configureFakeAgent()
     await createProject(page)
     const directory = await realpath(await app.createTestDirectory('resize-preview'))
     await writeFile(`${directory}/resize.txt`, 'Resize preview content')

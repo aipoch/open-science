@@ -352,6 +352,7 @@ describe('ComputeService job workflow facade', () => {
         }
       ),
       setSessionLimit,
+      getQueueBlockedReason: vi.fn(async () => undefined),
       getStatus: vi.fn(async () => ({
         session_limit: 7,
         active_count: 0,

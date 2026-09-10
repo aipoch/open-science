@@ -17,6 +17,22 @@ export const NOTEBOOK_RUN_FILE = 'run.json'
 export const NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000 + 15_000
 export const NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS = 120_000
 
+export type ShellRuntimeBinding =
+  | Readonly<{
+      kind: 'powershell'
+      version: '5.1'
+    }>
+  | Readonly<{
+      kind: 'native-posix'
+      shell: string
+    }>
+  | Readonly<{
+      kind: 'wsl2-bash'
+      profileId: string
+      distro: string
+      user: string
+    }>
+
 // Identifies whether a run was initiated by the agent or by the user terminal.
 export type NotebookRunSource = 'agent' | 'user'
 
@@ -558,6 +574,9 @@ export type NotebookRunRecord = {
   // Stable identity of the external runtime used by this run. Managed runs are reproducible from
   // their environment; external runs need this identity to rebuild a missing derived sidecar.
   runtimeId?: string
+  // Exact shell capability captured before a stateless shell Run. Optional keeps legacy run.json
+  // documents readable without inventing a backend that was never recorded.
+  shellRuntime?: ShellRuntimeBinding
   cellId: string
   source: NotebookRunSource
   inputKind?: NotebookRunInputKind
@@ -586,6 +605,10 @@ export type NotebookRunRecord = {
   truncated?: boolean
   // Exact stateless-shell outcome. Optional keeps non-shell and historical records compatible.
   exitCode?: number | null
+  shellRuntimeStatus?: 'unavailable'
+  recovery?: import('./execution-recovery').NotebookExecutionRecovery
+  shellErrorCode?:
+    'shell-runtime-unavailable' | 'shell-cleanup-incomplete' | 'shell-network-transport-unsupported'
   // Named env that produced this run (python/r only; omitted for repl/bash).
   environment?: string
   // Immutable completed-run environment evidence. The cache that helped build it is never referenced.
@@ -1010,4 +1033,7 @@ export type ExecuteShellRequest = NotebookSessionRequest & {
   command: string
   background?: boolean
   timeoutMs?: number
+  // App-owned capability binding. MCP callers cannot choose this field; the stdio bridge injects
+  // the immutable binding it advertised when the capability was created.
+  shellRuntime?: ShellRuntimeBinding
 }

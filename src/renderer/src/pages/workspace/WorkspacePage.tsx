@@ -11,7 +11,8 @@ import {
 import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persistence'
 import {
   deleteSession,
-  retryPendingArtifactFinalization
+  retryPendingArtifactFinalization,
+  saveSessionInOrder
 } from '@/lib/session-persistence/session-persistence'
 import { useMemoryStore } from '@/stores/memory-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -29,6 +30,7 @@ import {
   projectSessionActionability,
   resolveRootPermissionPending,
   sessionAwaitsHistoryReplay,
+  toPersistedSession,
   useSessionStore,
   type ChatSession
 } from '@/stores/session-store'
@@ -69,6 +71,7 @@ import { EditSessionDialog } from './EditSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
 import { JobDetailModal } from '@/components/JobDetailModal'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
+import { startWslSetupConversation } from '@/lib/wsl-support-handoff'
 import { ProjectFormDialog } from '../home/ProjectFormDialog'
 import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'
@@ -132,11 +135,13 @@ const WorkspacePage = ({
   const pendingLiteratureReviewPrefill = useNavigationStore(
     (state) => state.pendingLiteratureReviewPrefill
   )
+  const pendingWslSupportPrefill = useNavigationStore((state) => state.pendingWslSupportPrefill)
   const pendingArtifactMention = useNavigationStore((state) => state.pendingArtifactMention)
   const consumeCustomizePrefill = useNavigationStore((state) => state.consumeCustomizePrefill)
   const consumeLiteratureReviewPrefill = useNavigationStore(
     (state) => state.consumeLiteratureReviewPrefill
   )
+  const consumeWslSupportPrefill = useNavigationStore((state) => state.consumeWslSupportPrefill)
   const consumeArtifactMention = useNavigationStore((state) => state.consumeArtifactMention)
   const setArtifactMentionAvailability = useNavigationStore(
     (state) => state.setArtifactMentionAvailability
@@ -477,7 +482,9 @@ const WorkspacePage = ({
     newConversationDraftKey,
     activeProjectId,
     pendingCustomizePrefill,
+    pendingWslSupportPrefill,
     onCustomizePrefillApplied: sessionController.actions.resetNewConversationSpecialist,
+    onWslSupportPrefillApplied: sessionController.actions.resetNewConversationSpecialist,
     historyEntries: composerHistoryEntries,
     activeSession,
     historyPolicy: composerHistoryPolicy,
@@ -842,6 +849,10 @@ const WorkspacePage = ({
   useEffect(() => {
     if (pendingCustomizePrefill !== undefined) consumeCustomizePrefill()
   }, [pendingCustomizePrefill, consumeCustomizePrefill])
+
+  useEffect(() => {
+    if (pendingWslSupportPrefill !== undefined) consumeWslSupportPrefill()
+  }, [pendingWslSupportPrefill, consumeWslSupportPrefill])
 
   // The first agent-side notebook call reveals the new notebook entry and its preview together.
   useEffect(() => {
@@ -1428,6 +1439,9 @@ const WorkspacePage = ({
                 disabledReason: saveAsSkillAvailability.disabledReason,
                 running: activeSessionSaveAsSkillRunning,
                 request: requestSaveAsSkill
+              },
+              wslSetup: {
+                start: () => startWslSetupConversation(scopedProjectId, t)
               }
             }}
             sessionTools={{
@@ -1440,11 +1454,14 @@ const WorkspacePage = ({
               unavailable: activeSession
                 ? delegatedWorkUnavailableBySession[activeSession.id]
                 : undefined,
-              stop: () => {
+              stop: async () => {
                 if (!activeSession) return
-                return window.api.acp
-                  .cancel({ sessionId: activeSession.id, scope: 'subagents' })
-                  .then(() => undefined)
+                // Main selects the Stop scope from the durable branch, so commit the visible
+                // selection before cancellation can overtake the coalesced background save.
+                await saveSessionInOrder(
+                  toPersistedSession(activeSession, useSessionStore.getState().streamingMessages)
+                )
+                await window.api.acp.cancel({ sessionId: activeSession.id, scope: 'subagents' })
               }
             }}
           />

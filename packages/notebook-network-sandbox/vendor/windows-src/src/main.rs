@@ -23,6 +23,8 @@ struct LaunchSpec {
     read_write_roots: Vec<String>,
     denied_read_roots: Vec<String>,
     denied_write_roots: Vec<String>,
+    termination_proof_path: Option<String>,
+    termination_proof_token: Option<String>,
 }
 
 fn decode_launch_spec(encoded: &str) -> Result<LaunchSpec> {
@@ -202,8 +204,9 @@ mod windows_host {
     };
     use windows::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, TerminateJobObject,
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+        QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
     };
     use windows::Win32::System::Memory::{GetProcessHeap, HEAP_FLAGS, HeapFree};
     use windows::Win32::System::Pipes::{
@@ -217,7 +220,7 @@ mod windows_host {
         InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcess,
         OpenProcessToken, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, PROCESS_ACCESS_RIGHTS,
         PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, ReleaseMutex,
-        ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
+        ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
         UpdateProcThreadAttribute, WaitForSingleObject,
     };
     use windows::core::{BOOL, PCWSTR, PWSTR};
@@ -2736,6 +2739,84 @@ mod windows_host {
         }
     }
 
+    fn run_suspended_process_in_job(
+        spec: &LaunchSpec,
+        process: &Handle,
+        thread: &Handle,
+        terminate: &mut TerminateOnDrop,
+        operation_lock: Option<OperationLock>,
+        timeout: u32,
+    ) -> Result<u32> {
+        let job = Handle(
+            unsafe { CreateJobObjectW(None, PCWSTR::null()) }.context("create process job")?,
+        );
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        unsafe {
+            SetInformationJobObject(
+                job.0,
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        }
+        .context("configure process job")?;
+        unsafe { AssignProcessToJobObject(job.0, process.0) }.context("assign process job")?;
+        if unsafe { ResumeThread(thread.0) } == u32::MAX {
+            bail!("resume supervised process");
+        }
+        terminate.armed = false;
+        drop(operation_lock);
+        let process_wait = unsafe { WaitForSingleObject(process.0, timeout) };
+        if process_wait == WAIT_TIMEOUT {
+            unsafe { TerminateJobObject(job.0, 1) }.context("stop timed-out R verification")?;
+            unsafe { WaitForSingleObject(process.0, INFINITE) };
+        }
+        if process_wait != WAIT_OBJECT_0 && process_wait != WAIT_TIMEOUT {
+            bail!("wait for supervised process returned {process_wait:?}");
+        }
+        let mut exit_code = 1u32;
+        unsafe { GetExitCodeProcess(process.0, &mut exit_code) }
+            .context("read process exit code")?;
+        // A successful supervisor exit is an explicit termination proof for cleanup callers. Do
+        // not rely only on KILL_ON_JOB_CLOSE: terminate the remaining helpers and wait until the
+        // Job reports zero active processes before returning.
+        unsafe { TerminateJobObject(job.0, 1) }.context("terminate process job")?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            unsafe {
+                QueryInformationJobObject(
+                    Some(job.0),
+                    JobObjectBasicAccountingInformation,
+                    (&mut accounting as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                    None,
+                )
+            }
+            .context("query process job accounting")?;
+            if accounting.ActiveProcesses == 0 {
+                break;
+            }
+            if Instant::now() >= deadline {
+                bail!("timed out waiting for process job termination");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        match (&spec.termination_proof_path, &spec.termination_proof_token) {
+            (Some(path), Some(token)) => {
+                fs::write(path, token).context("write process tree termination proof")?;
+            }
+            (None, None) => {}
+            _ => bail!("incomplete process tree termination proof specification"),
+        }
+        drop(job);
+        if process_wait == WAIT_TIMEOUT {
+            bail!("R verification timed out");
+        }
+        Ok(exit_code)
+    }
+
     fn launch_child(
         spec: &LaunchSpec,
         app_container_sid: PSID,
@@ -2798,35 +2879,50 @@ mod windows_host {
             }
         }
 
-        let job = Handle(
-            unsafe { CreateJobObjectW(None, PCWSTR::null()) }.context("create process job")?,
-        );
-        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        run_suspended_process_in_job(
+            spec,
+            &process,
+            &thread,
+            &mut terminate,
+            Some(operation_lock),
+            timeout,
+        )
+    }
+
+    pub fn supervise(spec: LaunchSpec) -> Result<u32> {
+        let mut startup = STARTUPINFOW {
+            cb: size_of::<STARTUPINFOW>() as u32,
+            dwFlags: STARTF_USESTDHANDLES,
+            hStdInput: HANDLE(std::io::stdin().as_raw_handle()),
+            hStdOutput: HANDLE(std::io::stdout().as_raw_handle()),
+            hStdError: HANDLE(std::io::stderr().as_raw_handle()),
+            ..Default::default()
+        };
+        let mut mutable_command = wide(&command_line(&spec));
+        let current_directory = wide(&spec.cwd);
+        let mut process_info: PROCESS_INFORMATION = unsafe { zeroed() };
         unsafe {
-            SetInformationJobObject(
-                job.0,
-                JobObjectExtendedLimitInformation,
-                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            CreateProcessW(
+                PCWSTR::null(),
+                Some(PWSTR(mutable_command.as_mut_ptr())),
+                None,
+                None,
+                true,
+                CREATE_SUSPENDED,
+                None,
+                PCWSTR(current_directory.as_ptr()),
+                &mut startup,
+                &mut process_info,
             )
         }
-        .context("configure process job")?;
-        unsafe { AssignProcessToJobObject(job.0, process.0) }.context("assign process job")?;
-        if unsafe { ResumeThread(thread.0) } == u32::MAX {
-            bail!("resume AppContainer process");
-        }
-        terminate.armed = false;
-        drop(operation_lock);
-        if unsafe { WaitForSingleObject(process.0, timeout) } != WAIT_OBJECT_0 {
-            unsafe { TerminateJobObject(job.0, 1) }.context("stop timed-out R verification")?;
-            unsafe { WaitForSingleObject(process.0, INFINITE) };
-            bail!("R verification timed out");
-        }
-        let mut exit_code = 1u32;
-        unsafe { GetExitCodeProcess(process.0, &mut exit_code) }
-            .context("read process exit code")?;
-        Ok(exit_code)
+        .context("create supervised process")?;
+        let process = Handle(process_info.hProcess);
+        let thread = Handle(process_info.hThread);
+        let mut terminate = TerminateOnDrop {
+            process: process.0,
+            armed: true,
+        };
+        run_suspended_process_in_job(&spec, &process, &thread, &mut terminate, None, INFINITE)
     }
 
     pub fn launch(installation_id: &str, requested_root: &str, spec: LaunchSpec) -> Result<u32> {
@@ -3536,6 +3632,8 @@ mod windows_host {
                     read_write_roots: vec![],
                     denied_read_roots: vec![],
                     denied_write_roots: vec![],
+                    termination_proof_path: None,
+                    termination_proof_token: None,
                 },
             );
             server.join().unwrap();
@@ -3602,6 +3700,8 @@ mod windows_host {
                 read_write_roots: vec![],
                 denied_read_roots: vec![],
                 denied_write_roots: vec![],
+                termination_proof_path: None,
+                termination_proof_token: None,
             };
             validate_runtime_verification(pending.pending_runtime_access.as_ref().unwrap(), &spec)
                 .unwrap();
@@ -3772,11 +3872,68 @@ mod windows_host {
                     read_write_roots: vec![],
                     denied_read_roots: vec![],
                     denied_write_roots: vec![],
+                    termination_proof_path: None,
+                    termination_proof_token: None,
                 },
             );
             stop.join().unwrap();
             assert!(format!("{:#}", result.unwrap_err()).contains("R authorization owner exited"));
             assert!(started.elapsed() < Duration::from_secs(10));
+        }
+
+        #[test]
+        fn timed_out_probe_proves_job_termination_before_returning_failure() {
+            let root = unique_test_root("r-timeout-proof");
+            fs::create_dir_all(&root).unwrap();
+            let proof = root.join("terminated.proof");
+            let spec = LaunchSpec {
+                executable: std::env::var("ComSpec").unwrap(),
+                arguments: vec!["/d".into(), "/c".into(), "ping -n 30 127.0.0.1 >NUL".into()],
+                verbatim_arguments: false,
+                cwd: root.to_string_lossy().into_owned(),
+                read_only_roots: vec![],
+                read_write_roots: vec![],
+                denied_read_roots: vec![],
+                denied_write_roots: vec![],
+                termination_proof_path: Some(proof.to_string_lossy().into_owned()),
+                termination_proof_token: Some("owned-timeout-proof".into()),
+            };
+            let startup = STARTUPINFOW {
+                cb: size_of::<STARTUPINFOW>() as u32,
+                ..Default::default()
+            };
+            let mut command = wide(&command_line(&spec));
+            let cwd = wide(&spec.cwd);
+            let mut info = PROCESS_INFORMATION::default();
+            unsafe {
+                CreateProcessW(
+                    PCWSTR::null(),
+                    Some(PWSTR(command.as_mut_ptr())),
+                    None,
+                    None,
+                    false,
+                    CREATE_SUSPENDED,
+                    None,
+                    PCWSTR(cwd.as_ptr()),
+                    &startup,
+                    &mut info,
+                )
+            }
+            .unwrap();
+            let process = Handle(info.hProcess);
+            let thread = Handle(info.hThread);
+            let mut terminate = TerminateOnDrop {
+                process: process.0,
+                armed: true,
+            };
+            let started = Instant::now();
+            let result =
+                run_suspended_process_in_job(&spec, &process, &thread, &mut terminate, None, 100);
+            let proof_value = fs::read_to_string(&proof).ok();
+            fs::remove_dir_all(&root).unwrap();
+            assert!(format!("{:#}", result.unwrap_err()).contains("R verification timed out"));
+            assert!(started.elapsed() < Duration::from_secs(5));
+            assert_eq!(proof_value.as_deref(), Some("owned-timeout-proof"));
         }
 
         #[test]
@@ -4248,8 +4405,15 @@ fn run() -> Result<i32> {
                 decode_launch_spec(&encoded)?,
             )? as i32)
         }
+        Some("supervise") => {
+            let encoded = args.next().context("missing launch specification")?;
+            if args.next().is_some() {
+                bail!("unexpected supervise argument");
+            }
+            Ok(windows_host::supervise(decode_launch_spec(&encoded)?)? as i32)
+        }
         _ => bail!(
-            "usage: notebook-appcontainer-host <status|prepare-setup|cancel-setup|setup|finish-setup|prepare-remove|remove|finish-remove INSTALLATION_ID OWNERSHIP_ROOT|launch INSTALLATION_ID OWNERSHIP_ROOT SPEC>"
+            "usage: notebook-appcontainer-host <status|prepare-setup|cancel-setup|setup|finish-setup|prepare-remove|remove|finish-remove INSTALLATION_ID OWNERSHIP_ROOT|launch INSTALLATION_ID OWNERSHIP_ROOT SPEC|supervise SPEC>"
         ),
     }
 }
@@ -4284,6 +4448,8 @@ mod tests {
             read_write_roots: Vec::new(),
             denied_read_roots: Vec::new(),
             denied_write_roots: Vec::new(),
+            termination_proof_path: None,
+            termination_proof_token: None,
         };
         assert_eq!(
             command_line(&spec),
@@ -4307,6 +4473,8 @@ mod tests {
             read_write_roots: Vec::new(),
             denied_read_roots: Vec::new(),
             denied_write_roots: Vec::new(),
+            termination_proof_path: None,
+            termination_proof_token: None,
         };
         assert_eq!(
             command_line(&spec),
@@ -4370,6 +4538,8 @@ mod tests {
             read_write_roots: vec![workspace.to_string_lossy().into_owned()],
             denied_read_roots: Vec::new(),
             denied_write_roots: vec![git.to_string_lossy().into_owned()],
+            termination_proof_path: None,
+            termination_proof_token: None,
         };
 
         let grants = plan_writable_acl_grants(&spec).unwrap();

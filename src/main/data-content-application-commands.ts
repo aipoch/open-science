@@ -338,6 +338,7 @@ const dataContentApplicationCommands = Object.freeze({
   ),
   sessionLoadAll: sessionCommand('sessions:load-all', 'loadAll'),
   sessionLoadOne: sessionCommand('sessions:load-one', 'loadOne'),
+  sessionSearchMessages: sessionCommand('sessions:search-messages', 'searchMessages'),
   sessionLoadUsage: sessionCommand('sessions:load-usage', 'loadUsage'),
   sessionSaveManifest: sessionCommand(
     'sessions:save-manifest',
@@ -468,6 +469,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionList,
     dataContentApplicationCommands.sessionLoadAll,
     dataContentApplicationCommands.sessionLoadOne,
+    dataContentApplicationCommands.sessionSearchMessages,
     dataContentApplicationCommands.sessionLoadUsage,
     dataContentApplicationCommands.sessionSaveManifest,
     dataContentApplicationCommands.sessionUpdateArchive,
@@ -744,6 +746,8 @@ const registerDataContentApplicationCommands = (
         ),
       'sessions:load-one': ({ args }) =>
         dependencies.withDataRootWrite(() => dependencies.sessions.loadOne(args[0])),
+      'sessions:search-messages': ({ args }) =>
+        dependencies.withDataRootWrite(() => dependencies.sessions.searchMessages(args[0])),
       'sessions:load-usage': () =>
         dependencies.withDataRootWrite(() => dependencies.sessions.loadUsage()),
       'sessions:save-manifest': ({ args }) =>

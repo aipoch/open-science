@@ -187,6 +187,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     skillImport: options.skillImport,
     plan: options.plan,
     sideChat: options.sideChat,
+    wslSetupSessions: options.wslSetupSessions,
     literature: options.literature
       ? {
           isEnabled: options.literature.isEnabled,

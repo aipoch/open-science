@@ -106,6 +106,14 @@ import {
 import type { MemoryService } from '../memory/service'
 import { withDataRootWrite } from '../storage/migration-state'
 import { isRecord } from '../value-guards'
+import type {
+  OpenWslTerminalRequest,
+  SelectWslProfileRequest,
+  WslPlatformInstallResult,
+  WslSetupSnapshot,
+  WslSetupStatus,
+  WslSupportHandoff
+} from '../../shared/wsl-setup'
 
 const log = createLogger('notebook:local-rpc')
 const MAX_COMPLETED_COMPUTE_SUBMISSIONS_PER_SESSION = 100
@@ -210,7 +218,7 @@ type NotebookLocalRpcServerOptions = {
       active_count: number
       queued_count: number
       provider_ceilings: Record<string, number>
-      queue_blocked_reason?: 'session_limits_unavailable'
+      queue_blocked_reason?: import('../../shared/compute').ComputeQueueBlockedReason
     }>
   }
   skillImporter?: Pick<ConversationSkillImporter, 'request'>
@@ -338,6 +346,22 @@ type NotebookLocalRpcServerOptions = {
     discardSession(sessionId: string): void
     shutdown(): void
   }
+  wslSetup?: Readonly<{
+    getStatus(): WslSetupStatus
+    probe(): Promise<WslSetupSnapshot>
+    createSupportHandoff(): Promise<WslSupportHandoff>
+    installPlatform(): Promise<WslPlatformInstallResult>
+    installRecommendedDistro(): Promise<WslSetupSnapshot>
+    select(request: SelectWslProfileRequest): Promise<WslSetupSnapshot>
+    selectAtRevision?(
+      request: SelectWslProfileRequest,
+      expectedRevision: number
+    ): Promise<WslSetupSnapshot>
+    openTerminal(request: OpenWslTerminalRequest): Promise<WslSetupSnapshot>
+  }>
+  wslSetupSessions?: Readonly<{ isBound(sessionId: string): Promise<boolean> }>
+  wslSetupPreviewAvailable?: () => boolean
+  openWslSetupPowerShellTerminal?: () => Promise<void>
 }
 
 type ArtifactRpcCapability = Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'> & {
@@ -492,6 +516,13 @@ const DELEGATED_CONTROL_RPC_METHODS = new Set([
 ])
 const SKILL_IMPORT_RPC_METHODS = new Set(['skillImport'])
 const PLAN_RPC_METHODS = new Set(['planCall'])
+const WSL_SETUP_RPC_METHODS = new Set([
+  'wslSetupDiagnostics',
+  'wslSetupInstallPlatform',
+  'wslSetupInstallRecommendedDistro',
+  'wslSetupSelectProfile',
+  'wslSetupOpenTerminal'
+])
 
 const RPC_METHODS = new Set<string>([
   ...NOTEBOOK_LOCAL_RPC_METHODS,
@@ -499,6 +530,7 @@ const RPC_METHODS = new Set<string>([
   ...ARTIFACT_RPC_METHODS,
   ...SKILL_IMPORT_RPC_METHODS,
   ...PLAN_RPC_METHODS,
+  ...WSL_SETUP_RPC_METHODS,
   'delegatedOutputCall',
   'resolveNotebookInput'
 ])
@@ -611,6 +643,10 @@ class NotebookLocalRpcServer {
   private readonly skillsService: NotebookLocalRpcServerOptions['skillsService']
   private readonly hostModel: NotebookLocalRpcServerOptions['hostModel']
   private readonly hostViewImage: NotebookLocalRpcServerOptions['hostViewImage']
+  private readonly wslSetup: NotebookLocalRpcServerOptions['wslSetup']
+  private readonly wslSetupSessions: NotebookLocalRpcServerOptions['wslSetupSessions']
+  private readonly wslSetupPreviewAvailable: NotebookLocalRpcServerOptions['wslSetupPreviewAvailable']
+  private readonly openWslSetupPowerShellTerminal: NotebookLocalRpcServerOptions['openWslSetupPowerShellTerminal']
   private readonly resolveSpecialistSkillIds: NotebookLocalRpcServerOptions['resolveSpecialistSkillIds']
   private server: Server | undefined
   private serverLifecycle: NotebookRpcServerLifecycle | undefined
@@ -685,6 +721,10 @@ class NotebookLocalRpcServer {
     this.skillsService = options.skillsService
     this.hostModel = options.hostModel
     this.hostViewImage = options.hostViewImage
+    this.wslSetup = options.wslSetup
+    this.wslSetupSessions = options.wslSetupSessions
+    this.wslSetupPreviewAvailable = options.wslSetupPreviewAvailable
+    this.openWslSetupPowerShellTerminal = options.openWslSetupPowerShellTerminal
   }
 
   issueArtifactRunCapability(
@@ -2142,6 +2182,65 @@ class NotebookLocalRpcServer {
     signal: AbortSignal,
     checkMemoryAccess?: () => Promise<void>
   ): Promise<unknown> {
+    if (WSL_SETUP_RPC_METHODS.has(method)) {
+      if (!this.wslSetup || !this.wslSetupSessions) {
+        throw new RpcHttpError(403, 'WSL setup tools are unavailable.')
+      }
+      if (this.wslSetupPreviewAvailable?.() !== true) {
+        throw new RpcHttpError(403, 'WSL setup preview is unavailable on this host.')
+      }
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
+      if (!sessionId || !(await this.wslSetupSessions.isBound(sessionId))) {
+        throw new RpcHttpError(403, 'WSL setup tools require a bound local setup Session.')
+      }
+      if (method === 'wslSetupDiagnostics') {
+        await this.wslSetup.probe()
+        return this.wslSetup.createSupportHandoff()
+      }
+      if (method === 'wslSetupInstallPlatform') return this.wslSetup.installPlatform()
+      if (method === 'wslSetupInstallRecommendedDistro') {
+        return this.wslSetup.installRecommendedDistro()
+      }
+      if (method === 'wslSetupSelectProfile') {
+        if (
+          typeof params.expectedRevision !== 'number' ||
+          !Number.isSafeInteger(params.expectedRevision) ||
+          params.expectedRevision !== this.wslSetup.getStatus().revision
+        ) {
+          throw new RpcHttpError(409, 'WSL_SETUP_DIAGNOSTICS_STALE')
+        }
+        if (typeof params.distro !== 'string' || typeof params.user !== 'string') {
+          throw new RpcHttpError(400, 'WSL setup profile is invalid.')
+        }
+        const request = { distro: params.distro, user: params.user }
+        return this.wslSetup.selectAtRevision
+          ? this.wslSetup.selectAtRevision(request, params.expectedRevision)
+          : this.wslSetup.select(request)
+      }
+      if (params.target === 'powershell') {
+        if (params.distro !== undefined || params.user !== undefined) {
+          throw new RpcHttpError(400, 'A PowerShell terminal does not accept a distro or user.')
+        }
+        if (!this.openWslSetupPowerShellTerminal) {
+          throw new RpcHttpError(503, 'The WSL setup PowerShell terminal is unavailable.')
+        }
+        await this.openWslSetupPowerShellTerminal()
+        return Object.freeze({ target: 'powershell', state: 'opened' })
+      }
+      if (params.target !== 'distro' || typeof params.distro !== 'string') {
+        throw new RpcHttpError(400, 'WSL setup terminal target is invalid.')
+      }
+      if (params.user !== undefined && typeof params.user !== 'string') {
+        throw new RpcHttpError(400, 'WSL setup terminal user is invalid.')
+      }
+      return Object.freeze({
+        target: 'distro',
+        snapshot: await this.wslSetup.openTerminal({
+          distro: params.distro,
+          ...(typeof params.user === 'string' ? { user: params.user } : {})
+        })
+      })
+    }
     if (MEMORY_RPC_METHODS.has(method)) {
       if (!this.memoryService) throw new Error('Memory service is not configured.')
       if (typeof params.sessionId !== 'string') {

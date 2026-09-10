@@ -373,6 +373,10 @@ type ConversationPanelSaveAsSkill = {
   request: () => void
 }
 
+type ConversationPanelWslSetup = {
+  start: () => Promise<boolean>
+}
+
 type ConversationPanelWorkflows = {
   artifactFinalization: {
     running: boolean
@@ -380,6 +384,7 @@ type ConversationPanelWorkflows = {
   }
   review: ConversationPanelReview
   saveAsSkill: ConversationPanelSaveAsSkill
+  wslSetup: ConversationPanelWslSetup
 }
 
 type ConversationPanelSessionTools = {
@@ -445,10 +450,12 @@ const ConversationPanel = ({
       historyStatus,
       isHistoryBrowsing,
       isUploading: isUploadingAttachments,
+      isWslSetupDraft,
       caretRequest,
       readingContext: pdfContext
     },
     actions: {
+      discardWslSetupDraft,
       changeDoc: onDraftDocChange,
       addAnnotation: onAddAnnotation,
       updateAnnotationNote: onUpdateAnnotationNote,
@@ -895,8 +902,32 @@ const ConversationPanel = ({
   })
 
   // Submits the current doc, passing the ids of any skills picked as inline chips.
+  const handleWslSetupCommand = async (): Promise<void> => {
+    if (!canEditDraft) return
+    try {
+      const status = await window.api.settings.getWsl2BashPreviewStatus()
+      if (!status.available) {
+        onSetComposerError(
+          t('WSL2 setup is unavailable on this system ({{reason}}).', {
+            reason: status.reason
+          })
+        )
+        return
+      }
+      if (!(await workflows.wslSetup.start())) {
+        onSetComposerError(t('Open Science could not open the WSL2 setup conversation.'))
+      }
+    } catch {
+      onSetComposerError(t('Open Science could not open the WSL2 setup conversation.'))
+    }
+  }
+
   const handleSubmit = (): void => {
     if (!canEditDraft || !effectiveCanSend) return
+    if (docToText(draftDoc).trim() === '/setup-wsl') {
+      void handleWslSetupCommand()
+      return
+    }
     onSendMessage(docToSkillIds(draftDoc))
   }
 
@@ -1130,7 +1161,7 @@ const ConversationPanel = ({
                     session={activeSession}
                   />
                 ) : null}
-                {composerError ? (
+                {composerError && composerError !== actionError ? (
                   <div role="alert" className="mb-2">
                     <ErrorNotice icon={AlertTriangle} tone="red" title={composerError} />
                   </div>
@@ -1782,6 +1813,42 @@ const ConversationPanel = ({
                         {...messageQueue}
                         expanded={messageQueueExpanded}
                       />
+                      {isWslSetupDraft || activeSession?.wslSetup === true ? (
+                        <div
+                          className="flex items-center justify-between gap-3 rounded-lg border border-status-info-accent/30 bg-status-info-surface px-3 py-2 text-xs text-status-info-foreground"
+                          data-testid="wsl-setup-conversation-actions"
+                        >
+                          <span>
+                            {isWslSetupDraft
+                              ? t(
+                                  'This draft will open a guided WSL2 setup conversation. Review the diagnostics, then send it.'
+                                )
+                              : t('This is a guided WSL2 setup conversation.')}
+                          </span>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {isWslSetupDraft ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={discardWslSetupDraft}
+                              >
+                                {t('Discard setup draft')}
+                              </Button>
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                useSettingsStore.getState().openSettingsToPanel('runtimes')
+                              }
+                            >
+                              {t('Check and activate in Settings')}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
                       {composer.view.queuedEdit ? (
                         <div className="flex items-center justify-between gap-2 text-xs text-text-300">
                           <span>
@@ -2016,6 +2083,7 @@ const ConversationPanel = ({
                             )}
                             ariaLabel={t('Ask anything')}
                             allowedSkillIds={allowedSkillIds}
+                            onSelectWslSetup={() => void handleWslSetupCommand()}
                             isHistoryBrowsing={isHistoryBrowsing}
                             historyStatus={historyStatus}
                             onNavigateHistory={onNavigateHistory}

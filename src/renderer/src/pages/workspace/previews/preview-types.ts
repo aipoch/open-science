@@ -7,6 +7,7 @@ import type {
 
 export type PreviewFileRendererProps = {
   item: PreviewFileItem
+  presentation?: 'reader' | 'search'
   annotationVersionId?: string
   annotationBlockedByHistoricalVersion?: boolean
   annotationVersionPending?: boolean

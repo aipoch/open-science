@@ -199,6 +199,41 @@ describe('notebook MCP server config', () => {
     })
   })
 
+  it('serializes the immutable shell binding into the capability process', () => {
+    const binding = {
+      kind: 'wsl2-bash' as const,
+      profileId: 'profile-1',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    }
+    const config = createNotebookMcpServerConfig({
+      command: 'Open Science.exe',
+      entryPath: 'main.js',
+      endpoint: 'http://localhost',
+      token: 'secret-token',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: 'C:\\workspace',
+      memoryTools: false,
+      shellRuntime: binding
+    })
+
+    expect(config.env).toContainEqual({
+      name: 'OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME',
+      value: JSON.stringify(binding)
+    })
+    expect(
+      createNotebookMcpEnvironmentFromProcess({
+        OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT: 'http://localhost',
+        OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN: 'secret-token',
+        OPEN_SCIENCE_NOTEBOOK_PROJECT_ID: 'default-project',
+        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-1',
+        OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD: 'C:\\workspace',
+        OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME: JSON.stringify(binding)
+      }).shellRuntime
+    ).toEqual(binding)
+  })
+
   it('advertises memory tools only to an eligible main-agent environment', () => {
     const base = {
       endpoint: 'http://127.0.0.1:4567',
@@ -379,6 +414,31 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)).not.toEqual(
       expect.arrayContaining(['update_memory', 'forget_memory', 'set_memory_enabled'])
     )
+  })
+
+  it('exposes WSL setup tools only to an explicitly scoped setup Session', () => {
+    const environment = {
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'secret-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      memoryTools: true
+    }
+    const names = (wslSetupTools: boolean): string[] =>
+      notebookRpcToolsForEnvironment({ ...environment, wslSetupTools }).map(({ name }) => name)
+
+    expect(names(false)).not.toEqual(expect.arrayContaining(['wsl_setup_diagnostics']))
+    expect(names(true)).toEqual(
+      expect.arrayContaining([
+        'wsl_setup_diagnostics',
+        'wsl_setup_install_platform',
+        'wsl_setup_install_recommended_distro',
+        'wsl_setup_select_profile',
+        'wsl_setup_open_terminal'
+      ])
+    )
+    expect(names(true)).not.toEqual(expect.arrayContaining(['wsl_setup_activate']))
   })
 
   it('publishes remember_memory with a root object output schema', async () => {
@@ -1573,6 +1633,35 @@ describe('bash_execute tool', () => {
     expect(windowsDoc).not.toContain("generated file's absolute local path")
   })
 
+  it('derives the WSL2 Bash tool contract from the same captured binding', () => {
+    const binding = {
+      kind: 'wsl2-bash' as const,
+      profileId: 'profile-1',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    }
+    const tools = notebookRpcToolsForEnvironment({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'secret-token',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: 'C:\\workspace',
+      shellRuntime: binding
+    })
+    const wslTool = tools.find((entry) => entry.name === 'bash_execute')
+
+    expect(wslTool?.description).toContain('WSL2 Bash')
+    expect(wslTool?.description).toContain('Bash syntax')
+    expect(wslTool?.description).toContain('$OPEN_SCIENCE_HANDOFF_DIR')
+    expect(wslTool?.description).not.toContain('Windows PowerShell')
+    expect(wslTool?.inputSchema.command.description).toBe(
+      'WSL2 Bash command using POSIX syntax; do not use PowerShell syntax.'
+    )
+    expect(wslTool?.inputSchema.command.description).not.toMatch(
+      /profile-1|Ubuntu-22\.04|researcher/
+    )
+  })
+
   it('forwards bash_execute input to the executeShell RPC method', async () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
@@ -1604,6 +1693,37 @@ describe('bash_execute tool', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+
+  it('injects the advertised binding and ignores a forged per-call binding', async () => {
+    const binding = {
+      kind: 'wsl2-bash' as const,
+      profileId: 'profile-1',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    }
+    let body: { params: Record<string, unknown> } | undefined
+    await callNotebookRpc(
+      {
+        endpoint: 'http://127.0.0.1:4567',
+        token: 'secret-token',
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: 'C:\\workspace',
+        shellRuntime: binding
+      },
+      'executeShell',
+      { command: 'echo hi', shellRuntime: { kind: 'powershell', version: '5.1' } },
+      async (_environment, init) => {
+        body = JSON.parse(String(init.body)) as { params: Record<string, unknown> }
+        return {
+          ok: true,
+          json: async () => ({ result: { stdout: '', stderr: '', exitCode: 0 } })
+        } as Response
+      }
+    )
+
+    expect(body?.params.shellRuntime).toEqual(binding)
   })
 })
 
@@ -2266,6 +2386,36 @@ describe('manage_environments tool', () => {
 })
 
 describe('compactNotebookExecutionResult', () => {
+  it('preserves recovery prerequisites ahead of truncated output for foreground and background failures', () => {
+    const recovery = { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
+    const run = {
+      kernelKind: 'bash',
+      status: 'failed',
+      recovery,
+      stdout: 'x'.repeat(100_000),
+      stderr: 'cleanup failed',
+      exitCode: null
+    }
+    const foreground = compactNotebookExecutionResult(run) as Record<string, unknown>
+    const background = NOTEBOOK_RPC_TOOLS.find((tool) => tool.name === 'background_run')!
+      .mapResult!({ run }, { action: 'result' }) as Record<string, unknown>
+    expect(foreground.recovery).toMatchObject(recovery)
+    expect(background.recovery).toEqual(foreground.recovery)
+    for (const result of [foreground, background]) {
+      const serialized = serializeNotebookToolResult(result, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+      expect(JSON.parse(serialized).recovery).toEqual(foreground.recovery)
+    }
+    expect(foreground.truncated).toBe(true)
+  })
+
+  it('does not treat command output or historical error codes as current recovery facts', () => {
+    expect(
+      compactNotebookExecutionResult({ stdout: 'SHELL_CLEANUP_INCOMPLETE', exitCode: 0 })
+    ).not.toHaveProperty('recovery')
+    expect(
+      compactNotebookExecutionResult({ errorCode: 'shell-cleanup-incomplete', exitCode: null })
+    ).not.toHaveProperty('recovery')
+  })
   const runSummary = (text: {
     stdout?: string
     stderr?: string
@@ -2667,6 +2817,21 @@ describe('compactNotebookExecutionResult', () => {
 })
 
 describe('compactNotebookStateResult', () => {
+  it('keeps recovery on the latest attempt without repeating historical guidance', () => {
+    const recovery = { execution: 'not-started', retryAfter: 'cleanup-verified' }
+    const state = {
+      recentRuns: [
+        { runId: 'old', status: 'failed', recovery },
+        { runId: 'latest', status: 'failed', recovery }
+      ]
+    }
+    const compact = compactNotebookStateResult(state)
+    const parsed = JSON.parse(serializeNotebookToolResult(compact, NOTEBOOK_MCP_STATE_RESULT_LIMIT))
+    expect(parsed.recentRuns[0]).not.toHaveProperty('recovery')
+    expect(parsed.recentRuns[1].recovery).toMatchObject(recovery)
+    expect(parsed.recentRuns[1].recovery.guidance).toContain('not started')
+  })
+
   it('applies the state projection and smaller global budget to notebook_state', () => {
     const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_state')
     expect(tool?.mapResult).toBe(compactNotebookStateResult)

@@ -64,6 +64,7 @@ beforeEach(() => {
     explicitNavigationRevision: 0,
     pendingCustomizePrefill: undefined,
     pendingLiteratureReviewPrefill: undefined,
+    pendingWslSupportPrefill: undefined,
     pendingProjectCreation: false,
     pendingArtifactMention: undefined,
     pendingLiteratureItemId: undefined,
@@ -722,6 +723,30 @@ describe('navigation store Literature review conversation', () => {
 
     useNavigationStore.getState().consumeLiteratureReviewPrefill()
     expect(useNavigationStore.getState().pendingLiteratureReviewPrefill).toBeUndefined()
+  })
+})
+
+describe('navigation store WSL support conversation', () => {
+  it('opens a normal new-conversation draft with the supplied safe diagnostic document', () => {
+    const doc = { nodes: [{ type: 'text' as const, text: 'safe WSL diagnostics' }] }
+    expect(
+      useNavigationStore
+        .getState()
+        .startWslSupportConversation('project-a', doc, 'setup-session-token')
+    ).toBe(true)
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: 'project-a',
+      pendingCustomizePrefill: undefined,
+      pendingWslSupportPrefill: {
+        projectId: 'project-a',
+        doc,
+        setupSessionToken: 'setup-session-token'
+      }
+    })
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(useSessionStore.getState().sessions).toEqual([])
   })
 })
 

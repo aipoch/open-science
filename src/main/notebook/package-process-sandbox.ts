@@ -11,7 +11,10 @@ import {
 } from 'node:fs'
 import { delimiter, dirname, isAbsolute, join, relative, resolve, win32 } from 'node:path'
 
+import type { PackageMirror } from '../../shared/mirror'
+import { validateCustomAllowedDomain } from '../../shared/notebook-network'
 import { defaultSpawn, type InstallRequest, type InstallSpawn } from './package-manager'
+import { assertProcessTreeSupport, terminateProcessTree } from '../process-tree'
 import { buildNotebookKernelEnvironment } from './process-environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
 
@@ -20,9 +23,32 @@ type PackageProcessSandboxOptions = Readonly<{
   request: InstallRequest
   runtimeRoot: string
   storageRoot: string
+  mirror?: PackageMirror
   interpreter?: Readonly<{ command: string; condaPrefix?: string }>
   platform?: NodeJS.Platform
+  terminateTree?: typeof terminateProcessTree
 }>
+
+const packageMirrorHosts = (mirror: PackageMirror | undefined): string[] => {
+  const hosts = [mirror?.condaChannel, mirror?.pypiIndex, mirror?.cranMirror].flatMap((value) => {
+    const hasAsciiWhitespaceOrControl = [...(value ?? '')].some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0
+      return codePoint <= 0x20 || codePoint === 0x7f
+    })
+    if (!value || hasAsciiWhitespaceOrControl) return []
+    try {
+      const url = new URL(value)
+      if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password) {
+        return []
+      }
+      const normalized = validateCustomAllowedDomain(url.hostname)
+      return normalized.ok ? [normalized.hostname] : []
+    } catch {
+      return []
+    }
+  })
+  return [...new Set(hosts)]
+}
 
 const PACKAGE_ENV_KEYS = [
   'CONDA_PKGS_DIRS',
@@ -164,6 +190,7 @@ export const sandboxedPackageSpawn =
     spawnOptions?.signal?.throwIfAborted()
     const { processSandbox, request, runtimeRoot, storageRoot } = options
     const platform = options.platform ?? process.platform
+    assertProcessTreeSupport(platform)
     const projectedEnv = packageEnvironment(env ?? {}, platform)
     normalizeDarwinRepodataCachePermissions(projectedEnv, runtimeRoot, platform)
     const cwd =
@@ -177,7 +204,9 @@ export const sandboxedPackageSpawn =
       sessionId: request.sessionId ?? 'notebook-package-manager',
       projectId: request.projectId ?? 'notebook-package-manager',
       runtime: request.language,
+      allowedNetworkHosts: packageMirrorHosts(options.mirror),
       signal: spawnOptions?.signal,
+      superviseProcessTree: platform === 'win32',
       filesystem: {
         readOnlyRoots: [...absolutePath(dirname(command)), ...absolutePath(request.workspaceCwd)],
         readWriteRoots: [
@@ -191,6 +220,7 @@ export const sandboxedPackageSpawn =
     })
     let endExecution: (() => void) | undefined
     let ended = false
+    let processesTerminated = false
     try {
       spawnOptions?.signal?.throwIfAborted()
       endExecution = sandboxed.beginExecution?.()
@@ -202,13 +232,17 @@ export const sandboxedPackageSpawn =
         onBeforeSpawn,
         captureCondaJson ?? args.includes('--json'),
         cwd,
-        spawnOptions
+        spawnOptions,
+        options.terminateTree,
+        platform,
+        sandboxed.confirmProcessTreeTermination
       )
       endExecution?.()
       ended = true
+      processesTerminated = result.processesTerminated ?? true
       return { ...result, stderr: sandboxed.annotateStderr(result.stderr) }
     } finally {
       if (!ended) endExecution?.()
-      sandboxed.cleanup()
+      await sandboxed.cleanup(ended ? 'exit' : 'spawn-failed', { processesTerminated })
     }
   }

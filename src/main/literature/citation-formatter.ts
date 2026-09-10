@@ -193,12 +193,13 @@ const parseNbib = (input: string): ParsedCitationRecords | undefined => {
       issuedText,
       issuedYear: /^\d{4}/u.test(issuedText) ? Number(issuedText.slice(0, 4)) : undefined,
       containerTitle: nbibText(record, 'JT') || nbibText(record, 'TA'),
-      shortTitle: nbibText(record, 'TA'),
+      shortTitle: '',
       language: nbibText(record, 'LA'),
       rights: '',
       url: pmid ? `https://pubmed.ncbi.nlm.nih.gov/${encodeURIComponent(pmid)}/` : '',
       extra: authors.uncertain.join('\n'),
       typeFields: {
+        ...(nbibText(record, 'TA') ? { journalAbbreviation: nbibText(record, 'TA') } : {}),
         ...(nbibText(record, 'VI') ? { volume: nbibText(record, 'VI') } : {}),
         ...(nbibText(record, 'IP') ? { issue: nbibText(record, 'IP') } : {}),
         ...(nbibText(record, 'PG') ? { pages: nbibText(record, 'PG') } : {})

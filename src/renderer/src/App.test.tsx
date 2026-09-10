@@ -1592,7 +1592,7 @@ describe('App startup routing', () => {
     expect(alert?.textContent).toContain('Project archive needs attention')
     expect(alert?.textContent).toContain('A damaged saved conversation was moved aside')
     expect(alert?.textContent).toContain('You can still permanently delete the project')
-    expect(alert?.textContent).toContain('New Compute jobs may remain queued')
+    expect(alert?.textContent).toContain('Compute jobs in affected Sessions may remain queued')
     const recheck = container.querySelector<HTMLButtonElement>(
       '[data-testid="session-persistence-retry"]'
     )
