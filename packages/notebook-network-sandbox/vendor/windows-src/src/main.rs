@@ -2217,6 +2217,65 @@ mod windows_host {
         }
 
         #[test]
+        fn directory_listing_can_authorize_and_revoke_an_in_use_directory() {
+            use std::os::windows::fs::OpenOptionsExt;
+
+            for protected in [false, true] {
+                let root = unique_test_root("directory-listing-in-use");
+                let child = root.join("child");
+                fs::create_dir_all(&child).unwrap();
+                let path = root.to_string_lossy();
+                let child_path = child.to_string_lossy();
+                if protected {
+                    run_icacls(&path, &["/inheritancelevel:d", "/Q"], "protect test directory")
+                        .unwrap();
+                }
+                let original = capture_acl_snapshot(&path).unwrap();
+                // A legacy child's control flags make accidental inheritance propagation observable,
+                // even when reapplying the parent's existing ACEs would otherwise look unchanged.
+                let mut child_legacy = capture_acl_snapshot(&child_path).unwrap();
+                child_legacy.dacl_auto_inherited = false;
+                child_legacy.dacl_auto_inherit_requested = false;
+                restore_acl_snapshot(&child_legacy).unwrap();
+                let child_original = capture_acl_snapshot(&child_path).unwrap();
+                let capability = CommandCapability::new(format!(
+                    "open-science.test.{}",
+                    new_resource_key().unwrap()
+                ))
+                .unwrap();
+                let identity = sid_text(capability.sid()).unwrap();
+                // Match an ancestor held as a process working directory: reading and writing are
+                // shared, but deletion is not. ACL updates must not request deletion access.
+                let held = fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(0x1 | 0x2)
+                    .custom_flags(0x0200_0000) // FILE_FLAG_BACKUP_SEMANTICS
+                    .open(&root)
+                    .unwrap();
+                let result = (|| -> Result<()> {
+                    super::super::directory_access::update(&path, &identity, true, false)?;
+                    assert!(super::super::directory_access::is_granted(&path, &identity)?);
+                    let granted = capture_acl_snapshot(&path)?;
+                    assert_eq!(granted.dacl_protected, original.dacl_protected);
+                    assert_eq!(granted.dacl_auto_inherited, original.dacl_auto_inherited);
+                    assert_eq!(
+                        granted.dacl_auto_inherit_requested,
+                        original.dacl_auto_inherit_requested
+                    );
+                    assert_eq!(capture_acl_snapshot(&child_path)?, child_original);
+                    super::super::directory_access::update(&path, &identity, false, true)?;
+                    assert_eq!(capture_acl_snapshot(&path)?, original);
+                    assert_eq!(capture_acl_snapshot(&child_path)?, child_original);
+                    Ok(())
+                })();
+                drop(held);
+                restore_acl_snapshot(&original).unwrap();
+                fs::remove_dir_all(&root).unwrap();
+                result.unwrap();
+            }
+        }
+
+        #[test]
         fn directory_listing_preserves_children_and_removes_only_owned_permissions() {
             let root = unique_test_root("directory-listing");
             let child = root.join("child");
