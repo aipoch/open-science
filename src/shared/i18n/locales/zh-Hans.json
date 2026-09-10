@@ -4881,6 +4881,9 @@
     "Research work is still running. Stop it before restarting to update.": "研究任务仍在运行。请先停止任务，再重启以更新。",
     "Subagents are still running. Return to their tasks and stop them before restarting to update.": "子智能体仍在运行。请返回其任务并停止运行，再重启以更新。",
     "The installer is missing or has changed. Download the update again.": "安装程序缺失或已更改。请重新下载更新。",
-    "Verifying installer…": "正在校验安装程序…"
+    "Verifying installer…": "正在校验安装程序…",
+    "Open Science couldn't display this page": "Open Science 无法显示此页面",
+    "Background work may still be running. Reloading may lose unsaved changes on this page.": "后台工作可能仍在运行。重新加载可能会丢失此页面上未保存的更改。",
+    "Reload page": "重新加载页面"
   }
 }

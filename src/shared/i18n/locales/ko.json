@@ -4879,6 +4879,9 @@
     "Research work is still running. Stop it before restarting to update.": "연구 작업이 아직 실행 중입니다. 작업을 중지한 후 다시 시작하여 업데이트하세요.",
     "Subagents are still running. Return to their tasks and stop them before restarting to update.": "서브에이전트가 아직 실행 중입니다. 해당 작업으로 돌아가 중지한 후 다시 시작하여 업데이트하세요.",
     "The installer is missing or has changed. Download the update again.": "설치 프로그램이 없거나 변경되었습니다. 업데이트를 다시 다운로드하세요.",
-    "Verifying installer…": "설치 프로그램 확인 중…"
+    "Verifying installer…": "설치 프로그램 확인 중…",
+    "Open Science couldn't display this page": "Open Science에서 이 페이지를 표시할 수 없습니다",
+    "Background work may still be running. Reloading may lose unsaved changes on this page.": "백그라운드 작업이 아직 실행 중일 수 있습니다. 새로고침하면 이 페이지의 저장되지 않은 변경 사항이 손실될 수 있습니다.",
+    "Reload page": "페이지 새로고침"
   }
 }

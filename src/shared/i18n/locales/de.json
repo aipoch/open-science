@@ -5035,6 +5035,9 @@
     "Research work is still running. Stop it before restarting to update.": "Forschungsaufgaben laufen noch. Beenden Sie sie, bevor Sie zum Aktualisieren neu starten.",
     "Subagents are still running. Return to their tasks and stop them before restarting to update.": "Unteragenten laufen noch. Kehren Sie zu ihren Aufgaben zurück und beenden Sie sie, bevor Sie zum Aktualisieren neu starten.",
     "The installer is missing or has changed. Download the update again.": "Das Installationsprogramm fehlt oder wurde verändert. Laden Sie das Update erneut herunter.",
-    "Verifying installer…": "Installationsprogramm wird überprüft…"
+    "Verifying installer…": "Installationsprogramm wird überprüft…",
+    "Open Science couldn't display this page": "Open Science konnte diese Seite nicht anzeigen",
+    "Background work may still be running. Reloading may lose unsaved changes on this page.": "Hintergrundaufgaben werden möglicherweise noch ausgeführt. Beim Neuladen können ungespeicherte Änderungen auf dieser Seite verloren gehen.",
+    "Reload page": "Seite neu laden"
   }
 }

@@ -5197,6 +5197,9 @@
     "Research work is still running. Stop it before restarting to update.": "Hay tareas de investigación en curso. Deténgalas antes de reiniciar para actualizar.",
     "Subagents are still running. Return to their tasks and stop them before restarting to update.": "Hay subagentes en ejecución. Vuelva a sus tareas y deténgalos antes de reiniciar para actualizar.",
     "The installer is missing or has changed. Download the update again.": "El instalador no se encuentra o ha cambiado. Vuelva a descargar la actualización.",
-    "Verifying installer…": "Verificando el instalador…"
+    "Verifying installer…": "Verificando el instalador…",
+    "Open Science couldn't display this page": "Open Science no pudo mostrar esta página",
+    "Background work may still be running. Reloading may lose unsaved changes on this page.": "Es posible que las tareas en segundo plano sigan en ejecución. Al volver a cargar, pueden perderse los cambios sin guardar de esta página.",
+    "Reload page": "Volver a cargar la página"
   }
 }

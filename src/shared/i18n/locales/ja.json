@@ -4881,6 +4881,9 @@
     "Research work is still running. Stop it before restarting to update.": "研究タスクがまだ実行中です。停止してから再起動して更新してください。",
     "Subagents are still running. Return to their tasks and stop them before restarting to update.": "サブエージェントがまだ実行中です。該当するタスクに戻って停止してから、再起動して更新してください。",
     "The installer is missing or has changed. Download the update again.": "インストーラーが見つからないか、変更されています。更新を再ダウンロードしてください。",
-    "Verifying installer…": "インストーラーを検証中…"
+    "Verifying installer…": "インストーラーを検証中…",
+    "Open Science couldn't display this page": "Open Science でこのページを表示できませんでした",
+    "Background work may still be running. Reloading may lose unsaved changes on this page.": "バックグラウンドの処理は引き続き実行されている可能性があります。再読み込みすると、このページの未保存の変更が失われる可能性があります。",
+    "Reload page": "ページを再読み込み"
   }
 }
