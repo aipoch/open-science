@@ -80,6 +80,7 @@ export const SkillMentionPopup = ({
   }, [skillsLoaded, skills.length, loadSkills, retryAttempt])
 
   useEffect(() => {
+    if (window.api?.platform !== 'win32') return
     const getStatus = window.api?.settings?.getWsl2BashPreviewStatus
     if (!getStatus) return
     let active = true
@@ -138,6 +139,7 @@ export const SkillMentionPopup = ({
   const productCommandMatches = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return (
+      window.api?.platform === 'win32' &&
       onSelectWslSetup !== undefined &&
       (needle.length === 0 ||
         '/setup-wsl'.includes(needle) ||
@@ -189,11 +191,15 @@ export const SkillMentionPopup = ({
           !event.ctrlKey &&
           !event.metaKey)
       ) {
-        if (productCommandMatches && safeIndex === 0 && wslStatus?.available !== false) {
+        if (
+          productCommandMatches &&
+          safeIndex === matches.length &&
+          wslStatus?.available !== false
+        ) {
           event.preventDefault()
           onSelectWslSetup?.()
         } else {
-          const active = matches[safeIndex - (productCommandMatches ? 1 : 0)]
+          const active = matches[safeIndex]
           if (active) {
             event.preventDefault()
             onSelect(active.skill)
@@ -276,40 +282,8 @@ export const SkillMentionPopup = ({
             )}
           </li>
         )}
-        {productCommandMatches ? (
-          <li
-            id={`${resolvedListboxId}-option-0`}
-            role="option"
-            aria-selected={safeIndex === 0}
-            aria-disabled={wslStatus?.available === false}
-            data-testid="product-command-setup-wsl"
-            onMouseEnter={() => setActiveIndex(0)}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              if (wslStatus?.available !== false) onSelectWslSetup?.()
-            }}
-            className={`w-full flex items-start gap-2 rounded-lg px-2 py-1.5 text-sm text-text-100 transition-colors hover:bg-bg-200 hover:text-text-000 ${wslStatus?.available === false ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}${safeIndex === 0 ? ' bg-bg-200 !text-text-000' : ''}`}
-          >
-            <SquareTerminal className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-sm font-medium">/setup-wsl</span>
-                <span className="ml-auto rounded bg-accent px-1.5 py-0.5 text-[10px] text-accent-foreground">
-                  {t('Open Science')}
-                </span>
-              </div>
-              <div className="mt-0.5 text-xs text-text-300">
-                {wslStatus && !wslStatus.available
-                  ? t('WSL2 setup is unavailable on this system ({{reason}}).', {
-                      reason: wslStatus.reason
-                    })
-                  : t('Set up or repair WSL2 Bash in a guided conversation')}
-              </div>
-            </div>
-          </li>
-        ) : null}
         {matches.map(({ skill, positions }, index) => {
-          const optionIndex = index + (productCommandMatches ? 1 : 0)
+          const optionIndex = index
           const isActive = optionIndex === safeIndex
           return (
             <li
@@ -340,6 +314,35 @@ export const SkillMentionPopup = ({
             </li>
           )
         })}
+        {productCommandMatches ? (
+          <li
+            id={`${resolvedListboxId}-option-${matches.length}`}
+            role="option"
+            aria-selected={safeIndex === matches.length}
+            aria-disabled={wslStatus?.available === false}
+            data-testid="product-command-setup-wsl"
+            onMouseEnter={() => setActiveIndex(matches.length)}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              if (wslStatus?.available !== false) onSelectWslSetup?.()
+            }}
+            className={`w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-sm text-text-100 hover:bg-bg-200 hover:text-text-000 transition-colors ${wslStatus?.available === false ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}${safeIndex === matches.length ? ' bg-bg-200 !text-text-000' : ''}`}
+          >
+            <SquareTerminal className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="truncate font-medium text-sm">/setup-wsl</span>
+              </div>
+              <div className="text-xs text-text-300 line-clamp-2 mt-0.5">
+                {wslStatus && !wslStatus.available
+                  ? t('WSL2 setup is unavailable on this system ({{reason}}).', {
+                      reason: wslStatus.reason
+                    })
+                  : t('Set up or repair WSL2 Bash in a guided conversation')}
+              </div>
+            </div>
+          </li>
+        ) : null}
       </ul>
       <div className="mt-1 -mx-1.5 -mb-1.5 flex shrink-0 items-center justify-end gap-3 border-t border-border-200 bg-bg-200/40 px-3 py-1.5 text-[11px] text-text-100 select-none">
         {optionCount > 0 && (
