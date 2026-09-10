@@ -12,9 +12,18 @@
   height: 61px;
   padding: 0 21px;
 }
-.global-search-searchbar input {
+.global-search-input-field {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
   height: 40px;
+  padding-right: 4px;
   border-bottom: 1px solid var(--border);
+}
+.global-search-searchbar input {
+  height: 100%;
   border-radius: 0;
   font-size: 21px;
   line-height: 1.5;

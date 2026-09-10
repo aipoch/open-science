@@ -602,40 +602,42 @@ export const GlobalSearchDialog = ({
           <header className="shrink-0">
             <div className="global-search-searchbar">
               <Search className="size-5 shrink-0 text-muted-foreground" />
-              <Input
-                ref={inputRef}
-                role="combobox"
-                aria-label={t('Global search')}
-                aria-expanded
-                aria-controls={listboxId}
-                aria-activedescendant={activeId ? `${listboxId}-${activeId}` : undefined}
-                autoComplete="off"
-                placeholder={t('Search messages, projects, files and Library…')}
-                value={query}
-                onChange={(event) => {
-                  actionVersion.current++
-                  setQuery(event.target.value)
-                  resetSelection()
-                }}
-                onKeyDown={keyboard}
-                className="min-w-0 flex-1 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
-              />
-              {query && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  aria-label={t('Clear search')}
-                  title={t('Clear search')}
-                  className="rounded-full bg-bg-200 px-3 text-xs text-muted-foreground hover:bg-bg-300 hover:text-foreground"
-                  onClick={() => {
-                    setQuery('')
+              <div className="global-search-input-field">
+                <Input
+                  ref={inputRef}
+                  role="combobox"
+                  aria-label={t('Global search')}
+                  aria-expanded
+                  aria-controls={listboxId}
+                  aria-activedescendant={activeId ? `${listboxId}-${activeId}` : undefined}
+                  autoComplete="off"
+                  placeholder={t('Search messages, projects, files and Library…')}
+                  value={query}
+                  onChange={(event) => {
+                    actionVersion.current++
+                    setQuery(event.target.value)
                     resetSelection()
-                    inputRef.current?.focus()
                   }}
-                >
-                  {t('Clear')}
-                </Button>
-              )}
+                  onKeyDown={keyboard}
+                  className="min-w-0 flex-1 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+                />
+                {query && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    aria-label={t('Clear search')}
+                    title={t('Clear search')}
+                    className="rounded-full bg-bg-200 px-3 text-xs text-muted-foreground hover:bg-bg-300 hover:text-foreground"
+                    onClick={() => {
+                      setQuery('')
+                      resetSelection()
+                      inputRef.current?.focus()
+                    }}
+                  >
+                    {t('Clear')}
+                  </Button>
+                )}
+              </div>
               <Dialog.Close asChild>
                 <Button variant="ghost" size="icon" aria-label={t('Close')} className="size-7">
                   <X className="size-4" />
