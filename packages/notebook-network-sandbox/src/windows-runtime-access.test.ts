@@ -317,3 +317,69 @@ it('still reports a broken contained runtime when explicitly verifying an existi
     'launch'
   ])
 })
+
+it.each(['stdout', 'stderr'] as const)(
+  'rejects an existing-grant verifier exceeding the byte limit on %s',
+  async (stream) => {
+    const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process')
+    reply({ authorized: true, registered: true })
+    host.spawn.mockImplementationOnce(() =>
+      actual.spawn(
+        process.execPath,
+        [
+          '-e',
+          `process.stdout.write('OPEN_SCIENCE_R_ACCESS_OK'); process.${stream}.write('中'.repeat(350000))`
+        ],
+        { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }
+      )
+    )
+    await expect(
+      setWindowsRuntimeAccess(
+        'host.exe',
+        'installation',
+        'owner-root',
+        'Rscript.exe',
+        true,
+        verification
+      )
+    ).rejects.toThrow('output exceeded its buffer limit')
+    expect(host.spawn.mock.calls.map(([, args]) => args[0])).toEqual([
+      'runtime-access-status',
+      'launch'
+    ])
+  }
+)
+
+it('waits for the verifier to close after its combined output exceeds the limit', async () => {
+  reply({ authorized: true, registered: true })
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough()
+  })
+  host.spawn.mockImplementationOnce(() => child)
+  let settled = false
+  const result = setWindowsRuntimeAccess(
+    'host.exe',
+    'installation',
+    'owner-root',
+    'Rscript.exe',
+    true,
+    verification
+  ).then(
+    () => {
+      settled = true
+      return 'unexpected success'
+    },
+    (error: Error) => {
+      settled = true
+      return error.message
+    }
+  )
+  await vi.waitFor(() => expect(host.spawn).toHaveBeenCalledTimes(2))
+  child.stdout.end('OPEN_SCIENCE_R_ACCESS_OK' + 'x'.repeat(600_000))
+  child.stderr.end('x'.repeat(600_000))
+  await Promise.resolve()
+  expect(settled).toBe(false)
+  child.emit('close', 0)
+  await expect(result).resolves.toContain('output exceeded its buffer limit')
+})

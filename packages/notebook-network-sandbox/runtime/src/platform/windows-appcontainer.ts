@@ -130,20 +130,36 @@ const closeServer = (server: Server | undefined): Promise<void> =>
 const runCapture = (
   program: string,
   args: readonly string[],
-  options: Pick<SpawnOptions, 'env' | 'signal' | 'timeout'> = {}
+  options: Pick<SpawnOptions, 'env' | 'signal' | 'timeout'> & { maxBuffer?: number } = {}
 ): Promise<{ code: number | null; stdout: string; stderr: string }> =>
   new Promise((resolve, reject) => {
+    const { maxBuffer = Infinity, ...spawnOptions } = options
     const child = spawn(program, [...args], {
-      ...options,
+      ...spawnOptions,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
     })
     let stdout = ''
     let stderr = ''
-    child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk))
-    child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk))
+    let remaining = maxBuffer
+    let overflow = false
+    const capture = (chunk: string): string => {
+      if (overflow) return ''
+      remaining -= Buffer.byteLength(chunk)
+      if (remaining < 0) {
+        overflow = true
+        return ''
+      }
+      return chunk
+    }
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += capture(chunk)))
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += capture(chunk)))
     child.once('error', reject)
-    child.once('close', (code) => resolve({ code, stdout, stderr }))
+    // Keep draining until the native host closes so it can finish its process-tree cleanup proof.
+    child.once('close', (code) => {
+      if (overflow) reject(new Error('Windows AppContainer output exceeded its buffer limit.'))
+      else resolve({ code, stdout, stderr })
+    })
   })
 
 const readAppContainerStatus = async (
@@ -510,7 +526,8 @@ const setWindowsRuntimeAccess = async (
       const result = await runCapture(hostPath, verification.argv.slice(1), {
         env: verification.env,
         signal: verification.signal,
-        timeout: 20_000
+        timeout: 20_000,
+        maxBuffer: 1024 * 1024
       })
       if (result.code !== 0 || !result.stdout.includes('OPEN_SCIENCE_R_ACCESS_OK'))
         throw new Error(result.stderr.trim() || 'The contained R verification failed.')
