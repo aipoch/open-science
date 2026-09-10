@@ -20,7 +20,9 @@ import { CODEX_VERSION } from '../settings/managed-codex'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 
 const fakeChild = new EventEmitter() as ChildProcessWithoutNullStreams
-afterEach(() => fakeChild.emit('close', 0))
+afterEach(async () => {
+  await terminateProcessTree(fakeChild)
+})
 
 describe('codexFramework', () => {
   it('offers the scoped Skill loader and recovery guidance without enabling shell', () => {

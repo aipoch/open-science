@@ -417,10 +417,13 @@ const AgentPanel = ({
         codex.resolvedPath && codex.version && !isSupportedCodexAcpVersion(codex.version)
       ),
       minimumVersion: MINIMUM_CODEX_ACP_VERSION,
-      versionDetail: t('Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}', {
-        nativeVersion: codex.nativeVersion ?? t('Unknown'),
-        adapterVersion: codex.version ?? t('Unknown')
-      }),
+      versionDetail:
+        codex.resolvedPath || codex.version || codex.nativeVersion
+          ? t('Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}', {
+              nativeVersion: codex.nativeVersion ?? t('Unknown'),
+              adapterVersion: codex.version ?? t('Unknown')
+            })
+          : undefined,
       updateAvailable: Boolean(
         codexManaged && codex.nativeManaged && hasCodexNativeUpdate(codex.nativeVersion)
       ),

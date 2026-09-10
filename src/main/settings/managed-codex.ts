@@ -40,7 +40,7 @@ import {
 } from './managed-claude'
 import { createLogger } from '../logger'
 import { stripCodexCredentialEnv } from './process-tree'
-import { terminateProcessTree } from '../process-tree'
+import { onProcessTreeReaped, terminateProcessTree } from '../process-tree'
 import { toErrorMessage } from '../error-message'
 
 const execFileAsync = promisify(execFile)
@@ -142,8 +142,7 @@ export const spawnCodexWithInstallAdmission = (
   }
   try {
     const child = spawnProcess()
-    // close follows failed spawn as well as normal exit, and waits for inherited stdio to close.
-    child.once('close', release)
+    onProcessTreeReaped(child, release)
     return child
   } catch (error) {
     release()

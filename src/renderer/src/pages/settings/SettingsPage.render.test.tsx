@@ -4679,6 +4679,30 @@ describe('SettingsPage Codex framework', () => {
     }
   ]
 
+  it('omits the version line when Codex has never been detected', async () => {
+    window.api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: {},
+      codebuddy: {},
+      codex: {},
+      providers: [],
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: false
+    })
+    window.api.settings.getPreflight = vi.fn().mockResolvedValue({
+      codexReady: false,
+      agentReady: false,
+      agentFrameworkId: 'codex',
+      activeProviderReady: false
+    })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await openAgentPanel()
+    expect(document.body.textContent).not.toContain('Codex CLI Unknown')
+  })
+
   it.each([
     [true, '0.144.6', true],
     [false, '0.144.6', false],

@@ -2219,8 +2219,10 @@ describe('sanitizeManagedCodexDiagnostic', () => {
   })
 })
 
+const actualProcessTree = await vi.importActual<typeof import('../process-tree')>('../process-tree')
+
 describe('managed Codex process admission', () => {
-  it('blocks replacement until every process closes, including idle sessions', async () => {
+  it('blocks replacement after adapter close until every process tree is reaped', async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'codex-admission-'))
     const adapter = managedCodexAdapterEntry(dataRoot)
     const native = managedCodexBinary(dataRoot)
@@ -2234,6 +2236,10 @@ describe('managed Codex process admission', () => {
       first.emit('close', 0)
       expect((await installManagedCodex(options)).result.error).toContain('Codex is in use')
       second.emit('close', 0)
+      expect((await installManagedCodex(options)).result.error).toContain('Codex is in use')
+      await actualProcessTree.terminateProcessTree(first)
+      expect((await installManagedCodex(options)).result.error).toContain('Codex is in use')
+      await actualProcessTree.terminateProcessTree(second)
       expect((await installManagedCodex(options)).result.error).toBe('no registries configured')
     } finally {
       first.emit('close', 0)
@@ -2256,7 +2262,7 @@ describe('managed Codex process admission', () => {
       expect(() => spawnCodexWithInstallAdmission([adapter], spawn)).toThrow('being updated')
       expect(spawn).not.toHaveBeenCalled()
       await install
-      spawnCodexWithInstallAdmission([adapter], spawn).emit('close', 0)
+      await actualProcessTree.terminateProcessTree(spawnCodexWithInstallAdmission([adapter], spawn))
       expect(spawn).toHaveBeenCalledOnce()
       expect(() =>
         spawnCodexWithInstallAdmission([adapter], () => {
