@@ -9,12 +9,17 @@ import type { JSONReport } from '@playwright/test/reporter'
 import { describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const loadConfig = async (platform: NodeJS.Platform): Promise<PlaywrightTestConfig> => {
+const loadConfig = async (
+  platform: NodeJS.Platform,
+  browser = false
+): Promise<PlaywrightTestConfig> => {
   const original = process.platform
   Object.defineProperty(process, 'platform', { value: platform })
   try {
     vi.resetModules()
-    return (await import('./playwright.config')).default
+    return browser
+      ? (await import('./playwright.browser.config')).default
+      : (await import('./playwright.config')).default
   } finally {
     Object.defineProperty(process, 'platform', { value: original })
   }
@@ -68,6 +73,41 @@ describe('Electron Playwright concurrency', () => {
     }
   )
 })
+
+it('schedules each Windows browser case once without inheriting the Electron project', async () => {
+  const config = await loadConfig('win32', true)
+  const root = mkdtempSync(join(tmpdir(), 'open-science-browser-config-'))
+  try {
+    const configPath = join(root, 'playwright.config.cjs')
+    writeFileSync(
+      configPath,
+      `module.exports = ${JSON.stringify({ ...config, testDir: root, webServer: undefined })}`
+    )
+    writeFileSync(
+      join(root, 'browser.spec.cjs'),
+      `const { test } = require(${JSON.stringify(require.resolve('@playwright/test'))});
+       test('browser fixture', async () => {});`
+    )
+    const run = spawnSync(
+      process.execPath,
+      [
+        require.resolve('@playwright/test/cli'),
+        'test',
+        '-c',
+        configPath,
+        '--list',
+        '--reporter=json'
+      ],
+      { encoding: 'utf8', timeout: 15_000 }
+    )
+    expect(run.status, run.stderr).toBe(0)
+    const report = JSON.parse(run.stdout) as JSONReport
+    const scheduled = report.suites.flatMap((suite) => suite.specs.flatMap((spec) => spec.tests))
+    expect(scheduled.map((test) => test.projectName)).toEqual(['chromium'])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 20_000)
 
 it('partitions the selected Electron suites across three shards without losing or repeating tests', () => {
   const collect = (files: string[], shard?: string): string[] => {

@@ -71,41 +71,41 @@ async function rpc(
   return { status: response.status, body: await response.json() }
 }
 
-it('opens a supported Library page containing long valid abstracts over Web RPC', async () => {
-  const client = createProjectDbClient(await directory())
-  cleanup.push(() => client.$disconnect())
-  await migrateApplicationDatabase(client)
-  const catalog = new LiteratureCatalog(async () => client)
-  const abstract = 'a'.repeat(180_000)
-  for (let index = 0; index < 100; index++) {
-    await catalog.transact({
-      kind: 'create-item',
-      item: literatureItemInputSchema.parse({
-        itemType: 'journalArticle',
-        title: `Reference ${index}`,
-        abstract
+it.each(['library', 'global-search'] as const)(
+  'opens a %s page containing long valid abstracts over Web RPC',
+  async (scope) => {
+    const client = createProjectDbClient(await directory())
+    cleanup.push(() => client.$disconnect())
+    await migrateApplicationDatabase(client)
+    const catalog = new LiteratureCatalog(async () => client)
+    const abstract = 'a'.repeat(180_000)
+    for (let index = 0; index < 100; index++) {
+      await catalog.transact({
+        kind: 'create-item',
+        item: literatureItemInputSchema.parse({
+          itemType: 'journalArticle',
+          title: `Reference ${index}`,
+          abstract
+        })
       })
-    })
-  }
-  const small = await rpc('literature:search', () =>
-    catalog.search({ scope: 'library', limit: 50 })
-  )
-  expect(small.status).toBe(200)
-  const result = await rpc('literature:search', () =>
-    catalog.search({ scope: 'library', limit: 100 })
-  )
-  expect(result, JSON.stringify(result)).toMatchObject({ status: 200 })
-  const ids: string[] = []
-  let offset: number | undefined = 0
-  do {
-    const page = await catalog.search({ scope: 'library', limit: 100, offset })
-    ids.push(...page.entries.flatMap((entry) => ('id' in entry ? [entry.id] : [])))
-    offset = page.nextOffset
-  } while (offset !== undefined)
-  expect(new Set(ids).size).toBe(100)
-  expect(ids).toHaveLength(100)
-  expect((await catalog.get(ids[0]))?.item.abstract).toBe(abstract)
-}, 30_000)
+    }
+    const small = await rpc('literature:search', () => catalog.search({ scope, limit: 50 }))
+    expect(small.status).toBe(200)
+    const result = await rpc('literature:search', () => catalog.search({ scope, limit: 100 }))
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 200 })
+    const ids: string[] = []
+    let offset: number | undefined = 0
+    do {
+      const page = await catalog.search({ scope, limit: 100, offset })
+      ids.push(...page.entries.flatMap((entry) => ('id' in entry ? [entry.id] : [])))
+      offset = page.nextOffset
+    } while (offset !== undefined)
+    expect(new Set(ids).size).toBe(100)
+    expect(ids).toHaveLength(100)
+    expect((await catalog.get(ids[0]))?.item.abstract).toBe(abstract)
+  },
+  30_000
+)
 
 async function completedJob(count: number): Promise<{
   measured: { bytes: number; calls: number }
@@ -242,9 +242,11 @@ it('offers a lossless bounded export for an individually oversized reference', a
       abstract: 'a'.repeat(10 * 1024 * 1024) + '😀'
     })
   })
-  await expect(catalog.search({ scope: 'library' })).rejects.toThrow(
-    'Literature reference exceeds the display budget: ' + receipt.id
-  )
+  for (const scope of ['library', 'global-search'] as const) {
+    await expect(catalog.search({ scope })).rejects.toThrow(
+      'Literature reference exceeds the display budget: ' + receipt.id
+    )
+  }
   const first = await catalog.exportRecord({ itemId: receipt.id })
   expect((await rpc('literature:export-record', async () => first)).status).toBe(200)
   const chunks = [first.chunk]
@@ -328,9 +330,11 @@ it('counts matching oversized records without loading their metadata', async () 
       abstract: 'A'.repeat(10 * 1024 * 1024 + 1)
     })
   })
-  expect(
-    await catalog.search({ scope: 'library', query: 'Oversized count reference', countOnly: true })
-  ).toEqual({ entries: [], totalCount: 1 })
+  for (const scope of ['library', 'global-search'] as const) {
+    expect(
+      await catalog.search({ scope, query: 'Oversized count reference', countOnly: true })
+    ).toEqual({ entries: [], totalCount: 1 })
+  }
 })
 
 it('downloads complete metadata for an oversized reference retained in Trash', async () => {

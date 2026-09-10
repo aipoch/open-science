@@ -1537,7 +1537,16 @@ const createApplicationModules = async (
   const projectFilesHandlers = createProjectFilesHandlers(
     projectFilesRepository,
     sessionPersistenceCoordinator,
-    projectDeletionCoordinator
+    projectDeletionCoordinator,
+    (file) =>
+      managedFileVersionService.openVersion(
+        {
+          source: file.source,
+          projectId: file.projectId,
+          fileId: file.sourceFileId
+        },
+        file.sourceVersionId
+      )
   )
   const managedFileVersionHandlers = createManagedFileVersionHandlers(managedFileVersionService, {
     withDataRootWrite,

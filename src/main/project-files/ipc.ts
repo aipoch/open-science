@@ -1,4 +1,5 @@
 import { ipcMainHandle } from '../ipc-handler-registry'
+import { createFileContentSearch, type SearchFileOpener } from './content-search'
 
 import type {
   ArtifactGroupPage,
@@ -47,42 +48,50 @@ type ProjectFilesHandlers = {
 const createProjectFilesHandlers = (
   repository: ProjectFilesQueryRepository,
   repairBackend: ProjectFilesRepairBackend,
-  recoveryBackend: ProjectFilesRecoveryBackend
-): ProjectFilesHandlers => ({
-  getOverview: async (request) => {
-    await recoveryBackend.waitForProjectOperations([request.projectId])
-    return repository.getOverview(request)
-  },
-  listFiles: async (request) => {
-    await recoveryBackend.waitForProjectOperations([request.projectId])
-    return repository.listFiles(request)
-  },
-  readExportFiles: async (request) => {
-    await recoveryBackend.waitForProjectOperations([request.projectId])
-    return repository.readExportFiles(request)
-  },
-  resolveFile: async (request) => {
-    await recoveryBackend.waitForProjectOperations([request.projectId])
-    return repository.resolveFile(request)
-  },
-  listArtifactGroups: async (request) => {
-    await recoveryBackend.waitForProjectOperations([request.projectId])
-    return repository.listArtifactGroups(request)
-  },
-  searchArtifacts: async (request) => {
-    await recoveryBackend.waitForProjectOperations([
-      ...request.primaryProjectIds,
-      ...request.otherProjectIds
-    ])
-    return repository.searchArtifacts(request)
-  },
-  repairIndex: async ({ projectId }) => {
-    // repairProjectFiles performs a complete Session scan and global projection reconciliation.
-    // Keep it behind strict recovery so it cannot touch another Project with a failed deletion tail.
-    await recoveryBackend.recoverPendingDeletions()
-    return repairBackend.repairProjectFiles(projectId)
+  recoveryBackend: ProjectFilesRecoveryBackend,
+  openSearchFile?: SearchFileOpener
+): ProjectFilesHandlers => {
+  const searchContent = openSearchFile
+    ? createFileContentSearch(repository, openSearchFile)
+    : undefined
+  return {
+    getOverview: async (request) => {
+      await recoveryBackend.waitForProjectOperations([request.projectId])
+      return repository.getOverview(request)
+    },
+    listFiles: async (request) => {
+      await recoveryBackend.waitForProjectOperations([request.projectId])
+      return repository.listFiles(request)
+    },
+    readExportFiles: async (request) => {
+      await recoveryBackend.waitForProjectOperations([request.projectId])
+      return repository.readExportFiles(request)
+    },
+    resolveFile: async (request) => {
+      await recoveryBackend.waitForProjectOperations([request.projectId])
+      return repository.resolveFile(request)
+    },
+    listArtifactGroups: async (request) => {
+      await recoveryBackend.waitForProjectOperations([request.projectId])
+      return repository.listArtifactGroups(request)
+    },
+    searchArtifacts: async (request) => {
+      await recoveryBackend.waitForProjectOperations([
+        ...request.primaryProjectIds,
+        ...request.otherProjectIds
+      ])
+      return request.searchContent && request.filenameContains?.trim() && searchContent
+        ? searchContent(request)
+        : repository.searchArtifacts(request)
+    },
+    repairIndex: async ({ projectId }) => {
+      // repairProjectFiles performs a complete Session scan and global projection reconciliation.
+      // Keep it behind strict recovery so it cannot touch another Project with a failed deletion tail.
+      await recoveryBackend.recoverPendingDeletions()
+      return repairBackend.repairProjectFiles(projectId)
+    }
   }
-})
+}
 
 // All Files operations wait on Project-scoped deletion recovery before reading or repairing metadata.
 // This prevents a query from observing its Project midway through crash recovery without coupling it

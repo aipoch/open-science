@@ -13,6 +13,7 @@ import { createLogger } from '../logger'
 import { normalizeLiteratureSearchTextV1 as normalizeSearchText } from '../../shared/literature-search-text'
 import { findLiteratureDuplicateGroups } from './duplicates'
 import { planLiteratureMerge, supplementLiteratureMetadata } from './duplicate-metadata'
+import { searchTitleRank } from '../../shared/search-text'
 
 import {
   LITERATURE_IDENTITY_SCHEMES,
@@ -921,6 +922,18 @@ class LiteratureCatalog {
     if (request.scope === 'collections') {
       const where = {
         ...(request.parentId ? { parentId: request.parentId } : {}),
+        ...(request.itemId || request.projectId
+          ? {
+              items: {
+                some: {
+                  ...(request.itemId ? { itemId: request.itemId } : {}),
+                  ...(request.projectId
+                    ? { item: { projects: { some: { projectId: request.projectId } } } }
+                    : {})
+                }
+              }
+            }
+          : {}),
         ...(query ? { name: { contains: query } } : {})
       }
       const [totalCount, rows] = await Promise.all([
@@ -1006,12 +1019,16 @@ class LiteratureCatalog {
 
   private async searchLibrary(
     request: LiteratureCatalogSearchRequest,
-    client: Pick<LiteratureCatalogClient, 'literatureItem' | '$queryRaw' | 'projectDeletionIntent'>,
+    client: Pick<
+      LiteratureCatalogClient,
+      'literatureItem' | 'literatureCollection' | '$queryRaw' | 'projectDeletionIntent'
+    >,
     boundResponse = true
   ): Promise<LiteratureCatalogSearchPage> {
     const offset = Math.max(0, request.offset ?? 0)
     const limit = Math.min(100, Math.max(1, request.limit ?? 50))
     const filter = request.filter
+    const query = normalizeSpace(request.query ?? '')
     const predicates: Prisma.Sql[] = [
       request.lifecycle === 'deleted'
         ? Prisma.sql`i."deletedAt" IS NOT NULL`
@@ -1078,10 +1095,120 @@ class LiteratureCatalog {
       predicates.push(Prisma.sql`i."issuedYear" >= ${filter.yearFrom}`)
     if (filter?.yearTo !== undefined)
       predicates.push(Prisma.sql`i."issuedYear" <= ${filter.yearTo}`)
-    if (filter?.hasFullText !== undefined)
-      predicates.push(Prisma.sql`${filter.hasFullText ? Prisma.empty : Prisma.sql`NOT`} EXISTS (
+    if (request.updatedAfter !== undefined)
+      predicates.push(Prisma.sql`i."updatedAt" >= ${new Date(request.updatedAfter)}`)
+    const hasFullText = request.entryKind === 'pdf' ? true : filter?.hasFullText
+    if (hasFullText !== undefined)
+      predicates.push(Prisma.sql`${hasFullText ? Prisma.empty : Prisma.sql`NOT`} EXISTS (
       SELECT 1 FROM "LiteratureAttachment" a JOIN "LiteratureAttachmentVersion" v ON v."attachmentId" = a.id WHERE a."itemId" = i.id)`)
     const where = Prisma.join(predicates, ' AND ')
+    if (request.scope === 'global-search') {
+      // Rank lightweight identities across both kinds, then hydrate only the requested page.
+      const [papers, collections] = await Promise.all([
+        request.entryKind === 'collection'
+          ? []
+          : client.$queryRaw<{ id: string; title: string; updatedAt: Date }[]>(
+              Prisma.sql`SELECT i.id, i.title, i."updatedAt" FROM "LiteratureItem" i WHERE ${where}`
+            ),
+        request.entryKind && request.entryKind !== 'collection'
+          ? []
+          : client.literatureCollection.findMany({
+              where: {
+                ...(request.updatedAfter === undefined
+                  ? {}
+                  : { updatedAt: { gte: new Date(request.updatedAfter) } }),
+                ...(request.projectId
+                  ? {
+                      items: {
+                        some: {
+                          item: {
+                            deletedAt: null,
+                            projects: {
+                              some: {
+                                projectId: request.projectId,
+                                project: await availableProjectWhere(client)
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  : {}),
+                ...(query
+                  ? { OR: [{ name: { contains: query } }, { description: { contains: query } }] }
+                  : {})
+              },
+              include: {
+                _count: {
+                  select: {
+                    items: { where: { item: { deletedAt: null, mergedIntoItemId: null } } }
+                  }
+                }
+              }
+            })
+      ])
+      const ranked = [
+        ...papers.map((item) => ({
+          id: item.id,
+          title: item.title,
+          updatedAt: item.updatedAt.getTime(),
+          kind: 'paper' as const
+        })),
+        ...collections.map((item) => ({
+          id: item.id,
+          title: item.name,
+          updatedAt: item.updatedAt.getTime(),
+          kind: 'collection' as const
+        }))
+      ].sort(
+        (a, b) =>
+          (request.searchSort !== 'recent'
+            ? searchTitleRank(b.title, query) - searchTitleRank(a.title, query)
+            : 0) ||
+          b.updatedAt - a.updatedAt ||
+          a.id.localeCompare(b.id)
+      )
+      if (request.countOnly) return { entries: [], totalCount: ranked.length }
+      const page = ranked.slice(offset, offset + limit)
+      const selectedPapers = await client.literatureItem.findMany({
+        where: { id: { in: page.filter((item) => item.kind === 'paper').map((item) => item.id) } },
+        include: await activeItemInclude(client)
+      })
+      const paperViews = new Map(selectedPapers.map((item) => [item.id, toItemView(item)]))
+      const collectionViews = new Map(
+        collections.map((row) => [
+          row.id,
+          {
+            revision: row.revision,
+            id: row.id,
+            name: row.name,
+            description: row.description,
+            parentId: row.parentId ?? undefined,
+            itemCount: row._count.items,
+            createdAt: row.createdAt.getTime(),
+            updatedAt: row.updatedAt.getTime()
+          }
+        ])
+      )
+      const entries = page.flatMap((item) => {
+        const view = item.kind === 'paper' ? paperViews.get(item.id) : collectionViews.get(item.id)
+        return view ? [view] : []
+      })
+      const bounded = boundedLiteraturePage(
+        entries,
+        0,
+        limit,
+        (row) =>
+          new ApplicationCommandError('command-failed', LITERATURE_OVERSIZED_REFERENCE + row.id)
+      )
+      const nextOffset = offset + bounded.entries.length
+      return {
+        entries: bounded.entries,
+        totalCount: ranked.length,
+        nextOffset: nextOffset < ranked.length ? nextOffset : undefined
+      }
+    }
+
     const direction =
       (request.sortDirection ?? (request.sortBy === 'title' ? 'asc' : 'desc')) === 'asc'
         ? Prisma.sql`ASC`

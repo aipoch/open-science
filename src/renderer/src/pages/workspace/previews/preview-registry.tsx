@@ -12,10 +12,13 @@ import { PlanJsonPreview } from './renderers/PlanJsonPreview'
 import { PdfPreviewRenderer } from './renderers/PdfPreview'
 import { TextPreviewRenderer } from './renderers/TextPreview'
 import { TiffPreviewRenderer } from './renderers/TiffPreview'
+import { NotebookFilePreview } from './renderers/NotebookFilePreview'
+import { getFileExtension } from '../preview-support'
 
 // Keeps the registry as the single routing point while avoiding dynamic component creation in render.
 export const renderPreviewFile = ({
   item,
+  presentation,
   annotationVersionId,
   annotationBlockedByHistoricalVersion,
   annotationVersionPending,
@@ -28,6 +31,7 @@ export const renderPreviewFile = ({
 }: PreviewFileRendererProps): React.JSX.Element | undefined => {
   const props = {
     item,
+    presentation,
     annotationVersionId,
     annotationBlockedByHistoricalVersion,
     annotationVersionPending,
@@ -37,11 +41,16 @@ export const renderPreviewFile = ({
     onRemoveAnnotation,
     onAnnotationError
   }
+  if (
+    getFileExtension(item.name) === 'ipynb' ||
+    item.mimeType?.split(';')[0] === 'application/x-ipynb+json'
+  )
+    return <NotebookFilePreview {...props} />
   switch (item.format) {
     case 'code':
       return <CodePreviewRenderer {...props} />
     case 'csv':
-      return <CsvPreviewRenderer item={item} />
+      return <CsvPreviewRenderer {...props} />
     case 'fasta':
       return <FastaPreviewRenderer {...props} />
     case 'html':
@@ -55,7 +64,7 @@ export const renderPreviewFile = ({
     case 'pdb':
       return <PdbPreviewRenderer item={item} />
     case 'molecule':
-      return <MoleculePreviewRenderer item={item} />
+      return <MoleculePreviewRenderer {...props} />
     case 'text':
       return <TextPreviewRenderer {...props} />
     case 'tiff':

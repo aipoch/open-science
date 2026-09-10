@@ -383,8 +383,18 @@ export type LiteratureDuplicateGroup = z.infer<typeof literatureDuplicateGroupSc
 
 const literatureCatalogSearchRequestSchema = z
   .object({
-    scope: z.enum(['library', 'inbox', 'collections', 'project-counts', 'duplicates']),
+    scope: z.enum([
+      'library',
+      'inbox',
+      'collections',
+      'project-counts',
+      'duplicates',
+      'global-search'
+    ]),
     refreshDuplicates: z.boolean().optional(),
+    updatedAfter: z.number().int().nonnegative().optional(),
+    searchSort: z.enum(['relevance', 'recent']).optional(),
+    entryKind: z.enum(['paper', 'collection', 'pdf']).optional(),
     allItemIds: z.boolean().optional(),
     countOnly: z.boolean().optional(),
     itemIds: z.array(nonEmptyTextSchema).max(200).optional(),
@@ -392,6 +402,7 @@ const literatureCatalogSearchRequestSchema = z
     projectId: optionalTextSchema,
     collectionId: optionalTextSchema,
     parentId: optionalTextSchema,
+    itemId: optionalTextSchema,
     inboxState: z.enum(LITERATURE_INBOX_STATES).optional(),
     lifecycle: z.enum(LITERATURE_LIFECYCLE_STATES).optional(),
     sortBy: z.enum(LITERATURE_SORT_FIELDS).optional(),
@@ -408,9 +419,14 @@ const literatureCatalogSearchRequestSchema = z
   .refine((request) => request.itemIds === undefined || request.scope === 'library', {
     message: 'Selected item membership is only available for the library.'
   })
-  .refine((request) => !request.countOnly || (request.scope === 'library' && !request.allItemIds), {
-    message: 'Count-only queries require the library and cannot request item membership.'
-  })
+  .refine(
+    (request) =>
+      !request.countOnly ||
+      ((request.scope === 'library' || request.scope === 'global-search') && !request.allItemIds),
+    {
+      message: 'Count-only queries require the library and cannot request item membership.'
+    }
+  )
 
 const literatureCatalogSearchPageSchema = z
   .object({
