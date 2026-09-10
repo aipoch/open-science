@@ -3,7 +3,9 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$Exe,
   [ValidateSet('Basic', 'Full')]
-  [string]$Mode = 'Basic'
+  [string]$Mode = 'Basic',
+  # Tests can establish host port restrictions after the native allocator chooses its port.
+  [scriptblock]$AfterSetup
 )
 
 $ErrorActionPreference = 'Stop'
@@ -115,6 +117,7 @@ try {
     throw 'Notebook AppContainer setup did not produce owned ready resources.'
   }
   $gatewayPort = [int]$status.gatewayPort
+  if ($AfterSetup) { & $AfterSetup $gatewayPort }
   $ownedReceipt = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
   if ($ownedReceipt.schemaVersion -ne 4 -or [string]::IsNullOrWhiteSpace($ownedReceipt.wfpSublayerKey) -or $ownedReceipt.wfpFilterKeys.Count -ne 3) {
     throw 'Notebook AppContainer receipt does not identify the owned WFP fence.'
