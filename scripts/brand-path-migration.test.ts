@@ -2398,3 +2398,380 @@ describe('visible migration progress', () => {
     expect(result.stderr).toContain('completed')
   })
 })
+
+describe('pre-publication snapshot restart', () => {
+  async function interrupted(): Promise<
+    Awaited<ReturnType<typeof fixture>> & {
+      options: { home: string; appData: string; mode: string }
+      oldLogs: string
+      newLogs: string
+      state: string
+      receipt: ReturnType<typeof JSON.parse>
+      runMigration: typeof import('../resources/brand-migration/transaction.mjs').runMigration
+    }
+  > {
+    const f = await fixture()
+    const oldLogs = join(f.home, 'Library', 'Logs', 'Open Science (DEV)')
+    const newLogs = join(f.home, 'Library', 'Logs', 'Open-Science (DEV)')
+    await mkdir(oldLogs, { recursive: true })
+    await mkdir(newLogs, { recursive: true })
+    await writeFile(join(oldLogs, 'main.log'), 'old log\n')
+    await writeFile(join(newLogs, 'main.log'), 'new log\n')
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(join(f.config, 'open-science.db'))
+    db.exec('CREATE TABLE GrantedLocalRoot(id TEXT PRIMARY KEY,path TEXT)')
+    db.prepare('INSERT INTO GrantedLocalRoot VALUES (?,?)').run('stable-root', f.old)
+    db.close()
+    const options = { home: f.home, appData: join(f.home, 'appData'), mode: 'dev' }
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    await expect(
+      runMigration(
+        { ...options, execute: true },
+        {
+          onProgress(event: { phase: string }) {
+            if (event.phase === 'copied') throw new Error('fixture interruption')
+          }
+        }
+      )
+    ).rejects.toThrow('fixture interruption')
+    const state = `${f.config}.brand-migration`
+    const receipt = JSON.parse(await readFile(join(state, 'journal.json'), 'utf8'))
+    await writeFile(join(oldLogs, 'main.log'), 'old log\nlate old log\n')
+    await writeFile(join(newLogs, 'main.log'), 'new log\nlate new log\n')
+    return { ...f, options, oldLogs, newLogs, state, receipt, runMigration }
+  }
+
+  it('restarts appended source and target logs without losing either generation, SQLite IDs or prior staging', async () => {
+    const f = await interrupted()
+    const staged = f.receipt.participants.find((p) => p.from === f.oldLogs).stage
+    const stagedBytes = await readFile(join(staged, 'main.log'), 'utf8')
+    expect(cli(f.home, '--resume').status).not.toBe(0)
+    const result = cli(f.home, '--restart-preparing')
+    expect(result.status, result.output).toBe(0)
+    expect(result.value.status).toBe('committed')
+    expect(result.value.id).not.toBe(f.receipt.id)
+    expect(await readFile(join(f.newLogs, 'main.log'), 'utf8')).toBe('old log\nlate old log\n')
+    const target = result.value.existingTargetBackups.find((p) => p.from === f.newLogs)
+    expect(await readFile(join(target.backup, 'main.log'), 'utf8')).toBe('new log\nlate new log\n')
+    expect(await readFile(join(staged, 'main.log'), 'utf8')).toBe(stagedBytes)
+    expect(
+      JSON.parse(await readFile(join(f.state, `journal-${f.receipt.id}.superseded.json`), 'utf8'))
+    ).toEqual(f.receipt)
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(join(f.config, 'open-science.db'), { readOnly: true })
+    expect(db.prepare('SELECT id,path FROM GrantedLocalRoot').get()).toEqual({
+      id: 'stable-root',
+      path: f.next
+    })
+    db.close()
+    expect(cli(f.home, '--restart-preparing').value.id).toBe(result.value.id)
+    expect(cli(f.home, '--rollback').status).toBe(0)
+    expect(await readFile(join(f.oldLogs, 'main.log'), 'utf8')).toBe('old log\nlate old log\n')
+    expect(await readFile(join(f.newLogs, 'main.log'), 'utf8')).toBe('new log\nlate new log\n')
+  })
+
+  it('reports the changed file and explicit recovery action without silently accepting the new snapshot', async () => {
+    const f = await interrupted()
+    const result = cli(f.home, '--resume')
+    expect(result.status).not.toBe(0)
+    expect(result.output).toContain('main.log')
+    expect(result.output).toContain('--restart-preparing')
+    expect(JSON.parse(await readFile(join(f.state, 'journal.json'), 'utf8')).id).toBe(f.receipt.id)
+  })
+
+  it.each(['restart-archived', 'restart-intent', 'restart-installed'])(
+    'recovers a second interruption at %s without replacing the preserved receipt',
+    async (phase) => {
+      const f = await interrupted()
+      await expect(
+        f.runMigration(
+          { ...f.options, restartPreparing: true },
+          {
+            onProgress(event: { phase: string }) {
+              if (event.phase === phase) throw new Error('restart interruption')
+            }
+          }
+        )
+      ).rejects.toThrow('restart interruption')
+      const archive = await readFile(
+        join(f.state, `journal-${f.receipt.id}.superseded.json`),
+        'utf8'
+      )
+      const result = cli(f.home, '--restart-preparing')
+      expect(result.status, result.output).toBe(0)
+      expect(result.value.status).toBe('committed')
+      expect(await readFile(join(f.state, `journal-${f.receipt.id}.superseded.json`), 'utf8')).toBe(
+        archive
+      )
+      expect(await readFile(join(f.newLogs, 'main.log'), 'utf8')).toBe('old log\nlate old log\n')
+    }
+  )
+
+  it.each([
+    'configuration',
+    'database',
+    'log rotation',
+    'log truncation',
+    'backup appeared',
+    'publishing'
+  ])('refuses to rebuild after %s and preserves the receipt', async (change) => {
+    const f = await interrupted()
+    if (change === 'configuration') await writeFile(join(f.config, 'settings.json'), '{}')
+    if (change === 'database') {
+      const { DatabaseSync } = await import('node:sqlite')
+      const db = new DatabaseSync(join(f.config, 'open-science.db'))
+      db.exec("UPDATE GrantedLocalRoot SET id='changed'")
+      db.close()
+    }
+    if (change === 'log rotation') {
+      const { rename } = await import('node:fs/promises')
+      await rename(join(f.oldLogs, 'main.log'), join(f.oldLogs, 'main.1.log'))
+      await writeFile(join(f.oldLogs, 'main.log'), 'rotated\n')
+    }
+    if (change === 'log truncation') await writeFile(join(f.oldLogs, 'main.log'), '')
+    if (change === 'backup appeared') await mkdir(f.receipt.participants[0].backup)
+    if (change === 'publishing') {
+      f.receipt.status = 'publishing'
+      await writeFile(join(f.state, 'journal.json'), JSON.stringify(f.receipt))
+    }
+    const before = await readFile(join(f.state, 'journal.json'), 'utf8')
+    const result = cli(f.home, '--restart-preparing')
+    expect(result.status).not.toBe(0)
+    expect(result.output).not.toContain('Unknown argument')
+    expect(await readFile(join(f.state, 'journal.json'), 'utf8')).toBe(before)
+    expect(await lstat(f.old).then((s) => s.isDirectory())).toBe(true)
+    expect(await lstat(f.next).catch(() => undefined)).toBeUndefined()
+  })
+  it.each(['new append', 'publication evidence'])(
+    'rechecks %s after restart intent before installing the next receipt',
+    async (change) => {
+      const f = await interrupted()
+      await expect(
+        f.runMigration(
+          { ...f.options, restartPreparing: true },
+          {
+            async onProgress(event: { phase: string }) {
+              if (event.phase !== 'restart-intent') return
+              if (change === 'new append')
+                await writeFile(join(f.oldLogs, 'main.log'), 'old log\nlate old log\nmore\n')
+              else await mkdir(f.receipt.participants[0].backup)
+            }
+          }
+        )
+      ).rejects.toThrow()
+      const receipt = JSON.parse(await readFile(join(f.state, 'journal.json'), 'utf8'))
+      expect(receipt.status).toBe('restarting')
+      expect(receipt.id).toBe(f.receipt.id)
+    }
+  )
+  it('resumes a durable restart intent but blocks ordinary automatic startup until explicit recovery', async () => {
+    const f = await interrupted()
+    await expect(
+      f.runMigration(
+        { ...f.options, restartPreparing: true },
+        {
+          onProgress(event: { phase: string }) {
+            if (event.phase === 'restart-intent') throw new Error('interrupted intent')
+          }
+        }
+      )
+    ).rejects.toThrow('interrupted intent')
+    const pending = await readFile(join(f.state, 'journal.json'), 'utf8')
+    const startup = cli(f.home, '--execute')
+    expect(startup.status).not.toBe(0)
+    expect(startup.output).toContain('Interrupted snapshot restart')
+    expect(await readFile(join(f.state, 'journal.json'), 'utf8')).toBe(pending)
+    expect(cli(f.home, '--resume').value.status).toBe('committed')
+  })
+
+  it('survives two actual process exits while preserving the initial archive and staged files', async () => {
+    const f = await interrupted()
+    const { spawnSync } = await import('node:child_process')
+    for (const phase of ['restart-archived', 'restart-intent']) {
+      const child = spawnSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `
+        import {runMigration} from './resources/brand-migration/transaction.mjs';
+        import {join} from 'node:path';
+        const [home,phase] = process.argv.slice(1);
+        await runMigration({home,appData:join(home,'appData'),mode:'dev',restartPreparing:true,recoverLock:true}, {
+          onProgress(e) { if(e.phase === phase) process.exit(74); }
+        });
+      `,
+          f.home,
+          phase
+        ],
+        { encoding: 'utf8' }
+      )
+      expect(child.status, child.stderr).toBe(74)
+    }
+    const result = cli(f.home, '--resume', '--recover-lock')
+    expect(result.status, result.output).toBe(0)
+    expect(
+      JSON.parse(await readFile(join(f.state, `journal-${f.receipt.id}.superseded.json`), 'utf8'))
+    ).toEqual(f.receipt)
+    expect(await readFile(join(f.newLogs, 'main.log'), 'utf8')).toBe('old log\nlate old log\n')
+  })
+
+  it('rejects a competing real restart process while its owner holds the restart lease', async () => {
+    const f = await interrupted()
+    await f.runMigration(
+      { ...f.options, restartPreparing: true },
+      {
+        onProgress(event: { phase: string }) {
+          if (event.phase !== 'restart-intent') return
+          const result = cli(f.home, '--restart-preparing', '--recover-lock')
+          expect(result.status).not.toBe(0)
+          expect(result.output).toContain('kernel lock unavailable or active')
+        }
+      }
+    )
+    expect(cli(f.home, '--restart-preparing').value.status).toBe('committed')
+  })
+
+  it('does not mutate the receipt when a real process holds an old-root descriptor', async () => {
+    const f = await interrupted()
+    const { spawn } = await import('node:child_process')
+    const { once } = await import('node:events')
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        `
+      const fs=require('node:fs'); const fd=fs.openSync('main.log','a');
+      process.on('message',()=>{}); process.send('ready');
+    `
+      ],
+      { cwd: f.oldLogs, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+    )
+    await once(child, 'message')
+    try {
+      const before = await readFile(join(f.state, 'journal.json'), 'utf8')
+      const result = cli(f.home, '--restart-preparing')
+      expect(result.status).not.toBe(0)
+      expect(result.output).toMatch(/occupied|using migration paths/)
+      expect(await readFile(join(f.state, 'journal.json'), 'utf8')).toBe(before)
+    } finally {
+      const exited = once(child, 'exit')
+      child.kill()
+      await exited
+    }
+  })
+
+  it('keeps the restart intent when its archive is tampered with or its next-stage path is forged', async () => {
+    const f = await interrupted()
+    await expect(
+      f.runMigration(
+        { ...f.options, restartPreparing: true },
+        {
+          onProgress(event: { phase: string }) {
+            if (event.phase === 'restart-intent') throw new Error('interrupted')
+          }
+        }
+      )
+    ).rejects.toThrow('interrupted')
+    const file = join(f.state, 'journal.json'),
+      archive = join(f.state, `journal-${f.receipt.id}.superseded.json`)
+    const pending = await readFile(file, 'utf8'),
+      original = await readFile(archive, 'utf8')
+    await writeFile(archive, '{}')
+    expect(cli(f.home, '--resume').output).toContain('archive does not match')
+    expect(await readFile(file, 'utf8')).toBe(pending)
+    await writeFile(archive, original)
+    const forged = JSON.parse(pending)
+    forged.restart.next.participants[0].stage = join(f.home, 'unrelated')
+    await writeFile(file, JSON.stringify(forged))
+    expect(cli(f.home, '--resume').output).toContain('Invalid journal participant paths')
+    expect(await readFile(join(f.oldLogs, 'main.log'), 'utf8')).toBe('old log\nlate old log\n')
+  })
+
+  it('never turns a dry-run or mixed action into a snapshot restart', async () => {
+    const f = await interrupted()
+    const before = await readFile(join(f.state, 'journal.json'), 'utf8')
+    for (const args of [
+      ['--dry-run', '--restart-preparing'],
+      ['--execute', '--restart-preparing'],
+      ['--rollback', '--restart-preparing']
+    ]) {
+      expect(cli(f.home, ...args).status).not.toBe(0)
+    }
+    expect(cli(f.home).value.status).toBe('preparing')
+    expect(await readFile(join(f.state, 'journal.json'), 'utf8')).toBe(before)
+  })
+  it('does not accept a data change between original verification and rebuilding its manifest', async () => {
+    const f = await interrupted()
+    const before = await readFile(join(f.state, 'journal.json'), 'utf8')
+    let changed = false
+    await expect(
+      f.runMigration(
+        { ...f.options, restartPreparing: true },
+        {
+          async onProgress(event: { phase: string; path?: string; completed?: number }) {
+            if (
+              !changed &&
+              event.phase === 'scanning' &&
+              event.path === f.old &&
+              event.completed === 0
+            ) {
+              changed = true
+              await writeFile(join(f.old, 'uploads', 'paper.txt'), 'changed user research\n')
+            }
+          }
+        }
+      )
+    ).rejects.toThrow('Integrity mismatch')
+    expect(changed).toBe(true)
+    expect(await readFile(join(f.state, 'journal.json'), 'utf8')).toBe(before)
+    expect(await readFile(join(f.old, 'uploads', 'paper.txt'), 'utf8')).toBe(
+      'changed user research\n'
+    )
+  })
+  it('resumes the accepted restart generation after it partially publishes, without creating another generation', async () => {
+    const f = await interrupted()
+    await expect(
+      f.runMigration(
+        { ...f.options, restartPreparing: true },
+        {
+          onProgress(event: { phase: string }) {
+            if (event.phase === 'root-published') throw new Error('partial new publication')
+          }
+        }
+      )
+    ).rejects.toThrow('partial new publication')
+    const pending = JSON.parse(await readFile(join(f.state, 'journal.json'), 'utf8'))
+    expect(pending.status).toBe('publishing')
+    const result = cli(f.home, '--restart-preparing')
+    expect(result.status, result.output).toBe(0)
+    expect(result.value.id).toBe(pending.id)
+    expect(result.value.status).toBe('committed')
+    expect(await readFile(join(f.newLogs, 'main.log'), 'utf8')).toBe('old log\nlate old log\n')
+  })
+
+  it('preflights every original before rebuilding any earlier participant staging on resume', async () => {
+    const f = await fixture()
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    const options = { home: f.home, appData: join(f.home, 'appData'), mode: 'dev' }
+    await expect(
+      runMigration(
+        { ...options, execute: true },
+        {
+          onProgress(event: { phase: string; path?: string }) {
+            if (event.phase === 'copied' && event.path?.startsWith(`${f.config}.brand-stage-`))
+              throw new Error('late preparation interruption')
+          }
+        }
+      )
+    ).rejects.toThrow('late preparation interruption')
+    const receipt = JSON.parse(
+      await readFile(join(`${f.config}.brand-migration`, 'journal.json'), 'utf8')
+    )
+    const stage = receipt.participants.find((p) => p.from === f.old).stage
+    const before = await lstat(stage)
+    await writeFile(join(f.config, 'settings.json'), '{}')
+    expect(cli(f.home, '--resume').status).not.toBe(0)
+    expect((await lstat(stage)).ino).toBe(before.ino)
+  })
+})

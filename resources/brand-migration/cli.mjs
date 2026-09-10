@@ -36,6 +36,7 @@ export async function main(argv = process.argv.slice(2)) {
     else if (flag === '--audit-aliases') options.auditAliases = true
     else if (flag === '--retire-aliases') options.retireAliases = true
     else if (flag === '--execute') options.execute = true
+    else if (flag === '--restart-preparing') options.restartPreparing = true
     else if (flag === '--resume') options.resume = true
     else if (flag === '--rollback') options.rollback = true
     else if (flag === '--restart-after-rollback') options.restartAfterRollback = true
@@ -48,7 +49,7 @@ export async function main(argv = process.argv.slice(2)) {
       options.maps.push(pair)
     } else if (flag === '--help') {
       console.log(
-        'Usage: node scripts/migrate-brand-paths.mjs [--mode dev|packaged] [--home PATH] [--app-data PATH] [--config-root PATH] [--user-data PATH] [--map JSON] [--execute|--resume|--rollback] [--recover-lock] [--recover-incomplete-lock SHA256] [--restart-after-rollback] [--audit-aliases|--retire-aliases] [--state-dir PATH] [--data-parent PATH]\nWithout an action this command only prints a dry-run plan. Stop all app and runtime processes before execution.'
+        'Usage: node scripts/migrate-brand-paths.mjs [--mode dev|packaged] [--home PATH] [--app-data PATH] [--config-root PATH] [--user-data PATH] [--map JSON] [--execute|--resume|--rollback|--restart-preparing] [--recover-lock] [--recover-incomplete-lock SHA256] [--restart-after-rollback] [--audit-aliases|--retire-aliases] [--state-dir PATH] [--data-parent PATH]\nWithout an action this command only prints a dry-run plan. Stop all app and runtime processes before execution.'
       )
       return
     } else throw new Error(`Unknown argument: ${flag}`)
@@ -59,13 +60,18 @@ export async function main(argv = process.argv.slice(2)) {
       options.resume,
       options.rollback,
       options.auditAliases,
-      options.retireAliases
+      options.retireAliases,
+      options.restartPreparing
     ].filter(Boolean).length > 1
   )
     throw new Error('Choose one migration action')
   if (
     options.dryRun &&
-    (options.execute || options.resume || options.rollback || options.retireAliases)
+    (options.execute ||
+      options.resume ||
+      options.rollback ||
+      options.retireAliases ||
+      options.restartPreparing)
   )
     throw new Error('--dry-run cannot be combined with a write action')
   if (options.recoverIncompleteLock && !options.recoverLock)
@@ -125,6 +131,8 @@ export async function main(argv = process.argv.slice(2)) {
     result = await runMigration(options, { onProgress: logProgress })
     await ui?.complete()
   } catch (error) {
+    // The failure window can stay open indefinitely; its lifetime is not active migration work.
+    clearInterval(heartbeat)
     process.stderr.write(`Brand migration stopped: ${error.message}\n`)
     await ui?.fail(error)
     throw error
@@ -132,7 +140,7 @@ export async function main(argv = process.argv.slice(2)) {
     clearInterval(heartbeat)
   }
   // Manifests stay in the private receipt; stdout is a concise operator-facing plan/result.
-  const { journal, participants, ...summary } = result
+  const { journal, participants, restart, ...summary } = result
   const existingTargetBackups = (participants ?? journal?.participants ?? []).flatMap((p) =>
     p.previousTarget
       ? [{ from: p.to, backup: p.previousTarget.backup, kind: p.previousTarget.kind }]
@@ -142,6 +150,7 @@ export async function main(argv = process.argv.slice(2)) {
     JSON.stringify(
       {
         ...summary,
+        ...(restart ? { restartPending: true } : {}),
         ...(journal ? { status: journal.status, mappings: journal.mappings } : {}),
         ...(participants ? { backups: participants.map((p) => p.backup) } : {}),
         ...(existingTargetBackups.length ? { existingTargetBackups } : {})
