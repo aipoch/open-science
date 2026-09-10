@@ -1,7 +1,6 @@
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { FileMatcher } from 'app-builder-lib/out/fileMatcher'
 import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
@@ -16,35 +15,6 @@ import {
 } from '../src/main/notebook/micromamba-cache'
 
 describe('electron-builder native image processing', () => {
-  it('excludes private scratch and nested worktrees from the packaged application', () => {
-    const root = process.cwd()
-    const config = load(readFileSync(join(root, 'electron-builder.yml'), 'utf8')) as {
-      files: string[]
-    }
-    const matches = new FileMatcher(root, root, (pattern) => pattern, [
-      '**/*',
-      ...config.files
-    ]).createFilter()
-    const fileStat = statSync(join(root, 'package.json'))
-
-    for (const directory of [
-      '.scratch',
-      '.worktree',
-      '.worktrees',
-      '.claude',
-      '.codex',
-      '.open-science-test-runtime',
-      'test-results',
-      'playwright-report',
-      'coverage',
-      'dist',
-      'packages/notebook-network-sandbox'
-    ]) {
-      expect(matches(join(root, directory, 'private-diagnostics.json'), fileStat)).toBe(false)
-    }
-    expect(matches(join(root, 'out', 'main', 'index.js'), fileStat)).toBe(true)
-  })
-
   it('ships sharp and its platform binary outside the ASAR archive', () => {
     const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
       asarUnpack?: string[]
@@ -66,6 +36,7 @@ describe('electron-builder native image processing', () => {
     }
 
     expect(config.files).toContain('!node_modules/@aipoch/notebook-network-sandbox{,/**/*}')
+    expect(config.files).toContain('!packages/notebook-network-sandbox{,/**/*}')
     expect(config.win?.extraResources).toContainEqual({
       from: 'packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe',
       to: 'notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe'

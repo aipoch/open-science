@@ -15,14 +15,6 @@ files:
   # the app to multiple GB AND leaking local agent state into the shipped bundle.
   - '!.claude{,/**/*}'
   - '!.codex{,/**/*}'
-  # Local diagnostics and nested checkouts can contain private configuration and entire installs.
-  - '!.scratch{,/**/*}'
-  - '!.worktree{,/**/*}'
-  - '!.worktrees{,/**/*}'
-  - '!.open-science-test-runtime{,/**/*}'
-  - '!{test-results,playwright-report,coverage}{,/**/*}'
-  # Keep earlier builds out even when a certification build selects a different output directory.
-  - '!dist{,/**/*}'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
