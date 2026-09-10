@@ -449,6 +449,8 @@ describe('build verification throughput', () => {
     expect(macos['runs-on']).toBe('macos-14')
     const native = step(macos, 'Test macOS native behavior and release regressions').run
     for (const path of [
+      'src/main/windows.test.ts',
+      'packages/notebook-network-sandbox/src/filesystem-policy.test.ts',
       'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
       'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts',
       'src/main/net/network-info.test.ts',

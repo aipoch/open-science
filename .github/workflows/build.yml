@@ -205,6 +205,8 @@ jobs:
       - name: Test macOS native behavior and release regressions
         run: >-
           npx vitest run
+          src/main/windows.test.ts
+          packages/notebook-network-sandbox/src/filesystem-policy.test.ts
           packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts
           packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
           src/main/net/network-info.test.ts
