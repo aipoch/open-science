@@ -173,7 +173,11 @@ const TextAnnotationSurface = ({
         clearDraft()
         return
       }
-      const quote = selected.toString().trim()
+      // Chromium inserts rendered block separators into Selection.toString(), while
+      // Range.toString() follows the text nodes used by the anchor and reveal logic.
+      // Mixing the two makes a multi-block quote longer than its anchor span and the
+      // otherwise valid annotation is rejected as `invalid`.
+      const quote = range.toString().trim()
       if (!quote) {
         suppressFollowingClickRef.current = false
         clearDraft()
