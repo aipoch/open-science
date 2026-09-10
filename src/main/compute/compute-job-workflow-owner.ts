@@ -61,7 +61,8 @@ export interface ArtifactResolver {
 
 export const createComputeArtifactResolver = (
   storageRoot: string,
-  resolveManagedArtifactPath: (path: string) => Promise<string>
+  resolveManagedArtifactPath: (path: string) => Promise<string>,
+  assertPathVisible?: (path: string) => Promise<void>
 ): ArtifactResolver => ({
   resolveArtifactPath: async (path, scope) => {
     if (scope) {
@@ -71,7 +72,10 @@ export const createComputeArtifactResolver = (
         scope.sessionId,
         path
       )
-      if (staged) return staged
+      if (staged) {
+        await assertPathVisible?.(staged)
+        return staged
+      }
       throw new Error('Compute input is not staged for the submitting Project and Session.')
     }
     return resolveManagedArtifactPath(path)

@@ -882,6 +882,7 @@ describe('HeadlessTaskApi adapter', () => {
       updatedAt: 2
     }
     const invoke = vi.fn(async (channel: string, _callerContext: unknown, args: unknown[]) => {
+      if (channel === 'project-files:get-hidden-artifact-ids') return []
       if (channel === 'projects:list') return [project]
       if (channel === 'projects:create') {
         return { ...project, ...(args[0] as object), id: 'project-created' }

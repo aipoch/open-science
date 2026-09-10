@@ -298,6 +298,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "FileOriginSession_lifecycle_check" CHECK ((("state" = 'active' AND "deletedAt" IS NULL AND "deletionOperationId" IS NULL AND "retainedReviewIdsJson" IS NULL) OR ("state" = 'deleting' AND "deletedAt" IS NULL AND "deletionOperationId" IS NOT NULL AND "retainedReviewIdsJson" IS NOT NULL) OR ("state" = 'deleted' AND "deletedAt" IS NOT NULL AND "deletionOperationId" IS NULL AND "retainedReviewIdsJson" IS NULL)))
 );`,
   `CREATE TABLE IF NOT EXISTS "ArtifactLineage" (
+    "hiddenAt" DATETIME,
     "id" TEXT NOT NULL PRIMARY KEY,
     "projectId" TEXT NOT NULL,
     "sessionId" TEXT NOT NULL,

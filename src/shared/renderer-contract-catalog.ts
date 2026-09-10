@@ -1448,6 +1448,17 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'preview-resources',
     ['preview-resources:release']
   ),
+  'projectFiles.setArtifactHidden': callable<
+    (request: import('./project-files').SetArtifactHiddenRequest) => Promise<void>
+  >()('project-files', ['project-files:set-artifact-hidden']),
+  'projectFiles.getHiddenArtifactIds': callable<
+    (request: { projectId: string }) => Promise<import('./project-files').HiddenArtifactIdentity[]>
+  >()('project-files', ['project-files:get-hidden-artifact-ids']),
+  'projectFiles.readHiddenArtifact': callable<
+    (
+      request: import('./project-files').ReadHiddenArtifactRequest
+    ) => Promise<import('./artifacts').ArtifactPreviewResult>
+  >()('project-files', ['project-files:read-hidden-artifact']),
   'projectFiles.getOverview': callable<
     (request: GetProjectFilesOverviewRequest) => Promise<ProjectFilesOverview>
   >()('project-files', ['project-files:get-overview']),
@@ -1657,7 +1668,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   ),
   saveProjectArtifacts: callable<
     (request: SaveProjectArtifactsRequest) => Promise<SaveProjectArtifactsResult>
-  >()('platform-file-save', ['file:save-project-artifacts', MAPPED_ELECTRON]),
+  >()('platform-file-save', ['file:save-project-artifacts', DELEGATED_NATIVE]),
   saveSessionArtifacts: callable<
     (request: SaveSessionArtifactsRequest) => Promise<SaveSessionArtifactsResult>
   >()('platform-file-save', ['file:save-session-artifacts', MAPPED_ELECTRON]),

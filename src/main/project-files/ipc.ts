@@ -1,3 +1,10 @@
+import type {
+  SetArtifactHiddenRequest,
+  ReadHiddenArtifactRequest,
+  HiddenArtifactIdentity,
+  ProjectFilesChangedEvent
+} from '../../shared/project-files'
+import type { ArtifactPreviewResult } from '../../shared/artifacts'
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
@@ -15,6 +22,8 @@ import type {
 } from '../../shared/project-files'
 
 type ProjectFilesQueryRepository = {
+  setArtifactHidden?(request: SetArtifactHiddenRequest): Promise<void>
+  getHiddenArtifactIds?(projectId: string): Promise<HiddenArtifactIdentity[]>
   getOverview(request: GetProjectFilesOverviewRequest): Promise<ProjectFilesOverview>
   listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage>
   readExportFiles(request: ReadProjectExportFilesRequest): Promise<ProjectFileItem[]>
@@ -33,6 +42,9 @@ type ProjectFilesRecoveryBackend = {
 }
 
 type ProjectFilesHandlers = {
+  setArtifactHidden(request: SetArtifactHiddenRequest): Promise<void>
+  getHiddenArtifactIds(request: { projectId: string }): Promise<HiddenArtifactIdentity[]>
+  readHiddenArtifact(request: ReadHiddenArtifactRequest): Promise<ArtifactPreviewResult>
   getOverview(request: GetProjectFilesOverviewRequest): Promise<ProjectFilesOverview>
   listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage>
   readExportFiles(request: ReadProjectExportFilesRequest): Promise<ProjectFileItem[]>
@@ -47,8 +59,34 @@ type ProjectFilesHandlers = {
 const createProjectFilesHandlers = (
   repository: ProjectFilesQueryRepository,
   repairBackend: ProjectFilesRepairBackend,
-  recoveryBackend: ProjectFilesRecoveryBackend
+  recoveryBackend: ProjectFilesRecoveryBackend,
+  visibility?: {
+    readHiddenArtifact(request: ReadHiddenArtifactRequest): Promise<ArtifactPreviewResult>
+    onChanged(event: ProjectFilesChangedEvent): void
+  }
 ): ProjectFilesHandlers => ({
+  setArtifactHidden: async (request) => {
+    await recoveryBackend.waitForProjectOperations([request.projectId])
+    if (!repository.setArtifactHidden || !visibility)
+      throw new Error('Artifact visibility is unavailable.')
+    await repository.setArtifactHidden(request)
+    visibility.onChanged({
+      projectId: request.projectId,
+      sources: ['artifact'],
+      kind: 'reset',
+      artifactVisibilityChanged: true
+    })
+  },
+  getHiddenArtifactIds: async ({ projectId }) => {
+    await recoveryBackend.waitForProjectOperations([projectId])
+    if (!repository.getHiddenArtifactIds) throw new Error('Artifact visibility is unavailable.')
+    return repository.getHiddenArtifactIds(projectId)
+  },
+  readHiddenArtifact: async (request) => {
+    await recoveryBackend.waitForProjectOperations([request.projectId])
+    if (!visibility) throw new Error('Hidden artifact reader is unavailable.')
+    return visibility.readHiddenArtifact(request)
+  },
   getOverview: async (request) => {
     await recoveryBackend.waitForProjectOperations([request.projectId])
     return repository.getOverview(request)
@@ -97,6 +135,16 @@ const registerProjectFilesIpcHandlers = (
     recoveryBackend
   )
 ): void => {
+  ipcMainHandle('project-files:set-artifact-hidden', (_event, request: SetArtifactHiddenRequest) =>
+    handlers.setArtifactHidden(request)
+  )
+  ipcMainHandle('project-files:get-hidden-artifact-ids', (_event, request: { projectId: string }) =>
+    handlers.getHiddenArtifactIds(request)
+  )
+  ipcMainHandle(
+    'project-files:read-hidden-artifact',
+    (_event, request: ReadHiddenArtifactRequest) => handlers.readHiddenArtifact(request)
+  )
   ipcMainHandle('project-files:get-overview', (_event, request: GetProjectFilesOverviewRequest) =>
     handlers.getOverview(request)
   )

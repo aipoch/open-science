@@ -131,6 +131,7 @@ type TestFileSaveOptions = Omit<
 // latest-version lease boundary without restoring a path fallback in the handler itself.
 const registerProjectFileSaveHandlers = (options: TestFileSaveOptions = {}): void => {
   const { resolveManagedFilePath, resolveSessionArtifactFilePath, ...productionOptions } = options
+  const admittedFixturePaths = new Map<string, string>()
   const openManagedFileVersion =
     options.openManagedFileVersion ??
     options.openLatestManagedFile ??
@@ -148,8 +149,14 @@ const registerProjectFileSaveHandlers = (options: TestFileSaveOptions = {}): voi
                   'test-session',
                   request.fileId
                 )
-          if (!resolved) throw new Error('Test managed Version fixture is unavailable.')
-          const sourcePath = typeof resolved === 'string' ? resolved : resolved.path
+          const fixtureKey = `${source}:${request.fileId}`
+          const sourcePath = resolved
+            ? typeof resolved === 'string'
+              ? resolved
+              : resolved.path
+            : admittedFixturePaths.get(fixtureKey)
+          if (!sourcePath) throw new Error('Test managed Version fixture is unavailable.')
+          admittedFixturePaths.set(fixtureKey, sourcePath)
           return managedVersionHandle(await readFile(sourcePath))
         }
       : undefined)
@@ -1151,6 +1158,10 @@ describe('file save IPC handlers', () => {
         'open:artifact-1',
         'close:artifact-1',
         'open:upload-1',
+        'close:upload-1',
+        'open:artifact-1',
+        'close:artifact-1',
+        'open:upload-1',
         'close:upload-1'
       ])
       expect(maximumActiveLeases).toBe(1)
@@ -1168,22 +1179,17 @@ describe('file save IPC handlers', () => {
     const closeUpload = vi.fn().mockResolvedValue(undefined)
     const verifyArtifact = vi.fn().mockResolvedValue(undefined)
     const verifyUpload = vi.fn().mockResolvedValue(undefined)
-    const openLatestManagedFile = vi
-      .fn()
-      .mockResolvedValueOnce({
-        size: 21,
-        readRange: vi.fn().mockResolvedValue(Buffer.from('current artifact head')),
-        verifyUnchanged: verifyArtifact,
-        copyTo: vi.fn(),
-        close: closeArtifact
-      })
-      .mockResolvedValueOnce({
-        size: 19,
-        readRange: vi.fn().mockResolvedValue(Buffer.from('current upload head')),
-        verifyUnchanged: verifyUpload,
-        copyTo: vi.fn(),
-        close: closeUpload
-      })
+    const openLatestManagedFile = vi.fn(async (source: string) =>
+      source === 'artifact'
+        ? managedVersionHandle('current artifact head', {
+            verifyUnchanged: verifyArtifact,
+            close: closeArtifact
+          })
+        : managedVersionHandle('current upload head', {
+            verifyUnchanged: verifyUpload,
+            close: closeUpload
+          })
+    )
     showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
     registerProjectFileSaveHandlers({
       resolveManagedFilePath,
@@ -1217,7 +1223,7 @@ describe('file save IPC handlers', () => {
       )
 
       expect(result).toEqual({ saved: true, filePath: destinationPath })
-      expect(openLatestManagedFile.mock.calls).toEqual([
+      expect(openLatestManagedFile.mock.calls.slice(0, 2)).toEqual([
         [
           'artifact',
           {
@@ -1235,6 +1241,9 @@ describe('file save IPC handlers', () => {
           }
         ]
       ])
+      expect(openLatestManagedFile.mock.calls.slice(2)).toEqual(
+        openLatestManagedFile.mock.calls.slice(0, 2)
+      )
       expect(resolveManagedFilePath).not.toHaveBeenCalled()
       expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
       const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
@@ -1242,10 +1251,10 @@ describe('file save IPC handlers', () => {
         'current artifact head'
       )
       expect(Buffer.from(entries['uploads/data.csv']!).toString('utf8')).toBe('current upload head')
-      expect(verifyArtifact).toHaveBeenCalledOnce()
-      expect(verifyUpload).toHaveBeenCalledOnce()
-      expect(closeArtifact).toHaveBeenCalledOnce()
-      expect(closeUpload).toHaveBeenCalledOnce()
+      expect(verifyArtifact).toHaveBeenCalledTimes(2)
+      expect(verifyUpload).toHaveBeenCalledTimes(2)
+      expect(closeArtifact).toHaveBeenCalledTimes(2)
+      expect(closeUpload).toHaveBeenCalledTimes(2)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -2348,6 +2357,87 @@ describe('file save IPC handlers', () => {
       expect(result).toEqual({ saved: true, filePath: destinationPath })
       const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
       expect(Object.keys(entries)).toEqual(['generated/exact.bin'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([false, true])(
+    'cancels the entire ZIP when an earlier member loses its category during a later read (hidden=%s)',
+    async (hidden) => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-revoked-zip-'))
+      try {
+        const destination = join(root, 'revoked.zip')
+        let revoked = false
+        const openFile = async (request: { fileId: string }): Promise<TestManagedVersionHandle> => {
+          if (request.fileId === 'a' && revoked) throw new Error('file visibility changed')
+          return managedVersionHandle(request.fileId, {
+            readRange: async () => {
+              if (request.fileId === 'b') revoked = true
+              return Buffer.from(request.fileId)
+            }
+          })
+        }
+        showSaveDialog.mockResolvedValue({ canceled: false, filePath: destination })
+        registerFileSaveHandlers({
+          openManagedFileVersion: (_source, request) => openFile(request),
+          openHiddenArtifactVersion: openFile
+        })
+        const files = ['a', 'b'].map((fileId) => ({
+          source: 'artifact',
+          hidden,
+          sessionId: 'session',
+          fileId,
+          versionId: fileId + '-v1',
+          suggestedName: fileId + '.txt'
+        }))
+        await expect(
+          handlers.get('file:save-project-artifacts')!(
+            { sender: {} },
+            { projectId: 'project', suggestedArchiveName: 'project', files }
+          )
+        ).rejects.toThrow('file visibility changed')
+        await expect(stat(destination)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('exports explicitly selected Hidden files through only the Hidden reader', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-hidden-zip-'))
+    try {
+      const destination = join(root, 'hidden.zip')
+      showSaveDialog.mockResolvedValue({ canceled: false, filePath: destination })
+      const ordinary = vi.fn().mockRejectedValue(new Error('ordinary read denied'))
+      const hidden = vi.fn().mockResolvedValue(managedVersionHandle('private result'))
+      registerFileSaveHandlers({
+        openManagedFileVersion: ordinary,
+        openHiddenArtifactVersion: hidden
+      })
+      const file = {
+        source: 'artifact',
+        hidden: true,
+        sessionId: 'session',
+        fileId: 'secret',
+        versionId: 'version',
+        suggestedName: 'secret.txt'
+      }
+      await expect(
+        handlers.get('file:save-project-artifacts')!(
+          { sender: {} },
+          { projectId: 'project', suggestedArchiveName: 'project', files: [file] }
+        )
+      ).resolves.toMatchObject({ saved: true, filePath: destination })
+      expect(ordinary).not.toHaveBeenCalled()
+      expect(hidden).toHaveBeenCalledWith({
+        projectId: 'project',
+        fileId: 'secret',
+        versionId: 'version'
+      })
+      const archive = unzipSync(new Uint8Array(await readFile(destination)))
+      expect(Object.keys(archive)).toEqual(['hidden/secret.txt'])
+      expect(Buffer.from(archive['hidden/secret.txt']!).toString()).toBe('private result')
     } finally {
       await rm(root, { recursive: true, force: true })
     }

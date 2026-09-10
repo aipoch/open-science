@@ -596,119 +596,145 @@ describe('artifact provenance repository', () => {
     })
   })
 
-  it('keeps immutable bytes while same-session same-name saves advance one lineage', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-versions-'))
-    const client = createProjectDbClient(storageRoot)
-    disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
+  it.each([false, true])(
+    'keeps immutable bytes and finalization ownership for same-name saves (hidden=%s)',
+    async (hidden) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-versions-'))
+      const client = createProjectDbClient(storageRoot)
+      disconnect = () => client.$disconnect()
+      await migrateApplicationDatabase(client)
 
-    const compatibilityRepository = new ArtifactRepository(storageRoot)
-    const repository = new ArtifactProvenanceRepository({
-      storageRoot,
-      getClient: () => Promise.resolve(client),
-      compatibilityRepository
-    })
+      const compatibilityRepository = new ArtifactRepository(storageRoot)
+      const repository = new ArtifactProvenanceRepository({
+        storageRoot,
+        getClient: () => Promise.resolve(client),
+        compatibilityRepository
+      })
 
-    const common = {
-      projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactStorageSessionId: 'artifact-session-1',
-      artifactRunId: 'artifact-run-1',
-      rootFrameId: 'root-frame-1',
-      agentFrameId: 'agent-frame-1',
-      messageBranchId: 'branch-1',
-      runtimeSegmentId: 'runtime-segment-1',
-      promptMessageId: 'prompt-1',
-      agentName: 'Codex',
-      filename: 'Sin.png',
-      contentType: 'image/png',
-      titleSnapshot: 'Sine analysis'
-    } as const
+      const common = {
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-segment-1',
+        promptMessageId: 'prompt-1',
+        agentName: 'Codex',
+        filename: 'Sin.png',
+        contentType: 'image/png',
+        titleSnapshot: 'Sine analysis'
+      } as const
 
-    await compatibilityRepository.writePendingFile({
-      projectId: common.projectId,
-      sessionId: common.artifactStorageSessionId,
-      runId: common.artifactRunId,
-      filename: common.filename,
-      mimeType: common.contentType,
-      source: createPngInlineSource('version one')
-    })
-    const first = await repository.createVersion({
-      ...common,
-      writeOperationId: 'write-1',
-      writeRequestChecksum: 'a'.repeat(64)
-    })
+      await compatibilityRepository.writePendingFile({
+        projectId: common.projectId,
+        sessionId: common.artifactStorageSessionId,
+        runId: common.artifactRunId,
+        filename: common.filename,
+        mimeType: common.contentType,
+        source: createPngInlineSource('version one')
+      })
+      const first = await repository.createVersion({
+        ...common,
+        writeOperationId: 'write-1',
+        writeRequestChecksum: 'a'.repeat(64)
+      })
 
-    const replacementFilename = 'SIN.PNG'
-    await compatibilityRepository.writePendingFile({
-      projectId: common.projectId,
-      sessionId: common.artifactStorageSessionId,
-      runId: common.artifactRunId,
-      filename: replacementFilename,
-      mimeType: common.contentType,
-      source: createPngInlineSource('version two')
-    })
-    const second = await repository.createVersion({
-      ...common,
-      filename: replacementFilename,
-      writeOperationId: 'write-2',
-      writeRequestChecksum: 'b'.repeat(64)
-    })
-    const third = await repository.createVersion({
-      ...common,
-      filename: replacementFilename,
-      writeOperationId: 'write-3',
-      writeRequestChecksum: 'c'.repeat(64)
-    })
+      if (hidden)
+        await client.artifactLineage.update({
+          where: { id: first.artifactId },
+          data: { hiddenAt: new Date() }
+        })
+      const replacementFilename = 'SIN.PNG'
+      await compatibilityRepository.writePendingFile({
+        projectId: common.projectId,
+        sessionId: common.artifactStorageSessionId,
+        runId: common.artifactRunId,
+        filename: replacementFilename,
+        mimeType: common.contentType,
+        source: createPngInlineSource('version two')
+      })
+      const second = await repository.createVersion({
+        ...common,
+        filename: replacementFilename,
+        writeOperationId: 'write-2',
+        writeRequestChecksum: 'b'.repeat(64)
+      })
+      const third = await repository.createVersion({
+        ...common,
+        filename: replacementFilename,
+        writeOperationId: 'write-3',
+        writeRequestChecksum: 'c'.repeat(64)
+      })
 
-    const otherSession = {
-      ...common,
-      appSessionId: 'session-2',
-      artifactStorageSessionId: 'artifact-session-2',
-      artifactRunId: 'artifact-run-2'
+      const otherSession = {
+        ...common,
+        appSessionId: 'session-2',
+        artifactStorageSessionId: 'artifact-session-2',
+        artifactRunId: 'artifact-run-2'
+      }
+      await compatibilityRepository.writePendingFile({
+        projectId: otherSession.projectId,
+        sessionId: otherSession.artifactStorageSessionId,
+        runId: otherSession.artifactRunId,
+        filename: otherSession.filename,
+        mimeType: otherSession.contentType,
+        source: createPngInlineSource('version two')
+      })
+      const separateLineage = await repository.createVersion({
+        ...otherSession,
+        writeOperationId: 'write-other-session',
+        writeRequestChecksum: 'd'.repeat(64)
+      })
+
+      expect(first.artifactId).toBe(second.artifactId)
+      expect(first.versionId).not.toBe(second.versionId)
+      expect(first.versionNumber).toBe(1)
+      expect(second.versionNumber).toBe(2)
+      expect(third.versionNumber).toBe(3)
+      expect(third.checksum).toBe(second.checksum)
+      expect(separateLineage.artifactId).not.toBe(first.artifactId)
+      expect(separateLineage.versionNumber).toBe(1)
+      expect(await readFile(first.path)).toEqual(createPngBytes('version one'))
+      expect(await readFile(second.path)).toEqual(createPngBytes('version two'))
+      expect(first.name).toBe(common.filename)
+      expect(second.name).toBe(replacementFilename)
+      const firstRow = requireAgentArtifactVersion(
+        await client.artifactVersion.findUniqueOrThrow({ where: { id: first.versionId } })
+      )
+      expect(JSON.parse(firstRow.evidenceJson)).toMatchObject({ agent_name: 'Codex' })
+
+      const versions = await client.artifactVersion.findMany({
+        where: { artifactId: first.artifactId },
+        orderBy: { versionNumber: 'asc' }
+      })
+      expect(versions.map((version) => version.versionNumber)).toEqual([1, 2, 3])
+      expect(
+        (
+          await repository.listRunVersions({
+            projectId: common.projectId,
+            appSessionId: common.appSessionId,
+            artifactRunId: common.artifactRunId
+          })
+        ).map((version) => version.versionId)
+      ).toEqual(expect.arrayContaining([first.versionId, second.versionId, third.versionId]))
+      expect(
+        Boolean(
+          (await client.artifactLineage.findUniqueOrThrow({ where: { id: first.artifactId } }))
+            .hiddenAt
+        )
+      ).toBe(hidden)
+      expect(versions.map((version) => version.filename)).toEqual([
+        common.filename,
+        replacementFilename,
+        replacementFilename
+      ])
+      await repository.deleteProjectProvenance(common.projectId)
+      expect(await client.artifactLineage.count({ where: { projectId: common.projectId } })).toBe(0)
+      await expect(stat(first.path)).rejects.toMatchObject({ code: 'ENOENT' })
     }
-    await compatibilityRepository.writePendingFile({
-      projectId: otherSession.projectId,
-      sessionId: otherSession.artifactStorageSessionId,
-      runId: otherSession.artifactRunId,
-      filename: otherSession.filename,
-      mimeType: otherSession.contentType,
-      source: createPngInlineSource('version two')
-    })
-    const separateLineage = await repository.createVersion({
-      ...otherSession,
-      writeOperationId: 'write-other-session',
-      writeRequestChecksum: 'd'.repeat(64)
-    })
-
-    expect(first.artifactId).toBe(second.artifactId)
-    expect(first.versionId).not.toBe(second.versionId)
-    expect(first.versionNumber).toBe(1)
-    expect(second.versionNumber).toBe(2)
-    expect(third.versionNumber).toBe(3)
-    expect(third.checksum).toBe(second.checksum)
-    expect(separateLineage.artifactId).not.toBe(first.artifactId)
-    expect(separateLineage.versionNumber).toBe(1)
-    expect(await readFile(first.path)).toEqual(createPngBytes('version one'))
-    expect(await readFile(second.path)).toEqual(createPngBytes('version two'))
-    expect(first.name).toBe(common.filename)
-    expect(second.name).toBe(replacementFilename)
-    const firstRow = requireAgentArtifactVersion(
-      await client.artifactVersion.findUniqueOrThrow({ where: { id: first.versionId } })
-    )
-    expect(JSON.parse(firstRow.evidenceJson)).toMatchObject({ agent_name: 'Codex' })
-
-    const versions = await client.artifactVersion.findMany({
-      where: { artifactId: first.artifactId },
-      orderBy: { versionNumber: 'asc' }
-    })
-    expect(versions.map((version) => version.versionNumber)).toEqual([1, 2, 3])
-    expect(versions.map((version) => version.filename)).toEqual([
-      common.filename,
-      replacementFilename,
-      replacementFilename
-    ])
-  })
+  )
 
   it('selects the exact pending filename when multiple files share one normalized name', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-exact-filename-'))

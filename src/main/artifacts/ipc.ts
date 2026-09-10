@@ -479,8 +479,9 @@ const finalizeRunArtifacts = async (
 }
 
 // Artifacts are data-class: they follow the configurable data root (defaults to the config root).
-const createDefaultArtifactRepository = (): ArtifactRepository =>
-  new ArtifactRepository(resolveDataRoot())
+const createDefaultArtifactRepository = (
+  assertPathVisible?: (path: string) => Promise<void>
+): ArtifactRepository => new ArtifactRepository(resolveDataRoot(), undefined, assertPathVisible)
 
 // Registers the renderer-visible artifact commands without exposing internal message-file listing.
 const registerArtifactIpcHandlers = (

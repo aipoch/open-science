@@ -47,7 +47,8 @@ class ArtifactRepository {
 
   constructor(
     private readonly storageRoot: string,
-    private readonly durability: ArtifactRepositoryStorage = defaultArtifactRepositoryDurability
+    private readonly durability: ArtifactRepositoryStorage = defaultArtifactRepositoryDurability,
+    private readonly assertPathVisible?: (path: string) => Promise<void>
   ) {
     const storage = new ArtifactStorageAccess(this.storageRoot, this.durability)
     this.publicationOwner = new ArtifactPublicationOwner(
@@ -57,6 +58,7 @@ class ArtifactRepository {
     )
     this.compatibilityOwner = new ArtifactCompatibilityOwner({
       storage,
+      assertPathVisible: this.assertPathVisible,
       readRunMarkerForRecovery: (markerPath) =>
         this.publicationOwner.readRunMarkerForRecovery(markerPath)
     })

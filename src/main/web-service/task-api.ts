@@ -85,6 +85,10 @@ class HeadlessTaskApi {
     // Non-Agent compatibility channels remain temporary façade adapters. Agent execution crosses a
     // direct, narrow port so Task never impersonates an Electron caller for runtime operations.
     this.runner = new TaskRunner({
+      getHiddenArtifactIds: (projectId) =>
+        this.invoke('project-files:get-hidden-artifact-ids', { projectId }) as Promise<
+          import('../../shared/project-files').HiddenArtifactIdentity[]
+        >,
       projects: {
         list: () => this.invoke('projects:list') as Promise<Project[]>,
         create: (request) => this.invoke('projects:create', request) as Promise<Project>,
@@ -407,20 +411,37 @@ class HeadlessTaskApi {
     return this.invoke('acp:respond-plan', command) as Promise<PlanResponseResult>
   }
 
-  startRun(request: StartTaskRunRequest): Promise<TaskRun> {
-    return this.runner.startRun(request)
+  private async projectVisibleRun(run: TaskRun): Promise<TaskRun> {
+    if (!run.artifacts.length) return run
+    const hidden = new Set(
+      (
+        (await this.invoke('project-files:get-hidden-artifact-ids', {
+          projectId: run.projectId
+        })) as import('../../shared/project-files').HiddenArtifactIdentity[]
+      ).flatMap((file) => [file.fileId, ...file.versionIds])
+    )
+    return {
+      ...run,
+      artifacts: run.artifacts.filter(
+        (file) => !hidden.has(file.artifactId ?? file.id) && !hidden.has(file.versionId ?? file.id)
+      )
+    }
   }
 
-  getRun(runId: string): TaskRun {
-    return this.runner.getRun(runId)
+  startRun(request: StartTaskRunRequest): Promise<TaskRun> {
+    return this.runner.startRun(request).then((run) => this.projectVisibleRun(run))
+  }
+
+  async getRun(runId: string): Promise<TaskRun> {
+    return this.projectVisibleRun(this.runner.getRun(runId))
   }
 
   waitForRun(runId: string): Promise<TaskRun> {
-    return this.runner.waitForRun(runId)
+    return this.runner.waitForRun(runId).then((run) => this.projectVisibleRun(run))
   }
 
   cancelRun(runId: string): Promise<TaskRun> {
-    return this.runner.cancelRun(runId)
+    return this.runner.cancelRun(runId).then((run) => this.projectVisibleRun(run))
   }
 
   subscribeProgress(listener: (event: TaskRunProgressEvent) => void): () => void {

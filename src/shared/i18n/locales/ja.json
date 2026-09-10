@@ -4888,6 +4888,14 @@
     "Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.": "リモートモデルの URL には HTTPS が必要です。HTTP は localhost またはループバックアドレスでのみ使用できます。",
     "Load media from {{domains}}": "{{domains}} からメディアを読み込む",
     "Images in Mermaid diagrams are blocked": "Mermaid 図内の画像はブロックされています",
-    "Use a separate Markdown image to load it explicitly.": "個別の Markdown 画像を使って明示的に読み込んでください。"
+    "Use a separate Markdown image to load it explicitly.": "個別の Markdown 画像を使って明示的に読み込んでください。",
+    "Hidden": "非表示",
+    "Hide {{name}}": "{{name}} を非表示にする",
+    "Unhide {{name}}": "{{name}} を再表示する",
+    "Could not change file visibility.": "ファイルの表示設定を変更できませんでした。",
+    "Could not load project files.": "プロジェクトファイルを読み込めませんでした。",
+    "Could not load file preview.": "ファイルのプレビューを読み込めませんでした。",
+    "Download this file to view it.": "このファイルを表示するにはダウンロードしてください。",
+    "Preview truncated.": "プレビューは省略されています。"
   }
 }

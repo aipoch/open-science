@@ -201,7 +201,7 @@ type ComputeHandlers = {
   }>
   listDir: (providerId: string, path: string) => Promise<DirListing>
   download: (providerId: string, remotePath: string, dest: DownloadDest) => Promise<LocalFile>
-  revealInFolder: (filePath: string) => void
+  revealInFolder: (filePath: string) => Promise<void>
   // The compute service instance, exposed so the notebook RPC server can wire computeCall.
   computeService: ComputeService
   connectionBroker: ComputeConnectionBroker
@@ -257,7 +257,8 @@ const createComputeHandlers = (
   sessionCacheOwner?: SessionCacheOwner,
   operationRepository?: ComputeJobOperationRepository,
   sessionLimitPersistence?: SessionConcurrencyLimitPersistence,
-  resultDelivery?: Pick<ComputeResultDeliveryProjection, 'hasDeliveryPath'>
+  resultDelivery?: Pick<ComputeResultDeliveryProjection, 'hasDeliveryPath'>,
+  assertPathVisible?: (path: string) => Promise<void>
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
     ? createComputePermissionGrantAdapter(permissionGrantRegistry, legacyComputeGrants)
@@ -540,7 +541,8 @@ const createComputeHandlers = (
     getSessionConcurrencyStatus: (sessionId) => service.getSessionConcurrencyStatus(sessionId),
     listDir: (providerId, path) => service.listDir(providerId, path),
     download: (providerId, remotePath, dest) => service.download(providerId, remotePath, dest),
-    revealInFolder: (filePath) => {
+    revealInFolder: async (filePath) => {
+      await assertPathVisible?.(filePath)
       shell.showItemInFolder(filePath)
     },
     computeService: service,
@@ -776,7 +778,8 @@ const createComputeIpcModule = (
   legacyComputeGrants?: LegacyComputeGrantPort,
   hostLifecycle?: ComputeHostLifecycle,
   sessionLimitPersistence?: SessionConcurrencyLimitPersistence,
-  resultDelivery?: ComputeResultDeliveryProjection
+  resultDelivery?: ComputeResultDeliveryProjection,
+  assertPathVisible?: (path: string) => Promise<void>
 ): ComputeIpcModule => {
   const operationRepository = createDefaultComputeJobOperationRepository()
   const configRoot = resolveConfigRoot()
@@ -812,7 +815,8 @@ const createComputeIpcModule = (
     sessionCacheOwner,
     operationRepository,
     sessionLimitPersistence,
-    resultDelivery
+    resultDelivery,
+    assertPathVisible
   )
   const jobDeletionOwner = handlers.jobDeletionOwner
   if (!jobDeletionOwner) throw new Error('Compute Job deletion owner is unavailable.')

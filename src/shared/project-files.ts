@@ -11,6 +11,7 @@ export type ProjectFileOriginSession = {
 export type ProjectFileItem = {
   id: string
   source: ProjectFileSource
+  hidden?: boolean
   sourceFileId: string
   sourceVersionId: string
   checksum?: string
@@ -45,14 +46,33 @@ export type ListProjectFilesRequest = {
   // cursors for the Files page. The flat `all` collection is reserved for cross-session file pickers
   // that need one canonical Project Files read model rather than reconstructing Session metadata.
   collection:
-    { kind: 'all' } | { kind: 'uploads' } | { kind: 'sessionArtifacts'; sessionId: string }
+    | { kind: 'all' }
+    | { kind: 'hidden' }
+    | { kind: 'uploads' }
+    | { kind: 'sessionArtifacts'; sessionId: string }
   search?: ProjectFilesSearch
   cursor?: string
   limit: number
 }
 
 // One consistent selection for an export. Omit sessionId to include all Project sources.
+export type HiddenArtifactIdentity = { fileId: string; versionIds: string[] }
+export type ReadHiddenArtifactRequest = {
+  projectId: string
+  fileId: string
+  versionId: string
+  encoding?: 'utf8' | 'base64'
+  offset?: number
+}
+
+export type SetArtifactHiddenRequest = {
+  projectId: string
+  fileId: string
+  hidden: boolean
+}
+
 export type ReadProjectExportFilesRequest = {
+  category?: 'hidden'
   projectId: string
   sessionId?: string
 }
@@ -116,6 +136,7 @@ export type ProjectFilesOverview = {
   uploadCount: number
   artifactCount: number
   artifactGroupCount: number
+  hiddenArtifactCount?: number
   // False means the current rows are usable but may be partial; the renderer must expose repair
   // rather than treating a zero count as an authoritative empty project.
   isIndexComplete: boolean
@@ -128,6 +149,7 @@ export type ProjectFilesChangedEvent = {
   sessionId?: string
   sources: ProjectFileSource[]
   kind: 'upsert' | 'delete' | 'reset'
+  artifactVisibilityChanged?: boolean
 }
 
 // Main-only read projection used by the session-bound JavaScript host API. Latest reads come from

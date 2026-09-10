@@ -378,6 +378,7 @@ model FileOriginSession {
 
 // Stable identity for same-named generated Artifact saves inside one Project Session.
 model ArtifactLineage {
+  hiddenAt           DateTime?
   id                 String            @id
   projectId          String
   sessionId          String

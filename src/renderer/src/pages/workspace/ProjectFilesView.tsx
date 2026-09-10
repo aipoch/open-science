@@ -1,3 +1,4 @@
+import { HiddenArtifactFiles } from './HiddenArtifactFiles'
 // Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
 import type { TFunction } from 'i18next'
 import { ChevronDown, LayoutGrid, List, Maximize2, Minimize2, Search, X } from 'lucide-react'
@@ -679,6 +680,8 @@ const ProjectFilesViewContent = ({
           onEntryCountChange={setLocalEntryCount}
           requestedPath={localRequestedPath}
         />
+      ) : effectiveFilterId === 'hidden' && activeProjectId ? (
+        <HiddenArtifactFiles projectId={activeProjectId} query={debouncedSearchQuery} />
       ) : (
         <div data-testid="project-files-scroll" className="min-h-0 flex-1 overflow-y-auto pb-4">
           {!catalogIndex.overview.isIndexComplete ? (

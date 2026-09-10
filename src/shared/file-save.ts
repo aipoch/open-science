@@ -50,6 +50,7 @@ type SaveSessionArtifactsResult =
   { saved: false } | { saved: true; filePaths: string[]; failures?: SaveSessionArtifactFailure[] }
 
 type SaveProjectArtifactFile = {
+  hidden?: boolean
   source: 'artifact' | 'upload'
   sessionId: string
   fileId: string
