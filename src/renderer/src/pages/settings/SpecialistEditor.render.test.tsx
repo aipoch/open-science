@@ -583,6 +583,8 @@ describe('SpecialistEditor', () => {
     })
     await act(async () => {
       fireEvent.click(document.body.querySelector<HTMLElement>('[aria-label="Full access"]')!)
+    })
+    await act(async () => {
       fireEvent.click(
         Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
           (button) => button.textContent === '＋ Add a skill'

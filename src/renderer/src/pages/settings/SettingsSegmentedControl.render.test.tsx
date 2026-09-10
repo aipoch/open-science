@@ -78,7 +78,7 @@ describe('SettingsSegmentedControl', () => {
     )
   })
 
-  it('compacts only labels that do not fit at the normal font size', async () => {
+  it('preserves relative typography when localized labels exceed the available width', async () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
       'ResizeObserver',
@@ -116,7 +116,7 @@ describe('SettingsSegmentedControl', () => {
     expect(labels).toHaveLength(2)
     expect(texts).toHaveLength(2)
 
-    let longLabelWidth = 82
+    const longLabelWidth = 82
     Object.defineProperty(labels[0], 'clientWidth', { configurable: true, value: 56 })
     Object.defineProperty(labels[1], 'clientWidth', { configurable: true, value: 56 })
     Object.defineProperty(texts[0], 'scrollWidth', {
@@ -133,24 +133,8 @@ describe('SettingsSegmentedControl', () => {
       resizeCallbacks.forEach((callback) => callback([], {} as ResizeObserver))
     })
 
-    expect(labels[0].dataset.compact).toBe('true')
-    expect(labels[0].dataset.compactSize).toBe('9')
-    expect(texts[0].style.fontSize).toBe('9px')
-    expect(labels[1].dataset.compact).toBeUndefined()
-    expect(
-      labels[1].querySelector('[data-slot="settings-segment-label-text"]')?.className
-    ).toContain('text-xs')
-
-    longLabelWidth = 46
-    act(() => {
-      resizeCallbacks.forEach((callback) => callback([], {} as ResizeObserver))
-    })
-
-    expect(labels[0].dataset.compact).toBeUndefined()
-    expect(labels[0].dataset.compactSize).toBeUndefined()
-    expect(texts[0].style.fontSize).toBe('')
-    expect(
-      labels[0].querySelector('[data-slot="settings-segment-label-text"]')?.className
-    ).toContain('text-xs')
+    expect(texts[0].style.fontSize).not.toMatch(/px$/)
+    expect(texts[0].textContent).toBe('По умолчанию')
+    expect(texts[1].textContent).toBe('High')
   })
 })
