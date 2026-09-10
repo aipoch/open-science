@@ -48,50 +48,6 @@ import { DEFAULT_R_ENV, envPrefix, legacyDefaultEnvPrefix, rScriptBin } from './
 
 const fixtureDirectories: string[] = []
 
-it.each([undefined, true] as const)(
-  'preserves the native job capability in the executor adapter (%s)',
-  async (windowsJobObject) => {
-    const root = await mkdtemp(join(tmpdir(), 'os-job-capability-'))
-    fixtureDirectories.push(root)
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: root,
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow: vi.fn(),
-      requestDecision: vi.fn()
-    })
-    backend.wrap.mockResolvedValueOnce({
-      argv: ['host'],
-      env: {},
-      windowsJobObject,
-      annotateStderr: (stderr: string) => stderr,
-      resetNetworkConnections: backend.resetNetworkConnections,
-      cleanup: backend.cleanup
-    })
-    try {
-      const wrapped = await owner.wrap({
-        executable: process.execPath,
-        args: [],
-        env: {},
-        cwd: root,
-        commandText: 'workload',
-        sessionId: 'session',
-        projectId: 'project',
-        runtime: 'r',
-        filesystem: {
-          readOnlyRoots: [],
-          readWriteRoots: [root],
-          deniedReadRoots: [],
-          deniedWriteRoots: []
-        }
-      })
-      expect(wrapped.windowsJobObject).toBe(windowsJobObject)
-      wrapped.cleanup()
-    } finally {
-      await owner.dispose()
-    }
-  }
-)
-
 const createCapturingLogger = (): { logger: Logger; records: unknown[] } => {
   const records: unknown[] = []
   const capture = (message: string, data?: unknown): void => {

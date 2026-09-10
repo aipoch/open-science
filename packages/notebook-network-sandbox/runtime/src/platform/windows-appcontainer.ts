@@ -482,7 +482,6 @@ const windowsLaunch = (
     delete env.OPEN_SCIENCE_MCP_RPC_SOCKET_PATH
   }
   return {
-    windowsJobObject: true,
     argv: [
       request.hostPath,
       'launch',

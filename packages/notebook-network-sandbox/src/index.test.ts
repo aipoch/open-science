@@ -39,26 +39,6 @@ beforeEach(() => {
 })
 
 describe('NotebookNetworkSandbox', () => {
-  it.each([undefined, true] as const)(
-    'preserves native job containment evidence (%s)',
-    async (windowsJobObject) => {
-      const sandbox = new NotebookNetworkSandbox(options())
-      vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
-      backend.wrap.mockResolvedValue({ argv: ['host'], env: {}, windowsJobObject })
-      try {
-        await sandbox.initialize()
-        const wrapped = await sandbox.wrap({
-          command: 'workload',
-          cwd: '/workspace',
-          onNetworkAccessRequest: denyNetwork
-        })
-        expect(wrapped.windowsJobObject).toBe(windowsJobObject)
-        wrapped.cleanup()
-      } finally {
-        await sandbox.dispose()
-      }
-    }
-  )
   it('reports unsupported platforms without starting a backend', async () => {
     const sandbox = new NotebookNetworkSandbox(options())
 

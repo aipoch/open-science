@@ -1603,7 +1603,8 @@ class NotebookExecutionOwner {
                 ...(runtimeBinding.kind === 'wsl2-bash'
                   ? { profileReference: runtimeBinding.profileId }
                   : {}),
-                stage: shellResult.runtimeStatus === 'unavailable' ? 'sandbox-prepare' : 'execution',
+                stage:
+                  shellResult.runtimeStatus === 'unavailable' ? 'sandbox-prepare' : 'execution',
                 status,
                 terminationReason:
                   shellResult.errorCode === 'shell-cleanup-incomplete'
