@@ -35,7 +35,11 @@ export const MarkdownPreviewRenderer = (props: PreviewFileRendererProps): React.
 
   return (
     <PreviewTextAnnotationSurface {...props}>
-      <div className="size-full overflow-auto bg-bg-10 p-4">
+      <div
+        className={
+          props.presentation === 'search' ? 'w-full' : 'size-full overflow-auto bg-bg-10 p-4'
+        }
+      >
         <AgentMarkdown content={state.preview.content} />
       </div>
     </PreviewTextAnnotationSurface>

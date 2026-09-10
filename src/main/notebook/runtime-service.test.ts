@@ -6114,11 +6114,12 @@ describe('notebook runtime service', () => {
           }
         }
       )
+      const repository = new NotebookRunRepository(root)
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
         projectId: 'default-project',
-        repository: new NotebookRunRepository(root),
+        repository,
         executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
       })
       const request = { sessionId: 'session-1', workspaceCwd: root, cellId: 'cell-b' }
@@ -6143,11 +6144,29 @@ describe('notebook runtime service', () => {
             })
           )
           await blockerStarted.promise
+          // Real durable admission may exceed vi.waitFor's one-second default under CI load.
+          const appendRun = repository.appendOrGetRun.bind(repository)
+          vi.spyOn(repository, 'appendOrGetRun').mockImplementationOnce(async (input) => {
+            await new Promise((resolve) => setTimeout(resolve, 1250))
+            return appendRun(input)
+          })
           // Data runs have no public queued-state projection. Observe the existing queue entry
           // without replacing its behavior so rewriting happens strictly after admission.
+          const admitted = createDeferred<void>()
+          const enqueueExecution = NotebookSessionAggregate.prototype.enqueueExecution
           enqueue = vi.spyOn(NotebookSessionAggregate.prototype, 'enqueueExecution')
-          pending.push(service.runCell(request))
-          await vi.waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1))
+          enqueue.mockImplementation(function (
+            this: NotebookSessionAggregate,
+            ...args: Parameters<typeof enqueueExecution>
+          ) {
+            const result = enqueueExecution.apply(this, args)
+            admitted.resolve()
+            return result
+          })
+          const queuedRun = service.runCell(request)
+          pending.push(queuedRun)
+          await Promise.race([admitted.promise, queuedRun])
+          expect(enqueue).toHaveBeenCalledTimes(1)
           enqueue.mockRestore()
           await expect(
             service.beginCodeCell({ ...request, language: requestedLanguage })

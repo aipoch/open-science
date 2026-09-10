@@ -1619,7 +1619,16 @@ const createApplicationModules = async (
   const projectFilesHandlers = createProjectFilesHandlers(
     projectFilesRepository,
     sessionPersistenceCoordinator,
-    projectDeletionCoordinator
+    projectDeletionCoordinator,
+    (file) =>
+      managedFileVersionService.openVersion(
+        {
+          source: file.source,
+          projectId: file.projectId,
+          fileId: file.sourceFileId
+        },
+        file.sourceVersionId
+      )
   )
   const managedFileVersionHandlers = createManagedFileVersionHandlers(managedFileVersionService, {
     withDataRootWrite,
@@ -2711,7 +2720,8 @@ const createApplicationModules = async (
                   `Attempt ${delivery.sourceAttemptId}]\n\n${delivery.text}`,
                 suppressUserMessage: true,
                 provenanceContext: {
-                  promptMessageId: delivery.rootPromptMessageId,
+                  // Suppressed continuations create no user node; replies retain the durable origin.
+                  promptMessageId: delivery.originMessageId,
                   originMessageId: delivery.originMessageId,
                   rootFrameId: graph.rootFrameId,
                   agentFrameId: graph.rootFrameId,

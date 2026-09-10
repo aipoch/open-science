@@ -520,6 +520,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.openRecoveryFolder',
       'sessions.saveManifest',
       'sessions.saveSession',
+      'sessions.searchMessages',
       'sessions.sendFlushResponse',
       'sessions.setDelegationPolicy',
       'sessions.unlinkPdfContext',

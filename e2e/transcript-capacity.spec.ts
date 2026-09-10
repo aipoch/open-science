@@ -4,7 +4,7 @@ import { openProjectSession } from './certification/helpers'
 
 test.use({ windowMode: 'normal' })
 
-test('PERF-03 bounds history scrolling and preserves native find across the transcript', async ({
+test('bounds history scrolling and preserves native find across the transcript', async ({
   app
 }, testInfo) => {
   test.setTimeout(180_000)

@@ -1150,7 +1150,8 @@ export const PdfPreviewContent = ({
   onReadingPositionChange,
   annotationProps,
   pdfEvidenceSource,
-  pdfRevealSource
+  pdfRevealSource,
+  presentation = 'reader'
 }: {
   path: string
   name: string
@@ -1166,6 +1167,7 @@ export const PdfPreviewContent = ({
   annotationProps?: PreviewFileRendererProps
   pdfEvidenceSource?: PdfAnnotation['source']
   pdfRevealSource?: PdfAnnotation['source']
+  presentation?: PreviewFileRendererProps['presentation']
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const requestKey = createPreviewResourceKey({
@@ -1418,8 +1420,11 @@ export const PdfPreviewContent = ({
 
         setDocumentState({ requestKey: resourceRequestKey, status: 'ready', document })
       } catch (error: unknown) {
-        if (!isUnavailableFileError(error)) console.error('Failed to load PDF preview', error)
-        if (!canceled) setDocumentState({ requestKey: resourceRequestKey, status: 'error', error })
+        // Closing or switching a preview can reject the PDF.js task while cleanup destroys it.
+        if (!canceled) {
+          if (!isUnavailableFileError(error)) console.error('Failed to load PDF preview', error)
+          setDocumentState({ requestKey: resourceRequestKey, status: 'error', error })
+        }
         await dispose()
       }
     })()
@@ -1736,9 +1741,14 @@ export const PdfPreviewContent = ({
 
   return (
     <div
-      className="flex size-full overflow-hidden bg-bg-20"
+      className={
+        presentation === 'search'
+          ? 'flex min-h-64 w-full'
+          : 'flex size-full overflow-hidden bg-bg-20'
+      }
       data-pdf-preview-root
       onKeyDownCapture={(event) => {
+        if (presentation === 'search') return
         const primaryModifier = event.metaKey || event.ctrlKey
         if (primaryModifier && event.key.toLowerCase() === 'f') {
           event.preventDefault()
@@ -1788,14 +1798,17 @@ export const PdfPreviewContent = ({
           onNavigate={navigateToPage}
         />
       ) : null}
-      <div className="relative min-w-0 flex-1 overflow-hidden">
+      <div
+        className={cn('relative min-w-0 flex-1', presentation !== 'search' && 'overflow-hidden')}
+      >
         {/* The inner element is the real scroller (the outer div holds fixed controls), so it must
             be keyboard-focusable or PageUp/Down, Space, and arrows never reach the PDF. */}
         <div
           ref={scrollRef}
           data-pdf-cursor-mode={cursorMode}
           className={cn(
-            'size-full overflow-auto p-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50',
+            'outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50',
+            presentation === 'search' ? 'w-full' : 'size-full overflow-auto p-4',
             cursorMode === 'hand' &&
               `touch-none select-none [&_*]:cursor-inherit [&_*]:select-none ${panning ? 'cursor-grabbing' : 'cursor-grab'}`
           )}
@@ -1852,7 +1865,8 @@ export const PdfPreviewContent = ({
             // so a page still fitting a wide/full-screen pane stays centered.
             <div
               className={cn(
-                'flex min-w-full flex-col gap-3',
+                'flex min-w-full flex-col',
+                presentation === 'search' ? 'gap-[17px]' : 'gap-3',
                 viewportWidth > 0 && pageWidth > viewportWidth ? 'items-start' : 'items-center'
               )}
             >
@@ -1883,7 +1897,7 @@ export const PdfPreviewContent = ({
             </div>
           ) : null}
         </div>
-        {document ? (
+        {document && presentation !== 'search' ? (
           <>
             <PdfInteractionControls
               mode={cursorMode}
@@ -1976,6 +1990,7 @@ export const PdfPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.E
 
   return (
     <PdfPreviewContent
+      presentation={props.presentation}
       path={props.item.path}
       name={props.item.name}
       source={props.item.source ?? 'artifact'}

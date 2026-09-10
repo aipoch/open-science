@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
+import { PreviewInitialPosition } from './PreviewInitialPosition'
 import { usePreviewResourceGeneration } from './usePreviewResourceGeneration'
 
 import type { ArtifactPreviewResult } from '../../../../../shared/artifacts'
@@ -182,6 +183,7 @@ export const usePreviewFileContent = ({
   encoding = 'utf8'
 }: UsePreviewFileContentRequest): PreviewFileContentLoadState => {
   const generation = usePreviewResourceGeneration()
+  const initialPosition = useContext(PreviewInitialPosition)
   const fileKey = JSON.stringify([
     generation,
     projectId ?? null,
@@ -191,11 +193,16 @@ export const usePreviewFileContent = ({
     selectedVersionId ?? null,
     encoding,
     maxBytes,
+    initialPosition?.offset,
     maxFileBytes,
     path
   ])
   // Retain locations, not previous page contents, for the pinned resource sequence.
-  const firstPage = { offset: 0, startingLineNumber: 1, startsMidLine: false }
+  const firstPage = {
+    offset: initialPosition?.offset ?? 0,
+    startingLineNumber: initialPosition?.startingLineNumber ?? 1,
+    startsMidLine: Boolean(initialPosition?.offset)
+  }
   const [pageState, setPageState] = useState<{
     fileKey: string
     pages: (typeof firstPage)[]
@@ -290,6 +297,14 @@ export const usePreviewFileContent = ({
   const previousPage = (): void => {
     setPageState((current) => {
       const active = current.fileKey === fileKey ? current : activePageState
+      if (active.index === 0 && page.offset > 0) {
+        return {
+          fileKey,
+          pages: [{ offset: 0, startingLineNumber: 1, startsMidLine: false }],
+          index: 0,
+          showLastLines: false
+        }
+      }
       return { ...active, index: Math.max(0, active.index - 1), showLastLines: true }
     })
   }
@@ -314,7 +329,7 @@ export const usePreviewFileContent = ({
   return {
     ...state,
     pagination: {
-      pageNumber: activePageState.index + 1,
+      pageNumber: activePageState.index + (activePageState.pages[0]?.offset ? 2 : 1),
       pageKey: requestKey,
       startingLineNumber: page.startingLineNumber,
       startsMidLine: page.startsMidLine,
@@ -323,7 +338,7 @@ export const usePreviewFileContent = ({
       byteStart: offset,
       byteEnd: state.preview.nextOffset ?? state.preview.size,
       showLastLines: activePageState.showLastLines,
-      hasPrevious: activePageState.index > 0,
+      hasPrevious: activePageState.index > 0 || offset > 0,
       hasNext: state.preview.nextOffset !== undefined,
       previousPage,
       nextPage
