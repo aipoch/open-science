@@ -579,7 +579,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const signal = request.signal ?? controller!.signal
     if (signal.aborted) {
       return this.networkAccessResult(normalized.hostname, 'denied', runtime, {
-        decisionSource: 'aborted'
+        decisionSource: 'aborted',
+        message:
+          'The network access request was cancelled. No access was granted; do not execute or retry the requested operation without approval.'
       })
     }
     const decision = await this.options.requestDecision({
@@ -593,12 +595,17 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     })
     if (decision === 'unavailable') {
       return this.networkAccessResult(normalized.hostname, 'unavailable', runtime, {
-        decisionSource: 'approval-surface-unavailable'
+        decisionSource: 'approval-surface-unavailable',
+        message:
+          'No approval client is available to present this request. No user decision was obtained and no access was granted. The user must restore an approval client before access can be approved.'
       })
     }
     if (decision === 'deny' || signal.aborted) {
       return this.networkAccessResult(normalized.hostname, 'denied', runtime, {
-        decisionSource: signal.aborted ? 'aborted' : 'user-decision'
+        decisionSource: signal.aborted ? 'aborted' : 'user-decision',
+        message: signal.aborted
+          ? 'The network access request was cancelled. No access was granted; do not execute or retry the requested operation without approval.'
+          : 'The user denied network access. Stop the requested operation; do not repeat the request or use another command or tool to bypass this decision.'
       })
     }
     if (decision === 'allowOnce') {
@@ -1126,7 +1133,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     hostname: string,
     status: NotebookNetworkAccessDecisionResult['status'],
     runtime: NotebookCommandRuntime | undefined,
-    fields: Record<string, unknown> = {}
+    fields: Pick<NotebookNetworkAccessDecisionResult, 'decisionSource' | 'message'> & {
+      validationReason?: string
+    } = {}
   ): NotebookNetworkAccessDecisionResult {
     const level = status === 'allowedOnce' || status === 'alwaysAllowed' ? 'info' : 'warn'
     this.log[level]('network access request resolved', {
@@ -1134,7 +1143,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       runtime: runtime ?? 'unknown',
       ...fields
     })
-    return { hostname, status }
+    return {
+      hostname,
+      status,
+      ...(fields.decisionSource ? { decisionSource: fields.decisionSource } : {}),
+      ...(fields.message ? { message: fields.message } : {})
+    }
   }
 
   private getOrCreateSandbox(): NotebookNetworkSandbox {

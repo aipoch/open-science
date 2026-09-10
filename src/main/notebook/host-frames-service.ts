@@ -159,7 +159,7 @@ const normalizeListOptions = (value: unknown): NormalizedListOptions => {
   const cursor = optionalString(value, 'cursor', 4096, 'host.frames.list')
   const rootsOnly = value.roots_only === undefined ? true : value.roots_only
   if (typeof rootsOnly !== 'boolean') {
-    throw new Error('host.frames.list roots_only must be a boolean.')
+    throw new Error('host.frames.list rootsOnly must be a boolean.')
   }
   const kind = value.kind
   if (kind !== undefined && (typeof kind !== 'string' || !FRAME_KINDS.has(kind))) {

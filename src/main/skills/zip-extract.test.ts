@@ -190,6 +190,20 @@ describe('extractZip', () => {
 describe('extractZipLenient', () => {
   const limits = { maxFiles: 100, maxFileBytes: 1024, maxTotalBytes: 4096, maxDepth: 8 }
 
+  it('distinguishes corrupt DEFLATE data from an actual expansion limit', () => {
+    const damaged = buildZip([{ path: 'bad.txt', content: Buffer.from('text'), method: 8 }])
+    damaged[30 + Buffer.byteLength('bad.txt')] = 0x07 // reserved DEFLATE block type
+    expect(extractZipLenient(damaged, limits).skipped).toEqual([
+      { path: 'bad.txt', reason: 'invalid DEFLATE data' }
+    ])
+    const large = buildZip([
+      { path: 'large.txt', content: Buffer.alloc(limits.maxFileBytes + 1), method: 8 }
+    ])
+    expect(extractZipLenient(large, limits).skipped).toEqual([
+      { path: 'large.txt', reason: expect.stringContaining('too large (limit') }
+    ])
+  })
+
   it('keeps valid entries and skips an oversized one with a reason (never throws)', () => {
     const zip = buildZip([
       { path: 'ok.txt', content: Buffer.from('small'), method: 0 },

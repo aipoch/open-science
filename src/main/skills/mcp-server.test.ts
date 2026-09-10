@@ -10,6 +10,47 @@ import {
 } from './mcp-server'
 
 describe('Skill import MCP server', () => {
+  it('delivers partial commit information and rejected bundle diagnostics to the agent', async () => {
+    const partial = {
+      status: 'partial' as const,
+      skills: [{ id: 'imported-first', name: 'First', status: 'imported' as const }],
+      errors: [
+        { name: 'Second', error: 'Interrupted: commit state unknown.' },
+        { name: 'Third', error: 'Not attempted.' }
+      ]
+    }
+    const server = createSkillImportMcpServer({
+      requestImport: async () => {
+        throw new Error('No importable Skill. Rejected entries: invalid DEFLATE data')
+      },
+      requestGitHubImport: async () => partial
+    })
+    const client = new Client({ name: 'skill-result-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+    try {
+      const result = await client.callTool({
+        name: REQUEST_SKILL_IMPORT_TOOL_NAME,
+        arguments: { github_url: 'https://github.com/acme/skills/tree/main/first' }
+      })
+      expect(result.content).toEqual([{ type: 'text', text: JSON.stringify(partial, null, 2) }])
+      const rejected = await client.callTool({
+        name: REQUEST_SKILL_IMPORT_TOOL_NAME,
+        arguments: {
+          attachment_uri: 'file:///managed/broken.skill',
+          turn_token: '00000000-0000-4000-8000-000000000001'
+        }
+      })
+      expect(rejected).toMatchObject({
+        isError: true,
+        content: [{ type: 'text', text: expect.stringContaining('invalid DEFLATE data') }]
+      })
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('exposes one high-level request tool without exposing filesystem writes', async () => {
     const turnToken = '00000000-0000-4000-8000-000000000001'
     const requestImport = vi.fn().mockResolvedValue({

@@ -1,3 +1,5 @@
+import type { RequestNotebookNetworkAccessResult } from '../../shared/notebook'
+
 export type NotebookSandboxTarget =
   | Readonly<{ kind: 'native' }>
   | Readonly<{
@@ -73,10 +75,7 @@ export type NotebookNetworkAccessDecisionRequest = Readonly<{
   signal?: AbortSignal
 }>
 
-export type NotebookNetworkAccessDecisionResult = Readonly<{
-  hostname: string
-  status: 'alreadyAllowed' | 'allowedOnce' | 'alwaysAllowed' | 'denied' | 'blocked' | 'unavailable'
-}>
+export type NotebookNetworkAccessDecisionResult = RequestNotebookNetworkAccessResult
 
 // The native UAC decision cancels preparation before any cell is dispatched.
 export class NotebookRuntimeAccessCancelledError extends Error {

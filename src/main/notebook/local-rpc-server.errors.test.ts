@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import { NotebookBackgroundRunError } from '../../shared/notebook'
 
 import { fetchLocalRpc } from '../local-rpc-transport'
 import { NotebookLocalRpcServer } from './local-rpc-server'
@@ -36,6 +37,38 @@ describe.each(['tcp', 'pipe'] as const)('Notebook RPC error status over %s', (tr
 
     expect((await call(connection, body)).status).toBe(400)
     expect(state).not.toHaveBeenCalled()
+  })
+
+  it('preserves the explanation of a background Run failure', async () => {
+    server = new NotebookLocalRpcServer(
+      {
+        state: async () => {
+          throw new NotebookBackgroundRunError(
+            {
+              code: 'BACKGROUND_RUN_ADMISSION_FAILED',
+              stage: 'pre-admission',
+              retryable: true,
+              hint: 'Query background_run with this submissionIdentity.',
+              submissionIdentity: 'submission-1'
+            },
+            'Runtime binding changed before admission.'
+          )
+        }
+      } as never,
+      { transport }
+    )
+    const connection = await server.ensureStarted()
+    const response = await call(connection, {
+      method: 'state',
+      params: { sessionId: 'session', workspaceCwd: '/workspace' }
+    })
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: 'BACKGROUND_RUN_ADMISSION_FAILED',
+        message: 'Runtime binding changed before admission.',
+        submissionIdentity: 'submission-1'
+      }
+    })
   })
 
   it('rejects unknown methods independently of runtime params and capability scope', async () => {

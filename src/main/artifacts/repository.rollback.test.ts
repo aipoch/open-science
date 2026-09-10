@@ -51,7 +51,9 @@ describe('ArtifactRepository pending-file rollback', () => {
           throw new Error('durable Version write failed')
         }
       )
-    ).rejects.toThrow(renameFailure.message)
+    ).rejects.toThrow(
+      /Artifact write failed: durable Version write failed.*simulated Windows sharing violation.*Version routing publication was not confirmed.*Original file backup retained/s
+    )
 
     const directory = dirname(original.path)
     const backup = (await readdir(directory)).find(

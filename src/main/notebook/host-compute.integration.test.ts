@@ -49,6 +49,8 @@ const startStub = async (
     dropFirstListHostsBody?: boolean
     dropFirstSubmitResponse?: boolean
     dropFirstSubmitBody?: boolean
+    dropAllSubmitResponses?: boolean
+    omitSubmitReceipt?: boolean
     rejectSubmit?: boolean
   } = {}
 ): Promise<{
@@ -79,6 +81,14 @@ const startStub = async (
         res.flushHeaders()
         res.write(responseBody.slice(0, -1))
         setImmediate(() => res.destroy())
+        return
+      }
+      if (op === 'submit_job' && options.dropAllSubmitResponses) {
+        res.destroy()
+        return
+      }
+      if (op === 'submit_job' && options.omitSubmitReceipt) {
+        res.writeHead(200).end(JSON.stringify({ result: {} }))
         return
       }
       if (op === 'submit_job' && options.dropFirstSubmitResponse && !droppedFirstSubmitResponse) {
@@ -375,6 +385,39 @@ gate('repl kernel host.compute', () => {
     expect(submissions[0]?.invocation_id).toEqual(expect.any(String))
     expect(submissions[1]?.invocation_id).toBe(submissions[0]?.invocation_id)
   })
+
+  it.each(['dropAllSubmitResponses', 'omitSubmitReceipt', 'dropThenReject'] as const)(
+    'reports unknown submission after the same invocation cannot recover a receipt: %s',
+    async (failure) => {
+      const stub = await startStub(
+        failure === 'dropThenReject'
+          ? { dropFirstSubmitResponse: true, rejectSubmit: true }
+          : { [failure]: true }
+      )
+      const exec = makeExecutor()
+      try {
+        const result = await exec.execute(
+          baseRequest({
+            code: "await host.compute.create('ssh:x').submitJob('analyze', 'run')",
+            mcpRpcEndpoint: stub.endpoint,
+            mcpRpcToken: 'tok',
+            sessionId: 'session-7',
+            projectId: 'proj-x'
+          })
+        )
+        expect(result.status).toBe('failed')
+        expect(JSON.stringify(result)).toContain('submission outcome is unknown')
+        expect(JSON.stringify(result)).toContain('Do not submit the same work again')
+        const submissions = stub.received().filter((request) => request.params?.op === 'submit_job')
+        expect(submissions).toHaveLength(2)
+        expect(submissions[0].params?.invocation_id).toEqual(expect.any(String))
+        expect(submissions[1].params?.invocation_id).toBe(submissions[0].params?.invocation_id)
+      } finally {
+        await exec.shutdown()
+        stub.close()
+      }
+    }
+  )
 
   it('does not retry submitJob HTTP errors', async () => {
     const stub = await startStub({ rejectSubmit: true })

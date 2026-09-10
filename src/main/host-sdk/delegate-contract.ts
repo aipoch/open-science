@@ -383,7 +383,7 @@ const parseCollectRpcCall = (params: Readonly<Record<string, unknown>>): Collect
     )
   }
   if (returnWhen !== undefined && returnWhen !== 'all' && returnWhen !== 'any') {
-    throw new Error('host.collect options.return_when must be all or any; omit it to use all.')
+    throw new Error('host.collect options.returnWhen must be all or any; omit it to use all.')
   }
   return {
     selectors,

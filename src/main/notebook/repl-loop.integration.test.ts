@@ -10,6 +10,11 @@ import { createServer, type Server } from 'node:http'
 import { framePythonRequest, parseLoopResponse, type KernelLoopResponse } from './kernel-protocol'
 import { listenForLocalRpc } from '../local-rpc-transport'
 import { hostSdkHelp } from '../host-sdk/help'
+import { HostLineageService } from './host-lineage-service'
+import { HostFramesService } from './host-frames-service'
+import { parseCollectRpcCall } from '../host-sdk/delegate-contract'
+import { StructuredOutputError } from '../delegation/structured-output'
+import { resolveInputs } from '../compute/compute-job-workflow-owner'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { AgentsService } from '../agents/agents-service'
 import { createSpecialistService } from '../specialist/service'
@@ -138,6 +143,117 @@ describe('repl_loop local RPC transport', () => {
     }
   })
 
+  it('lets callers repair invalid public options using the final uncaught error', async () => {
+    const context = { projectId: 'project-a', sessionId: 'session-a' }
+    const lineage = new HostLineageService({
+      catalog: { readHostArtifactCatalog: async () => [] },
+      provenance: {
+        readDependencyRelations: async () => [],
+        getVersionCore: async () => {
+          throw new Error('unused')
+        }
+      }
+    })
+    const frames = new HostFramesService({
+      readProject: async () => ({ sessions: [], isComplete: true }),
+      readSession: async () => ({ status: 'missing' })
+    })
+    const accepted: string[] = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => {
+        body += chunk
+      })
+      request.on('end', async () => {
+        const { method, params } = JSON.parse(body)
+        try {
+          let result: unknown
+          if (method === 'lineageCall') {
+            // No matching Version is deliberate: reaching the catalog proves repaired options
+            // passed the real owner validator, without inventing a successful provenance graph.
+            result = await lineage.graph(params.version_id, params.options, context)
+          } else if (method === 'framesCall') {
+            result = await frames.list(params.options, context)
+          } else if (method === 'computeCall') {
+            await resolveInputs(params.inputs, undefined, undefined)
+            result = { job_id: 'job-1' }
+          } else {
+            parseCollectRpcCall(params)
+            result = []
+          }
+          accepted.push(method)
+          response.writeHead(200).end(JSON.stringify({ result }))
+        } catch (error) {
+          response.writeHead(400).end(JSON.stringify({ error: (error as Error).message }))
+        }
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'public-parameter-recovery',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath
+    })
+    try {
+      for (const [field, invalid, valid] of [
+        ['maxDepth', -1, 1],
+        ['maxNodes', 0, 5]
+      ] as const) {
+        const failed = await send(`await host.lineage.graph('missing', { ${field}: ${invalid} })`)
+        const suggested = failed.error?.match(/graph (\w+) must be an integer/)?.[1]
+        expect(suggested).toBe(field)
+        const repaired = await send(
+          `await host.lineage.graph('missing', { ${suggested}: ${valid} })`
+        )
+        expect(repaired.error).toContain(
+          'Artifact Version not found in the current Project: missing'
+        )
+      }
+      const framesFailure = await send('await host.frames.list({ rootsOnly: 1 })')
+      const rootsKey = framesFailure.error?.match(/list (\w+) must be a boolean/)?.[1]
+      expect(rootsKey).toBe('rootsOnly')
+      expect((await send(`await host.frames.list({ ${rootsKey}: false })`)).error).toBeNull()
+
+      const collectFailure = await send(
+        "await host.collect(['frame-1'], { returnWhen: 'invalid' })"
+      )
+      const returnKey = collectFailure.error?.match(/options\.(\w+) must be all or any/)?.[1]
+      expect(returnKey).toBe('returnWhen')
+      expect(
+        (await send(`await host.collect(['frame-1'], { ${returnKey}: 'any' })`)).error
+      ).toBeNull()
+
+      for (const [field, invalid, valid] of [
+        ['remotePath', 'relative', '/scratch/input.csv'],
+        ['dstFilename', 'nested/input.csv', 'input.csv']
+      ]) {
+        const input = { remotePath: '/scratch/input.csv', [field]: invalid }
+        const failed = await send(
+          `await host.compute.create('ssh:test').submitJob('test', 'true', { inputs: [${JSON.stringify(input)}] })`
+        )
+        const suggested = failed.error?.match(/(\w+) must be/)?.[1]
+        expect(suggested).toBe(field)
+        delete input[field]
+        input[suggested!] = valid
+        expect(
+          (
+            await send(
+              `await host.compute.create('ssh:test').submitJob('test', 'true', { inputs: [${JSON.stringify(input)}] })`
+            )
+          ).error
+        ).toBeNull()
+      }
+      expect(accepted).toEqual(['framesCall', 'delegatedWorkCall', 'computeCall', 'computeCall'])
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()))
+      })
+    }
+  })
+
   it('echoes a trailing expression when the call spans multiple lines', async () => {
     const { child, send } = startLoop({})
 
@@ -216,41 +332,96 @@ describe('repl_loop local RPC transport', () => {
     }
   }, 60_000)
 
-  it('preserves structured background-safety guidance from Host SDK failures', async () => {
-    const server = createServer((_request, response) => {
-      response.writeHead(409, { 'content-type': 'application/json' }).end(
-        JSON.stringify({
-          error: {
-            code: 'BACKGROUND_HOST_METHOD_UNSAFE',
-            method: 'host.agents.switch',
-            retryable: false,
-            hint: 'Run this Host SDK operation in foreground repl_execute.'
-          }
-        })
-      )
+  it('carries structured output diagnostics from the real RPC owner through uncaught REPL', async () => {
+    const rpc = new NotebookLocalRpcServer({} as never, {
+      transport: 'pipe',
+      delegatedWorkService: {
+        delegate: async () => {
+          throw new Error('unused')
+        },
+        submitOutput: async () => {
+          throw new StructuredOutputError(
+            'structured_output_validation_failed',
+            'Structured output does not match the admitted schema.',
+            'required',
+            '/summary',
+            'count'
+          )
+        }
+      }
     })
-    const connection = await listenForLocalRpc(server, {
-      name: 'repl-loop-background-safety-test',
-      transport: 'pipe'
+    const connection = await rpc.issueControlConnection('session', 'project', 'child', {
+      role: 'delegate',
+      attemptId: 'attempt-1'
+    })
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-1',
+      originatingTurnId: 'prompt-1',
+      originatingUserMessageId: 'prompt-1',
+      attachmentIds: [],
+      artifactIds: []
     })
     const { child, send } = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
       OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
-      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+      OPEN_SCIENCE_MCP_RPC_TOKEN: connection.token
     })
-
     try {
-      const result = await send('return await host.agents.switch(null)')
-      expect(result.error).toContain('BACKGROUND_HOST_METHOD_UNSAFE')
-      expect(result.error).toContain('host.agents.switch')
-      expect(result.error).toContain('foreground repl_execute')
+      const result = await send('await host.submitOutput({})')
+      expect(result.error).toContain('Structured output does not match the admitted schema.')
+      expect(result.error).toContain('structured_output_validation_failed')
+      expect(result.error).toContain('/summary')
+      expect(result.error).toContain('count')
     } finally {
       child.kill()
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve()))
-      )
+      endInvocation()
+      connection.release()
+      await rpc.close()
     }
-  }, 60_000)
+  })
+
+  it.each(['host.agents.switch(null)', "host.viewImage({ path: 'plot.png' })"])(
+    'preserves structured background-safety guidance from %s',
+    async (expression) => {
+      const server = createServer((_request, response) => {
+        response.writeHead(409, { 'content-type': 'application/json' }).end(
+          JSON.stringify({
+            error: {
+              code: 'BACKGROUND_HOST_METHOD_UNSAFE',
+              method: expression.split('(')[0],
+              retryable: false,
+              hint: 'Run this Host SDK operation in foreground repl_execute.'
+            }
+          })
+        )
+      })
+      const connection = await listenForLocalRpc(server, {
+        name: 'repl-loop-background-safety-test',
+        transport: 'pipe'
+      })
+      const { child, send } = startLoop({
+        OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+        OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+        OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+      })
+
+      try {
+        const result = await send(`return await ${expression}`)
+        expect(result.error).toContain('BACKGROUND_HOST_METHOD_UNSAFE')
+        expect(result.error).toContain(expression.split('(')[0])
+        expect(result.error).not.toContain('[object Object]')
+        expect(result.error).toContain('foreground repl_execute')
+      } finally {
+        child.kill()
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve()))
+        )
+      }
+    },
+    60_000
+  )
 
   it('routes the reserved Windows RPC endpoint through the authenticated command gateway', async () => {
     let received:
@@ -439,6 +610,77 @@ describe('repl_loop local RPC transport', () => {
       )
     }
   }, 60_000)
+
+  it('exposes partial stop handles through RPC and lets the REPL query those exact Attempts', async () => {
+    const session = { projectId: 'project', sessionId: 'session' }
+    const execution = createDeterministicDelegateExecution()
+    const records = createInMemoryDelegatedWorkRecords({
+      session,
+      rootFrameId: 'root',
+      originMessageId: 'prompt'
+    })
+    let failedFrame = ''
+    const work = createDurableDelegatedWork({
+      execution,
+      records,
+      revokeAttemptWrites: async ({ frameId }) => {
+        if (frameId === failedFrame) throw new Error('private dependency secret')
+      }
+    })
+    const rpc = new NotebookLocalRpcServer({} as never, {
+      transport: 'pipe',
+      delegatedWorkService: work
+    })
+    const connection = await rpc.issueControlConnection('session', 'project', 'root', {
+      role: 'main'
+    })
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool',
+      originatingUserMessageId: 'prompt'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: connection.token
+    })
+    try {
+      const admitted = await send(
+        "return await host.delegate([{ name: 'First', task: 'First' }, { name: 'Second', task: 'Second' }], { wait: false })"
+      )
+      expect(admitted.error).toBeNull()
+      const handles = JSON.parse(admitted.result!).children
+      await expect.poll(() => execution.controls()).toHaveLength(2)
+      failedFrame = handles[1].frameId
+      const stopped = await send(
+        `await host.stopChild(${JSON.stringify(handles.map(({ frameId }: { frameId: string }) => frameId))})`
+      )
+      expect(stopped.error).not.toContain('private dependency secret')
+      const report = JSON.parse(stopped.error!.match(/\{.*\}/)![0])
+      expect(report.hint).toContain('host.collect')
+      const selectors = report.attempts.map(
+        ({ frameId, attemptId }: { frameId: string; attemptId: string }) => ({ frameId, attemptId })
+      )
+      const observed = await send(
+        `return await host.collect(${JSON.stringify(selectors)}, { timeoutSeconds: 0 })`
+      )
+      expect(observed.error).toBeNull()
+      expect(JSON.parse(observed.result!).map(({ status }: { status: string }) => status)).toEqual([
+        'cancelled',
+        'running'
+      ])
+      failedFrame = ''
+      expect(
+        (await send(`await host.stopChild([${JSON.stringify(handles[1].frameId)}])`)).error
+      ).toBeNull()
+    } finally {
+      child.kill()
+      endInvocation()
+      connection.release()
+      await rpc.close()
+    }
+  })
 
   it('discovers a public Specialist and delegates by its stable id and exact name through the authenticated REPL', async () => {
     const profileStorage = await mkdtemp(join(tmpdir(), 'repl-delegate-profile-roundtrip-'))
@@ -3074,7 +3316,8 @@ gate('repl_loop.js host.compute', () => {
         error: JSON.stringify({
           error_code: 'host_unreachable',
           message: 'SSH connect failed',
-          retry_after_user_action: true
+          retry_after_user_action: true,
+          cause: { credential: 'private-compute-secret' }
         })
       }
     }
@@ -3093,6 +3336,11 @@ gate('repl_loop.js host.compute', () => {
       expect(parsed.code).toBe('host_unreachable')
       expect(parsed.retry).toBe(true)
       expect(parsed.msg).toContain('SSH connect failed')
+      const uncaught = await send("await host.compute.create('ssh:x').callCommand('id', 'probe')")
+      expect(uncaught.error).toContain('"error_code":"host_unreachable"')
+      expect(uncaught.error).toContain('"retry_after_user_action":true')
+      expect(uncaught.error).toContain('SSH connect failed')
+      expect(uncaught.error).not.toContain('private-compute-secret')
     } finally {
       child.kill()
     }
