@@ -2912,6 +2912,38 @@ describe('ManagedFileIndexRepository', () => {
       otherLimit: 0 as const
     }
     const first = await repository.searchArtifacts(request)
+    const ranked = await repository.searchArtifacts({
+      ...request,
+      filenameContains: 'sin-alpha',
+      format: 'image',
+      sort: 'relevance',
+      updatedAfter: 100
+    })
+    expect(ranked.primary).toMatchObject({ totalCount: 1, items: [{ name: 'sin-alpha.png' }] })
+    expect(
+      (await repository.searchArtifacts({ ...request, format: 'pdf' })).primary.totalCount
+    ).toBe(0)
+    const relevancePage = await repository.searchArtifacts({ ...request, sort: 'relevance' })
+    const relevanceNext = await repository.searchArtifacts({
+      ...request,
+      sort: 'relevance',
+      primaryCursor: relevancePage.primary.nextCursor
+    })
+    expect(
+      new Set(
+        [...relevancePage.primary.items, ...relevanceNext.primary.items].map((item) => item.id)
+      ).size
+    ).toBe(4)
+    await expect(
+      repository.searchArtifacts({
+        ...request,
+        sort: 'recent',
+        primaryCursor: relevancePage.primary.nextCursor
+      })
+    ).rejects.toThrow(/cursor.*search/i)
+    expect(
+      (await repository.searchArtifacts({ ...request, updatedAfter: 200 })).primary.totalCount
+    ).toBe(0)
     expect(first.primary.totalCount).toBe(6)
     expect(first.primary.items).toHaveLength(2)
     expect(first.primary.nextCursor).toBeDefined()
@@ -3106,6 +3138,40 @@ describe('ManagedFileIndexRepository', () => {
       otherFiles.slice(0, 5).map((file) => file.name)
     )
     expect(first.isIndexComplete).toBe(true)
+
+    const uploads = await repository.searchArtifacts({
+      primaryProjectIds: [PROJECT_ID],
+      otherProjectIds: [],
+      filenameContains: 'SIN',
+      source: 'upload',
+      primaryLimit: 10,
+      otherLimit: 0
+    })
+    expect(uploads.primary).toMatchObject({
+      totalCount: 1,
+      items: [expect.objectContaining({ name: 'sin-input.csv', source: 'upload' })]
+    })
+    const sessionFiles = await repository.searchArtifacts({
+      primaryProjectIds: [PROJECT_ID, 'project-b'],
+      otherProjectIds: [],
+      source: 'all',
+      sessionId: SESSION_ID,
+      primaryLimit: 10,
+      otherLimit: 0
+    })
+    expect(sessionFiles.primary.totalCount).toBe(4)
+    expect(sessionFiles.primary.items.every((item) => item.sessionId === SESSION_ID)).toBe(true)
+    await expect(
+      repository.searchArtifacts({
+        primaryProjectIds: [PROJECT_ID],
+        otherProjectIds: [],
+        filenameContains: 'SIN',
+        source: 'upload',
+        primaryLimit: 2,
+        primaryCursor: first.primary.nextCursor,
+        otherLimit: 0
+      })
+    ).rejects.toThrow(/cursor/i)
 
     await expect(
       repository.searchArtifacts({

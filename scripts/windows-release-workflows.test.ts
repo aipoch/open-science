@@ -100,7 +100,7 @@ describe('post-merge Windows validation', () => {
     expect(workflow.on?.schedule).toEqual([{ cron: '47 * * * *' }])
     expect(dispatch?.inputs?.mode).toMatchObject({
       default: 'full',
-      options: ['full', 'notebook-sandbox', 'regressions']
+      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions']
     })
     expect(workflow.on).not.toHaveProperty('workflow_call')
     expect(findStep(plan, 'Check for untested main changes').run).toContain(
@@ -108,7 +108,7 @@ describe('post-merge Windows validation', () => {
     )
     expect(job).toMatchObject({
       needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'notebook-sandbox') }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
       env: { VITEST_WINDOWS_FULL_TEST: '1' },
       'runs-on': 'windows-latest',
       'timeout-minutes': 35
@@ -131,7 +131,7 @@ describe('post-merge Windows validation', () => {
     expect(regressions.run).not.toContain('--shard')
     expect(sandbox).toMatchObject({
       needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'regressions') }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'notebook-sandbox')) }}",
       'runs-on': 'windows-latest',
       'timeout-minutes': 20
     })
@@ -552,8 +552,8 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(previous.run).toContain('gh release download')
     expect(previous.run).toContain('*-win-x64-setup.exe.blockmap')
     expect(previous.run).not.toContain('Get-AuthenticodeSignature')
-    expect(previous.run).toContain("$_.tagName -like 'v*'")
-    expect(previous.run).toContain('$_.tagName -ne $env:CURRENT_TAG')
+    expect(previous.run).toContain('gh api --paginate --slurp')
+    expect(previous.run).toContain('$version -lt $current')
     expect(findStep(upgrade, 'Certify Windows electron-updater differential update')).toMatchObject(
       {
         id: 'updater',
@@ -713,7 +713,9 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(historical.run).toContain('historical-blockmaps/$version/$name')
     expect(historical.run).toContain('gzip -t "$target"')
     const backfill = findStep(mirror, 'Backfill historical Windows blockmaps')
-    expect(backfill.run).toContain('releases/$version/$(basename "$blockmap")')
+    expect(backfill.run).toContain(
+      'scripts/publish-release-assets.mjs blockmaps historical-blockmaps'
+    )
     for (const sideEffectStep of [
       'Configure AWS credentials',
       'Collect historical Windows blockmaps',

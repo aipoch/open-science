@@ -1139,8 +1139,8 @@ class AcpRuntime {
   // Hot-switches the specialist bound to a live session. Updates the per-session skills and identity
   // maps so the next prompt reflects the new specialist. For Claude (identity baked into session
   // _meta at creation) the agent session is replaced via a context reset so the new identity append
-  // takes effect immediately; Codex/OpenCode carry identity as a per-turn prefix (updated in the map)
-  // and need no reset. Returns `contextReset` so the renderer knows to replay conversation history
+  // takes effect immediately; Codex refreshes its scoped MCP loader through compatible resume,
+  // while OpenCode updates its turn prefix. Both preserve history. Returns `contextReset` for replay
   // into the next prompt (only true for Claude, whose fresh session starts with no provider context).
   async switchSpecialist(
     sessionId: string,

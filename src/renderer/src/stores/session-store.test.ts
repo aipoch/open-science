@@ -28,7 +28,10 @@ import {
 } from '../../../shared/session-persistence'
 import type { UploadedAttachment } from '../../../shared/uploads'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
-import { createLinearConversationGraph } from '../../../shared/conversation-graph'
+import {
+  createLinearConversationGraph,
+  validateConversationGraph
+} from '../../../shared/conversation-graph'
 import {
   createInitialSessionState,
   projectSessionActionability,
@@ -2194,6 +2197,297 @@ describe('session store', () => {
       unsavedTitle: true
     })
   })
+
+  it.each(
+    (['finish', 'fail', 'interrupt'] as const).flatMap((terminal) =>
+      (['hidden prompt', 'shared prompt'] as const).map((selection) => ({ terminal, selection }))
+    )
+  )(
+    'keeps late output on its originating branch through $terminal with a $selection',
+    ({ terminal, selection }) => {
+      const prompt = {
+        id: 'origin-prompt',
+        role: 'user' as const,
+        content: 'Original run',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const graph = createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [prompt],
+        createdAt: 1,
+        updatedAt: 1
+      })
+      const originalBranch = graph.branches[0]
+      graph.branches.push({
+        id: 'other-branch',
+        agentFrameId: graph.rootFrameId,
+        parentBranchId: originalBranch.id,
+        ...(selection === 'shared prompt'
+          ? { forkMessageId: prompt.id, headMessageId: prompt.id }
+          : { supersededMessageId: prompt.id }),
+        createdAt: 2,
+        updatedAt: 2
+      })
+      const selectedMessages = selection === 'shared prompt' ? [prompt] : []
+      graph.frames[0].activeBranchId = 'other-branch'
+      validateConversationGraph(graph)
+      useSessionStore.getState().hydrateSessions([
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Branch switch',
+          cwd: '/workspace',
+          status: 'running',
+          activeRun: { promptMessageId: prompt.id, startedAt: 1 },
+          messages: selectedMessages,
+          conversationGraph: graph,
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ])
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      try {
+        useSessionStore
+          .getState()
+          .beginActivityGroup('session-1', 'late-group', 'Late tools', prompt.id)
+        useSessionStore.getState().upsertToolActivity({
+          sessionId: 'session-1',
+          toolCallId: 'late-tool',
+          eventId: 'tool-start',
+          promptMessageId: prompt.id,
+          title: 'Inspect original branch',
+          status: 'in_progress'
+        })
+        useSessionStore.getState().appendAgentMessageChunk({
+          sessionId: 'session-1',
+          promptMessageId: prompt.id,
+          streamId: 'late-reply',
+          eventId: 'late-event',
+          content: 'Original run '
+        })
+        useSessionStore.getState().appendAgentMessageChunks([
+          {
+            sessionId: 'session-1',
+            promptMessageId: prompt.id,
+            streamId: 'late-reply',
+            eventId: 'late-event-next',
+            content: 'completed'
+          },
+          {
+            sessionId: 'session-1',
+            promptMessageId: prompt.id,
+            streamId: 'late-reply',
+            eventId: 'late-event-next',
+            content: 'completed'
+          }
+        ])
+        const running = useSessionStore.getState()
+        const saved = toPersistedSession(running.sessions[0], running.streamingMessages)
+        expect(
+          saved.conversationGraph?.messages.find(
+            ({ content }) => content === 'Original run completed'
+          )?.introducedOnBranchId
+        ).toBe(originalBranch.id)
+        expect(saved.messages.map(({ id }) => id)).toEqual(selectedMessages.map(({ id }) => id))
+        expect(
+          saved.conversationGraph?.messages.find(
+            ({ content }) => content === 'Original run completed'
+          )
+        ).toBeDefined()
+        expect(
+          saved.conversationGraph?.activities.find(({ id }) => id === 'late-tool')
+        ).toMatchObject({ messageBranchId: originalBranch.id, status: 'in_progress' })
+        useSessionStore.getState().hydrateSessions([saved])
+        if (terminal === 'finish')
+          useSessionStore.getState().finishRun('session-1', undefined, prompt.id)
+        else if (terminal === 'fail')
+          useSessionStore
+            .getState()
+            .failRun('session-1', 'Runtime failed', { promptMessageId: prompt.id })
+        else
+          useSessionStore
+            .getState()
+            .interruptRun('session-1', 'connection-lost', 'Connection lost', prompt.id)
+        const session = useSessionStore.getState().sessions[0]
+        expect(errors).not.toHaveBeenCalled()
+        expect(session.conversationGraphSyncBlocked).toBeUndefined()
+        expect(session.messages.map(({ id }) => id)).toEqual(selectedMessages.map(({ id }) => id))
+        expect(session.activeRun).toBeUndefined()
+        expect(session.activities ?? []).toEqual([])
+        expect(session.activityGroups ?? []).toEqual([])
+        expect(
+          session.conversationGraph?.activities.find(({ id }) => id === 'late-tool')
+        ).toMatchObject({
+          messageBranchId: originalBranch.id,
+          status: terminal === 'finish' ? 'completed' : 'failed'
+        })
+        expect(
+          session.conversationGraph?.activityGroups.find(({ id }) => id === 'late-group')
+        ).toMatchObject({ messageBranchId: originalBranch.id, completedAt: expect.any(Number) })
+        expect(session.conversationGraph?.frames[0].activeBranchId).toBe('other-branch')
+        expect(
+          session.conversationGraph?.messages.find(
+            ({ content }) => content === 'Original run completed'
+          )?.introducedOnBranchId
+        ).toBe(originalBranch.id)
+        validateConversationGraph(session.conversationGraph!)
+      } finally {
+        errors.mockRestore()
+      }
+    }
+  )
+
+  it.each([1, 2])(
+    'preserves late output from a delegate at depth %i when its ancestor branch is hidden',
+    (depth) => {
+      const seed = (id: string): PersistedChatSession['messages'][number] => ({
+        id,
+        role: 'user' as const,
+        content: id,
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      })
+      const rootPrompt = seed('root-origin')
+      const graph = createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [rootPrompt],
+        createdAt: 1,
+        updatedAt: 1
+      })
+      let parentFrameId = graph.rootFrameId
+      let promptId = rootPrompt.id
+      let branchId = graph.branches[0].id
+      for (let level = 1; level <= depth; level += 1) {
+        const prompt = seed(`delegate-prompt-${level}`)
+        const child = createLinearConversationGraph({
+          sessionId: `delegate-${level}`,
+          messages: [prompt],
+          createdAt: 1,
+          updatedAt: 1
+        })
+        graph.frames.push({
+          ...child.frames[0],
+          parentFrameId,
+          originMessageId: promptId,
+          originBindingState: 'validated',
+          kind: 'delegate'
+        })
+        graph.branches.push(...child.branches)
+        graph.messages.push(...child.messages)
+        graph.runtimeSegments.push(...child.runtimeSegments)
+        parentFrameId = child.rootFrameId
+        promptId = prompt.id
+        branchId = child.branches[0].id
+      }
+      graph.branches.push({
+        id: 'selected-root-branch',
+        agentFrameId: graph.rootFrameId,
+        parentBranchId: graph.branches[0].id,
+        supersededMessageId: rootPrompt.id,
+        createdAt: 2,
+        updatedAt: 2
+      })
+      graph.frames[0].activeBranchId = 'selected-root-branch'
+      validateConversationGraph(graph)
+      useSessionStore.getState().hydrateSessions([
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Hidden delegate',
+          cwd: '/workspace',
+          status: 'running',
+          activeRun: { promptMessageId: promptId, startedAt: 1 },
+          messages: [],
+          conversationGraph: graph,
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ])
+      expect(() =>
+        useSessionStore.getState().appendAgentMessageChunk({
+          sessionId: 'session-1',
+          promptMessageId: promptId,
+          streamId: 'delegate-reply',
+          eventId: 'delegate-output',
+          content: 'Hidden delegate reply'
+        })
+      ).not.toThrow()
+      useSessionStore.getState().finishRun('session-1', undefined, promptId)
+      const session = useSessionStore.getState().sessions[0]
+      const saved = toPersistedSession(session)
+      expect(saved.messages).toEqual([])
+      expect(saved.conversationGraph?.activeFrameId).toBe(graph.rootFrameId)
+      expect(saved.conversationGraph?.frames[0].activeBranchId).toBe('selected-root-branch')
+      expect(
+        saved.conversationGraph?.messages.find(({ content }) => content === 'Hidden delegate reply')
+      ).toMatchObject({
+        introducedOnBranchId: branchId,
+        agentFrameId: parentFrameId,
+        responseToMessageId: promptId,
+        status: 'complete'
+      })
+      expect(session.conversationGraphSyncBlocked).toBeUndefined()
+      validateConversationGraph(saved.conversationGraph!)
+    }
+  )
+
+  it.each(['current', 'incoming'] as const)(
+    'retains the descendant branch head when the %s snapshot contains the latest reply',
+    (owner) => {
+      const messages = ['prompt', 'first-reply', 'latest-reply'].map((id, index) => ({
+        id,
+        role: index === 0 ? ('user' as const) : ('agent' as const),
+        content: id,
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: index + 1,
+        updatedAt: 3
+      }))
+      const current: PersistedChatSession = {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Delegated replies',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 1,
+        messages: owner === 'current' ? messages : messages.slice(0, 2),
+        createdAt: 1,
+        updatedAt: 3,
+        conversationGraph: createLinearConversationGraph({
+          sessionId: 'session-1',
+          messages: owner === 'current' ? messages : messages.slice(0, 2),
+          frameworkId: 'opencode',
+          createdAt: 1,
+          updatedAt: 3
+        })
+      }
+      const incoming = {
+        ...current,
+        revision: 2,
+        updatedAt: 4,
+        messages: owner === 'incoming' ? messages : messages.slice(0, 2),
+        conversationGraph: createLinearConversationGraph({
+          sessionId: 'session-1',
+          messages: owner === 'incoming' ? messages : messages.slice(0, 2),
+          frameworkId: 'opencode',
+          createdAt: 1,
+          updatedAt: owner === 'incoming' ? 2 : 4
+        })
+      }
+      validateConversationGraph(current.conversationGraph!)
+      validateConversationGraph(incoming.conversationGraph)
+      useSessionStore.getState().hydrateSessions([current])
+      useSessionStore.getState().upsertPersistedSession(incoming)
+      const merged = useSessionStore.getState().sessions[0]
+      expect(() => validateConversationGraph(merged.conversationGraph!)).not.toThrow()
+      expect(merged.messages.map(({ id }) => id)).toEqual(['prompt', 'first-reply', 'latest-reply'])
+    }
+  )
 
   it('merges a stale-timestamp child completion by durable identities without clearing root transient state', () => {
     const rootMessage = {
@@ -6260,7 +6554,7 @@ describe('session store public contract', () => {
           visit(path)
         } else if (
           /\.[cm]?tsx?$/.test(entry.name) &&
-          !/\.(?:test|spec)\.[cm]?tsx?$/.test(entry.name)
+          !/\.(?:test|spec|test-support)\.[cm]?tsx?$/.test(entry.name)
         ) {
           paths.push(path)
         }

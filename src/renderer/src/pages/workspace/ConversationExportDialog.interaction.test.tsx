@@ -5,8 +5,9 @@ import { waitFor } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ChatSession } from '@/stores/session-store'
+import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { ConversationExportDialog } from './ConversationExportDialog'
+import { createConversationExportDocument } from '../../../../shared/conversation-export'
 import {
   saveSessionInOrder,
   resetSessionPersistenceWriteFailuresForTests
@@ -93,6 +94,106 @@ describe('ConversationExportDialog', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     resetSessionPersistenceWriteFailuresForTests()
+  })
+
+  it('exports a settled conversation after a delayed stop and durable refresh', async () => {
+    const durable = createSession()
+    const initialState = useSessionStore.getState()
+    useSessionStore.getState().hydrateSessions([durable])
+    vi.spyOn(Date, 'now').mockReturnValue(10)
+    // The durable completion can arrive before its runtime stop event reaches the renderer.
+    useSessionStore.getState().finishRun(durable.id)
+    useSessionStore.getState().applyDurableSessionProjection({
+      source: useSessionStore.getState().sessions[0]!,
+      session: durable,
+      mode: 'runtime-context-authority'
+    })
+    const snapshot = useSessionStore.getState().sessions[0]!
+    const writeFile = vi.fn().mockResolvedValue(undefined)
+    const onClose = vi.fn()
+    const service = createConversationExportService({
+      loadSession: async () => durable,
+      isSessionActive: () => false,
+      showSaveDialog: async () => ({ canceled: false, filePath: '/in-memory/export.md' }),
+      getDownloadsPath: () => '/in-memory',
+      writeFile,
+      publishUserFile: async (path, write) => {
+        await write(path)
+      }
+    })
+    try {
+      expect(snapshot.status).toBe('idle')
+      const preview = createConversationExportDocument(snapshot, 0)
+      const saved = createConversationExportDocument(durable, 0)
+      expect(preview.updatedAt).not.toBe(saved.updatedAt)
+      expect({ ...preview, updatedAt: saved.updatedAt }).toEqual(saved)
+      expect(snapshot.messages.map(({ content }) => content)).toEqual(
+        durable.messages.map(({ content }) => content)
+      )
+      const render = (session: ChatSession | undefined): void => {
+        root.render(
+          <ConversationExportDialog
+            session={session}
+            currentSession={snapshot}
+            onClose={onClose}
+            onExport={service.exportConversation}
+          />
+        )
+      }
+      act(() => render(snapshot))
+      act(() => render(undefined))
+      act(() => render(snapshot))
+      act(() => findControl('radio', 'Markdown')?.click())
+      await act(async () => {
+        document.body
+          .querySelector<HTMLButtonElement>('[data-testid="conversation-export-confirm"]')
+          ?.click()
+      })
+      await waitFor(() =>
+        expect(
+          document.body.querySelector<HTMLButtonElement>(
+            '[data-testid="conversation-export-confirm"]'
+          )?.disabled
+        ).toBe(false)
+      )
+      expect(document.body.querySelector('[role="alert"]')?.textContent ?? '').toBe('')
+      expect(writeFile).toHaveBeenCalledWith(
+        '/in-memory/export.md',
+        expect.stringContaining('The selected limitations')
+      )
+      expect(writeFile.mock.calls[0]?.[1]).toContain(
+        `updated: ${JSON.stringify(new Date(durable.updatedAt).toISOString())}`
+      )
+      expect(onClose).toHaveBeenCalledOnce()
+    } finally {
+      useSessionStore.setState(initialState, true)
+    }
+  })
+
+  it('keeps export available when only the current Session update time changes', async () => {
+    const session = createSession()
+    const onExport = vi.fn().mockResolvedValue({ saved: true })
+    const onClose = vi.fn()
+    act(() =>
+      root.render(
+        <ConversationExportDialog
+          session={session}
+          currentSession={{ ...session, updatedAt: session.updatedAt + 1 }}
+          onClose={onClose}
+          onExport={onExport}
+        />
+      )
+    )
+    const confirm = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="conversation-export-confirm"]'
+    )!
+    expect(confirm.disabled).toBe(false)
+    expect(document.body.textContent).not.toContain('The conversation changed.')
+    await act(async () => {
+      confirm.click()
+    })
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    expect(onExport).toHaveBeenCalledOnce()
   })
 
   it('defaults to the whole PDF export and omits a selection field', async () => {

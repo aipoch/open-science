@@ -101,6 +101,8 @@ export class AcpProviderSessionAdopter {
       })
       const hasAuthoritativeSpecialistBinding =
         request.specialistBindingPending === true || request.specialistId !== undefined
+      const specialistBindingRevision =
+        this.deps.registry.lookup(stableAppSessionId)?.aggregate.specialistBindingRevision() ?? 0
       const specialistId = hasAuthoritativeSpecialistBinding
         ? request.specialistId
         : this.deps.registry.lookup(stableAppSessionId)?.aggregate.snapshot().specialistId
@@ -177,6 +179,15 @@ export class AcpProviderSessionAdopter {
         }
         diagnostics.phase('publish-provider-session')
         identity.assertCurrent()
+        if (
+          startupBackend.framework.id === 'codex' &&
+          startupBackend.session.options?.openScienceSkillRuntime &&
+          specialistBindingRevision !==
+            (this.deps.registry.lookup(stableAppSessionId)?.aggregate.specialistBindingRevision() ??
+              0)
+        ) {
+          throw new Error('ACP session startup was superseded.')
+        }
         const { aggregate } = this.deps.registry.publish(identity, stableAppSessionId, {
           session: provisionalSession,
           cwd: request.cwd,

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,7 +45,8 @@ function makeReleaseDir(files: FileSpec[]): string {
 // A canonical entry: 64-hex sha keyed off the platform so each file gets a distinct, checkable hash.
 const HEX = (n: string): string => n.repeat(64)
 function entry(key: keyof typeof INSTALLERS, extra = 0): FileSpec {
-  return { name: INSTALLERS[key], content: 'x'.repeat(10 + extra), sha: HEX(String(extra % 10)) }
+  const content = 'x'.repeat(10 + extra)
+  return { name: INSTALLERS[key], content, sha: createHash('sha256').update(content).digest('hex') }
 }
 
 describe('parseSha256Sums', () => {
@@ -227,30 +229,22 @@ describe('buildManifest', () => {
     expect(manifest.downloads['linux-x64-deb']).toBeUndefined()
   })
 
-  it('warns and skips an installer missing from SHA256SUMS', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  it('rejects an installer missing from SHA256SUMS', () => {
     dir = makeReleaseDir([entry('mac-arm64', 1), { ...entry('mac-x64', 2), sha: null }])
-
-    const manifest = buildManifest({
-      dir,
-      version: VERSION,
-      notes: '',
-      releaseDate: '',
-      cdnBase: CDN,
-      prefix: PREFIX
-    })
-
-    expect(manifest.downloads['mac-arm64']).toBeDefined()
-    expect(manifest.downloads['mac-x64']).toBeUndefined()
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no sha256'))
-    warn.mockRestore()
+    expect(() => buildManifest({ dir, version: VERSION, cdnBase: CDN, prefix: PREFIX })).toThrow(
+      /no sha256/
+    )
   })
 
   it('warns on an unrecognized file but stays silent for zips and checksums', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     dir = makeReleaseDir([
       entry('mac-arm64', 1),
-      { name: 'aipoch-open-science-0.1.2-mac-arm64.zip', content: 'zip', sha: HEX('9') },
+      {
+        name: 'aipoch-open-science-0.1.2-mac-arm64.zip',
+        content: 'zip',
+        sha: createHash('sha256').update('zip').digest('hex')
+      },
       { name: 'mystery-artifact.bin', content: 'bin', sha: HEX('8') }
     ])
 

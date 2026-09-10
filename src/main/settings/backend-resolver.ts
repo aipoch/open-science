@@ -316,6 +316,9 @@ export class AgentBackendResolver {
     const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
     const includeSkillAndConnectorContext = context.includeSkillAndConnectorContext !== false
     const codeBuddySkillRuntimeRoot = join(codeBuddyStorageDir(this.storageRoot), 'skill-runtime')
+    const codexSkillRuntimeRoot = isCodexSubscriptionProvider(target.provider.type)
+      ? codexSubscriptionStorageDir(this.storageRoot)
+      : codexStorageDir(this.storageRoot)
     const userSkillDirectoryGuidance =
       includeSkillAndConnectorContext && framework.supportsSkills
         ? userSkillDirectorySystemPromptAppend(this.storageRoot)
@@ -409,9 +412,7 @@ export class AgentBackendResolver {
         framework.id === 'codebuddy'
           ? join(codeBuddySkillRuntimeRoot, '.claude')
           : framework.id === 'codex'
-            ? isCodexSubscriptionProvider(target.provider.type)
-              ? codexSubscriptionStorageDir(this.storageRoot)
-              : codexStorageDir(this.storageRoot)
+            ? codexSkillRuntimeRoot
             : opencodeConfigDir(this.storageRoot)
       const materializedConnectorSkillNames = includeSkillAndConnectorContext
         ? await this.runtime.materializeAgentSkills(
@@ -502,13 +503,19 @@ export class AgentBackendResolver {
           ? { sessionModelRequired: true }
           : {}),
         sessionEffort,
-        ...(framework.id === 'codebuddy' && includeSkillAndConnectorContext
+        ...((framework.id === 'codebuddy' || framework.id === 'codex') &&
+        includeSkillAndConnectorContext
           ? {
               sessionOptions: {
                 [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
                   command: process.execPath,
                   entryPath: this.skillRuntimeMcpEntryPath,
-                  root: codeBuddySkillRuntimeRoot
+                  ...(framework.id === 'codebuddy'
+                    ? { root: codeBuddySkillRuntimeRoot }
+                    : {
+                        root: codexSkillRuntimeRoot,
+                        skillsDirectory: join(codexSkillRuntimeRoot, 'skills')
+                      })
                 }
               }
             }

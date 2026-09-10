@@ -126,6 +126,19 @@ const reliableMessagingChildren = new Map()
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
+const waitForReleaseFile = async (releaseFile) => {
+  const deadline = Date.now() + 30_000
+  while (true) {
+    try {
+      await readFile(releaseFile)
+      break
+    } catch (error) {
+      if (error.code !== 'ENOENT' || Date.now() >= deadline) throw error
+      await delay(50)
+    }
+  }
+}
+
 const suspendSessionWrites = async () => {
   const sessionsRoot = join(process.env.OPEN_SCIENCE_STORAGE_ROOT ?? '', 'sessions')
   const projects = await readdir(sessionsRoot, { withFileTypes: true })
@@ -1249,6 +1262,9 @@ if (process.argv.includes('--version')) {
             })
             await delay(50)
           }
+          // Hold only the fake stream until the test has queued the follow-up through the UI.
+          const releaseFile = JSON.parse(prompt.split('Release file: ')[1])
+          await waitForReleaseFile(releaseFile)
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
@@ -1508,10 +1524,10 @@ if (process.argv.includes('--version')) {
             update: {
               sessionUpdate: 'agent_message_chunk',
               messageId: `e2e-message-${nextMessageId++}`,
-              content: { type: 'text', text: 'Two upward lanes are queued.' }
+              content: { type: 'text', text: 'Two upward lanes are starting.' }
             }
           })
-          await delay(1_500)
+          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]))
           reply = 'Reliable fairness source turn completed.'
         } else if (prompt.includes(SUBAGENT_MODEL_BATCH_PROMPT)) {
           const delegated = controlResultValue(

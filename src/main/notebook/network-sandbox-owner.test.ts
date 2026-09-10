@@ -39,8 +39,53 @@ vi.mock('@aipoch/notebook-network-sandbox', () => ({
 }))
 
 import { NotebookNetworkSandboxOwner, commandLine } from './network-sandbox-owner'
+import { DEFAULT_R_ENV, envPrefix, legacyDefaultEnvPrefix, rScriptBin } from './runtime-paths'
 
 const fixtureDirectories: string[] = []
+
+it.each([undefined, true] as const)(
+  'preserves the native job capability in the executor adapter (%s)',
+  async (windowsJobObject) => {
+    const root = await mkdtemp(join(tmpdir(), 'os-job-capability-'))
+    fixtureDirectories.push(root)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    backend.wrap.mockResolvedValueOnce({
+      argv: ['host'],
+      env: {},
+      windowsJobObject,
+      annotateStderr: (stderr: string) => stderr,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      cleanup: backend.cleanup
+    })
+    try {
+      const wrapped = await owner.wrap({
+        executable: process.execPath,
+        args: [],
+        env: {},
+        cwd: root,
+        commandText: 'workload',
+        sessionId: 'session',
+        projectId: 'project',
+        runtime: 'r',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [root],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      expect(wrapped.windowsJobObject).toBe(windowsJobObject)
+      wrapped.cleanup()
+    } finally {
+      await owner.dispose()
+    }
+  }
+)
 
 const createCapturingLogger = (): { logger: Logger; records: unknown[] } => {
   const records: unknown[] = []
@@ -98,6 +143,34 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it.each([false, true])(
+    'removes the managed R grant before path replacement (cancelled: %s)',
+    async (cancelled) => {
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn(),
+        platform: 'win32'
+      })
+      backend.setWindowsRuntimeAccess.mockResolvedValueOnce({ cancelled })
+      const operation = owner.revokeManagedRAccess('/data/runtime')
+      if (cancelled) await expect(operation).rejects.toThrow('permission removal was cancelled')
+      else await expect(operation).resolves.toBeUndefined()
+      expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledWith(
+        rScriptBin(envPrefix('/data/runtime', DEFAULT_R_ENV, 'win32'), 'win32'),
+        false
+      )
+      if (!cancelled) {
+        expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledWith(
+          rScriptBin(legacyDefaultEnvPrefix('/data/runtime', DEFAULT_R_ENV), 'win32'),
+          false
+        )
+      }
+      expect(backend.wrap).not.toHaveBeenCalled()
+    }
+  )
+
   it('does not pass parent secrets or R startup overrides to the runtime verification child', async () => {
     const root = await mkdtemp(join(tmpdir(), 'os-r-verification-env-'))
     fixtureDirectories.push(root)

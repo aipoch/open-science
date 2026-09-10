@@ -67,7 +67,7 @@ describe('release and scheduled workflow topology', () => {
     expect(schedule).toEqual([{ cron: '47 * * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'full',
-      options: ['full', 'notebook-sandbox', 'regressions']
+      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions']
     })
     expect(windows.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(plan).toMatchObject({
@@ -79,12 +79,12 @@ describe('release and scheduled workflow topology', () => {
     )
     expect(job).toMatchObject({
       needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'notebook-sandbox') }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
       'timeout-minutes': 35
     })
     expect(sandbox).toMatchObject({
       needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'regressions') }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'notebook-sandbox')) }}",
       'runs-on': 'windows-latest',
       'timeout-minutes': 20
     })
@@ -422,5 +422,87 @@ describe('website mirror publication intent', () => {
     expect(publication.env?.MODE).toBe('${{ inputs.mode }}')
     expect(publication.if).toBe('${{ !inputs.dry_run }}')
     expect(publication.run).toBe('node scripts/publish-update-channel.mjs')
+  })
+})
+
+describe('build verification throughput', () => {
+  it('runs Ubuntu static checks independently from three complete portable shards', () => {
+    const { verify, verify_tests: tests, verify_macos: macos } = workflow('build.yml').jobs
+    expect(verify['runs-on']).toBe('ubuntu-latest')
+    expect(verify.needs).toBeUndefined()
+    expect(tests.needs).toBeUndefined()
+    expect(tests['runs-on']).toBe('ubuntu-latest')
+    expect(tests.strategy?.matrix?.shard).toEqual([1, 2, 3])
+    expect(tests.env).toEqual({
+      VITEST_DEFER_COVERAGE_THRESHOLDS: '1',
+      VITEST_PORTABLE_CI: '1'
+    })
+    expect(step(tests, 'Test complete suite shard').run).toContain('--shard=${{ matrix.shard }}/3')
+    expect(step(tests, 'Test complete suite shard').run).toContain('--coverage')
+    expect(step(tests, 'Enforce full-suite shard').if).toBe('${{ always() }}')
+    expect(step(verify, 'Check translation catalogs').run).toBe(
+      'npx vitest run src/renderer/src/i18n/resources.test.ts'
+    )
+    for (const job of [verify, tests, macos]) {
+      expect(job.if).toBe('${{ !inputs.skip_verify }}')
+    }
+    expect(macos['runs-on']).toBe('macos-14')
+    const native = step(macos, 'Test macOS native behavior and release regressions').run
+    for (const path of [
+      'src/main/windows.test.ts',
+      'packages/notebook-network-sandbox/src/filesystem-policy.test.ts',
+      'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
+      'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts',
+      'src/main/net/network-info.test.ts',
+      'src/main/notebook/managed-runtime-guard.test.ts',
+      'src/main/notebook/package-cache-sandbox.integration.test.ts',
+      'src/main/acp/prompt-attachment-notebook-sandbox.integration.test.ts',
+      'src/main/compute/compute-remote-operation-owner.test.ts',
+      'scripts/ci/mirror-channel-publication.test.ts',
+      'src/main/literature/catalog-capacity.test.ts'
+    ])
+      expect(native).toContain(path)
+    expect(step(macos, 'Test production macOS kernel sandbox').run).toContain(
+      'executes the repl loop through the production network sandbox'
+    )
+  })
+
+  it('requires successful shards and all blobs before enforcing aggregate coverage', () => {
+    const job = workflow('build.yml').jobs.verify_coverage
+    expect(job.needs).toBe('verify_tests')
+    expect(job.if).toBe('${{ !cancelled() && !inputs.skip_verify }}')
+    expect(job.env).toBeUndefined()
+    const guard = step(job, 'Require complete successful shards')
+    expect(guard.env).toEqual({ SHARDS_RESULT: '${{ needs.verify_tests.result }}' })
+    expect(guard.run).toContain('test "$SHARDS_RESULT" = success')
+    expect(guard.run).toContain('for shard in 1 2 3')
+    expect(guard.run).toContain('test -s "vitest-reports/blob-$shard.json"')
+    expect(step(job, 'Merge test reports and enforce coverage').run).toBe(
+      'npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests'
+    )
+    expect(step(job, 'Upload coverage report').with).toMatchObject({
+      overwrite: true,
+      'if-no-files-found': 'error'
+    })
+  })
+
+  it('reuses real verification for a manual release dry-run without packaging or publication', () => {
+    const release = workflow('release.yml')
+    const build = workflow('build.yml')
+    expect(release.on?.workflow_dispatch).toMatchObject({
+      inputs: { verify_only: { type: 'boolean', default: false } }
+    })
+    expect(release.jobs.build.with?.verify_only).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && inputs.verify_only }}"
+    )
+    expect(build.jobs.setup.if).toBe('${{ !inputs.verify_only }}')
+    expect(build.jobs.build.needs).toBe('setup')
+    expect(build.jobs.build.if).toBe("${{ needs.setup.result == 'success' }}")
+    expect(release.jobs['package-smoke'].if).toBe('${{ !inputs.verify_only }}')
+    for (const name of ['publish', 'notarize-mac']) {
+      expect(release.jobs[name].if).toBe(
+        "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')"
+      )
+    }
   })
 })

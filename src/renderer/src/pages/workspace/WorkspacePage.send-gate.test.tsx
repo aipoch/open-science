@@ -20,6 +20,8 @@ import {
   useSessionStore,
   type ChatSession
 } from '@/stores/session-store'
+import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import { resetSessionPersistenceWriteFailuresForTests } from '@/lib/session-persistence/session-persistence'
 import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 
@@ -250,6 +252,47 @@ describe('WorkspacePage send gate while compacting', () => {
       )
     })
   }
+
+  it('saves the selected branch before stopping its Subagents', async () => {
+    let releaseSave: (() => void) | undefined
+    const saveSession = vi.fn(
+      (session: PersistedChatSession) =>
+        new Promise<PersistedChatSession>((resolve) => {
+          releaseSave = () => resolve(session)
+        })
+    )
+    window.api.sessions = { saveSession } as never
+    const cancel = vi.fn().mockResolvedValue(undefined)
+    window.api.acp.cancel = cancel
+    await renderPage()
+    const stopping = Promise.resolve(conversationProps.subagents?.stop?.())
+    try {
+      expect(cancel).not.toHaveBeenCalled()
+      await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+      expect(saveSession.mock.calls[0][0].id).toBe('sess-a')
+      expect(cancel).not.toHaveBeenCalled()
+      releaseSave!()
+      await stopping
+      expect(cancel).toHaveBeenCalledExactlyOnceWith({ sessionId: 'sess-a', scope: 'subagents' })
+    } finally {
+      releaseSave?.()
+      await stopping
+    }
+  })
+
+  it('propagates a branch save failure without sending a Subagent Stop', async () => {
+    const error = new Error('Session storage unavailable')
+    window.api.sessions = { saveSession: vi.fn().mockRejectedValue(error) } as never
+    const cancel = vi.fn().mockResolvedValue(undefined)
+    window.api.acp.cancel = cancel
+    await renderPage()
+    try {
+      await expect(Promise.resolve(conversationProps.subagents?.stop?.())).rejects.toBe(error)
+      expect(cancel).not.toHaveBeenCalled()
+    } finally {
+      resetSessionPersistenceWriteFailuresForTests()
+    }
+  })
 
   it('disables sending while the active session is compacting, and re-enables after', async () => {
     await renderPage()

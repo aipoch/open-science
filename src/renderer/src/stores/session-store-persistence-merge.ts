@@ -9,7 +9,8 @@ import type { ActivePlanProjection } from '../../../shared/session-plan/contract
 import {
   projectConversationMessage,
   resolveActiveConversationActivities,
-  resolveActiveConversationMessages
+  resolveActiveConversationMessages,
+  resolveMessageBranchPath
 } from '../../../shared/conversation-graph'
 
 const collectDirectDelegateFrameIds = (
@@ -81,6 +82,20 @@ const mergeConversationGraphByIdentity = (
       }
     ),
     branches: merge(current.branches, incoming.branches, (left, right) => {
+      // A later save can contain an earlier streaming snapshot. Keep the descendant head
+      // when both snapshots describe the same chain; timestamps do not measure progress.
+      if (left.headMessageId !== right.headMessageId) {
+        if (
+          !right.headMessageId ||
+          resolveMessageBranchPath(current, left.id).some(({ id }) => id === right.headMessageId)
+        )
+          return false
+        if (
+          !left.headMessageId ||
+          resolveMessageBranchPath(incoming, right.id).some(({ id }) => id === left.headMessageId)
+        )
+          return true
+      }
       const isCurrentRootBranch =
         left.agentFrameId === current.rootFrameId &&
         left.id === current.frames.find(({ id }) => id === current.rootFrameId)?.activeBranchId

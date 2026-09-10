@@ -8,6 +8,7 @@ import {
 } from './environment-discovery'
 import { listEnvPackages } from './package-listing'
 import type { MicromambaRunner } from './windows-micromamba-runner'
+import { isMigrationInProgress, withDataRootWrite } from '../storage/migration-state'
 
 // Upper bound on concurrent package listings inside listPackageCounts (mirrors the bounded
 // probe concurrency in environment-discovery): enough to fill the Settings badges quickly without
@@ -95,11 +96,16 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
     operation: () => Promise<T>
   ): Promise<T> => {
     if (language !== 'r' || !deps.setWindowsRuntimeAccess) return operation()
+    if (isMigrationInProgress()) {
+      throw new Error(
+        'Open-Science is moving your data. Wait for the move to finish before running this.'
+      )
+    }
     if (runtimeAccessUpdate)
       throw new Error('An R runtime permission change is already in progress.')
     runtimeAccessUpdate = true
     try {
-      return await operation()
+      return await withDataRootWrite(operation)
     } finally {
       runtimeAccessUpdate = false
     }
@@ -147,8 +153,8 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
         const env = (await discoverLanguageEnvs('r')).find(
           (candidate) => candidate.envId === request.envId
         )
-        if (!env || env.provenance !== 'user-own')
-          throw new Error('Select a discovered external R runtime.')
+        if (!env || env.provenance === 'agent-created')
+          throw new Error('Select a discovered managed or external R runtime.')
         if (request.authorized && !env.runnable)
           throw new Error('R must be runnable with jsonlite before verifying sandbox access.')
         if (!request.authorized) {
@@ -246,7 +252,7 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
             const env = (await discoverLanguageEnvs('r')).find(
               (candidate) => candidate.envId === request.envId
             )
-            if (env?.provenance === 'user-own') {
+            if (env && env.provenance !== 'agent-created') {
               const result = await deps.setWindowsRuntimeAccess(
                 rscriptFor(env.interpreterPath),
                 false

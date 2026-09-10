@@ -247,6 +247,16 @@ const resolveAutomaticPermission = (
     return resolveAllowOptionId(params)
   }
 
+  // The app-owned loader only reads the current projection under its enforced Skill allowlist.
+  // A model-supplied title or argument must never claim this exception.
+  if (
+    context?.frameworkId === 'codex' &&
+    context.mcpServerNames?.includes('skills') &&
+    trustedMcpToolIdentity(params) === 'skills/load_skill'
+  ) {
+    return resolveAllowOptionId(params)
+  }
+
   // Saving an already-existing/inline result into the exact app-owned Artifact capability is part
   // of normal turn finalization. It cannot execute code or choose Project/Session ownership, so it
   // receives one call-scoped allow decision under every profile without showing an approval card.

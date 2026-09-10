@@ -1,3 +1,5 @@
+import sharp from 'sharp'
+import * as attachmentMedia from '../uploads/attachment-media'
 import * as acp from '@agentclientprotocol/sdk'
 import type {
   ContentBlock,
@@ -58,7 +60,9 @@ import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { validateDurableMessageOwnership } from '../artifacts/provenance-message-finalization'
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
 import type { ArtifactRunClaim } from '../artifacts/run-registry'
-import { createPngBytes, createPngInlineSource } from '../artifacts/artifact-test-fixtures'
+const imageBytes = await sharp({ create: { width: 2, height: 2, channels: 3, background: 'red' } })
+  .png()
+  .toBuffer()
 import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
 import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { BEGIN_ACTIVITY_GROUP_TOOL_NAME } from '../../shared/activity-groups'
@@ -1165,6 +1169,7 @@ const auditedIsMcp = (toolCallId: string): boolean | undefined => {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.allSettled(temporaryDisconnections.splice(0).map((disconnect) => disconnect()))
   if (temporaryRoot) {
     await rm(temporaryRoot, { recursive: true, force: true })
@@ -1783,7 +1788,7 @@ describe('ACP runtime provider prompt acceptance', () => {
       })
 
       const session = await runtime.createSession({ cwd: '/workspace' })
-      const imageData = Buffer.from(`visual-${modelRoute}`).toString('base64')
+      const imageData = imageBytes.toString('base64')
       await runtime.sendPrompt({
         sessionId: session.sessionId,
         text: 'Research this.',
@@ -1791,7 +1796,7 @@ describe('ACP runtime provider prompt acceptance', () => {
           {
             mimeType: 'image/png',
             data: imageData,
-            byteLength: Buffer.byteLength(`visual-${modelRoute}`)
+            byteLength: imageBytes.length
           }
         ]
       })
@@ -3173,8 +3178,8 @@ describe('ACP runtime restored permission continuation', () => {
               {
                 id: 'permission-replay-image',
                 mimeType: 'image/png',
-                data: createPngBytes('permission-replay').toString('base64'),
-                byteLength: createPngBytes('permission-replay').byteLength
+                data: imageBytes.toString('base64'),
+                byteLength: imageBytes.byteLength
               }
             ],
             eventIds: [],
@@ -7259,8 +7264,8 @@ describe('ACP runtime session management', () => {
             {
               id: 'choice-replay-image',
               mimeType: 'image/png',
-              data: createPngBytes('choice-replay').toString('base64'),
-              byteLength: createPngBytes('choice-replay').byteLength
+              data: imageBytes.toString('base64'),
+              byteLength: imageBytes.byteLength
             }
           ],
           eventIds: [],
@@ -7523,7 +7528,7 @@ describe('ACP runtime session management', () => {
         {
           name: 'paste.png',
           mimeType: 'image/png',
-          content: Buffer.from('png-bytes').toString('base64')
+          content: imageBytes.toString('base64')
         },
         {
           name: 'notes.txt',
@@ -7563,7 +7568,7 @@ describe('ACP runtime session management', () => {
     expect(receivedPrompts[0][1]).toMatchObject({
       type: 'image',
       mimeType: 'image/png',
-      data: Buffer.from('png-bytes').toString('base64'),
+      data: imageBytes.toString('base64'),
       uri: expect.stringContaining('/uploads/default-project/remote-session-1/paste.png')
     })
     expect(receivedPrompts[0][2]).toMatchObject({
@@ -7648,7 +7653,7 @@ describe('ACP runtime session management', () => {
         managedFileVersions: { openLatest } as never
       }
     })
-    const historyImageData = Buffer.from('history-image').toString('base64')
+    const historyImageData = imageBytes.toString('base64')
 
     const session = await runtime.createSession({ cwd: '/workspace' })
     await runtime.sendPrompt({
@@ -7658,7 +7663,7 @@ describe('ACP runtime session management', () => {
         {
           mimeType: 'image/png',
           data: historyImageData,
-          byteLength: Buffer.byteLength('history-image')
+          byteLength: imageBytes.length
         }
       ],
       historyAttachments: [historyUpload],
@@ -7829,12 +7834,12 @@ describe('ACP runtime session management', () => {
         {
           name: 'no-mime.png',
           mimeType: undefined,
-          content: Buffer.from('png-a').toString('base64')
+          content: imageBytes.toString('base64')
         },
         {
           name: 'generic.png',
           mimeType: 'application/octet-stream',
-          content: Buffer.from('png-b').toString('base64')
+          content: imageBytes.toString('base64')
         }
       ]
     })
@@ -7865,16 +7870,21 @@ describe('ACP runtime session management', () => {
     expect(receivedPrompts[0][1]).toMatchObject({
       type: 'image',
       mimeType: 'image/png',
-      data: Buffer.from('png-a').toString('base64')
+      data: imageBytes.toString('base64')
     })
     expect(receivedPrompts[0][2]).toMatchObject({
       type: 'image',
       mimeType: 'image/png',
-      data: Buffer.from('png-b').toString('base64')
+      data: imageBytes.toString('base64')
     })
   })
 
   it('degrades an image attachment to a resource link when replay images consume the inline budget', async () => {
+    // Isolate byte-budget admission from image compression; real decoding has its own regressions.
+    vi.spyOn(attachmentMedia, 'prepareModelImageData').mockImplementation(async (bytes) => ({
+      data: bytes.toString('base64'),
+      mimeType: 'image/png'
+    }))
     const root = await createTemporaryRoot()
     const uploadRepository = new UploadRepository(root)
     const [attachment] = await stageUploadFixtures(uploadRepository, {
@@ -7882,7 +7892,7 @@ describe('ACP runtime session management', () => {
         {
           name: 'overflow.png',
           mimeType: 'image/png',
-          content: Buffer.from('small-image').toString('base64')
+          content: imageBytes.toString('base64')
         }
       ]
     })
@@ -7940,16 +7950,14 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       uploads: { repository: uploadRepository },
-      inlineImageBudgetBytes: 15
+      inlineImageBudgetBytes: imageBytes.toString('base64').length + 1
     })
 
     const session = await runtime.createSession({ cwd: '/workspace' })
 
     const stageImage = (name: string): Promise<UploadedAttachment[]> =>
       stageUploadFixtures(uploadRepository, {
-        files: [
-          { name, mimeType: 'image/png', content: Buffer.from('png-bytes').toString('base64') }
-        ]
+        files: [{ name, mimeType: 'image/png', content: imageBytes.toString('base64') }]
       })
 
     await runtime.sendPrompt({
@@ -7968,7 +7976,7 @@ describe('ACP runtime session management', () => {
     expect(receivedPrompts[0][1]).toMatchObject({
       type: 'image',
       mimeType: 'image/png',
-      data: Buffer.from('png-bytes').toString('base64')
+      data: imageBytes.toString('base64')
     })
     // Second turn: the accumulated total would overflow, so the image degrades to a file reference
     // instead of base64 — keeping the request under the ceiling so compaction stays viable.
@@ -7980,9 +7988,7 @@ describe('ACP runtime session management', () => {
       uri: expect.stringContaining('second.png')
     })
     // The raw image bytes must not be inlined anywhere in the degraded turn.
-    expect(JSON.stringify(receivedPrompts[1])).not.toContain(
-      Buffer.from('png-bytes').toString('base64')
-    )
+    expect(JSON.stringify(receivedPrompts[1])).not.toContain(imageBytes.toString('base64'))
   })
 
   it('keeps image bytes charged when later prompt content preparation fails', async () => {
@@ -8000,13 +8006,11 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       uploads: { repository: uploadRepository },
-      inlineImageBudgetBytes: 15
+      inlineImageBudgetBytes: imageBytes.toString('base64').length + 1
     })
     const stageImage = (name: string): Promise<UploadedAttachment[]> =>
       stageUploadFixtures(uploadRepository, {
-        files: [
-          { name, mimeType: 'image/png', content: Buffer.from('png-bytes').toString('base64') }
-        ]
+        files: [{ name, mimeType: 'image/png', content: imageBytes.toString('base64') }]
       })
 
     const session = await runtime.createSession({ cwd: '/workspace' })
@@ -8042,9 +8046,7 @@ describe('ACP runtime session management', () => {
       mimeType: 'image/png',
       uri: expect.stringContaining('second.png')
     })
-    expect(JSON.stringify(receivedPrompts[0])).not.toContain(
-      Buffer.from('png-bytes').toString('base64')
-    )
+    expect(JSON.stringify(receivedPrompts[0])).not.toContain(imageBytes.toString('base64'))
   })
 
   it('registers every finalized prompt Upload Version with the trusted Notebook bridge', async () => {
@@ -9572,7 +9574,7 @@ describe('ACP runtime session management', () => {
       runId: 'run-1',
       filename: 'chart.png',
       mimeType: 'image/png',
-      source: createPngInlineSource('runtime referenced image')
+      source: { kind: 'inline', content: imageBytes.toString('base64'), encoding: 'base64' }
     })
 
     // A referenced binary output has no rich representation, so it falls through to a resource link.
@@ -9750,7 +9752,7 @@ describe('ACP runtime session management', () => {
     expect(receivedPrompts[0][2]).toMatchObject({
       type: 'image',
       mimeType: 'image/png',
-      data: createPngBytes('runtime referenced image').toString('base64'),
+      data: imageBytes.toString('base64'),
       uri: expect.stringMatching(/^file:.*\.png$/u)
     })
     // Referenced binary artifact -> provider-neutral local file descriptor.
@@ -10189,7 +10191,7 @@ describe('ACP runtime session management', () => {
     // The kernel's real cwd for this session, keyed by the FINAL id (not the notebook alias).
     const notebookDataDir = join(root, 'notebooks', 'default-project', finalSessionId, 'data')
     await mkdir(notebookDataDir, { recursive: true })
-    const sourcePng = createPngBytes('runtime notebook image')
+    const sourcePng = imageBytes
     await writeFile(join(notebookDataDir, 'sine.png'), sourcePng)
 
     let writtenPath: string | undefined

@@ -5912,6 +5912,20 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(reportButton()).toBeNull()
   })
 
+  it('shows a composer action error only once when both error surfaces receive it', () => {
+    const annotationError = 'This annotation could not be added.'
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, status: 'idle', error: undefined },
+        actionError: annotationError
+      },
+      composer: { view: { error: annotationError } }
+    })
+
+    expect(container.textContent?.match(/This annotation could not be added\./g)).toHaveLength(1)
+    expect(errorBoxText()).toContain(annotationError)
+  })
+
   it('opens Model settings from the image-support action error', () => {
     const openSettingsToPanel = vi.fn()
     useSettingsStore.setState({ openSettingsToPanel })

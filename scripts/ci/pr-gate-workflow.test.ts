@@ -991,7 +991,12 @@ describe('E2E throughput contracts', () => {
 
   it('partitions macOS groups while preserving the stable aggregate gate', () => {
     const job = workflow.jobs.macos_e2e
-    expect(job.strategy?.matrix?.group).toEqual(['journeys', 'presentation'])
+    expect(job.strategy?.matrix?.group).toEqual([
+      'journeys',
+      'presentation',
+      'regressions',
+      'delegation'
+    ])
     for (const [id, group] of [
       ['e2e_functional_macos', 'journeys'],
       ['e2e_workspace_macos', 'journeys'],

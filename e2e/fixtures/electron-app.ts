@@ -164,6 +164,7 @@ type ElectronApp = {
   emitPreviewContextMenuAtCssPoint: (point: { x: number; y: number }) => Promise<void>
   showMainWindow: () => Promise<void>
   restart: (options?: { resourceProfilePhase?: string }) => Promise<Page>
+  restartAfterCrash: () => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
   sampleResourceProfileNow: () => Promise<void>
@@ -295,12 +296,14 @@ const makeTreeWritable = async (root: string): Promise<void> => {
   )
 }
 
-const waitForRendererReady = async (page: Page, timeout = 60_000): Promise<void> => {
-  await page.waitForLoadState('domcontentloaded')
+const waitForRendererReady = async (page: Page, timeout = 90_000): Promise<void> => {
+  const deadline = performance.now() + timeout
+  const remainingTimeout = (): number => Math.max(1, deadline - performance.now())
+  await page.waitForLoadState('domcontentloaded', { timeout: remainingTimeout() })
   const startedAt = Date.now()
   const transitions: { elapsedMs: number; state: DatabaseStartupState }[] = []
   // A fresh Windows profile can spend longer than the general assertion budget applying the real
-  // schema manifest under runner I/O contention. Keep the startup gate aligned with settings load.
+  // schema manifest under runner I/O contention. Share one deadline with settings loading.
   try {
     await expect
       .poll(
@@ -317,7 +320,7 @@ const waitForRendererReady = async (page: Page, timeout = 60_000): Promise<void>
           }
           return state
         },
-        { timeout }
+        { timeout: remainingTimeout() }
       )
       .toMatchObject({ phase: 'ready' })
   } catch (cause) {
@@ -326,7 +329,9 @@ const waitForRendererReady = async (page: Page, timeout = 60_000): Promise<void>
       { cause }
     )
   }
-  await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
+  await page
+    .getByTestId('settings-startup-loading')
+    .waitFor({ state: 'hidden', timeout: remainingTimeout() })
 }
 
 const applyHiddenWindowPresentation = async (
@@ -395,10 +400,16 @@ class ElectronAppHarness implements ElectronApp {
       await harness.launch()
       return harness
     } catch (error) {
-      // Startup failures occur before the fixture's normal teardown is installed.
-      // Copy evidence out of the disposable profile before removing it.
+      // Copy startup evidence before cleanup, preserving both failures if cleanup also fails.
       await onStartupFailure?.(harness).catch(() => undefined)
-      await harness.dispose().catch(() => undefined)
+      try {
+        await harness.dispose()
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          'Electron fixture startup and cleanup failed.'
+        )
+      }
       throw error
     }
   }
@@ -1021,6 +1032,18 @@ class ElectronAppHarness implements ElectronApp {
     return { page: this.page, oldRoot, newRoot, identityBefore, identityAfter: snapshot() }
   }
 
+  async restartAfterCrash(): Promise<Page> {
+    const application = this.application
+    if (!application) throw new Error('No Electron process is available to terminate.')
+    const result = await terminateProcessTree(application.process())
+    if (!result.reaped) throw new Error('Electron crash simulation did not reap the process tree.')
+    this.resourceProfiler?.detach(application)
+    this.application = undefined
+    this.currentPage = undefined
+    await this.launch()
+    return this.page
+  }
+
   async restartWithCorruptHistoricalSessionFile(projectId: string): Promise<Page> {
     if (!/^[a-zA-Z0-9_-]+$/.test(projectId)) {
       throw new Error(`Invalid E2E project id: ${projectId}`)
@@ -1047,10 +1070,26 @@ class ElectronAppHarness implements ElectronApp {
   async dispose(): Promise<void> {
     this.resourceProfiler?.abort()
     this.resourceProfiler = undefined
-    await this.closeForCleanup().catch(() => undefined)
-    await makeTreeWritable(this.testRoot)
-    await rm(this.testRoot, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 })
-    this.rendererFailures.assertNoFailures()
+    const errors: unknown[] = []
+    try {
+      await this.closeForCleanup()
+      await makeTreeWritable(this.testRoot)
+      await rm(this.testRoot, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 })
+    } catch (error) {
+      errors.push(error)
+    }
+    try {
+      this.rendererFailures.assertNoFailures()
+    } catch (error) {
+      if (errors.length === 0) throw error
+      errors.push(error)
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(
+        errors,
+        `Electron fixture cleanup failed; inspect ${this.testRoot}: ${errors.map(String).join('; ')}`
+      )
+    }
   }
 
   private async launch(): Promise<void> {
@@ -1063,10 +1102,15 @@ class ElectronAppHarness implements ElectronApp {
       this.resourceProfiler !== undefined
     )
     await this.resourceProfiler?.attach(this.application)
-    // A main-process evaluation before the initial window can race Electron bootstrap on Windows.
-    const page = await this.application.firstWindow()
-    this.mainLogDirectory = await this.application.evaluate(({ app }) => app.getPath('logs'))
-    this.currentPage = await openMainWindow(page, this.rendererFailures, this.windowMode)
+    // Wait for the first window before querying main-process paths on Windows.
+    try {
+      const page = await this.application.firstWindow()
+      this.currentPage = await openMainWindow(page, this.rendererFailures, this.windowMode)
+    } finally {
+      this.mainLogDirectory = await this.application
+        .evaluate(({ app }) => app.getPath('logs'))
+        .catch(() => undefined)
+    }
   }
 
   private get runningApplication(): ElectronApplication {
@@ -1153,27 +1197,40 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
   windowMode: ['hidden', { option: true }],
   // Playwright fixture callbacks require an object pattern even when no base fixture is needed.
   app: async ({ windowMode }, install, testInfo) => {
-    const attachFailureLog = async (app: ElectronApp): Promise<void> => {
+    const attachFailureLog = async (app: ElectronApp, name = 'main-process-log'): Promise<void> => {
       // Attach bytes directly so concurrent jobs/tests cannot overwrite a shared evidence file.
       const path = await app.captureMainLog(
-        `failure-${testInfo.testId.replace(/[^a-z0-9-]/giu, '-')}-${testInfo.retry}.log`
+        `failure-${(testInfo.testId ?? 'fixture').replace(/[^a-z0-9-]/giu, '-')}-${testInfo.retry}.log`
       )
-      await testInfo.attach('main-process-log', {
+      await testInfo.attach(name, {
         body: await readFile(path),
         contentType: 'text/plain'
       })
     }
-    const app = await ElectronAppHarness.create(windowMode, attachFailureLog)
+    const app = await ElectronAppHarness.create(windowMode, (app) =>
+      attachFailureLog(app, 'startup-main-process-log')
+    )
 
+    let bodyError: unknown
     try {
       await install(app)
-    } finally {
-      if (testInfo.status !== testInfo.expectedStatus) {
-        // Preserve the original test failure even if shutdown left no readable log.
-        await attachFailureLog(app).catch(() => undefined)
-      }
-      await app.dispose()
+    } catch (error) {
+      bodyError = error
     }
+    if (testInfo.status !== testInfo.expectedStatus) {
+      // Preserve the original test failure even if shutdown left no readable log.
+      await attachFailureLog(app).catch(() => undefined)
+    }
+    try {
+      await app.dispose()
+    } catch (cleanupError) {
+      await attachFailureLog(app, 'cleanup-main-process-log').catch(() => undefined)
+      if (bodyError !== undefined) {
+        throw new AggregateError([bodyError, cleanupError], 'Electron test and cleanup failed.')
+      }
+      throw cleanupError
+    }
+    if (bodyError !== undefined) throw bodyError
   }
 })
 

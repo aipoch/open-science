@@ -38,7 +38,13 @@ import {
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { kernelExecutableReadRoot } from './kernel-executor'
 import { windowsCondaPrefixForR } from './environment-discovery'
-import { condaActivatedPath } from './runtime-paths'
+import {
+  condaActivatedPath,
+  DEFAULT_R_ENV,
+  envPrefix,
+  legacyDefaultEnvPrefix,
+  rScriptBin
+} from './runtime-paths'
 
 export type NotebookNetworkDecision = 'deny' | 'allowOnce' | 'alwaysAllow' | 'unavailable'
 
@@ -280,6 +286,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       executable,
       args,
       env: wrapped.env,
+      ...(wrapped.windowsJobObject ? { windowsJobObject: true as const } : {}),
       beginExecution: () => {
         if (cleaned) throw new Error('Notebook sandbox process is already closed.')
         if (executionActive) throw new Error('Notebook sandbox execution is already active.')
@@ -534,6 +541,26 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       endExecution?.()
       invocation?.cleanup()
       await rm(cwd, { recursive: true, force: true })
+    }
+  }
+
+  // The caller has stopped the affected kernels and holds repair/migration admission. Revoke while
+  // the exact old directories still exist so the native owner can remove every recorded ACL.
+  async revokeManagedRAccess(runtimeRoot: string): Promise<void> {
+    if (!this.supportsWindowsRuntimeAccess) return
+    // A damaged legacy interpreter can make discovery fall back to the short layout. Keep the
+    // original exact path addressable; the native owner removes only its recorded permissions.
+    const prefixes = new Set([
+      envPrefix(runtimeRoot, DEFAULT_R_ENV, this.platform),
+      legacyDefaultEnvPrefix(runtimeRoot, DEFAULT_R_ENV)
+    ])
+    for (const prefix of prefixes) {
+      const result = await this.setWindowsRuntimeAccess(rScriptBin(prefix, this.platform), false)
+      if (result.cancelled) {
+        throw new Error(
+          'R permission removal was cancelled; the existing runtime must be preserved.'
+        )
+      }
     }
   }
 

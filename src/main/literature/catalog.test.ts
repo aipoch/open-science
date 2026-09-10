@@ -88,6 +88,111 @@ describe('LiteratureCatalog', () => {
     return new LiteratureCatalog(async () => client!)
   }
 
+  it('pages global search across collections and literature without duplicates', async () => {
+    const catalog = await setup()
+    const collection = await catalog.transact({
+      kind: 'create-collection',
+      name: 'Corrective collection'
+    })
+    const paper = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    await client!.literatureCollection.update({
+      where: { id: collection.id },
+      data: { updatedAt: new Date(10) }
+    })
+    await client!.literatureItem.update({
+      where: { id: paper.id },
+      data: { updatedAt: new Date(20) }
+    })
+    const first = await catalog.search({ scope: 'global-search', query: 'Corrective', limit: 1 })
+    expect(first).toMatchObject({ totalCount: 2, nextOffset: 1, entries: [{ id: paper.id }] })
+    const second = await catalog.search({
+      scope: 'global-search',
+      query: 'Corrective',
+      limit: 1,
+      offset: first.nextOffset
+    })
+    expect(second).toMatchObject({ totalCount: 2, entries: [{ id: collection.id, revision: 1 }] })
+    expect(second.nextOffset).toBeUndefined()
+    expect(
+      await catalog.search({ scope: 'global-search', query: 'Corrective', entryKind: 'collection' })
+    ).toMatchObject({ totalCount: 1, entries: [{ id: collection.id }] })
+    expect(
+      await catalog.search({ scope: 'global-search', query: 'Corrective', updatedAfter: 15 })
+    ).toMatchObject({ totalCount: 1, entries: [{ id: paper.id }] })
+    expect(
+      await catalog.search({ scope: 'global-search', query: 'Corrective', entryKind: 'pdf' })
+    ).toMatchObject({ totalCount: 0 })
+    await catalog.transact({
+      kind: 'update-collection',
+      collectionId: collection.id,
+      expectedRevision: 1,
+      name: 'Corrective',
+      description: ''
+    })
+    await client!.literatureCollection.update({
+      where: { id: collection.id },
+      data: { updatedAt: new Date(10) }
+    })
+    expect(
+      await catalog.search({
+        scope: 'global-search',
+        query: 'Corrective',
+        searchSort: 'relevance',
+        limit: 1
+      })
+    ).toMatchObject({ entries: [{ id: collection.id }] })
+    expect(
+      await catalog.search({
+        scope: 'global-search',
+        query: 'Corrective',
+        searchSort: 'recent',
+        limit: 1
+      })
+    ).toMatchObject({ entries: [{ id: paper.id }] })
+  })
+
+  it('retains normalized matching and mixed-kind counts in global search', async () => {
+    const catalog = await setup()
+    const paper = await catalog.transact({
+      kind: 'create-item',
+      item: literatureItemInputSchema.parse({
+        itemType: 'book',
+        title: 'ÜBERBLICK gene_A',
+        creators: [
+          { nameMode: 'person', givenName: 'Jane', familyName: 'Smith', creatorType: 'author' }
+        ],
+        identifiers: [{ scheme: 'doi', value: '10.2468/global-reference' }]
+      })
+    })
+    const collection = await catalog.transact({
+      kind: 'create-collection',
+      name: 'gene_A collection'
+    })
+    await catalog.transact({
+      kind: 'create-item',
+      item: literatureItemInputSchema.parse({ itemType: 'book', title: 'geneXA' })
+    })
+    for (const query of [
+      'überblick',
+      'Jane Smith',
+      'Smith Jane',
+      'https://doi.org/10.2468/GLOBAL-REFERENCE'
+    ]) {
+      const page = await catalog.search({ scope: 'global-search', query })
+      expect(page).toMatchObject({ totalCount: 1, entries: [{ id: paper.id }] })
+    }
+    const request = literatureCatalogSearchRequestSchema.parse({
+      scope: 'global-search',
+      query: 'gene_A',
+      countOnly: true
+    })
+    expect(await catalog.search(request)).toEqual({ entries: [], totalCount: 2 })
+    const page = await catalog.search({ ...request, countOnly: false })
+    expect(new Set(page.entries.map((entry) => 'id' in entry && entry.id))).toEqual(
+      new Set([paper.id, collection.id])
+    )
+  })
+
   it('excludes deleted project membership from item views and counts', async () => {
     const catalog = await setup()
     const projects = new ProjectRepository(async () => client!)
@@ -132,9 +237,19 @@ describe('LiteratureCatalog', () => {
     async (state) => {
       const catalog = await setup()
       const item = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      const collection = await catalog.transact({ kind: 'create-collection', name: 'Reading' })
+      await catalog.transact({
+        kind: 'set-collection-item',
+        collectionId: collection.id,
+        itemId: item.id,
+        included: true
+      })
       await client!.projectLiterature.create({
         data: { projectId: 'project-1', itemId: item.id, source: 'library' }
       })
+      expect(
+        (await catalog.search({ scope: 'global-search', projectId: 'project-1' })).totalCount
+      ).toBe(2)
       if (state === 'deleted')
         await client!.project.update({
           where: { id: 'project-1' },
@@ -147,6 +262,14 @@ describe('LiteratureCatalog', () => {
         .soft((await catalog.search({ scope: 'library', projectId: 'project-1' })).totalCount)
         .toBe(0)
       expect.soft((await catalog.search({ scope: 'project-counts' })).entries).toEqual([])
+      // Global search retains Library records while hiding their unavailable Project membership.
+      expect.soft(await catalog.search({ scope: 'global-search' })).toMatchObject({
+        totalCount: 2,
+        entries: expect.arrayContaining([expect.objectContaining({ id: item.id, projectIds: [] })])
+      })
+      expect
+        .soft((await catalog.search({ scope: 'global-search', projectId: 'project-1' })).totalCount)
+        .toBe(0)
       expect(await client!.projectLiterature.count()).toBe(1)
     }
   )
@@ -954,6 +1077,16 @@ describe('LiteratureCatalog', () => {
             : 'id' in entry && entry.id === collection.id
         )
         expect(row && 'itemCount' in row ? row.itemCount : 0).toBe(list.totalCount)
+        if (scope === 'collection') {
+          const search = await catalog.search({
+            scope: 'global-search',
+            entryKind: 'collection',
+            query: 'Reading'
+          })
+          expect(search.entries).toMatchObject([
+            { id: collection.id, itemCount: state === 'deleted' ? 0 : 1 }
+          ])
+        }
       }
     }
   )
@@ -3048,6 +3181,12 @@ describe('LiteratureCatalog', () => {
         }
       ]
     })
+    await expect(catalog.search({ scope: 'collections', itemId: item.id })).resolves.toMatchObject({
+      entries: [{ id: collection.id }]
+    })
+    await expect(
+      catalog.search({ scope: 'collections', itemId: 'missing-item' })
+    ).resolves.toMatchObject({ entries: [], totalCount: 0 })
 
     await catalog.transact({
       kind: 'update-collection',

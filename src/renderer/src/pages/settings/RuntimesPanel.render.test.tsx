@@ -186,6 +186,34 @@ const click = async (el: Element | null): Promise<void> => {
 }
 
 describe('RuntimesPanel', () => {
+  it('offers the existing sandbox authorization and removal controls for managed Windows R', async () => {
+    Object.assign(window.api, { platform: 'win32' })
+    const managed = {
+      ...rEnvs[0],
+      provenance: 'app-managed',
+      condaEnv: 'default-r',
+      runnable: true,
+      detail: undefined
+    }
+    listEnvironments.mockResolvedValue({ python: pythonEnvs, r: [managed] })
+    const authorize = vi.fn(async () => ({ cancelled: false }))
+    Object.assign(window.api.runtime, { setSandboxAccess: authorize })
+    await render()
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Authorize and verify'
+    )
+    expect(button).toBeDefined()
+    await click(button!)
+    expect(authorize).toHaveBeenCalledWith('r', managed.envId, true)
+    expect(container.textContent).toContain('R access verified')
+    const remove = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Remove R access'
+    )
+    expect(remove).toBeDefined()
+    await click(remove!)
+    expect(authorize).toHaveBeenLastCalledWith('r', managed.envId, false)
+  })
+
   it('explains that authorization can remain when R verification fails', async () => {
     Object.assign(window.api, { platform: 'win32' })
     listEnvironments.mockResolvedValue({

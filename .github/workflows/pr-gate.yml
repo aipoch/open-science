@@ -788,7 +788,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [journeys, presentation]
+        group: [journeys, presentation, regressions, delegation]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -819,7 +819,7 @@ jobs:
         run: npm run build:e2e
       - name: Build web application
         id: build_web
-        if: ${{ matrix.group == 'journeys' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'build') }}
+        if: ${{ matrix.group == 'regressions' || (matrix.group == 'journeys' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'build')) }}
         continue-on-error: true
         run: npm run build:web
       - name: Run functional journeys
@@ -861,8 +861,24 @@ jobs:
           retention-days: 5
           if-no-files-found: warn
       - name: Install headless Chromium
-        if: ${{ matrix.group == 'presentation' }}
+        if: ${{ matrix.group == 'presentation' || matrix.group == 'regressions' }}
         run: npx playwright install chromium --only-shell
+      - name: Run supplemental regressions
+        id: e2e_regressions_macos
+        if: ${{ matrix.group == 'regressions' && steps.build_electron.outcome == 'success' && steps.build_web.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/regressions_macos
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/regressions_macos.json
+        run: npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout=1200000
+      - name: Run supplemental delegation
+        id: e2e_delegation_macos
+        if: ${{ matrix.group == 'delegation' && steps.build_electron.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/delegation_macos
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/delegation_macos.json
+        run: npm run test:e2e:delegation -- --fail-on-flaky-tests --global-timeout=1200000
       - name: Run renderer layout pilot
         id: renderer_layout
         if: ${{ matrix.group == 'presentation' }}
@@ -932,6 +948,9 @@ jobs:
           E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_macos.outcome }}
           E2E_VISUAL_OUTCOME: ${{ steps.e2e_visual_macos.outcome }}
           E2E_WORKSPACE_OUTCOME: ${{ steps.e2e_workspace_macos.outcome }}
+          E2E_REGRESSIONS_OUTCOME: ${{ steps.e2e_regressions_macos.outcome }}
+          E2E_DELEGATION_OUTCOME: ${{ steps.e2e_delegation_macos.outcome }}
+          E2E_GROUP: ${{ matrix.group }}
           UNIT_MACOS_NATIVE_OUTCOME: ${{ steps.unit_macos_native.outcome }}
         run: |
           set -euo pipefail
@@ -950,6 +969,9 @@ jobs:
           check e2e_accessibility_macos "$E2E_ACCESSIBILITY_OUTCOME"
           check e2e_visual_macos "$E2E_VISUAL_OUTCOME"
           check unit_macos_native "$UNIT_MACOS_NATIVE_OUTCOME"
+          # These groups are selected whenever this bundle runs; skipped is not success.
+          if [[ "${E2E_GROUP:-}" == "regressions" && "${E2E_REGRESSIONS_OUTCOME:-}" != "success" ]]; then failed=1; fi
+          if [[ "${E2E_GROUP:-}" == "delegation" && "${E2E_DELEGATION_OUTCOME:-}" != "success" ]]; then failed=1; fi
           exit "$failed"
 
   windows_e2e:

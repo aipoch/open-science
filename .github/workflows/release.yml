@@ -8,6 +8,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      verify_only:
+        description: Verify tests and coverage without building or publishing packages.
+        type: boolean
+        default: false
 
 # Required to create a Release and upload assets.
 permissions:
@@ -49,11 +54,14 @@ jobs:
   build:
     needs: release-preflight
     uses: ./.github/workflows/build.yml
+    with:
+      verify_only: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_only }}
     secrets: inherit
 
   # Exercise the exact uploaded packages in separate native jobs. A failed matrix leg can be retried
   # against the immutable build artifact without repeating installation, packaging, or signing.
   package-smoke:
+    if: ${{ !inputs.verify_only }}
     needs: build
     uses: ./.github/workflows/package-smoke.yml
 
@@ -95,6 +103,9 @@ jobs:
       - name: Checkout (for the mac-feed merge script)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Install release transform dependencies
+        run: npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund
+
       - name: Download all build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -110,8 +121,7 @@ jobs:
           --output artifacts/RELEASE-CERTIFICATION.json
           --expected-sha "$GITHUB_SHA"
 
-      # Merge the two per-arch mac feeds (from notarize-mac) into the single latest-mac.yml the
-      # installed app polls (default `latest` channel). No-ops if the mac feeds are absent.
+      # Merge build or post-notarization feeds; partial mac artifacts fail before publication.
       - name: Merge mac update feed
         run: node scripts/merge-mac-feed.mjs artifacts
 

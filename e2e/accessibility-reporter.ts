@@ -119,7 +119,10 @@ const formatAccessibilitySummary = (
   ]
 
   if (result.status === 'infra-failure') {
-    lines.push('', 'The real UI scan did not complete. Treat this as test infrastructure failure.')
+    lines.push(
+      '',
+      'The real UI scan did not complete reliably. Inspect Playwright attempt results for failures or retries.'
+    )
   } else if (result.status === 'advisory') {
     lines.push('', 'Findings block this pull request.')
     if (scans.some(({ violations }) => violations.length > 0)) {
@@ -155,6 +158,7 @@ const parseUiFindings = (result: TestResult): AccessibilityUiFinding[] =>
 
 class AccessibilityReporter implements Reporter {
   private plannedTests = 0
+  private unsuccessfulAttempt = false
   private readonly finalResults = new Map<string, TestResult>()
 
   printsToStdio(): boolean {
@@ -166,6 +170,7 @@ class AccessibilityReporter implements Reporter {
   }
 
   onTestEnd(test: TestCase, result: TestResult): void {
+    if (result.status !== 'passed') this.unsuccessfulAttempt = true
     this.finalResults.set(test.id, result)
   }
 
@@ -177,7 +182,7 @@ class AccessibilityReporter implements Reporter {
         result.attachments.some(({ name }) => name === ACCESSIBILITY_UI_READY_ATTACHMENT)
       ).length
       const result = classifyAccessibilityRun({
-        runStatus: fullResult.status,
+        runStatus: this.unsuccessfulAttempt ? 'failed' : fullResult.status,
         plannedTests: this.plannedTests,
         completedTests: this.finalResults.size,
         readyTests,
@@ -187,7 +192,7 @@ class AccessibilityReporter implements Reporter {
       const report = {
         schemaVersion: 1,
         ...result,
-        runStatus: fullResult.status,
+        runStatus: this.unsuccessfulAttempt ? 'failed' : fullResult.status,
         plannedTests: this.plannedTests,
         completedTests: this.finalResults.size,
         readyTests,

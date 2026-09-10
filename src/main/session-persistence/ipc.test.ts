@@ -426,7 +426,7 @@ describe('session persistence IPC handlers', () => {
     >()
   })
 
-  it.each(['list', 'loadAll'] as const)(
+  it.each(['list', 'loadAll', 'searchMessages'] as const)(
     'rechecks failed Compute restoration through %s after Session recovery',
     async (read) => {
       let corrupt = true
@@ -493,14 +493,22 @@ describe('session persistence IPC handlers', () => {
           await manager.startQueueReconciliation({ retryFailedOnly: true }).catch(() => undefined)
         }
       )
+      // The search catalog must retry the same recovery path as the ordinary Session list.
+      const readCatalog = async (): Promise<void> => {
+        if (read === 'searchMessages') {
+          await handlers.searchMessages({ query: '', projectIds: [], limit: 10 })
+        } else {
+          await handlers[read]()
+        }
+      }
       await expect(manager.startQueueReconciliation()).rejects.toThrow('could not be restored')
-      await handlers[read]!()
+      await readCatalog()
       await manager.reconcileQueuedJobs()
       expect(dispatch).not.toHaveBeenCalled()
       // A valid replacement now supersedes the retained quarantine; no deletion is involved.
       corrupt = false
       activeCount = 1
-      await handlers[read]!()
+      await readCatalog()
       await manager.reconcileQueuedJobs()
       expect(dispatch).not.toHaveBeenCalled()
       expect(await manager.getStatus('new-session')).toMatchObject({ session_limit: 1 })
@@ -563,6 +571,7 @@ describe('session persistence IPC handlers', () => {
     }
     const saveSession = vi.fn(async () => ({ created: false, session }))
     const handlers: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -911,6 +920,7 @@ describe('session persistence IPC handlers', () => {
       'sessions:load-all',
       'sessions:list',
       'sessions:load-usage',
+      'sessions:search-messages',
       'sessions:load-one',
       'sessions:save-session',
       'sessions:save-manifest',
@@ -960,6 +970,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn().mockResolvedValue(loadResult),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -989,6 +1000,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -1023,6 +1035,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -1091,6 +1104,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const handlers: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -1125,6 +1139,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const handlers: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
       loadUsage: vi.fn(),

@@ -2076,8 +2076,9 @@ describe('mandatory product glossary', () => {
       'Copy command': 'Copier la commande',
       'Data location': 'Emplacement des données',
       'Edit specialist': 'Modifier le spécialiste',
-      'Recent artifacts': 'Artefacts récents',
-      'Search sessions and artifacts…': 'Rechercher des sessions et des artefacts…',
+      'Recent files': 'Fichiers récents',
+      'Search messages, projects, files and Library…':
+        'Rechercher des messages, projets, fichiers et dans Library…',
       'Search skills': 'Rechercher des compétences',
       'Search skills to add': 'Rechercher des compétences à ajouter',
       'Search skills…': 'Rechercher des compétences…',

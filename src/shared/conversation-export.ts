@@ -268,13 +268,16 @@ export const sanitizeExportMarkdown = (content: string): string => {
   return parts.map((part) => part.raw).join('')
 }
 
+// Session updatedAt also tracks runtime/metadata changes. It is not part of the reviewed
+// content, but remains in the exported document. Use the same comparison in both processes.
+export const serializeConversationExportContent = (session: PersistedChatSession): string =>
+  JSON.stringify({ ...createConversationExportDocument(session, 0), updatedAt: 0 })
+
 // A precondition only: Main still renders its own durable Session, never renderer-supplied data.
 export const hashConversationExportContent = async (
   session: PersistedChatSession
 ): Promise<string> => {
-  const bytes = new TextEncoder().encode(
-    JSON.stringify(createConversationExportDocument(session, 0))
-  )
+  const bytes = new TextEncoder().encode(serializeConversationExportContent(session))
   const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
 }

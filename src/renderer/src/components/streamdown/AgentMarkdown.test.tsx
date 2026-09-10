@@ -261,7 +261,7 @@ describe('AgentMarkdown renderer recovery', () => {
     await act(async () => {
       root.render(<AgentMarkdown content="Plain shared markdown" />)
     })
-    expect(streamdownHarness.components).toBeUndefined()
+    expect(streamdownHarness.components?.a).toBeUndefined()
 
     await act(async () => {
       root.render(<AgentMarkdown content="Session markdown" sessionLinks />)

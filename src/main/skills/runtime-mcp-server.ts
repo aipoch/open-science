@@ -1,5 +1,5 @@
 import { lstat, open, readFile, readdir } from 'node:fs/promises'
-import { isAbsolute, join, resolve, sep } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
@@ -19,6 +19,7 @@ const LOAD_SKILL_TOOL_CALLABLE_NAME =
   `mcp__${SKILL_RUNTIME_MCP_SERVER_NAME}__${LOAD_SKILL_TOOL_NAME}` as const
 
 const SKILL_RUNTIME_ROOT_ENV = 'OPEN_SCIENCE_SKILL_RUNTIME_ROOT'
+const SKILL_RUNTIME_DIRECTORY_ENV = 'OPEN_SCIENCE_SKILL_RUNTIME_DIRECTORY'
 const SKILL_RUNTIME_ALLOWED_NAMES_ENV = 'OPEN_SCIENCE_SKILL_RUNTIME_ALLOWED_NAMES'
 const SAFE_PROJECTED_SKILL_NAME = /^(?=.{1,128}$)[a-z0-9]+[a-z0-9_-]*$/
 const SKILL_CATALOG_READ_CHUNK_BYTES = 64 * 1024
@@ -33,6 +34,7 @@ const SKILL_CATALOG_OMISSION_NOTICE =
 
 type SkillRuntimeEnvironment = Readonly<{
   root: string
+  skillsDirectory?: string
   allowedNames?: ReadonlySet<string>
 }>
 
@@ -40,6 +42,7 @@ type SkillRuntimeMcpServerConfig = Readonly<{
   command: string
   entryPath: string
   root: string
+  skillsDirectory?: string
   allowedNames?: readonly string[]
 }>
 
@@ -58,6 +61,29 @@ const requireRealDirectory = async (path: string, label: string): Promise<void> 
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
     throw new Error(`${label} is not a real directory.`)
   }
+}
+
+// The directory is supplied by the app, never by tool arguments. Validate every component so a
+// projection link cannot turn an otherwise contained directory into an arbitrary filesystem read.
+const skillCatalogDirectory = async (environment: SkillRuntimeEnvironment): Promise<string> => {
+  const root = resolve(environment.root)
+  const directory = environment.skillsDirectory ?? join(root, '.claude', 'skills')
+  const relation = relative(root, directory)
+  if (
+    !isAbsolute(directory) ||
+    !relation ||
+    isAbsolute(relation) ||
+    relation.split(sep).includes('..')
+  ) {
+    throw new Error('Skill catalog must be inside its runtime root.')
+  }
+  await requireRealDirectory(root, 'Skill projection')
+  let current = root
+  for (const part of relation.split(sep)) {
+    current = join(current, part)
+    await requireRealDirectory(current, 'Skill projection catalog')
+  }
+  return current
 }
 
 const readSkillCatalogFrontmatter = async (path: string, size: number): Promise<string> => {
@@ -100,11 +126,7 @@ const readSkillCatalogFrontmatter = async (path: string, size: number): Promise<
 const readSkillRuntimeCatalog = async (
   environment: SkillRuntimeEnvironment
 ): Promise<SkillRuntimeCatalog> => {
-  const root = resolve(environment.root)
-  const skillsDir = join(root, '.claude', 'skills')
-  await requireRealDirectory(root, 'Skill projection')
-  await requireRealDirectory(join(root, '.claude'), 'Skill projection configuration')
-  await requireRealDirectory(skillsDir, 'Skill projection catalog')
+  const skillsDir = await skillCatalogDirectory(environment)
 
   const entries = await readdir(skillsDir, { withFileTypes: true })
   entries.sort((left, right) => left.name.localeCompare(right.name, 'en'))
@@ -251,14 +273,9 @@ const readSkillDocument = async (
     throw new Error(`Unknown skill: ${name}`)
   }
 
-  const root = resolve(environment.root)
-  const skillDir = resolve(root, '.claude', 'skills', name)
-  if (!skillDir.startsWith(`${root}${sep}`)) throw new Error(`Unknown skill: ${name}`)
-
   try {
-    await requireRealDirectory(root, 'Skill projection')
-    await requireRealDirectory(join(root, '.claude'), 'Skill projection configuration')
-    await requireRealDirectory(join(root, '.claude', 'skills'), 'Skill projection catalog')
+    const skillsDir = await skillCatalogDirectory(environment)
+    const skillDir = join(skillsDir, name)
     await requireRealDirectory(skillDir, 'Skill package')
     const documentPath = join(skillDir, 'SKILL.md')
     const documentMetadata = await lstat(documentPath)
@@ -317,10 +334,15 @@ const createSkillRuntimeMcpServer = async (
 
 const skillRuntimeProcessEnvironment = ({
   root,
+  skillsDirectory,
   allowedNames
-}: Pick<SkillRuntimeMcpServerConfig, 'root' | 'allowedNames'>): Record<string, string> => ({
+}: Pick<SkillRuntimeMcpServerConfig, 'root' | 'skillsDirectory' | 'allowedNames'>): Record<
+  string,
+  string
+> => ({
   ELECTRON_RUN_AS_NODE: '1',
   [SKILL_RUNTIME_ROOT_ENV]: root,
+  ...(skillsDirectory ? { [SKILL_RUNTIME_DIRECTORY_ENV]: skillsDirectory } : {}),
   ...(allowedNames ? { [SKILL_RUNTIME_ALLOWED_NAMES_ENV]: JSON.stringify([...allowedNames]) } : {})
 })
 
@@ -377,12 +399,14 @@ const environmentFromProcess = (env: NodeJS.ProcessEnv = process.env): SkillRunt
   const root = env[SKILL_RUNTIME_ROOT_ENV]
   if (!root || !isAbsolute(root)) throw new Error('Missing absolute Skill runtime root.')
   const serializedAllowedNames = env[SKILL_RUNTIME_ALLOWED_NAMES_ENV]
-  if (!serializedAllowedNames) return { root }
+  const skillsDirectory = env[SKILL_RUNTIME_DIRECTORY_ENV]
+  const directory = skillsDirectory ? { skillsDirectory } : {}
+  if (!serializedAllowedNames) return { root, ...directory }
   const parsed = JSON.parse(serializedAllowedNames) as unknown
   if (!Array.isArray(parsed) || parsed.some((name) => typeof name !== 'string')) {
     throw new Error('Invalid Skill runtime allowlist.')
   }
-  return { root, allowedNames: new Set(parsed) }
+  return { root, ...directory, allowedNames: new Set(parsed) }
 }
 
 const runSkillRuntimeMcpServer = async (): Promise<void> => {
@@ -398,6 +422,7 @@ export {
   SKILL_RUNTIME_MCP_SERVER_ARG,
   SKILL_RUNTIME_MCP_SERVER_NAME,
   SKILL_RUNTIME_ROOT_ENV,
+  SKILL_RUNTIME_DIRECTORY_ENV,
   createSkillRuntimeAcpServerConfig,
   narrowSkillRuntimeAcpServers,
   createSkillRuntimeMcpServer,

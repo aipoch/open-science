@@ -398,7 +398,7 @@ import {
 } from './storage/migration-state'
 import { isDataRootMissing } from './storage/path-presence'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
-import { DataRootCleanupJournal } from './storage/data-root-cleanup'
+import { createDataRootSourceCleanup, DataRootCleanupJournal } from './storage/data-root-cleanup'
 import {
   markManagedProjectWorkspacesRetained,
   markManagedWorkspaceRetained,
@@ -406,7 +406,6 @@ import {
   restoreManagedProjectWorkspacesActive,
   restoreManagedWorkspaceActive
 } from './storage/managed-workspace-ownership'
-import { deleteSources } from './storage/data-migration'
 import { removeMicromambaCacheForRoot } from './notebook/micromamba-cache'
 import { removeNotebookWorkloadCache } from './notebook/notebook-workload-cache-paths'
 import { createDelegatedActivityProjection, detectActiveSessions } from './storage/detect-active'
@@ -722,11 +721,14 @@ const createApplicationModules = async (
     Boolean(storedSettings.dataRoot?.trim()) && (await isDataRootMissing(resolveDataRoot()))
   initializeDataRootWriteAvailability(configuredDataRootMissing)
   const dataRootCleanupJournal = new DataRootCleanupJournal(resolveConfigRoot())
+  const cleanupDataRootSources = createDataRootSourceCleanup((runtimeRoot) =>
+    notebookNetworkSandbox.revokeManagedRAccess(runtimeRoot)
+  )
   await runDataRootStartupRecovery(
     async () => {
       const cleanup = await dataRootCleanupJournal.recover(
         resolveDataRoot(),
-        deleteSources,
+        cleanupDataRootSources,
         (sourceRoot) => {
           const runtimeRoot = join(sourceRoot, 'runtime')
           const workloadRemoved = removeNotebookWorkloadCache(runtimeRoot)
@@ -1535,7 +1537,16 @@ const createApplicationModules = async (
   const projectFilesHandlers = createProjectFilesHandlers(
     projectFilesRepository,
     sessionPersistenceCoordinator,
-    projectDeletionCoordinator
+    projectDeletionCoordinator,
+    (file) =>
+      managedFileVersionService.openVersion(
+        {
+          source: file.source,
+          projectId: file.projectId,
+          fileId: file.sourceFileId
+        },
+        file.sourceVersionId
+      )
   )
   const managedFileVersionHandlers = createManagedFileVersionHandlers(managedFileVersionService, {
     withDataRootWrite,
@@ -2611,7 +2622,8 @@ const createApplicationModules = async (
                   `Attempt ${delivery.sourceAttemptId}]\n\n${delivery.text}`,
                 suppressUserMessage: true,
                 provenanceContext: {
-                  promptMessageId: delivery.rootPromptMessageId,
+                  // Suppressed continuations create no user node; replies retain the durable origin.
+                  promptMessageId: delivery.originMessageId,
                   originMessageId: delivery.originMessageId,
                   rootFrameId: graph.rootFrameId,
                   agentFrameId: graph.rootFrameId,
@@ -4158,6 +4170,9 @@ const createApplicationModules = async (
     waitForRecovery,
     assertProvisionAllowed,
     onRepairStarting: (language, target) => notebookService.prepareRuntimeRepair(language, target),
+    revokeRuntimeAccess: async (language) => {
+      if (language === 'r') await notebookNetworkSandbox.revokeManagedRAccess(provisioningRoot)
+    },
     onRepairCompleted: (language) => notebookService.completeRuntimeRepair(language)
   })
   // Always register the handlers (serialized is undefined when the provisioner could not be built).
@@ -4225,7 +4240,8 @@ const createApplicationModules = async (
         }
       }
     },
-    cleanupJournal: dataRootCleanupJournal
+    cleanupJournal: dataRootCleanupJournal,
+    deleteSources: cleanupDataRootSources
   })
   declareElectronAdapter('storage', () =>
     registerStorageIpcHandlers(

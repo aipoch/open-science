@@ -11,6 +11,16 @@ const wrapInstance = (instance: MermaidInstance): MermaidInstance => ({
   render: async (renderId, source) => {
     // Remembered even when rendering fails: the error panel can fall back to the same source.
     rememberMermaidSource(renderId, source)
+    // Mermaid image shapes fetch through new Image() before an SVG exists. Parse shape metadata
+    // before rendering, including quoted/escaped YAML keys; a post-render sanitizer is too late.
+    if (/@\s*\{/.test(source)) {
+      const { default: renderer } = await import('mermaid')
+      const diagram = await renderer.mermaidAPI.getDiagramFromText(source)
+      const db = diagram.db as { getVertices?: () => Map<string, { img?: string }> }
+      if (db.getVertices && [...db.getVertices().values()].some((vertex) => vertex.img)) {
+        throw new Error('MERMAID_IMAGE_BLOCKED')
+      }
+    }
     const result = await instance.render(renderId, source)
     return { ...result, svg: annotateSvg(result.svg, renderId) }
   }
