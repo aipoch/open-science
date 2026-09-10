@@ -907,6 +907,10 @@ export class AgentRuntimeManager {
     return { activeBackendAffected: wasActive }
   }
 
+  isManagedCodexNativePath(path: string): boolean {
+    return path === managedCodexBinary(this.configRoot)
+  }
+
   isManagedRuntimePath(frameworkId: AgentFrameworkId, path: string): boolean {
     if (frameworkId === 'claude-code') return isManagedClaudePath(path, this.configRoot)
     if (frameworkId === 'opencode') return isManagedOpencodePath(path, this.configRoot)

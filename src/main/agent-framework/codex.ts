@@ -32,7 +32,7 @@ import { isProductionDelegatedWorkFramework } from '../delegation/production-rea
 import { CODEX_SUBSCRIPTION_PROVIDER_ID, isCodexSubscriptionProvider } from '../../shared/settings'
 import { prepareCodexRuntimeHomeAuthentication } from '../settings/codex-auth'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../settings/codex-paths'
-import { CODEX_VERSION } from '../settings/managed-codex'
+import { CODEX_VERSION, spawnCodexWithInstallAdmission } from '../settings/managed-codex'
 import { clearSystemProxyEnvironment } from '../settings/system-proxy'
 import { registerOwnedPosixProcessGroup } from '../process-tree'
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
@@ -55,6 +55,7 @@ export const CODEX_BRIDGE_MODEL = 'gpt-5.4'
 const CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95
 const CODEX_NATIVE_MODEL_CATALOG_FILENAME_PREFIX = 'model-catalog-'
 const CODEX_BUNDLED_MODEL_IDS_BY_VERSION = {
+  // Existing installations keep their verified catalog until the user explicitly updates.
   '0.144.6': [
     'gpt-5.6-sol',
     'gpt-5.6-terra',
@@ -64,8 +65,21 @@ const CODEX_BUNDLED_MODEL_IDS_BY_VERSION = {
     'gpt-5.4-mini',
     'gpt-5.2',
     'codex-auto-review'
+  ],
+  [CODEX_VERSION]: [
+    'gpt-6-astra',
+    'gpt-daybreak-blue-latest',
+    'gpt-daybreak-red-latest',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+    'gpt-5.5',
+    'gpt-5.4',
+    'gpt-5.4-mini',
+    'gpt-5.2',
+    'codex-auto-review'
   ]
-} satisfies Record<typeof CODEX_VERSION, readonly string[]>
+} satisfies Record<string, readonly string[]>
 const CODEX_MODE_IDS = {
   ask: 'read-only',
   auto: 'agent',
@@ -428,18 +442,22 @@ export const createCodexFramework = ({
         : input.executablePath
     const args = isJavaScript ? [input.executablePath, ...input.args] : input.args
 
-    const child = spawnProcess(command, args, {
-      env: buildSpawnEnvironment(input, sourceEnv),
-      stdio: 'pipe',
-      // Keep a terminal/dev-runner SIGINT aimed at the Electron application's foreground process
-      // group from killing Codex before the app's awaited ACP teardown can mark and reap it. Piped
-      // stdio remains referenced (we never unref the child), and the resource owner still performs
-      // explicit cross-platform tree teardown. Node's detached process-group behavior is POSIX-only;
-      // creating an independent Windows console/process group here would change packaged startup.
-      detached: platform !== 'win32',
-      windowsHide: true,
-      shell: needsShell
-    })
+    const child = spawnCodexWithInstallAdmission(
+      [input.executablePath, ...(input.env.CODEX_PATH ? [input.env.CODEX_PATH] : [])],
+      () =>
+        spawnProcess(command, args, {
+          env: buildSpawnEnvironment(input, sourceEnv),
+          stdio: 'pipe',
+          // Keep a terminal/dev-runner SIGINT aimed at the Electron application's foreground process
+          // group from killing Codex before the app's awaited ACP teardown can mark and reap it. Piped
+          // stdio remains referenced (we never unref the child), and the resource owner still performs
+          // explicit cross-platform tree teardown. Node's detached process-group behavior is POSIX-only;
+          // creating an independent Windows console/process group here would change packaged startup.
+          detached: platform !== 'win32',
+          windowsHide: true,
+          shell: needsShell
+        })
+    )
     if (platform !== 'win32') registerOwnedPosixProcessGroup(child)
     return child
   },

@@ -5337,6 +5337,9 @@
     "Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.": "URL удалённых моделей должны использовать HTTPS. HTTP разрешён только для localhost или адресов обратной петли.",
     "Load media from {{domains}}": "Загрузить медиа с {{domains}}",
     "Images in Mermaid diagrams are blocked": "Изображения в диаграммах Mermaid заблокированы",
-    "Use a separate Markdown image to load it explicitly.": "Используйте отдельное изображение Markdown, чтобы загрузить его явно."
+    "Use a separate Markdown image to load it explicitly.": "Используйте отдельное изображение Markdown, чтобы загрузить его явно.",
+    "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}": "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}",
+    "Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.": "Обновите до проверенной версии Codex CLI v{{version}}. Перед обновлением закройте сеансы Codex.",
+    "Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.": "Доступна Codex CLI v{{version}}. Обновите внешнюю установку вручную, затем повторите обнаружение."
   }
 }

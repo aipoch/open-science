@@ -193,26 +193,32 @@ const makeCertificationAdapter = (capacity = 4): CertificationHarness => {
 }
 
 describe('Codex delegated-work production adapter', () => {
-  it('audits the pinned runtime and fails closed for an unreviewed runtime pair', () => {
-    expect(
-      getCodexNativeDelegationAudit({
-        nativeVersion: CODEX_VERSION,
-        adapterVersion: CODEX_ACP_VERSION
-      })
-    ).toEqual([
-      { entryPoint: 'task', status: 'not-present' },
-      { entryPoint: 'agent', status: 'not-present' },
-      { entryPoint: 'multi-agent', status: 'disabled' }
-    ])
+  it.each([CODEX_VERSION, '0.144.6'])(
+    'audits reviewed runtime %s and fails closed for an unreviewed pair',
+    (nativeVersion) => {
+      expect(
+        getCodexNativeDelegationAudit({
+          nativeVersion,
+          adapterVersion: CODEX_ACP_VERSION
+        })
+      ).toEqual([
+        { entryPoint: 'task', status: 'not-present' },
+        { entryPoint: 'agent', status: 'not-present' },
+        { entryPoint: 'multi-agent', status: 'disabled' }
+      ])
 
-    expect(
-      getCodexNativeDelegationAudit({ nativeVersion: 'future', adapterVersion: CODEX_ACP_VERSION })
-    ).toEqual([
-      { entryPoint: 'task', status: 'unknown' },
-      { entryPoint: 'agent', status: 'unknown' },
-      { entryPoint: 'multi-agent', status: 'unknown' }
-    ])
-  })
+      expect(
+        getCodexNativeDelegationAudit({
+          nativeVersion: 'future',
+          adapterVersion: CODEX_ACP_VERSION
+        })
+      ).toEqual([
+        { entryPoint: 'task', status: 'unknown' },
+        { entryPoint: 'agent', status: 'unknown' },
+        { entryPoint: 'multi-agent', status: 'unknown' }
+      ])
+    }
+  )
 })
 
 delegatedWorkCertificationContract((options) => {

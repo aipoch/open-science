@@ -252,6 +252,8 @@ export type CodexInfo = {
   resolvedPath?: string
   version?: string
   nativeVersion?: string
+  // Read-only ownership projection; never persisted in Settings.
+  nativeManaged?: boolean
 }
 
 // Result of probing the machine for a runnable claude executable.

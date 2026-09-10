@@ -55,14 +55,16 @@ type CodexDelegateExecution = Readonly<{
 }>
 
 /**
- * Native entry-point evidence is intentionally pinned to the exact reviewed Codex/codex-acp pair.
+ * Native entry-point evidence is pinned to reviewed Codex/codex-acp pairs. Keep the previously
+ * reviewed CLI usable while the managed upgrade remains optional.
  * Upgrades fail closed until their tool inventory and feature switches are audited again.
  */
 const getCodexNativeDelegationAudit = (
   identity: CodexRuntimeIdentity
 ): readonly NativeDelegationAudit[] => {
   const reviewed =
-    identity.nativeVersion === CODEX_VERSION && identity.adapterVersion === CODEX_ACP_VERSION
+    (identity.nativeVersion === CODEX_VERSION || identity.nativeVersion === '0.144.6') &&
+    identity.adapterVersion === CODEX_ACP_VERSION
   if (!reviewed) {
     return Object.freeze(
       (['task', 'agent', 'multi-agent'] as const).map((entryPoint) =>

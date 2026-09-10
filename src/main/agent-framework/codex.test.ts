@@ -1,11 +1,11 @@
 import { execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { once } from 'node:events'
+import { once, EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CODEX_BRIDGE_MODEL,
@@ -19,7 +19,8 @@ import { terminateProcessTree } from '../process-tree'
 import { CODEX_VERSION } from '../settings/managed-codex'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 
-const fakeChild = {} as ChildProcessWithoutNullStreams
+const fakeChild = new EventEmitter() as ChildProcessWithoutNullStreams
+afterEach(() => fakeChild.emit('close', 0))
 
 describe('codexFramework', () => {
   it('offers the scoped Skill loader and recovery guidance without enabling shell', () => {
@@ -470,33 +471,36 @@ describe('codexFramework', () => {
     })
   })
 
-  it('keeps Codex bundled model metadata for a trusted official OpenAI model', () => {
-    const framework = createCodexFramework()
-    const config = framework.prepareModelConfig(
-      {
-        type: 'official',
-        vendorId: 'openai',
-        apiEndpoints: ['responses'],
-        baseUrl: 'https://gateway.example/v1',
-        model: 'gpt-5.4',
-        key: 'sk-plaintext-secret'
-      },
-      {
-        storageRoot: '/data',
-        executablePath: '/runtime/codex-acp',
-        nativeVersion: CODEX_VERSION
-      }
-    )
+  it.each(['gpt-5.4', 'gpt-6-astra'])(
+    'keeps bundled metadata for trusted official model %s',
+    (model) => {
+      const framework = createCodexFramework()
+      const config = framework.prepareModelConfig(
+        {
+          type: 'official',
+          vendorId: 'openai',
+          apiEndpoints: ['responses'],
+          baseUrl: 'https://gateway.example/v1',
+          model,
+          key: 'sk-plaintext-secret'
+        },
+        {
+          storageRoot: '/data',
+          executablePath: '/runtime/codex-acp',
+          nativeVersion: CODEX_VERSION
+        }
+      )
 
-    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).not.toHaveProperty('model_catalog_json')
-    expect(config.configFiles).toEqual([
-      {
-        path: join('/data', 'codex', 'config.toml'),
-        content: 'cli_auth_credentials_store = "ephemeral"\n',
-        mode: 0o600
-      }
-    ])
-  })
+      expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).not.toHaveProperty('model_catalog_json')
+      expect(config.configFiles).toEqual([
+        {
+          path: join('/data', 'codex', 'config.toml'),
+          content: 'cli_auth_credentials_store = "ephemeral"\n',
+          mode: 0o600
+        }
+      ])
+    }
+  )
 
   it('keeps the native catalog when an unbundled official model is only a sibling option', () => {
     const framework = createCodexFramework()
@@ -536,7 +540,7 @@ describe('codexFramework', () => {
       {
         storageRoot: '/data',
         executablePath: '/runtime/codex-acp',
-        nativeVersion: CODEX_VERSION,
+        nativeVersion: '0.144.6',
         reasoningEffort: 'max',
         reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max']
       }

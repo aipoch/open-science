@@ -18,6 +18,8 @@ import {
 } from '../../../../shared/settings'
 import {
   isSupportedCodexAcpVersion,
+  hasCodexNativeUpdate,
+  MANAGED_CODEX_VERSION,
   MINIMUM_CODEX_ACP_VERSION
 } from '../../../../shared/codex-runtime'
 import { AgentFrameworkCard } from './AgentFrameworkCard'
@@ -333,6 +335,9 @@ const AgentPanel = ({
     updateRequired?: boolean
     minimumVersion?: string
     version?: string
+    versionDetail?: string
+    updateAvailable?: boolean
+    updateHint?: string
     path?: string
     sourceLabel: string
     sourceUrl: string
@@ -412,7 +417,24 @@ const AgentPanel = ({
         codex.resolvedPath && codex.version && !isSupportedCodexAcpVersion(codex.version)
       ),
       minimumVersion: MINIMUM_CODEX_ACP_VERSION,
-      version: codex.version,
+      versionDetail: t('Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}', {
+        nativeVersion: codex.nativeVersion ?? t('Unknown'),
+        adapterVersion: codex.version ?? t('Unknown')
+      }),
+      updateAvailable: Boolean(
+        codexManaged && codex.nativeManaged && hasCodexNativeUpdate(codex.nativeVersion)
+      ),
+      updateHint: hasCodexNativeUpdate(codex.nativeVersion)
+        ? codexManaged && codex.nativeManaged
+          ? t(
+              'Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.',
+              { version: MANAGED_CODEX_VERSION }
+            )
+          : t(
+              'Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.',
+              { version: MANAGED_CODEX_VERSION }
+            )
+        : undefined,
       path: codex.resolvedPath,
       sourceLabel: 'agentclientprotocol/codex-acp',
       sourceUrl: 'https://github.com/agentclientprotocol/codex-acp',
@@ -603,6 +625,9 @@ const AgentPanel = ({
       minimumVersion={card.minimumVersion}
       needsRepair={cardNeedsRepair(card)}
       version={card.version}
+      versionDetail={card.versionDetail}
+      updateAvailable={card.updateAvailable}
+      updateHint={card.updateHint}
       path={card.path}
       sourceLabel={card.sourceLabel}
       sourceUrl={card.sourceUrl}

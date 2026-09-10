@@ -4888,6 +4888,9 @@
     "Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.": "リモートモデルの URL には HTTPS が必要です。HTTP は localhost またはループバックアドレスでのみ使用できます。",
     "Load media from {{domains}}": "{{domains}} からメディアを読み込む",
     "Images in Mermaid diagrams are blocked": "Mermaid 図内の画像はブロックされています",
-    "Use a separate Markdown image to load it explicitly.": "個別の Markdown 画像を使って明示的に読み込んでください。"
+    "Use a separate Markdown image to load it explicitly.": "個別の Markdown 画像を使って明示的に読み込んでください。",
+    "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}": "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}",
+    "Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.": "検証済みの Codex CLI v{{version}} に更新できます。更新前に Codex セッションを閉じてください。",
+    "Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.": "Codex CLI v{{version}} が利用可能です。外部のインストールを手動で更新してから、再検出してください。"
   }
 }
