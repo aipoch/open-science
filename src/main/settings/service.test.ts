@@ -329,6 +329,56 @@ afterEach(async () => {
 })
 
 describe('SettingsService: Local Shell runtime', () => {
+  it('projects the current persisted Shell runtime into a cached WSL setup snapshot', async () => {
+    const selection = { distro: 'Ubuntu-24.04', user: 'scientist' }
+    let cachedRuntime: 'powershell' | 'wsl2-bash' = 'wsl2-bash'
+    const getStatus = vi.fn(() => ({
+      revision: 7,
+      snapshot: {
+        state: 'ready' as const,
+        distros: [{ name: selection.distro, version: 2 as const, isDefault: true }],
+        selection,
+        activeRuntime: cachedRuntime,
+        activatedSelection: selection,
+        operationReference: 'cached01'
+      },
+      operation: { state: 'idle' as const }
+    }))
+    const service = createService(undefined, {
+      wslSetup: {
+        getStatus,
+        probe: vi.fn(),
+        installPlatform: vi.fn(),
+        installMissingDependencies: vi.fn(),
+        select: vi.fn(),
+        installRecommendedDistro: vi.fn(),
+        openTerminal: vi.fn(),
+        createSupportHandoff: vi.fn(),
+        requireLatestReadySelection: vi.fn(async () => selection)
+      }
+    })
+    await repository.setLocalShellRuntime('wsl2-bash', selection)
+
+    await service.switchLocalShellToPowerShell()
+    await expect(service.getWslSetupStatus()).resolves.toMatchObject({
+      revision: 7,
+      snapshot: {
+        activeRuntime: 'powershell',
+        activatedSelection: selection
+      }
+    })
+
+    cachedRuntime = 'powershell'
+    await service.useWsl2Bash()
+    await expect(service.getWslSetupStatus()).resolves.toMatchObject({
+      revision: 7,
+      snapshot: {
+        activeRuntime: 'wsl2-bash',
+        activatedSelection: selection
+      }
+    })
+  })
+
   it('returns an immutable PowerShell binding and preserves the selected WSL profile', async () => {
     const service = createService()
     const profile = { distro: 'Ubuntu-22.04', user: 'scientist' }

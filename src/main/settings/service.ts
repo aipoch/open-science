@@ -542,11 +542,32 @@ class SettingsService {
   async getWslSetupStatus(): Promise<WslSetupStatus> {
     this.requireWsl2Preview()
     if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    let status: WslSetupStatus
     if (this.wslSetup.reconcileInterruptedOperation) {
-      return this.wslSetup.reconcileInterruptedOperation()
+      status = await this.wslSetup.reconcileInterruptedOperation()
+    } else if (this.wslSetup.getStatus) {
+      status = this.wslSetup.getStatus()
+    } else {
+      throw new Error('WSL setup status is unavailable.')
     }
-    if (this.wslSetup.getStatus) return this.wslSetup.getStatus()
-    throw new Error('WSL setup status is unavailable.')
+    if (!status.snapshot) return status
+
+    // Readiness is intentionally cached until the user checks again, but Shell activation is a
+    // separate persisted setting and can change without another WSL probe. Project the current
+    // activation into the cached readiness snapshot so reopening Settings never revives the prior
+    // runtime label.
+    const settings = await this.repository.getSettings()
+    const readiness = { ...status.snapshot }
+    delete readiness.activeRuntime
+    delete readiness.activatedSelection
+    const snapshot = Object.freeze({
+      ...readiness,
+      ...(settings.localShellRuntime ? { activeRuntime: settings.localShellRuntime } : {}),
+      ...(settings.activatedWslSelection
+        ? { activatedSelection: Object.freeze({ ...settings.activatedWslSelection }) }
+        : {})
+    })
+    return Object.freeze({ ...status, snapshot })
   }
 
   installWslPlatform(): Promise<WslPlatformInstallResult> {

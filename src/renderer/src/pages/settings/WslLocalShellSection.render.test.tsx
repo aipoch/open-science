@@ -49,7 +49,7 @@ const renderAndCheck = async (): Promise<void> => {
   await flush()
   expect(probe).not.toHaveBeenCalled()
   const check = [...container.querySelectorAll('button')].find((button) =>
-    button.textContent?.includes('Check now')
+    button.textContent?.includes('Check again')
   )
   expect(check).toBeDefined()
   await act(async () => check?.click())
@@ -170,7 +170,15 @@ beforeEach(() => {
     selection: { distro: 'Ubuntu-24.04', user: 'scientist' },
     appliesTo: 'subsequent-executions'
   })
-  getWslSetupStatus = vi.fn().mockResolvedValue({ revision: 0, operation: { state: 'idle' } })
+  getWslSetupStatus = vi.fn().mockResolvedValue({
+    revision: 1,
+    snapshot: {
+      state: 'distro-required',
+      distros: [],
+      operationReference: 'prior001'
+    },
+    operation: { state: 'idle' }
+  })
   onWslSetupChanged = vi.fn(() => () => undefined)
   ;(window as unknown as { api: unknown }).api = {
     settings: {
@@ -259,13 +267,35 @@ describe('WslLocalShellSection', () => {
     expect(container.textContent).toContain('Local Shell · WSL2 Bash Development Preview')
   })
 
-  it('waits for the user to refresh WSL2 status', async () => {
+  it('checks WSL2 once when no prior setup snapshot exists and reuses that snapshot on reopen', async () => {
+    const snapshot: WslSetupSnapshot = {
+      state: 'distro-required',
+      distros: [{ name: 'Ubuntu-24.04', version: 2, isDefault: true }],
+      operationReference: 'first001'
+    }
+    getWslSetupStatus.mockResolvedValue({ revision: 0, operation: { state: 'idle' } })
+    probe.mockImplementation(async () => {
+      getWslSetupStatus.mockResolvedValue({
+        revision: 1,
+        snapshot,
+        operation: { state: 'idle' }
+      })
+      return snapshot
+    })
+
     await act(async () => root.render(<WslLocalShellSection />))
     await flush()
 
-    expect(probe).not.toHaveBeenCalled()
-    expect(container.textContent).toContain('WSL2 status has not been checked yet')
-    expect(container.textContent).toContain('Check now')
+    expect(probe).toHaveBeenCalledOnce()
+    expect(container.textContent).not.toContain('WSL2 status has not been checked yet')
+    expect(container.textContent).toContain('Check again')
+
+    act(() => root.unmount())
+    root = createRoot(container)
+    await act(async () => root.render(<WslLocalShellSection />))
+    await flush()
+
+    expect(probe).toHaveBeenCalledOnce()
   })
 
   it('offers only explicit PowerShell recovery when Preview admission is unavailable', async () => {
@@ -708,13 +738,15 @@ describe('WslLocalShellSection', () => {
     expect(container.textContent).not.toContain('Copy command')
   })
 
-  it('refreshes a revision that is not yet bound to the manually checked snapshot', async () => {
+  it('refreshes a revision that is not yet bound to the freshly checked snapshot', async () => {
     const snapshot = dependencySnapshot()
     probe.mockResolvedValue(snapshot)
     getWslSetupStatus
       .mockResolvedValueOnce({ revision: 0, operation: { state: 'idle' } })
       .mockResolvedValueOnce({ revision: 11, snapshot, operation: { state: 'idle' } })
-    await renderAndCheck()
+    await act(async () => root.render(<WslLocalShellSection />))
+    await flush()
+    expect(probe).toHaveBeenCalledOnce()
 
     const installDependencies = [...container.querySelectorAll('button')].find((button) =>
       button.textContent?.includes('Install missing dependencies')

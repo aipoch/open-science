@@ -301,6 +301,7 @@ export const WslLocalShellSection = ({
   const installBusy = setupStatus?.operation.state === 'running'
   const busy = actionBusy || installBusy || (previewAvailable && setupStatus === undefined)
   const statusHydrated = useRef(false)
+  const initialProbeRequest = useRef<Promise<WslSetupSnapshot> | undefined>(undefined)
   const projects = useProjectStore((state) => state.projects)
   const chatProjectId = useMemo(
     () => resolveCustomizeProjectId(projects.filter((project) => project.archivedAt === undefined)),
@@ -325,13 +326,16 @@ export const WslLocalShellSection = ({
   }, [])
 
   const probe = useCallback(
-    async (isActive: () => boolean = () => true): Promise<void> => {
+    async (
+      isActive: () => boolean = () => true,
+      request?: Promise<WslSetupSnapshot>
+    ): Promise<void> => {
       if (isActive()) {
         setBusy(true)
         setSnapshot((current) => ({ ...current, state: 'checking' }))
       }
       try {
-        const next = await window.api.settings.probeWslSetup()
+        const next = await (request ?? window.api.settings.probeWslSetup())
         if (isActive()) {
           apply(next)
         }
@@ -350,6 +354,16 @@ export const WslLocalShellSection = ({
     },
     [apply]
   )
+
+  useEffect(() => {
+    if (!previewAvailable || !setupStatus || setupStatus.snapshot) return undefined
+    let active = true
+    initialProbeRequest.current ??= window.api.settings.probeWslSetup()
+    void probe(() => active, initialProbeRequest.current)
+    return () => {
+      active = false
+    }
+  }, [previewAvailable, probe, setupStatus])
 
   useEffect(() => {
     if (!previewAvailable || !setupStatus) return undefined
