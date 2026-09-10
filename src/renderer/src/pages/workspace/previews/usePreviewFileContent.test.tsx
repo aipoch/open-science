@@ -202,6 +202,20 @@ describe('usePreviewFileContent', () => {
     }
   )
 
+  it('does not describe an expired protocol capability as a missing file', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 404 }))
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const FailureProbe = (): React.JSX.Element => {
+      const state = usePreviewFileContent({ source: 'local', path: '/available.txt' })
+      return <div>{state.status === 'error' ? String(state.error) : state.status}</div>
+    }
+    root = createRoot(container)
+    await act(async () => root.render(<FailureProbe />))
+    expect(container.textContent).not.toMatch(/ENOENT|no longer available/)
+    expect(window.api.previewResources.release).toHaveBeenCalledOnce()
+    log.mockRestore()
+  })
+
   it('keeps project and session scope when acquiring a version-backed upload', async () => {
     root = createRoot(container)
     await act(async () => root.render(<Probe />))
@@ -210,8 +224,7 @@ describe('usePreviewFileContent', () => {
       projectId: 'project-1',
       source: 'upload',
       fileId: 'upload-file-1',
-      versionId: 'upload-version-1',
-      maxBytes: 1024 * 1024
+      versionId: 'upload-version-1'
     })
     expect(fetch).toHaveBeenCalledWith('https://preview.test/upload-file-1', {
       cache: 'no-store',

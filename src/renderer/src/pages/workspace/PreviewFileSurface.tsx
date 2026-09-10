@@ -997,6 +997,16 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     // Copy feedback is transient and must not outlive a closed or replaced preview.
     useEffect(() => () => clearTimeout(copiedTimer.current), [])
     const isDirty = mode === 'edit' && editBaseline !== undefined && draft !== editBaseline.text
+    useEffect(() => {
+      if (!isDirty) return
+      const preventUnload = (event: BeforeUnloadEvent): void => {
+        event.preventDefault()
+        // Chromium/Electron's legacy path also requires a return value.
+        event.returnValue = ''
+      }
+      window.addEventListener('beforeunload', preventUnload)
+      return () => window.removeEventListener('beforeunload', preventUnload)
+    }, [isDirty])
     const discardEdit = useCallback((): void => {
       saveGenerationRef.current += 1
       pendingSaveRef.current = undefined
@@ -1042,8 +1052,10 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
 
     useEffect(
       () =>
-        leaveGuardScope ? previewLeaveGuards.register(leaveGuardScope, guardLeave) : undefined,
-      [guardLeave, leaveGuardScope]
+        leaveGuardScope
+          ? previewLeaveGuards.register(leaveGuardScope, guardLeave, () => isDirty)
+          : undefined,
+      [guardLeave, leaveGuardScope, isDirty]
     )
 
     useEffect(() => {
@@ -1644,6 +1656,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                         autoFocus
                         aria-label={t('Edit {{name}} source', { name: resolvedPreviewItem.name })}
                         className="min-h-0 flex-1 resize-none bg-bg-000 p-4 font-mono text-sm leading-6 text-text-000 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                        readOnly={saving}
                         value={draft}
                         onChange={(event) => setDraft(event.target.value)}
                       />

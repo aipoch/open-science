@@ -356,6 +356,56 @@ describe('PreviewFileSurface managed text versions', () => {
       .mockResolvedValue({ ok: true, value: managedInspect })
   })
 
+  it.each([false, true])(
+    'preserves input accepted while saving (workbenchConnected=%s)',
+    async (workbenchConnected) => {
+      type SaveResult = Awaited<ReturnType<typeof window.api.managedFileVersions.saveTextEdit>>
+      let complete!: (result: SaveResult) => void
+      const save = vi.fn(() => new Promise<SaveResult>((resolve) => (complete = resolve)))
+      window.api.managedFileVersions.saveTextEdit = save
+      if (workbenchConnected) {
+        usePreviewWorkbenchStore.getState().upsertAndActivateItem(managedUploadItem)
+      }
+      await act(async () =>
+        root.render(
+          <PreviewFileSurface
+            item={managedUploadItem}
+            onClose={vi.fn()}
+            workbenchConnected={workbenchConnected}
+          />
+        )
+      )
+      await click(container.querySelector('[aria-label="Edit README.md"]'))
+      const submitted = '# Submitted A\n'
+      await changeTextarea(container.querySelector('textarea')!, submitted)
+      await click(container.querySelector('[aria-label="Save changes"]'))
+      const editor = container.querySelector('textarea')!
+      const acceptsInput = !editor.readOnly && !editor.disabled
+      const newerDraft = `${submitted}New unsaved B\n`
+      if (acceptsInput) await changeTextarea(editor, newerDraft)
+      expect(save).toHaveBeenCalledTimes(1)
+      expect(save.mock.calls[0]).toEqual([expect.objectContaining({ content: submitted })])
+      await act(async () => {
+        complete({
+          ok: true,
+          value: {
+            kind: 'created',
+            replayed: false,
+            version: { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 },
+            headVersionId: 'upload-v3'
+          }
+        })
+      })
+      if (acceptsInput) {
+        expect(container.querySelector('textarea')?.value).toBe(newerDraft)
+      } else {
+        expect(container.querySelector('textarea')).toBeNull()
+      }
+      expect(save).toHaveBeenCalledTimes(1)
+      expect(discardConfirmation()).toBeNull()
+    }
+  )
+
   it.each([
     ['initial', 'result'],
     ['initial', 'rejection'],

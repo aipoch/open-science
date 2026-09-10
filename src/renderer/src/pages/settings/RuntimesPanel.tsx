@@ -188,7 +188,9 @@ const RuntimesPanel = ({
   }, [initEnv])
 
   useEffect(() => {
+    const remove = useRuntimeSettingsStore.getState().listen()
     void loadRuntimeSettings().catch(() => undefined)
+    return remove
   }, [loadRuntimeSettings])
 
   // Fetches the open dialog's package list; re-runs on Retry via packagesRetryNonce. A successful
@@ -334,10 +336,7 @@ const RuntimesPanel = ({
     setBusy(true)
     setError(null)
     try {
-      const enabled = await window.api.runtime.setAgentEnvironmentCreationEnabled({
-        enabled: !agentEnvironmentCreationEnabled
-      })
-      setAgentEnvironmentCreationEnabled(enabled)
+      await setAgentEnvironmentCreationEnabled(!agentEnvironmentCreationEnabled)
     } catch (e) {
       setError(e instanceof Error ? e.message : t('Could not change Agent environment creation.'))
     } finally {

@@ -254,6 +254,7 @@ type Overrides = Partial<{
   historyStatus: string
   onNavigateHistory: (direction: 'previous' | 'next') => boolean
   mentionPreviewContext: { sessionId: string; projectId?: string }
+  onPreviewMentionArtifact: React.ComponentProps<typeof ComposerEditor>['onPreviewMentionArtifact']
   focusRequest: string | number
   restoreFocusRequest: number
   caretRequest: { key: number; position: { nodeIndex: number; offset: number } }
@@ -278,6 +279,7 @@ const renderEditor = (overrides: Overrides = {}): void => {
         historyStatus={overrides.historyStatus}
         onNavigateHistory={overrides.onNavigateHistory}
         mentionPreviewContext={overrides.mentionPreviewContext}
+        onPreviewMentionArtifact={overrides.onPreviewMentionArtifact}
         focusRequest={overrides.focusRequest}
         restoreFocusRequest={overrides.restoreFocusRequest}
         caretRequest={overrides.caretRequest}
@@ -1508,7 +1510,54 @@ describe('ComposerEditor', () => {
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
   })
 
-  it('opens an upload mention chip in the preview workbench on click after a successful probe', async () => {
+  it.each(pickerProjectFiles)(
+    'opens a pasted $source reference before a target Session exists',
+    async (file) => {
+      renderEditor()
+      editor().focus()
+      setCaret(editor(), 0)
+      const part = {
+        type: 'artifact',
+        id: file.id,
+        sourceFileId: file.sourceFileId,
+        versionId: file.sourceVersionId,
+        source: file.source,
+        name: file.name,
+        path: file.path,
+        mimeType: file.mimeType
+      }
+      const carrier = document.createElement('span')
+      carrier.setAttribute(
+        'data-open-science-message',
+        JSON.stringify({
+          version: 1,
+          origin: location.origin,
+          projectId: 'default',
+          parts: [part]
+        })
+      )
+      const paste = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(paste, 'clipboardData', {
+        value: {
+          getData: (type: string) => (type === 'text/html' ? carrier.outerHTML : `@${file.name}`)
+        }
+      })
+      act(() => editor().dispatchEvent(paste))
+      const chip = editor().querySelector<HTMLElement>('[data-mention-type="artifact"]')
+      expect(chip).not.toBeNull()
+      await act(async () => chip!.click())
+      expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+      expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+        projectId: 'default',
+        sessionId: 'session-1',
+        managedFileId: file.sourceFileId,
+        path: file.path,
+        name: file.name
+      })
+    }
+  )
+
+  it('opens an upload mention chip in the preview workbench on click through the shared preview surface', async () => {
     renderEditor({
       mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' },
       doc: {
@@ -1534,7 +1583,7 @@ describe('ComposerEditor', () => {
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('up-1')
   })
 
-  it('keeps an upload mention chip inert when the probe fails', async () => {
+  it('opens the preview surface to handle unreadable files without a silent probe', async () => {
     ;(
       window as unknown as { api: { uploads: { readPreview: ReturnType<typeof vi.fn> } } }
     ).api.uploads.readPreview.mockRejectedValueOnce(new Error('gone'))
@@ -1560,11 +1609,14 @@ describe('ComposerEditor', () => {
       await Promise.resolve()
     })
 
-    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+    expect(window.api.uploads.readPreview).not.toHaveBeenCalled()
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('up-1')
   })
 
   it('opens a Literature PDF mention without probing Upload or Artifact storage', () => {
+    const ownerPreview = vi.fn()
     renderEditor({
+      onPreviewMentionArtifact: ownerPreview,
       mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' },
       doc: {
         nodes: [
@@ -1586,6 +1638,7 @@ describe('ComposerEditor', () => {
 
     expect(window.api.uploads.readPreview).not.toHaveBeenCalled()
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+    expect(ownerPreview).not.toHaveBeenCalled()
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('literature-item-1')
     expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
       sessionId: '__literature__',
@@ -1593,5 +1646,106 @@ describe('ComposerEditor', () => {
       path: 'literature-attachment-version:literature-version-1',
       format: 'pdf'
     })
+  })
+})
+
+describe('structured message paste', () => {
+  const fragment = [{ type: 'skill' as const, id: 'lit', name: 'Literature' }]
+  const pasteSkill = (): void => {
+    const element = document.createElement('span')
+    element.setAttribute(
+      'data-open-science-message',
+      JSON.stringify({
+        version: 1,
+        origin: location.origin,
+        projectId: 'default',
+        parts: fragment
+      })
+    )
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', {
+      value: {
+        files: [],
+        getData: (type: string) => (type === 'text/html' ? element.outerHTML : '/Literature')
+      }
+    })
+    act(() => {
+      editor().dispatchEvent(paste)
+    })
+  }
+  const selectContents = (): void => {
+    editor().focus()
+    const range = document.createRange()
+    range.selectNodeContents(editor())
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+  }
+
+  it('preserves the selection while the Skill catalog loads, then restores the Skill on retry', async () => {
+    const loadSkills = vi.fn(async () => {
+      useSettingsStore.setState({ skillsLoaded: true, skills: seedSkills })
+    })
+    useSettingsStore.setState({ skillsLoaded: false, skills: [], loadSkills })
+    const onDocChange = vi.fn()
+    renderEditor({ doc: { nodes: [{ type: 'text', text: 'keep this' }] }, onDocChange })
+    selectContents()
+    await act(async () => {
+      pasteSkill()
+    })
+    expect(editor().textContent).toBe('keep this')
+    expect(onDocChange).not.toHaveBeenCalled()
+    expect(loadSkills).toHaveBeenCalledOnce()
+    expect(document.body.textContent).toContain('Skills are loading. Paste again shortly.')
+    pasteSkill()
+    expect(domToDoc(editor())).toEqual({ nodes: fragment })
+    expect(onDocChange).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the draft on catalog failure and hides its notice in a different Session', async () => {
+    const loadSkills = vi.fn().mockRejectedValue(new Error('offline'))
+    useSettingsStore.setState({ skillsLoaded: false, skills: [], loadSkills })
+    const doc: ComposerDoc = { nodes: [{ type: 'text', text: 'keep this' }] }
+    renderEditor({ doc, mentionPreviewContext: { sessionId: 'first', projectId: 'default' } })
+    selectContents()
+    await act(async () => {
+      pasteSkill()
+    })
+    expect(editor().textContent).toBe('keep this')
+    expect(document.body.textContent).toContain('Could not load Skills. Try pasting again.')
+    renderEditor({ doc, mentionPreviewContext: { sessionId: 'second', projectId: 'default' } })
+    expect(document.body.textContent).not.toContain('Could not load Skills. Try pasting again.')
+  })
+
+  it('replaces a selected Skill without counting it against the new paste', () => {
+    useSettingsStore.setState({ skillsLoaded: true })
+    const onDocChange = vi.fn()
+    renderEditor({
+      doc: { nodes: [{ type: 'skill', id: 'mpnn', name: 'ProteinMPNN' }] },
+      onDocChange
+    })
+    selectContents()
+    pasteSkill()
+    expect(domToDoc(editor())).toEqual({ nodes: fragment })
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: fragment },
+      expect.objectContaining({ nodeIndex: 0 })
+    )
+  })
+
+  it('preserves surrounding text and inserts at the selected range', () => {
+    useSettingsStore.setState({ skillsLoaded: true })
+    renderEditor({ doc: { nodes: [{ type: 'text', text: 'before replace after' }] } })
+    editor().focus()
+    const range = document.createRange()
+    range.setStart(editor().firstChild!, 7)
+    range.setEnd(editor().firstChild!, 14)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    pasteSkill()
+    expect(domToDoc(editor()).nodes).toEqual([
+      { type: 'text', text: 'before ' },
+      ...fragment,
+      { type: 'text', text: ' after' }
+    ])
   })
 })

@@ -1,4 +1,4 @@
-import { appendFile, mkdir, rename, rm, stat } from 'node:fs/promises'
+import { appendFile, mkdir, open, rename, rm, stat } from 'node:fs/promises'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -36,6 +36,9 @@ export type LoggerConfig = {
   maxBytes: number
   // Total files kept (the live file plus rotated backups). Older ones are deleted automatically.
   maxFiles: number
+  // Includes the in-flight record. One quarter is reserved for errors.
+  maxPendingBytes: number
+  maxPendingRecords: number
 }
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024 // 5 MB per file
@@ -45,10 +48,29 @@ const DEFAULT_MIRROR_TO_CONSOLE = process.env.NODE_ENV !== 'test'
 let config: LoggerConfig | undefined
 // Serializes appends (and rotation) so concurrent log calls cannot interleave partial lines.
 let writeChain: Promise<void> = Promise.resolve()
-// Running size of the live file; undefined until seeded from disk on the first write after init.
-let currentBytes: number | undefined
-let lastWriteSucceeded: boolean | null = null
-let lastFailureCategory: LogWriteFailureCategory | null = null
+// Each initialization owns its accounting even if an older sink is still draining.
+type LogSinkState = {
+  currentBytes: number | undefined
+  lastWriteSucceeded: boolean | null
+  lastFailureCategory: LogWriteFailureCategory | null
+  pendingBytes: number
+  pendingRecords: number
+  droppedRecords: number
+  repairedTailBytes: number
+  lostRecords: boolean
+}
+const createSinkState = (): LogSinkState => ({
+  currentBytes: undefined,
+  lastWriteSucceeded: null,
+  lastFailureCategory: null,
+  pendingBytes: 0,
+  pendingRecords: 0,
+  droppedRecords: 0,
+  repairedTailBytes: 0,
+  lostRecords: false
+})
+let sinkState = createSinkState()
+export type LogFlushResult = { failed: boolean }
 const diagnosticCorrelation = new AsyncLocalStorage<string>()
 
 const runWithDiagnosticCorrelation = <Result>(operation: () => Result): Result => {
@@ -685,67 +707,130 @@ const rotate = async (logDir: string, fileName: string, maxFiles: number): Promi
   )
 }
 
-const appendLine = (line: string): void => {
-  if (!config) return
-
-  const { logDir, fileName, maxBytes, maxFiles } = config
-
-  writeChain = writeChain.then(
-    async () => {
-      let failureCategory: LogWriteFailureCategory = 'directory'
-      try {
-        await mkdir(logDir, { recursive: true })
-
-        const filePath = join(logDir, fileName)
-
-        if (currentBytes === undefined) {
-          failureCategory = 'inspect'
-          currentBytes = await fileSize(filePath)
-        }
-
-        const lineBytes = Buffer.byteLength(line, 'utf8') + 1 // include the newline
-
-        // Even an empty file must not accept a record larger than its configured cap.
-        if (lineBytes > maxBytes) {
-          lastWriteSucceeded = false
-          lastFailureCategory = 'append'
-          return
-        }
-
-        // Rotate before writing when the next line would exceed the cap (but never rotate an empty file).
-        if (currentBytes > 0 && currentBytes + lineBytes > maxBytes) {
-          failureCategory = 'rotation'
-          const rotated = await rotate(logDir, fileName, maxFiles)
-          if (rotated) {
-            currentBytes = 0
-          } else {
-            // The live file may still have changed despite the failed operation (for example, another
-            // process removed it). Re-read the real size, and drop this line if it remains over cap.
-            currentBytes = await fileSize(filePath)
-            if (currentBytes > 0 && currentBytes + lineBytes > maxBytes) {
-              lastWriteSucceeded = false
-              lastFailureCategory = 'rotation'
-              return
-            }
-          }
-        }
-
-        failureCategory = 'append'
-        await appendFile(filePath, `${line}\n`, 'utf8')
-        currentBytes += lineBytes
-        lastWriteSucceeded = true
-        lastFailureCategory = null
-      } catch {
-        // An append can fail after a partial filesystem write. Re-seed from disk before the next
-        // attempt so the bounded-size decision never relies on a possibly stale byte count.
-        currentBytes = undefined
-        lastWriteSucceeded = false
-        lastFailureCategory = failureCategory
-        // Logging must never throw or reject into the app; a failed write is silently dropped.
+// A failed append (or an earlier process crash) may leave a non-JSON tail. Scan backwards
+// with bounded memory and discard only bytes after the last complete line, never a backup.
+const repairLogTail = async (path: string): Promise<{ size: number; discarded: number }> => {
+  let file: Awaited<ReturnType<typeof open>>
+  try {
+    file = await open(path, 'r+')
+  } catch (error) {
+    if (isMissingFileError(error)) return { size: 0, discarded: 0 }
+    throw error
+  }
+  try {
+    const { size } = await file.stat()
+    const buffer = Buffer.alloc(Math.min(size, 64 * 1024))
+    let end = size
+    let boundary = 0
+    while (end > 0) {
+      const start = Math.max(0, end - buffer.length)
+      const length = end - start
+      const { bytesRead } = await file.read(buffer, 0, length, start)
+      if (bytesRead !== length) throw new Error('Log tail changed during inspection')
+      const newline = buffer.subarray(0, bytesRead).lastIndexOf(10)
+      if (newline >= 0) {
+        boundary = start + newline + 1
+        break
       }
-    },
-    () => undefined
-  )
+      end = start
+    }
+    if (boundary !== size) await file.truncate(boundary)
+    return { size: boundary, discarded: size - boundary }
+  } finally {
+    await file.close()
+  }
+}
+
+const writeLine = async (
+  line: string,
+  activeConfig: LoggerConfig,
+  state: LogSinkState
+): Promise<boolean> => {
+  const { logDir, fileName, maxBytes, maxFiles } = activeConfig
+  let failureCategory: LogWriteFailureCategory = 'directory'
+  try {
+    await mkdir(logDir, { recursive: true })
+    const filePath = join(logDir, fileName)
+    if (state.currentBytes === undefined) {
+      failureCategory = 'inspect'
+      const repaired = await repairLogTail(filePath)
+      state.currentBytes = repaired.size
+      state.repairedTailBytes += repaired.discarded
+      if (repaired.discarded) state.lostRecords = true
+    }
+    const lineBytes = Buffer.byteLength(line, 'utf8') + 1
+    failureCategory = 'append'
+    if (lineBytes > maxBytes) throw new Error('Log record exceeds file budget')
+    if (state.currentBytes > 0 && state.currentBytes + lineBytes > maxBytes) {
+      failureCategory = 'rotation'
+      if (await rotate(logDir, fileName, maxFiles)) {
+        state.currentBytes = 0
+      } else {
+        state.currentBytes = await fileSize(filePath)
+        if (state.currentBytes > 0 && state.currentBytes + lineBytes > maxBytes) {
+          throw new Error('Log rotation failed')
+        }
+      }
+    }
+    failureCategory = 'append'
+    await appendFile(filePath, `${line}\n`, 'utf8')
+    state.currentBytes += lineBytes
+    state.lastWriteSucceeded = true
+    state.lastFailureCategory = null
+    return true
+  } catch {
+    state.currentBytes = undefined
+    state.lastWriteSucceeded = false
+    state.lastFailureCategory = failureCategory
+    state.lostRecords = true
+    return false
+  }
+}
+
+const appendLine = (line: string, level: LogLevel): void => {
+  if (!config) return
+  const activeConfig = config
+  const state = sinkState
+  const bytes = Buffer.byteLength(line, 'utf8') + 1
+  const fraction = level === 'error' ? 1 : 0.75
+  if (
+    state.pendingBytes + bytes > activeConfig.maxPendingBytes * fraction ||
+    state.pendingRecords + 1 > Math.floor(activeConfig.maxPendingRecords * fraction)
+  ) {
+    state.droppedRecords = Math.min(Number.MAX_SAFE_INTEGER, state.droppedRecords + 1)
+    state.lostRecords = true
+    return
+  }
+  state.pendingBytes += bytes
+  state.pendingRecords += 1
+  writeChain = writeChain.then(async () => {
+    try {
+      const succeeded = await writeLine(line, activeConfig, state)
+      // One aggregate recovery record, never one queued closure per rejected message. Do not
+      // recursively log a failure to the failed sink. A later successful write can retry it.
+      if (succeeded && (state.droppedRecords || state.repairedTailBytes)) {
+        const droppedRecords = state.droppedRecords
+        const repairedTailBytes = state.repairedTailBytes
+        const summary = formatLine(
+          'warn',
+          'logger',
+          'log records dropped',
+          {
+            droppedRecords,
+            repairedTailBytes
+          },
+          activeConfig.runId
+        )
+        if (await writeLine(summary, activeConfig, state)) {
+          state.droppedRecords -= droppedRecords
+          state.repairedTailBytes -= repairedTailBytes
+        }
+      }
+    } finally {
+      state.pendingBytes -= bytes
+      state.pendingRecords -= 1
+    }
+  })
 }
 
 // Initializes the sink. Safe to call once at startup; later calls replace the config and re-seed size.
@@ -757,11 +842,11 @@ const initLogger = (options: { logDir: string } & Partial<Omit<LoggerConfig, 'lo
     mirrorToConsole: DEFAULT_MIRROR_TO_CONSOLE,
     maxBytes: DEFAULT_MAX_BYTES,
     maxFiles: DEFAULT_MAX_FILES,
+    maxPendingBytes: 4 * 1024 * 1024,
+    maxPendingRecords: 1024,
     ...options
   }
-  currentBytes = undefined
-  lastWriteSucceeded = null
-  lastFailureCategory = null
+  sinkState = createSinkState()
 }
 
 // Absolute path of the configured log file, or undefined before init.
@@ -770,13 +855,14 @@ const getLogFilePath = (): string | undefined =>
 
 const getLogFileStatus = async (): Promise<LogFileStatus> => {
   const activeConfig = config
+  const state = sinkState
   if (!activeConfig) {
     return {
       configured: false,
       path: null,
       existing: false,
-      lastWriteSucceeded,
-      lastFailureCategory
+      lastWriteSucceeded: state.lastWriteSucceeded,
+      lastFailureCategory: state.lastFailureCategory
     }
   }
 
@@ -789,22 +875,26 @@ const getLogFileStatus = async (): Promise<LogFileStatus> => {
       configured: true,
       path,
       existing: true,
-      lastWriteSucceeded,
-      lastFailureCategory
+      lastWriteSucceeded: state.lastWriteSucceeded,
+      lastFailureCategory: state.lastFailureCategory
     }
   } catch (error) {
     return {
       configured: true,
       path,
       existing: false,
-      lastWriteSucceeded,
-      lastFailureCategory: isMissingFileError(error) ? lastFailureCategory : 'inspect'
+      lastWriteSucceeded: state.lastWriteSucceeded,
+      lastFailureCategory: isMissingFileError(error) ? state.lastFailureCategory : 'inspect'
     }
   }
 }
 
-// Resolves once all queued writes have flushed. Useful for tests and orderly shutdown.
-const flushLogs = (): Promise<void> => writeChain
+// Drain the current queue barrier, not fsync. Loss is sticky for this sink initialization;
+// later successful appends and overlapping flushes must not erase earlier missing diagnostics.
+const flushLogs = (): Promise<LogFlushResult> => {
+  const state = sinkState
+  return writeChain.then(() => ({ failed: state.lostRecords }))
+}
 
 // Fatal process failures cannot await the ordinary Promise-backed write queue: Node terminates as soon
 // as the uncaughtExceptionMonitor listeners return. Append the final bounded, redacted record
@@ -855,7 +945,7 @@ const emit = (level: LogLevel, scope: string, message: string, data?: unknown): 
 
   if (config && LEVEL_ORDER[level] < LEVEL_ORDER[config.minLevel]) return
 
-  appendLine(line)
+  appendLine(line, level)
 }
 
 export type Logger = {

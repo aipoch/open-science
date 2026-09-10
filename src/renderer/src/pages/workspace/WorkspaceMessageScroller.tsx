@@ -1,3 +1,4 @@
+import { cn } from '@/lib/utils'
 import { flushSync } from 'react-dom'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import {
@@ -1467,7 +1468,11 @@ const WorkspaceMessageScrollerImpl = ({
             {/* No wrapper div: message-scroller only measures/anchors Content's direct children. */}
             <MessageScrollerContent
               ref={messageScrollerContentRef}
-              className="mx-auto w-full max-w-4xl gap-0 px-4 pb-[56px]"
+              className={cn(
+                'mx-auto w-full max-w-4xl gap-0 px-4 pb-[56px]',
+                // Native find must scroll against final row heights, not deferred containment sizes.
+                windowFindOpen && '[&>[data-message-id]]:[content-visibility:visible]'
+              )}
             >
               {reviewLoadError ? (
                 <MessageScrollerItem

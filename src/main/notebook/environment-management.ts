@@ -18,7 +18,7 @@ type NotebookEnvironmentManager = {
     request?: Extract<ManageEnvironmentsRequest, { action: 'create' }>,
     signal?: AbortSignal
   ) => Promise<EnvironmentInfo>
-  listEnvironments: () => EnvironmentInfo[]
+  listEnvironments: (signal?: AbortSignal) => EnvironmentInfo[] | Promise<EnvironmentInfo[]>
   removeEnvironment: (name: string) => void
 }
 
@@ -104,8 +104,11 @@ class NotebookEnvironmentManagementOwner {
           signal
         )
       }
-      case 'list':
-        return { environments: manager.listEnvironments() }
+      case 'list': {
+        const environments = await manager.listEnvironments(signal)
+        signal?.throwIfAborted()
+        return { environments }
+      }
       case 'remove': {
         const name = assertSafeEnvName(request.name)
         if (this.isLive(name)) {

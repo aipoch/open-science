@@ -38,7 +38,7 @@ const shouldRunSkillRuntimeMcpServer = process.argv.includes(SKILL_RUNTIME_MCP_S
 const shouldRunPlanMcpServer = process.argv.includes(PLAN_MCP_SERVER_ARG)
 const bootstrapLog = createLogger('bootstrap')
 let startupDiagnostics: DiagnosticOperation | undefined
-let startupFlush = flushLogs
+let startupFlush: import('./diagnostics/flush').DiagnosticFlush = flushLogs
 
 if (shouldRunArtifactMcpServer) {
   // Reuse the packaged entry point as a Node stdio MCP server; import it only in this mode.
@@ -489,6 +489,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           ]
         ) => {
           startupDiagnostics?.phase('compose-runtime')
+          // Retain ownership before the complete context can be handed to the lifecycle.
+          let disposePartialRuntime:
+            Awaited<ReturnType<typeof registerIpcHandlers>>['dispose'] | undefined
+          let partialRemoteAccess:
+            Awaited<ReturnType<typeof RemoteAccessService.create>> | undefined
+          let partialWebController: ReturnType<typeof createWebServiceController> | undefined
+          let disposeTrayLocaleSubscription: (() => void) | undefined
 
           try {
             startupDiagnostics?.phase('register-application-ipc')
@@ -503,7 +510,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             // the app icon variant — the tray only exists once the lifecycle is installed (assigned in the
             // createTray callback). Mirrors the trayBox late-binding pattern in app-lifecycle.ts.
             const appTrayBox: { current: ReturnType<typeof createAppTray> } = { current: undefined }
-            const disposeTrayLocaleSubscription = localeOwner.subscribe(() =>
+            disposeTrayLocaleSubscription = localeOwner.subscribe(() =>
               refreshAppTrayLocale(appTrayBox.current)
             )
             // Unread state restores before the main-window lifecycle is installed. Late-bind its getter so
@@ -561,6 +568,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               },
               listAppIconPreviews: () => buildAppIconPreviews(nativeImage, iconVariantPaths)
             })
+            disposePartialRuntime = disposeApplicationRuntime
             startupDiagnostics?.phase('compose-desktop-surfaces')
 
             // The controller must exist before its IPC responder, while the responder calls back into the
@@ -610,6 +618,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             })
             startupDiagnostics?.phase('compose-remote-access')
             const remoteAccess = await RemoteAccessService.create()
+            partialRemoteAccess = remoteAccess
             bindRemoteAccess(remoteAccess)
             const webController = createWebServiceController({
               applicationCommands,
@@ -622,6 +631,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               computePreferences,
               detectActiveSessions
             })
+            partialWebController = webController
             remoteAccess.attachWebController(webController)
             registerRemoteAccessIpcHandlers(remoteAccess)
             // A launch that itself requested serving (a dedicated headless daemon, or an explicit --serve) is
@@ -633,7 +643,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             void remoteAccess.restore()
 
             const disposeApplicationIpcHandlers = (): void => {
-              disposeTrayLocaleSubscription()
+              disposeTrayLocaleSubscription?.()
               disposeLocalePreferenceIpc()
               managedPreviewProtocolBridge.dispose()
               disposeDatabaseStartupIpc()
@@ -710,8 +720,23 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             // Invalidate caller leases immediately if composition fails after registering IPC. The
             // outer shell rollback destroys the window and quits, but renderer calls can still arrive
             // while that shutdown is in flight.
-            disposeIpcHandlerRegistry()
-            managedPreviewProtocolBridge.dispose()
+            for (const invalidate of [
+              disposeIpcHandlerRegistry,
+              () => managedPreviewProtocolBridge.dispose()
+            ]) {
+              try {
+                invalidate()
+              } catch {
+                // Preserve the startup error and still stop all acquired services.
+              }
+            }
+            await createApplicationLifecycleShutdown({
+              disposeApplicationRuntime: () => disposePartialRuntime?.(),
+              remoteAccess: { shutdown: () => partialRemoteAccess?.shutdown() },
+              webController: { dispose: () => partialWebController?.dispose() },
+              disposeIpcHandlers: () => disposeTrayLocaleSubscription?.(),
+              log
+            })()
             throw error
           }
         },

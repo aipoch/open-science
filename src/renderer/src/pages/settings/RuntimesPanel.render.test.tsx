@@ -1281,3 +1281,106 @@ describe('RuntimesPanel packages dialog', () => {
     expect(occurrences(dialog, 'Conda: bio')).toBe(1)
   })
 })
+
+it('refreshes an open panel after another client changes policy and removes its listener', async () => {
+  let policy = true
+  const listeners = new Set<() => void>()
+  Object.assign(window.api.runtime, {
+    getAgentEnvironmentCreationEnabled: vi.fn(async () => policy),
+    onPolicyChanged: (listener: () => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }
+  })
+  await render()
+  const toggle = (): Element | null =>
+    container.querySelector('[aria-label="Let the Agent create environments"]')
+  expect(toggle()?.getAttribute('data-state')).toBe('checked')
+  policy = false
+  await act(async () => {
+    for (const listener of listeners) listener()
+  })
+  expect(toggle()?.getAttribute('data-state')).toBe('unchecked')
+  expect(listEnvironments).toHaveBeenCalledOnce()
+  await act(async () => root.render(null))
+  expect(listeners.size).toBe(0)
+})
+
+it('ignores a delayed local policy receipt after a newer remote change', async () => {
+  let policy = true
+  let finish!: (value: boolean) => void
+  const listeners = new Set<() => void>()
+  Object.assign(window.api.runtime, {
+    getAgentEnvironmentCreationEnabled: vi.fn(async () => policy),
+    setAgentEnvironmentCreationEnabled: vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve
+        })
+    ),
+    onPolicyChanged: (listener: () => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }
+  })
+  await render()
+  const toggle = (): Element | null =>
+    container.querySelector('[aria-label="Let the Agent create environments"]')
+  await click(toggle())
+  policy = true
+  await act(async () => {
+    for (const listener of listeners) listener()
+    finish(false)
+  })
+  expect(toggle()?.getAttribute('data-state')).toBe('checked')
+})
+
+it('shows the committed policy when the follow-up read fails', async () => {
+  const read = vi.fn().mockResolvedValueOnce(true).mockRejectedValue(new Error('offline'))
+  Object.assign(window.api.runtime, {
+    getAgentEnvironmentCreationEnabled: read,
+    setAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(false)
+  })
+  await render()
+  await click(container.querySelector('[aria-label="Let the Agent create environments"]'))
+  expect(
+    container
+      .querySelector('[aria-label="Let the Agent create environments"]')
+      ?.getAttribute('data-state')
+  ).toBe('unchecked')
+  expect(useRuntimeSettingsStore.getState().error).toBe('Could not load runtimes.')
+})
+
+it('does not use a stale write fallback after a policy event even when rereading fails', async () => {
+  let finish!: (value: boolean) => void
+  let changed!: () => void
+  const read = vi.fn().mockResolvedValue(true)
+  Object.assign(window.api.runtime, {
+    getAgentEnvironmentCreationEnabled: read,
+    setAgentEnvironmentCreationEnabled: vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve
+        })
+    ),
+    onPolicyChanged: (listener: () => void) => {
+      changed = listener
+      return () => undefined
+    }
+  })
+  await render()
+  await click(container.querySelector('[aria-label="Let the Agent create environments"]'))
+  await act(async () => {
+    changed()
+  })
+  read.mockRejectedValue(new Error('offline'))
+  await act(async () => {
+    finish(false)
+  })
+  expect(
+    container
+      .querySelector('[aria-label="Let the Agent create environments"]')
+      ?.getAttribute('data-state')
+  ).toBe('checked')
+  expect(useRuntimeSettingsStore.getState().error).toBe('Could not load runtimes.')
+})

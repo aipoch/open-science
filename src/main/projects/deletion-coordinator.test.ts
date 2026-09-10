@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   ProjectDeletionRecoveryLoop,
+  recoverDeletionWork,
   ProjectDeletionCoordinator,
   type ProjectDeletionRepository,
   type ProjectSessionDeletion
@@ -14,6 +15,186 @@ afterEach(() => {
 })
 
 describe('ProjectDeletionCoordinator', () => {
+  it('invalidates project availability after the intent commits while runtime cleanup is blocked', async () => {
+    const projects = createProjects()
+    const blocked = createDeferred<void>()
+    const beforeProjectDelete = vi.fn(() => blocked.promise)
+    const events = { publish: vi.fn() }
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      createSessions(),
+      undefined,
+      undefined,
+      undefined,
+      { beforeProjectDelete },
+      events
+    )
+    const deletion = coordinator.deleteProject('project-1')
+    try {
+      await vi.waitFor(() => expect(beforeProjectDelete).toHaveBeenCalled())
+      expect(projects.delete).not.toHaveBeenCalled()
+      expect(events.publish).toHaveBeenCalledWith('project:deletion-cleanup-changed', undefined)
+      expect(vi.mocked(projects.createDeletionIntent).mock.invocationCallOrder[0]).toBeLessThan(
+        events.publish.mock.invocationCallOrder[0]
+      )
+    } finally {
+      blocked.resolve()
+      await deletion
+    }
+  })
+
+  it('continues project recovery after unrelated remote cleanup fails', async () => {
+    const offline = new Error('remote host offline')
+    const order: string[] = []
+    await expect(
+      recoverDeletionWork({
+        recoverOrphanJobs: async () => {
+          order.push('jobs')
+          throw offline
+        },
+        replaySessionProjection: async () => {
+          order.push('projection')
+        },
+        recoverProjects: async () => {
+          order.push('projects')
+        }
+      })
+    ).rejects.toBe(offline)
+    expect(order).toEqual(['jobs', 'projection', 'projects'])
+  })
+
+  it('does not remove project authority when pending Session projection replay fails', async () => {
+    const recoverProjects = vi.fn()
+    await expect(
+      recoverDeletionWork({
+        recoverOrphanJobs: async () => undefined,
+        replaySessionProjection: async () => {
+          throw new Error('projection unavailable')
+        },
+        recoverProjects
+      })
+    ).rejects.toThrow('projection unavailable')
+    expect(recoverProjects).not.toHaveBeenCalled()
+  })
+
+  it.each(['quiesce', 'sessions', 'permissions', 'metadata'] as const)(
+    'automatically retries durable foreground failure during %s',
+    async (stage) => {
+      vi.useFakeTimers()
+      const projects = createProjects()
+      const intents = new Set<string>()
+      projects.createDeletionIntent = vi.fn(async (id) => {
+        intents.add(id)
+      })
+      projects.deleteDeletionIntent = vi.fn(async (id) => {
+        intents.delete(id)
+      })
+      projects.listDeletionIntents = vi.fn(async () => [...intents])
+      const sessions = createSessions()
+      const lifecycle = { beforeProjectDelete: vi.fn().mockResolvedValue(undefined) }
+      const permissions = { prune: vi.fn().mockResolvedValue(undefined) }
+      const failure = {
+        quiesce: lifecycle.beforeProjectDelete,
+        sessions: vi.mocked(sessions.deleteProjectSessions),
+        permissions: permissions.prune,
+        metadata: vi.mocked(projects.delete)
+      }[stage]
+      failure.mockRejectedValueOnce(new Error('transient'))
+      const coordinator = new ProjectDeletionCoordinator(
+        projects,
+        sessions,
+        undefined,
+        undefined,
+        permissions,
+        lifecycle
+      )
+      const loop = new ProjectDeletionRecoveryLoop(() => coordinator.recoverPendingDeletions())
+      coordinator.setRecoveryLoop(loop)
+      try {
+        loop.start()
+        await vi.advanceTimersByTimeAsync(0)
+        await expect(coordinator.deleteProject('project-1')).rejects.toThrow('transient')
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(intents.size).toBe(0)
+        expect(failure).toHaveBeenCalledTimes(2)
+      } finally {
+        await loop.stop()
+      }
+    }
+  )
+
+  it('does not wake recovery when intent creation fails and the fence is rolled back', async () => {
+    const projects = createProjects()
+    vi.mocked(projects.createDeletionIntent).mockRejectedValueOnce(
+      new Error('database unavailable')
+    )
+    const lifecycle = { beforeProjectDelete: vi.fn(), abortProjectDeletion: vi.fn() }
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      createSessions(),
+      undefined,
+      undefined,
+      undefined,
+      lifecycle
+    )
+    const loop = new ProjectDeletionRecoveryLoop(async () => undefined)
+    const wake = vi.spyOn(loop, 'wake')
+    coordinator.setRecoveryLoop(loop)
+    await expect(coordinator.deleteProject('project-1')).rejects.toThrow('database unavailable')
+    expect(lifecycle.abortProjectDeletion).toHaveBeenCalledWith('project-1')
+    expect(wake).not.toHaveBeenCalled()
+  })
+
+  it('schedules persistent foreground failures with accurate counts instead of spinning', async () => {
+    vi.useFakeTimers()
+    const projects = createProjects()
+    const intents = new Set<string>()
+    projects.createDeletionIntent = vi.fn(async (id) => {
+      intents.add(id)
+    })
+    projects.listDeletionIntents = vi.fn(async () => [...intents])
+    projects.listDeletionCleanupProjects = vi.fn(async () =>
+      [...intents].map((projectId) => ({ projectId }))
+    )
+    const sessions = createSessions({
+      deleteProjectSessions: vi.fn().mockRejectedValue(new Error('offline'))
+    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions)
+    const loop = new ProjectDeletionRecoveryLoop(
+      () =>
+        recoverDeletionWork({
+          recoverOrphanJobs: async () => {
+            throw new Error('remote offline')
+          },
+          replaySessionProjection: async () => undefined,
+          recoverProjects: () => coordinator.recoverPendingDeletions()
+        }),
+      { retryDelayMs: 1_000 }
+    )
+    coordinator.setRecoveryLoop(loop)
+    try {
+      loop.start()
+      await vi.advanceTimersByTimeAsync(0)
+      await expect(coordinator.deleteProject('project-1')).rejects.toThrow('offline')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(sessions.deleteProjectSessions).toHaveBeenCalledTimes(2)
+      expect(await coordinator.listDeletionCleanup()).toEqual([
+        {
+          projectId: 'project-1',
+          phase: 'retry-scheduled',
+          failureCount: 1,
+          nextRetryAt: Date.now() + 1_000
+        }
+      ])
+      await vi.advanceTimersByTimeAsync(999)
+      expect(sessions.deleteProjectSessions).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(sessions.deleteProjectSessions).toHaveBeenCalledTimes(3)
+    } finally {
+      await loop.stop()
+    }
+  })
+
   it('rejects deletion recovery while a data-root migration is pending', async () => {
     const projects = createProjects()
     const coordinator = new ProjectDeletionCoordinator(projects, createSessions())

@@ -38,7 +38,9 @@
     "Skill": "스킬",
     "Specialist": "스페셜리스트",
     "Connector": "커넥터",
-    "Export Connector configuration": "커넥터 구성 내보내기"
+    "Export Connector configuration": "커넥터 구성 내보내기",
+    "Discard changes": "변경 사항 버리기",
+    "Discard unsaved changes?": "저장되지 않은 변경 사항을 버리시겠습니까?"
   },
   "native": {
     "Conversation export is too large. Select fewer conversation turns.": "대화 내보내기 용량이 너무 큽니다. 더 적은 대화 턴을 선택하세요.",
@@ -97,12 +99,17 @@
     "Specialist ZIP": "스페셜리스트 ZIP",
     "JSON report": "JSON 보고서",
     "Connector configuration": "커넥터 구성",
-    "Import Connector configuration": "커넥터 구성 가져오기"
+    "Import Connector configuration": "커넥터 구성 가져오기",
+    "Your unsaved changes will be lost.": "저장하지 않은 변경 사항이 사라집니다."
   },
   "renderer": {
     "The source message is no longer available.": "원본 메시지를 더 이상 사용할 수 없습니다.",
     "This Notebook exceeds the 10 MB preview limit.": "이 Notebook은 10 MB 미리보기 제한을 초과합니다.",
     "Recent searches": "최근 검색",
+    "Cancellation request failed": "취소 요청에 실패했습니다",
+    "Skills are loading. Paste again shortly.": "스킬을 불러오는 중입니다. 잠시 후 다시 붙여넣으세요.",
+    "Could not load Skills. Try pasting again.": "스킬을 불러오지 못했습니다. 다시 붙여넣으세요.",
+    "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "이 TIFF는 미리보기 제한인 {{limit}} MiB를 초과합니다. 다운로드하거나 외부 앱에서 여세요.",
     "Shared content": "공유 콘텐츠",
     "Literature settings and tasks": "문헌 설정 및 작업",
     "Select no more than {{limit}} references for this task.": "이 작업에는 문헌을 {{limit}}개 이하로 선택하세요.",
@@ -322,7 +329,6 @@
     "Scientific literature": "과학 문헌",
     "Clinical and translational research": "임상 및 중개 연구",
     "A conversation changed elsewhere and could not be saved safely.": "다른 곳에서 대화가 변경되어 안전하게 저장할 수 없습니다.",
-    "One or more conversations could not be saved.": "하나 이상의 대화를 저장할 수 없습니다.",
     "Quit was canceled": "종료가 취소되었습니다",
     "This session was deleted or is unavailable.": "이 세션은 삭제되었거나 사용할 수 없습니다.",
     "Add context for the Agent": "에이전트에게 전달할 컨텍스트 추가",
@@ -3767,6 +3773,7 @@
     "Used by {{name}}. Remove this Skill from that Specialist before deleting it.": "{{name}}에서 사용됩니다. 삭제하기 전에 스페셜리스트에서 스킬을 제거하세요.",
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._other": "스페셜리스트 {{count}}개에서 사용 중입니다. 이 스킬을 삭제하기 전에 해당 스페셜리스트에서 제거하세요.",
     "Availability": "가용성",
+    "This built-in Skill supports core application features and is always enabled.": "이 기본 제공 스킬은 애플리케이션의 핵심 기능을 지원하며 항상 활성화되어 있습니다.",
     "Specialist access is configured on each Specialist.": "각 스페셜리스트에서 액세스를 설정합니다.",
     "Resolve Skill conflicts": "스킬 충돌 해결",
     "Choose one version for every conflicting Skill before installing the Specialist.": "스페셜리스트를 설치하기 전에 충돌하는 모든 스킬에 대해 하나의 버전을 선택하세요.",
@@ -4107,8 +4114,6 @@
     "Compare {{name}} with its source version": "{{name}} 파일을 원본 버전과 비교",
     "Compare with source version": "원본 버전과 비교",
     "Comparing versions...": "버전을 비교하는 중...",
-    "Discard unsaved changes?": "저장되지 않은 변경 사항을 버리시겠습니까?",
-    "Discard changes": "변경 사항 버리기",
     "Changes could not be saved.": "변경 사항을 저장할 수 없습니다.",
     "File storage is unavailable. Check the storage location and try again.": "파일 저장소를 사용할 수 없습니다. 저장 위치를 확인한 후 다시 시도하세요.",
     "Open Science does not have permission to save this file.": "Open Science에 이 파일을 저장할 권한이 없습니다.",
@@ -4903,6 +4908,16 @@
     "Failed: {{failed}} · Skipped: {{skipped}}": "실패: {{failed}} · 건너뜀: {{skipped}}",
     "You can import unfinished files or close this window.": "미완료 파일을 가져오거나 이 창을 닫을 수 있습니다.",
     "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "저장된 동시 실행 제한을 확인할 수 없어 새 Compute 작업이 대기열에 남을 수 있습니다. 영향을 받은 파일을 보존하고 유효한 사본을 복원한 다음 다시 확인하여 작업 전송을 재개하세요.",
-    "Recheck saved conversations": "저장된 대화 다시 확인"
+    "Recheck saved conversations": "저장된 대화 다시 확인",
+    "Some changes have not been saved.": "일부 변경 사항이 저장되지 않았습니다.",
+    "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "한 번 허용은 코드가 변경되어도 이 런타임의 다음 실행에 적용됩니다. 해당 실행 중에는 이 도메인에 여러 번 연결할 수 있습니다.",
+    "Next execution in this runtime": "이 런타임의 다음 실행",
+    "Research work is still running. Stop it before restarting to update.": "연구 작업이 아직 실행 중입니다. 작업을 중지한 후 다시 시작하여 업데이트하세요.",
+    "Subagents are still running. Return to their tasks and stop them before restarting to update.": "서브에이전트가 아직 실행 중입니다. 해당 작업으로 돌아가 중지한 후 다시 시작하여 업데이트하세요.",
+    "The installer is missing or has changed. Download the update again.": "설치 프로그램이 없거나 변경되었습니다. 업데이트를 다시 다운로드하세요.",
+    "Verifying installer…": "설치 프로그램 확인 중…",
+    "Open Science couldn't display this page": "Open Science에서 이 페이지를 표시할 수 없습니다",
+    "Background work may still be running. Reloading may lose unsaved changes on this page.": "백그라운드 작업이 아직 실행 중일 수 있습니다. 새로고침하면 이 페이지의 저장되지 않은 변경 사항이 손실될 수 있습니다.",
+    "Reload page": "페이지 새로고침"
   }
 }

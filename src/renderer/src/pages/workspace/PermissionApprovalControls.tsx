@@ -422,6 +422,13 @@ const NotebookNetworkApprovalDetail = ({
     <div className="space-y-2 text-xs leading-5 text-muted-foreground">
       <p>{t('Notebook code requested access to {{destination}}.', { destination })}</p>
       {approval.reason ? <p>{t('Reason: {{reason}}', { reason: approval.reason })}</p> : null}
+      {approval.runtime && approval.runtime !== 'bash' ? (
+        <p>
+          {t(
+            'Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.'
+          )}
+        </p>
+      ) : null}
       <button
         type="button"
         aria-expanded={expanded}
@@ -600,13 +607,15 @@ const ScopeDropdown = ({
   available,
   onSelect,
   onClose,
-  portaled
+  portaled,
+  onceDescription
 }: {
   selected: PermissionScope
   available: Set<PermissionScope>
   onSelect: (scope: PermissionScope) => void
   onClose: (restoreTriggerFocus?: boolean) => void
   portaled: boolean
+  onceDescription?: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const ref = useRef<HTMLDivElement>(null)
@@ -684,7 +693,9 @@ const ScopeDropdown = ({
           {/* Label column: left-aligned flush to padding so both rows line up */}
           <div className="flex min-w-0 flex-1 flex-col">
             <span className="text-xs font-medium text-foreground">{t(label)}</span>
-            <span className="text-[11px] leading-tight text-muted-foreground">{t(subtitle)}</span>
+            <span className="text-[11px] leading-tight text-muted-foreground">
+              {scope === 'once' && onceDescription ? onceDescription : t(subtitle)}
+            </span>
           </div>
           {/* Check column: right side, fixed slot so selection never shifts the label */}
           <span className="flex w-3.5 shrink-0 justify-center text-primary">
@@ -731,6 +742,7 @@ const PermissionApprovalCard = ({
   onSubmitted
 }: PermissionApprovalCardProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const networkRuntime = getNotebookNetworkApproval(request)?.runtime
   const [scope, setScope] = useState<PermissionScope>('session')
   const [scopeOpen, setScopeOpen] = useState(false)
   const [scopeConfirmation, setScopeConfirmation] = useState<PendingScopeConfirmation | undefined>(
@@ -1085,6 +1097,11 @@ const PermissionApprovalCard = ({
                 onSelect={setScope}
                 onClose={closeScopeMenu}
                 portaled={embedded}
+                onceDescription={
+                  networkRuntime && networkRuntime !== 'bash'
+                    ? t('Next execution in this runtime')
+                    : undefined
+                }
               />
             )}
             <PopoverAnchor asChild>

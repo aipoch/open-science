@@ -384,6 +384,7 @@ export const WEB_EVENT_CHANNELS = {
   'reviewer.onFixLoopStart': 'reviewer:fix-loop-start',
   'reviewer.onSuppressNextAutoReview': 'reviewer:suppress-next-auto-review',
   'reviewer.onUpdated': 'reviewer:updated',
+  'runtime.onPolicyChanged': 'runtime:policy-changed',
   'sessions.onCreated': 'session:created',
   'sessions.onDeleted': 'session:deleted',
   'sessions.onFlushAborted': 'sessions:flush-aborted',

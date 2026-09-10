@@ -219,6 +219,14 @@ const PdfThumbnailList = ({
     updateVisibleRange()
   }, [currentPage, pageCount, updateVisibleRange])
 
+  useEffect(() => {
+    const scroll = scrollRef.current
+    if (!scroll) return
+    const observer = new ResizeObserver(updateVisibleRange)
+    observer.observe(scroll)
+    return () => observer.disconnect()
+  }, [updateVisibleRange])
+
   return (
     <div
       ref={scrollRef}

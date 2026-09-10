@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const routerFactoryControl = vi.hoisted(() => ({
@@ -35,6 +38,11 @@ import {
   type ApplicationInvocation
 } from './application-command-router'
 import { createCallerContext } from './caller-context'
+import { ApplicationCallerLeaseRegistry } from './caller-lifecycle'
+import { createManagedPreviewOwnerRegistry } from './managed-preview-ipc'
+import { ManagedPreviewResources } from './managed-preview-resources'
+import { LocalFsService } from './local-fs/service'
+import type { ManagedPreviewResource, ManagedPreviewRangeResult } from '../shared/preview-resources'
 
 const EMPTY_OWNER = Object.freeze({})
 const unexpectedCommand = defineApplicationCommand<'test:unexpected', readonly [], void>(
@@ -624,4 +632,81 @@ it('validates bounded reference exports through the shared Web command boundary'
   ).resolves.toEqual(exported)
   expect(exportRecord).toHaveBeenCalledWith({ itemId: 'reference' })
   composition.dispose()
+})
+
+describe('TB-01 remote preview admission', () => {
+  it.each([
+    ['remote', 'local'],
+    ['local', 'local'],
+    ['remote', 'literature'],
+    ['remote', 'notebook-input']
+  ] as const)('enforces %s caller admission for %s preview sources', async (surface, source) => {
+    const location = surface === 'remote' ? 'remote' : 'local'
+    const directory = await mkdtemp(join(tmpdir(), 'preview-admission-'))
+    const path = join(directory, 'outside-project.txt')
+    const content = 'host-only-test-content'
+    await writeFile(path, content)
+    const localFs = new LocalFsService()
+    const resolvePath = vi.fn(async (_source, request) => localFs.resolveFilePath(request))
+    const trustedLease = {
+      path,
+      size: content.length,
+      versionToken: 1,
+      snapshot: { dev: 1n, ino: 1n, size: BigInt(content.length), mtimeNs: 1n },
+      read: vi.fn(),
+      readRange: async (begin: number, end: number) => Buffer.from(content).subarray(begin, end),
+      verifyUnchanged: async () => undefined,
+      close: async () => undefined
+    }
+    const resources = new ManagedPreviewResources({
+      resolvePath,
+      openLiterature: async () => trustedLease,
+      openNotebookInput: async () => trustedLease
+    })
+    const owners = createManagedPreviewOwnerRegistry(resources)
+    const deps = dependencies()
+    const composition = createApplicationCommandComposition({
+      ...deps,
+      dataContent: { ...deps.dataContent, managedPreview: owners }
+    })
+    const leases = new ApplicationCallerLeaseRegistry()
+    const initial = invocation(location)
+    const caller = { ...initial, callerLease: leases.acquire(initial.callerContext).lease }
+    const dispatcher = location === 'remote' ? composition.remoteWeb : composition.localWeb
+    let resource: ManagedPreviewResource | undefined
+    try {
+      const acquired = dispatcher.invoke('preview-resources:acquire', {
+        ...caller,
+        args: [{ source, path }]
+      }) as Promise<ManagedPreviewResource>
+      if (location === 'remote' && source === 'local') {
+        // Capture actual bytes if admission unexpectedly succeeds, without hiding the failed guard.
+        resource = await acquired.catch(() => undefined)
+        if (resource) {
+          const range = (await dispatcher.invoke('preview-resources:read-range', {
+            ...caller,
+            args: [{ resourceId: resource.id, begin: 0, end: content.length }]
+          })) as ManagedPreviewRangeResult
+          expect
+            .soft(Buffer.from(range.data).toString(), 'remote caller received host-only bytes')
+            .not.toBe(content)
+        }
+        await expect.soft(acquired).rejects.toThrow(/local app/)
+        expect.soft(resource, 'remote local-file request must be rejected').toBeUndefined()
+        expect(resolvePath, 'reject before filesystem resolution').not.toHaveBeenCalled()
+      } else {
+        resource = await acquired
+        const range = (await dispatcher.invoke('preview-resources:read-range', {
+          ...caller,
+          args: [{ resourceId: resource.id, begin: 0, end: content.length }]
+        })) as ManagedPreviewRangeResult
+        expect(Buffer.from(range.data).toString()).toBe(content)
+      }
+    } finally {
+      if (resource) owners.release(caller.callerLease, { resourceId: resource.id })
+      leases.dispose()
+      composition.dispose()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
 })

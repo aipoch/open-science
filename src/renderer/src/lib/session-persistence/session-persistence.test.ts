@@ -2185,6 +2185,38 @@ describe('renderer session persistence bridge', () => {
     }
   })
 
+  it('releases acknowledged bodies only after writes settle and retains the revision watermark', async () => {
+    const session = createPersistedSession({ revision: 4 })
+    const writing = createDeferred<PersistedChatSession>()
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockImplementationOnce(() => writing.promise)
+      .mockImplementation(async (submitted) => ({ ...submitted, revision: 6 }))
+    const persistence = createOrderedSessionPersistence(createApi({ saveSession }))
+    persistence.seedAcknowledgedSessions([session])
+    const pending = persistence.saveSession(session)
+    expect(persistence.releaseAcknowledgedSessionBody(session.id)).toBe(false)
+    writing.resolve({ ...session, revision: 5 })
+    await pending
+    expect(persistence.releaseAcknowledgedSessionBody(session.id)).toBe(true)
+    expect(persistence.getAcknowledgedSession(session.id)).toBeUndefined()
+    await persistence.saveSession({ ...session, revision: 0 })
+    expect(saveSession.mock.calls[1][0].revision).toBe(5)
+  })
+
+  it('retains the acknowledged body while a failed write remains unresolved', async () => {
+    const session = createPersistedSession({ revision: 4 })
+    const persistence = createOrderedSessionPersistence(
+      createApi({
+        saveSession: vi.fn().mockRejectedValue(new Error('disk unavailable'))
+      })
+    )
+    persistence.seedAcknowledgedSessions([session])
+    await expect(persistence.saveSession(session)).rejects.toThrow('disk unavailable')
+    expect(persistence.releaseAcknowledgedSessionBody(session.id)).toBe(false)
+    expect(persistence.getAcknowledgedSession(session.id)).toMatchObject({ revision: 4 })
+  })
+
   it('invalidates a delayed save when a new hydration generation starts', async () => {
     const session = createPersistedSession({ revision: 1, title: 'Old local title' })
     const authority = createPersistedSession({ revision: 2, title: 'Hydrated title' })

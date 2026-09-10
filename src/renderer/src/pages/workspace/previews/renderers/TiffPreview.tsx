@@ -263,11 +263,25 @@ const TiffPreviewContent = ({
   }, [pageIndex, requestKey, resourceKey, resourceState])
 
   if (resourceState.status === 'error') {
+    const error = resourceState.error
+    const tooLarge =
+      (error as { code?: unknown } | undefined)?.code === 'FILE_TOO_LARGE' ||
+      (error instanceof Error && error.message.includes('Managed preview file is too large.'))
     return (
       <PreviewErrorCard
         name={name}
-        error={resourceState.error}
-        fallbackMessage={t("TIFF couldn't be loaded for preview")}
+        error={error}
+        retryable={!tooLarge}
+        fallbackMessage={
+          tooLarge
+            ? t(
+                'This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.',
+                {
+                  limit: DEFAULT_TIFF_PREVIEW_LIMITS.maxFileBytes / (1024 * 1024)
+                }
+              )
+            : t("TIFF couldn't be loaded for preview")
+        }
       />
     )
   }

@@ -20,6 +20,7 @@ import { migrateApplicationDatabase } from '../database/migration-service'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { LiteratureCatalog, normalizeIdentifier } from './catalog'
 import { LiteratureCitationFormatter } from './citation-formatter'
+import { ProjectRepository } from '../projects/repository'
 import { TagRepository } from '../tags/repository'
 import { TagResourceCatalog } from '../tags/resource-catalog'
 import { TagService } from '../tags/service'
@@ -190,6 +191,121 @@ describe('LiteratureCatalog', () => {
     expect(new Set(page.entries.map((entry) => 'id' in entry && entry.id))).toEqual(
       new Set([paper.id, collection.id])
     )
+  })
+
+  it('excludes deleted project membership from item views and counts', async () => {
+    const catalog = await setup()
+    const projects = new ProjectRepository(async () => client!)
+    const item = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    await catalog.transact({
+      kind: 'set-project-item',
+      projectId: 'project-1',
+      itemId: item.id,
+      included: true,
+      source: 'library'
+    })
+    await projects.delete('project-1')
+    expect(await projects.get('project-1')).toBeNull()
+    expect(await client!.projectLiterature.count()).toBe(0)
+    expect.soft((await catalog.get(item.id))?.projectIds).toEqual([])
+    expect((await catalog.search({ scope: 'project-counts' })).entries).toEqual([])
+  })
+
+  it.each(['deleted', 'deleting', 'missing'] as const)(
+    'rejects single and bulk membership for a %s project',
+    async (state) => {
+      const catalog = await setup()
+      const projects = new ProjectRepository(async () => client!)
+      const item = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      if (state === 'deleted') await projects.delete('project-1')
+      if (state === 'deleting') await projects.createDeletionIntent('project-1')
+      const projectId = state === 'missing' ? 'missing-project' : 'project-1'
+      for (const command of [
+        { kind: 'set-project-item' as const, itemId: item.id },
+        { kind: 'set-project-items' as const, itemIds: [item.id] }
+      ]) {
+        await expect(
+          catalog.transact({ ...command, projectId, included: true, source: 'library' })
+        ).rejects.toThrow('Project is unavailable')
+      }
+      expect(await client!.projectLiterature.count()).toBe(0)
+    }
+  )
+
+  it.each(['deleted', 'deleting'] as const)(
+    'hides retained %s project membership from active reads',
+    async (state) => {
+      const catalog = await setup()
+      const item = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      const collection = await catalog.transact({ kind: 'create-collection', name: 'Reading' })
+      await catalog.transact({
+        kind: 'set-collection-item',
+        collectionId: collection.id,
+        itemId: item.id,
+        included: true
+      })
+      await client!.projectLiterature.create({
+        data: { projectId: 'project-1', itemId: item.id, source: 'library' }
+      })
+      expect(
+        (await catalog.search({ scope: 'global-search', projectId: 'project-1' })).totalCount
+      ).toBe(2)
+      if (state === 'deleted')
+        await client!.project.update({
+          where: { id: 'project-1' },
+          data: { deletedAt: new Date() }
+        })
+      else await new ProjectRepository(async () => client!).createDeletionIntent('project-1')
+      expect.soft((await catalog.get(item.id))?.projectIds).toEqual([])
+      expect.soft((await catalog.getMany([item.id]))[0].projectIds).toEqual([])
+      expect
+        .soft((await catalog.search({ scope: 'library', projectId: 'project-1' })).totalCount)
+        .toBe(0)
+      expect.soft((await catalog.search({ scope: 'project-counts' })).entries).toEqual([])
+      // Global search retains Library records while hiding their unavailable Project membership.
+      expect.soft(await catalog.search({ scope: 'global-search' })).toMatchObject({
+        totalCount: 2,
+        entries: expect.arrayContaining([expect.objectContaining({ id: item.id, projectIds: [] })])
+      })
+      expect
+        .soft((await catalog.search({ scope: 'global-search', projectId: 'project-1' })).totalCount)
+        .toBe(0)
+      expect(await client!.projectLiterature.count()).toBe(1)
+    }
+  )
+
+  it('preserves archived membership and other projects when deleting a project', async () => {
+    const catalog = await setup()
+    const projects = new ProjectRepository(async () => client!)
+    await client!.project.create({
+      data: { id: 'archived-project', name: 'Archived', archivedAt: new Date() }
+    })
+    const staged = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+    await catalog.transact({
+      kind: 'set-project-items',
+      itemIds: [accepted.id],
+      projectId: 'archived-project',
+      included: true,
+      source: 'library'
+    })
+    await projects.delete('project-1')
+    expect((await catalog.get(accepted.id))?.projectIds).toEqual(['archived-project'])
+    expect(
+      await client!.literatureCandidateDiscovery.count({ where: { projectId: 'project-1' } })
+    ).toBe(1)
+    expect(
+      (await catalog.search({ scope: 'library', projectId: 'archived-project' })).totalCount
+    ).toBe(1)
+  })
+
+  it('accepts a retained candidate without reattaching its deleted source project', async () => {
+    const catalog = await setup()
+    const projects = new ProjectRepository(async () => client!)
+    const staged = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    await projects.delete('project-1')
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+    expect((await catalog.get(accepted.id))?.projectIds).toEqual([])
   })
 
   it.each(['10.2468/exact-reference', '39876543'])(

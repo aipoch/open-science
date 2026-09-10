@@ -955,6 +955,7 @@
       "testFiles": {
         "owner": [
           "src/main/projects/deletion-coordinator.test.ts",
+          "src/main/projects/data-lifecycle-regressions.integration.test.ts",
           "src/main/projects/preview-repository.test.ts",
           "src/main/projects/project-owned-data.catalog.architecture.test.ts",
           "src/main/projects/project-runtime-quiescence-owner.test.ts",

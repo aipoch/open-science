@@ -1,3 +1,4 @@
+import { createLogger, errorLogFields } from '../logger'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { probeRemoteLaunch } from './remote-launch-recovery'
 import { randomUUID } from 'node:crypto'
@@ -22,6 +23,8 @@ import {
   terminateRemoteJobProcessIfOwned
 } from './remote-job-process'
 import { cancelSlurmJob, recoverSlurmJob } from './slurm-driver'
+
+const log = createLogger('compute-cancellation')
 
 type ReaperOptions = Readonly<{
   dispatchTracker?: Pick<DispatchTracker, 'has'>
@@ -111,7 +114,7 @@ class ComputeJobCancellationReaper {
     if (this.started) return
     this.started = true
     this.schedule()
-    void this.tick()
+    this.tickInBackground()
   }
 
   async stop(): Promise<void> {
@@ -128,12 +131,18 @@ class ComputeJobCancellationReaper {
 
   resume(): void {
     this.paused = false
-    if (this.started) void this.tick()
+    if (this.started) this.tickInBackground()
   }
 
   private schedule(): void {
-    this.timer = setInterval(() => void this.tick(), this.intervalMs)
+    this.timer = setInterval(() => this.tickInBackground(), this.intervalMs)
     this.timer.unref?.()
+  }
+
+  private tickInBackground(): void {
+    void this.tick().catch((error) => {
+      log.warn('background cancellation recovery failed', errorLogFields(error))
+    })
   }
 
   private tick(): Promise<void> {

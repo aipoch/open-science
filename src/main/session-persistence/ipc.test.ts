@@ -461,7 +461,7 @@ describe('session persistence IPC handlers', () => {
         {
           findQueuedJobs: async () => (job.status === 'queued' ? [job] : []),
           countActiveBySession: async () => activeCount,
-          findBySession: async () => [job],
+          findSessionConcurrencyJobs: async () => [job],
           countActiveByProvider: async () => 0,
           updateIfStatus: async () => {
             job.status = 'submitted'

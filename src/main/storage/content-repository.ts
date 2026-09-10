@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { copyFile, link, mkdir, rename, rm, stat } from 'node:fs/promises'
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { type BigIntStats, createReadStream } from 'node:fs'
+import { copyFile, link, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+
+import { recoverAnchoredRemoval, removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
 
 import type { PrismaClient } from '@prisma/client'
 import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
@@ -97,7 +99,7 @@ const pathAlreadyExists = (error: unknown): boolean =>
   'code' in error &&
   (error as { code?: unknown }).code === 'EEXIST'
 
-const fileFingerprint = (file: Awaited<ReturnType<typeof stat>>): string =>
+const fileFingerprint = (file: Awaited<ReturnType<typeof stat>> | BigIntStats): string =>
   [file.dev, file.ino, file.size, file.mtimeMs, file.ctimeMs].join(':')
 
 // Different repositories share the same immutable files. Keep a sweep's claim and unlink
@@ -106,6 +108,11 @@ const contentLifecycles = new Map<string, Promise<void>>()
 // Reservations bridge publication and reference insertion without holding a database transaction.
 // All content publishers and sweepers in the application process share these counts.
 const pendingContentReferences = new Map<string, number>()
+// UUID filenames identify attempts independently of partially copied lengths and root aliases.
+// All application publishers share this set, just as they share content lifecycle reservations.
+const activePublicationFiles = new Set<string>()
+const publicationFilename =
+  /^([a-f0-9]{64})\.[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.tmp$/
 const contentLifecycleKey = (storageRoot: string, contentId: string): string =>
   JSON.stringify([resolve(storageRoot), contentId])
 
@@ -210,6 +217,7 @@ class ContentRepository {
         const destination = resolveContentStorageKey(this.options.storageRoot, storageKey)
         await mkdir(dirname(destination), { recursive: true })
         const temporary = `${destination}.${randomUUID()}.tmp`
+        activePublicationFiles.add(basename(temporary))
         try {
           await copyFile(request.sourcePath, temporary)
           const copied = await stat(temporary)
@@ -226,7 +234,11 @@ class ContentRepository {
             }
           })
         } finally {
-          await rm(temporary, { force: true })
+          try {
+            await rm(temporary, { force: true })
+          } finally {
+            activePublicationFiles.delete(basename(temporary))
+          }
         }
 
         const destinationFile = await stat(destination)
@@ -475,6 +487,10 @@ class ContentRepository {
     if (request.contentIds?.length === 0) {
       return { removedIds: [], retainedIds: [], failedIds: [] }
     }
+    // Only a whole-repository sweep owns historical attempts without a database row. A targeted
+    // cleanup must not touch another owner's publication files. Scan first so unlink failures do
+    // not discard staging authority; files without rows remain discoverable on the next sweep.
+    if (!request.contentIds) await this.sweepPublicationFiles()
     const candidateWhere = {
       createdAt: { lt: request.createdBefore },
       ...(request.contentIds ? { id: { in: [...new Set(request.contentIds)] } } : {})
@@ -526,6 +542,83 @@ class ContentRepository {
       }
     }
     return receipt
+  }
+
+  private async sweepPublicationFiles(): Promise<void> {
+    const root = resolve(this.options.storageRoot)
+    const directories = [root, join(root, 'content'), join(root, 'content', 'blobs')]
+    const snapshots: BigIntStats[] = []
+    for (const directory of directories) {
+      const snapshot = await lstat(directory, { bigint: true }).catch((error: unknown) => {
+        if (missingFile(error)) return undefined
+        throw error
+      })
+      if (!snapshot) return
+      if (!snapshot.isDirectory() || snapshot.isSymbolicLink()) {
+        throw new Error('Unsafe content publication directory.')
+      }
+      snapshots.push(snapshot)
+    }
+    const blobsRoot = directories[2]
+    for (const prefix of await readdir(blobsRoot)) {
+      if (!/^[a-f0-9]{2}$/.test(prefix)) continue
+      const directory = join(blobsRoot, prefix)
+      const snapshot = await lstat(directory, { bigint: true })
+      if (!snapshot.isDirectory() || snapshot.isSymbolicLink()) continue
+      const entries = await readdir(directory)
+      // Recover receipts before admitting source names: a conflict receipt protects a replaced
+      // source from being mistaken for a fresh orphan on every later sweep.
+      for (const entry of entries) {
+        if (
+          !/^\.publication-recovery-[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+            entry
+          )
+        )
+          continue
+        try {
+          recoverAnchoredRemoval(root, relative(root, directory), entry, snapshot)
+        } catch (error) {
+          if (!missingFile(error)) throw error
+        }
+      }
+      for (const filename of entries) {
+        const match = publicationFilename.exec(filename)
+        if (!match || !match[1].startsWith(prefix) || activePublicationFiles.has(filename)) continue
+        const temporary = join(directory, filename)
+        try {
+          const file = await lstat(temporary, { bigint: true })
+          if (!file.isFile() || file.isSymbolicLink()) continue
+          // A replaced directory invalidates the enumeration. Never follow its replacement to
+          // remove a same-named file, and never recursively remove an unexpected directory.
+          for (const [index, path] of [...directories, directory].entries()) {
+            const expected = [...snapshots, snapshot][index]
+            const current = await lstat(path, { bigint: true })
+            if (
+              !current.isDirectory() ||
+              current.isSymbolicLink() ||
+              current.dev !== expected.dev ||
+              current.ino !== expected.ino ||
+              current.birthtimeMs !== expected.birthtimeMs
+            ) {
+              throw new Error('Content publication directory changed during recovery.')
+            }
+          }
+          const current = await lstat(temporary, { bigint: true })
+          if (
+            !current.isFile() ||
+            current.isSymbolicLink() ||
+            fileFingerprint(current) !== fileFingerprint(file)
+          )
+            continue
+          if (!activePublicationFiles.has(filename)) {
+            removeAnchoredFile(root, relative(root, directory), filename, snapshot, file)
+          }
+        } catch (error) {
+          // Another sweep or publisher can have removed this exact temporary file already.
+          if (!missingFile(error)) throw error
+        }
+      }
+    }
   }
 
   // Caller holds the content lifecycle lock through claim, unlink and authority removal.

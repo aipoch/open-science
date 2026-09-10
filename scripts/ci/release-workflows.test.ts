@@ -403,3 +403,24 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     }
   })
 })
+
+describe('website mirror publication intent', () => {
+  it('serializes channel writers and defaults to versioned backfill', () => {
+    const mirror = workflow('mirror-to-website.yml')
+    expect(mirror.concurrency).toEqual({
+      group: 'mirror-website-stable',
+      'cancel-in-progress': false
+    })
+    const dispatch = mirror.on?.workflow_dispatch as {
+      inputs: { mode: { default: string; options: string[] } }
+    }
+    expect(dispatch.inputs.mode).toMatchObject({
+      default: 'backfill',
+      options: ['backfill', 'promote']
+    })
+    const publication = step(mirror.jobs.mirror, 'Sync installers to versioned path')
+    expect(publication.env?.MODE).toBe('${{ inputs.mode }}')
+    expect(publication.if).toBe('${{ !inputs.dry_run }}')
+    expect(publication.run).toBe('node scripts/publish-update-channel.mjs')
+  })
+})

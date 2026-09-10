@@ -3,6 +3,7 @@ import './assets/main.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { ApplicationErrorBoundary } from '@/components/application-error-boundary'
 import { DatabaseStartupGate } from '@/components/database-startup-gate'
 import { installStreamdown } from '@/components/streamdown/install-streamdown'
 import { initI18n } from '@/i18n'
@@ -53,8 +54,10 @@ window.addEventListener('drop', (event) => event.preventDefault())
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <DatabaseStartupGate>
-      <App />
-    </DatabaseStartupGate>
+    <ApplicationErrorBoundary>
+      <DatabaseStartupGate>
+        <App />
+      </DatabaseStartupGate>
+    </ApplicationErrorBoundary>
   </StrictMode>
 )

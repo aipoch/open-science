@@ -101,24 +101,28 @@
       "id": "env-management",
       "name": "Environment & Packages",
       "source": "featured",
+      "activationPolicy": "always-on",
       "updatedAt": "2026-07-14T00:00:00.000Z"
     },
     {
       "id": "compute-env-setup",
       "name": "Compute Environment Setup",
       "source": "featured",
+      "activationPolicy": "always-on",
       "updatedAt": "2026-09-06T00:00:00.000Z"
     },
     {
       "id": "remote-compute-ssh",
       "name": "Remote Compute (SSH)",
       "source": "featured",
+      "activationPolicy": "always-on",
       "updatedAt": "2026-08-02T00:00:00.000Z"
     },
     {
       "id": "customize",
       "name": "Customize",
       "source": "featured",
+      "activationPolicy": "always-on",
       "updatedAt": "2026-08-12T00:00:00.000Z"
     },
     {
@@ -143,6 +147,7 @@
       "id": "self-awareness",
       "name": "Self-awareness",
       "source": "featured",
+      "activationPolicy": "always-on",
       "exposure": "internal",
       "updatedAt": "2026-08-10T00:00:00.000Z"
     },
@@ -150,6 +155,7 @@
       "id": "skill-creator",
       "name": "Skill Creator",
       "source": "featured",
+      "activationPolicy": "always-on",
       "exposure": "internal",
       "updatedAt": "2026-08-09T00:00:00.000Z"
     }

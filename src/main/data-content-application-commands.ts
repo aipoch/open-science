@@ -614,8 +614,12 @@ const registerDataContentApplicationCommands = (
       'preview:save': ({ args }) => dependencies.preview.save(args[0])
     })
     scope.registerGroup(dataContentApplicationCommandGroups[3], {
-      'preview-resources:acquire': ({ args, callerLease }) =>
-        dependencies.managedPreview.acquire(callerLease, args[0]),
+      'preview-resources:acquire': (invocation) => {
+        if (invocation.args[0].source === 'local') {
+          assertLocalCaller(invocation, 'preview-resources:acquire')
+        }
+        return dependencies.managedPreview.acquire(invocation.callerLease, invocation.args[0])
+      },
       'preview-resources:read-range': ({ args, callerLease }) =>
         dependencies.managedPreview.readRange(callerLease, args[0]),
       'preview-resources:release': ({ args, callerLease }) =>

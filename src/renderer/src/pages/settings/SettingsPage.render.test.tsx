@@ -75,6 +75,10 @@ beforeAll(async () => {
 // real jsdom window so DOM globals radix relies on (getComputedStyle, etc.) stay intact.
 const installApi = (): void => {
   ;(window as unknown as { api: unknown }).api = {
+    runtime: {
+      onPolicyChanged: vi.fn(() => vi.fn()),
+      getAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(true)
+    },
     settings: {
       getSettings: vi.fn().mockResolvedValue({
         claude: {},

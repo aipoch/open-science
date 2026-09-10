@@ -272,6 +272,7 @@ class ProjectRepository {
         transaction as unknown as Prisma.TransactionClient,
         'PRAGMA secure_delete = ON'
       )
+      await transaction.projectLiterature.deleteMany({ where: { projectId: id } })
       await transaction.projectPreviewState.deleteMany({ where: { projectId: id } })
       await transaction.visionEvidence.deleteMany({ where: { projectId: id } })
       const deletedMemory = await transaction.memoryEntry.deleteMany({ where: { projectId: id } })

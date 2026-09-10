@@ -1,3 +1,4 @@
+import { waitFor } from '@testing-library/react'
 // @vitest-environment jsdom
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -493,6 +494,32 @@ afterEach(() => {
 })
 
 describe('ArtifactProvenancePanel', () => {
+  it('moves provenance tab focus with ArrowRight', async () => {
+    const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+    expect(tabs.length).toBeGreaterThan(1)
+    act(() => tabs[0].focus())
+    await act(async () => {
+      tabs[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    })
+    await waitFor(() => expect(document.activeElement).toBe(tabs[1]))
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true')
+    expect(getVersionExecution).not.toHaveBeenCalled()
+    await act(async () => {
+      tabs[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    await waitFor(() => expect(getVersionExecution).toHaveBeenCalledOnce())
+    expect(tabs[1].getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('links the selected provenance tab to its content panel', () => {
+    const tab = container.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')!
+    const panelId = tab.getAttribute('aria-controls')
+    expect(panelId).toBeTruthy()
+    const panel = document.getElementById(panelId!)!
+    expect(panel.getAttribute('role')).toBe('tabpanel')
+    expect(panel.getAttribute('aria-labelledby')).toBe(tab.id)
+  })
+
   it.each([1, 2])('renders the English package count for %i installed packages', async (count) => {
     const snapshot = provenance()
     const environment = snapshot.evidence!.environment as { packages: unknown[] }

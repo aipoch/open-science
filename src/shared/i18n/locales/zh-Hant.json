@@ -38,7 +38,9 @@
     "Skill": "技能",
     "Specialist": "專家",
     "Connector": "連接器",
-    "Export Connector configuration": "匯出連接器設定"
+    "Export Connector configuration": "匯出連接器設定",
+    "Discard changes": "捨棄變更",
+    "Discard unsaved changes?": "要捨棄未儲存的變更嗎？"
   },
   "native": {
     "Conversation export is too large. Select fewer conversation turns.": "對話匯出內容過大。請選擇較少的對話輪次。",
@@ -97,12 +99,17 @@
     "Specialist ZIP": "專家 ZIP",
     "JSON report": "JSON 報告",
     "Connector configuration": "連接器設定",
-    "Import Connector configuration": "匯入連接器設定"
+    "Import Connector configuration": "匯入連接器設定",
+    "Your unsaved changes will be lost.": "未儲存的變更將會遺失。"
   },
   "renderer": {
     "The source message is no longer available.": "來源訊息已無法使用。",
     "This Notebook exceeds the 10 MB preview limit.": "此 Notebook 超過 10 MB 預覽限制。",
     "Recent searches": "最近搜尋",
+    "Cancellation request failed": "取消請求失敗",
+    "Skills are loading. Paste again shortly.": "正在載入技能，請稍後再次貼上。",
+    "Could not load Skills. Try pasting again.": "無法載入技能，請嘗試再次貼上。",
+    "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "此 TIFF 超過 {{limit}} MiB 的預覽限制。請下載或使用外部應用程式開啟。",
     "Shared content": "共用內容",
     "Literature settings and tasks": "文獻設定與任務",
     "Select no more than {{limit}} references for this task.": "此任務最多支援 {{limit}} 篇文獻，請調整選取範圍。",
@@ -322,7 +329,6 @@
     "Scientific literature": "科學文獻",
     "Clinical and translational research": "臨床與轉譯研究",
     "A conversation changed elsewhere and could not be saved safely.": "會話已在其他位置變更，無法安全儲存。",
-    "One or more conversations could not be saved.": "一個或多個會話無法儲存。",
     "Quit was canceled": "已取消結束",
     "This session was deleted or is unavailable.": "此會話已刪除或無法使用。",
     "Add context for the Agent": "為智能體新增上下文",
@@ -3844,6 +3850,7 @@
     "Used by {{name}}. Remove this Skill from that Specialist before deleting it.": "正由 {{name}} 使用。請先從該專家中移除此技能，再將其刪除。",
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._other": "正由 {{count}} 個專家使用。請先從這些專家中移除此技能，再將其刪除。",
     "Availability": "可用範圍",
+    "This built-in Skill supports core application features and is always enabled.": "此內建技能用於應用程式核心功能，始終保持啟用。",
     "Specialist access is configured on each Specialist.": "專家存取權限需在對應的專家中設定。",
     "Resolve Skill conflicts": "解決技能衝突",
     "Choose one version for every conflicting Skill before installing the Specialist.": "安裝專家前，請為每個衝突的技能選擇一個版本。",
@@ -4110,8 +4117,6 @@
     "Compare {{name}} with its source version": "將 {{name}} 與其來源版本比較",
     "Compare with source version": "與來源版本比較",
     "Comparing versions...": "正在比較版本……",
-    "Discard unsaved changes?": "要捨棄未儲存的變更嗎？",
-    "Discard changes": "捨棄變更",
     "Changes could not be saved.": "無法儲存變更。",
     "File storage is unavailable. Check the storage location and try again.": "檔案儲存空間無法使用。請檢查儲存位置後再試一次。",
     "Open Science does not have permission to save this file.": "Open Science 沒有儲存此檔案的權限。",
@@ -4905,6 +4910,16 @@
     "Failed: {{failed}} · Skipped: {{skipped}}": "失敗：{{failed}} · 已略過：{{skipped}}",
     "You can import unfinished files or close this window.": "您可以匯入未完成的檔案或關閉此視窗。",
     "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "無法驗證已儲存的並行限制，新 Compute 任務可能會持續排隊。請保留受影響的檔案，還原有效副本後重新檢查，以恢復任務派發。",
-    "Recheck saved conversations": "重新檢查已儲存的對話"
+    "Recheck saved conversations": "重新檢查已儲存的對話",
+    "Some changes have not been saved.": "部分變更尚未儲存。",
+    "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "允許一次適用於此執行環境的下一次執行，即使程式碼有所變更也仍然適用。該次執行期間可多次連線至此網域。",
+    "Next execution in this runtime": "此執行環境的下一次執行",
+    "Research work is still running. Stop it before restarting to update.": "研究任務仍在執行。請先停止任務，再重新啟動以更新。",
+    "Subagents are still running. Return to their tasks and stop them before restarting to update.": "子智能體仍在執行。請返回其任務並停止執行，再重新啟動以更新。",
+    "The installer is missing or has changed. Download the update again.": "安裝程式遺失或已變更。請重新下載更新。",
+    "Verifying installer…": "正在驗證安裝程式…",
+    "Open Science couldn't display this page": "Open Science 無法顯示此頁面",
+    "Background work may still be running. Reloading may lose unsaved changes on this page.": "背景工作可能仍在執行。重新載入可能會遺失此頁面上未儲存的變更。",
+    "Reload page": "重新載入頁面"
   }
 }

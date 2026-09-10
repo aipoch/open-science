@@ -122,6 +122,21 @@ describe('TiffPreviewContent', () => {
     container.remove()
   })
 
+  it.each([
+    new Error('Managed preview file is too large.'),
+    Object.assign(new Error('Managed preview file is too large.'), { code: 'FILE_TOO_LARGE' })
+  ])('explains TIFF admission limits without offering an unchanged retry (%s)', async (error) => {
+    vi.mocked(window.api.previewResources.acquire).mockRejectedValue(error)
+    root = createRoot(container)
+    await act(async () =>
+      root.render(<TiffPreviewContent source="local" path="/large.tiff" name="large.tiff" />)
+    )
+    expect(container.textContent).toContain('40 MiB')
+    expect(container.textContent).toContain('limit')
+    expect(container.textContent).not.toContain('Retry')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('renders an LZW TIFF page with the same zoom surface as other images', async () => {
     root = createRoot(container)
     await act(async () => {

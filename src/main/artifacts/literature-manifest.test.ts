@@ -52,6 +52,7 @@ const owner = (metadataRevision = 3): ArtifactLiteratureManifestOwner =>
   new ArtifactLiteratureManifestOwner(
     async () =>
       ({
+        projectDeletionIntent: { findMany: vi.fn(async () => []) },
         literatureItem: { findMany: vi.fn(async () => [literatureRow(metadataRevision)]) }
       }) as unknown as PrismaClient
   )
@@ -268,6 +269,7 @@ describe('Literature evidence delivered to a review', () => {
     const manifestOwner = new ArtifactLiteratureManifestOwner(
       async () =>
         ({
+          projectDeletionIntent: { findMany: vi.fn(async () => []) },
           literatureItem: { findMany: vi.fn(async () => [literatureRow(), uncited]) }
         }) as unknown as PrismaClient
     )

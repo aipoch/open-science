@@ -577,8 +577,7 @@ describe('PreviewFileContent', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
       projectId: 'project-1',
-      fileId: 'canonical-artifact-id',
-      maxBytes: expect.any(Number)
+      fileId: 'canonical-artifact-id'
     })
     consoleError.mockRestore()
   })
@@ -596,8 +595,7 @@ describe('PreviewFileContent', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
       projectId: 'project-1',
-      fileId: 'file-1',
-      maxBytes: 1024 * 1024
+      fileId: 'file-1'
     })
     expect(container.querySelector('pre')?.textContent).toContain('"name":"sample"')
     expect(container.querySelector('pre')?.textContent).toContain('"values":[')
@@ -852,20 +850,33 @@ describe('PreviewFileContent', () => {
     expect(window.api.artifacts.openFile).not.toHaveBeenCalled()
   })
 
-  it('keeps the unavailable classification when a managed fetch returns 404 after acquire', async () => {
+  it('reacquires an expired preview after a protocol 404 without reporting a missing file', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 404 }))
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 404 }))
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: 'Recovered preview',
+      encoding: 'utf8',
+      size: 17,
+      truncated: false
+    })
 
     await renderFile(
       createFileItem({ format: 'text', name: 'gone.txt', path: '/workspace/gone.txt' })
     )
 
-    expect(container.textContent).toContain('This file is no longer available')
+    expect(container.textContent).not.toContain('This file is no longer available')
+    expect(container.textContent).toContain("File couldn't be read")
     expect(container.querySelector('pre')).toBeNull()
-    expect(consoleError).not.toHaveBeenCalledWith('Failed to read file preview', expect.anything())
     expect(window.api.previewResources.release).toHaveBeenCalledWith({
       resourceId: 'resource-1'
     })
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    expect(retry).toBeDefined()
+    await act(async () => retry!.click())
+    await vi.waitFor(() => expect(container.textContent).toContain('Recovered preview'))
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
 
     consoleError.mockRestore()
   })
@@ -1351,8 +1362,7 @@ describe('PreviewFileContent', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
       projectId: 'project-1',
-      fileId: 'file-1',
-      maxBytes: 1024 * 1024
+      fileId: 'file-1'
     })
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
     expect(container.textContent).toContain('uploaded content')

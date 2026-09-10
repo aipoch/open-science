@@ -2625,3 +2625,111 @@ describe('settings store: setDefaultPermissionProfile', () => {
     )
   })
 })
+
+describe('overlapping authoritative updates', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  const deferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+    let resolve!: (v: T) => void
+    const promise = new Promise<T>((a) => {
+      resolve = a
+    })
+    return { promise, resolve }
+  }
+  const settings = (revision: number, notificationsEnabled: boolean): SettingsSnapshot => ({
+    ...snapshot([]),
+    revision,
+    notificationsEnabled
+  })
+
+  it.each(['load', 'provider', 'runtime'] as const)(
+    'preserves the committed preference after an overlapping %s snapshot and event',
+    async (source) => {
+      useSettingsStore.setState({ ...createInitialSettingsState(), isLoaded: true })
+      useSettingsStore.getState().acceptCommittedSnapshot(settings(1, true))
+      const read = deferred<ReturnType<typeof settings>>()
+      const write = deferred<ReturnType<typeof settings>>()
+      vi.stubGlobal('window', {
+        api: {
+          settings: {
+            getSettings: () => read.promise,
+            isEncryptionAvailable: async () => true,
+            setActiveProvider: () => read.promise,
+            detectOpencode: () => read.promise,
+            getPreflight: async () => createInitialSettingsState().preflight,
+            setNotificationsEnabled: () => write.promise
+          }
+        }
+      })
+      const store = useSettingsStore.getState()
+      const loading =
+        source === 'load'
+          ? store.load()
+          : source === 'provider'
+            ? store.setActiveProvider('provider')
+            : store.detectOpencode()
+      const saving = store.setNotificationsEnabled(false)
+      expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+      read.resolve(settings(1, true))
+      await loading
+      // Production publishes the committed event before returning the command response.
+      useSettingsStore.getState().acceptCommittedSnapshot(settings(2, false))
+      write.resolve(settings(2, false))
+      await saving
+      expect(useSettingsStore.getState()).toMatchObject({
+        settingsSnapshotRevision: 2,
+        notificationsEnabled: false,
+        settingsWriteError: undefined
+      })
+    }
+  )
+})
+
+it('keeps normalized preference defaults when an untyped receipt omits the field', async () => {
+  useSettingsStore.setState({
+    ...createInitialSettingsState(),
+    isLoaded: true,
+    notificationsEnabled: false
+  })
+  const committed = { ...snapshot([]), revision: 2 }
+  delete (committed as Partial<SettingsSnapshot>).notificationsEnabled
+  vi.stubGlobal('window', { api: { settings: { setNotificationsEnabled: async () => committed } } })
+  try {
+    await useSettingsStore.getState().setNotificationsEnabled(true)
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(true)
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+it.each([
+  ['closePreference', 'setClosePreference'],
+  ['projectFilesFilter', 'setProjectFilesFilter']
+] as const)(
+  'keeps a successful %s clear when transport omits the field',
+  async (field, command) => {
+    useSettingsStore.setState(createInitialSettingsState())
+    const previous: SettingsSnapshot = {
+      ...snapshot([]),
+      revision: 1,
+      closePreference: 'quit',
+      projectFilesFilter: { sourceMode: 'local' }
+    }
+    useSettingsStore.getState().acceptCommittedSnapshot(previous)
+    const cleared = JSON.parse(
+      JSON.stringify({ ...previous, revision: 2, [field]: undefined })
+    ) as SettingsSnapshot
+    expect(Object.hasOwn(cleared, field)).toBe(false)
+    const save = vi.fn().mockResolvedValue(cleared)
+    vi.stubGlobal('window', { api: { settings: { [command]: save } } })
+    try {
+      await useSettingsStore.getState()[command](undefined)
+      expect(save).toHaveBeenCalledOnce()
+      expect(useSettingsStore.getState()[field]).toBeUndefined()
+      expect(useSettingsStore.getState().settingsSnapshotRevision).toBe(2)
+      expect(useSettingsStore.getState().settingsWriteError).toBeUndefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  }
+)

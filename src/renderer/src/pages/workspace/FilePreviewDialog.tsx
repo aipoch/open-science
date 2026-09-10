@@ -20,6 +20,7 @@ type FilePreviewDialogProps = PreviewInteractionPort & {
   onReadWithAgent?: (item: PreviewFileItem) => void
   onPdfContextError?: (message: string | null) => void
   onViewInContextNavigate?: () => void
+  onFocusFallback?: () => void
 }
 
 const hasStreamdownFullscreen = (): boolean =>
@@ -61,6 +62,7 @@ const FilePreviewDialog = ({
   onReadWithAgent,
   onPdfContextError,
   onViewInContextNavigate,
+  onFocusFallback,
   ...annotationPort
 }: FilePreviewDialogProps): React.JSX.Element | null => {
   const { t } = useTranslation()
@@ -68,6 +70,7 @@ const FilePreviewDialog = ({
   const open = Boolean(item)
   const [hasNestedFullscreen, setHasNestedFullscreen] = useState(hasStreamdownFullscreen)
   const isBackgroundIsolatedRef = useRef(false)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
   const previewSurfaceRef = useRef<PreviewFileSurfaceHandle | null>(null)
   const requestClose = useCallback(
     (checkGuard = true): void => {
@@ -135,6 +138,7 @@ const FilePreviewDialog = ({
           data-slot="file-preview-dialog"
           aria-describedby={undefined}
           aria-modal="true"
+          onCloseAutoFocus={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
           onAnimationEnd={(event) => {
             if (!open && event.target === event.currentTarget) releaseBackgroundIsolation()
@@ -146,7 +150,28 @@ const FilePreviewDialog = ({
           <Dialog.Title className="sr-only">
             {dialogItem ? t('Preview {{title}}', { title: dialogItem.title }) : t('File preview')}
           </Dialog.Title>
-          <FocusScope asChild loop trapped={!(open && hasNestedFullscreen)}>
+          <FocusScope
+            asChild
+            loop
+            trapped={!(open && hasNestedFullscreen)}
+            onMountAutoFocus={() => {
+              returnFocusRef.current =
+                document.activeElement instanceof HTMLElement ? document.activeElement : null
+            }}
+            onUnmountAutoFocus={(event) => {
+              releaseBackgroundIsolation()
+              const trigger = returnFocusRef.current
+              if (
+                !trigger?.isConnected ||
+                trigger.matches(':disabled, [inert], [aria-disabled="true"]')
+              ) {
+                if (onFocusFallback) {
+                  event.preventDefault()
+                  onFocusFallback()
+                }
+              }
+            }}
+          >
             <div className="flex size-full min-h-0 min-w-0">
               {dialogItem ? (
                 <PreviewFileSurface

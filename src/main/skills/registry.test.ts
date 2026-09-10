@@ -93,8 +93,64 @@ describe('SkillRegistry', () => {
       category: 'biomodels',
       // `requirements: [gpu]` is a YAML list; the flat frontmatter reader joins it to a string. The
       // materializer only substring-matches gpu/compute, so this stays equivalent.
-      requirements: 'gpu'
+      requirements: 'gpu',
+      activationPolicy: 'user-controlled'
     })
+  })
+
+  it('reads always-on activation from a trusted bundled manifest', async () => {
+    const root = await seedRoot()
+    await mkdir(join(root, 'customize'), { recursive: true })
+    await writeFile(
+      join(root, 'customize', 'SKILL.md'),
+      '---\nname: customize\ndescription: Customize Open Science.\n---\nBody.'
+    )
+    await writeFile(
+      join(root, 'manifest.json'),
+      JSON.stringify({
+        version: 1,
+        skills: [
+          {
+            id: 'customize',
+            name: 'Customize',
+            source: 'featured',
+            activationPolicy: 'always-on',
+            updatedAt: '2026-01-01'
+          },
+          {
+            id: 'demo',
+            name: 'Demo',
+            source: 'featured',
+            activationPolicy: 'always-on',
+            updatedAt: '2026-01-01'
+          }
+        ]
+      })
+    )
+
+    expect(await new SkillRegistry(root).list()).toEqual([
+      expect.objectContaining({ id: 'customize', activationPolicy: 'always-on' }),
+      expect.objectContaining({ id: 'demo', activationPolicy: 'always-on' })
+    ])
+  })
+
+  it('marks exactly the application-required Skills always-on in the production manifest', async () => {
+    const skillsRoot = join(__dirname, '..', '..', '..', 'resources', 'skills')
+    const skills = await new SkillRegistry(skillsRoot).list()
+
+    expect(
+      skills
+        .filter((skill) => skill.activationPolicy === 'always-on')
+        .map((skill) => skill.id)
+        .sort()
+    ).toEqual([
+      'compute-env-setup',
+      'customize',
+      'env-management',
+      'remote-compute-ssh',
+      'self-awareness',
+      'skill-creator'
+    ])
   })
 
   it('uses an optional SKILL.md displayName instead of the manifest presentation name', async () => {

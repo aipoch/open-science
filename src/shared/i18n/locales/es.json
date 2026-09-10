@@ -38,7 +38,9 @@
     "Skill": "Habilidad",
     "Specialist": "Especialista",
     "Connector": "Conector",
-    "Export Connector configuration": "Exportar configuración del conector"
+    "Export Connector configuration": "Exportar configuración del conector",
+    "Discard changes": "Descartar cambios",
+    "Discard unsaved changes?": "¿Descartar los cambios no guardados?"
   },
   "native": {
     "Conversation export is too large. Select fewer conversation turns.": "La exportación de la conversación es demasiado grande. Seleccione menos turnos de conversación.",
@@ -99,12 +101,17 @@
     "Specialist ZIP": "ZIP del especialista",
     "JSON report": "Informe JSON",
     "Connector configuration": "Configuración del conector",
-    "Import Connector configuration": "Importar configuración del conector"
+    "Import Connector configuration": "Importar configuración del conector",
+    "Your unsaved changes will be lost.": "Se perderán los cambios sin guardar."
   },
   "renderer": {
     "The source message is no longer available.": "El mensaje de origen ya no está disponible.",
     "This Notebook exceeds the 10 MB preview limit.": "Este Notebook supera el límite de vista previa de 10 MB.",
     "Recent searches": "Búsquedas recientes",
+    "Cancellation request failed": "Error al solicitar la cancelación",
+    "Skills are loading. Paste again shortly.": "Se están cargando las Habilidades. Vuelva a pegar el contenido en breve.",
+    "Could not load Skills. Try pasting again.": "No se pudieron cargar las Habilidades. Intente pegar el contenido de nuevo.",
+    "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "Este archivo TIFF supera el límite de vista previa de {{limit}} MiB. Descárguelo o ábralo en una aplicación externa.",
     "Shared content": "Contenido compartido",
     "Literature settings and tasks": "Configuración y tareas bibliográficas",
     "Select no more than {{limit}} references for this task.": "Seleccione como máximo {{limit}} referencias para esta tarea.",
@@ -332,7 +339,6 @@
     "Scientific literature": "Literatura científica",
     "Clinical and translational research": "Investigación clínica y traslacional",
     "A conversation changed elsewhere and could not be saved safely.": "Una conversación cambió en otro lugar y no se pudo guardar de forma segura.",
-    "One or more conversations could not be saved.": "No se pudieron guardar una o más conversaciones.",
     "Quit was canceled": "Se canceló la salida",
     "This session was deleted or is unavailable.": "Esta sesión se eliminó o no está disponible.",
     "Architect": "Arquitecto",
@@ -4041,6 +4047,7 @@
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._other": "Usada por {{count}} especialistas. Retire esta habilidad de esos especialistas antes de eliminarla.",
     "Used by {{count}} Specialists. Remove this Skill from them before deleting it._many": "Usada por {{count}} especialistas. Retire esta habilidad de esos especialistas antes de eliminarla.",
     "Availability": "Disponibilidad",
+    "This built-in Skill supports core application features and is always enabled.": "Esta Habilidad integrada admite funciones esenciales de la aplicación y siempre está habilitada.",
     "Specialist access is configured on each Specialist.": "El acceso se configura por separado para cada especialista.",
     "Resolve Skill conflicts": "Resolver conflictos de habilidades",
     "Choose one version for every conflicting Skill before installing the Specialist.": "Elija una versión para cada habilidad en conflicto antes de instalar el especialista.",
@@ -4407,8 +4414,6 @@
     "Compare {{name}} with its source version": "Comparar {{name}} con su versión de origen",
     "Compare with source version": "Comparar con la versión de origen",
     "Comparing versions...": "Comparando versiones…",
-    "Discard unsaved changes?": "¿Descartar los cambios no guardados?",
-    "Discard changes": "Descartar cambios",
     "Changes could not be saved.": "No se pudieron guardar los cambios.",
     "File storage is unavailable. Check the storage location and try again.": "El almacenamiento de archivos no está disponible. Compruebe la ubicación de almacenamiento e inténtelo de nuevo.",
     "Open Science does not have permission to save this file.": "Open Science no tiene permiso para guardar este archivo.",
@@ -5223,6 +5228,16 @@
     "Failed: {{failed}} · Skipped: {{skipped}}": "Fallidos: {{failed}} · Omitidos: {{skipped}}",
     "You can import unfinished files or close this window.": "Puede importar los archivos pendientes o cerrar esta ventana.",
     "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "Los nuevos trabajos de Compute pueden permanecer en cola porque no se pudieron verificar los límites de concurrencia guardados. Conserve los archivos afectados, restaure una copia válida y vuelva a comprobarlos para reanudar el envío de trabajos.",
-    "Recheck saved conversations": "Volver a comprobar las conversaciones guardadas"
+    "Recheck saved conversations": "Volver a comprobar las conversaciones guardadas",
+    "Some changes have not been saved.": "Algunos cambios no se han guardado.",
+    "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "Permitir una vez se aplica a la siguiente ejecución en este entorno, aunque cambie el código. Permite varias conexiones a este dominio durante esa ejecución.",
+    "Next execution in this runtime": "Siguiente ejecución en este entorno",
+    "Research work is still running. Stop it before restarting to update.": "Hay tareas de investigación en curso. Deténgalas antes de reiniciar para actualizar.",
+    "Subagents are still running. Return to their tasks and stop them before restarting to update.": "Hay subagentes en ejecución. Vuelva a sus tareas y deténgalos antes de reiniciar para actualizar.",
+    "The installer is missing or has changed. Download the update again.": "El instalador no se encuentra o ha cambiado. Vuelva a descargar la actualización.",
+    "Verifying installer…": "Verificando el instalador…",
+    "Open Science couldn't display this page": "Open Science no pudo mostrar esta página",
+    "Background work may still be running. Reloading may lose unsaved changes on this page.": "Es posible que las tareas en segundo plano sigan en ejecución. Al volver a cargar, pueden perderse los cambios sin guardar de esta página.",
+    "Reload page": "Volver a cargar la página"
   }
 }

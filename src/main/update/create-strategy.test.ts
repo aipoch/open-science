@@ -27,9 +27,18 @@ vi.mock('electron', () => ({
   shell: { openExternal: vi.fn(async () => {}), openPath: vi.fn(async () => '') }
 }))
 vi.mock('electron-updater', () => ({
+  CancellationToken: class {
+    cancelled = false
+    cancel(): void {
+      this.cancelled = true
+    }
+  },
   autoUpdater: {
     on: (event: string, listener: (...args: unknown[]) => void) => {
       updaterListeners.set(event, listener)
+    },
+    downloadUpdate: async () => {
+      updaterListeners.get('update-downloaded')?.()
     },
     autoDownload: true,
     autoInstallOnAppQuit: true,
@@ -71,7 +80,8 @@ describe('createUpdateStrategy', () => {
     async (_, platform, opts) => {
       const strategy = createUpdateStrategy(platform, opts)
       if (strategy instanceof ElectronUpdaterStrategy) {
-        updaterListeners.get('update-downloaded')?.()
+        updaterListeners.get('update-available')?.({})
+        await strategy.download()
       }
 
       await strategy.apply()
@@ -87,7 +97,8 @@ describe('createUpdateStrategy', () => {
   it('constructs the in-place strategy with its install gate', async () => {
     const installGate = vi.fn(async () => ({ completed: true, reaped: true }))
     const strategy = createUpdateStrategy('win32', { installGate })
-    updaterListeners.get('update-downloaded')?.()
+    updaterListeners.get('update-available')?.({})
+    await strategy.download()
 
     await strategy.apply()
 
@@ -104,7 +115,8 @@ describe('createUpdateStrategy', () => {
       installGate: vi.fn(async () => ({ completed: true, reaped: true })),
       releaseInstallHandoff
     })
-    updaterListeners.get('update-downloaded')?.()
+    updaterListeners.get('update-available')?.({})
+    await strategy.download()
 
     await strategy.apply()
 

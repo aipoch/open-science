@@ -424,6 +424,7 @@ class NotebookRuntimeService {
   private disposalPromise: Promise<{ reaped: boolean }> | undefined
   private environmentStartupBarrier: Promise<void> = Promise.resolve()
   private runLifecycleRecovery: Promise<void> | undefined
+  private runLifecycleRecoveryFailed = false
   private readonly backgroundRuns = new Map<
     string,
     {
@@ -2044,18 +2045,22 @@ class NotebookRuntimeService {
   // download (staging cleanup), materialize (verify/rebuild the env prefix), and install (flag
   // repair-required) paths all populate the journal, so each reconcile action below is wired to a real effect.
   async recoverInterruptedOperations(): Promise<void> {
+    if (this.runLifecycleRecoveryFailed) {
+      this.runLifecycleRecovery = undefined
+      this.runLifecycleRecoveryFailed = false
+    }
     this.runLifecycleRecovery ??= (async () => {
       // Publish every startup recovery before yielding so new work cannot race any owner.
       const runRecovery = this.repository.recoverAllRunLifecycles()
       const kernelRecovery = this.kernelProcessLifecycle.recover()
       const operationRecovery = this.recoveryCoordinator.recover()
       const shellRecovery = this.shellProcessOwnership.recover()
-      const [, recoveredRuns] = await Promise.all([
-        shellRecovery,
-        runRecovery,
-        kernelRecovery,
-        operationRecovery
-      ])
+      const recoveries = [shellRecovery, runRecovery, kernelRecovery, operationRecovery] as const
+      const [, recoveredRuns] = await Promise.all(recoveries).catch(async (error: unknown) => {
+        // Preserve the first failure, but do not release retry while another owner mutates storage.
+        await Promise.allSettled(recoveries)
+        throw error
+      })
       if (this.options.onBackgroundRunTerminal) {
         await Promise.all(
           recoveredRuns.map(async ({ projectId, sessionId, run }) => {
@@ -2073,7 +2078,10 @@ class NotebookRuntimeService {
           })
         )
       }
-    })()
+    })().catch((error: unknown) => {
+      this.runLifecycleRecoveryFailed = true
+      throw error
+    })
     await this.runLifecycleRecovery
   }
 
@@ -2083,7 +2091,7 @@ class NotebookRuntimeService {
   // startup env gate and UI provision/repair handlers can share the SAME barrier (they touch prefixes
   // too, not just materialize/install).
   async ensureRecovered(): Promise<void> {
-    await this.runLifecycleRecovery
+    if (this.runLifecycleRecovery) await this.recoverInterruptedOperations()
     await this.kernelProcessLifecycle.ensureReady()
     await this.recoveryCoordinator.ensureReady()
   }
@@ -2255,17 +2263,34 @@ class NotebookRuntimeService {
     const recoveryDisposal = this.recoveryCoordinator.dispose()
     const shutdown = this.executionOwner
       .cancelShellRuns({}, new Error('Notebook runtime is shutting down.'))
-      .then(async (shell) => {
-        const shellRecoveryReaped =
-          shell.reaped && !this.shellProcessOwnership.hasReceipts()
-            ? true
-            : await this.shellProcessOwnership
-                .recover()
-                .then(() => true)
-                .catch(() => false)
-        const sessions = await this.sessionLifecycle.dispose()
-        return { reaped: shellRecoveryReaped && sessions.reaped }
-      })
+      .then(
+        async (shell) => {
+          const shellRecoveryReaped =
+            shell.reaped && !this.shellProcessOwnership.hasReceipts()
+              ? true
+              : await this.shellProcessOwnership
+                  .recover()
+                  .then(() => true)
+                  .catch(() => false)
+          const sessions = await this.sessionLifecycle.dispose()
+          return { reaped: shellRecoveryReaped && sessions.reaped }
+        },
+        async (error: unknown) => {
+          const results = await Promise.allSettled([
+            this.shellProcessOwnership.recover(),
+            this.sessionLifecycle.dispose()
+          ])
+          const failures = results.flatMap((result) =>
+            result.status === 'rejected' ? [result.reason] : []
+          )
+          if (failures.length)
+            throw new AggregateError(
+              [error, ...failures],
+              'Notebook cleanup failed after Shell cancellation failed.'
+            )
+          throw error
+        }
+      )
     const disposal = Promise.allSettled([shutdown, recoveryDisposal]).then(
       ([shutdownResult, recoveryResult]) => {
         const failures = [shutdownResult, recoveryResult]

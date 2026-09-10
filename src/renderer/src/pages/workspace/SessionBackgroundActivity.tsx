@@ -4,6 +4,7 @@ import { Circle, CircleCheck, CircleX, Clock3, Loader2 } from 'lucide-react'
 
 import type { JobSummary } from '../../../../shared/compute'
 import type { NotebookRunRecord, NotebookSessionReference } from '../../../../shared/notebook'
+import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import { backgroundActivityStatusLabel } from './background-activity-presentation'
 import { isJobActive, isRunActive } from './use-session-background-tasks'
@@ -60,7 +61,7 @@ const shellLaneLabel = (
 // useSessionBackgroundTasks and toggled by the BackgroundTasksChip in the
 // strip; data fetching and ordering live in the hook, this component only
 // renders sections and owns optimistic cancelling state.
-const SessionBackgroundActivity = ({
+const SessionBackgroundActivityLedger = ({
   sessionId,
   projectId,
   notebook,
@@ -73,12 +74,18 @@ const SessionBackgroundActivity = ({
 }: Props): React.JSX.Element | null => {
   const { t } = useTranslation()
   const [cancellationRequests, setCancellationRequests] = useState<Set<string>>(() => new Set())
+  const [cancellationErrors, setCancellationErrors] = useState<Map<string, string>>(() => new Map())
   const cancelling = useMemo(() => {
     const activeIds = new Set<string>([
       ...runs.filter(isRunActive).map(({ runId }) => runId),
       ...jobs.filter(isJobActive).map(({ job_id: jobId }) => jobId)
     ])
-    return new Set([...cancellationRequests].filter((id) => activeIds.has(id)))
+    return new Set([
+      ...[...cancellationRequests].filter((id) => activeIds.has(id)),
+      ...runs
+        .filter((run) => isRunActive(run) && run.cancellationRequestedAt !== undefined)
+        .map((run) => run.runId)
+    ])
   }, [cancellationRequests, jobs, runs])
   if (runs.length === 0 && jobs.length === 0) return null
 
@@ -147,6 +154,11 @@ const SessionBackgroundActivity = ({
               size="xs"
               disabled={isCancelling}
               onClick={() => {
+                setCancellationErrors((current) => {
+                  const next = new Map(current)
+                  next.delete(run.runId)
+                  return next
+                })
                 setCancellationRequests((current) => new Set(current).add(run.runId))
                 void window.api.notebook
                   .cancelBackgroundRun({
@@ -154,19 +166,34 @@ const SessionBackgroundActivity = ({
                     runId: run.runId,
                     agentFrameId: run.agentFrameId
                   })
-                  .catch(() =>
+                  .catch((error: unknown) => {
+                    setCancellationErrors((current) =>
+                      new Map(current).set(
+                        run.runId,
+                        error instanceof Error ? error.message : String(error)
+                      )
+                    )
                     setCancellationRequests((current) => {
                       const next = new Set(current)
                       next.delete(run.runId)
                       return next
                     })
-                  )
+                  })
               }}
             >
               {t('Cancel')}
             </Button>
           ) : null}
         </span>
+        {isActive && cancellationErrors.has(run.runId) ? (
+          <ErrorNotice
+            className="col-span-full"
+            role="alert"
+            tone="amber"
+            title={t('Cancellation request failed')}
+            description={cancellationErrors.get(run.runId)}
+          />
+        ) : null}
       </div>
     )
   }
@@ -218,6 +245,11 @@ const SessionBackgroundActivity = ({
               size="xs"
               disabled={isCancelling}
               onClick={() => {
+                setCancellationErrors((current) => {
+                  const next = new Map(current)
+                  next.delete(job.job_id)
+                  return next
+                })
                 setCancellationRequests((current) => new Set(current).add(job.job_id))
                 void window.api.compute
                   .jobsCancel({
@@ -226,19 +258,34 @@ const SessionBackgroundActivity = ({
                     sessionId,
                     projectId
                   })
-                  .catch(() =>
+                  .catch((error: unknown) => {
+                    setCancellationErrors((current) =>
+                      new Map(current).set(
+                        job.job_id,
+                        error instanceof Error ? error.message : String(error)
+                      )
+                    )
                     setCancellationRequests((current) => {
                       const next = new Set(current)
                       next.delete(job.job_id)
                       return next
                     })
-                  )
+                  })
               }}
             >
               {t('Cancel')}
             </Button>
           ) : null}
         </span>
+        {isActive && cancellationErrors.has(job.job_id) ? (
+          <ErrorNotice
+            className="col-span-full"
+            role="alert"
+            tone="amber"
+            title={t('Cancellation request failed')}
+            description={cancellationErrors.get(job.job_id)}
+          />
+        ) : null}
       </div>
     )
   }
@@ -294,5 +341,12 @@ const SessionBackgroundActivity = ({
     </section>
   )
 }
+
+const SessionBackgroundActivity = (props: Props): React.JSX.Element => (
+  <SessionBackgroundActivityLedger
+    key={JSON.stringify([props.projectId, props.sessionId])}
+    {...props}
+  />
+)
 
 export { SessionBackgroundActivity }
