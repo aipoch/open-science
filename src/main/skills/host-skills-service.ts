@@ -286,7 +286,10 @@ export class HostSkillsService {
     }
 
     const skill = await this.resolvePublished(requestedName)
-    if (!skill) throw new Error(`Unknown Skill: ${requestedName}`)
+    if (!skill)
+      throw new Error(
+        `Unknown Skill: ${requestedName}. host.skills reads managed and draft Skills, not generated Connector Skill documents. Use an already loaded document or the current framework's advertised Skill loader. If unavailable, stop the dependent work; do not probe filesystem paths or guess Connector methods.`
+      )
     const result = await this.options.catalog.withSkillRead(skill.id, (lockedSkill) =>
       this.readFromPackage(
         lockedSkill.sourceDir,

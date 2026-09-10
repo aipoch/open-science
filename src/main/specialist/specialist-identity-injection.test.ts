@@ -110,7 +110,9 @@ const CODEX_MODES = {
 const startFakeAgentWithModes = (
   process: FakeAgentProcess,
   sessionIds: string[],
-  modes?: { currentModeId: string; availableModes: Array<{ id: string; name: string }> }
+  modes?: { currentModeId: string; availableModes: Array<{ id: string; name: string }> },
+  supportsClose = true,
+  supportsResume = true
 ): FakeAgentResult => {
   const newSessions: Array<{ cwd: string; mcpServers: unknown[]; _meta?: unknown }> = []
   const prompts: Array<{ sessionId: string; text: string }> = []
@@ -122,7 +124,10 @@ const startFakeAgentWithModes = (
       protocolVersion: acp.PROTOCOL_VERSION,
       agentCapabilities: {
         loadSession: false,
-        sessionCapabilities: { close: {}, resume: {} }
+        sessionCapabilities: {
+          ...(supportsClose ? { close: {} } : {}),
+          ...(supportsResume ? { resume: {} } : {})
+        }
       },
       authMethods: []
     }))
@@ -137,7 +142,10 @@ const startFakeAgentWithModes = (
       const sessionId = sessionIds[sessionIndex++]
       return { sessionId, ...(modes ? { modes } : {}) }
     })
-    .onRequest(acp.methods.agent.session.resume, () => ({}))
+    .onRequest(acp.methods.agent.session.resume, () => {
+      if (!supportsResume) throw new Error('Method not found: session/resume')
+      return modes ? { modes } : {}
+    })
     .onRequest(acp.methods.agent.session.setMode, () => ({}))
     .onRequest(acp.methods.agent.session.setConfigOption, () => ({ configOptions: [] }))
     .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
@@ -643,6 +651,57 @@ describe('specialist hot-switch — Claude Code', () => {
 })
 
 describe('specialist hot-switch — Codex', () => {
+  it.each([
+    { missing: 'session/close', close: false, resume: true },
+    { missing: 'session/resume', close: true, resume: false }
+  ])(
+    'keeps the original identity and usable session without $missing',
+    async ({ missing, close, resume }) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgentWithModes(
+        process,
+        ['session-codex'],
+        CODEX_MODES,
+        close,
+        resume
+      )
+      const runtime = new AcpRuntime({
+        appVersion: 'test',
+        defaultCwd: '/workspace',
+        framework: codexFramework,
+        resolveBackend: () => ({
+          framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+          executablePath: '/bin/codex-acp',
+          env: {},
+          sessionOptions: {
+            openScienceSkillRuntime: {
+              command: '/node',
+              entryPath: '/main.js',
+              root: '/codex',
+              skillsDirectory: '/codex/skills'
+            }
+          }
+        }),
+        resolveSpecialistIdentity: async (id) => ({ append: '', prefix: `Identity: ${id}` }),
+        resolveSpecialistSkills: async (id) => ({
+          kind: 'specialist',
+          skillIds: [id],
+          frameworkNames: [id],
+          missingSkillIds: []
+        })
+      })
+      await runtime.createSession({ cwd: '/workspace', specialistId: 'original-specialist' })
+      await expect(runtime.switchSpecialist('session-codex', 'new-specialist')).rejects.toThrow(
+        `does not support ${missing}`
+      )
+      await runtime.sendPrompt({ sessionId: 'session-codex', text: 'Continue the original task' })
+      expect(fakeAgent.newSessions).toHaveLength(1)
+      expect(fakeAgent.prompts).toHaveLength(1)
+      expect(fakeAgent.prompts[0].text).toContain('Identity: original-specialist')
+      expect(fakeAgent.prompts[0].text).not.toContain('new-specialist')
+    }
+  )
+
   it('switchSpecialist updates the per-turn prefix without resetting the session', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgentWithModes(process, ['session-codex'], CODEX_MODES)

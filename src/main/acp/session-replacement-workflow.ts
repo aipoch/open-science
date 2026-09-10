@@ -28,6 +28,8 @@ type AcpSessionReplacementWorkflowDependencies = Readonly<{
     publishedAppSessionId?: string
   ) => AcpPrimarySessionIdentityReservationResult
   adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
+  reconfigureSession: (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
+  assertSkillScopeRefreshSupported: () => void
   permission: Pick<AcpPermissionContext, 'cancelForSession' | 'clearLivePermissionProfile'>
   elicitation: Pick<AcpElicitationOwner, 'cancelForSession'>
   clearUserChoiceProvenanceForSession: (sessionId: string) => void
@@ -125,38 +127,91 @@ export class AcpSessionReplacementWorkflow {
     }
 
     const { aggregate } = this.deps.registry.ensureAffinity(sessionId)
+    const previousAttachment = this.deps.registry.lookup(sessionId)?.attachment
+    const isCodex = this.deps.currentFrameworkId() === 'codex'
+    const refreshCodex = isCodex && previousAttachment !== undefined
+    let codexIdentity: { append: string; prefix: string } | undefined
+    if (isCodex) {
+      const revision = aggregate.specialistBindingRevision()
+      if (specialistId !== undefined && this.deps.resolveSpecialistIdentity) {
+        codexIdentity = await this.deps.resolveSpecialistIdentity(specialistId, 'codex')
+      }
+      // Resolve before mutating the binding. A prompt or a newer switch may win while awaiting
+      // identity; neither may be interrupted or overwritten by this scope refresh.
+      if (this.deps.interactions.current(sessionId)) {
+        throw new Error('Cannot switch specialist while the Agent is running.')
+      }
+      if (
+        aggregate.specialistBindingRevision() !== revision ||
+        this.deps.registry.lookup(sessionId)?.attachment !== previousAttachment ||
+        this.deps.currentFrameworkId() !== 'codex'
+      ) {
+        throw new Error('ACP session startup was superseded.')
+      }
+    }
+    // Unsupported runtimes must leave the old binding and attachment intact. After mutation,
+    // failures deliberately detach a loader whose scope no longer matches the new binding.
+    if (refreshCodex) this.deps.assertSkillScopeRefreshSupported()
     // Projection is intentionally eager and is not rolled back if identity resolution or reset fails.
     aggregate.setSpecialistId(specialistId)
 
-    if (specialistId !== undefined && this.deps.resolveSpecialistIdentity) {
-      const identity = await this.deps.resolveSpecialistIdentity(
-        specialistId,
-        this.deps.currentFrameworkId()
-      )
-      aggregate.setSpecialistPrefix(identity?.prefix || undefined)
-    } else {
-      aggregate.setSpecialistPrefix(undefined)
+    try {
+      if (isCodex) {
+        aggregate.setSpecialistPrefix(codexIdentity?.prefix || undefined)
+      } else if (specialistId !== undefined && this.deps.resolveSpecialistIdentity) {
+        const identity = await this.deps.resolveSpecialistIdentity(
+          specialistId,
+          this.deps.currentFrameworkId()
+        )
+        aggregate.setSpecialistPrefix(identity?.prefix || undefined)
+      } else {
+        aggregate.setSpecialistPrefix(undefined)
+      }
+
+      this.deps.registerSessionSpecialist?.(sessionId, specialistId)
+
+      if (refreshCodex) {
+        const snapshot = aggregate.snapshot()
+        await this.deps.reconfigureSession({
+          sessionId,
+          providerSessionId: previousAttachment.providerSessionId,
+          previousFrameworkId: 'codex',
+          previousBackendId: snapshot.backendId,
+          cwd: snapshot.cwd ?? this.deps.defaultCwd,
+          projectId: snapshot.projectId,
+          permissionProfile: snapshot.permissionProfile?.selectedProfile,
+          specialistId,
+          memoryEnabled: snapshot.memoryEnabled
+        })
+      }
+
+      const requiresContextReset =
+        this.deps.currentFrameworkId() === 'claude-code' &&
+        this.deps.registry.lookup(sessionId)?.attachment !== undefined
+      if (requiresContextReset) {
+        const snapshot = aggregate.snapshot()
+        await this.reset({
+          sessionId,
+          cwd: snapshot.cwd,
+          projectId: snapshot.projectId,
+          ...(snapshot.permissionProfile?.selectedProfile
+            ? { permissionProfile: snapshot.permissionProfile.selectedProfile }
+            : {}),
+          memoryEnabled: snapshot.memoryEnabled
+        } as AcpResumeSessionRequest)
+      }
+
+      return { contextReset: requiresContextReset }
+    } catch (error) {
+      // Reconfigure can restore the old attachment on failure. Its loader no longer matches the
+      // eagerly updated binding, so it must not remain usable under the new Specialist identity.
+      const currentAttachment = this.deps.registry.lookup(sessionId)?.attachment
+      if (refreshCodex && currentAttachment?.session === previousAttachment.session) {
+        currentAttachment.session.dispose()
+        this.deps.registry.detach(currentAttachment, 'provider')
+      }
+      throw error
     }
-
-    this.deps.registerSessionSpecialist?.(sessionId, specialistId)
-
-    const requiresContextReset =
-      this.deps.currentFrameworkId() === 'claude-code' &&
-      this.deps.registry.lookup(sessionId)?.attachment !== undefined
-    if (requiresContextReset) {
-      const snapshot = aggregate.snapshot()
-      await this.reset({
-        sessionId,
-        cwd: snapshot.cwd,
-        projectId: snapshot.projectId,
-        ...(snapshot.permissionProfile?.selectedProfile
-          ? { permissionProfile: snapshot.permissionProfile.selectedProfile }
-          : {}),
-        memoryEnabled: snapshot.memoryEnabled
-      } as AcpResumeSessionRequest)
-    }
-
-    return { contextReset: requiresContextReset }
   }
 }
 

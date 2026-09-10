@@ -22,6 +22,43 @@ import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 const fakeChild = {} as ChildProcessWithoutNullStreams
 
 describe('codexFramework', () => {
+  it('offers the scoped Skill loader and recovery guidance without enabling shell', () => {
+    const framework = createCodexFramework()
+    const sessionOptions = {
+      openScienceSkillRuntime: {
+        command: process.execPath,
+        entryPath: '/app/main.js',
+        root: '/codex',
+        skillsDirectory: '/codex/skills'
+      }
+    }
+    const setup = framework.buildSessionSetup({
+      systemPromptAppends: [],
+      skillRuntimeScope: ['mcp-genomes'],
+      sessionOptions
+    })
+    expect(setup.mcpServers).toContainEqual(
+      expect.objectContaining({
+        name: 'skills',
+        env: expect.arrayContaining([
+          { name: 'OPEN_SCIENCE_SKILL_RUNTIME_ALLOWED_NAMES', value: '["mcp-genomes"]' },
+          { name: 'OPEN_SCIENCE_SKILL_RUNTIME_DIRECTORY', value: '/codex/skills' }
+        ])
+      })
+    )
+    expect(setup.promptPrefix).toContain('mcp__skills__load_skill')
+    expect(setup.promptPrefix).toContain('already loaded')
+    expect(setup.promptPrefix).toContain('Do not')
+    for (const skillRuntimeScope of [undefined, []] as const) {
+      expect(
+        framework.buildSessionSetup({
+          systemPromptAppends: [],
+          sessionOptions,
+          ...(skillRuntimeScope ? { skillRuntimeScope: [...skillRuntimeScope] } : {})
+        }).mcpServers
+      ).toBeUndefined()
+    }
+  })
   it.runIf(process.platform !== 'win32')(
     'reaps a descendant that leaves the owned ACP process group while its leader is alive',
     async () => {
@@ -361,6 +398,7 @@ describe('codexFramework', () => {
         memories: false,
         multi_agent: false,
         multi_agent_v2: false,
+        code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
         shell_tool: false
       }))
     )
@@ -893,6 +931,7 @@ describe('codexFramework', () => {
             memories: false,
             multi_agent: false,
             multi_agent_v2: false,
+            code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
             shell_tool: false
           },
           memories: { generate_memories: false, use_memories: false }
@@ -917,6 +956,7 @@ describe('codexFramework', () => {
             memories: false,
             multi_agent: false,
             multi_agent_v2: false,
+            code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
             shell_tool: false
           },
           memories: { generate_memories: false, use_memories: false }

@@ -91,6 +91,8 @@ describe('Codex approved handoff', () => {
         sessionId: 'codex-session',
         modes: CODEX_MODES
       }))
+      .onRequest(acp.methods.agent.session.resume, () => ({ modes: CODEX_MODES }))
+      .onRequest(acp.methods.agent.session.close, () => ({}))
       .onRequest(acp.methods.agent.session.setMode, () => ({}))
       .onRequest(acp.methods.agent.session.setConfigOption, () => ({ configOptions: [] }))
       .onRequest(acp.methods.agent.session.prompt, async (ctx) => {

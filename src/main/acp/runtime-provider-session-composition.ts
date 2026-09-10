@@ -120,6 +120,9 @@ const composeAcpRuntimeProviderSessionOwners = (
     reserveIdentity: (sessionId, publishedAppSessionId) =>
       reserveIdentity(undefined, [sessionId], publishedAppSessionId),
     adopter: providerSessionAdopter,
+    reconfigureSession: (request) => providerSessionResumer.reconfigure(request),
+    assertSkillScopeRefreshSupported: () =>
+      providerSessionResumer.assertSkillScopeRefreshSupported(),
     permission: session.permissionContext,
     elicitation: session.elicitationOwner,
     clearUserChoiceProvenanceForSession: runtime.clearUserChoiceProvenanceForSession,
@@ -165,6 +168,7 @@ const composeAcpRuntimeProviderSessionOwners = (
       }
     },
     resumeCapabilityAdvertised: () => base.connectionResources.capabilities.resume,
+    supportsSessionClose: () => base.connectionResources.capabilities.close,
     currentBackend: () => base.backendGeneration.current,
     registry: session.sessionRegistry,
     reserveIdentity: (sessionId) => reserveIdentity(undefined, [sessionId]),
