@@ -489,17 +489,13 @@ export const prepareImageContentData = async (
   }
 }
 
-// Builds the base64 payload for an image content block, downscaling oversized images first.
-// Small images pass through unchanged. Oversized images must be decoded and reduced below the hard
-// payload limit; returning their original bytes would allow a 50MB upload to escape this boundary.
-export const buildImageContentData = async (
-  filePath: string,
-  mimeType: string | undefined,
-  size: number,
-  readBytes?: () => Promise<Uint8Array>
+// Model input is a derivative; never alter scientific source files. Small still images use PNG
+// to preserve decoded pixels/alpha while stripping ancillary metadata. Keep GIF/WebP animation.
+export const prepareModelImageData = async (
+  bytes: Buffer,
+  sourceSize = bytes.byteLength
 ): Promise<ImageContentData> => {
-  const fallbackMimeType = mimeType ?? 'application/octet-stream'
-
+  const size = Math.max(sourceSize, bytes.byteLength)
   if (size > MAX_AUTO_PROCESS_IMAGE_BYTES) {
     throw new ImageContentError(
       'IMAGE_SOURCE_TOO_LARGE',
@@ -507,21 +503,44 @@ export const buildImageContentData = async (
       { sourceBytes: size, limitBytes: MAX_AUTO_PROCESS_IMAGE_BYTES }
     )
   }
-
-  if (size <= MAX_INLINE_IMAGE_BYTES) {
-    const source = readBytes ? Buffer.from(await readBytes()) : await readFile(filePath)
-    return { data: source.toString('base64'), mimeType: fallbackMimeType }
-  }
-
   try {
-    // Managed versions supply integrity-checked bytes; legacy callers still read the resolved path.
-    const bytes = readBytes ? Buffer.from(await readBytes()) : await readFile(filePath)
-    if (bytes.byteLength > MAX_AUTO_PROCESS_IMAGE_BYTES) {
-      throw new ImageContentError(
-        'IMAGE_SOURCE_TOO_LARGE',
-        `Image source is ${bytes.byteLength} bytes, exceeding the automatic processing limit.`,
-        { sourceBytes: bytes.byteLength, limitBytes: MAX_AUTO_PROCESS_IMAGE_BYTES }
-      )
+    if (size <= MAX_INLINE_IMAGE_BYTES) {
+      const { default: sharp } = await import('sharp')
+      const image = sharp(bytes, {
+        animated: true,
+        failOn: 'error',
+        limitInputPixels: MAX_DECODED_IMAGE_PIXELS
+      })
+      const metadata = await image.metadata()
+      const animated = (metadata.pages ?? 1) > 1
+      const format =
+        animated && metadata.format === 'gif'
+          ? 'gif'
+          : animated && metadata.format === 'webp'
+            ? 'webp'
+            : 'png'
+      const oriented = image.autoOrient()
+      const output = await (
+        format === 'gif'
+          ? oriented.gif()
+          : format === 'webp'
+            ? oriented.webp({ lossless: true })
+            : oriented.png()
+      ).toBuffer()
+      if (output.byteLength <= MAX_IMAGE_PAYLOAD_BYTES) {
+        return { data: output.toString('base64'), mimeType: `image/${format}` }
+      }
+      // Do not silently discard animation when metadata removal makes a small image too large.
+      if (animated)
+        throw new ImageContentError(
+          'IMAGE_PAYLOAD_TOO_LARGE',
+          'Processed animation exceeds the inline image limit.',
+          {
+            sourceBytes: size,
+            payloadBytes: output.byteLength,
+            limitBytes: MAX_IMAGE_PAYLOAD_BYTES
+          }
+        )
     }
     const processed = await processImageBytes(bytes, 'sharp-raster')
     return { data: processed.data, mimeType: processed.mimeType }
@@ -536,13 +555,29 @@ export const buildImageContentData = async (
         cause: error.cause
       })
     }
-
     throw new ImageContentError(
       'IMAGE_PROCESSING_FAILED',
-      `Failed to safely process oversized ${size}-byte image.`,
+      `Failed to safely process ${size}-byte image.`,
       { sourceBytes: size, limitBytes: MAX_IMAGE_PAYLOAD_BYTES, cause: error }
     )
   }
+}
+
+export const buildImageContentData = async (
+  filePath: string,
+  _mimeType: string | undefined,
+  size: number,
+  readBytes?: () => Promise<Uint8Array>
+): Promise<ImageContentData> => {
+  if (size > MAX_AUTO_PROCESS_IMAGE_BYTES) {
+    throw new ImageContentError(
+      'IMAGE_SOURCE_TOO_LARGE',
+      `Image source is ${size} bytes, exceeding the automatic processing limit.`,
+      { sourceBytes: size, limitBytes: MAX_AUTO_PROCESS_IMAGE_BYTES }
+    )
+  }
+  const bytes = readBytes ? Buffer.from(await readBytes()) : await readFile(filePath)
+  return prepareModelImageData(bytes, size)
 }
 
 // Resolves the on-disk pdfjs asset directories so CID/CJK fonts map to Unicode during extraction.

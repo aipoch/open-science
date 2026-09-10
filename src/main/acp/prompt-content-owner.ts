@@ -29,6 +29,7 @@ import {
 import { createLogger, errorLogFields } from '../logger'
 import {
   buildImageContentData,
+  prepareModelImageData,
   canInlineImageInSession,
   consumeInlineImageBudget,
   extractPdfText,
@@ -234,7 +235,7 @@ class AcpPromptContentOwner {
       )
     }
     let currentImageBytes = 0
-    const currentImages = (input.currentImages ?? []).map((candidate, index) => {
+    const validatedCurrentImages = (input.currentImages ?? []).map((candidate, index) => {
       const image = sanitizeAcpMessageImage(candidate)
       if (!image) throw new Error(`Invalid current image at index ${index}.`)
       currentImageBytes += image.byteLength
@@ -245,6 +246,10 @@ class AcpPromptContentOwner {
       }
       return image
     })
+    const currentImages = [] as Array<{ data: string; mimeType: string }>
+    for (const image of validatedCurrentImages) {
+      currentImages.push(await prepareModelImageData(Buffer.from(image.data, 'base64')))
+    }
     let promptUploads: UploadedAttachment[] = []
     const resolvedReferences: FileReference[] = []
     let historyImageCount = 0
@@ -316,7 +321,7 @@ class AcpPromptContentOwner {
             : undefined
         if (
           appendBlock(
-            { type: 'image', data: image.data, mimeType: image.mimeType },
+            { type: 'image', ...(await prepareModelImageData(Buffer.from(image.data, 'base64'))) },
             undefined,
             source
           )

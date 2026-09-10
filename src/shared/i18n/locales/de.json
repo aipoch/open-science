@@ -5038,6 +5038,10 @@
     "Verifying installer…": "Installationsprogramm wird überprüft…",
     "Open Science couldn't display this page": "Open Science konnte diese Seite nicht anzeigen",
     "Background work may still be running. Reloading may lose unsaved changes on this page.": "Hintergrundaufgaben werden möglicherweise noch ausgeführt. Beim Neuladen können ungespeicherte Änderungen auf dieser Seite verloren gehen.",
-    "Reload page": "Seite neu laden"
+    "Reload page": "Seite neu laden",
+    "Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.": "URLs für entfernte Modelle müssen HTTPS verwenden. HTTP ist nur für localhost oder Loopback-Adressen erlaubt.",
+    "Load media from {{domains}}": "Medien von {{domains}} laden",
+    "Images in Mermaid diagrams are blocked": "Bilder in Mermaid-Diagrammen sind blockiert",
+    "Use a separate Markdown image to load it explicitly.": "Verwenden Sie ein separates Markdown-Bild, um es ausdrücklich zu laden."
   }
 }

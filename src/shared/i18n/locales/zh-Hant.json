@@ -4884,6 +4884,10 @@
     "Verifying installer…": "正在驗證安裝程式…",
     "Open Science couldn't display this page": "Open Science 無法顯示此頁面",
     "Background work may still be running. Reloading may lose unsaved changes on this page.": "背景工作可能仍在執行。重新載入可能會遺失此頁面上未儲存的變更。",
-    "Reload page": "重新載入頁面"
+    "Reload page": "重新載入頁面",
+    "Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.": "遠端模型 URL 必須使用 HTTPS。HTTP 僅允許用於 localhost 或迴路位址。",
+    "Load media from {{domains}}": "載入來自 {{domains}} 的媒體",
+    "Images in Mermaid diagrams are blocked": "已封鎖 Mermaid 圖表中的圖片",
+    "Use a separate Markdown image to load it explicitly.": "請使用獨立的 Markdown 圖片，以便手動載入。"
   }
 }
