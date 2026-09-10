@@ -118,6 +118,22 @@ try {
   }
   $gatewayPort = [int]$status.gatewayPort
   if ($AfterSetup) { & $AfterSetup $gatewayPort }
+  # The product gateway only needs TCP. This fixture also probes UDP at the same port, which
+  # another host process may own independently. Reserve that listener before running assertions.
+  for ($attempt = 0; $attempt -lt 5; $attempt++) {
+    try {
+      $gatewayUdpListener = [Net.Sockets.UdpClient]::new([Net.IPEndPoint]::new([Net.IPAddress]::Loopback, $gatewayPort))
+      break
+    } catch [Net.Sockets.SocketException] {
+      if ($_.Exception.SocketErrorCode -notin @('AccessDenied', 'AddressAlreadyInUse') -or $attempt -eq 4) { throw }
+      Write-Host "[windows-smoke] UDP fixture port $gatewayPort unavailable; recreate the test installation"
+      Remove-SandboxResources $installationId $ownershipRoot
+      Install-SandboxResources $installationId $ownershipRoot
+      $status = (& $hostExe status $installationId $ownershipRoot | ConvertFrom-Json)
+      $gatewayPort = [int]$status.gatewayPort
+    }
+  }
+
   $ownedReceipt = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
   if ($ownedReceipt.schemaVersion -ne 4 -or [string]::IsNullOrWhiteSpace($ownedReceipt.wfpSublayerKey) -or $ownedReceipt.wfpFilterKeys.Count -ne 3) {
     throw 'Notebook AppContainer receipt does not identify the owned WFP fence.'
@@ -370,7 +386,6 @@ try {
     # port must never reach a host listener.
     $outsideUdpListener = [Net.Sockets.UdpClient]::new([Net.IPEndPoint]::new([Net.IPAddress]::Loopback, 0))
     $outsideUdpPort = $outsideUdpListener.Client.LocalEndPoint.Port
-    $gatewayUdpListener = [Net.Sockets.UdpClient]::new([Net.IPEndPoint]::new([Net.IPAddress]::Loopback, $gatewayPort))
     $udpSpec = {
       param($port)
       $command = "try { `$client = [Net.Sockets.UdpClient]::new(); `$bytes = [Text.Encoding]::UTF8.GetBytes('probe'); [void]`$client.Send(`$bytes, `$bytes.Length, '127.0.0.1', $port); `$client.Dispose(); exit 0 } catch { exit 33 }"
