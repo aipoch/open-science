@@ -280,8 +280,9 @@ describe('production application command wiring', () => {
       )
     )
     expect(occurrences(indexSource, 'RemoteAccessService.create()')).toBe(1)
+    // Ownership bookkeeping may sit between acquisition and binding; preserve their order.
     expect(startup).toMatch(
-      /const remoteAccess = await RemoteAccessService\.create\(\) bindRemoteAccess\(remoteAccess\) const webController = createWebServiceController\(\{[^}]*externalAccess: remoteAccess\.webAccess/
+      /const remoteAccess = await RemoteAccessService\.create\(\).*?bindRemoteAccess\(remoteAccess\) const webController = createWebServiceController\(\{[^}]*externalAccess: remoteAccess\.webAccess/
     )
     expect(startup).toContain('remoteAccess.attachWebController(webController)')
     expect(startup).toContain('registerRemoteAccessIpcHandlers(remoteAccess)')
