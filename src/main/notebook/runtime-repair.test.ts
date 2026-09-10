@@ -18,12 +18,55 @@ import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import { createNotebookEnvironmentLifecycle } from './environment-lifecycle-workflows'
 import { serializeProvisioner } from './environment-operation-foundation'
 import { DefaultRuntimeProvisioner } from './provisioner'
-import { envPrefix, pythonBin } from './runtime-paths'
+import { DEFAULT_R_ENV, envPrefix, pythonBin, rBin } from './runtime-paths'
 import { NotebookSessionAggregate, type NotebookSessionRuntimeBinding } from './session-aggregate'
 
 type RepairOptions = ConstructorParameters<typeof NotebookRuntimeRepairOwner>[0]
 
 const roots: string[] = []
+
+it.each([false, true])(
+  'drains and revokes managed R before deleting its prefix (cancelled: %s)',
+  async (cancelled) => {
+    const root = mkdtempSync(join(tmpdir(), 'r-repair-access-'))
+    roots.push(root)
+    const interpreter = rBin(envPrefix(root, DEFAULT_R_ENV))
+    mkdirSync(dirname(interpreter), { recursive: true })
+    writeFileSync(interpreter, 'original R')
+    const order: string[] = []
+    const fetchBundle = vi.fn(async () => {
+      order.push('rebuild')
+      expect(existsSync(interpreter)).toBe(false)
+      throw new Error('rebuild reached')
+    })
+    const provisioner = new DefaultRuntimeProvisioner({
+      root,
+      mm: '/unused-mm',
+      channel: 'conda-forge',
+      fetchBundle,
+      runArgv: vi.fn(),
+      verify: vi.fn()
+    })
+    const lifecycle = createNotebookEnvironmentLifecycle({
+      provisioner,
+      root,
+      projectProgress: () => undefined,
+      onRepairStarting: async () => {
+        order.push('drain')
+      },
+      revokeRuntimeAccess: async () => {
+        order.push('revoke')
+        expect(readFileSync(interpreter, 'utf8')).toBe('original R')
+        if (cancelled) throw new Error('permission removal cancelled')
+      }
+    })
+    await expect(lifecycle.repair('r', interpreter)).rejects.toThrow(
+      cancelled ? 'permission removal cancelled' : 'rebuild reached'
+    )
+    expect(order).toEqual(cancelled ? ['drain', 'revoke'] : ['drain', 'revoke', 'rebuild'])
+    if (cancelled) expect(readFileSync(interpreter, 'utf8')).toBe('original R')
+  }
+)
 
 afterEach(() => {
   vi.restoreAllMocks()

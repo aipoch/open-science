@@ -32,6 +32,11 @@ vi.mock('./environment-discovery', async (importOriginal) => ({
 }))
 
 import { createRuntimeWorkflows, type RuntimeWorkflowDeps } from './runtime-workflows'
+import {
+  beginMigrationPreparation,
+  endMigration,
+  waitForDataRootWriters
+} from '../storage/migration-state'
 
 type SettingsPort = RuntimeWorkflowDeps['settingsService']
 
@@ -98,6 +103,111 @@ beforeEach(() => {
 })
 
 describe('runtime workflows', () => {
+  it('blocks R authorization once data-root handoff preparation starts', async () => {
+    discoveryState.r = [
+      {
+        language: 'r',
+        provenance: 'app-managed',
+        envId: 'managed-r',
+        interpreterPath: '/runtime/bin/R',
+        label: 'R',
+        runnable: true
+      }
+    ]
+    const grant = vi.fn(async () => ({ cancelled: false }))
+    const workflows = createRuntimeWorkflows({
+      settingsService: fakeSettingsService(),
+      runtimeRoot: () => '/runtime',
+      setWindowsRuntimeAccess: grant
+    })
+    const migration = beginMigrationPreparation()
+    try {
+      await expect(
+        workflows.setSandboxAccess({ language: 'r', envId: 'managed-r', authorized: true })
+      ).rejects.toThrow('moving your data')
+      expect(grant).not.toHaveBeenCalled()
+    } finally {
+      migration.finish()
+      endMigration()
+    }
+  })
+
+  it('keeps data-root writers draining until an admitted R authorization finishes', async () => {
+    discoveryState.r = [
+      {
+        language: 'r',
+        provenance: 'app-managed',
+        envId: 'managed-r',
+        interpreterPath: '/runtime/bin/R',
+        label: 'R',
+        runnable: true
+      }
+    ]
+    let finish!: () => void
+    const held = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const grant = vi.fn(async () => {
+      await held
+      return { cancelled: false }
+    })
+    const workflows = createRuntimeWorkflows({
+      settingsService: fakeSettingsService(),
+      runtimeRoot: () => '/runtime',
+      setWindowsRuntimeAccess: grant
+    })
+    const authorization = workflows.setSandboxAccess({
+      language: 'r',
+      envId: 'managed-r',
+      authorized: true
+    })
+    try {
+      await vi.waitFor(() => expect(grant).toHaveBeenCalledOnce())
+      let drained = false
+      const drain = waitForDataRootWriters().then(() => {
+        drained = true
+      })
+      await Promise.resolve()
+      expect(drained).toBe(false)
+      finish()
+      await authorization
+      await drain
+      expect(drained).toBe(true)
+    } finally {
+      finish()
+      await authorization
+    }
+  })
+
+  it('authorizes managed R and revokes its access after disabling and draining it', async () => {
+    const env: DiscoveredInterpreter = {
+      language: 'r',
+      provenance: 'app-managed',
+      envId: 'managed-r',
+      interpreterPath: 'D:\\data\\runtime\\envs\\.r\\Lib\\R\\bin\\R.exe',
+      label: 'Managed R',
+      runnable: true
+    }
+    discoveryState.r = [env]
+    const settingsService = fakeSettingsService()
+    const events: string[] = []
+    const workflows = createRuntimeWorkflows({
+      settingsService,
+      runtimeRoot: () => '/runtime',
+      setWindowsRuntimeAccess: async (_path, authorized) => {
+        events.push(authorized ? 'grant' : 'remove')
+        return { cancelled: false }
+      },
+      onRuntimeDisabled: async () => {
+        expect((await settingsService.getRuntimeEnablement('r')).enabled[env.envId]).toBe(false)
+        events.push('drain')
+      }
+    })
+    await workflows.setSandboxAccess({ language: 'r', envId: env.envId, authorized: true })
+    await workflows.setEnvironmentEnabled({ language: 'r', envId: env.envId, enabled: false })
+    expect(events).toEqual(['grant', 'drain', 'remove'])
+  })
+
   it('rejects authorization for non-runnable R while allowing its access to be removed', async () => {
     discoveryState.r = [
       {
@@ -162,7 +272,7 @@ describe('runtime workflows', () => {
     })
     await expect(
       workflows.setSandboxAccess({ language: 'r', envId: 'unknown', authorized: true })
-    ).rejects.toThrow('Select a discovered external R')
+    ).rejects.toThrow('Select a discovered managed or external R')
     expect(setWindowsRuntimeAccess).not.toHaveBeenCalled()
     await workflows.setSandboxAccess({ language: 'r', envId: env.envId, authorized: true })
     expect(setWindowsRuntimeAccess).toHaveBeenLastCalledWith(
