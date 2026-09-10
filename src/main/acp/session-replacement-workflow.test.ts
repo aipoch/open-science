@@ -58,12 +58,14 @@ describe('AcpSessionReplacementWorkflow', () => {
       defaultProjectId: 'default-project',
       currentCwd: () => '/current-workspace',
       currentFrameworkId: () => 'claude-code',
+      assertSkillScopeRefreshSupported: vi.fn(),
       ensureConnected: vi.fn(async () => connection),
       assertCurrentConnection: vi.fn(),
       registry,
       reserveIdentity: (sessionId, publishedAppSessionId) =>
         registry.reserve({ sessionIds: [sessionId], publishedAppSessionId }),
       adopter: { adopt },
+      reconfigureSession: vi.fn(),
       permission: { cancelForSession: cancelPermissionFlow, clearLivePermissionProfile },
       elicitation: { cancelForSession: vi.fn() },
       clearUserChoiceProvenanceForSession,
@@ -127,12 +129,14 @@ describe('AcpSessionReplacementWorkflow', () => {
       defaultProjectId: 'project',
       currentCwd: vi.fn(),
       currentFrameworkId: () => 'claude-code',
+      assertSkillScopeRefreshSupported: vi.fn(),
       ensureConnected: vi.fn(async () => connection),
       assertCurrentConnection: vi.fn(),
       registry,
       reserveIdentity: (sessionId, publishedAppSessionId) =>
         registry.reserve({ sessionIds: [sessionId], publishedAppSessionId }),
       adopter: { adopt },
+      reconfigureSession: vi.fn(),
       permission: { cancelForSession: vi.fn(), clearLivePermissionProfile: vi.fn() },
       elicitation: { cancelForSession: vi.fn() },
       clearUserChoiceProvenanceForSession: vi.fn(),
@@ -169,12 +173,14 @@ describe('AcpSessionReplacementWorkflow', () => {
       defaultProjectId: 'default-project',
       currentCwd: () => '/current-workspace',
       currentFrameworkId: () => 'claude-code',
+      assertSkillScopeRefreshSupported: vi.fn(),
       ensureConnected: vi.fn(async () => connection),
       assertCurrentConnection: vi.fn(),
       registry,
       reserveIdentity: (sessionId, publishedAppSessionId) =>
         registry.reserve({ sessionIds: [sessionId], publishedAppSessionId }),
       adopter: { adopt },
+      reconfigureSession: vi.fn(),
       permission: { cancelForSession: vi.fn(), clearLivePermissionProfile: vi.fn() },
       elicitation: { cancelForSession: vi.fn() },
       clearUserChoiceProvenanceForSession: vi.fn(),
@@ -217,17 +223,24 @@ describe('AcpSessionReplacementWorkflow', () => {
         frameworkId
       )
       const adopt = vi.fn()
+      const reconfigureSession = vi.fn(async () => ({
+        sessionId: 'app-session',
+        cwd: '/old-workspace',
+        frameworkId
+      }))
       const registerSessionSpecialist = vi.fn()
       const workflow = new AcpSessionReplacementWorkflow({
         defaultCwd: '/workspace',
         defaultProjectId: 'project',
         currentCwd: vi.fn(),
         currentFrameworkId: () => frameworkId,
+        assertSkillScopeRefreshSupported: vi.fn(),
         ensureConnected: vi.fn(),
         assertCurrentConnection: vi.fn(),
         registry,
         reserveIdentity: vi.fn(),
         adopter: { adopt },
+        reconfigureSession,
         permission: { cancelForSession: vi.fn(), clearLivePermissionProfile: vi.fn() },
         elicitation: { cancelForSession: vi.fn() },
         clearUserChoiceProvenanceForSession: vi.fn(),
@@ -249,12 +262,35 @@ describe('AcpSessionReplacementWorkflow', () => {
 
       expect(dispose).not.toHaveBeenCalled()
       expect(adopt).not.toHaveBeenCalled()
+      if (frameworkId === 'codex') {
+        expect(reconfigureSession).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sessionId: 'app-session',
+            providerSessionId: 'provider-session',
+            specialistId: 'new-specialist'
+          })
+        )
+      }
       expect(registry.lookup('app-session')?.aggregate.snapshot()).toMatchObject({
         specialistId: 'new-specialist',
         specialistPrefix: 'New Specialist prefix',
         providerSessionId: 'provider-session'
       })
       expect(registerSessionSpecialist).toHaveBeenCalledWith('app-session', 'new-specialist')
+      if (frameworkId === 'codex') {
+        reconfigureSession.mockImplementationOnce(async () => {
+          const previous = registry.lookup('app-session')!.attachment!
+          registry.detach(previous, 'provider')
+          publishSession(registry, 'app-session', previous.session, 'codex')
+          throw new Error('resume failed')
+        })
+        await expect(workflow.switchSpecialist('app-session', undefined)).rejects.toThrow(
+          'resume failed'
+        )
+        expect(registry.lookup('app-session')?.attachment).toBeUndefined()
+        expect(dispose).toHaveBeenCalledOnce()
+        expect(registry.lookup('app-session')?.aggregate.snapshot().specialistId).toBeUndefined()
+      }
     }
   )
 
@@ -270,11 +306,13 @@ describe('AcpSessionReplacementWorkflow', () => {
       defaultProjectId: 'default-project',
       currentCwd: vi.fn(),
       currentFrameworkId: () => 'codex',
+      assertSkillScopeRefreshSupported: vi.fn(),
       ensureConnected: vi.fn(),
       assertCurrentConnection: vi.fn(),
       registry,
       reserveIdentity: vi.fn(),
       adopter: { adopt: vi.fn() },
+      reconfigureSession: vi.fn(),
       permission: { cancelForSession: vi.fn(), clearLivePermissionProfile: vi.fn() },
       elicitation: { cancelForSession: vi.fn() },
       clearUserChoiceProvenanceForSession: vi.fn(),
@@ -301,4 +339,53 @@ describe('AcpSessionReplacementWorkflow', () => {
     expect(resolveSpecialistIdentity).not.toHaveBeenCalled()
     expect(registerSessionSpecialist).not.toHaveBeenCalled()
   })
+
+  it.each(['prompt', 'newer-binding'] as const)(
+    'does not apply a delayed Codex switch after %s wins',
+    async (winner) => {
+      const registry = new AcpSessionRegistry()
+      const dispose = vi.fn()
+      publishSession(registry, 'app-session', attachedSession('provider-session', dispose), 'codex')
+      const aggregate = registry.lookup('app-session')!.aggregate
+      aggregate.setSpecialistId('initial')
+      const pending = Promise.withResolvers<{ append: string; prefix: string }>()
+      const current = vi.fn()
+      const reconfigureSession = vi.fn()
+      const workflow = new AcpSessionReplacementWorkflow({
+        defaultCwd: '/workspace',
+        defaultProjectId: 'project',
+        currentCwd: vi.fn(),
+        currentFrameworkId: () => 'codex',
+        assertSkillScopeRefreshSupported: vi.fn(),
+        ensureConnected: vi.fn(),
+        assertCurrentConnection: vi.fn(),
+        registry,
+        reserveIdentity: vi.fn(),
+        adopter: { adopt: vi.fn() },
+        reconfigureSession,
+        permission: { cancelForSession: vi.fn(), clearLivePermissionProfile: vi.fn() },
+        elicitation: { cancelForSession: vi.fn() },
+        clearUserChoiceProvenanceForSession: vi.fn(),
+        appContinuations: { delete: vi.fn() },
+        promptContent: { resetSession: vi.fn() },
+        releasePromptResourcesForSession: vi.fn(),
+        contextUsage: { deleteSession: vi.fn() },
+        interactions: { current, supersedeCurrent: vi.fn() },
+        resolveSpecialistIdentity: () => pending.promise
+      })
+      const switched = workflow.switchSpecialist('app-session', 'requested')
+      const rejected = expect(switched).rejects.toThrow()
+      if (winner === 'prompt') current.mockReturnValue({ kind: 'prompt' })
+      else {
+        aggregate.setSpecialistId('newer')
+        aggregate.setSpecialistPrefix('Newer prefix')
+      }
+      pending.resolve({ append: '', prefix: 'Obsolete prefix' })
+      await rejected
+      expect(reconfigureSession).not.toHaveBeenCalled()
+      expect(dispose).not.toHaveBeenCalled()
+      expect(aggregate.snapshot().specialistId).toBe(winner === 'prompt' ? 'initial' : 'newer')
+      expect(aggregate.snapshot().specialistPrefix).not.toBe('Obsolete prefix')
+    }
+  )
 })

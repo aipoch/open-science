@@ -1,3 +1,4 @@
+import { getCustomProviderBaseUrlError } from '../../shared/provider-base-url'
 import type { ChatApiEndpoint, ProviderView } from '../../shared/settings'
 import {
   isClaudeSubscriptionProvider,
@@ -204,6 +205,10 @@ class ProviderRuntimeProjectionOwner {
   }
 
   resolveProvider(provider: StoredProvider, modelOverride?: string): ResolvedProvider {
+    if (provider.type === 'custom' && provider.baseUrl) {
+      const error = getCustomProviderBaseUrlError(provider.baseUrl)
+      if (error) throw new Error(error)
+    }
     const key =
       provider.type === 'xai-subscription'
         ? undefined

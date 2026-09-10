@@ -4920,6 +4920,10 @@
     "Verifying installer…": "正在校验安装程序…",
     "Open Science couldn't display this page": "Open Science 无法显示此页面",
     "Background work may still be running. Reloading may lose unsaved changes on this page.": "后台工作可能仍在运行。重新加载可能会丢失此页面上未保存的更改。",
-    "Reload page": "重新加载页面"
+    "Reload page": "重新加载页面",
+    "Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.": "远程模型 URL 必须使用 HTTPS。HTTP 仅允许用于 localhost 或回环地址。",
+    "Load media from {{domains}}": "加载来自 {{domains}} 的媒体",
+    "Images in Mermaid diagrams are blocked": "已阻止 Mermaid 图表中的图片",
+    "Use a separate Markdown image to load it explicitly.": "请使用单独的 Markdown 图片，以便手动加载。"
   }
 }

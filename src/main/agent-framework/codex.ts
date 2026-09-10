@@ -36,6 +36,10 @@ import { CODEX_VERSION } from '../settings/managed-codex'
 import { clearSystemProxyEnvironment } from '../settings/system-proxy'
 import { registerOwnedPosixProcessGroup } from '../process-tree'
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
+import {
+  createSkillRuntimeAcpServerConfig,
+  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
+} from '../skills/runtime-mcp-server'
 
 const CODEX_PROVIDER_ID = 'open-science'
 // Catalog model used only for Codex's local metadata; the Responses bridge rewrites it to the selected
@@ -76,6 +80,9 @@ const CODEX_DISABLED_NATIVE_FEATURES = Object.freeze({
   memories: false,
   multi_agent: false,
   multi_agent_v2: false,
+  // The bounded Skill loader must remain callable without deferred tool discovery, including
+  // through Chat gateways. Leave other namespaces and the model's code-mode default unchanged.
+  code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
   // Disabling unified_exec alone falls back to shell_command. shell_tool disables both generations
   // so execution stays on the app-owned Notebook bash_execute MCP tool.
   shell_tool: false
@@ -197,8 +204,6 @@ const buildCodexConfig = (provider: {
         ...(provider.key ? { requires_openai_auth: true } : {})
       }
     }
-    // Tool-search configuration is intentionally left at Codex defaults. The Chat bridge exposes its
-    // app-owned tools through explicit namespaced aliases and does not depend on deferred tool_search.
   }
 }
 
@@ -593,12 +598,41 @@ export const createCodexFramework = ({
   },
 
   buildSessionSetup(ctx: SessionSetupContext): SessionSetup {
+    const runtime = ctx.sessionOptions?.[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION] as
+      { command?: string; entryPath?: string; root?: string; skillsDirectory?: string } | undefined
+    const loaderAvailable =
+      ctx.skillRuntimeScope !== undefined &&
+      (ctx.skillRuntimeScope === 'all' || ctx.skillRuntimeScope.length > 0) &&
+      typeof runtime?.command === 'string' &&
+      typeof runtime.entryPath === 'string' &&
+      typeof runtime.root === 'string' &&
+      typeof runtime.skillsDirectory === 'string'
+    const skillGuidance = loaderAvailable
+      ? 'Use Skill documents already loaded in this turn. For another Skill, call `mcp__skills__load_skill` with its exact available name. Do not read Skill directories through Notebook Shell or REPL, use `host.skills` for Connector discovery, or guess Connector methods. If loading fails, stop the dependent work and report the missing Skill; do not retry through another runtime.'
+      : undefined
     // Production backends pass no stable appends here because developer_instructions owns them.
     // Keep the fallback for injected/legacy backends and ephemeral reviewer sessions.
-    const promptPrefix = [...ctx.systemPromptAppends, ...(ctx.turnPromptReminders ?? [])]
+    const promptPrefix = [
+      ...ctx.systemPromptAppends,
+      skillGuidance,
+      ...(ctx.turnPromptReminders ?? [])
+    ]
       .filter(Boolean)
       .join('\n\n')
     return {
+      ...(loaderAvailable
+        ? {
+            mcpServers: [
+              createSkillRuntimeAcpServerConfig({
+                command: runtime!.command!,
+                entryPath: runtime!.entryPath!,
+                root: runtime!.root!,
+                skillsDirectory: runtime!.skillsDirectory!,
+                ...(ctx.skillRuntimeScope !== 'all' ? { allowedNames: ctx.skillRuntimeScope } : {})
+              })
+            ]
+          }
+        : {}),
       ...(promptPrefix ? { promptPrefix } : {})
     }
   },

@@ -64,6 +64,8 @@ export type NotebookSandboxCommand = Readonly<{
 export type NotebookSandboxedProcess = Readonly<{
   argv: readonly string[]
   env: NodeJS.ProcessEnv
+  /** The native host owns a kill-on-close Job Object covering every workload descendant. */
+  windowsJobObject?: true
   annotateStderr: (stderr: string) => string
   resetNetworkConnections: () => void
   cleanup: () => void

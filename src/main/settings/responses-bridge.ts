@@ -391,6 +391,19 @@ export class ResponsesBridge {
     if (reviewerScoped) this.scopedReviewerSessionKeys.add(promptCacheKey)
     if (toolLessScoped) this.scopedToolLessSessionKeys.add(promptCacheKey)
     if (hostMessageScoped) this.scopedHostMessageSessionKeys.add(promptCacheKey!)
+    // This app-owned MCP server carries the current session's Skill allowlist. Preserve its
+    // request-local schema; a backend-wide declaration would outlive Specialist scope changes.
+    const skillNamespace = Array.isArray(body.tools)
+      ? body.tools.find((tool) => tool?.type === 'namespace' && tool.name === 'mcp__skills')
+      : undefined
+    const skillLoader = Array.isArray(skillNamespace?.tools)
+      ? skillNamespace.tools.find(
+          (tool: JsonObject) => tool?.type === 'function' && tool.name === 'load_skill'
+        )
+      : undefined
+    const skillTools: ResponsesBridgeNamespacedTool[] = skillLoader
+      ? [{ ...skillLoader, namespace: 'mcp__skills' }]
+      : []
     const namespacedTools = reviewerScoped
       ? (this.target.reviewerScope?.namespacedTools ?? [])
       : toolLessScoped
@@ -399,7 +412,7 @@ export class ResponsesBridge {
           ? hostMessageTools
           : hostMessageBoundaryActive
             ? []
-            : (this.target.namespacedTools ?? [])
+            : [...(this.target.namespacedTools ?? []), ...skillTools]
     // codex-acp ignores disableBuiltInTools metadata and still advertises shell/filesystem tools.
     // For reviewer turns, replace the entire declaration set at the protocol boundary so the model
     // can call only the scope-bounded reviewer HTTP MCP functions.

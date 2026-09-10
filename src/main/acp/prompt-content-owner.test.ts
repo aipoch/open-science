@@ -1,3 +1,5 @@
+import sharp from 'sharp'
+import * as attachmentMedia from '../uploads/attachment-media'
 import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { access, mkdtemp, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -44,6 +46,15 @@ vi.mock('../uploads/attachment-media', async (importOriginal) => {
   return { ...actual, extractPdfText: vi.fn(actual.extractPdfText) }
 })
 
+// Valid, deterministic model images: production now decodes small inputs to remove metadata.
+const imageBytes = await sharp({ create: { width: 2, height: 2, channels: 3, background: 'red' } })
+  .png()
+  .toBuffer()
+const historyImageBytes = await sharp({
+  create: { width: 2, height: 2, channels: 3, background: 'blue' }
+})
+  .png()
+  .toBuffer()
 const roots: string[] = []
 
 describe('PDF preparation routing', () => {
@@ -108,6 +119,7 @@ const createTrustedLease = (bytes: Buffer): TrustedLeaseFixture => {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
@@ -554,7 +566,7 @@ describe('AcpPromptContentOwner', () => {
     const root = await createRoot()
     const replacedPath = join(root, 'replaced.png')
     await writeFile(replacedPath, 'wrong image bytes')
-    const trustedBytes = Buffer.from('trusted image bytes')
+    const trustedBytes = imageBytes
     const trustedLease = createTrustedLease(trustedBytes)
     const owner = new AcpPromptContentOwner({
       fileReferenceResolver: new FileReferenceResolver([
@@ -851,8 +863,8 @@ describe('AcpPromptContentOwner', () => {
       historyImages: [
         {
           mimeType: 'image/png',
-          data: Buffer.from('history-image').toString('base64'),
-          byteLength: Buffer.byteLength('history-image')
+          data: historyImageBytes.toString('base64'),
+          byteLength: historyImageBytes.length
         }
       ],
       historyUploads: [immutableHistoryUpload],
@@ -1187,8 +1199,8 @@ describe('AcpPromptContentOwner', () => {
     const owner = new AcpPromptContentOwner({
       fileReferenceResolver: createManagedFileReferenceResolver({})
     })
-    const historyData = Buffer.from('history-image').toString('base64')
-    const currentData = Buffer.from('current-image').toString('base64')
+    const historyData = historyImageBytes.toString('base64')
+    const currentData = imageBytes.toString('base64')
 
     const result = await owner.prepare({
       appSessionId: 'session-1',
@@ -1198,14 +1210,14 @@ describe('AcpPromptContentOwner', () => {
         {
           mimeType: 'image/png',
           data: historyData,
-          byteLength: Buffer.byteLength('history-image')
+          byteLength: historyImageBytes.length
         }
       ],
       currentImages: [
         {
           mimeType: 'image/png',
           data: currentData,
-          byteLength: Buffer.byteLength('current-image')
+          byteLength: imageBytes.length
         }
       ],
       historyUploads: [],
@@ -1484,7 +1496,7 @@ describe('AcpPromptContentOwner', () => {
     const owner = new AcpPromptContentOwner({
       uploadRepository: uploads,
       fileReferenceResolver: createManagedFileReferenceResolver({ uploads }),
-      inlineImageBudgetBytes: 15
+      inlineImageBudgetBytes: imageBytes.toString('base64').length + 1
     })
     const stageImage = async (name: string): Promise<UploadedAttachment> => {
       const [image] = await stageUploadFixtures(uploads, {
@@ -1492,7 +1504,7 @@ describe('AcpPromptContentOwner', () => {
           {
             name,
             mimeType: 'image/png',
-            content: Buffer.from('png-bytes').toString('base64')
+            content: imageBytes.toString('base64')
           }
         ]
       })
@@ -1602,7 +1614,7 @@ describe('AcpPromptContentOwner', () => {
     const owner = new AcpPromptContentOwner({
       uploadRepository: uploads,
       fileReferenceResolver: createManagedFileReferenceResolver({ uploads }),
-      inlineImageBudgetBytes: 15
+      inlineImageBudgetBytes: imageBytes.toString('base64').length + 1
     })
     const stageImage = async (name: string): Promise<UploadedAttachment> => {
       const [image] = await stageUploadFixtures(uploads, {
@@ -1610,7 +1622,7 @@ describe('AcpPromptContentOwner', () => {
           {
             name,
             mimeType: 'image/png',
-            content: Buffer.from('png-bytes').toString('base64')
+            content: imageBytes.toString('base64')
           }
         ]
       })
@@ -1662,7 +1674,7 @@ describe('AcpPromptContentOwner', () => {
 it.each(['current failure', 'historical failure', 'image budget', 'evidence budget'])(
   'preserves mixed image identity through %s',
   async (scenario) => {
-    const bytes = Buffer.from('historical image')
+    const bytes = historyImageBytes
     const lease = createTrustedLease(bytes)
     const attachment: UploadedAttachment = {
       id: 'upload-1',
@@ -1698,7 +1710,7 @@ it.each(['current failure', 'historical failure', 'image budget', 'evidence budg
       } as never,
       fileReferenceResolver: new FileReferenceResolver([])
     })
-    const currentData = Buffer.from('current image').toString('base64')
+    const currentData = imageBytes.toString('base64')
     for (const historyUploads of [
       [],
       Array.from({ length: scenario.includes('budget') ? 9 : 1 }, () => attachment)
@@ -1707,7 +1719,9 @@ it.each(['current failure', 'historical failure', 'image budget', 'evidence budg
         appSessionId: 'session-1',
         projectId: 'project-1',
         text: 'Analyze the new image',
-        currentImages: [{ mimeType: 'image/png', data: currentData, byteLength: 13 }],
+        currentImages: [
+          { mimeType: 'image/png', data: currentData, byteLength: imageBytes.length }
+        ],
         historyImages: [],
         historyUploads,
         currentUploads: [],
@@ -1783,6 +1797,16 @@ it.each(['current failure', 'historical failure', 'image budget', 'evidence budg
 it.each(['current', 'historical'] as const)(
   'retains current inline images before native %s upload overflow',
   async (origin) => {
+    vi.spyOn(attachmentMedia, 'prepareModelImageData').mockImplementation(async (bytes) => ({
+      data: bytes.toString('base64'),
+      mimeType: 'image/png'
+    }))
+    vi.spyOn(attachmentMedia, 'buildImageContentData').mockImplementation(
+      async (path, _mimeType, _size, readBytes) => ({
+        data: Buffer.from(readBytes ? await readBytes() : await readFile(path)).toString('base64'),
+        mimeType: 'image/png'
+      })
+    )
     const root = await createRoot()
     const uploads = new UploadRepository(root)
     const pendingUploads = await stageUploadFixtures(uploads, {

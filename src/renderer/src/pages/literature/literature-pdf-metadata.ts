@@ -4,11 +4,32 @@ import {
   type LiteratureCreatorInput,
   type LiteratureItemInput
 } from '../../../../shared/literature'
-import { joinPdfTextItems } from '../../../../shared/pdf-text'
+import { joinPdfTextItems, type PdfTextItem } from '../../../../shared/pdf-text'
 
 const MAX_LOCAL_PDF_METADATA_BYTES = 50 * 1024 * 1024
 const DOI_PATTERN = /\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/giu
 const PMID_PATTERN = /\b(?:PMID|PubMed\s+ID)\s*:?\s*(\d{6,9})\b/iu
+
+// A terminal publication block is stronger evidence than a DOI somewhere in References.
+const PUBLICATION_DOI_PATTERN =
+  /(?:^|\n)Accepted[^\n]*\b\d{4}\s*\nPublished[^\n]*\b\d{4}\s*\n(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:\s*)?(10\.\d{4,9}\/[-._;()/:A-Z0-9]+)\s*$/iu
+
+const comparableTitle = (text: string): string =>
+  text
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, '')
+
+const prominentPdfTitle = (items: readonly PdfTextItem[]): string => {
+  const height = (item: PdfTextItem): number =>
+    item.height ?? (item.transform ? Math.hypot(item.transform[2], item.transform[3]) : 0)
+  const textItems = items.filter((item) => item.str?.trim())
+  const largest = textItems.reduce((max, item) => Math.max(max, height(item)), 0)
+  if (!largest) return ''
+  return comparableTitle(
+    joinPdfTextItems(textItems.filter((item) => Math.abs(height(item) - largest) < 0.1))
+  )
+}
 
 const DOI_CACHE_SIZE = 32
 const DOI_CACHE_MS = 5 * 60_000
@@ -131,17 +152,54 @@ const extractLiteraturePdfDraft = async (
   try {
     const { info } = await document.getMetadata()
     const pageTexts: string[] = []
+    let firstPageTitle = ''
     for (let pageNumber = 1; pageNumber <= Math.min(2, document.numPages); pageNumber += 1) {
       const page = await document.getPage(pageNumber)
       const content = await page.getTextContent()
       page.cleanup()
-      pageTexts.push(joinPdfTextItems(content.items.map((item) => ('str' in item ? item : {}))))
+      const items = content.items.map((item) => ('str' in item ? item : {}))
+      if (pageNumber === 1) firstPageTitle = prominentPdfTitle(items)
+      pageTexts.push(joinPdfTextItems(items))
     }
     const extracted = parseLiteraturePdfMetadata(
       info as Record<string, unknown>,
       pageTexts.join('\n').slice(0, 30_000)
     )
-    return { ...fallback, ...extracted }
+    const draft = { ...fallback, ...extracted }
+    if (!draft.identifiers.some(({ scheme }) => scheme === 'doi') && document.numPages > 2) {
+      try {
+        const page = await document.getPage(document.numPages)
+        let text: string
+        try {
+          const content = await page.getTextContent()
+          text = joinPdfTextItems(content.items.map((item) => ('str' in item ? item : {}))).slice(
+            -4_000
+          )
+        } finally {
+          page.cleanup()
+        }
+        const doi = PUBLICATION_DOI_PATTERN.exec(text)?.[1]
+        if (doi && firstPageTitle.length >= 20) {
+          const normalized = normalizeLiteratureIdentifierValue('doi', doi)
+          const resolved = await lookupPdfDoi(normalized)
+          // A valid DOI may belong to a cited paper. Require the complete prominent title,
+          // not the embedded Title, a substring in the abstract, or a fuzzy title match.
+          if (comparableTitle(resolved.title) === firstPageTitle) {
+            return {
+              ...draft,
+              url: createLiteratureIdentifierUrl('doi', normalized) ?? '',
+              identifiers: [
+                { scheme: 'doi', value: normalized, isPrimary: true },
+                ...draft.identifiers.map((identifier) => ({ ...identifier, isPrimary: false }))
+              ]
+            }
+          }
+        }
+      } catch {
+        // Optional tail parsing or lookup must not discard the local metadata already read.
+      }
+    }
+    return draft
   } finally {
     await document.destroy()
   }

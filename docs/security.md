@@ -61,6 +61,63 @@ practices govern how it processes that content.
 Treat project content, model output, downloaded files, Skills, Specialist packages,
 custom Connectors, MCP servers, and remote compute hosts as untrusted until reviewed.
 
+### Data recipients
+
+Local storage and local processes do not imply offline operation. The selected provider endpoint
+receives the message, relevant history, and attachments prepared for the task. Scenario models may
+use another provider: a fixed title model receives the first message text; a vision model receives
+an image and returns evidence that can then be sent to the main model. Review both the provider name
+and endpoint in Settings when choosing these models.
+
+Read-only Connectors still send query terms, identifiers, filters, or other tool arguments to their
+sources. Literature lookup may query several services with DOI/PMID identifiers; a metadata lookup
+is not an automatic upload of the local PDF. Remote jobs transfer the scripts and selected inputs
+needed for the job. In the Web UI, uploaded files first go to the machine running Open Science,
+which can be different from the machine running the browser.
+
+Custom remote model endpoints require HTTPS. HTTP is supported for `localhost`, IPv4 loopback, and
+IPv6 loopback; private-network addresses alone do not establish an encrypted connection. Existing
+remote HTTP configurations remain editable but cannot supply a running model until corrected.
+
+Messages and Markdown previews defer external media until the user activates it. The control shows
+the destination hosts and exposes the full URLs on hover. This permission is local to the displayed
+media and its URL set, not a permanent domain grant. After activation, media uses the browser's
+network stack and normal redirect behavior; it is not routed through the Notebook domain policy.
+Mermaid image nodes are blocked before diagram rendering; use a separate Markdown image to load
+them explicitly. Ordinary diagrams remain available. Managed artifact previews retain their existing
+authorization. Import previews that disable media continue to suppress it entirely.
+
+Image understanding uses metadata-minimized derivatives. Original attachments remain intact for
+scientific provenance and explicit file/metadata analysis. Small still images are losslessly encoded
+from their decoded, oriented pixels when they fit the payload budget; larger derivatives retain the
+existing resizing/compression limits. Removing metadata does not remove identifying information
+visible in the picture or prevent an explicitly authorized file tool from reading the original.
+
+### Cancellation, deletion, and retention
+
+Stopping a request can stop subsequent work or stop waiting for a response. It cannot retract bytes
+already received by a service. Pausing a batch may wait for the current item to settle. Deleting a
+local session, attachment, temporary profile, or vision cache removes that local resource; it does
+not instruct the model provider to erase its copies. Remote job file cleanup and provider-side
+deletion are separate operations and must be confirmed by the owning service.
+
+Retention, training use, and deletion guarantees depend on the selected service and account policy.
+Open Science does not infer a zero-retention guarantee from HTTPS, local models, or cancellation.
+
+### Runtime network verification
+
+The app proxy settings affect Electron sessions and the environment of subsequently started
+processes. They do not change the OS proxy, reconfigure already running agent processes, or control
+a remote browser's network stack. Third-party runtime telemetry cannot be established from this
+repository's environment flags alone.
+
+Before making a runtime-specific privacy claim, test the exact runtime version in an isolated
+profile with synthetic data: startup, login, idle, send, cancel, exit, and proxy changes with both
+existing and newly started processes. Record destination origins, request categories, which process
+initiated them, and whether synthetic content was transmitted. Repeat for desktop and remote Web.
+This is an acceptance checklist, not a claim that those third-party traffic measurements have been
+completed or that all runtimes are offline.
+
 ## Local data and credentials
 
 Open Science keeps configuration and research data in local storage by default:

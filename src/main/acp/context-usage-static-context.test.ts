@@ -69,6 +69,7 @@ describe('contextUsageMcpSections', () => {
     // Network approval adds one bounded tool plus its denial/retry contract (~200 tokens).
     // Background execution adds one bounded query/cancel tool plus durable receipt and delivery
     // guidance (~450 tokens); retain the established Notebook guidance rather than trading it away.
+    // Connector loading adds ~35 tokens for the composer boundary, supported reader and stop rule.
     for (const { frameworkId, codexBridgeAliases } of frameworks) {
       const [{ text: schema }] = contextUsageMcpSections(frameworkId, {
         artifacts: false,
@@ -79,7 +80,7 @@ describe('contextUsageMcpSections', () => {
       expect(
         tokenCount(`${NOTEBOOK_SYSTEM_PROMPT_APPEND}\n${schema}`) + bashHeadroom,
         `${frameworkId}${codexBridgeAliases ? ' (bridge aliases)' : ''}`
-      ).toBeLessThanOrEqual(4_650)
+      ).toBeLessThanOrEqual(4_690)
     }
   })
 

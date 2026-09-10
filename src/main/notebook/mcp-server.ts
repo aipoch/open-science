@@ -44,6 +44,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Notebook preview is for code/results; keep explanations and diagnosis in chat.',
   'Use one `notebook_execute` per persistent Python/R cell; reuse `cellId`. For skill functions, repeat kernelSkillIds per dependent cell; call directly in code, never import. Data kernels cannot call connectors; use `repl_execute` only for Host SDK operations reported by `host.capabilities()` and `host.help()`. Move large cross-kernel data through `process.env.OPEN_SCIENCE_HANDOFF_DIR`.',
   HOST_SDK_DISCOVERY_GUIDANCE,
+  'Connector documents: use loaded text or the framework Skill loader, never Shell/REPL. `host.skills` manages authored Skills. If neither is available, stop and report.',
   '`manage_environments` creates separate runtimes and returns `created.runtimeId`; bind/switch them and move data with files.',
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
@@ -742,7 +743,9 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
   const hint =
     importedKernelSkillId && requestedKernelSkillIds.includes(importedKernelSkillId)
       ? `Kernel Skill "${importedKernelSkillId}" is injected by kernelSkillIds and is not a Python package. Remove the "${missingModule}" import, keep kernelSkillIds: ${JSON.stringify(requestedKernelSkillIds)}, call its exported functions directly, and retry. Do not install ${missingModule}.`
-      : undefined
+      : record.kernelKind === 'bash' && record.status === 'failed'
+        ? 'For a denied path or unavailable runtime, stop dependent work; do not retry through another runtime or request unsupported escalation. Load Skill documents with the current framework Skill loader. For other command errors, correct the cause before retrying once.'
+        : undefined
   const invalidatedRuns = Array.isArray(record.invalidatedRuns)
     ? record.invalidatedRuns.slice(0, 50).flatMap((value) => {
         const invalidated = asRecord(value)

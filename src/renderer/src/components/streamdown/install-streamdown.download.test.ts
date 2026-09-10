@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render } from '@testing-library/react'
+import { createElement } from 'react'
 
 import { installStreamdown } from './install-streamdown'
+import { PresentedAgentMarkdown } from './AgentMarkdown'
 
 let uninstall: (() => void) | undefined
 let saveBlobFile: ReturnType<typeof vi.fn>
@@ -90,6 +93,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  cleanup()
   uninstall?.()
   uninstall = undefined
   document.body.innerHTML = ''
@@ -98,6 +102,27 @@ afterEach(() => {
 })
 
 describe('Streamdown blob download bridge', () => {
+  it('downloads an approved Markdown image through the existing save bridge', async () => {
+    const fetchImage = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      blob: async () => new Blob(['image bytes'], { type: 'image/png' })
+    } as Response)
+    const view = render(
+      createElement(PresentedAgentMarkdown, {
+        content: '![Figure](https://image.invalid/figure.png)'
+      })
+    )
+    expect(fetchImage).not.toHaveBeenCalled()
+    fireEvent.click(view.getByRole('button', { name: /image.invalid/ }))
+    fireEvent.load(view.container.querySelector('img')!)
+    fireEvent.click(view.getByRole('button', { name: 'Download image' }))
+    await vi.waitFor(() => expect(saveBlobFile).toHaveBeenCalledOnce())
+    expect(fetchImage).toHaveBeenCalledWith('https://image.invalid/figure.png')
+    expect(saveBlobFile.mock.calls[0]?.[0]).toMatchObject({
+      suggestedName: 'figure.png',
+      mimeType: 'image/png'
+    })
+  })
+
   it('saves a blob created synchronously by the current Streamdown button action', async () => {
     const root = document.createElement('div')
     root.className = 'agent-markdown-root'

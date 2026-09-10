@@ -393,7 +393,7 @@ const setWindowsRuntimeAccess = async (
 
 const windowsLaunch = (
   request: WindowsLaunchRequest
-): { argv: string[]; env: NodeJS.ProcessEnv } => {
+): { argv: string[]; env: NodeJS.ProcessEnv; windowsJobObject: true } => {
   const shell: WindowsShell =
     typeof request.shell === 'object'
       ? request.shell
@@ -439,6 +439,7 @@ const windowsLaunch = (
     delete env.OPEN_SCIENCE_MCP_RPC_SOCKET_PATH
   }
   return {
+    windowsJobObject: true,
     argv: [
       request.hostPath,
       'launch',

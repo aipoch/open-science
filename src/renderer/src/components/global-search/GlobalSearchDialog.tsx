@@ -622,18 +622,18 @@ export const GlobalSearchDialog = ({
               />
               {query && (
                 <Button
-                  variant="ghost"
-                  size="icon"
+                  variant="secondary"
+                  size="sm"
                   aria-label={t('Clear search')}
                   title={t('Clear search')}
-                  className="size-7"
+                  className="rounded-full bg-bg-200 px-3 text-xs text-muted-foreground hover:bg-bg-300 hover:text-foreground"
                   onClick={() => {
                     setQuery('')
                     resetSelection()
                     inputRef.current?.focus()
                   }}
                 >
-                  <X className="size-4" />
+                  {t('Clear')}
                 </Button>
               )}
               <Dialog.Close asChild>

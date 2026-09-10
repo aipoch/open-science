@@ -4920,6 +4920,10 @@
     "Verifying installer…": "インストーラーを検証中…",
     "Open Science couldn't display this page": "Open Science でこのページを表示できませんでした",
     "Background work may still be running. Reloading may lose unsaved changes on this page.": "バックグラウンドの処理は引き続き実行されている可能性があります。再読み込みすると、このページの未保存の変更が失われる可能性があります。",
-    "Reload page": "ページを再読み込み"
+    "Reload page": "ページを再読み込み",
+    "Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.": "リモートモデルの URL には HTTPS が必要です。HTTP は localhost またはループバックアドレスでのみ使用できます。",
+    "Load media from {{domains}}": "{{domains}} からメディアを読み込む",
+    "Images in Mermaid diagrams are blocked": "Mermaid 図内の画像はブロックされています",
+    "Use a separate Markdown image to load it explicitly.": "個別の Markdown 画像を使って明示的に読み込んでください。"
   }
 }

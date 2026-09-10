@@ -71,3 +71,47 @@ it('allows a small catalog write while a large library search is running', async
     await rm(root, { recursive: true, force: true })
   }
 }, 120000)
+
+it.each([false, true])(
+  'waits for a valid read transaction before writing (notifications: %s)',
+  async (notify) => {
+    const root = await mkdtemp(join(tmpdir(), 'literature-transaction-wait-'))
+    const client = createProjectDbClient(root)
+    try {
+      await migrateApplicationDatabase(client)
+      const events: unknown[] = []
+      const catalog = new LiteratureCatalog(
+        async () => client,
+        undefined,
+        undefined,
+        undefined,
+        notify ? (event) => events.push(event) : undefined
+      )
+      let ready!: () => void
+      const started = new Promise<void>((resolve) => {
+        ready = resolve
+      })
+      // Match the single-connection search: a valid read may outlast Prisma's 2s acquire default.
+      const read = client.$transaction(
+        async (transaction) => {
+          await transaction.$queryRaw`SELECT 1`
+          ready()
+          await new Promise((resolve) => setTimeout(resolve, 2500))
+        },
+        { timeout: 30_000 }
+      )
+      await started
+      const write = catalog.transact({
+        kind: 'create-item',
+        item: literatureItemInputSchema.parse({ itemType: 'book', title: 'Queued reference' })
+      })
+      const results = await Promise.allSettled([read, write])
+      expect(results.map(({ status }) => status)).toEqual(['fulfilled', 'fulfilled'])
+      expect(await client.literatureItem.count()).toBe(1)
+      expect(events).toHaveLength(notify ? 1 : 0)
+    } finally {
+      await client.$disconnect()
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)

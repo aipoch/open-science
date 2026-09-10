@@ -716,6 +716,12 @@ describe('AgentBackendResolver configured and explicit targets', () => {
 
     expect(harness.ensureCodexSubscriptionHome).toHaveBeenCalledWith('https')
     expect(backend.codexSubscriptionTransport).toBe('https')
+    expect(backend.sessionOptions).toMatchObject({
+      [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+        root: join('/storage', 'codex-subscription'),
+        skillsDirectory: join('/storage', 'codex-subscription', 'skills')
+      }
+    })
   })
 
   it.each(['https', 'websocket'] as const)(
@@ -1948,6 +1954,14 @@ describe('AgentBackendResolver bridge predicates', () => {
       expect(developerInstructions).toContain('Never guess a connector server or method name')
       expect(developerInstructions).not.toContain('search_articles')
       expect(backend.persistentSystemPrompt).toBe(developerInstructions)
+      expect(backend.sessionOptions).toMatchObject({
+        [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+          root: join('/storage', 'codex'),
+          skillsDirectory: join('/storage', 'codex', 'skills'),
+          command: process.execPath,
+          entryPath: '/app/main.js'
+        }
+      })
       expect(backend.systemPromptAppends).toBeUndefined()
       await backend.responsesBridgeLease?.release()
     }

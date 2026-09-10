@@ -15,6 +15,7 @@ files:
   # the app to multiple GB AND leaking local agent state into the shipped bundle.
   - '!.claude{,/**/*}'
   - '!.codex{,/**/*}'
+  - '!**/{.worktree,.worktrees,.codegraph,.agents}{,/**/*}'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
@@ -184,13 +185,9 @@ deb:
     - bubblewrap
 npmRebuild: false
 # electron-updater feed. Win/Linux/macOS auto-update reads app-update.yml (generated from this block)
-# and fetches its feed from <url>. Win/Linux use the default `latest` channel (latest.yml /
-# latest-linux.yml). macOS builds override the channel to the arch at build time (see build.yml), so
-# each arch polls its own `${arch}-mac.yml` — arm64 and x64 build on separate runners and would
-# otherwise collide on one latest-mac.yml. Mac in-place update needs a Developer ID signature (now
-# configured) and the feed is regenerated post-staple in notarize-mac.yml. The GitHub Release remains
-# the human-facing download source, populated by release.yml — electron-builder runs with --publish
-# never, so this block only shapes app-update.yml + the feed files, it does not upload anything.
+# and fetches its feed from <url>. Each installed app uses the default latest channel. macOS
+# builds preserve uniquely named per-arch feed artifacts; release.yml merges them into latest-mac.yml
+# after optional notarization. --publish never means this configuration does not upload anything.
 publish:
   provider: generic
   url: https://statics.aipoch.com/open-science/app/stable

@@ -143,3 +143,18 @@ it('partitions the selected Electron suites across three shards without losing o
     expect(actual.sort()).toEqual(expected.sort())
   }
 }, 90_000)
+
+it.each(['win32', 'darwin', 'linux'] as const)(
+  'runs browser tests in exactly one Chromium project on %s',
+  async (platform) => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: platform })
+    try {
+      vi.resetModules()
+      const config = (await import('./playwright.browser.config')).default
+      expect(config.projects).toEqual([{ name: 'chromium', use: { browserName: 'chromium' } }])
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original })
+    }
+  }
+)

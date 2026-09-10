@@ -18,7 +18,7 @@ vi.mock('../logger', async (importOriginal) => {
 import type { AcpCreateSessionResponse } from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
-import { claudeCodeFramework, opencodeFramework } from '../agent-framework'
+import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import { AcpProviderSessionAdopter } from './provider-session-adopter'
 import {
@@ -229,6 +229,40 @@ const createHarness = (
 }
 
 describe('AcpProviderSessionAdopter', () => {
+  it('rejects Codex adoption when the Specialist scope changes before publication', async () => {
+    const pending = Promise.withResolvers<ConfigurationFacts>()
+    const harness = createHarness({
+      initialBackend: {
+        framework: codexFramework,
+        backendId: 'codex',
+        session: {
+          modelRequired: false,
+          options: {
+            openScienceSkillRuntime: {
+              command: '/node',
+              entryPath: '/main.js',
+              root: '/codex',
+              skillsDirectory: '/codex/skills'
+            }
+          }
+        },
+        prompt: { systemPromptAppends: [] },
+        context: { supportsImageInput: false },
+        adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
+      },
+      configure: () => pending.promise
+    })
+    const aggregate = harness.registry.ensureAffinity('stable-app-session').aggregate
+    const adopted = harness.adopt()
+    const rejected = expect(adopted).rejects.toThrow('ACP session startup was superseded.')
+    await vi.waitFor(() => expect(harness.configure).toHaveBeenCalledOnce())
+    aggregate.setSpecialistId('restricted-specialist')
+    pending.resolve({ permissionProfile, appliedModel: undefined, configOptions: undefined })
+    await rejected
+    expect(harness.registry.lookup('stable-app-session')?.attachment).toBeUndefined()
+    expect(harness.commit).not.toHaveBeenCalled()
+    expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
+  })
   beforeEach(() => {
     vi.clearAllMocks()
   })

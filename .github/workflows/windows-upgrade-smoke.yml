@@ -13,6 +13,11 @@ on:
         type: string
         required: true
 
+      dry_run:
+        description: Run isolated baseline-selection tests without downloading or installing releases
+        type: boolean
+        default: false
+
 permissions:
   contents: read
 
@@ -22,6 +27,7 @@ concurrency:
 
 jobs:
   windows-upgrade-smoke:
+    if: ${{ !inputs.dry_run }}
     runs-on: windows-latest
     timeout-minutes: 40
     env:
@@ -106,13 +112,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           New-Item -ItemType Directory -Force previous | Out-Null
-          $releases = gh release list --exclude-drafts --exclude-pre-releases --limit 20 --json tagName
+          $stableTag = '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$'
+          if ($env:CURRENT_TAG -notmatch $stableTag) { throw "Current tag must be stable SemVer." }
+          $current = [version]$env:CURRENT_TAG.Substring(1)
+          $pages = gh api --paginate --slurp "repos/$env:GITHUB_REPOSITORY/releases?per_page=100"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $tag = ($releases | ConvertFrom-Json | Where-Object { $_.tagName -like 'v*' -and $_.tagName -ne $env:CURRENT_TAG } | Select-Object -First 1).tagName
+          $releases = @($pages | ConvertFrom-Json | ForEach-Object { $_ })
+          $eligible = @($releases | Where-Object {
+            if ($_.draft -or $_.prerelease -or $_.tag_name -notmatch $stableTag) { return $false }
+            $version = [version]$_.tag_name.Substring(1)
+            $installer = "aipoch-open-science-$version-win-x64-setup.exe"
+            $version -lt $current -and $_.assets.name -contains $installer -and
+              $_.assets.name -contains "$installer.blockmap"
+          })
+          $tag = ($eligible | Sort-Object { [version]$_.tag_name.Substring(1) } -Descending | Select-Object -First 1).tag_name
           if ([string]::IsNullOrWhiteSpace($tag)) {
             "available=false" >> $env:GITHUB_OUTPUT
             "reason=no-previous-stable-release" >> $env:GITHUB_OUTPUT
-            Write-Host "No previous stable release is available; fresh-install smoke already passed."
+            Write-Host "No eligible previous stable Windows installer is available; fresh-install smoke already passed."
             exit 0
           }
           gh release download $tag --pattern '*-win-x64-setup.exe' --pattern '*-win-x64-setup.exe.blockmap' --dir previous
@@ -199,3 +216,19 @@ jobs:
           always() && steps.previous.outputs.available == 'true' &&
           (steps.updater.outcome != 'success' || steps.installer.outcome != 'success')
         run: exit 1
+
+  baseline-dry-run:
+    if: ${{ inputs.dry_run }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout selection harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+      - name: Install test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Test actual Windows baseline selection
+        run: npx vitest run scripts/windows-upgrade-baseline.test.ts

@@ -31,6 +31,10 @@ const localizeProviderResourceMessage = (message: string, t: TFunction): string 
   switch (message) {
     case 'The provider changed while loading models. Try again.':
       return t('The provider changed while loading models. Try again.')
+    case 'Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.':
+      return t(
+        'Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.'
+      )
     case 'Base URL must be a valid HTTP or HTTPS URL.':
       return t('Base URL must be a valid HTTP or HTTPS URL.')
     case 'Base URL must not include query parameters or fragments.':

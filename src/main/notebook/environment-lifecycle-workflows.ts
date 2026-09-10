@@ -44,6 +44,7 @@ type NotebookEnvironmentLifecycleDeps = {
     target: ExplicitRuntimeRepairTarget
   ) => Promise<void> | void
   onRepairCompleted?: (language: NotebookLanguage) => Promise<void> | void
+  revokeRuntimeAccess?: (language: NotebookLanguage) => Promise<void>
 }
 
 const RUNTIME_UNAVAILABLE_MESSAGE =
@@ -148,13 +149,16 @@ const createNotebookEnvironmentLifecycle = (
           if (deps.waitForRecovery) await deps.waitForRecovery()
           await provisioner.repair(parsedLanguage, report, {
             force: true,
-            onStarting: deps.onRepairStarting
-              ? () =>
-                  deps.onRepairStarting?.(
-                    parsedLanguage,
-                    explicitRuntimeRepairTarget(parsedLanguage, runtimeIdentity)
-                  )
-              : undefined,
+            onStarting:
+              deps.onRepairStarting || deps.revokeRuntimeAccess
+                ? async () => {
+                    await deps.onRepairStarting?.(
+                      parsedLanguage,
+                      explicitRuntimeRepairTarget(parsedLanguage, runtimeIdentity)
+                    )
+                    await deps.revokeRuntimeAccess?.(parsedLanguage)
+                  }
+                : undefined,
             onVerified: () => deps.onRepairCompleted?.(parsedLanguage)
           })
         }),

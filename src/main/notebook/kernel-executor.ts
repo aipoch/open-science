@@ -442,6 +442,9 @@ const helperInitializationError = (
 // as independent processes; the requested kind never triggers a restart of another.
 class NotebookKernelExecutor implements NotebookExecutor {
   private readonly procs = new Map<ProcessKey, ProcState>()
+  // A dead admission wrapper alone does not prove native Job Object teardown. Its private IPC
+  // acknowledgement is sent only after the sandbox host exits; workload stdio cannot forge it.
+  private readonly exitedWindowsJobs = new WeakSet<ChildProcessWithoutNullStreams>()
   // In-flight process-tree teardowns, keyed by the process key of the proc being reaped. A dropped
   // proc's tree is killed asynchronously; ensureProc awaits any pending teardown for a key before
   // spawning its replacement, so two live process trees for the SAME (kind, env) never briefly coexist.
@@ -995,7 +998,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
         : {})
     }
     let child: ChildProcessWithoutNullStreams
+    const windowsJobObject = this.platform === 'win32' && sandboxed?.windowsJobObject === true
     try {
+      // The first three descriptors remain pipes even when the fourth carries a token or IPC.
       child = spawn(spawnExecutable, spawnArgs, {
         cwd: spawnCwd,
         env: effectiveSpawnEnv,
@@ -1004,19 +1009,32 @@ class NotebookKernelExecutor implements NotebookExecutor {
         // Windows descendants are contained by the sandbox host's kill-on-close Job Object and the
         // taskkill /T fallback used by terminateProcessTree.
         detached: this.platform !== 'win32',
-        ...(rpcTokenFileDescriptor ? { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] } : {})
-      })
+        ...(rpcTokenFileDescriptor
+          ? { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] }
+          : windowsJobObject && ownershipIntent
+            ? { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] }
+            : {})
+      }) as ChildProcessWithoutNullStreams
     } catch (error) {
       if (ownershipIntent) this.processLifecycle?.abandonSpawn(ownershipIntent)
       sandboxed?.cleanup()
       throw error
     }
+    if (windowsJobObject) {
+      if (ownershipIntent) {
+        child.on('message', (message) => {
+          if (message === 'kernel-child-exited') this.exitedWindowsJobs.add(child)
+        })
+      } else {
+        // Without durable admission the child handle addresses the native sandbox host itself.
+        child.once('exit', () => this.exitedWindowsJobs.add(child))
+      }
+    }
     if (this.platform !== 'win32') registerOwnedPosixProcessGroup(child)
     let ownershipReceipt: KernelProcessReceipt | undefined
     const cleanupFailedSpawn = async (): Promise<void> => {
-      const result = await terminateProcessTree(child)
-      if (ownershipReceipt) this.processLifecycle?.complete(ownershipReceipt, result.reaped)
-      else if (ownershipIntent && result.reaped) {
+      const result = await this.killChild(child, ownershipReceipt)
+      if (!ownershipReceipt && ownershipIntent && result.reaped) {
         this.processLifecycle?.abandonSpawn(ownershipIntent)
       }
       sandboxed?.cleanup()
@@ -1494,7 +1512,12 @@ class NotebookKernelExecutor implements NotebookExecutor {
     child: ChildProcessWithoutNullStreams,
     ownershipReceipt?: KernelProcessReceipt
   ): Promise<ProcessTreeKillResult> {
-    const result = await terminateProcessTree(child)
+    const jobExited = (): boolean =>
+      this.exitedWindowsJobs.has(child) && (child.exitCode !== null || child.signalCode !== null)
+    const result = jobExited() ? { reaped: true } : await terminateProcessTree(child)
+    // Native exit can race a taskkill of the admission wrapper. Its acknowledgement remains
+    // authoritative even when taskkill reports that the wrapper's PID has already disappeared.
+    if (jobExited()) result.reaped = true
     if (ownershipReceipt) this.processLifecycle?.complete(ownershipReceipt, result.reaped)
     child.removeAllListeners('exit')
     child.removeAllListeners('close')
