@@ -10,7 +10,7 @@ try {
         param([int]$Port)
         $reservation.listener = [Net.Sockets.UdpClient]::new()
         $reservation.listener.ExclusiveAddressUse = $true
-        $reservation.listener.Client.Bind([Net.IPEndPoint]::new([Net.IPAddress]::Loopback, $Port))
+        $reservation.listener.Client.Bind([Net.IPEndPoint]::new([Net.IPAddress]::Any, $Port))
         Write-Host "[regression] exclusively bound UDP port $Port; TCP gateway remains available"
       }
     } catch {
