@@ -98,7 +98,7 @@ class IpcHandoffLifecycleClient implements HandoffLifecycleEventSource {
 
   async load(sessionId: string): Promise<void> {
     const api = this.getApi()
-    if (!api) return
+    if (!api || typeof api.getHandoffEvents !== 'function') return
 
     const retained = await api.getHandoffEvents(sessionId)
     this.merge(sessionId, retained.map(toHandoffEvent))
@@ -106,7 +106,8 @@ class IpcHandoffLifecycleClient implements HandoffLifecycleEventSource {
 
   async retry(request: HandoffRetryRequest): Promise<void> {
     const api = this.getApi()
-    if (!api) throw new Error('Handoff lifecycle API is unavailable')
+    if (!api || typeof api.retryHandoff !== 'function')
+      throw new Error('Handoff lifecycle API is unavailable')
     const event = [...this.getEvents(request.sessionId)]
       .reverse()
       .find((candidate) => candidate.provenance.originatingTurnId === request.originatingTurnId)
@@ -117,7 +118,7 @@ class IpcHandoffLifecycleClient implements HandoffLifecycleEventSource {
   private ensureChangedListener(): void {
     if (this.stopChangedListener) return
     const api = this.getApi()
-    if (!api) return
+    if (!api || typeof api.onHandoffLifecycleEvent !== 'function') return
     this.stopChangedListener = api.onHandoffLifecycleEvent((event) => {
       if (event.removed) {
         this.remove(event.sessionId, event.id)
