@@ -572,6 +572,11 @@ export class AgentRuntimeManager {
     signal?: AbortSignal
   ): Promise<T> {
     this.shutdownAbort.signal.throwIfAborted()
+    // The install's own post-install detection is allowed; independent detection must not probe
+    // files being replaced or publish an older snapshot after the installer commits its result.
+    if (this.activeInstallId !== undefined && signal !== this.activeInstallAbort?.signal) {
+      throw new Error('Runtime installation is in progress. Wait before detecting agents.')
+    }
     const operationSignal = signal
       ? AbortSignal.any([signal, this.shutdownAbort.signal])
       : this.shutdownAbort.signal
@@ -826,6 +831,15 @@ export class AgentRuntimeManager {
       return { installId, ok: false, error: 'Another install is already in progress.' }
     }
 
+    // Check synchronously before claiming install admission. activeDetections includes repository
+    // writes, so replacement cannot race a probe or its delayed snapshot commit.
+    if (this.activeDetections.size > 0) {
+      return {
+        installId,
+        ok: false,
+        error: 'Runtime detection is in progress. Retry after it finishes.'
+      }
+    }
     const controller = new AbortController()
     const completion = Promise.withResolvers<Error | undefined>()
     let cleanupFailure: Error | undefined

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { createReadStream, type Dirent } from 'node:fs'
 import {
   chmod,
@@ -122,10 +122,10 @@ const codexPathKey = (path: string): string => {
   return process.platform === 'win32' ? absolute.toLowerCase() : absolute
 }
 
-export const spawnCodexWithInstallAdmission = (
+export const spawnCodexWithInstallAdmission = <T extends ChildProcess>(
   paths: readonly string[],
-  spawnProcess: () => ChildProcessWithoutNullStreams
-): ChildProcessWithoutNullStreams => {
+  spawnProcess: () => T
+): T => {
   const keys = [...new Set(paths.map(codexPathKey))]
   if (keys.some((key) => codexInstallPaths.has(key))) {
     throw new Error(
