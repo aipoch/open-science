@@ -1,6 +1,6 @@
 import { expect } from '@playwright/test'
 import type { AxeResults } from 'axe-core'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
@@ -198,22 +198,28 @@ test('explains disabled revision navigation while a turn is running', async ({ a
 
   const previous = conversation.getByRole('button', { name: 'Previous message revision' })
   await expect(previous).toBeEnabled()
+  const releaseFile = resolve(await app.createTestDirectory('revision-hint'), 'release')
   await page
     .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Run the ordered slow tool journey.')
+    .fill(`Hold the queue until the reveal finishes. Release file: ${JSON.stringify(releaseFile)}`)
   await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.getByTestId('composer-queue-submit')).toBeVisible()
-  await expect(previous).toBeDisabled()
-  const explanation = 'Message revisions are unavailable while this session is busy or blocked.'
-  const trigger = previous.locator('..')
-  // Scroll back like a reader before focusing: a focus-induced scroll dismisses Radix tooltips.
-  await conversation.hover()
-  await page.mouse.wheel(0, -100_000)
-  await trigger.hover()
-  await trigger.focus()
-  await expect(page.getByRole('tooltip', { name: explanation })).toBeVisible()
-  await page.screenshot({ path: testInfo.outputPath('revision-navigation-running.png') })
-  await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText('2/2')
+  try {
+    await expect(page.getByTestId('composer-queue-submit')).toBeVisible()
+    await expect(previous).toBeDisabled()
+    const explanation = 'Message revisions are unavailable while this session is busy or blocked.'
+    const trigger = previous.locator('..')
+    // Scroll back like a reader before focusing: a focus-induced scroll dismisses Radix tooltips.
+    await conversation.hover()
+    await page.mouse.wheel(0, -100_000)
+    await trigger.hover()
+    await trigger.focus()
+    await expect(page.getByRole('tooltip', { name: explanation })).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('revision-navigation-running.png') })
+    await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText('2/2')
+  } finally {
+    // Release even after an assertion failure so the fixture can close the active session.
+    await writeFile(releaseFile, '')
+  }
   await expect(previous).toBeEnabled()
   await previous.click()
   await expect(conversation.getByText(USER_MESSAGE, { exact: true })).toBeVisible()
