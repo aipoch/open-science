@@ -1,3 +1,4 @@
+import { computeQueueBlockedLabel } from '@/lib/compute/queue-blocked-label'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Zap, ChevronRight } from 'lucide-react'
@@ -36,7 +37,7 @@ export function RemoteJobRow({ job, onOpen }: RemoteJobRowProps): React.JSX.Elem
     if (job.cancellation_status === 'cancelled') return t('Cancelled')
     switch (job.status) {
       case 'queued':
-        return t('Waiting in queue')
+        return computeQueueBlockedLabel(job.queue_blocked_reason, t) ?? t('Waiting in queue')
       case 'submitted':
         return t('Submitting')
       case 'running':
@@ -73,7 +74,8 @@ export function RemoteJobRow({ job, onOpen }: RemoteJobRowProps): React.JSX.Elem
         {intentDisplay}
       </span>
       <span
-        className="text-[11px] shrink-0 tabular-nums"
+        className="text-[11px] max-w-[50%] truncate tabular-nums"
+        title={statusLabel}
         style={{ color: 'var(--session-waiting)' }}
       >
         {statusLabel}

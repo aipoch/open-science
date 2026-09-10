@@ -398,6 +398,8 @@ export type ComputeJobCancellationStatus = 'cancelling' | 'cancelled'
 // via JSON RPC). Timestamps are epoch milliseconds; JSON columns are parsed at the repository
 // boundary to their respective types.
 export type ComputeJob = {
+  // Read-side scheduling diagnostics; never persisted as a Job status.
+  queue_blocked_reason?: ComputeQueueBlockedReason
   job_id: string
   provider_id: string
   shape: string
@@ -458,6 +460,8 @@ export type ComputeJob = {
 // Lightweight job status shape returned by attach_job().status() and the job_status computeCall op.
 // Only the fields needed for the agent to track job progress are included.
 export type JobStatusResult = {
+  // Read-side scheduling diagnostics; never persisted as a Job status.
+  queue_blocked_reason?: ComputeQueueBlockedReason
   job_id: string
   scheduler_job_id?: string
   error_code?: string
@@ -481,6 +485,8 @@ export type JobStatusResult = {
 // File lists are workspace-relative paths (e.g. "hpc/<jobId>/featured/out.result").
 // In non-terminal states or before harvest completes, file fields are empty arrays.
 export type JobResult = {
+  // Read-side scheduling diagnostics; never persisted as a Job status.
+  queue_blocked_reason?: ComputeQueueBlockedReason
   job_id: string
   // Notebook Run that submitted this job. Pass it as producerRunId when publishing a harvested
   // local file so cross-turn provenance resolves to the actual producing execution.
@@ -517,7 +523,18 @@ export type JobResult = {
 
 // Result returned by submit_job (immediate, before dispatch completes). remote_workdir is
 // deterministically computed from the job_id before any SSH connection is made.
+export type ComputeQueueBlockedReason =
+  | 'runtime_stopped'
+  | 'session_policy_unavailable'
+  | 'session_policy_identity_conflict'
+  | 'session_policy_missing'
+  | 'session_policy_deleted'
+  | 'session_policy_unsupported_version'
+  | 'session_policy_invalid'
+
 export type SubmitJobResult = {
+  // Read-side scheduling diagnostics; never persisted as a Job status.
+  queue_blocked_reason?: ComputeQueueBlockedReason
   job_id: string
   provider_id: string
   status: 'queued' | 'submitted'
@@ -548,6 +565,8 @@ export type ComputeJobErrorCode =
 // Phase 3b: notification payload fields (spec §11.3) are embedded here so the renderer can
 // display the done card and decide whether to trigger an analysis turn (issue 05/07).
 export type JobSummary = {
+  // Read-side scheduling diagnostics; never persisted as a Job status.
+  queue_blocked_reason?: ComputeQueueBlockedReason
   job_id: string
   provider_id: string
   // Human-readable host name, denormalized from ComputeHost.displayName at query time.

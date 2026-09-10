@@ -474,11 +474,10 @@ describe('session persistence IPC handlers', () => {
         undefined,
         undefined,
         {
-          load: async () => {
-            if (!canReconcileSessionAbsences(catalog()))
-              throw new Error('Session concurrency limits could not be restored authoritatively.')
-            return [['new-session', 1]]
-          },
+          resolve: async () =>
+            corrupt
+              ? { status: 'blocked', reason: 'unavailable' }
+              : { status: 'ready', limit: 1, revision: 0 },
           save: async () => undefined
         }
       )
@@ -501,7 +500,7 @@ describe('session persistence IPC handlers', () => {
           await handlers[read]()
         }
       }
-      await expect(manager.startQueueReconciliation()).rejects.toThrow('could not be restored')
+      await manager.startQueueReconciliation()
       await readCatalog()
       await manager.reconcileQueuedJobs()
       expect(dispatch).not.toHaveBeenCalled()
