@@ -2938,6 +2938,63 @@ describe('startWebHttpServer', () => {
     expect(taskContext?.isAuthorizationCurrent()).toBe(false)
   })
 
+  it.each(['success', 'error'] as const)(
+    'TB-05 suppresses a delayed remote %s after revocation',
+    async (outcome) => {
+      let current = true
+      let started!: () => void
+      const entered = new Promise<void>((resolve) => {
+        started = resolve
+      })
+      let finish!: () => void
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      const invoke = vi.fn(async () => {
+        started()
+        await pending
+        if (outcome === 'error')
+          throw new ApplicationCommandError('command-failed', 'private-result-marker')
+        return { content: 'private-result-marker' }
+      })
+      const server = await startTestWebHttpServer({
+        host: '127.0.0.1',
+        port: 0,
+        token: 'local-token',
+        staticRoot: '/unused',
+        rpc: { channels: () => ['projects:list'], invoke },
+        externalAccess: {
+          authorizeHttp: async () => ({
+            kind: 'authorized',
+            principalId: 'paired-browser',
+            isCurrent: () => current
+          }),
+          authorizeWebSocket: async () => undefined
+        },
+        bootstrap: {
+          appName: 'Open Science',
+          appVersion: '0.0.0',
+          configRoot: '/fake/root',
+          platform: 'test',
+          versions: { electron: '1', chrome: '1', node: '1' }
+        }
+      })
+      servers.push(server)
+      const responsePromise = fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+      })
+      await entered
+      current = false
+      finish()
+      const response = await responsePromise
+      expect.soft(response.status).toBe(401)
+      expect(await response.text()).not.toContain('private-result-marker')
+      expect(invoke).toHaveBeenCalledOnce()
+    }
+  )
+
   it('keeps host-management RPC local while preserving the local Web client', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)

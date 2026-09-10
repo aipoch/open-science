@@ -1,3 +1,5 @@
+import * as filesystem from 'node:fs/promises'
+import * as runtimePaths from './runtime-paths'
 import { existsSync } from 'node:fs'
 import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -7,6 +9,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { operationJournalPath, RuntimeOperationJournal } from './operation-journal'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
 import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, pythonBin, rBin } from './runtime-paths'
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rm: vi.fn(actual.rm) }
+})
 
 let root: string | undefined
 
@@ -565,3 +572,122 @@ describe('NotebookRecoveryCoordinator', () => {
     await expect(coordinator.recover()).rejects.toThrow(/disposed/)
   })
 })
+
+it('blocks an interrupted install until its failed repair marker can be committed', async () => {
+  const runtimeRoot = await createRuntimeRoot()
+  const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+  const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+  await journal.begin({
+    operationId: 'repair-write-failure',
+    kind: 'install',
+    runtimeId: DEFAULT_PY_ENV,
+    phase: 'install-python',
+    startedAt: 100,
+    targetPath: prefix
+  })
+  const failure = Object.assign(new Error('repair registry write denied'), { code: 'EACCES' })
+  const marker = vi.spyOn(runtimePaths, 'addRepairRequired').mockImplementationOnce(() => {
+    throw failure
+  })
+  const recovery = new NotebookRecoveryCoordinator(runtimeRoot)
+  try {
+    await recovery.recover()
+    expect(marker).toHaveBeenCalledTimes(1)
+    expect(await journal.pending()).toHaveLength(1)
+    expect(
+      runtimePaths.isRepairRequired(
+        runtimeRoot,
+        runtimePaths.managedRepairRegistryKey(DEFAULT_PY_ENV, 'python')
+      )
+    ).toBe(false)
+    expect(recovery.isPrefixBlocked(prefix)).toBe(true)
+    await recovery.ensureReady()
+    expect(await journal.pending()).toHaveLength(0)
+    expect(
+      runtimePaths.isRepairRequired(
+        runtimeRoot,
+        runtimePaths.managedRepairRegistryKey(DEFAULT_PY_ENV, 'python')
+      )
+    ).toBe(true)
+    expect(recovery.isPrefixBlocked(prefix)).toBe(false)
+  } finally {
+    marker.mockRestore()
+  }
+})
+
+it.each(['python', 'r', 'external'] as const)(
+  'retains only the affected %s install identity when journal completion fails',
+  async (kind) => {
+    const runtimeRoot = await createRuntimeRoot()
+    const language = kind === 'r' ? 'r' : 'python'
+    const runtimeId =
+      kind === 'external' ? join(runtimeRoot, 'external-python') : `analysis-${kind}`
+    const prefix = kind === 'external' ? undefined : envPrefix(runtimeRoot, runtimeId)
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'incomplete-commit',
+      kind: 'install',
+      runtimeId,
+      phase: `install-${language}`,
+      startedAt: 100,
+      ...(prefix ? { targetPath: prefix } : {})
+    })
+    const complete = vi.spyOn(journal, 'complete').mockRejectedValueOnce(new Error('commit EIO'))
+    const recovery = new NotebookRecoveryCoordinator(runtimeRoot)
+    try {
+      await recovery.recover()
+      expect(await journal.pending()).toHaveLength(1)
+      expect.soft(recovery.isRuntimeIdBlocked(runtimeId)).toBe(true)
+      if (prefix) expect.soft(recovery.isPrefixBlocked(prefix)).toBe(true)
+      expect(recovery.isPrefixBlocked(envPrefix(runtimeRoot, 'unrelated'))).toBe(false)
+      expect(recovery.isRuntimeIdBlocked('unrelated')).toBe(false)
+      await recovery.ensureReady()
+      expect(await journal.pending()).toEqual([])
+      expect(recovery.isRuntimeIdBlocked(runtimeId)).toBe(false)
+    } finally {
+      complete.mockRestore()
+    }
+  }
+)
+
+it.each(['download', 'materialize'] as const)(
+  'blocks and retries an interrupted %s after its cleanup fails',
+  async (kind) => {
+    const runtimeRoot = await createRuntimeRoot()
+    const targetPath =
+      kind === 'download'
+        ? join(runtimeRoot, 'packs', '.incoming-test')
+        : envPrefix(runtimeRoot, 'analysis')
+    await mkdir(targetPath, { recursive: true })
+    const canonicalTargetPath = await filesystem.realpath(targetPath)
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'cleanup-failure',
+      kind,
+      runtimeId: 'analysis',
+      phase: kind === 'download' ? 'download' : 'create-python',
+      startedAt: 100,
+      targetPath
+    })
+    const { rm: remove } =
+      await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    const failure = vi.spyOn(filesystem, 'rm').mockImplementation(async (path, options) => {
+      if (path === targetPath || path === canonicalTargetPath)
+        throw Object.assign(new Error('cleanup denied'), { code: 'EACCES' })
+      return remove(path, options)
+    })
+    const recovery = new NotebookRecoveryCoordinator(runtimeRoot)
+    try {
+      await recovery.recover()
+      expect(await journal.pending()).toHaveLength(1)
+      expect(recovery.isPrefixBlocked(targetPath)).toBe(true)
+      expect(recovery.isPrefixBlocked(envPrefix(runtimeRoot, 'unrelated'))).toBe(false)
+      failure.mockRestore()
+      await recovery.ensureReady()
+      expect(await journal.pending()).toEqual([])
+      expect(recovery.isPrefixBlocked(targetPath)).toBe(false)
+    } finally {
+      failure.mockRestore()
+    }
+  }
+)

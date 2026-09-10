@@ -177,6 +177,7 @@ const networkApprovalRequest: AcpPermissionRequest = {
   rawInput: {
     notebookNetworkApproval: {
       hostname: 'data.example.org',
+      runtime: 'python',
       port: 443,
       reason: 'Download the dataset requested in this conversation.'
     }
@@ -288,6 +289,9 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('Connect to data.example.org?')
     expect(html).toContain('Network access')
     expect(html).toContain('Notebook code requested access to data.example.org:443.')
+    expect(html).toContain(
+      'Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.'
+    )
     expect(html).toContain('Reason: Download the dataset requested in this conversation.')
     expect(html).toContain('Details')
     expect(html).toContain('Allow once')
@@ -296,6 +300,22 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain('data-testid="extra-option"')
     expect(html).not.toContain('notebookNetworkApproval')
   })
+
+  it.each(['python', 'r', 'repl', 'bash', undefined])(
+    'TB-06 describes the existing %s execution contract',
+    (runtime) => {
+      const request = {
+        ...networkApprovalRequest,
+        rawInput: { notebookNetworkApproval: { hostname: 'data.example.org', runtime } }
+      }
+      const html = renderToStaticMarkup(
+        <PermissionApprovalControls requests={[request]} onRespond={() => undefined} />
+      )
+      expect(html.includes('even if the code changes')).toBe(
+        runtime !== undefined && runtime !== 'bash'
+      )
+    }
+  )
 
   it('renders the Allow button with the conversation copy for the session scope by default', () => {
     const html = renderControls()

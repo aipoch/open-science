@@ -79,11 +79,22 @@ Project, session, Notebook, artifact, and log content remain user-readable local
 and rely on operating-system account isolation and filesystem protection. Use full-disk
 encryption when the device or research data requires protection at rest.
 
-Open-Science's credential stores protect API keys, Connector secrets and OAuth state,
-GitHub tokens, and compute passwords with Electron `safeStorage`, backed by the operating
-system's secure storage. Those stores reject new secret writes when a secure backend is
-unavailable, including Linux's unprotected `basic_text` backend. The renderer receives
-masked or non-secret projections rather than plaintext credential values.
+By default, Open-Science protects API keys, Connector secrets and OAuth state, GitHub
+tokens, and compute passwords with Electron `safeStorage`, backed by the operating
+system's secure storage. OS mode rejects new secret writes when a secure backend is
+unavailable, including Linux's unprotected `basic_text` backend.
+
+The Linux headless backend also accepts an explicit `--credential-store=file` option.
+For settings credentials, this stores reversible `file:v1:` base64 values in private
+files; base64 is not encryption. This mode relies on operating-system account and
+filesystem protection and is never selected automatically because a vault is unavailable.
+Compute passwords still require their separate secure vault and do not use this fallback.
+The renderer receives masked or non-secret projections in either mode.
+
+Existing `enc:` values still require the OS vault. `file:v1:` values are readable only
+in explicit file mode. Legacy `plain:` values remain readable when file mode is selected
+or a secure OS vault is available; new writes never create legacy references. Selecting
+a mode does not migrate or re-encrypt existing credentials.
 
 Codex subscription authentication uses an app-owned `codex-subscription/auth.json` file
 under the configuration root and relies on operating-system account and filesystem
