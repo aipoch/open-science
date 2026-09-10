@@ -637,15 +637,17 @@ export class AcpProviderSessionResumer {
 
   assertSkillScopeRefreshSupported(): void {
     const backend = this.deps.currentBackend()
-    if (
-      backend.framework.id === 'codex' &&
-      backend.session.options?.openScienceSkillRuntime &&
-      !this.deps.supportsSessionClose()
-    ) {
+    if (backend.framework.id === 'codex' && backend.session.options?.openScienceSkillRuntime) {
+      const missingMethod = !this.deps.supportsSessionClose()
+        ? 'session/close'
+        : !this.deps.resumeCapabilityAdvertised()
+          ? 'session/resume'
+          : undefined
+      if (!missingMethod) return
       // A plain resume can keep the previous loader alive. Do not guess support or silently
       // replace persisted context when this runtime cannot refresh the thread's MCP processes.
       throw new Error(
-        'The Codex runtime does not support session/close; cannot safely refresh the Skill scope. Update the Codex runtime and retry.'
+        `The Codex runtime does not support ${missingMethod}; cannot safely refresh the Skill scope. Update the Codex runtime and retry.`
       )
     }
   }

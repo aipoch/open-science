@@ -193,7 +193,7 @@ it.runIf(Boolean(adapter && native)).each([
       await mkdir(dirname(file.path), { recursive: true })
       await writeFile(file.path, file.content)
     }
-    const child = spawn(
+    let child = spawn(
       adapter!.endsWith('.js') ? process.execPath : adapter!,
       adapter!.endsWith('.js') ? [adapter!] : [],
       {
@@ -203,6 +203,7 @@ it.runIf(Boolean(adapter && native)).each([
       }
     )
     const stderr: string[] = []
+    let persistedSessionId: string | undefined
     child.stderr.on('data', (chunk) => stderr.push(String(chunk)))
     try {
       await acp
@@ -231,6 +232,7 @@ it.runIf(Boolean(adapter && native)).each([
             await ctx
               .buildSession({ cwd: workspace, mcpServers: setup.mcpServers ?? [] })
               .withSession(async (session) => {
+                persistedSessionId = session.sessionId
                 session.prompt({
                   type: 'text',
                   text: `${setup.promptPrefix ?? ''}\nUse the genomes Connector to look up a gene.`,
@@ -323,6 +325,45 @@ it.runIf(Boolean(adapter && native)).each([
               })
           }
         )
+      if (!explicit) {
+        // A fresh adapter has no loaded local session. Verify the actual Codex close contract
+        // before resuming persisted history rather than assuming a detached close must fail.
+        await terminateProcessTree(child)
+        child = spawn(
+          adapter!.endsWith('.js') ? process.execPath : adapter!,
+          adapter!.endsWith('.js') ? [adapter!] : [],
+          {
+            cwd: workspace,
+            env: { ...process.env, ...config.env, CODEX_PATH: native! },
+            stdio: ['pipe', 'pipe', 'pipe']
+          }
+        )
+        child.stderr.on('data', (chunk) => stderr.push(String(chunk)))
+        expect(persistedSessionId).toBeTruthy()
+        await acp
+          .client({ name: 'skill-loading-restart-probe' })
+          .connectWith(
+            acp.ndJsonStream(
+              Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+              Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
+            ),
+            async (ctx) => {
+              await ctx.request(acp.methods.agent.initialize, {
+                protocolVersion: acp.PROTOCOL_VERSION,
+                clientInfo: { name: 'skill-loading-restart-probe', version: '1.0.0' },
+                clientCapabilities: {}
+              })
+              await ctx.request(acp.methods.agent.providers.set, config.providerConfiguration!)
+              await ctx.request(acp.methods.agent.session.close, { sessionId: persistedSessionId! })
+              const resumed = await ctx.request(acp.methods.agent.session.resume, {
+                sessionId: persistedSessionId!,
+                cwd: workspace,
+                mcpServers: setup.mcpServers ?? []
+              })
+              expect(resumed, stderr.join('')).toHaveProperty('modes')
+            }
+          )
+      }
       expect(requests.length).toBeGreaterThan(0)
     } finally {
       await terminateProcessTree(child)
