@@ -674,6 +674,29 @@ describe('session persistence startup', () => {
     expect(saveSession.mock.calls.at(-1)?.[0].id).toBe('session-1')
   })
 
+  it('replaces unsaved local changes with durable content when retrying a conflict', async () => {
+    const restored = createPersistedSession({ revision: 1 })
+    const latest = createPersistedSession({ revision: 2, title: 'Durable title' })
+    loadAll.mockReset().mockResolvedValue({ ...emptyLoadResult(), sessions: [latest] })
+    loadAll.mockResolvedValueOnce({ ...emptyLoadResult(), sessions: [restored] })
+    saveSession.mockRejectedValue(
+      Object.assign(new Error('Session revision conflict: expected 1, actual 2.'), {
+        code: 'session-revision-conflict'
+      })
+    )
+    await act(async () => root.render(<Probe />))
+    await act(async () =>
+      useSessionStore.getState().renameSession('session-1', 'Unsaved local title')
+    )
+    expect(useSessionStore.getState().sessions[0].title).toBe('Unsaved local title')
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-writes"]')!.click()
+    })
+    expect(useSessionStore.getState().sessions[0].title).toBe('Durable title')
+    expect(saveSession).toHaveBeenCalledOnce()
+    await expect(flushSessionPersistence()).resolves.toBeUndefined()
+  })
+
   it('reloads after a Session revision conflict instead of resending stale JSON', async () => {
     const restored = createPersistedSession({ revision: 1 })
     loadAll.mockReset().mockResolvedValue({
