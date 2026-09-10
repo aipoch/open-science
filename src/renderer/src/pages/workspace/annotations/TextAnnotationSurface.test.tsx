@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { installCssHighlightsMock, type TestHighlightRegistry } from '@/test-utils/css-highlights'
-import type { TextAnnotation } from '../../../../../shared/annotations'
+import { validateAnnotations, type TextAnnotation } from '../../../../../shared/annotations'
 import { WorkspaceToolCodeBlock } from '../WorkspaceToolCodeBlock'
 import { requestAnnotationReveal, subscribeAnnotationReveal } from './annotation-reveal'
 import { TextAnnotationSurface } from './TextAnnotationSurface'
@@ -675,6 +675,60 @@ describe('TextAnnotationSurface annotate trigger', () => {
     })
 
     expect(document.querySelector('textarea')).not.toBeNull()
+  })
+
+  it('uses Range text when Chromium adds rendered block separators to Selection text', async () => {
+    const onAdd = vi.fn((annotation: TextAnnotation) => validateAnnotations([annotation]))
+    const onError = vi.fn()
+    await act(async () =>
+      root.render(
+        <TextAnnotationSurface
+          source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+          activeAnnotations={[]}
+          onAdd={onAdd}
+          onError={onError}
+        >
+          <div data-testid="multi-block-selection">
+            <p>first block</p>
+            <p>second block</p>
+          </div>
+        </TextAnnotationSurface>
+      )
+    )
+    const target = container.querySelector<HTMLElement>('[data-testid="multi-block-selection"]')!
+    const range = document.createRange()
+    range.selectNodeContents(target)
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      configurable: true,
+      value: () =>
+        ({
+          left: 10,
+          right: 120,
+          top: 20,
+          bottom: 40,
+          width: 110,
+          height: 20,
+          x: 10,
+          y: 20,
+          toJSON: () => ({})
+        }) as DOMRect
+    })
+    expect(range.toString()).toBe('first blocksecond block')
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    vi.spyOn(selection, 'toString').mockReturnValue('first block\n\nsecond block')
+
+    await act(async () => target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+    await act(async () => annotateTrigger()?.click())
+    const confirm = Array.from(document.querySelectorAll('button'))
+      .filter((button) => button.textContent === 'Annotate')
+      .at(-1)
+    await act(async () => confirm?.click())
+
+    expect(onAdd).toHaveBeenCalledOnce()
+    expect(onAdd.mock.calls[0]?.[0].quote).toBe('first blocksecond block')
+    expect(onError).not.toHaveBeenCalled()
   })
 
   it('shows one trigger when a drag starts in one of several surfaces and ends outside it', async () => {
