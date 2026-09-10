@@ -337,9 +337,10 @@ test('projects real production-composed delegation, permission, and Stop lifecyc
   const composer = page.getByRole('textbox', { name: 'Ask anything' })
   await composer.fill(PERMISSION_PROMPT)
   await page.getByRole('button', { name: 'Send message' }).click()
-  const permissionCard = page
-    .getByTestId('permission-composer-scroll')
-    .getByTestId('permission-card')
+  const permissionCard = page.getByRole('group', {
+    name: `${PERMISSION_CHILD} permission request: Allow tool access?`,
+    exact: true
+  })
   await expect(permissionCard).toContainText('Read delegated evidence', {
     timeout: 120_000
   })
@@ -634,36 +635,39 @@ test('routes reliable Main and child messages through production Host RPC and th
     name: /asked a question\./
   })
   await expect(inlineQuestion).toContainText('Child reliable question reached Main')
-  const evidence = await page.evaluate(async (projectId) => {
-    const loaded = await window.api.sessions.loadAll()
-    const session = loaded.sessions.find((candidate) => candidate.projectId === projectId)
-    return {
-      commands: session?.runtimeContext?.delegatedWork?.messageCommands,
-      rendered: session?.conversationGraph?.messages.some((message) =>
-        message.content.includes(
-          'Main replied to the reliable child question from the root continuation.'
-        )
-      )
-    }
-  }, projectId)
-  expect(evidence.rendered).toBe(true)
-  expect(evidence.commands).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        direction: 'to_child',
-        receipt: expect.objectContaining({ status: 'accepted' })
-      }),
-      expect.objectContaining({
-        direction: 'to_parent',
-        receipt: expect.objectContaining({ status: 'accepted' })
-      }),
-      expect.objectContaining({
-        requestId: 'e2e-main-reply-to-child',
-        direction: 'to_child',
-        receipt: expect.objectContaining({ status: 'accepted' })
-      })
-    ])
-  )
+  await expect
+    .poll(() =>
+      page.evaluate(async (projectId) => {
+        const loaded = await window.api.sessions.loadAll()
+        const session = loaded.sessions.find((candidate) => candidate.projectId === projectId)
+        return {
+          commands: session?.runtimeContext?.delegatedWork?.messageCommands,
+          rendered: session?.conversationGraph?.messages.some((message) =>
+            message.content.includes(
+              'Main replied to the reliable child question from the root continuation.'
+            )
+          )
+        }
+      }, projectId)
+    )
+    .toMatchObject({
+      rendered: true,
+      commands: expect.arrayContaining([
+        expect.objectContaining({
+          direction: 'to_child',
+          receipt: expect.objectContaining({ status: 'accepted' })
+        }),
+        expect.objectContaining({
+          direction: 'to_parent',
+          receipt: expect.objectContaining({ status: 'accepted' })
+        }),
+        expect.objectContaining({
+          requestId: 'e2e-main-reply-to-child',
+          direction: 'to_child',
+          receipt: expect.objectContaining({ status: 'accepted' })
+        })
+      ])
+    })
 })
 
 test('parks an upward message on branch switch and resumes it after restart and restoration', async ({
