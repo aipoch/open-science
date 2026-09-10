@@ -1,5 +1,9 @@
 import { BrowserWindow } from 'electron'
 
+import { createLogger, errorLogFields } from './logger'
+
+const log = createLogger('renderer-broadcast')
+
 import type {
   ApplicationEventChannel,
   ApplicationEventMap,
@@ -21,7 +25,15 @@ const projectToElectron = <Channel extends ApplicationEventChannel>(
   payload: ApplicationEventMap[Channel]
 ): void => {
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(channel, payload)
+    try {
+      if (!window.isDestroyed()) window.webContents.send(channel, payload)
+    } catch (error) {
+      // Destruction can race the liveness check. One failed window must not starve its peers.
+      log.warn('Could not deliver application event to renderer', {
+        channel,
+        ...errorLogFields(error)
+      })
+    }
   }
 }
 

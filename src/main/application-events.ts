@@ -60,6 +60,7 @@ export type ApplicationEventMap = {
   'notebook:available': NotebookAvailableEvent
   'notebook:changed': NotebookChangedEvent
   'notebook-env:progress': ProvisionProgress
+  'runtime:policy-changed': undefined
   'notifications:changed': NotificationInboxChanged
   'background-result-delivery:changed': ProjectBackgroundActivityChangedEvent
   'project:created': Project

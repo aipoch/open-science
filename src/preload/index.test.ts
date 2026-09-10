@@ -491,6 +491,7 @@ describe('preload bridge — public surface inventory', () => {
       'runtime.listEnvironments',
       'runtime.listPackageCounts',
       'runtime.listPackages',
+      'runtime.onPolicyChanged',
       'runtime.pickInterpreter',
       'runtime.registerInterpreter',
       'runtime.setAgentEnvironmentCreationEnabled',

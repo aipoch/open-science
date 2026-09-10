@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ElectronApplication } from 'playwright'
@@ -17,6 +17,8 @@ import {
   type ElectronProcessMetric,
   type RuntimeResourceSample
 } from './runtime-resource-profiler'
+
+vi.mock('node:fs/promises', { spy: true })
 
 const processEntry = (overrides: Partial<ProcessSnapshotEntry> = {}): ProcessSnapshotEntry => ({
   pid: 10,
@@ -46,6 +48,27 @@ const electronMetric = (overrides: Partial<ElectronProcessMetric> = {}): Electro
 })
 
 describe('runtime resource profiler', () => {
+  it.each(['ENOENT', 'EACCES'])('handles a storage stat %s during sampling', async (code) => {
+    const root = await mkdtemp(join(tmpdir(), 'resource-stat-race-'))
+    try {
+      await mkdir(join(root, 'sessions'))
+      await writeFile(join(root, 'sessions', 'session.json.tmp'), 'pending write')
+      // A file listed by readdir may be renamed away before stat; model the filesystem result
+      // at that existing I/O boundary without adding a production test hook.
+      const error = Object.assign(new Error(code), { code })
+      vi.mocked(stat).mockRejectedValueOnce(error)
+      const snapshot = readRuntimeStorageSnapshot(root)
+      if (code === 'ENOENT') {
+        await expect(snapshot).resolves.toMatchObject({ temporaryFileCount: 0, temporaryBytes: 0 })
+      } else {
+        await expect(snapshot).rejects.toBe(error)
+      }
+    } finally {
+      vi.mocked(stat).mockRestore()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('calculates external-process CPU deltas and resets identity after PID reuse', () => {
     const tracker = new ProcessCpuTracker()
     expect(tracker.observe(processEntry({ kind: 'agent' }), 1_000)).toEqual({ identity: '10:1' })

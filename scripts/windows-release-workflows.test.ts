@@ -658,6 +658,13 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
             description: 'Release tag to mirror (e.g. v0.1.2)',
             required: true
           },
+          mode: {
+            description: 'Backfill versioned files only, or promote the stable channel',
+            required: true,
+            type: 'choice',
+            options: ['backfill', 'promote'],
+            default: 'backfill'
+          },
           dry_run: {
             description: 'Run local release transforms without AWS credentials or uploads',
             required: false,
@@ -694,8 +701,9 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(stepNames.indexOf('Backfill historical Windows blockmaps')).toBeGreaterThan(
       configureIndex
     )
-    expect(stepNames.indexOf('Upload version.json')).toBeGreaterThan(configureIndex)
-    expect(stepNames.indexOf('Upload update feed to channel root')).toBeGreaterThan(configureIndex)
+    expect(findStep(mirror, 'Sync installers to versioned path').run).toBe(
+      'node scripts/publish-update-channel.mjs'
+    )
     const historical = findStep(mirror, 'Collect historical Windows blockmaps')
     expect(historical.run).toContain('gh api --paginate')
     expect(historical.run).toContain('> "$blockmap_index"')
@@ -710,9 +718,7 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
       'Configure AWS credentials',
       'Collect historical Windows blockmaps',
       'Backfill historical Windows blockmaps',
-      'Sync installers to versioned path',
-      'Upload version.json',
-      'Upload update feed to channel root'
+      'Sync installers to versioned path'
     ]) {
       expect(findStep(mirror, sideEffectStep).if).toBe('${{ !inputs.dry_run }}')
     }

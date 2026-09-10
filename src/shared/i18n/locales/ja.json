@@ -4877,6 +4877,10 @@
     "Recheck saved conversations": "保存済みの会話を再確認",
     "Some changes have not been saved.": "一部の変更が保存されていません。",
     "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "1回のみ許可は、コードが変更されても、このランタイムでの次の実行に適用されます。その実行中は、このドメインへの複数の接続が許可されます。",
-    "Next execution in this runtime": "このランタイムでの次の実行"
+    "Next execution in this runtime": "このランタイムでの次の実行",
+    "Research work is still running. Stop it before restarting to update.": "研究タスクがまだ実行中です。停止してから再起動して更新してください。",
+    "Subagents are still running. Return to their tasks and stop them before restarting to update.": "サブエージェントがまだ実行中です。該当するタスクに戻って停止してから、再起動して更新してください。",
+    "The installer is missing or has changed. Download the update again.": "インストーラーが見つからないか、変更されています。更新を再ダウンロードしてください。",
+    "Verifying installer…": "インストーラーを検証中…"
   }
 }

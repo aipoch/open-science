@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -1920,13 +1928,60 @@ describe('DefaultRuntimeProvisioner journals every prefix write', () => {
 })
 
 describe('DefaultRuntimeProvisioner.listEnvironments', () => {
-  it('returns [] when the envs dir does not exist', () => {
+  it('PERF-01 yields to the event loop while counting a large environment', async () => {
     const root = makeRoot()
-    const provisioner = new DefaultRuntimeProvisioner(makeDeps(root))
-    expect(provisioner.listEnvironments()).toEqual([])
+    const prefix = envPrefix(root, 'large-env')
+    mkdirSync(dirname(pythonBin(prefix)), { recursive: true })
+    writeFileSync(pythonBin(prefix), 'x')
+    for (let i = 0; i < 1000; i++) writeFileSync(join(prefix, `file-${i}`), 'x')
+    let heartbeat = false
+    const tick = new Promise<void>((resolve) =>
+      setImmediate(() => {
+        heartbeat = true
+        resolve()
+      })
+    )
+    try {
+      const environments = await new DefaultRuntimeProvisioner(makeDeps(root)).listEnvironments()
+      expect(environments).toEqual([
+        { name: 'large-env', language: 'python', ready: true, isDefault: false, sizeBytes: 1001 }
+      ])
+      expect(heartbeat).toBe(true)
+    } finally {
+      await tick
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
-  it('classifies python/r/default/ready and skips dirs with neither interpreter', () => {
+  it('cancels a scan without publishing partial results', async () => {
+    const root = makeRoot()
+    const prefix = envPrefix(root, 'cancel-env')
+    mkdirSync(dirname(pythonBin(prefix)), { recursive: true })
+    writeFileSync(pythonBin(prefix), 'x')
+    const controller = new AbortController()
+    const tick = new Promise<void>((resolve) =>
+      setImmediate(() => {
+        controller.abort(new Error('scan cancelled'))
+        resolve()
+      })
+    )
+    try {
+      await expect(
+        new DefaultRuntimeProvisioner(makeDeps(root)).listEnvironments(controller.signal)
+      ).rejects.toThrow('scan cancelled')
+    } finally {
+      await tick
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('returns [] when the envs dir does not exist', async () => {
+    const root = makeRoot()
+    const provisioner = new DefaultRuntimeProvisioner(makeDeps(root))
+    expect(await provisioner.listEnvironments()).toEqual([])
+  })
+
+  it('classifies python/r/default/ready and skips dirs with neither interpreter', async () => {
     const root = makeRoot()
     // default-python: has a python bin -> python, isDefault.
     const pyDefaultPrefix = envPrefix(root, DEFAULT_PY_ENV)
@@ -1944,7 +1999,7 @@ describe('DefaultRuntimeProvisioner.listEnvironments', () => {
     mkdirSync(envPrefix(root, 'half-baked'), { recursive: true })
 
     const provisioner = new DefaultRuntimeProvisioner(makeDeps(root))
-    const infos = provisioner.listEnvironments()
+    const infos = await provisioner.listEnvironments()
 
     expect(infos.map((i) => i.name).sort()).toEqual(['default-python', 'my-analysis', 'r-stats'])
     const byName = Object.fromEntries(infos.map((i) => [i.name, i]))
@@ -1961,7 +2016,7 @@ describe('DefaultRuntimeProvisioner.listEnvironments', () => {
     expect(byName['r-stats']).toMatchObject({ language: 'r', ready: true, isDefault: false })
   })
 
-  it('maps short Windows default directories to logical names and ignores legacy duplicates', () => {
+  it('maps short Windows default directories to logical names and ignores legacy duplicates', async () => {
     const root = makeRoot()
     const shortPrefix = join(root, 'envs', '.p')
     mkdirSync(join(pythonBin(shortPrefix, 'win32'), '..'), { recursive: true })
@@ -1970,7 +2025,7 @@ describe('DefaultRuntimeProvisioner.listEnvironments', () => {
     mkdirSync(join(pythonBin(legacyPrefix, 'win32'), '..'), { recursive: true })
     writeFileSync(pythonBin(legacyPrefix, 'win32'), 'legacy')
 
-    const infos = new DefaultRuntimeProvisioner(
+    const infos = await new DefaultRuntimeProvisioner(
       makeDeps(root, { platform: 'win32' })
     ).listEnvironments()
 
@@ -1991,14 +2046,14 @@ describe('DefaultRuntimeProvisioner.removeEnvironment', () => {
     expect(() => provisioner.removeEnvironment(DEFAULT_R_ENV)).toThrow(/Refusing to remove/)
   })
 
-  it('removes a named env without rediscovering the remaining environments', () => {
+  it('removes a named env without rediscovering the remaining environments', async () => {
     const root = makeRoot()
     const namedPrefix = envPrefix(root, 'my-analysis')
     mkdirSync(join(pythonBin(namedPrefix), '..'), { recursive: true })
     writeFileSync(pythonBin(namedPrefix), 'x')
 
     const provisioner = new DefaultRuntimeProvisioner(makeDeps(root))
-    expect(provisioner.listEnvironments()).toHaveLength(1)
+    expect(await provisioner.listEnvironments()).toHaveLength(1)
 
     const listEnvironments = vi.spyOn(provisioner, 'listEnvironments')
     const result = provisioner.removeEnvironment('my-analysis')

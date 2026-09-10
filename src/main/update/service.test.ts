@@ -1456,7 +1456,7 @@ describe('UpdateService.apply', () => {
     const first = service.apply()
     const second = service.apply()
 
-    expect(openPath).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(openPath).toHaveBeenCalledTimes(1))
     resolveOpen('')
     await expect(Promise.all([first, second])).resolves.toMatchObject([
       { state: 'ready' },
@@ -1500,6 +1500,7 @@ describe('UpdateService.apply', () => {
     const service = await downloadedService(target, { fetchImpl, openPath })
 
     const applying = service.apply()
+    await vi.waitFor(() => expect(openPath).toHaveBeenCalledTimes(1))
     await expect(service.check()).resolves.toMatchObject({ state: 'available', latest: '0.4.0' })
     resolveOpen('No application is associated with this file')
     await applying
@@ -1579,7 +1580,7 @@ describe('UpdateService.apply', () => {
           operation: 'update-apply',
           outcome: 'failed',
           phase: 'verify-installer',
-          reason: 'installer-missing'
+          reason: 'installer-invalid'
         })
       ])
     )

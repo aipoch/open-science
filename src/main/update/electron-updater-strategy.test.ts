@@ -65,8 +65,12 @@ class FakeUpdater extends EventEmitter {
   quitAndInstall = vi.fn()
 }
 
-const markUpdateReady = (updater: FakeUpdater): void => {
-  updater.emit('update-downloaded', { version: '0.3.0' })
+const markUpdateReady = async (
+  strategy: ElectronUpdaterStrategy,
+  updater: FakeUpdater
+): Promise<void> => {
+  if (strategy.getStatus().state === 'idle') updater.emit('update-available', {})
+  await strategy.download()
 }
 
 // Fake fetch returning a version.json manifest, so notes hydration never touches the network.
@@ -328,35 +332,39 @@ describe('ElectronUpdaterStrategy', () => {
     expect(strategy.getStatus().state).toBe('ready')
   })
 
-  it('preserves in-place ready on check failure but accepts a strictly newer update', async () => {
-    const updater = new FakeUpdater()
-    const strategy = new ElectronUpdaterStrategy({
-      updater,
-      currentVersion: '0.2.0',
-      broadcast: vi.fn(),
-      fetchImpl: offlineFetch()
-    })
-    await strategy.check()
-    await strategy.download()
-    const readyStatus = strategy.getStatus()
-
-    updater.checkForUpdates = vi.fn(async () => {
-      updater.emit('error', new Error('offline'))
-    })
-    expect(await strategy.check()).toBe(readyStatus)
-
-    updater.checkForUpdates = vi.fn(async () => {
-      updater.emit('checking-for-update')
-      updater.emit('update-available', {
-        version: '0.4.0',
-        releaseNotes: 'newer notes',
-        files: [{ url: 'https://cdn/Open-Science-0.4.0.zip', size: 12000 }]
+  it.each(['darwin', 'win32', 'linux'] as const)(
+    'preserves in-place ready on check failure but accepts a strictly newer update on %s',
+    async (platform) => {
+      const updater = new FakeUpdater()
+      const strategy = new ElectronUpdaterStrategy({
+        updater,
+        platform,
+        currentVersion: '0.2.0',
+        broadcast: vi.fn(),
+        fetchImpl: offlineFetch()
       })
-    })
-    expect(await strategy.check()).toEqual(
-      expect.objectContaining({ state: 'available', latest: '0.4.0', totalBytes: 12000 })
-    )
-  })
+      await strategy.check()
+      await strategy.download()
+      const readyStatus = strategy.getStatus()
+
+      updater.checkForUpdates = vi.fn(async () => {
+        updater.emit('error', new Error('offline'))
+      })
+      expect(await strategy.check()).toBe(readyStatus)
+
+      updater.checkForUpdates = vi.fn(async () => {
+        updater.emit('checking-for-update')
+        updater.emit('update-available', {
+          version: '0.4.0',
+          releaseNotes: 'newer notes',
+          files: [{ url: 'https://cdn/Open-Science-0.4.0.zip', size: 12000 }]
+        })
+      })
+      const available = await strategy.check()
+      expect(available).toEqual(expect.objectContaining({ state: 'available', latest: '0.4.0' }))
+      expect(available.totalBytes).toBe(platform === 'linux' ? undefined : 12000)
+    }
+  )
 
   it('coalesces overlapping in-place checks onto the in-flight provider query', async () => {
     const updater = new FakeUpdater()
@@ -470,56 +478,60 @@ describe('ElectronUpdaterStrategy', () => {
     })
   })
 
-  it('preserves the offer and retries after a failed in-place download', async () => {
-    const updater = new FakeUpdater()
-    let starts = 0
-    updater.runDownload = async () => {
-      starts += 1
-      if (starts === 1) throw new Error('private updater diagnostic detail')
-      updater.emit('update-downloaded', { version: '0.3.0' })
-    }
-    const log = createLogSpy()
-    const strategy = new ElectronUpdaterStrategy({
-      updater,
-      currentVersion: '0.2.0',
-      broadcast: vi.fn(),
-      fetchImpl: offlineFetch(),
-      log
-    })
-    await strategy.check()
-    for (const level of ['debug', 'info', 'warn', 'error'] as const) {
-      vi.mocked(log[level]).mockClear()
-    }
-
-    const failed = await strategy.download()
-    const retry = await strategy.download()
-
-    expect.soft(failed).toEqual(
-      expect.objectContaining({
-        state: 'error',
-        current: '0.2.0',
-        latest: '0.3.0',
-        notes: 'notes',
-        totalBytes: 10000,
-        error: 'private updater diagnostic detail'
+  it.each(['darwin', 'win32', 'linux'] as const)(
+    'preserves the offer and retries after a failed in-place download on %s',
+    async (platform) => {
+      const updater = new FakeUpdater()
+      let starts = 0
+      updater.runDownload = async () => {
+        starts += 1
+        if (starts === 1) throw new Error('private updater diagnostic detail')
+        updater.emit('update-downloaded', { version: '0.3.0' })
+      }
+      const log = createLogSpy()
+      const strategy = new ElectronUpdaterStrategy({
+        updater,
+        platform,
+        currentVersion: '0.2.0',
+        broadcast: vi.fn(),
+        fetchImpl: offlineFetch(),
+        log
       })
-    )
-    expect.soft(retry.state).toBe('ready')
-    expect.soft(retry.error).toBeUndefined()
-    expect.soft(starts).toBe(2)
-    const records = diagnosticRecords(log)
-    expect(records).toEqual(
-      expect.arrayContaining([
+      await strategy.check()
+      for (const level of ['debug', 'info', 'warn', 'error'] as const) {
+        vi.mocked(log[level]).mockClear()
+      }
+
+      const failed = await strategy.download()
+      const retry = await strategy.download()
+
+      expect.soft(failed).toEqual(
         expect.objectContaining({
-          operation: 'update-download',
-          outcome: 'failed',
-          phase: 'transfer',
-          errorCategory: 'error'
+          state: 'error',
+          current: '0.2.0',
+          latest: '0.3.0',
+          notes: 'notes',
+          error: 'private updater diagnostic detail'
         })
-      ])
-    )
-    expect(JSON.stringify(records)).not.toContain('private updater diagnostic detail')
-  })
+      )
+      expect.soft(failed.totalBytes).toBe(platform === 'linux' ? undefined : 10000)
+      expect.soft(retry.state).toBe('ready')
+      expect.soft(retry.error).toBeUndefined()
+      expect.soft(starts).toBe(2)
+      const records = diagnosticRecords(log)
+      expect(records).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            operation: 'update-download',
+            outcome: 'failed',
+            phase: 'transfer',
+            errorCategory: 'error'
+          })
+        ])
+      )
+      expect(JSON.stringify(records)).not.toContain('private updater diagnostic detail')
+    }
+  )
 
   it('cancel aborts an in-flight download and resets the status to available', async () => {
     const updater = new FakeUpdater()
@@ -746,7 +758,16 @@ describe('ElectronUpdaterStrategy', () => {
       installGate,
       markUpdateShutdown
     })
-    enterState(updater)
+    let finishDownload: (() => void) | undefined
+    let downloading: Promise<unknown> | undefined
+    if (state === 'downloading') {
+      updater.runDownload = () =>
+        new Promise<void>((resolve) => {
+          finishDownload = resolve
+        })
+      updater.emit('update-available', {})
+      downloading = strategy.download()
+    } else enterState(updater)
     expect(strategy.getStatus().state).toBe(state)
     const statusBeforeApply = strategy.getStatus()
     broadcast.mockClear()
@@ -759,6 +780,8 @@ describe('ElectronUpdaterStrategy', () => {
     expect(installGate).not.toHaveBeenCalled()
     expect(markUpdateShutdown).not.toHaveBeenCalled()
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    finishDownload?.()
+    await downloading
   })
 
   it('apply installs silently and relaunches (quitAndInstall(true, true))', async () => {
@@ -770,7 +793,7 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       log
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
     await strategy.apply()
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
     expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
@@ -793,7 +816,7 @@ describe('ElectronUpdaterStrategy', () => {
       currentVersion: '0.2.0',
       broadcast: vi.fn()
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     await strategy.apply({ relaunch: false })
 
@@ -813,7 +836,7 @@ describe('ElectronUpdaterStrategy', () => {
       installGate: vi.fn(async () => ({ completed: true, reaped: true })),
       releaseInstallHandoff
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
@@ -833,7 +856,7 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       installGate: createDurableInstallGate(backendTeardownGate, confirmRendererDurability)
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     await strategy.apply()
 
@@ -855,7 +878,7 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       installGate: createDurableInstallGate(backendTeardownGate, confirmRendererDurability)
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
@@ -866,7 +889,7 @@ describe('ElectronUpdaterStrategy', () => {
     )
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
     expect(status).toMatchObject({
-      state: 'error',
+      state: 'ready',
       error: 'Could not fully stop background processes before updating. Please try again.'
     })
   })
@@ -880,12 +903,12 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       installGate: createActiveResearchSafeInstallGate(() => ['delegated'], backendTeardownGate)
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
     expect(status).toMatchObject({
-      state: 'error',
+      state: 'ready',
       error: expect.stringMatching(/subagents are still running/i),
       blockedBy: ['delegated']
     })
@@ -905,12 +928,12 @@ describe('ElectronUpdaterStrategy', () => {
         backendTeardownGate
       )
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
     expect(status).toMatchObject({
-      state: 'error',
+      state: 'ready',
       error:
         'An Agent Runtime is still installing. Wait for it to finish before restarting to update.',
       blockedBy: ['settings-install']
@@ -931,12 +954,12 @@ describe('ElectronUpdaterStrategy', () => {
         backendTeardownGate
       )
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
     expect(status).toMatchObject({
-      state: 'error',
+      state: 'ready',
       error: expect.stringMatching(/research work is still running/i),
       blockedBy: ['agent', 'notebook', 'reviewer']
     })
@@ -960,7 +983,7 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast,
       installGate: gate
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const applying = strategy.apply()
     expect(strategy.getStatus().state).toBe('applying')
@@ -976,7 +999,7 @@ describe('ElectronUpdaterStrategy', () => {
     await strategy.check()
     await strategy.download()
     expect(updater.checkForUpdates).not.toHaveBeenCalled()
-    expect(updater.downloadUpdate).not.toHaveBeenCalled()
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
     expect(strategy.getStatus().state).toBe('applying')
 
     finishGate?.()
@@ -997,13 +1020,13 @@ describe('ElectronUpdaterStrategy', () => {
       releaseInstallHandoff,
       log
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
     expect(releaseInstallHandoff).toHaveBeenCalledOnce()
-    expect(status.state).toBe('error')
+    expect(status.state).toBe('ready')
     expect(diagnosticRecords(log)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1028,11 +1051,11 @@ describe('ElectronUpdaterStrategy', () => {
       installGate: () => Promise.reject(new Error('private teardown diagnostic detail')),
       log
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
-    expect(status.state).toBe('error')
+    expect(status.state).toBe('ready')
 
     const records = diagnosticRecords(log)
     expect(records).toEqual(
@@ -1060,7 +1083,7 @@ describe('ElectronUpdaterStrategy', () => {
           finishGate = () => resolve({ completed: true, reaped: true })
         })
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const applying = strategy.apply()
     updater.emit('error', new Error('stale download failure'))
@@ -1084,7 +1107,7 @@ describe('ElectronUpdaterStrategy', () => {
       releaseInstallHandoff,
       log
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     await strategy.apply()
     expect(currentApplicationShutdownTrigger()).toBe('update')
@@ -1116,7 +1139,7 @@ describe('ElectronUpdaterStrategy', () => {
       currentVersion: '0.2.0',
       broadcast: vi.fn()
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
@@ -1134,12 +1157,12 @@ describe('ElectronUpdaterStrategy', () => {
       installGate: vi.fn(async () => Promise.reject(new Error('teardown failed')))
     })
     await strategy.check()
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
-    expect(status.state).toBe('error')
+    expect(status.state).toBe('ready')
     expect(status.latest).toBe('0.3.0')
     expect(status.error).toContain('Please try again')
   })
@@ -1153,12 +1176,12 @@ describe('ElectronUpdaterStrategy', () => {
       broadcast: vi.fn(),
       installGate: gate
     })
-    markUpdateReady(updater)
+    await markUpdateReady(strategy, updater)
 
     const status = await strategy.apply()
 
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
-    expect(status.state).toBe('error')
+    expect(status.state).toBe('ready')
   })
 
   it('hydrates notes from the CDN manifest when the version matches', async () => {
@@ -1358,31 +1381,35 @@ describe('ElectronUpdaterStrategy', () => {
     expect(status.totalBytes).toBeUndefined()
   })
 
-  it('preserves check-time totalBytes when download-progress omits total', async () => {
-    // Artifacts published with a size in the feed should keep that size even if a progress event
-    // arrives without a total field.
-    const updater = new FakeUpdater()
-    updater.checkForUpdates = vi.fn(async () => {
-      updater.emit('update-available', { version: '0.3.0', files: [{ size: 50000 }] })
-    })
-    updater.runDownload = async () => {
-      // Progress event intentionally omits total — must not clobber the known 50000.
-      updater.emit('download-progress', { percent: 10, transferred: 5000 })
-      updater.emit('update-downloaded', { version: '0.3.0' })
-    }
-    const strategy = new ElectronUpdaterStrategy({
-      updater,
-      currentVersion: '0.2.0',
-      broadcast: vi.fn(),
-      fetchImpl: offlineFetch()
-    })
-    await strategy.check()
-    expect(strategy.getStatus().totalBytes).toBe(50000)
+  it.each(['darwin', 'win32', 'linux'] as const)(
+    'preserves check-time totalBytes when download-progress omits total on %s',
+    async (platform) => {
+      // Preserve known estimates when progress omits total; Linux stays unknown without a format.
+      const updater = new FakeUpdater()
+      updater.checkForUpdates = vi.fn(async () => {
+        updater.emit('update-available', { version: '0.3.0', files: [{ size: 50000 }] })
+      })
+      updater.runDownload = async () => {
+        // Progress intentionally omits total, preserving the check-time estimate if known.
+        updater.emit('download-progress', { percent: 10, transferred: 5000 })
+        updater.emit('update-downloaded', { version: '0.3.0' })
+      }
+      const strategy = new ElectronUpdaterStrategy({
+        updater,
+        platform,
+        currentVersion: '0.2.0',
+        broadcast: vi.fn(),
+        fetchImpl: offlineFetch()
+      })
+      await strategy.check()
+      expect(strategy.getStatus().totalBytes).toBe(platform === 'linux' ? undefined : 50000)
 
-    const status = await strategy.download()
-    expect(status.totalBytes).toBe(50000)
-    expect(status.downloadedBytes).toBe(5000)
-  })
+      const status = await strategy.download()
+      // Progress uses the existing zero sentinel when neither source supplies a known total.
+      expect(status.totalBytes).toBe(platform === 'linux' ? 0 : 50000)
+      expect(status.downloadedBytes).toBe(5000)
+    }
+  )
 
   it('omits totalBytes when the updater feed has no artifact size', async () => {
     const updater = new FakeUpdater()

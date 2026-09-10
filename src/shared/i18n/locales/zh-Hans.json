@@ -4877,6 +4877,10 @@
     "Recheck saved conversations": "重新检查已保存的对话",
     "Some changes have not been saved.": "部分更改尚未保存。",
     "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "允许一次适用于此运行时的下一次执行，即使代码发生变化也仍然适用。该次执行期间可多次连接此域名。",
-    "Next execution in this runtime": "此运行时的下一次执行"
+    "Next execution in this runtime": "此运行时的下一次执行",
+    "Research work is still running. Stop it before restarting to update.": "研究任务仍在运行。请先停止任务，再重启以更新。",
+    "Subagents are still running. Return to their tasks and stop them before restarting to update.": "子智能体仍在运行。请返回其任务并停止运行，再重启以更新。",
+    "The installer is missing or has changed. Download the update again.": "安装程序缺失或已更改。请重新下载更新。",
+    "Verifying installer…": "正在校验安装程序…"
   }
 }

@@ -202,7 +202,12 @@ const scanStorageFiles = async (
       if (!entry.isFile()) return
       const kind = classify(entry.name)
       if (!kind) return
-      const bytes = (await stat(path)).size
+      const info = await stat(path).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return undefined
+        throw error
+      })
+      if (!info) return // A concurrent atomic write may have already moved this temporary file.
+      const bytes = info.size
       if (kind === 'session') {
         totals.sessionFileCount += 1
         totals.sessionBytes += bytes

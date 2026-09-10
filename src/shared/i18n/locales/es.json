@@ -5193,6 +5193,10 @@
     "Recheck saved conversations": "Volver a comprobar las conversaciones guardadas",
     "Some changes have not been saved.": "Algunos cambios no se han guardado.",
     "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "Permitir una vez se aplica a la siguiente ejecución en este entorno, aunque cambie el código. Permite varias conexiones a este dominio durante esa ejecución.",
-    "Next execution in this runtime": "Siguiente ejecución en este entorno"
+    "Next execution in this runtime": "Siguiente ejecución en este entorno",
+    "Research work is still running. Stop it before restarting to update.": "Hay tareas de investigación en curso. Deténgalas antes de reiniciar para actualizar.",
+    "Subagents are still running. Return to their tasks and stop them before restarting to update.": "Hay subagentes en ejecución. Vuelva a sus tareas y deténgalos antes de reiniciar para actualizar.",
+    "The installer is missing or has changed. Download the update again.": "El instalador no se encuentra o ha cambiado. Vuelva a descargar la actualización.",
+    "Verifying installer…": "Verificando el instalador…"
   }
 }

@@ -55,6 +55,12 @@ describe('production application command wiring', () => {
     )
   })
 
+  it('routes background deletion through the tested owner recovery sequence', () => {
+    expect(compact(ipcSource)).toContain(
+      'recoverDeletionWork({ recoverOrphanJobs: () => jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive), replaySessionProjection: () => sessionRepository.reconcilePendingSessionProjection(), recoverProjects: () => projectDeletionCoordinator.recoverPendingDeletions() })'
+    )
+  })
+
   it('restores durable deletion barriers before managed file version recovery', () => {
     const deletionBarrierRestore = ipcSource.indexOf(
       'projectDeletionCoordinator.restorePendingDeletionBarriers()'

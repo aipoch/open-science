@@ -1716,6 +1716,7 @@ const WorkspaceMessageItemImpl = ({
                     }}
                     onSubmit={handleConfirmEdit}
                     onPaste={ignoreEditPaste}
+                    onPreviewMentionArtifact={onPreviewMentionArtifact}
                     placeholder={t('Edit your message')}
                     ariaLabel={t('Edit message')}
                     focusRequest={editFocusRequest}

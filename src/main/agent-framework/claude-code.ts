@@ -22,6 +22,7 @@ import {
   LOAD_SKILL_TOOL_CALLABLE_NAME,
   OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
   SKILL_RUNTIME_MCP_SERVER_NAME,
+  createSkillRuntimeAcpServerConfig,
   createSkillRuntimeMcpServerConfig
 } from '../skills/runtime-mcp-server'
 
@@ -109,15 +110,18 @@ export const claudeCodeFramework: AgentFramework = {
       typeof skillRuntime.root === 'string' &&
       typeof skillRuntime.command === 'string' &&
       typeof skillRuntime.entryPath === 'string'
-    const mcpServers = skillRuntimeEnabled
+    const skillRuntimeConfig = skillRuntimeEnabled
+      ? {
+          command: skillRuntime.command as string,
+          entryPath: skillRuntime.entryPath as string,
+          root: skillRuntime.root as string,
+          ...(ctx.skillRuntimeScope !== 'all' ? { allowedNames: ctx.skillRuntimeScope } : {})
+        }
+      : undefined
+    const mcpServers = skillRuntimeConfig
       ? {
           ...recordValue(sessionOptions.mcpServers),
-          [SKILL_RUNTIME_MCP_SERVER_NAME]: createSkillRuntimeMcpServerConfig({
-            command: skillRuntime.command as string,
-            entryPath: skillRuntime.entryPath as string,
-            root: skillRuntime.root as string,
-            ...(ctx.skillRuntimeScope !== 'all' ? { allowedNames: ctx.skillRuntimeScope } : {})
-          })
+          [SKILL_RUNTIME_MCP_SERVER_NAME]: createSkillRuntimeMcpServerConfig(skillRuntimeConfig)
         }
       : sessionOptions.mcpServers
     const toolAliases = skillRuntimeEnabled
@@ -224,6 +228,10 @@ export const claudeCodeFramework: AgentFramework = {
 
     return {
       meta,
+      // Register SDK-installed tooling with the app's Session capability owner as well.
+      ...(skillRuntimeConfig
+        ? { mcpServers: [createSkillRuntimeAcpServerConfig(skillRuntimeConfig)] }
+        : {}),
       ...(persistentSystemPrompt ? { persistentSystemPrompt } : {}),
       ...(promptPrefix ? { promptPrefix } : {})
     }

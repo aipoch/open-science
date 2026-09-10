@@ -1,14 +1,9 @@
+import { randomUUID } from 'node:crypto'
+import type { BigIntStats } from 'node:fs'
 import { createRequire } from 'node:module'
 import { isAbsolute, relative, sep } from 'node:path'
 
-type NativePublisherBinding = {
-  publishNoReplace: (
-    rootPath: string,
-    relativeParentPath: string,
-    sourceName: string,
-    destinationName: string
-  ) => void
-}
+type NativePublisherBinding = typeof import('@aipoch/safe-file-publisher-native')
 
 const require = createRequire(import.meta.url)
 let binding: NativePublisherBinding | undefined
@@ -35,4 +30,40 @@ export const publishNoReplace = (
     throw error
   }
   loadBinding().publishNoReplace(rootPath, relativeParentPath, sourceName, destinationName)
+}
+
+export const removeAnchoredFile = (
+  rootPath: string,
+  relativeParentPath: string,
+  filename: string,
+  parent: { dev: bigint; ino: bigint },
+  file: Pick<BigIntStats, 'dev' | 'ino' | 'size' | 'mtimeNs'>
+): void => {
+  loadBinding().removeAnchoredFile(
+    rootPath,
+    relativeParentPath,
+    filename,
+    parent.dev,
+    parent.ino,
+    file.dev,
+    file.ino,
+    file.size,
+    file.mtimeNs,
+    `.publication-recovery-${randomUUID()}`
+  )
+}
+
+export const recoverAnchoredRemoval = (
+  rootPath: string,
+  relativeParentPath: string,
+  quarantineName: string,
+  parent: { dev: bigint; ino: bigint }
+): void => {
+  loadBinding().recoverAnchoredRemoval(
+    rootPath,
+    relativeParentPath,
+    quarantineName,
+    parent.dev,
+    parent.ino
+  )
 }
