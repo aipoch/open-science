@@ -39,7 +39,7 @@ test('holds the queued message until the previous reply finishes revealing', asy
   await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toHaveCount(1)
 
   const releaseFile = join(await app.createTestDirectory('queue-stream'), 'release')
-  await textbox.fill(`${GATE_PROMPT}\nRelease file: ${JSON.stringify(releaseFile)}`)
+  await textbox.fill(`${GATE_PROMPT} Release file: ${JSON.stringify(releaseFile)}`)
   await expect(sendButton).toBeEnabled()
   await sendButton.click()
 
