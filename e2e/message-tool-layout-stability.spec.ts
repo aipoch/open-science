@@ -51,6 +51,7 @@ const runLayoutStabilityJourney = async (
 ): Promise<void> => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
+  await page.setViewportSize({ width: 1008, height: 681 })
 
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
@@ -133,6 +134,7 @@ const runLayoutStabilityJourney = async (
       final: geometry.at(-1)
     })
   ).toBeLessThanOrEqual(2)
+  await page.screenshot({ path: test.info().outputPath('stable-compact-transcript.png') })
 }
 
 for (const scenario of cases) {
