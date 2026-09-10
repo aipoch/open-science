@@ -33,6 +33,7 @@ import {
 import { getActiveConversationContext } from '../../../../shared/conversation-graph'
 import {
   confirmPendingDelegationPolicyAuthority,
+  flushSessionPersistence,
   saveSessionInOrder,
   toPersistedSessionForAuthorityMaterialization
 } from '../session-persistence/session-persistence'
@@ -106,6 +107,7 @@ type WorkspaceCommandLifecycle = {
   // Ownership of asynchronous admission, before the command establishes its own prompt run.
   isCurrent?: () => boolean
   awaitPendingPreparation?: boolean
+  flushPersistence?: () => Promise<void>
   onSendPreparationStateChange?: (sessionId: string, inFlight: boolean) => void
   drainRuntimeEvents?: (sessionId?: string) => Promise<void>
   onSessionBound?: (pendingSessionId: string, sessionId: string) => void
@@ -1086,8 +1088,10 @@ const sendWorkspaceMessage = async (
       preserveSelection: input.preserveSelection
     })
     if (!appended) return undefined
-    // Recovery rearms an existing Message; its normal store saver already owns persistence.
-    // Keep the explicit durability barrier for new application-authored stable identities.
+    // Application-owned stable identities need an explicit save because they may be dispatched
+    // outside the mounted store saver. Ordinary user Messages are already queued by that saver;
+    // drain it before provider dispatch so Delegation cannot authenticate against a stale root
+    // conversation snapshot. Recovery rearms an already durable Message and needs no extra barrier.
     if (stableMessageId && !(input.allowCompactionRecovery && rearmExistingStableMessage)) {
       const durableSession = useSessionStore
         .getState()
@@ -1095,6 +1099,15 @@ const sendWorkspaceMessage = async (
       if (!durableSession) return undefined
       try {
         await saveSessionInOrder(toPersistedSession(durableSession))
+      } catch (error) {
+        if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
+        useSessionStore.getState().failRun(sessionId, errorMessage(error))
+        return undefined
+      }
+      if (!ownsPrompt(sessionId, appended.messageId)) return undefined
+    } else if (!rearmExistingStableMessage) {
+      try {
+        await (lifecycle.flushPersistence ?? flushSessionPersistence)()
       } catch (error) {
         if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
         useSessionStore.getState().failRun(sessionId, errorMessage(error))

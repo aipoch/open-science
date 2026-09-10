@@ -2383,6 +2383,58 @@ describe('workspace agent message sending', () => {
     vi.restoreAllMocks()
   })
 
+  it('drains ordinary user Message persistence before provider dispatch', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      selectedSessionId: 'transport-session-1',
+      sessions: [
+        {
+          id: 'transport-session-1',
+          projectId: 'project-1',
+          cwd: '/workspace/project',
+          title: 'Conversation',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        } as ChatSession
+      ]
+    })
+    const persistence = createDeferred<void>()
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    const sending = sendWorkspaceMessage(
+      runtime,
+      {
+        sessionId: 'transport-session-1',
+        text: 'Delegate this task',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        agentFrameworkId: 'opencode'
+      },
+      { flushPersistence: () => persistence.promise }
+    )
+
+    await vi.waitFor(() =>
+      expect(useSessionStore.getState().sessions[0]?.messages).toEqual([
+        expect.objectContaining({ role: 'user', content: 'Delegate this task' })
+      ])
+    )
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+
+    persistence.resolve()
+    await expect(sending).resolves.toEqual(
+      expect.objectContaining({ sessionId: 'transport-session-1' })
+    )
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
   it.each<AgentFrameworkId>(['claude-code', 'opencode', 'codex', 'codebuddy'])(
     'persists a stable application-owned Message before dispatching through %s',
     async (agentFrameworkId) => {

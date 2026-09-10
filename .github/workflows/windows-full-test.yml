@@ -17,7 +17,6 @@ on:
           - full
           - notebook-sandbox
           - notebook-mutation
-          - wsl-setup
           - regressions
 
 permissions:
@@ -161,41 +160,6 @@ jobs:
         run: >-
           packages/notebook-network-sandbox/vendor/windows-src/ci/smoke-port-regression.ps1
           -Exe packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe
-
-  wsl_setup:
-    name: Windows WSL2 setup conversation
-    needs: plan
-    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'wsl-setup') }}
-    runs-on: windows-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: node scripts/ci/npm-ci.mjs
-      - name: Build WSL setup conversation preview
-        run: node scripts/build-wsl-setup-e2e.mjs
-      - name: Run WSL setup conversation
-        env:
-          OPEN_SCIENCE_E2E_WSL_SETUP: '1'
-        run: npm run test:e2e:wsl-setup -- --workers=1 --fail-on-flaky-tests --global-timeout=300000
-      - name: Upload WSL setup conversation failure artifacts
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: wsl-setup-e2e-windows-failure
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 5
-          if-no-files-found: warn
 
   notebook_mutation:
     name: Windows Notebook controlled mutations
