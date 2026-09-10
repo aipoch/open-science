@@ -1,5 +1,7 @@
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Tabs } from 'radix-ui'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -133,40 +135,20 @@ const SpecialistCapabilitiesSection = ({
   const connectorSearchRef = useRef<HTMLInputElement>(null)
   const [skillPopoverOpen, setSkillPopoverOpen] = useState(false)
   const [connectorPopoverOpen, setConnectorPopoverOpen] = useState(false)
-  const skillDropdownRef = useRef<HTMLDivElement>(null)
-  const connectorDropdownRef = useRef<HTMLDivElement>(null)
-  useSettingsSearchShortcut(skillSearchRef, skillPopoverOpen)
-  useSettingsSearchShortcut(connectorSearchRef, connectorPopoverOpen)
-  const skillTriggerRef = useRef<HTMLButtonElement>(null)
-  const connectorTriggerRef = useRef<HTMLButtonElement>(null)
-
-  const closeSkillDropdown = useCallback(() => setSkillPopoverOpen(false), [])
-  const closeConnectorDropdown = useCallback(() => setConnectorPopoverOpen(false), [])
-
-  useEffect(() => {
-    if (!skillPopoverOpen) return
-    const handle = (e: MouseEvent): void => {
-      if (skillDropdownRef.current && !skillDropdownRef.current.contains(e.target as Node)) {
-        closeSkillDropdown()
-      }
+  useSettingsSearchShortcut(skillSearchRef, skillPopoverOpen && !isFullAccess)
+  useSettingsSearchShortcut(connectorSearchRef, connectorPopoverOpen && !isFullAccess)
+  const fullAccessRef = useRef<HTMLButtonElement>(null)
+  const selectionRef = useRef<HTMLDivElement>(null)
+  const composingRef = useRef(false)
+  if (isFullAccess && (skillPopoverOpen || connectorPopoverOpen)) {
+    setSkillPopoverOpen(false)
+    setConnectorPopoverOpen(false)
+  }
+  useLayoutEffect(() => {
+    if (isFullAccess && selectionRef.current?.contains(document.activeElement)) {
+      fullAccessRef.current?.focus()
     }
-    document.addEventListener('mousedown', handle)
-    return () => document.removeEventListener('mousedown', handle)
-  }, [skillPopoverOpen, closeSkillDropdown])
-
-  useEffect(() => {
-    if (!connectorPopoverOpen) return
-    const handle = (e: MouseEvent): void => {
-      if (
-        connectorDropdownRef.current &&
-        !connectorDropdownRef.current.contains(e.target as Node)
-      ) {
-        closeConnectorDropdown()
-      }
-    }
-    document.addEventListener('mousedown', handle)
-    return () => document.removeEventListener('mousedown', handle)
-  }, [connectorPopoverOpen, closeConnectorDropdown])
+  }, [isFullAccess])
 
   useEffect(() => {
     void loadConnectors()
@@ -368,6 +350,7 @@ const SpecialistCapabilitiesSection = ({
           connector; selecting it disables the Select capabilities panel below. */}
         <button
           type="button"
+          ref={fullAccessRef}
           role="switch"
           aria-checked={isFullAccess}
           aria-label={t('Full access')}
@@ -409,23 +392,26 @@ const SpecialistCapabilitiesSection = ({
         {/* Select capabilities — greyed and non-interactive while Full access is on. Clicking the
           greyed panel turns Full access off so the lists become editable. */}
         <div className="relative">
-          <div
+          <Tabs.Root
+            ref={selectionRef}
+            inert={isFullAccess}
+            value={activeTab}
+            activationMode="manual"
+            onValueChange={(value) => onActiveTabChange(value as 'skills' | 'connectors')}
             className={cn(
               'rounded-lg',
               isFullAccess && 'pointer-events-none opacity-45 select-none'
             )}
           >
             <div className="mb-3 flex items-center justify-between">
-              <div
+              <Tabs.List
                 className="inline-flex gap-0.5 rounded-lg bg-muted p-1"
-                role="tablist"
                 aria-label={t('Capability type')}
               >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'skills'}
+                <Tabs.Trigger
+                  value="skills"
                   onClick={() => onActiveTabChange('skills')}
+                  disabled={isFullAccess}
                   className={cn(
                     'rounded-md px-3 py-1 text-[12.5px] font-medium',
                     activeTab === 'skills'
@@ -435,12 +421,11 @@ const SpecialistCapabilitiesSection = ({
                 >
                   {t('Skills')}{' '}
                   <span className="ml-0.5 text-[11px] opacity-75">{selectedSkillIds.length}</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'connectors'}
+                </Tabs.Trigger>
+                <Tabs.Trigger
+                  value="connectors"
                   onClick={() => onActiveTabChange('connectors')}
+                  disabled={isFullAccess}
                   className={cn(
                     'rounded-md px-3 py-1 text-[12.5px] font-medium',
                     activeTab === 'connectors'
@@ -452,274 +437,328 @@ const SpecialistCapabilitiesSection = ({
                   <span className="ml-0.5 text-[11px] opacity-75">
                     {selectedConnectorIds.length}
                   </span>
-                </button>
-              </div>
+                </Tabs.Trigger>
+              </Tabs.List>
 
               {/* Add button + dropdown — right side of the same row */}
               {activeTab === 'skills' ? (
-                <div className="relative" ref={skillDropdownRef}>
-                  <button
-                    ref={skillTriggerRef}
-                    type="button"
-                    onClick={() => {
-                      setSkillPopoverOpen((prev) => !prev)
-                      setSkillSearchQuery('')
-                      setTimeout(() => skillSearchRef.current?.focus(), 0)
+                <Popover
+                  open={skillPopoverOpen && !isFullAccess}
+                  onOpenChange={(open) => {
+                    setSkillPopoverOpen(open)
+                    composingRef.current = false
+                    if (open) setSkillSearchQuery('')
+                  }}
+                >
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      disabled={isFullAccess}
+                      className="flex h-[28px] items-center rounded-lg border border-dashed border-border bg-card px-3 text-[12px] text-muted-foreground hover:bg-muted"
+                    >
+                      {t('＋ Add a skill')}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    aria-label={t('＋ Add a skill')}
+                    align="end"
+                    className="flex max-h-[260px] w-[240px] flex-col overflow-y-auto rounded-lg border border-border bg-card p-0 text-foreground shadow-md"
+                    onCloseAutoFocus={(event) => {
+                      if (isFullAccess) {
+                        event.preventDefault()
+                        fullAccessRef.current?.focus()
+                      }
                     }}
-                    className="flex h-[28px] items-center rounded-lg border border-dashed border-border bg-card px-3 text-[12px] text-muted-foreground hover:bg-muted"
+                    onOpenAutoFocus={(event) => {
+                      event.preventDefault()
+                      skillSearchRef.current?.focus()
+                    }}
+                    onCompositionStart={() => {
+                      composingRef.current = true
+                    }}
+                    onCompositionEnd={() => {
+                      composingRef.current = false
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') event.stopPropagation()
+                    }}
+                    onEscapeKeyDown={(event) => {
+                      if (event.isComposing || composingRef.current || event.keyCode === 229)
+                        event.preventDefault()
+                    }}
                   >
-                    {t('＋ Add a skill')}
-                  </button>
-                  {skillPopoverOpen ? (
-                    <div className="absolute right-0 top-full z-50 mt-1 flex max-h-[260px] w-[240px] flex-col overflow-y-auto rounded-lg border border-border bg-card shadow-md">
-                      <div className="sticky top-0 z-10 border-b border-border bg-card p-2">
-                        <input
-                          ref={skillSearchRef}
-                          type="search"
-                          aria-label={t('Search skills to add')}
-                          aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
-                          placeholder={t('Search skills…')}
-                          value={skillSearchQuery}
-                          onChange={(e) => setSkillSearchQuery(e.target.value)}
-                          className="w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-[12.5px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary"
-                        />
-                        <TagFilter
-                          resourceType="catalog.skill"
-                          value={skillTagFilter}
-                          onChange={setSkillTagFilter}
-                          className="mt-2 w-full"
-                        />
-                      </div>
-                      <div className="flex-1">
-                        {filteredAddableSkills.length === 0 ? (
-                          <p className="px-3 py-3 text-[12px] text-muted-foreground">
-                            {skillSearchQuery
-                              ? t('No matching skills')
-                              : t('No more skills to add')}
-                          </p>
-                        ) : (
-                          filteredAddableSkills.map((skill) => (
-                            <button
-                              key={skill.id}
-                              type="button"
-                              onClick={() => {
-                                addSkill(skill.id)
-                                setSkillPopoverOpen(false)
-                              }}
-                              className="flex h-[32px] w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                            >
-                              <span className="min-w-0 flex-1 truncate text-[12.5px]">
-                                {skill.name}
-                              </span>
-                            </button>
-                          ))
-                        )}
-                      </div>
+                    <div className="sticky top-0 z-10 border-b border-border bg-card p-2">
+                      <input
+                        ref={skillSearchRef}
+                        type="search"
+                        aria-label={t('Search skills to add')}
+                        aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
+                        placeholder={t('Search skills…')}
+                        value={skillSearchQuery}
+                        onChange={(e) => setSkillSearchQuery(e.target.value)}
+                        className="w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-[12.5px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary"
+                      />
+                      <TagFilter
+                        resourceType="catalog.skill"
+                        value={skillTagFilter}
+                        onChange={setSkillTagFilter}
+                        className="mt-2 w-full"
+                      />
                     </div>
-                  ) : null}
-                </div>
+                    <div className="flex-1">
+                      {filteredAddableSkills.length === 0 ? (
+                        <p className="px-3 py-3 text-[12px] text-muted-foreground">
+                          {skillSearchQuery ? t('No matching skills') : t('No more skills to add')}
+                        </p>
+                      ) : (
+                        filteredAddableSkills.map((skill) => (
+                          <button
+                            key={skill.id}
+                            type="button"
+                            onClick={() => {
+                              addSkill(skill.id)
+                              setSkillPopoverOpen(false)
+                            }}
+                            className="flex h-[32px] w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                          >
+                            <span className="min-w-0 flex-1 truncate text-[12.5px]">
+                              {skill.name}
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               ) : (
-                <div className="relative" ref={connectorDropdownRef}>
-                  <button
-                    ref={connectorTriggerRef}
-                    type="button"
-                    onClick={() => {
-                      setConnectorPopoverOpen((prev) => !prev)
-                      setConnectorSearchQuery('')
-                      setTimeout(() => connectorSearchRef.current?.focus(), 0)
+                <Popover
+                  open={connectorPopoverOpen && !isFullAccess}
+                  onOpenChange={(open) => {
+                    setConnectorPopoverOpen(open)
+                    composingRef.current = false
+                    if (open) setConnectorSearchQuery('')
+                  }}
+                >
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      disabled={isFullAccess}
+                      className="flex h-[28px] items-center rounded-lg border border-dashed border-border bg-card px-3 text-[12px] text-muted-foreground hover:bg-muted"
+                    >
+                      {t('＋ Add a connector')}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    aria-label={t('＋ Add a connector')}
+                    align="end"
+                    className="flex max-h-[260px] w-[240px] flex-col overflow-y-auto rounded-lg border border-border bg-card p-0 text-foreground shadow-md"
+                    onCloseAutoFocus={(event) => {
+                      if (isFullAccess) {
+                        event.preventDefault()
+                        fullAccessRef.current?.focus()
+                      }
                     }}
-                    className="flex h-[28px] items-center rounded-lg border border-dashed border-border bg-card px-3 text-[12px] text-muted-foreground hover:bg-muted"
+                    onOpenAutoFocus={(event) => {
+                      event.preventDefault()
+                      connectorSearchRef.current?.focus()
+                    }}
+                    onCompositionStart={() => {
+                      composingRef.current = true
+                    }}
+                    onCompositionEnd={() => {
+                      composingRef.current = false
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') event.stopPropagation()
+                    }}
+                    onEscapeKeyDown={(event) => {
+                      if (event.isComposing || composingRef.current || event.keyCode === 229)
+                        event.preventDefault()
+                    }}
                   >
-                    {t('＋ Add a connector')}
-                  </button>
-                  {connectorPopoverOpen ? (
-                    <div className="absolute right-0 top-full z-50 mt-1 flex max-h-[260px] w-[240px] flex-col overflow-y-auto rounded-lg border border-border bg-card shadow-md">
-                      <div className="sticky top-0 z-10 border-b border-border bg-card p-2">
-                        <input
-                          ref={connectorSearchRef}
-                          type="search"
-                          aria-label={t('Search connectors to add')}
-                          aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
-                          placeholder={t('Search connectors…')}
-                          value={connectorSearchQuery}
-                          onChange={(e) => setConnectorSearchQuery(e.target.value)}
-                          className="w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-[12.5px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary"
-                        />
-                        <TagFilter
-                          resourceType="catalog.connector"
-                          value={connectorTagFilter}
-                          onChange={setConnectorTagFilter}
-                          className="mt-2 w-full"
-                        />
-                      </div>
-                      <div className="flex-1">
-                        {filteredAddableConnectors.length === 0 ? (
-                          <p className="px-3 py-3 text-[12px] text-muted-foreground">
-                            {connectorSearchQuery
-                              ? t('No matching connectors')
-                              : t('No more connectors to add')}
-                          </p>
-                        ) : (
-                          filteredAddableConnectors.map((connector) => (
-                            <button
-                              key={connector.id}
-                              type="button"
-                              onClick={() => {
-                                addConnector(connector.id)
-                                setConnectorPopoverOpen(false)
-                              }}
-                              className="flex h-[32px] w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                            >
-                              <span className="min-w-0 flex-1 truncate text-[12.5px]">
-                                {connector.name}
-                              </span>
-                            </button>
-                          ))
-                        )}
-                      </div>
+                    <div className="sticky top-0 z-10 border-b border-border bg-card p-2">
+                      <input
+                        ref={connectorSearchRef}
+                        type="search"
+                        aria-label={t('Search connectors to add')}
+                        aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
+                        placeholder={t('Search connectors…')}
+                        value={connectorSearchQuery}
+                        onChange={(e) => setConnectorSearchQuery(e.target.value)}
+                        className="w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-[12.5px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary"
+                      />
+                      <TagFilter
+                        resourceType="catalog.connector"
+                        value={connectorTagFilter}
+                        onChange={setConnectorTagFilter}
+                        className="mt-2 w-full"
+                      />
                     </div>
-                  ) : null}
-                </div>
+                    <div className="flex-1">
+                      {filteredAddableConnectors.length === 0 ? (
+                        <p className="px-3 py-3 text-[12px] text-muted-foreground">
+                          {connectorSearchQuery
+                            ? t('No matching connectors')
+                            : t('No more connectors to add')}
+                        </p>
+                      ) : (
+                        filteredAddableConnectors.map((connector) => (
+                          <button
+                            key={connector.id}
+                            type="button"
+                            onClick={() => {
+                              addConnector(connector.id)
+                              setConnectorPopoverOpen(false)
+                            }}
+                            className="flex h-[32px] w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                          >
+                            <span className="min-w-0 flex-1 truncate text-[12.5px]">
+                              {connector.name}
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               )}
             </div>
 
-            {activeTab === 'skills' ? (
-              <div>
-                <div className="overflow-hidden rounded-lg border border-border">
-                  {selectedSkillRows.length === 0 ? (
-                    <p className="px-3 py-3.5 text-[12px] text-muted-foreground">
-                      {t('No skills added yet.')}
-                    </p>
-                  ) : (
-                    selectedSkillRows.map((skill) => {
-                      const openSkill =
-                        !skill.missing && onOpenSkillDetail !== undefined
-                          ? () => onOpenSkillDetail(skill.id)
-                          : undefined
-                      return (
-                        <div
-                          key={skill.id}
-                          {...clickableRowProps(
-                            openSkill,
-                            t('View {{name}} details', { name: skill.name })
-                          )}
-                          className={capabilityRowClassName(openSkill !== undefined)}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[12.5px]">{skill.name}</div>
-                            {!skill.missing && skill.description ? (
-                              <div className="truncate text-[11px] text-muted-foreground">
-                                {skill.description}
-                              </div>
-                            ) : null}
-                          </div>
-                          {skill.missing ? (
-                            <span className="shrink-0 text-[11px] text-muted-foreground">
-                              {t('Missing · unavailable')}
-                            </span>
-                          ) : (
-                            <>
-                              {skill.source ? (
-                                <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] capitalize text-muted-foreground">
-                                  {skill.source}
-                                </span>
-                              ) : null}
-                              {!skill.mainEnabled ? (
-                                <span className="shrink-0 text-[11px] text-muted-foreground">
-                                  {t('Main disabled · available here')}
-                                </span>
-                              ) : null}
-                            </>
-                          )}
-                          <SettingsIconAction
-                            label={t('Remove {{name}}', { name: skill.name })}
-                            icon={X}
-                            onClick={stopThen(() => removeSkill(skill.id))}
-                            danger
-                          />
-                        </div>
-                      )
-                    })
-                  )}
-                </div>
-                <p className="mt-2.5 flex gap-2 rounded-lg bg-muted p-2.5 text-[11.5px] leading-snug text-muted-foreground">
-                  <span aria-hidden="true">ⓘ</span>
-                  <span>
-                    {t(
-                      'Skills start empty and must be added. Skills not listed here are hidden from this specialist, and Skill calls to them are rejected.'
-                    )}
-                  </span>
-                </p>
-              </div>
-            ) : null}
-
-            {activeTab === 'connectors' ? (
-              <div>
-                <div className="overflow-hidden rounded-lg border border-border">
-                  {selectedConnectorRows.length === 0 ? (
-                    <p className="px-3 py-3.5 text-[12px] text-muted-foreground">
-                      {t('No connectors added yet.')}
-                    </p>
-                  ) : (
-                    selectedConnectorRows.map((connector) => {
-                      const canonicalConnectorId = (): string =>
-                        customServers.find(
-                          (server) => server.id === connector.id || server.name === connector.id
-                        )?.id ?? connector.id
-                      const openConnector =
-                        connector.available && onOpenConnectorDetail !== undefined
-                          ? () => onOpenConnectorDetail(canonicalConnectorId())
-                          : undefined
-                      return (
-                        <div
-                          key={connector.id}
-                          {...clickableRowProps(
-                            openConnector,
-                            t('View {{name}} details', { name: connector.name })
-                          )}
-                          className={capabilityRowClassName(openConnector !== undefined)}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[12.5px]">{connector.name}</div>
-                            {connector.available && connector.description ? (
-                              <div className="truncate text-[11px] text-muted-foreground">
-                                {connector.description}
-                              </div>
-                            ) : null}
-                          </div>
-                          {!connector.available ? (
-                            <span className="shrink-0 text-[11px] text-muted-foreground">
-                              {t('Unavailable — {{reason}}', {
-                                reason: connector.availability ?? t('not installed')
-                              })}
-                            </span>
-                          ) : !connector.mainEnabled ? (
-                            <span className="shrink-0 text-[11px] text-muted-foreground">
-                              {t('Main disabled · available here')}
-                            </span>
+            <Tabs.Content value="skills">
+              <div className="overflow-hidden rounded-lg border border-border">
+                {selectedSkillRows.length === 0 ? (
+                  <p className="px-3 py-3.5 text-[12px] text-muted-foreground">
+                    {t('No skills added yet.')}
+                  </p>
+                ) : (
+                  selectedSkillRows.map((skill) => {
+                    const openSkill =
+                      !skill.missing && onOpenSkillDetail !== undefined
+                        ? () => onOpenSkillDetail(skill.id)
+                        : undefined
+                    return (
+                      <div
+                        key={skill.id}
+                        {...clickableRowProps(
+                          openSkill,
+                          t('View {{name}} details', { name: skill.name })
+                        )}
+                        className={capabilityRowClassName(openSkill !== undefined)}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[12.5px]">{skill.name}</div>
+                          {!skill.missing && skill.description ? (
+                            <div className="truncate text-[11px] text-muted-foreground">
+                              {skill.description}
+                            </div>
                           ) : null}
-                          <SettingsIconAction
-                            label={t('Remove {{name}}', { name: connector.name })}
-                            icon={X}
-                            onClick={stopThen(() => removeConnector(connector.id))}
-                            danger
-                          />
                         </div>
-                      )
-                    })
-                  )}
-                </div>
-                <p className="mt-2.5 flex gap-2 rounded-lg bg-muted p-2.5 text-[11.5px] leading-snug text-muted-foreground">
-                  <span aria-hidden="true">ⓘ</span>
-                  <span>
-                    {t(
-                      "Connectors start empty and must be added. Connectors not listed here are blocked at runtime for this specialist's sessions."
-                    )}
-                  </span>
-                </p>
+                        {skill.missing ? (
+                          <span className="shrink-0 text-[11px] text-muted-foreground">
+                            {t('Missing · unavailable')}
+                          </span>
+                        ) : (
+                          <>
+                            {skill.source ? (
+                              <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] capitalize text-muted-foreground">
+                                {skill.source}
+                              </span>
+                            ) : null}
+                            {!skill.mainEnabled ? (
+                              <span className="shrink-0 text-[11px] text-muted-foreground">
+                                {t('Main disabled · available here')}
+                              </span>
+                            ) : null}
+                          </>
+                        )}
+                        <SettingsIconAction
+                          label={t('Remove {{name}}', { name: skill.name })}
+                          icon={X}
+                          disabled={isFullAccess}
+                          onClick={stopThen(() => removeSkill(skill.id))}
+                          danger
+                        />
+                      </div>
+                    )
+                  })
+                )}
               </div>
-            ) : null}
-          </div>
+              <p className="mt-2.5 flex gap-2 rounded-lg bg-muted p-2.5 text-[11.5px] leading-snug text-muted-foreground">
+                <span aria-hidden="true">ⓘ</span>
+                <span>
+                  {t(
+                    'Skills start empty and must be added. Skills not listed here are hidden from this specialist, and Skill calls to them are rejected.'
+                  )}
+                </span>
+              </p>
+            </Tabs.Content>
+
+            <Tabs.Content value="connectors">
+              <div className="overflow-hidden rounded-lg border border-border">
+                {selectedConnectorRows.length === 0 ? (
+                  <p className="px-3 py-3.5 text-[12px] text-muted-foreground">
+                    {t('No connectors added yet.')}
+                  </p>
+                ) : (
+                  selectedConnectorRows.map((connector) => {
+                    const canonicalConnectorId = (): string =>
+                      customServers.find(
+                        (server) => server.id === connector.id || server.name === connector.id
+                      )?.id ?? connector.id
+                    const openConnector =
+                      connector.available && onOpenConnectorDetail !== undefined
+                        ? () => onOpenConnectorDetail(canonicalConnectorId())
+                        : undefined
+                    return (
+                      <div
+                        key={connector.id}
+                        {...clickableRowProps(
+                          openConnector,
+                          t('View {{name}} details', { name: connector.name })
+                        )}
+                        className={capabilityRowClassName(openConnector !== undefined)}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[12.5px]">{connector.name}</div>
+                          {connector.available && connector.description ? (
+                            <div className="truncate text-[11px] text-muted-foreground">
+                              {connector.description}
+                            </div>
+                          ) : null}
+                        </div>
+                        {!connector.available ? (
+                          <span className="shrink-0 text-[11px] text-muted-foreground">
+                            {t('Unavailable — {{reason}}', {
+                              reason: connector.availability ?? t('not installed')
+                            })}
+                          </span>
+                        ) : !connector.mainEnabled ? (
+                          <span className="shrink-0 text-[11px] text-muted-foreground">
+                            {t('Main disabled · available here')}
+                          </span>
+                        ) : null}
+                        <SettingsIconAction
+                          label={t('Remove {{name}}', { name: connector.name })}
+                          icon={X}
+                          disabled={isFullAccess}
+                          onClick={stopThen(() => removeConnector(connector.id))}
+                          danger
+                        />
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+              <p className="mt-2.5 flex gap-2 rounded-lg bg-muted p-2.5 text-[11.5px] leading-snug text-muted-foreground">
+                <span aria-hidden="true">ⓘ</span>
+                <span>
+                  {t(
+                    "Connectors start empty and must be added. Connectors not listed here are blocked at runtime for this specialist's sessions."
+                  )}
+                </span>
+              </p>
+            </Tabs.Content>
+          </Tabs.Root>
 
           {isFullAccess ? (
             <button
