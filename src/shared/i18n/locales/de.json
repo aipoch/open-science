@@ -5175,6 +5175,9 @@
     "A project is required for the WSL2 setup conversation.": "Für die Konversation zur WSL2-Einrichtung ist ein Projekt erforderlich.",
     "Open Science could not prepare the WSL2 setup conversation.": "Open Science konnte die Konversation zur WSL2-Einrichtung nicht vorbereiten.",
     "Check the WSL2 status again, then retry the conversation setup.": "Prüfen Sie den WSL2-Status erneut und versuchen Sie dann noch einmal, die Konversation einzurichten.",
-    "First call {{toolName}} to read the bundled version-matched setup guide and refresh diagnostics.": "Rufen Sie zuerst {{toolName}} auf, um die mitgelieferte versionsgleiche Einrichtungsanleitung zu lesen und die Diagnose zu aktualisieren."
+    "First call {{toolName}} to read the bundled version-matched setup guide and refresh diagnostics.": "Rufen Sie zuerst {{toolName}} auf, um die mitgelieferte versionsgleiche Einrichtungsanleitung zu lesen und die Diagnose zu aktualisieren.",
+    "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}": "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}",
+    "Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.": "Auf die getestete Codex CLI v{{version}} aktualisieren. Schließen Sie vorher die Codex-Sitzungen.",
+    "Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.": "Codex CLI v{{version}} ist verfügbar. Aktualisieren Sie Ihre externe Installation manuell und lassen Sie sie erneut erkennen."
   }
 }

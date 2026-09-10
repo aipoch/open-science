@@ -5018,6 +5018,9 @@
     "A project is required for the WSL2 setup conversation.": "WSL2 설정 대화에는 프로젝트가 필요합니다.",
     "Open Science could not prepare the WSL2 setup conversation.": "Open Science에서 WSL2 설정 대화를 준비할 수 없습니다.",
     "Check the WSL2 status again, then retry the conversation setup.": "WSL2 상태를 다시 확인한 후 대화 설정을 재시도하세요.",
-    "First call {{toolName}} to read the bundled version-matched setup guide and refresh diagnostics.": "먼저 진단 도구 {{toolName}} 호출을 통해 기본 제공되는 버전 일치 설정 가이드를 읽고 진단을 새로 고치세요."
+    "First call {{toolName}} to read the bundled version-matched setup guide and refresh diagnostics.": "먼저 진단 도구 {{toolName}} 호출을 통해 기본 제공되는 버전 일치 설정 가이드를 읽고 진단을 새로 고치세요.",
+    "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}": "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}",
+    "Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.": "검증된 Codex CLI v{{version}}로 업데이트할 수 있습니다. 업데이트 전에 Codex 세션을 닫으세요.",
+    "Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.": "Codex CLI v{{version}} 버전을 사용할 수 있습니다. 외부 설치를 수동으로 업데이트한 후 다시 감지하세요."
   }
 }

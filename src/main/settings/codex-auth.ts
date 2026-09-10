@@ -8,7 +8,8 @@ import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 
 import type { CodexSubscriptionTransport } from '../../shared/settings'
-import { terminateProcessTree } from '../process-tree'
+import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
+import { spawnCodexWithInstallAdmission } from './managed-codex'
 import { codexSubscriptionStorageDir } from './codex-paths'
 import { augmentedPathEnv } from './shell-path'
 import { clearSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
@@ -1011,12 +1012,18 @@ export const openCodexAuthSession = async ({
   if (isJavaScript) env.ELECTRON_RUN_AS_NODE = '1'
   if (nativePath) env.CODEX_PATH = nativePath
 
-  const child = spawn(command, args, {
-    env,
-    shell: needsShell,
-    stdio: 'pipe',
-    windowsHide: true
-  })
+  const child = spawnCodexWithInstallAdmission(
+    [adapterPath, ...(nativePath ? [nativePath] : [])],
+    () =>
+      spawn(command, args, {
+        env,
+        shell: needsShell,
+        stdio: 'pipe',
+        detached: process.platform !== 'win32',
+        windowsHide: true
+      })
+  )
+  if (process.platform !== 'win32') registerOwnedPosixProcessGroup(child)
   const stream = acp.ndJsonStream(
     Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
     Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>

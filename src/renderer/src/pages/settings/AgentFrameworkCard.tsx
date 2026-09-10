@@ -38,6 +38,9 @@ type AgentFrameworkCardProps = {
   needsRepair: boolean
   // Detected version, rendered as a muted `vX.Y.Z` right after the name.
   version?: string
+  versionDetail?: string
+  updateAvailable?: boolean
+  updateHint?: string
   // Resolved runtime/adapter path; its presence also gates the Uninstall control.
   path?: string
   // Repository/docs link shown under the path (e.g. the ACP adapter repo for ACP-based runtimes).
@@ -87,9 +90,9 @@ type AgentFrameworkCardPreviewState =
   'default' | 'hover' | 'focus' | 'active' | 'disabled' | 'loading' | 'error' | 'success'
 
 // Unified agent-framework card for the settings Model panel. The whole card is the radio option
-// that switches the active framework (only ready runtimes are selectable); the action column on
-// the right carries exactly one action — Uninstall when ready, Repair when a detected runtime
-// fails preflight, Install when nothing was detected — and stops clicks bubbling into a selection.
+// that switches the active framework (only ready runtimes are selectable). The action column
+// offers an optional managed update alongside Uninstall, or Repair/Install for an unavailable
+// runtime, and stops action clicks from selecting the framework.
 const AgentFrameworkCard = ({
   icon,
   name,
@@ -100,6 +103,9 @@ const AgentFrameworkCard = ({
   minimumVersion,
   needsRepair,
   version,
+  versionDetail,
+  updateAvailable = false,
+  updateHint,
   path,
   sourceLabel,
   sourceUrl,
@@ -144,7 +150,7 @@ const AgentFrameworkCard = ({
   const installLogs = install.installLogs
   const installError = previewState === 'error' ? t('Update failed') : install.installError
   // Any framework's install (or any uninstall) locks this card's Install menu.
-  const installLocked = installRunning || isUninstalling
+  const installLocked = installRunning || isUninstalling || isDetecting || Boolean(promptInFlight)
 
   // Show the bar while this card's install runs; fall back to an indeterminate label before the
   // first progress tick arrives.
@@ -262,6 +268,10 @@ const AgentFrameworkCard = ({
               )}
             </div>
             <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+            {versionDetail ? (
+              <p className="mt-1 text-xs text-muted-foreground">{versionDetail}</p>
+            ) : null}
+            {updateHint ? <p className="mt-1 text-xs text-muted-foreground">{updateHint}</p> : null}
             {updateRequired && minimumVersion ? (
               <p className="mt-1 font-mono text-[11px] text-status-warning-foreground dark:text-status-warning-dark-foreground">
                 {t('Requires Codex ACP v{{version}} or later', { version: minimumVersion })}
@@ -285,26 +295,39 @@ const AgentFrameworkCard = ({
             ) : null}
           </div>
           {/* Actions live outside the selection gesture: clicks here must not switch frameworks.
-              Exactly one action per card: Uninstall when ready, Repair when detected-but-broken,
-              Install when nothing was detected. */}
-          {!ready || showUninstall ? (
+              Ready runtimes may offer Update alongside Uninstall. */}
+          {!ready || showUninstall || updateAvailable ? (
             <div
               className="ml-auto flex shrink-0 items-center gap-2"
               onClick={(event) => event.stopPropagation()}
             >
-              {ready ? (
-                <RuntimeUninstallControl
-                  label={name}
-                  uninstallCommand={uninstallCommand}
-                  managed={managed}
-                  active={active}
-                  isUninstalling={isUninstalling}
-                  isDetecting={isDetecting}
-                  // Global by contract: an install of ANY framework locks every card's Uninstall.
-                  isInstalling={installRunning}
-                  promptInFlight={promptInFlight}
-                  onUninstall={onUninstall}
+              {ready && updateAvailable ? (
+                <AgentInstallSourceMenu
+                  name={name}
+                  intent="update"
+                  sources={installSources}
+                  installing={installing}
+                  disabled={installLocked}
+                  npmAvailable={npmAvailable}
+                  blockedInstallSources={blockedInstallSources}
+                  onInstall={onInstall}
                 />
+              ) : null}
+              {ready ? (
+                showUninstall ? (
+                  <RuntimeUninstallControl
+                    label={name}
+                    uninstallCommand={uninstallCommand}
+                    managed={managed}
+                    active={active}
+                    isUninstalling={isUninstalling}
+                    isDetecting={isDetecting}
+                    // Global by contract: an install of ANY framework locks every card's Uninstall.
+                    isInstalling={installRunning}
+                    promptInFlight={promptInFlight}
+                    onUninstall={onUninstall}
+                  />
+                ) : null
               ) : (
                 <AgentInstallSourceMenu
                   name={name}
@@ -321,9 +344,9 @@ const AgentFrameworkCard = ({
           ) : null}
         </div>
 
-        {!ready ? (
+        {!ready || installing || installError || installLogs.length > 0 ? (
           <div className="mt-2 space-y-3">
-            <p className="text-xs text-muted-foreground">{notReadyHint}</p>
+            {!ready ? <p className="text-xs text-muted-foreground">{notReadyHint}</p> : null}
 
             {progress ? (
               // Determinate bar when the installer reports bytes, indeterminate slide otherwise —
@@ -335,7 +358,9 @@ const AgentFrameworkCard = ({
                 </div>
                 <div
                   role="progressbar"
-                  aria-label={updateRequired ? t('Update progress') : t('Install progress')}
+                  aria-label={
+                    updateRequired || updateAvailable ? t('Update progress') : t('Install progress')
+                  }
                   aria-valuemin={0}
                   aria-valuemax={100}
                   aria-valuenow={percent}

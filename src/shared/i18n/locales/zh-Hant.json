@@ -5020,6 +5020,9 @@
     "A project is required for the WSL2 setup conversation.": "WSL2 設定會話需要一個專案。",
     "Open Science could not prepare the WSL2 setup conversation.": "Open Science 無法準備 WSL2 設定會話。",
     "Check the WSL2 status again, then retry the conversation setup.": "請重新檢查 WSL2 狀態，然後重試會話設定。",
-    "First call {{toolName}} to read the bundled version-matched setup guide and refresh diagnostics.": "請先呼叫 {{toolName}}，以讀取內建的版本相符設定指南並重新整理診斷資訊。"
+    "First call {{toolName}} to read the bundled version-matched setup guide and refresh diagnostics.": "請先呼叫 {{toolName}}，以讀取內建的版本相符設定指南並重新整理診斷資訊。",
+    "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}": "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}",
+    "Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.": "可更新至已驗證的 Codex CLI v{{version}}。更新前請關閉 Codex 工作階段。",
+    "Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.": "Codex CLI v{{version}} 已可用。請手動更新外部安裝，然後重新偵測。"
   }
 }

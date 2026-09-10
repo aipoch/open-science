@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { execFile, spawn } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { createReadStream, type Dirent } from 'node:fs'
 import {
   chmod,
@@ -28,7 +28,7 @@ import {
   ACP_MODEL_TURN_COUNT_META_KEY,
   ACP_TURN_TOKEN_USAGE_META_KEY
 } from '../../shared/acp'
-import { MINIMUM_CODEX_ACP_VERSION } from '../../shared/codex-runtime'
+import { MANAGED_CODEX_VERSION, MINIMUM_CODEX_ACP_VERSION } from '../../shared/codex-runtime'
 import {
   DEFAULT_REGISTRIES,
   defaultFetchJson,
@@ -40,13 +40,13 @@ import {
 } from './managed-claude'
 import { createLogger } from '../logger'
 import { stripCodexCredentialEnv } from './process-tree'
-import { terminateProcessTree } from '../process-tree'
+import { onProcessTreeReaped, terminateProcessTree } from '../process-tree'
 import { toErrorMessage } from '../error-message'
 
 const execFileAsync = promisify(execFile)
 
 export const CODEX_ACP_VERSION = MINIMUM_CODEX_ACP_VERSION
-export const CODEX_VERSION = '0.144.6'
+export const CODEX_VERSION = MANAGED_CODEX_VERSION
 
 const log = createLogger('managed-codex')
 const MAX_INITIALIZE_DIAGNOSTIC_CHARS = 4 * 1024
@@ -56,17 +56,17 @@ export const CODEX_ACP_INTEGRITY =
 
 export const CODEX_INTEGRITIES: Readonly<Record<string, string>> = {
   'darwin-arm64':
-    'sha512-6zgvh70MzBNSeT17HEhSOrmmGGZGAKzSC7x6JAq+edkJkdPYA9P0I1tG7aJ49GlBkBxuC+MKBH1qm6+2Cghcww==',
+    'sha512-B1qhN3fa1ay0R0wGziXqgwSkB5icpYChNKHhtBHff/0UtSTC7z+l8aTtvMlGjH3E8HEvY3+njIJelM9CAAoVWg==',
   'darwin-x64':
-    'sha512-THRyPG0zSU6M8NQAge1LHEHsJDnoH4BpKsfJHB/qe3Fm+Wf6zqAmWJFlOKzBm27m0K2Hq3za4Ac2I5p5i4yp/A==',
+    'sha512-vnSbbPzfoDZmmyzsxswsDDXQ06IVFBzkQU7/hroB3ji93Ok2utcsq8Psfk2tjF5r9mEx8RWFJhzuTGHG26/NDA==',
   'linux-arm64':
-    'sha512-PGiLXMN+2IQRkf7tOLi64dMInjU1pRLbz0Rwfj/yt2Y97SZQqAjFQoi2wmswmqtqMDnfwCPTC1DRXVQkvU6T6Q==',
+    'sha512-QKdjYLYV4hXIuUQDP3P6F4NXuWFoKo9WUoV4nAREIx55kiUyi8UsYdsVobkeXir5n/maEQgYMCKLHVma4rNPiw==',
   'linux-x64':
-    'sha512-4E7EnzCg0OnBxCyYnwJ+qnZwWHYe0YScr5ucKWbngE9u4+0XrpWELqq2Kn9jl5GZK8MDjU7PrJwFIwusHOHjuw==',
+    'sha512-x1EcwBlY3AObM1VTUHNM2AzAJQsyreGdagpF+qFiYi/Oa30VBktvvG0C6tLtCzqW6hjZNWkGZQWmeVk7MuJKWg==',
   'win32-arm64':
-    'sha512-SpMjXJLW43JzMP0K62mVcYfmFcpk0BK4AOgYmWSfyZHs3iRtHMd0UYw7605n/9lwkT2EqbwQLT2omZFeKJFzwA==',
+    'sha512-/FBh42976ltF1kxDoPQBg1Q6+hwChRU5/sm5dfeC8kFVQMvOCGoGeY5d8rRZGVJE8XojlXo74VQb0sHowcfgBw==',
   'win32-x64':
-    'sha512-dN39VnjEthKz5io1RNWwZDtErdSn07nW3pGUgvlA6DMxgm/nuGaIAZO/sG/Hgxq/x5j9HteAENfrFgVkpZ0lFg=='
+    'sha512-lMkB43kJZH0VFr+hoXc11qqR7QtQIbkr07ALgj4urKL1osNyUyuy1iXd3Vzz2iCYvBUCSw7I0l/W1cEPGx9euQ=='
 }
 
 export type ManagedCodexPlatform = {
@@ -112,6 +112,67 @@ export const managedCodexBinary = (
   platform: ManagedCodexPlatform = resolveManagedCodexPlatform()
 ): string =>
   join(managedCodexRoot(dataRoot), 'codex', 'vendor', platform.target, 'bin', platform.binName)
+
+// Main-process admission for app-launched Codex processes and replacement of their files.
+// Acquire synchronously before spawn/download: checking only UI prompt state leaves a start race.
+const codexProcessUsers = new Map<string, number>()
+const codexInstallPaths = new Set<string>()
+const codexPathKey = (path: string): string => {
+  const absolute = resolve(path)
+  return process.platform === 'win32' ? absolute.toLowerCase() : absolute
+}
+
+export const spawnCodexWithInstallAdmission = <T extends ChildProcess>(
+  paths: readonly string[],
+  spawnProcess: () => T
+): T => {
+  const keys = [...new Set(paths.map(codexPathKey))]
+  if (keys.some((key) => codexInstallPaths.has(key))) {
+    throw new Error(
+      'Codex is being updated. Wait for the update to finish before starting a session.'
+    )
+  }
+  for (const key of keys) codexProcessUsers.set(key, (codexProcessUsers.get(key) ?? 0) + 1)
+  const release = (): void => {
+    for (const key of keys) {
+      const remaining = (codexProcessUsers.get(key) ?? 1) - 1
+      if (remaining > 0) codexProcessUsers.set(key, remaining)
+      else codexProcessUsers.delete(key)
+    }
+  }
+  try {
+    const child = spawnProcess()
+    onProcessTreeReaped(child, release)
+    return child
+  } catch (error) {
+    release()
+    throw error
+  }
+}
+
+export const installManagedCodex = async (
+  options: InstallManagedCodexOptions
+): Promise<ManagedCodexInstallOutcome> => {
+  const keys = [
+    managedCodexAdapterEntry(options.dataRoot),
+    managedCodexBinary(options.dataRoot, options.platform)
+  ].map(codexPathKey)
+  if (keys.some((key) => codexProcessUsers.has(key) || codexInstallPaths.has(key))) {
+    return {
+      result: {
+        installId: options.installId,
+        ok: false,
+        error: 'Codex is in use. Close Codex sessions and stop background tasks before updating.'
+      }
+    }
+  }
+  for (const key of keys) codexInstallPaths.add(key)
+  try {
+    return await installManagedCodexFiles(options)
+  } finally {
+    for (const key of keys) codexInstallPaths.delete(key)
+  }
+}
 
 const adapterEntryInRoot = (root: string): string => join(root, 'adapter', 'dist', 'index.js')
 
@@ -1384,7 +1445,7 @@ const replaceDirectory = async (staged: string, destination: string): Promise<vo
   if (hasBackup) await rm(backup, { recursive: true, force: true }).catch(() => undefined)
 }
 
-export const installManagedCodex = async (
+const installManagedCodexFiles = async (
   options: InstallManagedCodexOptions
 ): Promise<ManagedCodexInstallOutcome> => {
   const {
@@ -1517,7 +1578,7 @@ export const installManagedCodex = async (
           stream: 'system',
           chunk: `Existing Codex CLI is incompatible with the managed adapter; falling back to the managed Codex CLI.\n`
         })
-        return installManagedCodex({ ...options, existingCodexPath: undefined })
+        return installManagedCodexFiles({ ...options, existingCodexPath: undefined })
       }
 
       signal?.throwIfAborted()
