@@ -247,7 +247,9 @@ describe('HeadlessTaskApi adapter', () => {
           codexReady: false,
           agentFrameworkId: 'codex',
           agentReady: false,
-          activeProviderReady: false
+          activeProviderReady: false,
+          runtimeReadiness: { status: 'missing' },
+          providerReadiness: { status: 'missing' }
         }
       }
       if (channel === 'settings:list-skills') {
@@ -297,6 +299,38 @@ describe('HeadlessTaskApi adapter', () => {
         skills: { status: 'ready', enabled: ['literature-review', 'writing'] }
       },
       next: [{ code: 'runtime_missing' }, { code: 'provider_missing' }]
+    })
+  })
+
+  it('distinguishes configured but unusable runtime and provider state', async () => {
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'settings:get-preflight') {
+        return {
+          claudeReady: false,
+          opencodeReady: false,
+          codebuddyReady: false,
+          codexReady: false,
+          agentFrameworkId: 'codex',
+          agentReady: false,
+          activeProviderReady: false,
+          runtimeReadiness: { status: 'not_ready' },
+          providerReadiness: { status: 'not_ready', reason: 'credential_invalid' }
+        }
+      }
+      if (channel === 'settings:list-skills') return []
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+
+    await expect(api.doctor()).resolves.toEqual({
+      ready: false,
+      checks: {
+        daemon: { status: 'ready' },
+        runtime: { status: 'not_ready', framework: 'codex' },
+        provider: { status: 'not_ready', reason: 'credential_invalid' },
+        skills: { status: 'ready', enabled: [] }
+      },
+      next: [{ code: 'runtime_not_ready' }, { code: 'provider_not_ready' }]
     })
   })
 

@@ -14,7 +14,7 @@ import type {
   InstallCodeBuddyRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
-  Preflight,
+  ReadinessPreflight,
   ValidateProviderResult
 } from '../../shared/settings'
 import {
@@ -433,7 +433,7 @@ export class AgentRuntimeManager {
       options.resolveCodexProxyEnvironment ?? resolveSystemProxyEnvironment
   }
 
-  async getPreflight(providers: ProviderPreflightAccess): Promise<Preflight> {
+  async getPreflight(providers: ProviderPreflightAccess): Promise<ReadinessPreflight> {
     return this.trackDetection(async (signal) => {
       const settings = await this.repository.getSettings()
       signal.throwIfAborted()
@@ -458,18 +458,16 @@ export class AgentRuntimeManager {
       const activeEndpoints = activeProvider
         ? providers.resolveProviderApiEndpoints(activeProvider, activeModel)
         : undefined
-      const activeProviderCompatible =
-        activeProvider && configuredModelAvailable
-          ? isProviderUsableByFramework(
-              { apiEndpoints: activeEndpoints, type: activeProvider.type },
-              framework
-            ) &&
-            (framework.id !== 'codex' || isModelBridgeSupported(activeProvider, activeModel))
-          : false
-      const activeProviderKeyUsable =
-        activeProvider && activeProvider.lastValidatedAt !== undefined
-          ? await providers.isProviderKeyUsable(activeProvider)
-          : false
+      const activeProviderCompatible = activeProvider
+        ? isProviderUsableByFramework(
+            { apiEndpoints: activeEndpoints, type: activeProvider.type },
+            framework
+          ) &&
+          (framework.id !== 'codex' || isModelBridgeSupported(activeProvider, activeModel))
+        : false
+      const activeProviderKeyUsable = activeProvider
+        ? await providers.isProviderKeyUsable(activeProvider)
+        : false
       const activeValidationTarget = activeProvider
         ? {
             model: activeModel,
@@ -497,6 +495,7 @@ export class AgentRuntimeManager {
         isProviderKeyUsable: (provider) =>
           provider.id === activeProvider?.id && activeProviderKeyUsable,
         activeProviderCompatible,
+        activeProviderModelAvailable: configuredModelAvailable,
         activeValidationTarget
       })
     })

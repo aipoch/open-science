@@ -537,6 +537,28 @@ describe('AgentRuntimeManager', () => {
     expect(providers.isProviderKeyUsable).toHaveBeenCalledWith(storedProvider)
   })
 
+  it('projects a never-validated missing app credential as credential_invalid', async () => {
+    await repository.upsertProvider({
+      id: 'provider-a',
+      type: 'custom',
+      name: 'Provider A',
+      model: 'model-a',
+      apiEndpoints: ['anthropic'],
+      keyRef: 'missing-key'
+    })
+    await repository.setActiveProvider('provider-a', 'model-a')
+    const providers: ProviderPreflightAccess = {
+      resolveProviderApiEndpoints: vi.fn().mockReturnValue(['anthropic']),
+      resolveActiveModel: vi.fn().mockReturnValue('model-a'),
+      isProviderKeyUsable: vi.fn().mockResolvedValue(false)
+    }
+
+    await expect(manager.getPreflight(providers)).resolves.toMatchObject({
+      providerReadiness: { status: 'not_ready', reason: 'credential_invalid' }
+    })
+    expect(providers.isProviderKeyUsable).toHaveBeenCalledOnce()
+  })
+
   it('fails Codex preflight when the installed ACP adapter is below the supported version', async () => {
     inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.1.4')
     inventory.codexNative.set(managedCodexPath, 'codex-cli 0.144.6')

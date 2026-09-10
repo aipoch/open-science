@@ -669,9 +669,16 @@ export type AppIconPreview = AppIconVariantInfo & {
   previewDataUrl: string
 }
 
-// The hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.
-// Per-framework readiness is exposed alongside `agentReady`, which reflects the currently-selected
-// framework — the gate a session actually depends on.
+export type ReadinessStatus = 'ready' | 'missing' | 'not_ready'
+
+export type ProviderReadinessReason =
+  'credential_invalid' | Exclude<ValidationCategory, 'ok' | 'auth'>
+
+export type ProviderReadiness =
+  { status: 'ready' | 'missing' } | { status: 'not_ready'; reason?: ProviderReadinessReason }
+
+// The hard startup gates. The booleans keep the wizard's existing gate contract; the structured
+// projections distinguish absent resources from configured resources that cannot currently run.
 export type Preflight = {
   claudeReady: boolean
   opencodeReady: boolean
@@ -681,6 +688,11 @@ export type Preflight = {
   agentFrameworkId: AgentFrameworkId
   agentReady: boolean
   activeProviderReady: boolean
+}
+
+export type ReadinessPreflight = Preflight & {
+  runtimeReadiness: { status: ReadinessStatus }
+  providerReadiness: ProviderReadiness
 }
 
 // A provider draft as entered in the renderer form. The plaintext `key` is present only when the user

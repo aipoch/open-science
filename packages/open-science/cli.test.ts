@@ -39,10 +39,10 @@ describe('task CLI', () => {
       checks: {
         daemon: { status: 'ready' },
         runtime: { status: 'missing', framework: 'codex' },
-        provider: { status: 'missing' },
+        provider: { status: 'not_ready', reason: 'credential_invalid' },
         skills: { status: 'ready', enabled: ['literature-review'] }
       },
-      next: [{ code: 'runtime_missing' }, { code: 'provider_missing' }]
+      next: [{ code: 'runtime_missing' }, { code: 'provider_not_ready' }]
     }
     const log = vi.fn()
 

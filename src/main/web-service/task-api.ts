@@ -20,7 +20,7 @@ import type {
   UpdateDeviceCredentialRequest,
   DeviceCredentialsSnapshot,
   CreateDeviceCredentialResult,
-  Preflight,
+  ReadinessPreflight,
   SkillView,
   SettingsSnapshot
 } from '../../shared/settings'
@@ -234,21 +234,26 @@ class HeadlessTaskApi {
 
   async doctor(): Promise<TaskDoctorReport> {
     const [preflight, skills] = await Promise.all([
-      this.invoke('settings:get-preflight') as Promise<Preflight>,
+      this.invoke('settings:get-preflight') as Promise<ReadinessPreflight>,
       this.invoke('settings:list-skills') as Promise<SkillView[]>
     ])
+    const { runtimeReadiness, providerReadiness } = preflight
     const next: TaskDoctorReport['next'][number][] = []
-    if (!preflight.agentReady) next.push({ code: 'runtime_missing' })
-    if (!preflight.activeProviderReady) next.push({ code: 'provider_missing' })
+    if (runtimeReadiness.status !== 'ready') {
+      next.push({ code: `runtime_${runtimeReadiness.status}` })
+    }
+    if (providerReadiness.status !== 'ready') {
+      next.push({ code: `provider_${providerReadiness.status}` })
+    }
     return {
-      ready: preflight.agentReady && preflight.activeProviderReady,
+      ready: runtimeReadiness.status === 'ready' && providerReadiness.status === 'ready',
       checks: {
         daemon: { status: 'ready' },
         runtime: {
-          status: preflight.agentReady ? 'ready' : 'missing',
+          status: runtimeReadiness.status,
           framework: preflight.agentFrameworkId
         },
-        provider: { status: preflight.activeProviderReady ? 'ready' : 'missing' },
+        provider: providerReadiness,
         skills: {
           status: 'ready',
           enabled: skills

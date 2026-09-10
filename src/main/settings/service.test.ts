@@ -2162,7 +2162,9 @@ describe('SettingsService: preflight & spawn config', () => {
       codebuddyReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
-      activeProviderReady: true
+      activeProviderReady: true,
+      runtimeReadiness: { status: 'ready' },
+      providerReadiness: { status: 'ready' }
     })
   })
 
@@ -2185,7 +2187,10 @@ describe('SettingsService: preflight & spawn config', () => {
       lastValidatedAt: 1
     })
 
-    await expect(service.getPreflight()).resolves.toMatchObject({ activeProviderReady: false })
+    await expect(service.getPreflight()).resolves.toMatchObject({
+      activeProviderReady: false,
+      providerReadiness: { status: 'not_ready', reason: 'model-not-found' }
+    })
   })
 
   it('closes the provider gate when the active shared Claude session is signed out', async () => {
@@ -2901,8 +2906,19 @@ describe('SettingsService: preflight & spawn config', () => {
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: false
+      }),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' }
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexAuth
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
@@ -2920,7 +2936,11 @@ describe('SettingsService: preflight & spawn config', () => {
     })
     await service.setActiveProvider(CODEX_SHARED_PROVIDER_ID, 'gpt-5.6-terra')
 
-    expect(await service.getPreflight()).toMatchObject({ activeProviderReady: false })
+    expect(await service.getPreflight()).toMatchObject({
+      activeProviderReady: false,
+      providerReadiness: { status: 'not_ready', reason: 'credential_invalid' }
+    })
+    expect(codexAuth.getStatus).toHaveBeenCalledWith('isolated')
     const migratedProviders = (await repository.getSettings()).providers
 
     expect(migratedProviders).toEqual([
