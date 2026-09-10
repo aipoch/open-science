@@ -137,7 +137,7 @@ const startFakeAgentWithModes = (
       const sessionId = sessionIds[sessionIndex++]
       return { sessionId, ...(modes ? { modes } : {}) }
     })
-    .onRequest(acp.methods.agent.session.resume, () => ({}))
+    .onRequest(acp.methods.agent.session.resume, () => (modes ? { modes } : {}))
     .onRequest(acp.methods.agent.session.setMode, () => ({}))
     .onRequest(acp.methods.agent.session.setConfigOption, () => ({ configOptions: [] }))
     .onRequest(acp.methods.agent.session.prompt, async (ctx) => {

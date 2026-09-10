@@ -57,6 +57,7 @@ type AcpProviderSessionResumerDependencies = Readonly<{
   assertCurrentConnection: (connection: ClientConnection) => void
   disconnectTimedOutConnection: () => Promise<void>
   resumeCapabilityAdvertised: () => boolean
+  supportsSessionClose: () => boolean
   currentBackend: () => AcpBackendGenerationView
   registry: AcpSessionRegistry
   reserveIdentity: (sessionId: string) => AcpPrimarySessionIdentityReservationResult
@@ -114,6 +115,7 @@ export class AcpProviderSessionResumer {
         true
       )
     }
+    this.assertSkillScopeRefreshSupported()
     this.deps.registry.detach(attachment, 'provider')
     try {
       const result = await this.resumeDetached(
@@ -420,6 +422,7 @@ export class AcpProviderSessionResumer {
     let provisionalSession: ActiveSession | undefined
     try {
       let backend = this.deps.currentBackend()
+      this.assertSkillScopeRefreshSupported()
       capability = await this.deps.capabilities.provision({
         stableAppSessionId: request.sessionId,
         framework: backend.framework,
@@ -630,6 +633,21 @@ export class AcpProviderSessionResumer {
       specialistBindingPending: request.specialistBindingPending,
       memoryEnabled: request.memoryEnabled
     })
+  }
+
+  private assertSkillScopeRefreshSupported(): void {
+    const backend = this.deps.currentBackend()
+    if (
+      backend.framework.id === 'codex' &&
+      backend.session.options?.openScienceSkillRuntime &&
+      !this.deps.supportsSessionClose()
+    ) {
+      // A plain resume can keep the previous loader alive. Do not guess support or silently
+      // replace persisted context when this runtime cannot refresh the thread's MCP processes.
+      throw new Error(
+        'The Codex runtime does not support session/close; cannot safely refresh the Skill scope. Update the Codex runtime and retry.'
+      )
+    }
   }
 
   private async resolveProjectAgentContext(projectId: string): Promise<string | undefined> {

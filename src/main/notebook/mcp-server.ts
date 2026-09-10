@@ -44,7 +44,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Notebook preview is for code/results; keep explanations and diagnosis in chat.',
   'Use one `notebook_execute` per persistent Python/R cell; reuse `cellId`. For skill functions, repeat kernelSkillIds per dependent cell; call directly in code, never import. Data kernels cannot call connectors; use `repl_execute` only for Host SDK operations reported by `host.capabilities()` and `host.help()`. Move large cross-kernel data through `process.env.OPEN_SCIENCE_HANDOFF_DIR`.',
   HOST_SDK_DISCOVERY_GUIDANCE,
-  'Use already loaded Connector Skill documents or the current framework Skill loader. `host.skills` manages authored Skills, not generated Connector documents. Never read framework Skill directories through Notebook Shell/REPL; if no loader is available, stop dependent work and report the missing capability.',
+  'Connector documents: use loaded text or the framework Skill loader, never Shell/REPL. `host.skills` manages authored Skills. If neither is available, stop and report.',
   '`manage_environments` creates separate runtimes and returns `created.runtimeId`; bind/switch them and move data with files.',
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',

@@ -87,6 +87,7 @@ type HarnessOptions = {
     | null
   specialistSkills?: EffectiveSpecialistSkills
   supportsResume?: boolean
+  supportsClose?: boolean
   capabilityMcpServers?: McpServer[]
 }
 
@@ -155,7 +156,10 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     order.push('registry publish')
     return AcpSessionRegistry.prototype.publish.call(registry, ...args)
   })
-  const request = vi.fn(async () => {
+  const request = vi.fn(async (method?: string) => {
+    if (method === acp.methods.agent.session.close && options.supportsClose === false) {
+      throw new Error('Method not found: session/close')
+    }
     order.push('session/resume')
     if (options.invalidateDuringResume) {
       registry.invalidatePending()
@@ -287,6 +291,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     assertCurrentConnection,
     disconnectTimedOutConnection,
     resumeCapabilityAdvertised: () => options.supportsResume !== false,
+    supportsSessionClose: () => options.supportsClose !== false,
     currentBackend: () => currentBackend,
     registry,
     reserveIdentity: (sessionId) =>
@@ -382,6 +387,51 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it.each([
+    ['Responses', false, codexResponsesBackend],
+    ['Chat', false, codexBridgeBackend],
+    ['Responses', true, codexResponsesBackend],
+    ['Chat', true, codexBridgeBackend]
+  ] as const)(
+    'rejects unsupported %s Skill scope refresh before requests or detach (attached: %s)',
+    async (_route, attached, initialBackend) => {
+      const harness = createHarness({
+        attached,
+        supportsClose: false,
+        initialBackend: {
+          ...initialBackend,
+          providerContinuityToken: 'same-provider',
+          session: {
+            ...initialBackend.session,
+            options: {
+              openScienceSkillRuntime: {
+                command: '/node',
+                entryPath: '/main.js',
+                root: '/codex',
+                skillsDirectory: '/codex/skills'
+              }
+            }
+          }
+        },
+        providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+      })
+      const originalAttachment = harness.registry.lookup('stable-app-session')?.attachment
+      await expect(
+        attached
+          ? harness.reconfigure()
+          : harness.resume({
+              providerSessionId: harness.providerSession.sessionId,
+              providerContinuityToken: 'same-provider'
+            })
+      ).rejects.toThrow('does not support session/close; cannot safely refresh the Skill scope')
+      expect(harness.request).not.toHaveBeenCalled()
+      expect(harness.provision).not.toHaveBeenCalled()
+      expect(harness.adopt).not.toHaveBeenCalled()
+      expect(harness.registry.lookup('stable-app-session')?.attachment).toBe(originalAttachment)
+      expect(harness.providerSession.dispose).not.toHaveBeenCalled()
+    }
+  )
+
   it('merges framework-contributed MCP servers into session/resume', async () => {
     const capabilityServer: McpServer = {
       type: 'http',

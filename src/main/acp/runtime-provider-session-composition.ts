@@ -166,6 +166,7 @@ const composeAcpRuntimeProviderSessionOwners = (
       }
     },
     resumeCapabilityAdvertised: () => base.connectionResources.capabilities.resume,
+    supportsSessionClose: () => base.connectionResources.capabilities.close,
     currentBackend: () => base.backendGeneration.current,
     registry: session.sessionRegistry,
     reserveIdentity: (sessionId) => reserveIdentity(undefined, [sessionId]),
