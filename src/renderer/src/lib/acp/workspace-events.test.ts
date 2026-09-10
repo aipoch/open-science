@@ -215,6 +215,51 @@ describe('workspace runtime events', () => {
   )
 
   it.each(['single', 'batch'] as const)(
+    'preserves snapshot prompt ownership while loading the first %s event',
+    async (path) => {
+      const persisted = summarizeCurrentSession()
+      let resolveRead!: (session: typeof persisted) => void
+      vi.stubGlobal('window', {
+        api: {
+          sessions: {
+            loadOne: vi.fn(
+              () =>
+                new Promise<typeof persisted>((resolve) => {
+                  resolveRead = resolve
+                })
+            )
+          }
+        }
+      })
+      syncWorkspaceAgentFirstOutputState([persisted.id])
+      const event = createEvent({
+        role: 'assistant',
+        messageId: 'silent-restored-reply',
+        promptMessageId: persisted.messages[0].id,
+        text: ''
+      })
+      const applying =
+        path === 'single'
+          ? applyWorkspaceRuntimeEvent(event)
+          : applyWorkspaceRuntimeEventBatch([event])
+      expect(useSessionStore.getState().sessions[0]).toMatchObject({
+        contentLoaded: false,
+        agentPromptInFlight: true,
+        awaitingFirstAgentOutput: true
+      })
+      resolveRead(persisted)
+      await applying
+      expect(useSessionStore.getState().sessions[0]).toMatchObject({
+        agentPromptInFlight: true,
+        awaitingFirstAgentOutput: true
+      })
+      syncWorkspaceAgentFirstOutputState([])
+      expect(useSessionStore.getState().sessions[0].agentPromptInFlight).toBeUndefined()
+      expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+    }
+  )
+
+  it.each(['single', 'batch'] as const)(
     'rejects a failed content read before the %s projection',
     async (path) => {
       const persisted = summarizeCurrentSession()
