@@ -125,16 +125,30 @@ for (const localized of localizedSettingsCases) {
         )
         .toEqual([])
 
-      const highLabel = effort
-        .getByRole('radio', { name: 'High', exact: true })
-        .locator('[data-slot="settings-segment-label"]')
-      await expect(highLabel).not.toHaveAttribute('data-compact', 'true')
-      if (localized.locale === 'ru') {
-        await expect(
-          effort
-            .getByRole('radio', { name: localized.defaultEffort, exact: true })
-            .locator('[data-slot="settings-segment-label"]')
-        ).toHaveAttribute('data-compact', 'true')
+      const defaultText = effort
+        .getByRole('radio', { name: localized.defaultEffort, exact: true })
+        .locator('[data-slot="settings-segment-label-text"]')
+      const originalFont = await defaultText.evaluate((text) =>
+        parseFloat(getComputedStyle(text).fontSize)
+      )
+      const originalRootStyle = await page.evaluate(() => document.documentElement.style.fontSize)
+      await page.evaluate(() => {
+        document.documentElement.style.fontSize = `${parseFloat(getComputedStyle(document.documentElement).fontSize) * 2}px`
+      })
+      try {
+        await expect
+          .poll(() => defaultText.evaluate((text) => parseFloat(getComputedStyle(text).fontSize)))
+          .toBeGreaterThanOrEqual(originalFont * 2)
+        expect(
+          await defaultText.evaluate(
+            (text) =>
+              text.scrollHeight <= text.clientHeight + 1 && text.scrollWidth <= text.clientWidth + 1
+          )
+        ).toBe(true)
+      } finally {
+        await page.evaluate((value) => {
+          document.documentElement.style.fontSize = value
+        }, originalRootStyle)
       }
       const clippedPolicyLabels = async (): Promise<Array<string | undefined>> =>
         settings

@@ -371,7 +371,10 @@ test('resolves Agent permission requests through both Allow and Deny decisions',
   const permissionActions = page.getByTestId('permission-actions')
   await expect(permissionActions).toHaveCSS('position', 'sticky')
   await expect(permissionActions).toHaveCSS('bottom', '0px')
-  const resizeHandle = page.getByRole('button', { name: 'Resize permission panel' })
+  const resizeHandle = page.getByRole('separator', { name: 'Resize permission panel' })
+  await expect
+    .poll(async () => Number(await resizeHandle.getAttribute('aria-valuenow')))
+    .toBeGreaterThan(0)
   const handleBounds = await resizeHandle.boundingBox()
   expect(handleBounds).not.toBeNull()
   const restingHandleBackground = await resizeHandle.evaluate(
