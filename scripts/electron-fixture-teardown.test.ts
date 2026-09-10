@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 const boundary = vi.hoisted(() => ({
   fixture: undefined as unknown as (
     options: unknown,
-    use: () => Promise<void>,
+    use: (app: { restartAfterCrash: () => Promise<unknown> }) => Promise<void>,
     info: unknown
   ) => Promise<void>,
   launch: vi.fn(),
@@ -56,7 +56,7 @@ beforeEach(() => {
   boundary.launch.mockImplementation(async ({ env }) => {
     root = dirname(env.OPEN_SCIENCE_STORAGE_ROOT)
     const logs = join(root, 'logs')
-    await mkdir(logs)
+    await mkdir(logs, { recursive: true })
     await writeFile(join(logs, 'main.log'), 'fixture shutdown diagnostic')
     const page = {
       emulateMedia: async () => undefined,
@@ -227,3 +227,21 @@ it('still fails with diagnostics when initialization never finishes', async () =
     expect.objectContaining({ contentType: 'text/plain' })
   )
 })
+
+it.each([true, false])(
+  'requires confirmed process termination before a crash restart (reaped=%s)',
+  async (reaped) => {
+    boundary.reap.mockResolvedValue({ reaped })
+    const operation = boundary.fixture(
+      { windowMode: 'hidden' },
+      async (app) => {
+        await app.restartAfterCrash()
+      },
+      { status: reaped ? 'passed' : 'failed', expectedStatus: 'passed', attach }
+    )
+    if (reaped) await operation
+    else await expect(operation).rejects.toThrow('crash simulation did not reap')
+    expect(boundary.reap).toHaveBeenCalledOnce()
+    expect(boundary.launch).toHaveBeenCalledTimes(reaped ? 2 : 1)
+  }
+)

@@ -230,7 +230,10 @@ for (const reducedMotion of ['reduce', 'no-preference'] as const) {
     await expect(toolGroup).toBeVisible()
     await expect(conversation.getByText('Interacting with tools', { exact: true })).toBeVisible()
     const scrollToEndButton = page.getByRole('button', { name: 'Scroll to end' })
-    await expect(scrollToEndButton).toBeVisible()
+    // Begin above the bottom even when reduced motion has already completed automatic scrolling.
+    await conversation.hover()
+    await page.mouse.wheel(0, -100_000)
+    await expect(scrollToEndButton).toHaveAttribute('data-active', 'true')
     await scrollToEndButton.click()
     await expect
       .poll(() => conversation.evaluate((element) => element.scrollTop))

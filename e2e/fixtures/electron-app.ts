@@ -146,6 +146,7 @@ type ElectronApp = {
   emitPreviewContextMenuAtCssPoint: (point: { x: number; y: number }) => Promise<void>
   showMainWindow: () => Promise<void>
   restart: (options?: { resourceProfilePhase?: string }) => Promise<Page>
+  restartAfterCrash: () => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
   sampleResourceProfileNow: () => Promise<void>
@@ -907,6 +908,18 @@ class ElectronAppHarness implements ElectronApp {
       if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
       this.resourceProfiler.markPhase(options.resourceProfilePhase)
     }
+    await this.launch()
+    return this.page
+  }
+
+  async restartAfterCrash(): Promise<Page> {
+    const application = this.application
+    if (!application) throw new Error('No Electron process is available to terminate.')
+    const result = await terminateProcessTree(application.process())
+    if (!result.reaped) throw new Error('Electron crash simulation did not reap the process tree.')
+    this.resourceProfiler?.detach(application)
+    this.application = undefined
+    this.currentPage = undefined
     await this.launch()
     return this.page
   }
