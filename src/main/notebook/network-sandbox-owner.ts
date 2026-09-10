@@ -534,7 +534,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           throw new Error(
             'R access requires administrator authorization on the local Open Science desktop.'
           )
-        return this.applyWindowsRuntimeAccess(request.executable, true)
+        return this.applyWindowsRuntimeAccess(request.executable, true, request.signal)
       })
       if (result.cancelled) this.cancelledRuntimeAccess.add(key)
       if (result.cancelled) throw new NotebookRuntimeAccessCancelledError()
@@ -580,17 +580,23 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
 
   private async applyWindowsRuntimeAccess(
     executable: string,
-    authorized: boolean
+    authorized: boolean,
+    signal?: AbortSignal
   ): Promise<{ cancelled: boolean }> {
-    const result = await this.getOrCreateSandbox().setWindowsRuntimeAccess(executable, authorized)
-    if (result.cancelled || !authorized) return result
-    await this.verifyWindowsRuntimeAccess(executable)
-    return result
+    if (!authorized) return this.getOrCreateSandbox().setWindowsRuntimeAccess(executable, false)
+    try {
+      await this.verifyWindowsRuntimeAccess(executable, false, { signal })
+      return { cancelled: false }
+    } catch (error) {
+      if (error instanceof NotebookRuntimeAccessCancelledError) return { cancelled: true }
+      throw error
+    }
   }
 
   private async verifyWindowsRuntimeAccess(
     executable: string,
-    pathsOnly = false
+    pathsOnly = false,
+    authorization?: { signal?: AbortSignal }
   ): Promise<boolean> {
     if ((await this.status()).kind !== 'ready')
       throw new Error('Enable protected mode before verifying R access.')
@@ -631,6 +637,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         }
       })
       endExecution = invocation.beginExecution?.()
+      if (authorization) {
+        const result = await this.getOrCreateSandbox().setWindowsRuntimeAccess(executable, true, {
+          argv: [invocation.executable, ...invocation.args],
+          env: invocation.env,
+          ...(authorization.signal ? { signal: authorization.signal } : {})
+        })
+        if (result.cancelled) throw new NotebookRuntimeAccessCancelledError()
+        return true
+      }
       const { stdout } = await promisify(execFile)(invocation.executable, [...invocation.args], {
         cwd,
         env: invocation.env,

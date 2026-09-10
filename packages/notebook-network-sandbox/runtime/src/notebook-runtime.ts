@@ -21,7 +21,8 @@ import {
   removeWindowsAppContainer,
   windowsLaunch,
   windowsStandardLaunch,
-  type WindowsShell
+  type WindowsShell,
+  type WindowsRuntimeVerification
 } from './platform/windows-appcontainer.js'
 import {
   hiddenByFilesystemLayout,
@@ -347,14 +348,16 @@ const getWindowsRuntimeAccess = (
 const setWindowsRuntimeAccess = (
   config: NetworkRuntimeConfig,
   executable: string,
-  authorized: boolean
+  authorized: boolean,
+  verification?: WindowsRuntimeVerification
 ): Promise<{ cancelled: boolean }> =>
   setWindowsRuntimeAccessImpl(
     config.windowsHostPath,
     config.installationId,
     config.windowsOwnershipRoot,
     executable,
-    authorized
+    authorized,
+    verification
   )
 
 const NotebookNetworkRuntime = {
@@ -385,5 +388,6 @@ export type {
   NetworkRuntimeConfig,
   NetworkWrapRequest,
   SandboxDependencyCheck,
-  WindowsShell
+  WindowsShell,
+  WindowsRuntimeVerification
 }

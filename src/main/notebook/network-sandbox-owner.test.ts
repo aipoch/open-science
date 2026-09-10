@@ -1,4 +1,6 @@
 import { existsSync } from 'node:fs'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -57,6 +59,12 @@ import {
 } from '../storage/migration-state'
 
 const fixtureDirectories: string[] = []
+type Verification = { argv: readonly string[]; env: NodeJS.ProcessEnv }
+const runVerification = async (verification: Verification): Promise<void> => {
+  await promisify(execFile)(verification.argv[0]!, [...verification.argv.slice(1)], {
+    env: verification.env
+  })
+}
 
 it.each([undefined, true] as const)(
   'preserves the native job capability in the executor adapter (%s)',
@@ -118,7 +126,12 @@ beforeEach(() => {
   vi.clearAllMocks()
   backend.status.mockResolvedValue({ kind: 'ready', warnings: [] })
   backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: true, registered: true })
-  backend.setWindowsRuntimeAccess.mockResolvedValue({ cancelled: false })
+  backend.setWindowsRuntimeAccess.mockImplementation(
+    async (_executable, authorized: boolean, verification?: Verification) => {
+      if (authorized && verification) await runVerification(verification)
+      return { cancelled: false }
+    }
+  )
   backend.rKernelProtocolProbe.mockResolvedValue(true)
   backend.installWindows.mockResolvedValue({ cancelled: false })
   backend.removeWindows.mockResolvedValue({ cancelled: false })
@@ -978,10 +991,13 @@ it('authorizes missing R access before the original Notebook cell is dispatched'
     authorized: existsSync(granted),
     registered: existsSync(granted)
   }))
-  backend.setWindowsRuntimeAccess.mockImplementation(async () => {
-    await writeFile(granted, '')
-    return { cancelled: false }
-  })
+  backend.setWindowsRuntimeAccess.mockImplementation(
+    async (_executable, _authorized, verification?: Verification) => {
+      await writeFile(granted, '')
+      if (verification) await runVerification(verification)
+      return { cancelled: false }
+    }
+  )
   backend.wrap.mockImplementation(async (command: { args?: string[]; env: NodeJS.ProcessEnv }) => {
     const verification = command.args?.some((arg) => arg.includes('OPEN_SCIENCE_R_ACCESS_OK'))
     const script = `
@@ -1032,7 +1048,11 @@ it('authorizes missing R access before the original Notebook cell is dispatched'
     })
     expect(result.status, result.stderr).toBe('completed')
     expect(result.stdout).toContain('R_CELL_COMPLETED')
-    expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledExactlyOnceWith(process.execPath, true)
+    expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledExactlyOnceWith(
+      process.execPath,
+      true,
+      expect.objectContaining({ argv: expect.any(Array), env: expect.any(Object) })
+    )
   } finally {
     await executor.shutdown()
     await owner.dispose()
@@ -1073,7 +1093,7 @@ it('does not repeat a cancelled UAC prompt and reports cancellation before cell 
       expect(result.stderr).toContain('authorization was cancelled')
     }
     expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledOnce()
-    expect(backend.wrap).toHaveBeenCalledOnce()
+    expect(backend.wrap).toHaveBeenCalledTimes(2)
     // Authorization applied elsewhere is authoritative; a remembered refusal is not an ACL.
     backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: true, registered: true })
     await expect(
@@ -1306,6 +1326,47 @@ describe('R startup authorization admission', () => {
     }
   })
 
+  it('does not retain new runtime access when host protocol succeeds but contained verification fails', async () => {
+    const owner = createOwner()
+    let authorized = false
+    backend.getWindowsRuntimeAccess.mockImplementation(async () => ({
+      authorized,
+      registered: authorized
+    }))
+    backend.setWindowsRuntimeAccess.mockImplementation(
+      async (_executable, next: boolean, verification?: Verification) => {
+        if (verification) await runVerification(verification)
+        authorized = next
+        return { cancelled: false }
+      }
+    )
+    backend.wrap.mockImplementation(async (command: { env: NodeJS.ProcessEnv }) => ({
+      argv: [
+        process.execPath,
+        '-e',
+        command.env.R_ENABLE_JIT === '0'
+          ? `console.log(${JSON.stringify(tmpdir())}); process.exit(77)`
+          : 'console.error("there is no package called jsonlite inside containment"); process.exit(1)'
+      ],
+      env: process.env,
+      annotateStderr: (stderr: string) => stderr,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      cleanup: backend.cleanup
+    }))
+    try {
+      await expect(owner.ensureRuntimeAccess(request)).rejects.toThrow(
+        'there is no package called jsonlite inside containment'
+      )
+      expect(backend.rKernelProtocolProbe).toHaveBeenCalledOnce()
+      expect(await backend.getWindowsRuntimeAccess(request.executable)).toEqual({
+        authorized: false,
+        registered: false
+      })
+    } finally {
+      await owner.dispose()
+    }
+  })
+
   it('does not open UAC when cancelled during host R protocol verification', async () => {
     const owner = createOwner()
     const controller = new AbortController()
@@ -1345,7 +1406,7 @@ describe('R startup authorization admission', () => {
       const outcomes = await results
       expect(outcomes.map((outcome) => outcome.status)).toEqual(['rejected', 'rejected'])
       expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledOnce()
-      expect(backend.wrap).toHaveBeenCalledOnce()
+      expect(backend.wrap).toHaveBeenCalledTimes(2)
     } finally {
       settle?.({ cancelled: true })
       await results

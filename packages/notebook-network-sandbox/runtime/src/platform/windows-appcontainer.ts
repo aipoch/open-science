@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process'
+import { spawn, type SpawnOptions } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { createServer, type Server } from 'node:net'
@@ -13,6 +14,12 @@ import {
 } from '../gateway/command-gateway.js'
 
 type WindowsShell = Readonly<{ kind: 'powershell' | 'cmd'; path: string }>
+
+type WindowsRuntimeVerification = Readonly<{
+  argv: readonly string[]
+  env: NodeJS.ProcessEnv
+  signal?: AbortSignal
+}>
 
 type WindowsLaunchRequest = Readonly<{
   command: string
@@ -111,10 +118,12 @@ const closeServer = (server: Server | undefined): Promise<void> =>
 
 const runCapture = (
   program: string,
-  args: readonly string[]
+  args: readonly string[],
+  options: Pick<SpawnOptions, 'env' | 'signal' | 'timeout'> = {}
 ): Promise<{ code: number | null; stdout: string; stderr: string }> =>
   new Promise((resolve, reject) => {
     const child = spawn(program, [...args], {
+      ...options,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
     })
@@ -264,17 +273,36 @@ const checkWindowsAppContainer = async (
 
 const powershellString = (value: string): string => `'${value.replaceAll("'", "''")}'`
 
+// ProcessStartInfo.Arguments uses Windows argv quoting, without a cmd.exe parsing layer.
+const windowsProcessArgument = (value: string): string =>
+  `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`
+
 const windowsElevationScript = (
   hostPath: string,
   installationId: string,
   ownershipRoot: string,
-  command: 'setup' | 'remove'
+  command: 'setup' | 'remove' | 'authorize-runtime-access',
+  args: readonly string[] = []
 ): string =>
   [
+    '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)',
     'try {',
-    `$process = Start-Process -FilePath ${powershellString(hostPath)} -ArgumentList @('${command}', ${powershellString(installationId)}, ${powershellString(ownershipRoot)}) -Verb RunAs -Wait -PassThru`,
+    '$start = [System.Diagnostics.ProcessStartInfo]::new()',
+    `$start.FileName = ${powershellString(hostPath)}`,
+    `$start.Arguments = ${powershellString([command, installationId, ownershipRoot, ...args].map(windowsProcessArgument).join(' '))}`,
+    '$start.UseShellExecute = $true',
+    "$start.Verb = 'runas'",
+    '$start.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden',
+    // Windows PowerShell Start-Process discards Win32Exception.NativeErrorCode on launch failure.
+    '$process = [System.Diagnostics.Process]::Start($start)',
+    '$process.WaitForExit()',
     'exit $process.ExitCode',
-    '} catch { exit 1223 }'
+    '} catch {',
+    '$failure = $_.Exception',
+    'while ($null -ne $failure) { if ($failure -is [System.ComponentModel.Win32Exception] -and $failure.NativeErrorCode -eq 1223) { exit 1223 }; $failure = $failure.InnerException }',
+    '[Console]::Error.WriteLine($_.Exception.Message)',
+    'exit 1',
+    '}'
   ].join('; ')
 
 const runHostCommand = async (
@@ -293,9 +321,10 @@ const runElevatedHostCommand = async (
   hostPath: string,
   installationId: string,
   ownershipRoot: string,
-  command: 'setup' | 'remove'
+  command: 'setup' | 'remove' | 'authorize-runtime-access',
+  args: readonly string[] = []
 ): Promise<{ cancelled: boolean }> => {
-  const script = windowsElevationScript(hostPath, installationId, ownershipRoot, command)
+  const script = windowsElevationScript(hostPath, installationId, ownershipRoot, command, args)
   const encoded = Buffer.from(script, 'utf16le').toString('base64')
   const result = await runCapture('powershell.exe', [
     '-NoLogo',
@@ -309,10 +338,7 @@ const runElevatedHostCommand = async (
     stderr: error instanceof Error ? error.message : String(error)
   }))
   if (result.code === 0) return { cancelled: false }
-  if (
-    result.code === 1223 ||
-    /cancell?ed by the user|operation was canceled|1223/i.test(result.stderr)
-  ) {
+  if (result.code === 1223) {
     return { cancelled: true }
   }
   throw new Error(
@@ -373,24 +399,150 @@ const getWindowsRuntimeAccess = async (
   return current as { authorized: boolean; registered: boolean }
 }
 
+const runVerifiedRuntimeAccess = async (
+  hostPath: string,
+  installationId: string,
+  ownershipRoot: string,
+  verification: WindowsRuntimeVerification
+): Promise<{ cancelled: boolean }> => {
+  const ticket = randomBytes(32).toString('hex')
+  const child = spawn(
+    hostPath,
+    [
+      'verify-runtime-access',
+      installationId,
+      ownershipRoot,
+      ticket,
+      String(process.pid),
+      verification.argv[4]!
+    ],
+    { env: verification.env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }
+  )
+  let stderr = ''
+  let exited = false
+  const completion = new Promise<{ code: number | null; error?: Error }>((resolve) => {
+    child.stdout.resume()
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+      stderr = (stderr + chunk).slice(-1024 * 1024)
+    })
+    child.once('error', (error) => {
+      exited = true
+      resolve({ code: null, error })
+    })
+    child.once('close', (code) => {
+      exited = true
+      resolve({ code })
+    })
+  })
+  const stop = (): void => {
+    if (!exited) child.kill()
+  }
+  verification.signal?.addEventListener('abort', stop, { once: true })
+  try {
+    if (!child.pid) {
+      const failure = await completion
+      throw failure.error ?? new Error('Could not start the R verification process.')
+    }
+    if (verification.signal?.aborted) return { cancelled: true }
+    let result: { cancelled: boolean }
+    try {
+      result = await runElevatedHostCommand(
+        hostPath,
+        installationId,
+        ownershipRoot,
+        'authorize-runtime-access',
+        [ticket, String(child.pid), String(process.pid)]
+      )
+    } catch (error) {
+      stop()
+      await completion
+      throw new Error(
+        [stderr.trim(), error instanceof Error ? error.message : String(error)]
+          .filter(Boolean)
+          .join('\n')
+      )
+    }
+    if (result.cancelled) return result
+    const verified = await completion
+    if (verified.error || verified.code !== 0)
+      throw verified.error ?? new Error(stderr.trim() || 'The contained R verification failed.')
+    return result
+  } finally {
+    verification.signal?.removeEventListener('abort', stop)
+    stop()
+    await completion
+  }
+}
+
 const setWindowsRuntimeAccess = async (
   hostPath: string,
   installationId: string,
   ownershipRoot: string,
   executable: string,
-  authorized: boolean
+  authorized: boolean,
+  verification?: WindowsRuntimeVerification
 ): Promise<{ cancelled: boolean }> => {
   const access = await getWindowsRuntimeAccess(hostPath, installationId, ownershipRoot, executable)
-  if ((authorized && access.authorized) || (!authorized && !access.registered))
+  if (
+    verification &&
+    (!authorized ||
+      verification.argv.length !== 5 ||
+      verification.argv[0] !== hostPath ||
+      verification.argv[1] !== 'launch' ||
+      verification.argv[2] !== installationId ||
+      verification.argv[3] !== ownershipRoot)
+  )
+    throw new Error('R verification must use this installation’s contained launch.')
+  if (verification?.signal?.aborted) return { cancelled: true }
+  if ((authorized && access.authorized) || (!authorized && !access.registered)) {
+    if (verification) {
+      const result = await runCapture(hostPath, verification.argv.slice(1), {
+        env: verification.env,
+        signal: verification.signal,
+        timeout: 20_000
+      })
+      if (result.code !== 0 || !result.stdout.includes('OPEN_SCIENCE_R_ACCESS_OK'))
+        throw new Error(result.stderr.trim() || 'The contained R verification failed.')
+    }
     return { cancelled: false }
+  }
   const prepared = await runCapture(hostPath, [
-    authorized ? 'prepare-runtime-access' : 'prepare-remove-runtime-access',
+    authorized
+      ? verification
+        ? 'prepare-verified-runtime-access'
+        : 'prepare-runtime-access'
+      : 'prepare-remove-runtime-access',
     installationId,
     ownershipRoot,
     executable
   ])
   if (prepared.code !== 0)
     throw new Error(prepared.stderr.trim() || 'Could not prepare R runtime access.')
+  if (verification) {
+    try {
+      const result = await runVerifiedRuntimeAccess(
+        hostPath,
+        installationId,
+        ownershipRoot,
+        verification
+      )
+      if (result.cancelled)
+        await runHostCommand(hostPath, installationId, ownershipRoot, 'cancel-setup')
+      return result
+    } catch (error) {
+      // Safe only after the helper/verifier have exited. Native cancellation refuses to discard
+      // a partially applied journal; failed rollback therefore remains repairable and visible.
+      try {
+        await runHostCommand(hostPath, installationId, ownershipRoot, 'cancel-setup')
+      } catch (cleanup) {
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}\nR access repair is required: ${cleanup instanceof Error ? cleanup.message : String(cleanup)}`
+        )
+      }
+      if (verification.signal?.aborted) return { cancelled: true }
+      throw error
+    }
+  }
   const result = await runElevatedHostCommand(hostPath, installationId, ownershipRoot, 'setup')
   if (result.cancelled) {
     await runHostCommand(hostPath, installationId, ownershipRoot, 'cancel-setup')
@@ -503,4 +655,10 @@ export {
   windowsLaunch,
   windowsStandardLaunch
 }
-export type { AppContainerStatus, WindowsLaunchRequest, WindowsShell, WindowsStandardLaunchRequest }
+export type {
+  AppContainerStatus,
+  WindowsLaunchRequest,
+  WindowsShell,
+  WindowsStandardLaunchRequest,
+  WindowsRuntimeVerification
+}

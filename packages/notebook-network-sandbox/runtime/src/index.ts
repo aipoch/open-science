@@ -9,5 +9,6 @@ export {
   type NetworkRuntimeConfig,
   type NetworkWrapRequest,
   type SandboxDependencyCheck,
-  type WindowsShell
+  type WindowsShell,
+  type WindowsRuntimeVerification
 } from './notebook-runtime.js'
