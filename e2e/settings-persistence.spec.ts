@@ -351,6 +351,9 @@ test('persists German into the built main-process native quit dialog', async ({ 
 for (const localized of localizedSettingsCases) {
   test(`persists ${localized.language} after an Electron restart`, async ({ app }) => {
     let page = await app.completeOnboarding()
+    // The language picker helper uses English labels; the host's system locale may differ.
+    await page.evaluate(async () => window.api.locale.setPreference({ preference: 'en' }))
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en')
     await selectLanguage(page, localized.pickerLabel)
     await expect(page.locator('html')).toHaveAttribute('lang', localized.locale)
     page = await app.restart()

@@ -339,11 +339,10 @@ const applyHiddenWindowPresentation = async (
 }
 
 const openMainWindow = async (
-  application: ElectronApplication,
+  page: Page,
   rendererFailures: RendererFailureGate,
   windowMode: E2eWindowMode
 ): Promise<Page> => {
-  const page = await application.firstWindow()
   await applyHiddenWindowPresentation(page, windowMode)
   await rendererFailures.observe(page)
   await waitForRendererReady(page)
@@ -1064,12 +1063,10 @@ class ElectronAppHarness implements ElectronApp {
       this.resourceProfiler !== undefined
     )
     await this.resourceProfiler?.attach(this.application)
+    // A main-process evaluation before the initial window can race Electron bootstrap on Windows.
+    const page = await this.application.firstWindow()
     this.mainLogDirectory = await this.application.evaluate(({ app }) => app.getPath('logs'))
-    this.currentPage = await openMainWindow(
-      this.application,
-      this.rendererFailures,
-      this.windowMode
-    )
+    this.currentPage = await openMainWindow(page, this.rendererFailures, this.windowMode)
   }
 
   private get runningApplication(): ElectronApplication {

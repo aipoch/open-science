@@ -28,19 +28,35 @@ describe('Electron E2E startup failure evidence', () => {
     let profileRoot = ''
     let capturedLog: string | undefined
     let captureError: unknown
+    let windowCreated = false
     vi.spyOn(electron, 'launch').mockImplementation(async (options) => {
       profileRoot = dirname(options!.env!.OPEN_SCIENCE_STORAGE_ROOT!)
       const logs = join(profileRoot, 'logs')
       await mkdir(logs, { recursive: true })
       await writeFile(join(logs, 'main.log'), 'database migration started: 0042\n')
       return {
-        evaluate: async (callback: (electron: unknown) => unknown) =>
-          callback({
-            app: { getPath: () => logs },
+        evaluate: async (callback: (electron: unknown) => unknown) => {
+          return callback({
+            app: {
+              getPath: () => {
+                if (!windowCreated) throw new Error('Electron is not ready for diagnostics')
+                return logs
+              }
+            },
             safeStorage: { setUsePlainTextEncryption: () => undefined }
-          }),
+          })
+        },
         firstWindow: async () => {
-          throw startupError
+          windowCreated = true
+          return {
+            emulateMedia: async () => undefined,
+            on: () => undefined,
+            consoleMessages: async () => [],
+            pageErrors: async () => [],
+            waitForLoadState: async () => {
+              throw startupError
+            }
+          }
         },
         close: async () => undefined
       } as unknown as ElectronApplication
