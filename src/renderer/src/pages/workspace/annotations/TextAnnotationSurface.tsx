@@ -84,6 +84,9 @@ const TextAnnotationSurface = ({
   const contentRef = useRef<HTMLDivElement | null>(null)
   const ownedHighlightIds = useRef(new Set<string>())
   const suppressFollowingClickRef = useRef(false)
+  const annotatePointerActiveRef = useRef(false)
+  const preserveDraftForCollapsedSelectionRef = useRef(false)
+  const suppressFollowingEscapeKeyUpRef = useRef(false)
   const pendingHighlightKey = `pending-${useId()}`
   const noteInputId = `annotation-note-${useId()}`
   const [selection, setSelection] = useState<SelectionDraft>()
@@ -143,45 +146,56 @@ const TextAnnotationSurface = ({
     // it unconditionally would destroy a selection another surface is
     // building with this very pointerdown.
     if (open) window.getSelection()?.removeAllRanges()
+    preserveDraftForCollapsedSelectionRef.current = false
     setSelection(undefined)
     setOpen(false)
     setNote('')
   }, [open])
 
-  const captureSelection = (suppressFollowingClick: boolean): void => {
-    // While the note editor is open the draft is frozen; stray mouseup/keyup
-    // events from the surface must neither replace nor drop it.
-    if (open) return
-    const selected = window.getSelection()
-    const range = selected?.rangeCount ? selected.getRangeAt(0) : undefined
-    const surface = surfaceRef.current
-    if (!selected || !range || !surface || selected.isCollapsed) {
-      suppressFollowingClickRef.current = false
-      clearDraft()
-      return
-    }
-    const ancestor = range.commonAncestorContainer
-    if (!surface.contains(ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentNode : ancestor)) {
-      suppressFollowingClickRef.current = false
-      clearDraft()
-      return
-    }
-    const quote = selected.toString().trim()
-    if (!quote) {
-      suppressFollowingClickRef.current = false
-      clearDraft()
-      return
-    }
-    suppressFollowingClickRef.current = suppressFollowingClick
-    const cloned = range.cloneRange()
-    const content = contentRef.current
-    setSelection({
-      quote,
-      backward: isBackwardSelection(selected),
-      range: cloned,
-      occurrence: content ? quoteOccurrenceForRange(content, quote, cloned) : 0
-    })
-  }
+  const captureSelection = useCallback(
+    (suppressFollowingClick: boolean): void => {
+      // While the note editor is open the draft is frozen; stray mouseup/keyup
+      // events from the surface must neither replace nor drop it.
+      if (open) return
+      const selected = window.getSelection()
+      const range = selected?.rangeCount ? selected.getRangeAt(0) : undefined
+      const surface = surfaceRef.current
+      if (!selected || !range || !surface || selected.isCollapsed) {
+        suppressFollowingClickRef.current = false
+        clearDraft()
+        return
+      }
+      const ancestor = range.commonAncestorContainer
+      if (
+        !surface.contains(ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentNode : ancestor)
+      ) {
+        suppressFollowingClickRef.current = false
+        clearDraft()
+        return
+      }
+      // Chromium inserts rendered block separators into Selection.toString(), while
+      // Range.toString() follows the text nodes used by the anchor and reveal logic.
+      // Mixing the two makes a multi-block quote longer than its anchor span and the
+      // otherwise valid annotation is rejected as `invalid`.
+      const quote = range.toString().trim()
+      if (!quote) {
+        suppressFollowingClickRef.current = false
+        clearDraft()
+        return
+      }
+      suppressFollowingClickRef.current = suppressFollowingClick
+      preserveDraftForCollapsedSelectionRef.current = false
+      const cloned = range.cloneRange()
+      const content = contentRef.current
+      setSelection({
+        quote,
+        backward: isBackwardSelection(selected),
+        range: cloned,
+        occurrence: content ? quoteOccurrenceForRange(content, quote, cloned) : 0
+      })
+    },
+    [clearDraft, open]
+  )
 
   useEffect(() => {
     // Clicking anywhere else collapses the selection without any event
@@ -189,12 +203,64 @@ const TextAnnotationSurface = ({
     // instead of lingering over the text as a stale trigger.
     const onPointerDown = (event: PointerEvent): void => {
       const target = event.target
-      if (target instanceof Element && target.closest(ANNOTATE_UI_SELECTOR)) return
+      annotatePointerActiveRef.current =
+        target instanceof Element && target.closest(ANNOTATE_UI_SELECTOR) !== null
+      if (annotatePointerActiveRef.current) return
+      preserveDraftForCollapsedSelectionRef.current = false
       clearDraft()
     }
+    // Keep the exemption for the complete annotate press. A cancelled press
+    // retains the draft until the next pointerdown.
+    const onClick = (): void => {
+      annotatePointerActiveRef.current = false
+    }
+    const onPointerCancel = (): void => {
+      annotatePointerActiveRef.current = false
+    }
     document.addEventListener('pointerdown', onPointerDown, true)
-    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('click', onClick)
+    document.addEventListener('pointercancel', onPointerCancel, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('click', onClick)
+      document.removeEventListener('pointercancel', onPointerCancel, true)
+    }
   }, [clearDraft])
+
+  useEffect(() => {
+    const onSelectionChange = (): void => {
+      const selected = window.getSelection()
+      if (preserveDraftForCollapsedSelectionRef.current) {
+        if (!selected || selected.isCollapsed) return
+        preserveDraftForCollapsedSelectionRef.current = false
+      }
+      // Do not create a trigger during the live drag. Once a draft exists,
+      // native selection changes must update or withdraw it. The annotation
+      // UI and its open editor intentionally preserve the captured draft when
+      // their own focus behavior collapses the browser selection.
+      if (!selectionRef.current || open || annotatePointerActiveRef.current) return
+      captureSelection(false)
+    }
+    document.addEventListener('selectionchange', onSelectionChange)
+    return () => document.removeEventListener('selectionchange', onSelectionChange)
+  }, [captureSelection, open])
+
+  useEffect(() => {
+    // A selection can begin inside this surface and finish over the transcript's
+    // empty space. React then never delivers mouseup to the surface, even though
+    // the browser selection still belongs to it. Let every mounted surface
+    // reconcile on the document-level completion: the owner captures the range,
+    // while the others withdraw any stale draft they still hold.
+    const onMouseUp = (event: MouseEvent): void => {
+      const target = event.target
+      if (target instanceof Element && target.closest(ANNOTATE_UI_SELECTOR)) return
+      const surface = surfaceRef.current
+      if (surface && target instanceof Node && surface.contains(target)) return
+      captureSelection(true)
+    }
+    document.addEventListener('mouseup', onMouseUp)
+    return () => document.removeEventListener('mouseup', onMouseUp)
+  }, [captureSelection])
 
   useLayoutEffect(() => {
     let prepared: TextAnnotation | undefined
@@ -379,8 +445,20 @@ const TextAnnotationSurface = ({
       data-annotation-surface="true"
       data-annotation-active={matchingAnnotations.length > 0 ? 'true' : undefined}
       className="relative rounded-md"
-      onMouseUp={() => captureSelection(true)}
-      onKeyUp={() => captureSelection(false)}
+      onMouseUp={(event) => {
+        const target = event.target
+        if (target instanceof Element && target.closest(ANNOTATE_UI_SELECTOR)) return
+        captureSelection(true)
+      }}
+      onKeyUp={(event) => {
+        if (suppressFollowingEscapeKeyUpRef.current) {
+          suppressFollowingEscapeKeyUpRef.current = false
+          if (event.key === 'Escape') return
+        }
+        const target = event.target
+        if (target instanceof Element && target.closest(ANNOTATE_UI_SELECTOR)) return
+        captureSelection(false)
+      }}
       onClickCapture={(event) => {
         if (!suppressFollowingClickRef.current) return
         suppressFollowingClickRef.current = false
@@ -425,7 +503,10 @@ const TextAnnotationSurface = ({
               setNote('')
               // Escape keeps the draft (the trigger returns) but must still
               // withdraw a keyboard-triggered native selection.
-              window.getSelection()?.removeAllRanges()
+              const selected = window.getSelection()
+              preserveDraftForCollapsedSelectionRef.current = true
+              suppressFollowingEscapeKeyUpRef.current = true
+              selected?.removeAllRanges()
             }
           }}
           onCancel={() => setOpen(false)}
