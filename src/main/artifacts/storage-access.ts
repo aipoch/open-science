@@ -124,7 +124,16 @@ const readFilePrefix = async (path: string, maxBytes = 512): Promise<Buffer> => 
   }
 }
 
-const importRootsError = (filePath: string, allowedImportRoots: string[]): Error => {
+const importRootsError = (
+  filePath: string,
+  allowedImportRoots: string[],
+  purpose: 'artifact' | 'literature' = 'artifact'
+): Error => {
+  if (purpose === 'literature') {
+    return new Error(
+      `Literature source file must be inside the current Notebook session or workspace. Allowed directories: ${allowedImportRoots.join(', ') || 'none configured'}. Select an existing file in an allowed directory.`
+    )
+  }
   const guidance =
     allowedImportRoots.length > 0
       ? ` Write the file under one of these directories and pass that path, or use inline content instead: ${allowedImportRoots.join(', ')}`
@@ -137,9 +146,10 @@ const importRootsError = (filePath: string, allowedImportRoots: string[]): Error
 const resolveAllowedImportFilePath = async (
   filePath: string,
   allowedImportRoots: string[],
-  relativeBaseDirs: string[] = []
+  relativeBaseDirs: string[] = [],
+  purpose: 'artifact' | 'literature' = 'artifact'
 ): Promise<string> => {
-  if (allowedImportRoots.length === 0) throw importRootsError(filePath, allowedImportRoots)
+  if (allowedImportRoots.length === 0) throw importRootsError(filePath, allowedImportRoots, purpose)
   if (relativeBaseDirs.length === 0 && !isAbsolute(filePath)) {
     throw new Error(
       `Artifact local source path does not exist: "${filePath}". A relative path resolves against the notebook session data dir or the session workspace, but this turn carries neither — pass an absolute path to the already-saved file instead.`
@@ -158,6 +168,11 @@ const resolveAllowedImportFilePath = async (
     }
   }
   if (!resolvedFilePath) {
+    if (purpose === 'literature') {
+      throw new Error(
+        `Literature source file does not exist: "${filePath}". Select an existing file in the current Notebook session or workspace; relative paths resolve against: ${relativeBaseDirs.join(', ')}.`
+      )
+    }
     throw new Error(
       `Artifact local source path does not exist: "${filePath}". Save the file to disk (inside the notebook session workspace) before calling write_artifact_file, pass an absolute path to an already-saved file, or use inline content instead.`
     )
@@ -175,10 +190,12 @@ const resolveAllowedImportFilePath = async (
     )
   ).filter((root): root is string => typeof root === 'string')
   if (!resolvedRoots.some((root) => isPathInsideRoot(root, resolvedFilePath))) {
-    throw importRootsError(filePath, allowedImportRoots)
+    throw importRootsError(filePath, allowedImportRoots, purpose)
   }
   if (!(await stat(resolvedFilePath)).isFile()) {
-    throw new Error('Artifact local source path is not a file.')
+    throw new Error(
+      `${purpose === 'literature' ? 'Literature' : 'Artifact local'} source path is not a file.`
+    )
   }
   return resolvedFilePath
 }

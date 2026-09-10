@@ -49,6 +49,9 @@ export type RequestNotebookNetworkAccessRequest = NotebookSessionRequest & {
 export type RequestNotebookNetworkAccessResult = Readonly<{
   hostname: string
   status: 'alreadyAllowed' | 'allowedOnce' | 'alwaysAllowed' | 'denied' | 'blocked' | 'unavailable'
+  decisionSource?:
+    'missing-command-context' | 'aborted' | 'user-decision' | 'approval-surface-unavailable'
+  message?: string
 }>
 
 // Distinguishes regular notebook cells from terminal submissions in the same history.

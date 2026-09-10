@@ -77,8 +77,8 @@ const bindingUnavailableError = (
   new Error(
     `RUNTIME_BINDING_UNAVAILABLE: the bound ${language} runtime is ${binding.status}` +
       (binding.reason ? ` (${binding.reason})` : '') +
-      '. Call list_notebook_runtimes then notebook_switch_runtime to choose another runtime ' +
-      '(an unspecified choice falls back to the app-managed default). Any prior kernel memory ' +
+      '. Call list_notebook_runtimes then notebook_switch_runtime with the language and an exact ' +
+      'runtimeId from the listing to choose another runtime. Any prior kernel memory ' +
       '(variables, imports) for this language was lost.'
   )
 

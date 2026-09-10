@@ -348,7 +348,9 @@ const handleUpdate = async (
 
   const current = await deps.specialistService.resolveCustomMutationByName(name)
   if (current.revision !== revision) {
-    throw agentsPublicError('revision does not match the current specialist revision.')
+    throw agentsPublicError(
+      'revision does not match the current Specialist revision. Read host.agents.get({ name }) before deciding whether to apply the update again.'
+    )
   }
 
   const input: UpdateSpecialistInput = { id: current.id, revision }
@@ -412,7 +414,9 @@ const handleAttachDetach = async (
 
   const current = await deps.specialistService.resolveCustomMutationByName(name)
   if (current.revision !== revision) {
-    throw agentsPublicError('revision does not match the current specialist revision.')
+    throw agentsPublicError(
+      'revision does not match the current Specialist revision. Read host.agents.get({ name }) before deciding whether to apply the update again.'
+    )
   }
   const mode: SpecialistCapabilityMode = current.capabilityMode
 

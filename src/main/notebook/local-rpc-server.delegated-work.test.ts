@@ -1,3 +1,4 @@
+import { StructuredOutputError } from '../delegation/structured-output'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -160,6 +161,25 @@ describe('authenticated delegatedWorkCall route', () => {
     const accepted = await call(child.token)
     expect(accepted.status).toBe(200)
     await expect(accepted.json()).resolves.toEqual({ result: { accepted: true } })
+    submitOutput.mockRejectedValueOnce(
+      new StructuredOutputError(
+        'structured_output_validation_failed',
+        'Structured output does not match the admitted schema.',
+        'required',
+        '/summary',
+        'count'
+      )
+    )
+    const rejected = await call(child.token)
+    await expect(rejected.json()).resolves.toEqual({
+      error: {
+        code: 'structured_output_validation_failed',
+        message: 'Structured output does not match the admitted schema.',
+        keyword: 'required',
+        instance_path: '/summary',
+        property: 'count'
+      }
+    })
     expect(submitOutput).toHaveBeenCalledWith(
       expect.objectContaining({
         session: { projectId: 'project-1', sessionId: 'session-1' },

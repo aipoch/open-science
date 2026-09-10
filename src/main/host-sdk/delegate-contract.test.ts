@@ -185,7 +185,7 @@ describe('Agent-facing collect contract', () => {
     ).toThrow('private RPC options use timeout_seconds')
     expect(() =>
       parseCollectRpcCall({ selectors: ['frame-1'], options: { return_when: 'first' } })
-    ).toThrow('return_when must be all or any')
+    ).toThrow('returnWhen must be all or any')
   })
 })
 

@@ -2133,7 +2133,7 @@ class NotebookLocalRpcServer {
       const message = error instanceof Error ? error.message : String(error)
       const serializedError =
         error instanceof NotebookBackgroundRunError
-          ? error.detail
+          ? { ...error.detail, message }
           : error instanceof BackgroundHostMethodUnsafeError
             ? error.detail
             : error instanceof PlanCommandError
@@ -2141,6 +2141,7 @@ class NotebookLocalRpcServer {
               : error instanceof StructuredOutputError
                 ? {
                     code: error.code,
+                    message,
                     ...(error.keyword ? { keyword: error.keyword } : {}),
                     ...(error.instancePath !== undefined
                       ? { instance_path: error.instancePath }
@@ -2753,7 +2754,7 @@ class NotebookLocalRpcServer {
             if (existing.fingerprint !== fingerprint) {
               throw new RpcHttpError(
                 409,
-                'invocation_id was already used with a different submit_job request.'
+                'Compute submission identity conflicts with a different request. The identity is managed by the Host SDK; do not replace it or resubmit the same work. Application recovery is required.'
               )
             }
             return await existing.submission

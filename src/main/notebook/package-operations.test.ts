@@ -9,6 +9,7 @@ import type { PackageMirror } from '../../shared/mirror'
 import { createRootNotebookLane } from './lane-identity'
 import { NotebookPackageOperations } from './package-operations'
 import { installPackages } from './package-manager'
+import { compactManagePackagesResult } from './mcp-server'
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import { NotebookSessionAggregate, type NotebookSessionRuntimeBinding } from './session-aggregate'
@@ -190,6 +191,43 @@ describe('NotebookPackageOperations', () => {
       expect(options.installPackages).not.toHaveBeenCalled()
       expect(options.environmentOperations.recommendRestart).not.toHaveBeenCalled()
       expect(options.notifyChanged).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    'ERROR: No matching distribution found for nonexistent-package',
+    'ERROR: Permission denied: /runtime/site-packages'
+  ])(
+    'delivers the actual failed installer output through the MCP projection: %s',
+    async (diagnosis) => {
+      const { owner } = harness(
+        session('session-1', binding('python', '/external/python', 'external')),
+        {
+          resolveRuntimeEnablement: async () => ({
+            enabled: { '/external/python': true },
+            installAuthorized: { '/external/python': true }
+          }),
+          installPackages: (request, deps) =>
+            installPackages(request, {
+              ...deps,
+              pathExists: () => true,
+              spawn: async () => ({ code: 1, stdout: '', stderr: diagnosis })
+            })
+        }
+      )
+      const result = await owner.manage({
+        sessionId: 'session-1',
+        language: 'python',
+        packages: ['nonexistent-package'],
+        operation: 'install',
+        usePip: true
+      })
+      expect(compactManagePackagesResult(result), result.error).toMatchObject({
+        ok: false,
+        needsRestart: false,
+        diagnostics: diagnosis,
+        attempts: [expect.objectContaining({ installer: 'pip', status: 'failed' })]
+      })
     }
   )
 

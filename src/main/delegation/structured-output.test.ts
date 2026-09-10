@@ -49,6 +49,22 @@ describe('structured output validator profile', () => {
     expect(() => validateStructuredOutputValue(contract, sparse)).toThrow(StructuredOutputError)
   })
 
+  it('identifies the applicable schema and value budgets without echoing their content', () => {
+    expect(() => prepareStructuredOutputSchema({ description: 'x'.repeat(65536) })).toThrow(
+      '65536-byte limit'
+    )
+    const contract = prepareStructuredOutputSchema(true)
+    expect(() => validateStructuredOutputValue(contract, 'secret'.repeat(50000))).toThrow(
+      '262144-byte limit'
+    )
+    expect(() => validateStructuredOutputValue(contract, Array(1001).fill(null))).toThrow(
+      'at most 1000 items'
+    )
+    expect(() => prepareStructuredOutputSchema({ unknownKeyword: true })).toThrow(
+      expect.objectContaining({ keyword: 'unknownKeyword' })
+    )
+  })
+
   it('returns only a bounded safe validation error', () => {
     const contract = prepareStructuredOutputSchema({
       type: 'object',

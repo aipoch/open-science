@@ -1,3 +1,4 @@
+import { redactSensitiveText } from '../diagnostic-redaction'
 import { ParserEngine } from './engine'
 import { ALL_CONNECTOR_IDS, getDescriptor, validateToolArguments } from './registry'
 import {
@@ -521,6 +522,15 @@ export class ConnectorService {
       signal
     )
     const config = toCustomMcpConfig(authorization.custom)
+    if (
+      (config.transport === 'stdio' && !config.command?.trim()) ||
+      (config.transport !== 'stdio' && !config.url?.trim())
+    ) {
+      throw new ConnectorGateError(
+        'connector_configuration_invalid',
+        'Connector configuration is incomplete. Ask the user to set the command or URL for this Connector in Settings > Connectors before retrying.'
+      )
+    }
     if (physicalFailure) this.claimCustomServerProbe(custom.id, physicalFailure)
 
     let tools: Array<{ name: string }>
@@ -592,6 +602,39 @@ export class ConnectorService {
         (custom.oauth && availability === 'unauthenticated')
       ) {
         this.recordCustomServerFailure(custom.id, failureEpoch, availability)
+      }
+      if (error instanceof McpToolCallError) {
+        // Tool-level text is an intentional server response, unlike arbitrary transport errors.
+        // Remove configured credentials before making the bounded diagnosis visible to the Agent.
+        let diagnostic = error.message
+        const secrets = [
+          ...Object.values(config.env ?? {}),
+          ...Object.values(config.headers ?? {}).flatMap((value) => [
+            value,
+            value.replace(/^(?:Bearer|Basic)\s+/i, '')
+          ]),
+          config.oauth?.clientSecret ?? '',
+          config.oauth?.state?.clientInformation?.client_secret ?? '',
+          config.oauth?.state?.tokens?.access_token ?? '',
+          config.oauth?.state?.tokens?.refresh_token ?? ''
+        ]
+        for (const secret of secrets.filter(Boolean).sort((a, b) => b.length - a.length)) {
+          diagnostic = diagnostic.replaceAll(secret, '[REDACTED]')
+        }
+        diagnostic = redactSensitiveText(diagnostic).slice(0, 2000)
+        if (availability === 'unauthenticated') {
+          const guidance = custom.oauth
+            ? connectorGateGuidance.connector_unauthenticated
+            : 'Follow the authentication instructions and login tool, if listed, in this Connector’s loaded Skill. Retry the original call after authentication completes.'
+          throw new ConnectorGateError(
+            'connector_unauthenticated',
+            `connector_unauthenticated: ${guidance}${custom.oauth ? '' : ` ${diagnostic}`}`
+          )
+        }
+        throw new ConnectorGateError(
+          'connector_tool_error',
+          `connector_tool_error: The Connector returned a tool failure. ${diagnostic}`
+        )
       }
       throw new ConnectorGateError(customMcpFailureCategory(availability))
     }

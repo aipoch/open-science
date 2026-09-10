@@ -122,10 +122,16 @@ class NotebookEnvironmentManagementOwner {
       }
       case 'remove': {
         const name = assertSafeEnvName(request.name)
-        if (this.isLive(name)) {
+        const liveKernel = this.liveKernel(name)
+        if (liveKernel) {
           throw new Error(
-            `Environment "${name}" is in use by a running kernel — restart the notebook or ` +
-              'wait for the run to finish before removing it.'
+            `Environment "${name}" is in use by a live ${liveKernel.language} Kernel ` +
+              `(status: ${liveKernel.status}) in Session "${liveKernel.sessionId}". ` +
+              'Waiting for a Run to finish leaves an idle Kernel alive. In that Session, use ' +
+              'list_notebook_runtimes then notebook_switch_runtime with the language and an exact ' +
+              'runtimeId for another Runtime Environment, or notebook_shutdown to stop its Kernels. ' +
+              'These actions clear the affected Kernel memory. If a Runtime Binding still blocks removal, ' +
+              'switch that binding to another environment.'
           )
         }
         const blockingBinding = this.blockingBinding(name)
@@ -134,7 +140,9 @@ class NotebookEnvironmentManagementOwner {
           throw new Error(
             `Environment "${name}" cannot be removed because Session ` +
               `"${blockingBinding.sessionId}" has ${bindingState} Runtime Binding ` +
-              'to it. Switch that Session to another Runtime Environment first.'
+              'to it. In that Session, use list_notebook_runtimes then notebook_switch_runtime with ' +
+              'the language and an exact runtimeId for another Runtime Environment. Switching clears ' +
+              'the previous Kernel memory.'
           )
         }
         await this.options.ensureRecovered()
@@ -181,14 +189,26 @@ class NotebookEnvironmentManagementOwner {
     })
   }
 
-  private isLive(name: string): boolean {
+  private liveKernel(name: string):
+    | {
+        sessionId: string
+        language: string
+        status: NotebookKernelMetadata['lastKnownStatus']
+      }
+    | undefined {
     for (const session of this.options.sessions()) {
       for (const [processKey, status] of session.kernelStatusEntries()) {
         if (processKey === 'repl' || status === 'terminated') continue
-        if (processKey.slice(processKey.indexOf(':') + 1) === name) return true
+        if (processKey.slice(processKey.indexOf(':') + 1) === name) {
+          return {
+            sessionId: session.sessionId,
+            language: processKey.slice(0, processKey.indexOf(':')),
+            status
+          }
+        }
       }
     }
-    return false
+    return undefined
   }
 
   private blockingBinding(

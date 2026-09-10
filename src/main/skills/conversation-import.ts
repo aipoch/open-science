@@ -441,7 +441,21 @@ class ConversationSkillImporter {
       }
       const preview = previewed.preview
       if (preview.previews.length === 0) {
-        throw new Error('The attached bundle does not contain an importable Skill.')
+        const rejected = preview.skipped
+          .slice(0, 5)
+          .map((entry) =>
+            JSON.stringify({
+              source: entry.source.slice(0, 200),
+              reason: entry.reason.slice(0, 300)
+            })
+          )
+          .join('; ')
+        throw new Error(
+          'The attached bundle does not contain an importable Skill.' +
+            (rejected
+              ? ` Rejected entries: ${rejected}${preview.skipped.length > 5 ? '; additional entries omitted.' : ''}`
+              : '')
+        )
       }
 
       const approval = await this.options.requestApproval(
@@ -552,15 +566,35 @@ class ConversationSkillImporter {
     const skills: ConversationSkillImportResult['skills'] = []
     const errors: NonNullable<ConversationSkillImportResult['errors']> = []
     const importSignal = withGitHubFlowTimeout(cancellation.signal)
-    for (const item of items) {
-      if (cancellation.isCancelled()) break
+    for (const [index, item] of items.entries()) {
+      if (cancellation.isCancelled() || importSignal.aborted) {
+        for (const remaining of items.slice(index)) {
+          errors.push({
+            name: candidates.get(remaining.subPath)!.name,
+            error: 'Not attempted: the Skill import batch was cancelled or timed out.'
+          })
+        }
+        break
+      }
       const candidate = candidates.get(item.subPath)!
       try {
         const outcome = await importGitHub(candidate.url, importSignal)
         skills.push({ id: outcome.id, name: candidate.name, status: outcome.status })
       } catch (error) {
-        if (cancellation.isCancelled()) break
-        if (importSignal.aborted) throw importSignal.reason
+        if (cancellation.isCancelled() || importSignal.aborted) {
+          errors.push({
+            name: candidate.name,
+            error:
+              'The import was interrupted without a completion receipt; whether this Skill was committed is unknown. Inspect installed Skills before retrying.'
+          })
+          for (const remaining of items.slice(index + 1)) {
+            errors.push({
+              name: candidates.get(remaining.subPath)!.name,
+              error: 'Not attempted: the Skill import batch was cancelled or timed out.'
+            })
+          }
+          break
+        }
         errors.push({
           name: candidate.name,
           error: error instanceof Error ? error.message : 'Import failed.'

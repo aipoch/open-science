@@ -1,3 +1,4 @@
+import { AgentsSafeError, agentsPublicError } from '../agents/agents-error'
 import { randomUUID } from 'node:crypto'
 
 import { createLogger } from '../logger'
@@ -67,7 +68,7 @@ const assertCapabilityConfigShape = (
     input.capabilityMode !== 'full' &&
     input.capabilityMode !== 'selected'
   ) {
-    throw new Error('Capability mode must be "full" or "selected".')
+    throw agentsPublicError('Capability mode must be "full" or "selected".')
   }
   if (input.fullAccess !== undefined) {
     const config = input.fullAccess
@@ -78,7 +79,7 @@ const assertCapabilityConfigShape = (
       !isStringArray((config as SpecialistFullAccessConfig).excludedConnectorIds) ||
       !isConnectorToolRuleArray((config as SpecialistFullAccessConfig).connectorTools)
     ) {
-      throw new Error('Full access capability configuration is invalid.')
+      throw agentsPublicError('Full access capability configuration is invalid.')
     }
   }
   if (input.selectedCapabilities !== undefined) {
@@ -90,7 +91,7 @@ const assertCapabilityConfigShape = (
       !isStringArray((config as SpecialistSelectedConfig).connectorIds) ||
       !isConnectorToolRuleArray((config as SpecialistSelectedConfig).connectorTools)
     ) {
-      throw new Error('Selected capabilities configuration is invalid.')
+      throw agentsPublicError('Selected capabilities configuration is invalid.')
     }
   }
 }
@@ -117,10 +118,10 @@ const specialistReferenceError = (
       : `Available Specialists: ${listed.join(', ')}${
           names.length > listed.length ? ' (list truncated).' : '.'
         }`
-  return new Error(`Requested Specialist is ${reason}. ${availability}`)
+  return agentsPublicError(`Requested Specialist is ${reason}. ${availability}`)
 }
 
-export class SpecialistReadonlyError extends Error {
+export class SpecialistReadonlyError extends AgentsSafeError {
   readonly code = 'SPECIALIST_READ_ONLY' as const
 
   constructor(
@@ -200,17 +201,17 @@ const assertOptionalIdentityFieldShapes = (
   ] as const
   for (const [label, value] of optionalTextFields) {
     if (value !== undefined && typeof value !== 'string') {
-      throw new Error(`${label[0].toUpperCase()}${label.slice(1)} must be a string.`)
+      throw agentsPublicError(`${label[0].toUpperCase()}${label.slice(1)} must be a string.`)
     }
   }
 }
 
 const assertCreateInputShape = (input: CreateSpecialistInput): void => {
   if (!input || typeof input !== 'object' || typeof input.name !== 'string') {
-    throw new Error('Name must be a string.')
+    throw agentsPublicError('Name must be a string.')
   }
   if (input.id !== undefined && typeof input.id !== 'string') {
-    throw new Error('ID must be a string.')
+    throw agentsPublicError('ID must be a string.')
   }
   assertOptionalIdentityFieldShapes(input)
 
@@ -219,7 +220,7 @@ const assertCreateInputShape = (input: CreateSpecialistInput): void => {
     input.capabilityMode !== 'full' &&
     input.capabilityMode !== 'selected'
   ) {
-    throw new Error('Capability mode must be "full" or "selected".')
+    throw agentsPublicError('Capability mode must be "full" or "selected".')
   }
   assertCapabilityConfigShape(input)
 }
@@ -322,7 +323,7 @@ export class SpecialistService {
     if (customMatch) return customMatch
     const builtin = (await this.builtinEntries()).find((entry) => entry.id === id)
     if (builtin) return this.toBuiltinView(builtin)
-    throw new Error(`Runnable Specialist ${id} not found.`)
+    throw agentsPublicError(`Runnable Specialist ${id} not found.`)
   }
 
   async resolveRunnableByName(name: string): Promise<SpecialistView> {
@@ -331,7 +332,7 @@ export class SpecialistService {
     if (customMatch) return customMatch
     const builtin = (await this.builtinEntries()).find((entry) => entry.name === name)
     if (builtin) return this.toBuiltinView(builtin)
-    throw new Error(`Runnable Specialist "${name}" not found.`)
+    throw agentsPublicError(`Runnable Specialist "${name}" not found.`)
   }
 
   async resolveRunnableByReference(reference: string): Promise<SpecialistView> {
@@ -359,14 +360,14 @@ export class SpecialistService {
   async getById(id: string): Promise<SpecialistView> {
     const doc = await this.repo.getAll()
     const found = doc.specialists.find((s) => s.id === id)
-    if (!found) throw new Error(`Specialist ${id} not found.`)
+    if (!found) throw agentsPublicError(`Specialist ${id} not found.`)
     return toView(found)
   }
 
   async getByName(name: string): Promise<SpecialistView> {
     const doc = await this.repo.getAll()
     const found = doc.specialists.find((s) => s.name === name)
-    if (!found) throw new Error(`Specialist "${name}" not found.`)
+    if (!found) throw agentsPublicError(`Specialist "${name}" not found.`)
     return toView(found)
   }
 
@@ -397,7 +398,7 @@ export class SpecialistService {
     // boundary rules before constructing the persisted record.
     const errors = validateCreateSpecialistInput(input, existingNames, existingIds, [...usedIds])
     if (errors.length > 0) {
-      throw new Error(errors.map((e) => e.message).join('; '))
+      throw agentsPublicError(errors.map((e) => e.message).join('; '))
     }
 
     const name = input.name
@@ -439,20 +440,20 @@ export class SpecialistService {
 
   async setEnabled(id: string, enabled: boolean): Promise<SpecialistView> {
     if (typeof id !== 'string' || !id.trim()) {
-      throw new Error('Specialist id must be a non-empty string.')
+      throw agentsPublicError('Specialist id must be a non-empty string.')
     }
-    if (typeof enabled !== 'boolean') throw new Error('Enabled must be a boolean.')
+    if (typeof enabled !== 'boolean') throw agentsPublicError('Enabled must be a boolean.')
     await this.assertMutableId(id)
     if (enabled) {
       const current = await this.getById(id)
       if (current.setupPending) {
-        throw new Error('Complete Specialist setup before enabling it.')
+        throw agentsPublicError('Complete Specialist setup before enabling it.')
       }
     }
     const updatedDoc = await this.repo.setEnabled(id, enabled)
     this.notify()
     const found = updatedDoc.specialists.find((s) => s.id === id)
-    if (!found) throw new Error(`Specialist ${id} not found after setEnabled.`)
+    if (!found) throw agentsPublicError(`Specialist ${id} not found after setEnabled.`)
     return toView(found)
   }
 
@@ -461,16 +462,16 @@ export class SpecialistService {
   // (optimistic concurrency); the repository bumps it and rejects stale writes.
   async update(input: UpdateSpecialistInput): Promise<SpecialistView> {
     if (!input || typeof input.id !== 'string' || typeof input.revision !== 'number') {
-      throw new Error('Update requires id and revision.')
+      throw agentsPublicError('Update requires id and revision.')
     }
     if ('name' in input) {
-      throw new Error('Specialist name is immutable.')
+      throw agentsPublicError('Specialist name is immutable.')
     }
     if (input.enabled !== undefined && typeof input.enabled !== 'boolean') {
-      throw new Error('Enabled must be a boolean.')
+      throw agentsPublicError('Enabled must be a boolean.')
     }
     if (input.completeSetup !== undefined && input.completeSetup !== true) {
-      throw new Error('Complete setup must be true when provided.')
+      throw agentsPublicError('Complete setup must be true when provided.')
     }
     await this.assertMutableId(input.id)
     assertOptionalIdentityFieldShapes(input)
@@ -479,11 +480,11 @@ export class SpecialistService {
     const doc = await this.repo.getAll()
     const errors = validateUpdateSpecialistInput(input)
     if (errors.length > 0) {
-      throw new Error(errors.map((e) => e.message).join('; '))
+      throw agentsPublicError(errors.map((e) => e.message).join('; '))
     }
 
     const current = doc.specialists.find((s) => s.id === input.id)
-    if (!current) throw new Error(`Specialist ${input.id} not found.`)
+    if (!current) throw agentsPublicError(`Specialist ${input.id} not found.`)
     if (
       current.origin === 'marketplace' &&
       (Object.keys(input) as Array<keyof UpdateSpecialistInput>).some(
@@ -495,10 +496,10 @@ export class SpecialistService {
 
     const patch: Partial<StoredSpecialist> = {}
     if (input.completeSetup && !current?.setupPending) {
-      throw new Error('Specialist setup is not pending.')
+      throw agentsPublicError('Specialist setup is not pending.')
     }
     if (current?.setupPending && input.enabled === true && !input.completeSetup) {
-      throw new Error('Complete Specialist setup before enabling it.')
+      throw agentsPublicError('Complete Specialist setup before enabling it.')
     }
     if (input.packageVersion !== undefined) patch.packageVersion = input.packageVersion
     if (input.displayName !== undefined) {
@@ -524,35 +525,37 @@ export class SpecialistService {
     const updatedDoc = await this.repo.update(input.id, patch, input.revision)
     this.notify()
     const updated = updatedDoc.specialists.find((s) => s.id === input.id)
-    if (!updated) throw new Error(`Specialist ${input.id} not found after update.`)
+    if (!updated) throw agentsPublicError(`Specialist ${input.id} not found after update.`)
     return toView(updated)
   }
 
   async markMarketplaceManaged(id: string, expectedRevision: number): Promise<SpecialistView> {
     const current = await this.getById(id)
     if (current.revision !== expectedRevision) {
-      throw new Error(`Revision conflict: expected ${expectedRevision}, found ${current.revision}.`)
+      throw agentsPublicError(
+        `Revision conflict: expected ${expectedRevision}, found ${current.revision}. Read the current Specialist with host.agents.get({ name }) before deciding whether to apply the update again.`
+      )
     }
     if (current.origin === 'marketplace') return current
     if (current.origin !== 'imported' || !current.importBaseline) {
-      throw new Error('Only an exact imported package can become Marketplace-managed.')
+      throw agentsPublicError('Only an exact imported package can become Marketplace-managed.')
     }
     const updated = await this.repo.update(id, { origin: 'marketplace' }, expectedRevision)
     this.notify()
     const managed = updated.specialists.find((specialist) => specialist.id === id)
-    if (!managed) throw new Error(`Specialist ${id} not found after Marketplace migration.`)
+    if (!managed) throw agentsPublicError(`Specialist ${id} not found after Marketplace migration.`)
     return toView(managed)
   }
 
   async delete(id: string, expectedRevision?: number): Promise<void> {
     if (typeof id !== 'string' || !id.trim()) {
-      throw new Error('Specialist id must be a non-empty string.')
+      throw agentsPublicError('Specialist id must be a non-empty string.')
     }
     if (
       expectedRevision !== undefined &&
       (!Number.isInteger(expectedRevision) || expectedRevision < 1)
     ) {
-      throw new Error('Expected revision must be a positive integer.')
+      throw agentsPublicError('Expected revision must be a positive integer.')
     }
     await this.assertMutableId(id)
     await this.repo.delete(id, expectedRevision)

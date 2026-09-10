@@ -440,7 +440,8 @@ const createAcpRuntime = ({
                   const sourcePath = await resolveAllowedImportFilePath(
                     filename,
                     [notebookRoot, workspaceCwd],
-                    [notebookDataDir, workspaceCwd, notebookRoot]
+                    [notebookDataDir, workspaceCwd, notebookRoot],
+                    'literature'
                   )
                   if ((await stat(sourcePath)).size > MAX_LITERATURE_CANDIDATE_FILE_BYTES) {
                     throw Object.assign(
@@ -479,7 +480,8 @@ const createAcpRuntime = ({
                   const sourcePath = await resolveAllowedImportFilePath(
                     filename,
                     [notebookRoot, workspaceCwd],
-                    [notebookDataDir, workspaceCwd, notebookRoot]
+                    [notebookDataDir, workspaceCwd, notebookRoot],
+                    'literature'
                   )
                   if (extname(sourcePath).toLowerCase() !== '.docx') {
                     throw new Error('Citation document must be a DOCX file.')
@@ -508,7 +510,8 @@ const createAcpRuntime = ({
                   const sourcePath = await resolveAllowedImportFilePath(
                     filename,
                     [notebookRoot, workspaceCwd],
-                    [notebookDataDir, workspaceCwd, notebookRoot]
+                    [notebookDataDir, workspaceCwd, notebookRoot],
+                    'literature'
                   )
                   if (extname(sourcePath).toLowerCase() !== '.tex') {
                     throw new Error('LaTeX source must be a .tex file.')

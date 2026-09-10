@@ -1727,6 +1727,44 @@ describe('ConnectorService', () => {
       expect(onCustomServerAvailabilityChanged).toHaveBeenCalledWith('oauth-1', 'unauthenticated')
     })
 
+    it('retains a bounded business diagnosis without exposing configured secrets or declaring a disconnect', async () => {
+      const call = vi
+        .fn()
+        .mockRejectedValueOnce(
+          new McpToolCallError(
+            '403 Forbidden: resource outside allowed collection. secret=HIDDEN_CONFIG_VALUE'
+          )
+        )
+        .mockResolvedValueOnce({ ok: true })
+      const svc = new ConnectorService({
+        mcpClientManager: manager(call, ['lookup']),
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'business',
+              name: 'business',
+              displayName: 'Business',
+              transport: 'stdio',
+              command: 'business-mcp',
+              env: { SECRET: 'HIDDEN_CONFIG_VALUE' },
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+      const error = await svc.call('business', 'lookup', {}, internal).catch((error) => error)
+      if (!(error instanceof Error)) throw new Error('Expected Connector tool failure')
+      expect(error.message).toContain('connector_tool_error')
+      expect(error.message).toContain('resource outside allowed collection')
+      expect(error.message).not.toContain('HIDDEN_CONFIG_VALUE')
+      expect(error.message).not.toContain('connector_unauthenticated')
+      expect(error.message).not.toContain('unavailable')
+      await expect(svc.call('business', 'lookup', {}, internal)).resolves.toEqual({ ok: true })
+    })
+
     it('keeps a connector-managed authentication tool reachable after a sign-in error', async () => {
       const call = vi
         .fn()
@@ -1752,7 +1790,7 @@ describe('ConnectorService', () => {
       })
 
       await expect(svc.call('content-service', 'status', {}, internal)).rejects.toThrow(
-        'connector_unauthenticated'
+        'this Connector’s loaded Skill'
       )
       await expect(svc.call('content-service', 'login', {}, internal)).resolves.toEqual({
         authenticated: true

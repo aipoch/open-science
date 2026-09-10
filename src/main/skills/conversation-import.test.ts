@@ -97,6 +97,99 @@ const createActiveCancellationGuard = (): {
 })
 
 describe('ConversationSkillImporter', () => {
+  it.each(['cancelled', 'timed out'] as const)(
+    'retains committed, uncertain, and unattempted Skills when a batch is %s',
+    async (interruption) => {
+      const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+      roots.push(root)
+      const store = new UserSkillRepository(root)
+      const cancellation = new AbortController()
+      const names = ['first', 'second', 'third']
+      const importGitHub = vi.fn(async (url: string) => {
+        if (url.endsWith('/second')) {
+          cancellation.abort(new Error(interruption))
+          throw new Error('request interrupted')
+        }
+        const bundle = buildNamedSkillZip('first')
+        const preview = await store.previewZip(bundle)
+        const [entry] = await store.importFromZipBatch(bundle, [
+          { subPath: preview.previews[0].subPath }
+        ])
+        return { ...entry.outcome!, skills: [] }
+      })
+      const importer = new ConversationSkillImporter({
+        uploads: new UploadRepository(root),
+        createCancellationGuard: createActiveCancellationGuard,
+        createSessionCancellationGuard: () => ({
+          signal: cancellation.signal,
+          isCancelled: () => interruption === 'cancelled' && cancellation.signal.aborted
+        }),
+        previewBundle: async () => ({ previews: [], skipped: [] }),
+        importBundle: async () => [],
+        scanGitHub: async () =>
+          names.map((name) => ({
+            name,
+            path: name,
+            url: `https://github.com/acme/skills/tree/main/${name}`,
+            alreadyImported: false
+          })),
+        importGitHub,
+        requestApproval: async (request) => ({
+          id: 'approved',
+          items: request.previews.map((entry) => ({ subPath: entry.subPath }))
+        })
+      })
+      const result = await importer.request({
+        sessionId: 'session-1',
+        githubUrl: 'https://github.com/acme/skills'
+      })
+      expect(result).toMatchObject({
+        status: 'partial',
+        skills: [{ id: 'imported-first', name: 'first', status: 'imported' }],
+        errors: [
+          { name: 'second', error: expect.stringContaining('unknown') },
+          { name: 'third', error: expect.stringContaining('Not attempted') }
+        ]
+      })
+      expect((await store.list()).map((skill) => skill.id)).toEqual(['imported-first'])
+      expect(importGitHub).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it('includes bounded rejected-entry reasons when an eligible bundle has no importable Skill', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+    roots.push(root)
+    const uploads = new UploadRepository(root)
+    const store = new UserSkillRepository(root)
+    const zip = buildNamedSkillZip('broken')
+    const [staged] = await stageUploadFixtures(uploads, {
+      files: [
+        { name: 'broken.skill', content: zip.toString('base64'), mimeType: 'application/zip' }
+      ]
+    })
+    const [attachment] = await uploads.finalizePendingSessionUploads('session-1', [staged])
+    const requestApproval = vi.fn()
+    const importer = new ConversationSkillImporter({
+      uploads,
+      createCancellationGuard: createActiveCancellationGuard,
+      previewBundle: async () => ({
+        previews: [],
+        skipped: [{ source: 'bad.txt', reason: 'invalid DEFLATE data' }]
+      }),
+      importBundle: (bundle, items) => store.importFromZipBatch(bundle, items),
+      requestApproval
+    })
+    await expect(
+      importer.request({
+        sessionId: 'session-1',
+        turnToken: 'turn-1',
+        attachmentUri: pathToFileURL(attachment.path).href
+      })
+    ).rejects.toThrow('invalid DEFLATE data')
+    expect(requestApproval).not.toHaveBeenCalled()
+    expect(await store.list()).toEqual([])
+  })
+
   it('scans and imports selected GitHub Skills after the user confirms the conversation preview', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)
@@ -246,8 +339,14 @@ describe('ConversationSkillImporter', () => {
     await expect(
       importer.request({ sessionId: 'session-1', githubUrl: 'https://github.com/acme/skills' })
     ).resolves.toEqual({
-      status: 'imported',
-      skills: [{ id: 'imported-first', name: 'First', status: 'imported' }]
+      status: 'partial',
+      skills: [{ id: 'imported-first', name: 'First', status: 'imported' }],
+      errors: [
+        {
+          name: 'Second',
+          error: 'Not attempted: the Skill import batch was cancelled or timed out.'
+        }
+      ]
     })
     expect(importGitHub).toHaveBeenCalledOnce()
     expect(importGitHub).toHaveBeenCalledWith(firstUrl, expect.any(AbortSignal))

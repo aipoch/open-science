@@ -86,6 +86,20 @@ describe('biorxiv / get_categories', () => {
 })
 
 describe('biorxiv / get_preprint', () => {
+  it.each([{ messages: [{ status: 'upstream unavailable' }], collection: [] }, {}])(
+    'does not turn upstream failure into absence: %j',
+    async (payload) => {
+      const { impl } = sequence(payload)
+      const out = (await run('get_preprint', { doi: '10.1101/000000' }, impl)) as {
+        success: boolean
+        error: string
+      }
+      expect(out.success).toBe(false)
+      expect(out.error).toContain('Unable to confirm DOI')
+      expect(out.error).not.toContain('not found')
+    }
+  )
+
   it('builds the /details/{server}/{doi}/na/json URL and shapes the latest version', async () => {
     const v1 = { ...DETAIL_RECORD, version: '1' }
     const v2 = { ...DETAIL_RECORD, version: '2', published: '10.1038/s41564-020-0723-z' }

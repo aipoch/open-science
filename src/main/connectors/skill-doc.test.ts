@@ -146,7 +146,9 @@ describe('renderSkillDoc', () => {
     expect(md).toContain('persistent')
     expect(md).toContain('native JavaScript')
     expect(md).toMatch(/instead of running the call again/)
-    expect(md).toMatch(/never re-(issue|call)/i)
+    expect(md).toContain(
+      'do not re-issue an upstream call merely to inspect or process its existing result'
+    )
   })
   it('keeps planned connector work in fewer model round trips and bounds returned context', () => {
     const baseline = renderConnectorInstructions(['mcp-pubmed'])
