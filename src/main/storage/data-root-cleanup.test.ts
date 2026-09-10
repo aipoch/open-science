@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { deleteSources } from './data-migration'
-import { DataRootCleanupJournal } from './data-root-cleanup'
+import { createDataRootSourceCleanup, DataRootCleanupJournal } from './data-root-cleanup'
 import { readMigrationMarker, scanInventory, writeMigrationMarker } from './migration-marker'
 
 let root: string
@@ -38,6 +38,56 @@ afterEach(async () => {
 })
 
 describe('DataRootCleanupJournal', () => {
+  it('preserves old runtime access before commit and retries cancelled removal after commit', async () => {
+    const runtime = join(source, 'runtime')
+    await mkdir(runtime)
+    await writeFile(join(runtime, 'R.exe'), 'old runtime')
+    await mkdir(join(target, 'runtime'))
+    await writeFile(join(target, 'runtime', 'R.exe'), 'new runtime')
+    const migratedDirs = [
+      join('runtime', 'pkgs'),
+      join('runtime', 'provenance', 'environment-manifests')
+    ]
+    for (const dir of migratedDirs) await mkdir(join(target, dir), { recursive: true })
+    await writeMigrationMarker(target, {
+      version: 1,
+      token: 'runtime-cleanup',
+      source,
+      target,
+      createdAt: 1,
+      status: 'verified',
+      migratedDirs,
+      inventory: await scanInventory(target, migratedDirs)
+    })
+    const revoke = vi.fn(async () => {
+      expect(await readFile(join(runtime, 'R.exe'), 'utf8')).toBe('old runtime')
+      throw new Error('permission removal cancelled')
+    })
+    const removeSources = createDataRootSourceCleanup(revoke)
+    const journal = new DataRootCleanupJournal(configRoot)
+    const stage = (): Promise<string[]> =>
+      journal.stage({ token: 'runtime-cleanup', source, target, dirs: ['runtime'], createdAt: 1 })
+    await stage()
+    // Abandoned or failed pointer commit keeps the source as current and must preserve its access.
+    await journal.recover(source, removeSources)
+    expect(revoke).not.toHaveBeenCalled()
+    expect(await readFile(join(runtime, 'R.exe'), 'utf8')).toBe('old runtime')
+    await stage()
+    await journal.markCommitted('runtime-cleanup')
+    expect(await journal.recover(target, removeSources)).toEqual({ pending: true, failureCount: 1 })
+    expect(revoke).toHaveBeenCalledWith(runtime)
+    expect(await readFile(join(runtime, 'R.exe'), 'utf8')).toBe('old runtime')
+    revoke.mockResolvedValue(undefined as never)
+    const restarted = new DataRootCleanupJournal(configRoot)
+    expect(await restarted.recover(target, removeSources)).toEqual({
+      pending: false,
+      failureCount: 0
+    })
+    await expect(readFile(join(runtime, 'R.exe'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(target, 'runtime', 'R.exe'), 'utf8')).toBe('new runtime')
+    await restarted.recover(target, removeSources)
+    expect(revoke).toHaveBeenCalledTimes(2)
+  })
   it('removes copied legacy Notebook evidence through the durable cleanup journal', async () => {
     const legacyDirectory = 'notebook-file-evidence'
     await mkdir(join(source, legacyDirectory, 'project-1'), { recursive: true })

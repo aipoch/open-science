@@ -22,6 +22,8 @@ export type NotebookSandboxedSpawn = Readonly<{
   executable: string
   args: readonly string[]
   env: NodeJS.ProcessEnv
+  // Only the native protected Windows host provides kill-on-close descendant containment.
+  windowsJobObject?: true
   beginExecution?: () => () => void
   annotateStderr: (stderr: string) => string
   cleanup: () => void

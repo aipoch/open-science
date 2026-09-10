@@ -2,7 +2,7 @@ import { lstat, realpath, rm } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 import { MIGRATABLE_DATA_DIRS } from './data-directories'
-import { capturePortableMetadata, restorePortableMetadata } from './data-migration'
+import { capturePortableMetadata, deleteSources, restorePortableMetadata } from './data-migration'
 import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
@@ -65,6 +65,15 @@ type DeleteSources = (
 ) => Promise<{ deleted: string[]; failed: { dir: string; error: string }[] }>
 type CleanupRuntimeCache = (source: string) => Promise<boolean> | boolean
 type CleanupRecoveryResult = Readonly<{ pending: boolean; failureCount: number }>
+
+// One deletion adapter is shared by committed migration and durable cleanup replay. Copying,
+// discarding a staged copy, and switching to an existing root never remove the source runtime.
+export const createDataRootSourceCleanup =
+  (revokeRuntimeAccess: (runtimeRoot: string) => Promise<void>): typeof deleteSources =>
+  async (source, dirs, onProgress) => {
+    if (dirs.includes('runtime')) await revokeRuntimeAccess(join(source, 'runtime'))
+    return deleteSources(source, dirs, onProgress)
+  }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)

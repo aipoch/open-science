@@ -1529,6 +1529,48 @@ describe('storage IPC handlers', () => {
     expect(cleanupRuntimeCache).not.toHaveBeenCalled()
   })
 
+  it.each(['commit', 'failed-pointer', 'discard', 'cancel-copy'] as const)(
+    'runs source permission cleanup only after pointer commit (%s)',
+    async (action) => {
+      initDataRoot(dataRoot)
+      const order: string[] = []
+      const { deleteSources } = await import('./data-migration')
+      const cleanup = vi.fn<typeof deleteSources>(async (...args) => {
+        expect(order).toEqual(['commit'])
+        order.push('cleanup')
+        return deleteSources(...args)
+      })
+      const deps = fakeDeps({
+        deleteSources: cleanup,
+        ...(action === 'cancel-copy'
+          ? {
+              runDataRootMigration: async () => ({
+                ok: false as const,
+                error: 'migration cancelled',
+                cancelled: true
+              })
+            }
+          : {})
+      })
+      vi.mocked(deps.settingsService.setDataRoot).mockImplementation(async () => {
+        if (action === 'failed-pointer') throw new Error('settings write failed')
+        order.push('commit')
+      })
+      registerStorageIpcHandlers(deps)
+      await invoke('storage:migrate', { parent: targetParent })
+      expect(cleanup).not.toHaveBeenCalled()
+      if (action === 'cancel-copy') return
+      if (action === 'discard') {
+        await invoke('storage:discard-migrated-copy', { parent: targetParent })
+        expect(cleanup).not.toHaveBeenCalled()
+      } else {
+        const result = await invoke('storage:commit-and-relaunch', { parent: targetParent })
+        expect(result).toMatchObject({ ok: action === 'commit' })
+        expect(order).toEqual(action === 'commit' ? ['commit', 'cleanup'] : [])
+      }
+    }
+  )
+
   it('commit-and-relaunch invokes settingsService.setDataRoot as a method, preserving its `this`', async () => {
     initDataRoot(dataRoot)
     // Regression: the real settings service is a class whose setDataRoot reads `this.repository`.

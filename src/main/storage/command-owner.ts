@@ -105,6 +105,7 @@ type StorageCommandOwnerDeps = {
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   exportRuntimeLocks?: typeof exportRuntimeLocks
   discardStagedCopy?: typeof discardStagedCopy
+  deleteSources?: typeof import('./data-migration').deleteSources
   runDataRootMigration?: typeof runDataRootMigration
   pauseDataRootWriters?: typeof pauseDataRootWriters
   // Windows classification probes volume capabilities; inject only when a host-independent command
@@ -840,6 +841,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
             // Prove the on-disk copy is the one this session staged (guards against a stale marker).
             expectedToken: staged.token,
             cleanupJournal,
+            deleteSources: deps.deleteSources,
             cleanupRuntimeCache: (sourceRoot) => cleanupRuntimeCache(join(sourceRoot, 'runtime')),
             logger,
             diagnosticCorrelationId: staged.correlationId

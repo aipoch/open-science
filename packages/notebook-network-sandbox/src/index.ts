@@ -158,6 +158,7 @@ class NotebookNetworkSandbox {
     return {
       argv: wrapped.argv,
       env: wrapped.env,
+      ...(wrapped.windowsJobObject ? { windowsJobObject: true as const } : {}),
       annotateStderr: (stderr) => this.#backend.annotateStderr(commandId, stderr),
       resetNetworkConnections: () => this.#backend.resetCommandConnections(commandId),
       cleanup: () => this.#releaseCommand(commandId, true)

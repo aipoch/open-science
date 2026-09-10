@@ -58,8 +58,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   })
 }
 
-child.once('error', () => process.exit(126))
-child.once('exit', (code, signal) => {
+const finish = (code, signal) => {
   if (signal) {
     try {
       process.kill(process.pid, signal)
@@ -69,4 +68,13 @@ child.once('exit', (code, signal) => {
     return
   }
   process.exit(code ?? 1)
-})
+}
+
+// Only the parent can create this IPC channel. It is not inherited by the workload, and stdout is
+// never used as containment evidence. A wrapper killed before native-host exit sends no receipt.
+const reportExit = (code, signal) => {
+  if (process.send) process.send('kernel-child-exited', () => finish(code, signal))
+  else finish(code, signal)
+}
+child.once('error', () => reportExit(126))
+child.once('exit', reportExit)
