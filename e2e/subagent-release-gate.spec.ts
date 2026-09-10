@@ -673,7 +673,7 @@ test('routes reliable Main and child messages through production Host RPC and th
 
 test('parks an upward message on branch switch and resumes it after restart and restoration', async ({
   app
-}) => {
+}, testInfo) => {
   test.setTimeout(180_000)
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
@@ -763,6 +763,7 @@ test('parks an upward message on branch switch and resumes it after restart and 
       )
     )
     .toEqual({ sessionStatus: 'idle', receiptStatus: 'queued' })
+  await page.screenshot({ path: testInfo.outputPath('late-output-selected-branch.png') })
   page = await app.restart()
   await expect
     .poll(async () =>
@@ -842,6 +843,7 @@ test('parks an upward message on branch switch and resumes it after restart and 
       )
     )
     .toBe('accepted')
+  await page.screenshot({ path: testInfo.outputPath('late-output-restored-branch.png') })
 })
 
 test('recovers a post-fence receipt persistence failure as uncertain after process termination', async ({

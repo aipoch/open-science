@@ -1,3 +1,8 @@
+import {
+  projectConversationMessage,
+  resolveActiveConversationActivities,
+  resolveActiveConversationMessages
+} from '../../../shared/conversation-graph'
 import type { StoreApi } from 'zustand'
 
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
@@ -60,6 +65,7 @@ import type {
   SessionStoreData
 } from './session-store-persistence-owner'
 import {
+  hydrateToolActivity,
   materializeStreamingMessageContent,
   removeStreamingMessageContentForSession
 } from './session-store-persistence-owner'
@@ -175,6 +181,66 @@ const projectSession = (
 ): ChatSession[] =>
   sessions.map((session) => (session.id === sessionId ? projector(session) : session))
 
+// Runtime events keep their prompt owner even when a persisted branch selection arrives while
+// the run is in flight. Project hidden output through that branch, then restore the UI selection.
+const projectRunBranch = (
+  session: ChatSession,
+  promptMessageId: string | undefined,
+  projector: (session: ChatSession) => ChatSession
+): ChatSession => {
+  const promptId = promptMessageId ?? session.activeRun?.promptMessageId
+  const graph = session.conversationGraph
+  if (!graph || !promptId || session.messages.some((message) => message.id === promptId)) {
+    return projector(session)
+  }
+  const prompt = graph.messages.find(
+    (message) => message.id === promptId && message.role === 'user'
+  )
+  if (!prompt) return projector(session)
+  const runGraph = {
+    ...graph,
+    activeFrameId: prompt.agentFrameId,
+    frames: graph.frames.map((frame) =>
+      frame.id === prompt.agentFrameId
+        ? { ...frame, activeBranchId: prompt.introducedOnBranchId }
+        : frame
+    )
+  }
+  const activities = resolveActiveConversationActivities(runGraph)
+  const runSession = {
+    ...session,
+    conversationGraph: runGraph,
+    messages: resolveActiveConversationMessages(runGraph).map(projectConversationMessage),
+    activities: activities.activities.map((activity) =>
+      hydrateToolActivity({
+        ...activity,
+        promptMessageId: graph.activities.find(({ id }) => id === activity.id)?.promptMessageId
+      })
+    ),
+    activityGroups: activities.activityGroups.map((group) => ({
+      ...group,
+      promptMessageId: graph.activityGroups.find(({ id }) => id === group.id)?.promptMessageId
+    }))
+  }
+  const projected = projector(runSession)
+  if (projected === runSession) return session
+  const updatedGraph = synchronizeSessionGraph(projected, projected.messages, projected.updatedAt)
+  return {
+    ...projected,
+    messages: session.messages,
+    activities: session.activities,
+    activityGroups: session.activityGroups,
+    conversationGraph: {
+      ...updatedGraph,
+      activeFrameId: graph.activeFrameId,
+      frames: updatedGraph.frames.map((frame) => ({
+        ...frame,
+        activeBranchId: graph.frames.find((original) => original.id === frame.id)!.activeBranchId
+      }))
+    }
+  }
+}
+
 export const createSessionRunProjectionOwner = <
   State extends SessionStoreData & SessionRunProjectionActions
 >(
@@ -201,11 +267,31 @@ export const createSessionRunProjectionOwner = <
     const sessions = state.sessions.map((session) => {
       const indexes = inputIndexesBySessionId.get(session.id)
       if (!indexes) return session
-      const projection = projectAgentMessageChunks(
-        session,
-        indexes.map((index) => inputs[index]),
-        streamingMessages
-      )
+      const sessionInputs = indexes.map((index) => inputs[index])
+      if (
+        session.conversationGraph &&
+        sessionInputs.some((input) => {
+          const promptId = input.promptMessageId ?? session.activeRun?.promptMessageId
+          return promptId && !session.messages.some((message) => message.id === promptId)
+        })
+      ) {
+        let next = session
+        for (const index of indexes) {
+          next = projectRunBranch(next, inputs[index].promptMessageId, (runSession) => {
+            const projection = projectAgentMessageChunks(
+              runSession,
+              [inputs[index]],
+              streamingMessages
+            )
+            streamingMessages = projection.streamingMessages
+            indexedResults[index] = projection.results[0]
+            return materializeStreamingMessageContent(projection.session, streamingMessages)
+          })
+        }
+        sessionsChanged ||= next !== session
+        return next
+      }
+      const projection = projectAgentMessageChunks(session, sessionInputs, streamingMessages)
       streamingMessages = projection.streamingMessages
       indexes.forEach((inputIndex, resultIndex) => {
         indexedResults[inputIndex] = projection.results[resultIndex]
@@ -232,14 +318,18 @@ export const createSessionRunProjectionOwner = <
   const projectTerminalRun = (
     state: SessionStoreData,
     sessionId: string,
-    projector: (session: ChatSession) => ChatSession
+    projector: (session: ChatSession) => ChatSession,
+    promptMessageId?: string
   ): Partial<SessionStoreData> => {
     let projected = false
     const sessions = projectSession(state.sessions, sessionId, (session) => {
-      const materialized = materializeStreamingMessageContent(session, state.streamingMessages)
-      const next = projector(materialized)
-      // A projector that declines (returns its input) keeps the original Session and slice.
-      if (next === materialized) return session
+      const next = projectRunBranch(session, promptMessageId, (runSession) => {
+        const materialized = materializeStreamingMessageContent(runSession, state.streamingMessages)
+        const projected = projector(materialized)
+        // A projector that declines keeps the original Session and streaming slice.
+        return projected === materialized ? runSession : projected
+      })
+      if (next === session) return session
       projected = true
       return next
     })
@@ -304,9 +394,11 @@ export const createSessionRunProjectionOwner = <
       let result: AppendMessageResult | undefined
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, input.sessionId, (session) => {
-          const projection = projectRunArtifacts(session, input)
-          result = projection.result
-          return projection.session
+          return projectRunBranch(session, input.promptMessageId, (runSession) => {
+            const projection = projectRunArtifacts(runSession, input)
+            result = projection.result
+            return projection.session
+          })
         })
       }))
       return result
@@ -390,7 +482,9 @@ export const createSessionRunProjectionOwner = <
       if (!input.sessionId || !input.toolCallId || !input.eventId) return
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, input.sessionId, (session) =>
-          projectToolActivity(session, input)
+          projectRunBranch(session, input.promptMessageId, (runSession) =>
+            projectToolActivity(runSession, input)
+          )
         )
       }))
     },
@@ -454,7 +548,9 @@ export const createSessionRunProjectionOwner = <
       if (!sessionId || !canStartActivityGroup(groupId, title)) return
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) =>
-          projectActivityGroupStart(session, groupId, title, promptMessageId)
+          projectRunBranch(session, promptMessageId, (runSession) =>
+            projectActivityGroupStart(runSession, groupId, title, promptMessageId)
+          )
         )
       }))
     },
@@ -465,7 +561,9 @@ export const createSessionRunProjectionOwner = <
       setSessionState((state) => {
         const target = state.sessions.find((session) => session.id === sessionId)
         if (!target) return state
-        const projected = projectActivityGroupCompletion(target, promptMessageId, now)
+        const projected = projectRunBranch(target, promptMessageId, (runSession) =>
+          projectActivityGroupCompletion(runSession, promptMessageId, now)
+        )
         if (projected === target) return state
         return {
           sessions: projectSession(state.sessions, sessionId, () => projected)
@@ -475,14 +573,18 @@ export const createSessionRunProjectionOwner = <
 
     finishRun: (sessionId, turnUsage, promptMessageId, contextWindowSample, modelCallUsage) => {
       setSessionState((state) =>
-        projectTerminalRun(state, sessionId, (session) =>
-          projectFinishedRun(
-            session,
-            turnUsage,
-            promptMessageId,
-            contextWindowSample,
-            modelCallUsage
-          )
+        projectTerminalRun(
+          state,
+          sessionId,
+          (session) =>
+            projectFinishedRun(
+              session,
+              turnUsage,
+              promptMessageId,
+              contextWindowSample,
+              modelCallUsage
+            ),
+          promptMessageId
         )
       )
     },
@@ -497,16 +599,20 @@ export const createSessionRunProjectionOwner = <
       modelCallUsage
     ) => {
       setSessionState((state) =>
-        projectTerminalRun(state, sessionId, (session) =>
-          projectInterruptedRun(
-            session,
-            cause,
-            error,
-            promptMessageId,
-            contextWindowSample,
-            turnUsage,
-            modelCallUsage
-          )
+        projectTerminalRun(
+          state,
+          sessionId,
+          (session) =>
+            projectInterruptedRun(
+              session,
+              cause,
+              error,
+              promptMessageId,
+              contextWindowSample,
+              turnUsage,
+              modelCallUsage
+            ),
+          promptMessageId
         )
       )
     },
@@ -633,14 +739,18 @@ export const createSessionRunProjectionOwner = <
       const message = error.trim()
       if (!message) return
       setSessionState((state) =>
-        projectTerminalRun(state, sessionId, (session) =>
-          projectFailedRun(
-            session,
-            message,
-            opts?.reportable,
-            opts?.promptMessageId,
-            opts?.contextWindowSample
-          )
+        projectTerminalRun(
+          state,
+          sessionId,
+          (session) =>
+            projectFailedRun(
+              session,
+              message,
+              opts?.reportable,
+              opts?.promptMessageId,
+              opts?.contextWindowSample
+            ),
+          opts?.promptMessageId
         )
       )
     },

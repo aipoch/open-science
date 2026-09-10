@@ -2198,6 +2198,136 @@ describe('session store', () => {
     })
   })
 
+  it.each(['finish', 'fail', 'interrupt'] as const)(
+    'keeps late output on its originating branch through %s after another branch is selected',
+    (terminal) => {
+      const prompt = {
+        id: 'origin-prompt',
+        role: 'user' as const,
+        content: 'Original run',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const graph = createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [prompt],
+        createdAt: 1,
+        updatedAt: 1
+      })
+      const originalBranch = graph.branches[0]
+      graph.branches.push({
+        id: 'other-branch',
+        agentFrameId: graph.rootFrameId,
+        parentBranchId: originalBranch.id,
+        supersededMessageId: prompt.id,
+        createdAt: 2,
+        updatedAt: 2
+      })
+      graph.frames[0].activeBranchId = 'other-branch'
+      validateConversationGraph(graph)
+      useSessionStore.getState().hydrateSessions([
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Branch switch',
+          cwd: '/workspace',
+          status: 'running',
+          activeRun: { promptMessageId: prompt.id, startedAt: 1 },
+          messages: [],
+          conversationGraph: graph,
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ])
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      try {
+        useSessionStore
+          .getState()
+          .beginActivityGroup('session-1', 'late-group', 'Late tools', prompt.id)
+        useSessionStore.getState().upsertToolActivity({
+          sessionId: 'session-1',
+          toolCallId: 'late-tool',
+          eventId: 'tool-start',
+          promptMessageId: prompt.id,
+          title: 'Inspect original branch',
+          status: 'in_progress'
+        })
+        useSessionStore.getState().appendAgentMessageChunk({
+          sessionId: 'session-1',
+          promptMessageId: prompt.id,
+          streamId: 'late-reply',
+          eventId: 'late-event',
+          content: 'Original run '
+        })
+        useSessionStore.getState().appendAgentMessageChunks([
+          {
+            sessionId: 'session-1',
+            promptMessageId: prompt.id,
+            streamId: 'late-reply',
+            eventId: 'late-event-next',
+            content: 'completed'
+          },
+          {
+            sessionId: 'session-1',
+            promptMessageId: prompt.id,
+            streamId: 'late-reply',
+            eventId: 'late-event-next',
+            content: 'completed'
+          }
+        ])
+        const running = useSessionStore.getState()
+        const saved = toPersistedSession(running.sessions[0], running.streamingMessages)
+        expect(saved.messages).toEqual([])
+        expect(
+          saved.conversationGraph?.messages.find(
+            ({ content }) => content === 'Original run completed'
+          )
+        ).toBeDefined()
+        expect(
+          saved.conversationGraph?.activities.find(({ id }) => id === 'late-tool')
+        ).toMatchObject({ messageBranchId: originalBranch.id, status: 'in_progress' })
+        useSessionStore.getState().hydrateSessions([saved])
+        if (terminal === 'finish')
+          useSessionStore.getState().finishRun('session-1', undefined, prompt.id)
+        else if (terminal === 'fail')
+          useSessionStore
+            .getState()
+            .failRun('session-1', 'Runtime failed', { promptMessageId: prompt.id })
+        else
+          useSessionStore
+            .getState()
+            .interruptRun('session-1', 'connection-lost', 'Connection lost', prompt.id)
+        const session = useSessionStore.getState().sessions[0]
+        expect(errors).not.toHaveBeenCalled()
+        expect(session.conversationGraphSyncBlocked).toBeUndefined()
+        expect(session.messages).toEqual([])
+        expect(session.activeRun).toBeUndefined()
+        expect(session.activities ?? []).toEqual([])
+        expect(session.activityGroups ?? []).toEqual([])
+        expect(
+          session.conversationGraph?.activities.find(({ id }) => id === 'late-tool')
+        ).toMatchObject({
+          messageBranchId: originalBranch.id,
+          status: terminal === 'finish' ? 'completed' : 'failed'
+        })
+        expect(
+          session.conversationGraph?.activityGroups.find(({ id }) => id === 'late-group')
+        ).toMatchObject({ messageBranchId: originalBranch.id, completedAt: expect.any(Number) })
+        expect(session.conversationGraph?.frames[0].activeBranchId).toBe('other-branch')
+        expect(
+          session.conversationGraph?.messages.find(
+            ({ content }) => content === 'Original run completed'
+          )?.introducedOnBranchId
+        ).toBe(originalBranch.id)
+        validateConversationGraph(session.conversationGraph!)
+      } finally {
+        errors.mockRestore()
+      }
+    }
+  )
+
   it.each(['current', 'incoming'] as const)(
     'retains the descendant branch head when the %s snapshot contains the latest reply',
     (owner) => {
