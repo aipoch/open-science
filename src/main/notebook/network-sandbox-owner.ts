@@ -40,6 +40,7 @@ import {
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { kernelExecutableReadRoot } from './kernel-executor'
 import { windowsCondaPrefixForR } from './environment-discovery'
+import { rKernelProtocolProbe } from './r-command'
 import {
   condaActivatedPath,
   DEFAULT_R_ENV,
@@ -593,18 +594,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   ): Promise<boolean> {
     if ((await this.status()).kind !== 'ready')
       throw new Error('Enable protected mode before verifying R access.')
+    const prefix = windowsCondaPrefixForR(executable, this.platform)
+    const env = {
+      ...buildNotebookKernelEnvironment(this.platform),
+      ...(prefix ? { PATH: condaActivatedPath(prefix, process.env.PATH, this.platform) } : {})
+    }
     const cwd = await mkdtemp(join(tmpdir(), 'open-science-r-access-'))
     let invocation: NotebookSandboxedSpawn | undefined
     let endExecution: (() => void) | undefined
     try {
-      const prefix = windowsCondaPrefixForR(executable, this.platform)
-      const env = {
-        ...buildNotebookKernelEnvironment(this.platform),
-        // Keep the read-only path probe alive even when startup cannot load compiler/default
-        // packages. Full post-authorization verification uses ordinary R startup below.
-        ...(pathsOnly ? { R_DEFAULT_PACKAGES: 'NULL', R_ENABLE_JIT: '0' } : {}),
-        ...(prefix ? { PATH: condaActivatedPath(prefix, process.env.PATH, this.platform) } : {})
-      }
       invocation = await this.wrap({
         executable,
         args: [
@@ -615,7 +613,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             : 'stopifnot(requireNamespace("jsonlite", quietly=TRUE)); normalizePath(.libPaths(), mustWork=TRUE); cat("OPEN_SCIENCE_R_ACCESS_OK")'
         ],
         cwd,
-        env,
+        // Only the contained path probe suppresses startup packages. Host readiness and full
+        // post-authorization verification must exercise ordinary R startup and dependencies.
+        env: {
+          ...env,
+          ...(pathsOnly ? { R_DEFAULT_PACKAGES: 'NULL', R_ENABLE_JIT: '0' } : {})
+        },
         commandText: 'Verify selected R runtime',
         runtime: 'r',
         sessionId: 'runtime-access-check',
@@ -646,6 +649,17 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       // The same paths must exist and normalize outside containment. A missing/damaged install,
       // a failed launch, or a missing R package is not grounds for administrator authorization.
       await Promise.all(paths.map((path) => realpath(path)))
+      const runnable = await rKernelProtocolProbe({
+        exec: (args) =>
+          promisify(execFile)(executable, ['--vanilla', ...args], {
+            cwd,
+            env,
+            timeout: 20_000,
+            windowsHide: true,
+            maxBuffer: 1024 * 1024
+          })
+      })
+      if (!runnable) throw new Error('The R kernel protocol dependencies failed to load.')
       return false
     } finally {
       endExecution?.()

@@ -22,7 +22,13 @@ const backend = vi.hoisted(() => ({
   removeWindows: vi.fn().mockResolvedValue({ cancelled: false }),
   getWindowsRuntimeAccess: vi.fn().mockResolvedValue({ authorized: true, registered: true }),
   setWindowsRuntimeAccess: vi.fn().mockResolvedValue({ cancelled: false }),
+  rKernelProtocolProbe: vi.fn().mockResolvedValue(true),
   dispose: vi.fn().mockResolvedValue(undefined)
+}))
+
+vi.mock('./r-command', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./r-command')>()),
+  rKernelProtocolProbe: backend.rKernelProtocolProbe
 }))
 
 vi.mock('@aipoch/notebook-network-sandbox', () => ({
@@ -113,6 +119,7 @@ beforeEach(() => {
   backend.status.mockResolvedValue({ kind: 'ready', warnings: [] })
   backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: true, registered: true })
   backend.setWindowsRuntimeAccess.mockResolvedValue({ cancelled: false })
+  backend.rKernelProtocolProbe.mockResolvedValue(true)
   backend.installWindows.mockResolvedValue({ cancelled: false })
   backend.removeWindows.mockResolvedValue({ cancelled: false })
   backend.wrap.mockImplementation(
@@ -1278,6 +1285,40 @@ describe('R startup authorization admission', () => {
     })
     try {
       await expect(owner.ensureRuntimeAccess(request)).rejects.toThrow()
+      expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
+    } finally {
+      await owner.dispose()
+    }
+  })
+
+  it('does not grant persistent access when denied R paths also hide broken protocol dependencies', async () => {
+    const owner = createOwner()
+    backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
+    backend.rKernelProtocolProbe.mockResolvedValue(false)
+    try {
+      await expect(owner.ensureRuntimeAccess(request)).rejects.toThrow(
+        'The R kernel protocol dependencies failed to load.'
+      )
+      expect(backend.rKernelProtocolProbe).toHaveBeenCalledOnce()
+      expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
+    } finally {
+      await owner.dispose()
+    }
+  })
+
+  it('does not open UAC when cancelled during host R protocol verification', async () => {
+    const owner = createOwner()
+    const controller = new AbortController()
+    backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
+    backend.rKernelProtocolProbe.mockImplementation(async () => {
+      controller.abort()
+      return true
+    })
+    try {
+      await expect(
+        owner.ensureRuntimeAccess({ ...request, signal: controller.signal })
+      ).rejects.toThrow('cancelled')
+      expect(backend.rKernelProtocolProbe).toHaveBeenCalledOnce()
       expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
     } finally {
       await owner.dispose()
