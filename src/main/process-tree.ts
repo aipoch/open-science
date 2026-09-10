@@ -27,6 +27,12 @@ export const registerOwnedPosixProcessGroup = (child: ChildProcess): void => {
   ownedPosixProcessGroups.set(child, { kind: 'owned-posix-process-group', id: groupId })
 }
 
+// File replacement must wait for confirmed tree teardown, not the adapter's close event.
+const processTreeReapCallbacks = new WeakMap<ChildProcess, () => void>()
+export const onProcessTreeReaped = (child: ChildProcess, callback: () => void): void => {
+  processTreeReapCallbacks.set(child, callback)
+}
+
 // Upper bound for awaiting a direct child's real exit (POSIX) or taskkill's own completion (Windows).
 // Bounded so a wedged process can never hang app teardown; the caller (before-quit) also time-bounds
 // the whole shutdown, this is a second, tighter guard scoped to a single tree.
@@ -308,9 +314,11 @@ const terminatePosixTree = async (
   signal: NodeJS.Signals | undefined,
   log: ProcessTreeLogger | undefined
 ): Promise<ProcessTreeKillResult> => {
+  // Node leaves pid undefined when spawn fails; no process (or descendant) was created.
+  // Its error/close events may already have fired before cleanup starts.
+  if (child.pid === undefined) return { reaped: true }
   const gracefulSignal = signal ?? 'SIGTERM'
-  const snapshot =
-    child.pid === undefined ? { pids: [], complete: true } : await collectDescendantPids(child.pid)
+  const snapshot = await collectDescendantPids(child.pid)
   const descendants = snapshot.pids
 
   signalPids(descendants, gracefulSignal)
@@ -411,10 +419,16 @@ export const terminateProcessTree = async (
   signal?: NodeJS.Signals,
   log?: ProcessTreeLogger
 ): Promise<ProcessTreeKillResult> => {
-  if (process.platform === 'win32') {
-    return terminateWindowsTree(child, signal, log)
-  }
   const ownedGroup = ownedPosixProcessGroups.get(child)
-  if (ownedGroup) return terminateOwnedPosixProcessGroup(ownedGroup, signal, log)
-  return terminatePosixTree(child, signal, log)
+  const result = await (process.platform === 'win32'
+    ? terminateWindowsTree(child, signal, log)
+    : ownedGroup
+      ? terminateOwnedPosixProcessGroup(ownedGroup, signal, log)
+      : terminatePosixTree(child, signal, log))
+  if (result.reaped) {
+    const callback = processTreeReapCallbacks.get(child)
+    processTreeReapCallbacks.delete(child)
+    callback?.()
+  }
+  return result
 }

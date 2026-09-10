@@ -9,7 +9,8 @@ const { spawnMock } = vi.hoisted(() => ({
 
 vi.mock('node:child_process', () => ({ spawn: spawnMock }))
 
-const { registerOwnedPosixProcessGroup, terminateProcessTree } = await import('./process-tree')
+const { onProcessTreeReaped, registerOwnedPosixProcessGroup, terminateProcessTree } =
+  await import('./process-tree')
 
 // Minimal ChildProcess stand-in: an EventEmitter (so waitForExit's once('exit') resolves) exposing the
 // pid/kill/killed/exitCode surface the code under test touches. kill() flips killed like Node does.
@@ -160,15 +161,22 @@ describe('terminateProcessTree (win32)', () => {
     expect(log.error).toHaveBeenCalled()
   })
 
-  it('with an undefined pid does not spawn taskkill and reports the tree reaped', async () => {
-    setPlatform('win32')
-    const child = new FakeChild(undefined)
+  it.each(['win32', 'linux', 'darwin'])(
+    'with an undefined pid reports the tree reaped on %s',
+    async (platform) => {
+      setPlatform(platform)
+      const child = new FakeChild(undefined)
+      const release = vi.fn()
+      onProcessTreeReaped(child as never, release)
+      child.emit('close', -2)
 
-    // No pid means nothing spawned/already gone — nothing left to reap.
-    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
-    expect(spawnMock).not.toHaveBeenCalled()
-    expect(child.kill).not.toHaveBeenCalled()
-  })
+      // No pid means nothing spawned/already gone — nothing left to reap.
+      await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
+      expect(spawnMock).not.toHaveBeenCalled()
+      expect(child.kill).not.toHaveBeenCalled()
+      expect(release).toHaveBeenCalledOnce()
+    }
+  )
 })
 
 describe('terminateProcessTree (posix)', () => {
@@ -372,5 +380,31 @@ describe('terminateProcessTree (posix)', () => {
     ps.emit('close', 0)
 
     await expect(pending).resolves.toEqual({ reaped: true })
+  })
+})
+
+describe('process tree reap notification', () => {
+  it('retains admission after close and failed teardown, and releases once after confirmed teardown', async () => {
+    setPlatform('win32')
+    const child = new FakeChild(4321)
+    child.exitCode = 0
+    const release = vi.fn()
+    onProcessTreeReaped(child as never, release)
+    child.emit('close', 0)
+    expect(release).not.toHaveBeenCalled()
+    const failedKiller = new EventEmitter()
+    spawnMock.mockReturnValueOnce(failedKiller)
+    const failed = terminateProcessTree(child as never)
+    failedKiller.emit('exit', 1, null)
+    await expect(failed).resolves.toEqual({ reaped: false })
+    expect(release).not.toHaveBeenCalled()
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const killer = new EventEmitter()
+      spawnMock.mockReturnValueOnce(killer)
+      const pending = terminateProcessTree(child as never)
+      killer.emit('exit', 0, null)
+      await expect(pending).resolves.toEqual({ reaped: true })
+    }
+    expect(release).toHaveBeenCalledOnce()
   })
 })

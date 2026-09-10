@@ -17,6 +17,7 @@ import { toSettingsPreferencesSnapshot } from './preferences'
 import type { StoredProvider, StoredSettings } from './types'
 
 type ManagedRuntimeProjection = {
+  isManagedCodexNativePath: (path: string) => boolean
   isManagedRuntimePath: (frameworkId: AgentFrameworkId, path: string) => boolean
 }
 
@@ -38,7 +39,10 @@ export const buildSettingsSnapshot = (
     codex: {
       resolvedPath: settings.codex?.resolvedPath,
       version: settings.codex?.version,
-      nativeVersion: settings.codex?.nativeVersion
+      nativeVersion: settings.codex?.nativeVersion,
+      ...(settings.codex?.nativePath
+        ? { nativeManaged: runtimeManager.isManagedCodexNativePath(settings.codex.nativePath) }
+        : {})
     },
     claudeManaged: settings.claude?.resolvedPath
       ? runtimeManager.isManagedRuntimePath('claude-code', settings.claude.resolvedPath)

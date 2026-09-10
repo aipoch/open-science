@@ -4924,6 +4924,9 @@
     "Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.": "远程模型 URL 必须使用 HTTPS。HTTP 仅允许用于 localhost 或回环地址。",
     "Load media from {{domains}}": "加载来自 {{domains}} 的媒体",
     "Images in Mermaid diagrams are blocked": "已阻止 Mermaid 图表中的图片",
-    "Use a separate Markdown image to load it explicitly.": "请使用单独的 Markdown 图片，以便手动加载。"
+    "Use a separate Markdown image to load it explicitly.": "请使用单独的 Markdown 图片，以便手动加载。",
+    "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}": "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}",
+    "Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.": "可更新至已验证的 Codex CLI v{{version}}。更新前请关闭 Codex 会话。",
+    "Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.": "Codex CLI v{{version}} 已可用。请手动更新外部安装，然后重新检测。"
   }
 }

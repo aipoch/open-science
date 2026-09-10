@@ -1,13 +1,15 @@
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { installManagedCodex, managedCodexAdapterEntry, managedCodexBinary } from './managed-codex'
 
 import { describe, expect, it, vi } from 'vitest'
 
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import {
   CodexAuthController,
+  openCodexAuthSession,
   createCodexAuthEnvironment,
   ensureCodexAuthHome,
   importCodexAuthentication,
@@ -1075,6 +1077,32 @@ describe('CodexAuthController', () => {
     } finally {
       resolveStatus({ type: 'unauthenticated' })
       vi.useRealTimers()
+    }
+  })
+})
+
+describe('Codex authentication install admission', () => {
+  it('blocks replacement while authentication owns the runtime and releases after tree teardown', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-admission-'))
+    const adapterPath = managedCodexAdapterEntry(root)
+    let auth: CodexAuthSession | undefined
+    try {
+      await mkdir(dirname(adapterPath), { recursive: true })
+      await writeFile(adapterPath, 'process.stdin.resume(); setInterval(() => {}, 1000)')
+      auth = await openCodexAuthSession({
+        adapterPath,
+        nativePath: managedCodexBinary(root),
+        mode: 'isolated',
+        storageRoot: root
+      })
+      const options = { dataRoot: root, installId: 'update', onEvent: vi.fn(), registries: [] }
+      expect((await installManagedCodex(options)).result.error).toContain('Codex is in use')
+      await auth.close()
+      auth = undefined
+      expect((await installManagedCodex(options)).result.error).toBe('no registries configured')
+    } finally {
+      await auth?.close()
+      await rm(root, { recursive: true, force: true })
     }
   })
 })

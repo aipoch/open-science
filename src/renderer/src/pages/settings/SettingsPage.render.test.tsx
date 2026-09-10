@@ -4679,6 +4679,82 @@ describe('SettingsPage Codex framework', () => {
     }
   ]
 
+  it('omits the version line when Codex has never been detected', async () => {
+    window.api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: {},
+      codebuddy: {},
+      codex: {},
+      providers: [],
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: false
+    })
+    window.api.settings.getPreflight = vi.fn().mockResolvedValue({
+      codexReady: false,
+      agentReady: false,
+      agentFrameworkId: 'codex',
+      activeProviderReady: false
+    })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await openAgentPanel()
+    expect(document.body.textContent).not.toContain('Codex CLI Unknown')
+  })
+
+  it.each([
+    [true, '0.144.6', true],
+    [false, '0.144.6', false],
+    [true, '0.153.4', false],
+    [true, '0.154.0', false],
+    [true, undefined, false]
+  ])(
+    'offers a tested native update only for an older managed CLI (%s, %s)',
+    async (nativeManaged, nativeVersion, expected) => {
+      const api = window.api.settings
+      const snapshot = {
+        claude: {},
+        opencode: {},
+        codebuddy: {},
+        codex: {
+          resolvedPath: '/data/codex-managed/adapter/dist/index.js',
+          version: '1.6.2',
+          nativeVersion,
+          nativeManaged
+        },
+        providers: [],
+        agentFrameworkId: 'codex',
+        agentFrameworks: frameworks,
+        claudeManaged: false,
+        opencodeManaged: false,
+        codexManaged: true
+      }
+      api.getSettings = vi.fn().mockResolvedValue(snapshot)
+      api.getPreflight = vi.fn().mockResolvedValue({
+        codexReady: true,
+        agentReady: true,
+        agentFrameworkId: 'codex',
+        activeProviderReady: false
+      })
+      await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+      await openAgentPanel()
+      const update = document.body.querySelector<HTMLButtonElement>('[aria-label="Update Codex"]')
+      expect(Boolean(update)).toBe(expected)
+      if (!nativeManaged)
+        expect(document.body.textContent).toContain('Update your external installation manually')
+      if (expected) {
+        const installCodex = vi
+          .fn()
+          .mockResolvedValue({ installId: 'upgrade', ok: false, error: 'Codex is in use' })
+        api.installCodex = installCodex
+        api.onInstallLog = vi.fn().mockReturnValue(() => undefined)
+        await act(async () => update?.click())
+        expect(installCodex).toHaveBeenCalledWith({ source: 'managed' })
+      }
+    }
+  )
+
   it('offers Codex as a selectable framework behind the switch confirmation', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const snapshot = {
@@ -4720,8 +4796,8 @@ describe('SettingsPage Codex framework', () => {
 
     const codexRadio = document.body.querySelector<HTMLButtonElement>('[aria-label="Use Codex"]')
     expect(codexRadio).not.toBeNull()
-    // The adapter version shows as a muted v-tag after the name; the repo link points at the ACP adapter.
-    expect(document.body.textContent).toContain('v1.6.2')
+    // The native and adapter versions are displayed separately; the repo link points at the ACP adapter.
+    expect(document.body.textContent).toContain('Codex CLI 0.144.6 · ACP 1.6.2')
     expect(document.body.textContent).toContain('agentclientprotocol/codex-acp')
 
     await act(async () => codexRadio?.click())

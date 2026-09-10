@@ -2242,6 +2242,27 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(preflight.opencodeReady).toBe(false)
   })
 
+  it('projects native ownership separately from the managed adapter without persisting the projection', async () => {
+    const service = createService()
+    const { managedCodexAdapterEntry, managedCodexBinary } = await import('./managed-codex')
+    const adapter = managedCodexAdapterEntry(storageRoot)
+    for (const [nativePath, expected] of [
+      [managedCodexBinary(storageRoot), true],
+      [join(storageRoot, 'external-codex'), false]
+    ] as const) {
+      await repository.setCodexInfo({
+        resolvedPath: adapter,
+        version: '1.6.2',
+        nativePath,
+        nativeVersion: '0.144.6'
+      })
+      const snapshot = await service.getSettingsView()
+      expect(snapshot.codexManaged).toBe(true)
+      expect(snapshot.codex.nativeManaged).toBe(expected)
+      expect((await repository.getSettings()).codex).not.toHaveProperty('nativeManaged')
+    }
+  })
+
   it('detects Codex and exposes readiness for its selected adapter', async () => {
     const adapterPath = '/data/codex-managed/adapter/dist/index.js'
     const nativePath = '/data/codex-managed/codex/vendor/target/bin/codex'
@@ -2260,6 +2281,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(snapshot.codex).toEqual({
       resolvedPath: adapterPath,
       version: '1.6.2',
+      nativeManaged: false,
       nativeVersion: '0.144.6'
     })
     expect(await service.getPreflight()).toMatchObject({ codexReady: true, agentReady: true })
