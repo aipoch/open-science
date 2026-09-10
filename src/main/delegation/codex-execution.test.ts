@@ -1,5 +1,6 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import * as processTree from '../process-tree'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpPermissionResponse } from '../../shared/acp'
@@ -52,7 +53,10 @@ type CertificationHarness = Readonly<{
   runtimeConnections: AcpDelegateRuntime[]
 }>
 
-const makeCertificationAdapter = (capacity = 4): CertificationHarness => {
+const makeCertificationAdapter = (
+  capacity = 4,
+  failure?: 'throw' | 'reuse'
+): CertificationHarness => {
   const controls = new Map<string, RuntimeControl>()
   const inputs: DelegateExecutionInput[] = []
   const scopes: PreparedCodexDelegateExecution[] = []
@@ -102,6 +106,8 @@ const makeCertificationAdapter = (capacity = 4): CertificationHarness => {
     },
     createRuntime(scope, callbacks, agentProcess): AcpDelegateRuntime {
       agentProcesses.push(agentProcess)
+      if (failure === 'throw') throw new Error('runtime construction failed')
+      if (failure === 'reuse' && runtimeConnections[0]) return runtimeConnections[0]
       const prompt = deferred<PromptResponse>()
       const prompts: string[] = []
       const responses: AcpPermissionResponse[] = []
@@ -231,6 +237,40 @@ delegatedWorkCertificationContract((options) => {
 })
 
 describe('Codex delegated-work isolation evidence', () => {
+  it.each(['throw', 'reuse'] as const)(
+    'reaps the process tree after %s construction failure',
+    async (failure) => {
+      const reap = vi.spyOn(processTree, 'terminateProcessTree').mockResolvedValue({ reaped: true })
+      try {
+        const { adapter, driver, agentProcesses } = makeCertificationAdapter(2, failure)
+        const reservation = await adapter.execution.reserve(2)
+        const run = (index: number): ReturnType<typeof adapter.execution.run> =>
+          adapter.execution.run(
+            {
+              session: { projectId: 'project', sessionId: 'session' },
+              frameId: `frame-${index}`,
+              attemptId: `attempt-${index}`,
+              runtimeSegmentId: `segment-${index}`,
+              task: 'task',
+              inputs: [],
+              continuation: false
+            },
+            reservation.slotIds[index]
+          )
+        run(0)
+        if (failure === 'reuse') {
+          await driver.waitForStart('attempt-0')
+          run(1)
+        }
+        await vi.waitFor(() => expect(reap).toHaveBeenCalledOnce())
+        expect(reap).toHaveBeenCalledWith(agentProcesses.at(-1))
+        if (failure === 'reuse') await driver.complete('attempt-0', 'done')
+      } finally {
+        reap.mockRestore()
+      }
+    }
+  )
+
   it('rejects uncertified runtimes and unavailable providers before durable admission', async () => {
     for (const candidate of [
       {

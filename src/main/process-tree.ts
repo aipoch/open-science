@@ -314,9 +314,11 @@ const terminatePosixTree = async (
   signal: NodeJS.Signals | undefined,
   log: ProcessTreeLogger | undefined
 ): Promise<ProcessTreeKillResult> => {
+  // Node leaves pid undefined when spawn fails; no process (or descendant) was created.
+  // Its error/close events may already have fired before cleanup starts.
+  if (child.pid === undefined) return { reaped: true }
   const gracefulSignal = signal ?? 'SIGTERM'
-  const snapshot =
-    child.pid === undefined ? { pids: [], complete: true } : await collectDescendantPids(child.pid)
+  const snapshot = await collectDescendantPids(child.pid)
   const descendants = snapshot.pids
 
   signalPids(descendants, gracefulSignal)

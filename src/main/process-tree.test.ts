@@ -161,15 +161,22 @@ describe('terminateProcessTree (win32)', () => {
     expect(log.error).toHaveBeenCalled()
   })
 
-  it('with an undefined pid does not spawn taskkill and reports the tree reaped', async () => {
-    setPlatform('win32')
-    const child = new FakeChild(undefined)
+  it.each(['win32', 'linux', 'darwin'])(
+    'with an undefined pid reports the tree reaped on %s',
+    async (platform) => {
+      setPlatform(platform)
+      const child = new FakeChild(undefined)
+      const release = vi.fn()
+      onProcessTreeReaped(child as never, release)
+      child.emit('close', -2)
 
-    // No pid means nothing spawned/already gone — nothing left to reap.
-    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
-    expect(spawnMock).not.toHaveBeenCalled()
-    expect(child.kill).not.toHaveBeenCalled()
-  })
+      // No pid means nothing spawned/already gone — nothing left to reap.
+      await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
+      expect(spawnMock).not.toHaveBeenCalled()
+      expect(child.kill).not.toHaveBeenCalled()
+      expect(release).toHaveBeenCalledOnce()
+    }
+  )
 })
 
 describe('terminateProcessTree (posix)', () => {

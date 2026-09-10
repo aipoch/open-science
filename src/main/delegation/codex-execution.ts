@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
+import { terminateProcessTree } from '../process-tree'
 import { codexFramework } from '../agent-framework/codex'
 import type { AgentFramework, AgentSpawnInput } from '../agent-framework/types'
 import { CODEX_ACP_VERSION, CODEX_VERSION } from '../settings/managed-codex'
@@ -149,11 +150,11 @@ const createCodexDelegateExecution = (
       try {
         runtime = options.createRuntime(codexScope, callbacks, agentProcess)
       } catch (error) {
-        agentProcess.kill()
+        void terminateProcessTree(agentProcess)
         throw error
       }
       if (issuedRuntimes.has(runtime)) {
-        agentProcess.kill()
+        void terminateProcessTree(agentProcess)
         throw new Error('Codex delegated execution requires an independent runtime connection.')
       }
       issuedRuntimes.add(runtime)

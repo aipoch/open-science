@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import {
@@ -2222,6 +2222,31 @@ describe('sanitizeManagedCodexDiagnostic', () => {
 const actualProcessTree = await vi.importActual<typeof import('../process-tree')>('../process-tree')
 
 describe('managed Codex process admission', () => {
+  it('releases admission after a real missing executable fails to spawn', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'codex-failed-spawn-'))
+    try {
+      const child = spawnCodexWithInstallAdmission([managedCodexAdapterEntry(dataRoot)], () =>
+        spawn(join(dataRoot, 'missing-executable'), [], { stdio: 'pipe' })
+      )
+      child.on('error', () => undefined)
+      await new Promise<void>((resolve) => child.once('close', () => resolve()))
+      expect(child.pid).toBeUndefined()
+      await expect(actualProcessTree.terminateProcessTree(child)).resolves.toEqual({ reaped: true })
+      expect(
+        (
+          await installManagedCodex({
+            dataRoot,
+            installId: 'retry',
+            onEvent: vi.fn(),
+            registries: []
+          })
+        ).result.error
+      ).toBe('no registries configured')
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  })
+
   it('blocks replacement after adapter close until every process tree is reaped', async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'codex-admission-'))
     const adapter = managedCodexAdapterEntry(dataRoot)
