@@ -33,6 +33,8 @@ export type NotebookSandboxInvocation = Readonly<{
   sessionId: string
   projectId: string
   runtime: 'python' | 'r' | 'repl' | 'bash'
+  /** Exact public hostnames granted only to this wrapped process. */
+  allowedNetworkHosts?: readonly string[]
   localRpcSocketPath?: string
   inheritedFileDescriptorCount?: number
   // Package installers opt in so standard Windows mode can contain helpers in a native Job Object.

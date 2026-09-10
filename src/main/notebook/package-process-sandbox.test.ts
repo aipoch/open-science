@@ -168,6 +168,73 @@ describe('sandboxedPackageSpawn', () => {
     })
   })
 
+  it('grants only the configured package mirror hostnames to the installer', async () => {
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async (invocation) => ({
+        executable: invocation.executable,
+        args: invocation.args,
+        env: invocation.env,
+        annotateStderr: (stderr: string) => stderr,
+        cleanup: vi.fn()
+      }))
+    }
+    const spawn = sandboxedPackageSpawn({
+      processSandbox,
+      request: { language: 'python', packages: ['example'] },
+      mirror: {
+        condaChannel: 'https://CONDA.example.org/channels/conda-forge/',
+        pypiIndex: 'https://pypi.example.org/simple',
+        cranMirror: 'https://cran.example.org/CRAN/'
+      },
+      runtimeRoot: process.cwd(),
+      storageRoot: process.cwd()
+    })
+
+    await spawn(process.execPath, ['-e', 'process.exit(0)'], process.env)
+
+    expect(processSandbox.wrap).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowedNetworkHosts: ['conda.example.org', 'pypi.example.org', 'cran.example.org']
+      })
+    )
+  })
+
+  it.each([
+    ['leading whitespace', ' https://packages.example.org/simple', []],
+    ['trailing whitespace', 'https://packages.example.org/simple ', []],
+    ['embedded ASCII whitespace', 'https://packages.exa\tmple.org/simple', []],
+    ['embedded ASCII control', 'https://packages.example.org/sim\nple', []],
+    ['non-HTTP protocol', 'ftp://packages.example.org/simple', []],
+    ['URL userinfo', 'https://user:secret@packages.example.org/simple', []],
+    ['localhost', 'https://localhost/simple', []],
+    ['IPv4 address', 'https://127.0.0.1/simple', []],
+    ['IPv6 address', 'https://[::1]/simple', []],
+    ['valid IDN', 'https://例子.测试/simple', ['xn--fsqu00a.xn--0zwm56d']]
+  ] as const)('derives safe exact mirror hosts for %s', async (_label, pypiIndex, expected) => {
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async (invocation) => ({
+        executable: invocation.executable,
+        args: invocation.args,
+        env: invocation.env,
+        annotateStderr: (stderr: string) => stderr,
+        cleanup: vi.fn()
+      }))
+    }
+    const spawn = sandboxedPackageSpawn({
+      processSandbox,
+      request: { language: 'python', packages: ['example'] },
+      mirror: { pypiIndex },
+      runtimeRoot: process.cwd(),
+      storageRoot: process.cwd()
+    })
+
+    await spawn(process.execPath, ['-e', 'process.exit(0)'], process.env)
+
+    expect(processSandbox.wrap).toHaveBeenCalledWith(
+      expect.objectContaining({ allowedNetworkHosts: expected })
+    )
+  })
+
   it('forwards installer deadlines and cleans up only after the child is stopped', async () => {
     const endExecution = vi.fn()
     const cleanup = vi.fn()

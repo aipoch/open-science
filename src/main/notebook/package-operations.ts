@@ -91,7 +91,7 @@ type NotebookPackageOperationsOptions = {
     'inspectPackages' | 'markPackageMutationDirty' | 'refreshAfterPackageMutation'
   >
   installPackages: (request: InstallRequest, deps?: Partial<InstallDeps>) => Promise<InstallResult>
-  packageSpawn?: (target: NotebookPackageAdmittedTarget) => InstallSpawn
+  packageSpawn?: (target: NotebookPackageAdmittedTarget, mirror: PackageMirror) => InstallSpawn
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   retainWorkingCache?: MicromambaWorkingCacheRetainer
   createEnvironmentCaptureTarget: (
