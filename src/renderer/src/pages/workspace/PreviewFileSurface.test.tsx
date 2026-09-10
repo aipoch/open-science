@@ -2875,7 +2875,9 @@ describe('PreviewFileSurface Provenance entry', () => {
       await act(async () => resizePreview(900))
       expect(container.querySelector('[data-testid="provenance-panel"]')).not.toBeNull()
       expect(container.querySelector('[data-testid="preview-content"]')).toBe(content)
-      const separator = container.querySelector<HTMLElement>('[aria-label="Resize right panel"]')!
+      const separator = container.querySelector<HTMLElement>(
+        '[aria-label="Resize provenance panel"]'
+      )!
       expect(separator.getAttribute('aria-hidden')).toBe('false')
       const capturePointer = vi.spyOn(separator, 'setPointerCapture')
       const pointerDown = new MouseEvent('pointerdown', { bubbles: true, button: 0 })

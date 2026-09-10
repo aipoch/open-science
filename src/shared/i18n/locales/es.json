@@ -2332,6 +2332,7 @@
     "Resize left panel": "Cambiar tamaño del panel izquierdo",
     "Resize notebook and terminal": "Cambiar tamaño Notebook y terminal",
     "Resize right panel": "Cambiar tamaño del panel derecho",
+    "Resize provenance panel": "Cambiar tamaño del panel de procedencia",
     "Resolve the current Session operation first.": "Resuelva primero la operación de sesión actual.",
     "Resolve the items marked Action needed, then choose Check again.": "Resuelva los elementos marcados como Acción necesaria y elija Comprobar de nuevo.",
     "Resolved": "Resuelto",

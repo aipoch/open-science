@@ -49,7 +49,8 @@ const redrawCells = readFileSync(
 ).split('\n\n# %%\n\n')
 
 const matrixChord = readFileSync(join(__dirname, 'reported-python-matrix-chord.fixture.py'), 'utf8')
-const matrixInput = "import pandas as pd\ndf = pd.read_excel('inputs/edge-weights-222222222222.xlsx')"
+const matrixInput =
+  "import pandas as pd\ndf = pd.read_excel('inputs/edge-weights-222222222222.xlsx')"
 const neighborChords = [0, 1].map((variant) =>
   readFileSync(join(__dirname, `reported-python-neighbor-chord-${variant}.fixture.py`), 'utf8')
 )

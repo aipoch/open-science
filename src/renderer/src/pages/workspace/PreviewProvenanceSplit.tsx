@@ -27,51 +27,53 @@ export const PreviewProvenanceSplit = ({
   }, [contentId, mode, provenanceId])
 
   return (
-    <ResizablePanelGroup
-      groupRef={groupRef}
-      orientation="horizontal"
-      data-testid="preview-file-content-region"
-      className="min-h-0 flex-1"
-      disabled={!split}
-      onLayoutChanged={(layout, { isUserInteraction }) => {
-        // Persist only completed pointer/keyboard changes, not responsive/programmatic resizing.
-        if (split && isUserInteraction) splitSize.current = layout[provenanceId] ?? 40
-      }}
-    >
-      <ResizablePanel
-        id={contentId}
-        defaultSize="60%"
-        minSize={split ? '25%' : mode === 'content' ? '100%' : '0%'}
-        maxSize={mode === 'provenance' ? '0%' : '100%'}
-        aria-hidden={mode === 'provenance' || undefined}
-        inert={mode === 'provenance' || undefined}
-      >
-        {children}
-      </ResizablePanel>
-      <ResizableHandle
-        aria-label={t('Resize right panel')}
+    // Group owns its data-testid; keep the preview's public test marker on a native element.
+    <div data-testid="preview-file-content-region" className="flex min-h-0 min-w-0 flex-1">
+      <ResizablePanelGroup
+        groupRef={groupRef}
+        orientation="horizontal"
+        className="min-h-0 flex-1"
         disabled={!split}
-        aria-hidden={!split}
-        onPointerDown={(event) => {
-          // Keep drag events in this document when the pointer crosses a PDF/HTML iframe.
-          if (split && event.button === 0) event.currentTarget.setPointerCapture(event.pointerId)
+        onLayoutChanged={(layout, { isUserInteraction }) => {
+          // Persist only completed pointer/keyboard changes, not responsive/programmatic resizing.
+          if (split && isUserInteraction) splitSize.current = layout[provenanceId] ?? 40
         }}
-        className={
-          split
-            ? 'z-20 bg-border-200 after:w-5 before:top-0 before:h-full before:translate-y-0 before:bg-text-200 hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=hover]:before:opacity-100 data-[separator=active]:before:opacity-100'
-            : 'hidden'
-        }
-      />
-      <ResizablePanel
-        id={provenanceId}
-        defaultSize="40%"
-        minSize={split ? '25%' : mode === 'provenance' ? '100%' : '0%'}
-        maxSize={mode === 'content' ? '0%' : '100%'}
-        aria-hidden={mode === 'content' || undefined}
-        inert={mode === 'content' || undefined}
       >
-        {provenance}
-      </ResizablePanel>
-    </ResizablePanelGroup>
+        <ResizablePanel
+          id={contentId}
+          defaultSize="60%"
+          minSize={split ? '25%' : mode === 'content' ? '100%' : '0%'}
+          maxSize={mode === 'provenance' ? '0%' : '100%'}
+          aria-hidden={mode === 'provenance' || undefined}
+          inert={mode === 'provenance' || undefined}
+        >
+          {children}
+        </ResizablePanel>
+        <ResizableHandle
+          aria-label={t('Resize provenance panel')}
+          disabled={!split}
+          aria-hidden={!split}
+          onPointerDown={(event) => {
+            // Keep drag events in this document when the pointer crosses a PDF/HTML iframe.
+            if (split && event.button === 0) event.currentTarget.setPointerCapture(event.pointerId)
+          }}
+          className={
+            split
+              ? 'z-20 bg-border-200 after:w-5 before:top-0 before:h-full before:translate-y-0 before:bg-text-200 hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=hover]:before:opacity-100 data-[separator=active]:before:opacity-100'
+              : 'hidden'
+          }
+        />
+        <ResizablePanel
+          id={provenanceId}
+          defaultSize="40%"
+          minSize={split ? '25%' : mode === 'provenance' ? '100%' : '0%'}
+          maxSize={mode === 'content' ? '0%' : '100%'}
+          aria-hidden={mode === 'content' || undefined}
+          inert={mode === 'content' || undefined}
+        >
+          {provenance}
+        </ResizablePanel>
+      </ResizablePanelGroup>
+    </div>
   )
 }

@@ -267,7 +267,7 @@ export const OutputComparisonSettings = ({
           size="sm"
           variant={pending ? 'default' : 'outline'}
           disabled={disabled || !pending}
-          className="justify-self-start"
+          className="h-auto min-h-7 max-w-full justify-self-start whitespace-normal py-1"
         >
           {t('Apply comparison rules')}
         </Button>

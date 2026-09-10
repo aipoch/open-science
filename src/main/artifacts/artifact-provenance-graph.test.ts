@@ -213,7 +213,14 @@ describe('artifact provenance graph', () => {
             [
               ...(index === 3
                 ? []
-                : [relation('xlsx', 'data/inputs/set-membership-111111111111.xlsx', 'present-before', 'a')]),
+                : [
+                    relation(
+                      'xlsx',
+                      'data/inputs/set-membership-111111111111.xlsx',
+                      'present-before',
+                      'a'
+                    )
+                  ]),
               ...(index >= 5
                 ? [
                     relation(
@@ -281,12 +288,18 @@ describe('artifact provenance graph', () => {
             {
               relation: index < 3 ? 'present-before' : 'created',
               relativePath:
-                index < 3 ? 'data/inputs/set-membership-111111111111.xlsx' : 'data/proportional_venn_5sets.png',
+                index < 3
+                  ? 'data/inputs/set-membership-111111111111.xlsx'
+                  : 'data/proportional_venn_5sets.png',
               pathPortability: 'relative',
               authority: 'advisory',
               generation:
                 index < 3
-                  ? generation('xlsx', 'data/inputs/set-membership-111111111111.xlsx', checksum('a'))
+                  ? generation(
+                      'xlsx',
+                      'data/inputs/set-membership-111111111111.xlsx',
+                      checksum('a')
+                    )
                   : generation('png', 'data/proportional_venn_5sets.png', checksum('b'))
             }
           ],
@@ -441,7 +454,12 @@ describe('artifact provenance graph', () => {
         'producer',
         7,
         [
-          relation('present-before', 'xlsx', 'data/inputs/differential-results-333333333333.xlsx', 'a'),
+          relation(
+            'present-before',
+            'xlsx',
+            'data/inputs/differential-results-333333333333.xlsx',
+            'a'
+          ),
           relation('created', 'rds', 'data/diff_df_clean.rds', 'b')
         ],
         { script: cells[7].script, kernelKind: 'r', kernelEpochId: 'first' }
@@ -510,7 +528,11 @@ describe('artifact provenance graph', () => {
                   relativePath: 'data/inputs/expression-matrix-444444444444.csv',
                   pathPortability: 'relative',
                   authority: 'advisory',
-                  generation: generation('csv', 'data/inputs/expression-matrix-444444444444.csv', checksum('a'))
+                  generation: generation(
+                    'csv',
+                    'data/inputs/expression-matrix-444444444444.csv',
+                    checksum('a')
+                  )
                 }
               ]
             : c.index === 6
@@ -752,8 +774,18 @@ describe('artifact provenance graph', () => {
             c.index,
             c.index === 5
               ? [
-                  relation('present-before', 'csv', 'data/inputs/expression-matrix-444444444444.csv', 'a'),
-                  relation('present-before', 'xlsx', 'data/inputs/differential-results-333333333333.xlsx', 'b'),
+                  relation(
+                    'present-before',
+                    'csv',
+                    'data/inputs/expression-matrix-444444444444.csv',
+                    'a'
+                  ),
+                  relation(
+                    'present-before',
+                    'xlsx',
+                    'data/inputs/differential-results-333333333333.xlsx',
+                    'b'
+                  ),
                   relation('created', 'intermediate', 'data/processed/diff_results.csv', 'c')
                 ]
               : c.index >= 6
@@ -847,8 +879,18 @@ describe('artifact provenance graph', () => {
             c.index,
             c.index === 4
               ? [
-                  relation('present-before', 'csv', 'data/inputs/expression-matrix-444444444444.csv', 'a'),
-                  relation('present-before', 'xlsx', 'data/inputs/differential-results-333333333333.xlsx', 'b'),
+                  relation(
+                    'present-before',
+                    'csv',
+                    'data/inputs/expression-matrix-444444444444.csv',
+                    'a'
+                  ),
+                  relation(
+                    'present-before',
+                    'xlsx',
+                    'data/inputs/differential-results-333333333333.xlsx',
+                    'b'
+                  ),
                   relation('created', 'rds', 'data/merged_diff_expr.rds', 'c')
                 ]
               : c.index >= 5

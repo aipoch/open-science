@@ -373,7 +373,9 @@ gate('r_loop.R', () => {
               writerAttribution: 'complete',
               reasonCodes: []
             })
-            expect(result.confirmedReadPaths).toEqual(['data/inputs/differential-results-333333333333.xlsx'])
+            expect(result.confirmedReadPaths).toEqual([
+              'data/inputs/differential-results-333333333333.xlsx'
+            ])
             expect(readFileSync(join(dataRoot, 'volcano_plot.pdf')).subarray(0, 5).toString()).toBe(
               '%PDF-'
             )
@@ -594,7 +596,9 @@ gate('r_loop.R', () => {
               writerAttribution: 'complete',
               reasonCodes: []
             })
-            expect(evidence.confirmedReadPaths).toEqual(['data/inputs/differential-results-333333333333.xlsx'])
+            expect(evidence.confirmedReadPaths).toEqual([
+              'data/inputs/differential-results-333333333333.xlsx'
+            ])
             pngs.push(readFileSync(join(dataRoot, '对角线火山图.png')))
           } finally {
             child.kill()
@@ -659,7 +663,9 @@ gate('r_loop.R', () => {
               writerAttribution: 'complete',
               reasonCodes: []
             })
-            expect(evidence.confirmedReadPaths).toEqual(['data/inputs/expression-matrix-444444444444.csv'])
+            expect(evidence.confirmedReadPaths).toEqual([
+              'data/inputs/expression-matrix-444444444444.csv'
+            ])
             expect(evidence.workingFiles.map((file) => file.relativePath).sort()).toEqual([
               'data/diagonal_volcano.pdf',
               'data/diagonal_volcano.png',
@@ -734,7 +740,9 @@ gate('r_loop.R', () => {
               writerAttribution: 'complete',
               reasonCodes: []
             })
-            expect(evidence.confirmedReadPaths).toEqual(['data/inputs/differential-results-333333333333.xlsx'])
+            expect(evidence.confirmedReadPaths).toEqual([
+              'data/inputs/differential-results-333333333333.xlsx'
+            ])
             expect(evidence.workingFiles.map((file) => file.relativePath).sort()).toEqual([
               'data/diagonal_volcano.png',
               'data/volcano_data.csv'
@@ -818,7 +826,10 @@ gate('r_loop.R', () => {
               reasonCodes: []
             })
             expect(evidence.confirmedReadPaths?.sort()).toEqual(
-              ['data/inputs/expression-matrix-444444444444.csv', 'data/inputs/differential-results-333333333333.xlsx'].sort()
+              [
+                'data/inputs/expression-matrix-444444444444.csv',
+                'data/inputs/differential-results-333333333333.xlsx'
+              ].sort()
             )
             expect(evidence.workingFiles.map((f) => f.relativePath).sort()).toEqual([
               'data/diagonal_volcano.pdf',
@@ -1241,7 +1252,9 @@ write.csv(df,"result.csv",row.names=FALSE)`
               reasonCodes: []
             })
             expect(evidence.confirmedReadPaths).toEqual([
-              index === 7 ? 'data/inputs/differential-results-333333333333.xlsx' : 'data/diff_df_clean.rds'
+              index === 7
+                ? 'data/inputs/differential-results-333333333333.xlsx'
+                : 'data/diff_df_clean.rds'
             ])
             expect(evidence.workingFiles.map((f) => f.relativePath)).toContain(
               index === 7 ? 'data/diff_df_clean.rds' : 'data/diagonal_volcano.png'
@@ -1371,7 +1384,9 @@ write.csv(df,"result.csv",row.names=FALSE)`
                   reasonCodes: []
                 })
                 expect(evidence.confirmedReadPaths).toEqual([
-                  index === scenario.replay[0] ? 'data/inputs/set-membership-111111111111.xlsx' : 'data/sets.rds'
+                  index === scenario.replay[0]
+                    ? 'data/inputs/set-membership-111111111111.xlsx'
+                    : 'data/sets.rds'
                 ])
                 expect(evidence.workingFiles.map((file) => file.relativePath)).toContain(
                   index === scenario.replay[0] ? 'data/sets.rds' : `data/${scenario.outputs[0]}`
@@ -1488,7 +1503,9 @@ write.csv(df,"result.csv",row.names=FALSE)`
             writerAttribution: 'complete',
             reasonCodes: []
           })
-          expect(evidence.confirmedReadPaths).toEqual(['data/inputs/differential-results-333333333333.xlsx'])
+          expect(evidence.confirmedReadPaths).toEqual([
+            'data/inputs/differential-results-333333333333.xlsx'
+          ])
           expect(evidence.workingFiles.map((f) => f.relativePath).sort()).toEqual([
             'data/diagonal_volcano.pdf',
             'data/diagonal_volcano.png'
@@ -1556,7 +1573,9 @@ set.seed(42)`)
             writerAttribution: 'complete',
             reasonCodes: []
           })
-          expect(evidence.confirmedReadPaths).toEqual(['data/inputs/differential-results-333333333333.xlsx'])
+          expect(evidence.confirmedReadPaths).toEqual([
+            'data/inputs/differential-results-333333333333.xlsx'
+          ])
           expect(evidence.workingFiles.map((f) => f.relativePath)).toEqual([
             'data/diagonal_volcano.png'
           ])
@@ -1615,7 +1634,9 @@ set.seed(42)`)
             writerAttribution: 'complete',
             reasonCodes: []
           })
-          expect(evidence.confirmedReadPaths).toEqual(['data/inputs/differential-results-333333333333.xlsx'])
+          expect(evidence.confirmedReadPaths).toEqual([
+            'data/inputs/differential-results-333333333333.xlsx'
+          ])
           expect(evidence.workingFiles.map((f) => f.relativePath)).toEqual([
             'data/diagonal_volcano.png'
           ])
@@ -1687,7 +1708,10 @@ set.seed(42)`)
             })
             expect(evidence.confirmedReadPaths?.sort()).toEqual(
               index === 4
-                ? ['data/inputs/expression-matrix-444444444444.csv', 'data/inputs/differential-results-333333333333.xlsx'].sort()
+                ? [
+                    'data/inputs/expression-matrix-444444444444.csv',
+                    'data/inputs/differential-results-333333333333.xlsx'
+                  ].sort()
                 : ['data/merged_diff_expr.rds']
             )
             expect(evidence.workingFiles.map((f) => f.relativePath)).toEqual([
@@ -1753,7 +1777,10 @@ set.seed(42)`)
             reasonCodes: []
           })
           expect(evidence.confirmedReadPaths?.sort()).toEqual(
-            ['data/inputs/expression-matrix-444444444444.csv', 'data/inputs/differential-results-333333333333.xlsx'].sort()
+            [
+              'data/inputs/expression-matrix-444444444444.csv',
+              'data/inputs/differential-results-333333333333.xlsx'
+            ].sort()
           )
           expect(evidence.workingFiles.map((file) => file.relativePath)).toEqual([
             'data/diagonal_volcano_plot.png'
@@ -1850,7 +1877,9 @@ set.seed(42)`)
             writerAttribution: 'complete',
             reasonCodes: []
           })
-          expect(evidence.confirmedReadPaths).toEqual(['data/inputs/expression-matrix-444444444444.csv'])
+          expect(evidence.confirmedReadPaths).toEqual([
+            'data/inputs/expression-matrix-444444444444.csv'
+          ])
           expect(evidence.workingFiles.map((file) => file.relativePath).sort()).toEqual(
             ['data/diagonal_volcano.png', 'data/diagonal_volcano_diff.csv'].sort()
           )
@@ -2245,7 +2274,9 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
                   reasonCodes: []
                 })
                 expect(evidence.confirmedReadPaths ?? []).toEqual(
-                  scenario.inputCells.includes(index) ? ['data/inputs/set-membership-111111111111.xlsx'] : []
+                  scenario.inputCells.includes(index)
+                    ? ['data/inputs/set-membership-111111111111.xlsx']
+                    : []
                 )
                 const files = evidence.workingFiles.map((file) => file.relativePath)
                 if (scenario.logPrefix) {

@@ -2065,6 +2065,7 @@
     "Resize left panel": "Größe des linken Bereichs ändern",
     "Resize notebook and terminal": "Größe von Notebook und Terminal ändern",
     "Resize right panel": "Größe des rechten Bereichs ändern",
+    "Resize provenance panel": "Größe des Provenienzbereichs ändern",
     "Resolve the current Session operation first.": "Lösen Sie zuerst den aktuellen Sitzungsvorgang auf.",
     "Resolve the items marked Action needed, then choose Check again.": "Lösen Sie die mit „Aktion erforderlich“ gekennzeichneten Elemente und wählen Sie dann erneut „Überprüfen“.",
     "Resolved": "Gelöst",

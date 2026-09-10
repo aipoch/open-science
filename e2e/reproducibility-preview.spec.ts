@@ -94,16 +94,26 @@ for (const { width, locale, zoom } of [
     const dialog = page.getByRole('dialog')
     await expect(dialog).toBeVisible()
     await page.getByText(copy('Comparison rules'), { exact: true }).click()
-    expect(await page.locator('form').evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(
-      true
-    )
-    expect(
-      await page.locator('form').evaluate((el) => {
-        const form = el.getBoundingClientRect()
-        const card = el.closest('[data-reproducibility-check-state]')!.getBoundingClientRect()
-        return form.left >= card.left && form.right <= card.right
+    // Exercise the space reserved by non-overlay scrollbars even on overlay-scrollbar hosts.
+    if (locale === 'de') {
+      await page.addStyleTag({
+        content: '.overflow-auto { scrollbar-gutter: stable; } ::-webkit-scrollbar { width: 12px; }'
       })
-    ).toBe(true)
+    }
+    // Font loading and Electron zoom settle asynchronously, especially on cold CI runners.
+    await page.evaluate(() => document.fonts.ready.then(() => undefined))
+    await expect
+      .poll(() => page.locator('form').evaluate((el) => el.scrollWidth - el.clientWidth))
+      .toBeLessThanOrEqual(1)
+    await expect
+      .poll(() =>
+        page.locator('form').evaluate((el) => {
+          const form = el.getBoundingClientRect()
+          const card = el.closest('[data-reproducibility-check-state]')!.getBoundingClientRect()
+          return form.left >= card.left && form.right <= card.right
+        })
+      )
+      .toBe(true)
     const help = page.locator('[data-slot="field-help"]').first()
     await help.hover()
     const tooltip = page.locator('[data-slot="tooltip-content"]')

@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
+import { readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { NotebookRunRecord } from '../../shared/notebook'
@@ -112,4 +113,15 @@ it.each([
 ])('retains uncertain conditional references: %s', async (script) => {
   const { facts } = await analyzeRNotebookSource(script)
   expect(facts.copyOnModifyNames ?? []).not.toContain('out')
+})
+
+it('keeps reported regression fixtures free of original host paths and source-language copy', () => {
+  const fixtures = readdirSync(__dirname).filter((name) => name.startsWith('reported-'))
+  expect(fixtures.length).toBeGreaterThan(0)
+  for (const name of fixtures) {
+    const source = readFileSync(join(__dirname, name), 'utf8')
+    expect(source, name).not.toMatch(/\/(?:Users|home)\/|\.dev-isolate|OpenScience-DEV/)
+    expect(source, name).not.toMatch(/inputs\/_-|GS[EM]\d+/)
+    expect(source, name).not.toMatch(/\p{Script=Han}/u)
+  }
 })

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ArtifactReproducibilityProjection } from '../../../../shared/artifact-provenance'
 import { previewNodeStart, type NodeStartPreview } from './artifact-reproducibility-start'
 import { ReproducibilityStartPreview } from './ReproducibilityStartPreview'
+import { PreviewProvenanceSplit } from './PreviewProvenanceSplit'
 
 const fixture = (): ArtifactReproducibilityProjection => ({
   completeness: 'complete',
@@ -246,3 +247,37 @@ describe('metadata-only node starts', () => {
     expect(onStart).not.toHaveBeenCalled()
   })
 })
+
+it('preserves the preview content-region target with the real resizable component', () => {
+  render(
+    <PreviewProvenanceSplit mode="content" provenance={null}>
+      <span>Preview content</span>
+    </PreviewProvenanceSplit>
+  )
+  expect(
+    within(screen.getByTestId('preview-file-content-region')).getByText('Preview content')
+  ).toBeTruthy()
+})
+
+it.each(['content', 'split', 'provenance'] as const)(
+  'distinguishes the preview divider from the workspace divider in %s mode',
+  (mode) => {
+    const { container } = render(
+      <>
+        <div role="separator" aria-label="Resize right panel" />
+        <PreviewProvenanceSplit mode={mode} provenance={<span>Provenance</span>}>
+          <span>Preview content</span>
+        </PreviewProvenanceSplit>
+      </>
+    )
+    // Include hidden handles, as the workspace modal-isolation E2E does.
+    expect(
+      container.querySelectorAll('[role="separator"][aria-label="Resize right panel"]')
+    ).toHaveLength(1)
+    expect(
+      within(screen.getByTestId('preview-file-content-region'))
+        .getByRole('separator', { hidden: true })
+        .getAttribute('aria-label')
+    ).toBe('Resize provenance panel')
+  }
+)

@@ -2260,6 +2260,7 @@
     "Resize left panel": "왼쪽 패널 크기 조정",
     "Resize notebook and terminal": "Notebook 및 터미널 크기 조정",
     "Resize right panel": "오른쪽 패널 크기 조정",
+    "Resize provenance panel": "출처 패널 크기 조정",
     "Resolve the current Session operation first.": "현재 세션 작업을 먼저 해결하세요.",
     "Resolve the items marked Action needed, then choose Check again.": "조치 필요라고 표시된 항목을 해결한 후 다시 확인을 선택합니다.",
     "Resolved": "해결됨",

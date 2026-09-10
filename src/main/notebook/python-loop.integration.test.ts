@@ -185,7 +185,9 @@ w.save(sys.argv[1])`,
                 reasonCodes: []
               })
               if (index < 2)
-                expect(evidence!.confirmedReadPaths).toContain('data/inputs/edge-weights-222222222222.xlsx')
+                expect(evidence!.confirmedReadPaths).toContain(
+                  'data/inputs/edge-weights-222222222222.xlsx'
+                )
               runs.push({
                 runId: String(index),
                 cellId: String(index),
@@ -359,7 +361,10 @@ w.save(sys.argv[1])`,
         reasonCodes: []
       })
       expect(evidence.confirmedReadPaths?.sort()).toEqual(
-        ['data/inputs/expression-matrix-444444444444.csv', 'data/inputs/differential-results-333333333333.xlsx'].sort()
+        [
+          'data/inputs/expression-matrix-444444444444.csv',
+          'data/inputs/differential-results-333333333333.xlsx'
+        ].sort()
       )
     } finally {
       loop.child.kill()
@@ -434,7 +439,9 @@ w.save(sys.argv[1])`,
               const response = await loop.send(script)
               expect(response.error).toBeNull()
               const evidence = await observer.finish()
-              expect(evidence.confirmedReadPaths).toEqual(['data/inputs/set-membership-111111111111.xlsx'])
+              expect(evidence.confirmedReadPaths).toEqual([
+                'data/inputs/set-membership-111111111111.xlsx'
+              ])
               expect(evidence.fileEvidence).toMatchObject({
                 state: 'available',
                 fileReads: 'complete',
@@ -968,9 +975,9 @@ w.save(sys.argv[1])`,
         reasonCodes: []
       })
       expect(files.confirmedReadPaths).toEqual([`data/${inputPath}`])
-      expect(files.workingFiles.some((file) => file.relativePath === 'data/synthetic_groups_bar.png')).toBe(
-        true
-      )
+      expect(
+        files.workingFiles.some((file) => file.relativePath === 'data/synthetic_groups_bar.png')
+      ).toBe(true)
       const replayRoot = join(root, 'replay')
       mkdirSync(join(replayRoot, 'inputs'), { recursive: true })
       writeFileSync(join(replayRoot, inputPath), content)

@@ -104,10 +104,7 @@ for (const [language, reportedPlots] of [
           reportedPlots === 'nested-subplots'
             ? [
                 'print("ready")',
-                reportedSubplotsInput.replace(
-                  'inputs/sample-groups-666666666666.csv',
-                  inputPath
-                ),
+                reportedSubplotsInput.replace('inputs/sample-groups-666666666666.csv', inputPath),
                 reportedSubplots
                   .replace('inputs/sample-groups-666666666666.csv', inputPath)
                   .replaceAll('synthetic_groups_group_plots.png', 'group_bar.png')

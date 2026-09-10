@@ -112,7 +112,9 @@ for (const language of ['r', 'python'] as const) {
               writerAttribution: 'complete',
               reasonCodes: []
             })
-            expect(evidence.confirmedReadPaths).toEqual(['data/inputs/heatmap-values-555555555555.csv'])
+            expect(evidence.confirmedReadPaths).toEqual([
+              'data/inputs/heatmap-values-555555555555.csv'
+            ])
             const output = language === 'r' ? 'heatmap_r.png' : 'heatmap_python.png'
             expect(evidence.workingFiles.map((file) => file.relativePath)).toEqual([
               `data/${output}`

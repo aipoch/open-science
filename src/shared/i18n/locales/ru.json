@@ -2342,6 +2342,7 @@
     "Resize left panel": "Изменить размер левой панели",
     "Resize notebook and terminal": "Изменить размер Notebook и терминала",
     "Resize right panel": "Изменить размер правой панели",
+    "Resize provenance panel": "Изменить размер панели происхождения",
     "Resolve the current Session operation first.": "Решить текущую операцию по сессии сначала.",
     "Resolve the items marked Action needed, then choose Check again.": "Решить элементы, отмеченные как «Действие необходимо», затем выбрать «Проверить снова».",
     "Resolved": "Решено",
