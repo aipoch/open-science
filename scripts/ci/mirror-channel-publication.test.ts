@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { load } from 'js-yaml'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -90,6 +90,7 @@ else {
         cwd: root,
         // Do not inherit host AWS environment or credentials. PATH begins with the only AWS used.
         env: {
+          HOME: root,
           PATH: [bin, '/usr/bin', '/bin'].join(delimiter),
           FIXTURE_STORAGE: storage,
           S3_BUCKET: 'fixture-bucket',
@@ -98,7 +99,8 @@ else {
           MODE: mode,
           FAIL_KEY: failKey
         },
-        stdio: 'pipe'
+        // macOS Bash treats a piped stdin as a remote shell and can source .bashrc.
+        stdio: ['ignore', 'pipe', 'pipe']
       })
     }
   }
@@ -115,6 +117,25 @@ describe.skipIf(process.platform === 'win32')('website channel publication', () 
     }
     vi.stubEnv('PATH', `${wrappers}${delimiter}${process.env.PATH}`)
     const f = fixture()
+    f.stage('2.1.0')
+    f.run('2.1.0', 'promote')
+    expect(JSON.parse(f.snapshot()['version.json']).version).toBe('2.1.0')
+  })
+
+  it('keeps publication isolated from shell startup files that replace PATH', () => {
+    const f = fixture()
+    const hostBin = join(f.root, 'host-bin')
+    mkdirSync(hostBin)
+    writeFileSync(
+      join(hostBin, 'aws'),
+      '#!/bin/sh\necho "Unable to locate credentials: host AWS escaped fixture" >&2\nexit 1\n',
+      { mode: 0o755 }
+    )
+    const quote = (value: string): string => "'" + value.replaceAll("'", "'\\''") + "'"
+    writeFileSync(
+      join(f.root, '.bashrc'),
+      `export PATH=${quote([hostBin, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter))}\n`
+    )
     f.stage('2.1.0')
     f.run('2.1.0', 'promote')
     expect(JSON.parse(f.snapshot()['version.json']).version).toBe('2.1.0')
