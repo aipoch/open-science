@@ -11,7 +11,8 @@ import {
 import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persistence'
 import {
   deleteSession,
-  retryPendingArtifactFinalization
+  retryPendingArtifactFinalization,
+  saveSessionInOrder
 } from '@/lib/session-persistence/session-persistence'
 import { useMemoryStore } from '@/stores/memory-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -29,6 +30,7 @@ import {
   projectSessionActionability,
   resolveRootPermissionPending,
   sessionAwaitsHistoryReplay,
+  toPersistedSession,
   useSessionStore,
   type ChatSession
 } from '@/stores/session-store'
@@ -1440,11 +1442,14 @@ const WorkspacePage = ({
               unavailable: activeSession
                 ? delegatedWorkUnavailableBySession[activeSession.id]
                 : undefined,
-              stop: () => {
+              stop: async () => {
                 if (!activeSession) return
-                return window.api.acp
-                  .cancel({ sessionId: activeSession.id, scope: 'subagents' })
-                  .then(() => undefined)
+                // Main selects the Stop scope from the durable branch, so commit the visible
+                // selection before cancellation can overtake the coalesced background save.
+                await saveSessionInOrder(
+                  toPersistedSession(activeSession, useSessionStore.getState().streamingMessages)
+                )
+                await window.api.acp.cancel({ sessionId: activeSession.id, scope: 'subagents' })
               }
             }}
           />

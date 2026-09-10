@@ -2622,7 +2622,8 @@ const createApplicationModules = async (
                   `Attempt ${delivery.sourceAttemptId}]\n\n${delivery.text}`,
                 suppressUserMessage: true,
                 provenanceContext: {
-                  promptMessageId: delivery.rootPromptMessageId,
+                  // Suppressed continuations create no user node; replies retain the durable origin.
+                  promptMessageId: delivery.originMessageId,
                   originMessageId: delivery.originMessageId,
                   rootFrameId: graph.rootFrameId,
                   agentFrameId: graph.rootFrameId,

@@ -690,7 +690,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
     set((state) => {
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
       if (existing?.contentLoaded === false) {
-        const loaded = hydrateSession(session)
+        const loaded = withTransientSessionState(session, existing)
         const archive = projectSessionMetadataAuthority(existing, session)
         const incomingIsNewer = sessionRevision(session) > sessionRevision(existing)
         const hydrated: ChatSession = {

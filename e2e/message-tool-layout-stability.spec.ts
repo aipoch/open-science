@@ -51,6 +51,7 @@ const runLayoutStabilityJourney = async (
 ): Promise<void> => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
+  await page.setViewportSize({ width: 1008, height: 681 })
 
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
@@ -77,13 +78,35 @@ const runLayoutStabilityJourney = async (
     await expect(conversation.getByText(agentStatus, { exact: true })).toBeVisible()
   }
 
-  const tops = await toolGroup.evaluate(
+  const geometry = await toolGroup.evaluate(
     (element) =>
-      new Promise<number[]>((resolve) => {
-        const observations: number[] = []
+      new Promise<
+        Array<{
+          top: number
+          scrollTop: number
+          scrollHeight: number
+          viewportTop: number
+          viewportHeight: number
+        }>
+      >((resolve) => {
+        const viewport = element.closest<HTMLElement>('[role="region"]')
+        if (!viewport) throw new Error('Conversation viewport is unavailable.')
+        const observations: Array<{
+          top: number
+          scrollTop: number
+          scrollHeight: number
+          viewportTop: number
+          viewportHeight: number
+        }> = []
         const startedAt = performance.now()
         const sample = (): void => {
-          observations.push(element.getBoundingClientRect().top)
+          observations.push({
+            top: element.getBoundingClientRect().top,
+            scrollTop: viewport.scrollTop,
+            scrollHeight: viewport.scrollHeight,
+            viewportTop: viewport.getBoundingClientRect().top,
+            viewportHeight: viewport.clientHeight
+          })
           if (performance.now() - startedAt >= 2_000) {
             resolve(observations)
             return
@@ -96,6 +119,7 @@ const runLayoutStabilityJourney = async (
 
   await expect(conversation.getByText('Layout fixture complete.', { exact: true })).toBeVisible()
 
+  const tops = geometry.map(({ top }) => top)
   const excursion = Math.max(...tops) - Math.min(...tops)
   expect(
     excursion,
@@ -103,9 +127,14 @@ const runLayoutStabilityJourney = async (
       firstTop: tops[0],
       minimumTop: Math.min(...tops),
       maximumTop: Math.max(...tops),
-      finalTop: tops.at(-1)
+      finalTop: tops.at(-1),
+      initial: geometry[0],
+      minimum: geometry[tops.indexOf(Math.min(...tops))],
+      maximum: geometry[tops.indexOf(Math.max(...tops))],
+      final: geometry.at(-1)
     })
   ).toBeLessThanOrEqual(2)
+  await page.screenshot({ path: test.info().outputPath('stable-compact-transcript.png') })
 }
 
 for (const scenario of cases) {
@@ -230,7 +259,10 @@ for (const reducedMotion of ['reduce', 'no-preference'] as const) {
     await expect(toolGroup).toBeVisible()
     await expect(conversation.getByText('Interacting with tools', { exact: true })).toBeVisible()
     const scrollToEndButton = page.getByRole('button', { name: 'Scroll to end' })
-    await expect(scrollToEndButton).toBeVisible()
+    // Begin above the bottom even when reduced motion has already completed automatic scrolling.
+    await conversation.hover()
+    await page.mouse.wheel(0, -100_000)
+    await expect(scrollToEndButton).toHaveAttribute('data-active', 'true')
     await scrollToEndButton.click()
     await expect
       .poll(() => conversation.evaluate((element) => element.scrollTop))

@@ -2,6 +2,7 @@ import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
+  forbidOnly: Boolean(process.env.CI),
   tag: process.env.CI ? `@${process.platform}` : undefined,
   testIgnore: ['**/browser/**'],
   outputDir: 'test-results/electron',
