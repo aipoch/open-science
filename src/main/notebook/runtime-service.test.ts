@@ -4607,12 +4607,20 @@ describe('notebook runtime service', () => {
         runtimeSegmentId: 'runtime-child',
         promptMessageId: 'message-child'
       }
+      // A previously initialized child Frame can reach shell admission before a cold root Frame.
+      await service.state({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        provenanceContext: childContext
+      })
+
       const first = service.executeShell({
         sessionId: 'session-1',
         workspaceCwd: root,
         command: 'first',
         provenanceContext: rootContext
       })
+      await firstStarted.promise
       const queued = service.executeShell({
         sessionId: 'session-1',
         workspaceCwd: root,
@@ -4620,7 +4628,7 @@ describe('notebook runtime service', () => {
         provenanceContext: childContext
       })
 
-      await firstStarted.promise
+      const settledRuns = Promise.allSettled([first, queued])
       expect(entered).toEqual(['first'])
       const shutdown = service.shutdownSession('session-1')
       await shutdown
@@ -4631,7 +4639,7 @@ describe('notebook runtime service', () => {
         await vi.waitFor(() => expect(entered).toHaveLength(2))
         releases.get('must-not-start')?.()
       }
-      await Promise.allSettled([first, queued])
+      await settledRuns
 
       expect(activeWasCancelled).toBe(true)
       expect(entered).toEqual(['first'])
