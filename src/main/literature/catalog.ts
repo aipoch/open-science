@@ -829,7 +829,10 @@ class LiteratureCatalog {
       | ((result: T) => Omit<LiteratureChangedEvent, 'revision'>),
     options?: { timeout: number }
   ): Promise<T> {
-    if (!this.onChanged) return client.$transaction(operation, options)
+    // A library search may hold the single SQLite connection for up to 30 seconds.
+    // Acquisition must not fail at Prisma's 2s default while that valid read is still running.
+    const transactionOptions = { maxWait: 30_000, ...options }
+    if (!this.onChanged) return client.$transaction(operation, transactionOptions)
     const committed = await client.$transaction(async (transaction) => {
       const count = async (): Promise<bigint> =>
         (
@@ -838,7 +841,7 @@ class LiteratureCatalog {
       const before = await count()
       const result = await operation(transaction)
       return { result, changed: (await count()) !== before }
-    }, options)
+    }, transactionOptions)
     if (committed.changed) {
       duplicateGroups.delete(client)
       this.publishChanged(typeof changes === 'function' ? changes(committed.result) : changes)

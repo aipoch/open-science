@@ -31,6 +31,10 @@ on:
           notarization in isolation; release/nightly leave it false so builds stay gated on tests.
         type: boolean
         default: false
+      verify_only:
+        description: Run verification without packaging, signing, or publication.
+        type: boolean
+        default: false
       platform_name:
         description: >-
           If set, emit only this matrix name (macos-arm64, macos-x64, linux-x64, or windows-x64).
@@ -38,14 +42,14 @@ on:
         type: string
         default: ''
 jobs:
-  # Run the quality suite once on Apple Silicon beside the native package matrix. The reusable
+  # Run static checks beside sharded portable tests and the native package matrix. The reusable
   # workflow still fails when this job fails, so every caller's publish boundary remains fail closed
   # without putting the full verification duration on the matrix's critical path.
   verify:
-    name: Verify (lint + typecheck + test + package)
+    name: Verify static checks and CLI package
     # Skipped by the notarization dry-run (skip_verify), which only needs a signed mac build.
     if: ${{ !inputs.skip_verify }}
-    runs-on: macos-14
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -70,16 +74,158 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: npm run typecheck
 
-      - name: Test (with coverage)
-        run: npm run test:coverage
+      - name: Check translation catalogs
+        run: npx vitest run src/renderer/src/i18n/resources.test.ts
 
       - name: Check CLI package
         run: npm run check:cli-package
+
+  verify_tests:
+    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/3)
+    if: ${{ !inputs.skip_verify }}
+    runs-on: ubuntu-latest
+    env:
+      VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
+      VITEST_PORTABLE_CI: '1'
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Test complete suite shard
+        id: verify_shard
+        continue-on-error: true
+        # The static lane owns i18n; the native lane retains the original macOS sandbox checks.
+        # PR Gate separately verifies real Linux isolation with its required system dependencies.
+        run: >-
+          npx vitest run
+          --coverage
+          --coverage.reporter=text-summary
+          --testTimeout=30000
+          --shard=${{ matrix.shard }}/3
+          --reporter=blob
+          --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
+      - name: Upload full-suite blob report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: build-test-blob-${{ matrix.shard }}
+          path: vitest-reports/
+          overwrite: true
+          retention-days: 7
+          if-no-files-found: error
+      - name: Enforce full-suite shard
+        if: ${{ always() }}
+        shell: bash
+        env:
+          VERIFY_SHARD_OUTCOME: ${{ steps.verify_shard.outcome }}
+        run: |
+          set -euo pipefail
+          failed=0
+          if [[ "$VERIFY_SHARD_OUTCOME" != "success" ]]; then
+            echo "verify_shard ended with $VERIFY_SHARD_OUTCOME" >&2
+            failed=1
+          fi
+          exit "$failed"
+
+  verify_coverage:
+    name: Verify merged coverage
+    needs: verify_tests
+    if: ${{ !cancelled() && !inputs.skip_verify }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Download all test shards
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: build-test-blob-*
+          path: vitest-reports
+          merge-multiple: true
+      - name: Require complete successful shards
+        env:
+          SHARDS_RESULT: ${{ needs.verify_tests.result }}
+        run: |
+          test "$SHARDS_RESULT" = success
+          for shard in 1 2 3; do
+            test -s "vitest-reports/blob-$shard.json"
+          done
+      - name: Merge test reports and enforce coverage
+        run: npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests
+      - name: Upload coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: build-coverage-report
+          path: coverage/
+          overwrite: true
+          retention-days: 7
+          if-no-files-found: error
+
+  verify_macos:
+    name: Verify macOS native behavior
+    if: ${{ !inputs.skip_verify }}
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+      # Keep platform-gated cases that Ubuntu skips, plus regressions from the macOS release run.
+      - name: Test macOS native behavior and release regressions
+        run: >-
+          npx vitest run
+          src/main/windows.test.ts
+          packages/notebook-network-sandbox/src/filesystem-policy.test.ts
+          packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts
+          packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
+          src/main/net/network-info.test.ts
+          src/main/notebook/managed-runtime-guard.test.ts
+          src/main/notebook/package-cache-sandbox.integration.test.ts
+          src/main/acp/prompt-attachment-notebook-sandbox.integration.test.ts
+          src/main/compute/compute-remote-operation-owner.test.ts
+          scripts/ci/mirror-channel-publication.test.ts
+          src/main/literature/catalog-capacity.test.ts
+      - name: Test production macOS kernel sandbox
+        run: >-
+          npx vitest run src/main/notebook/kernel-executor.test.ts
+          -t 'executes the repl loop through the production network sandbox'
 
   # Resolve the platform matrix. mac_only trims it to the two mac archs — used by the notarization
   # dry-run (notarize-dryrun.yml), which only needs a signed mac build. With mac_only false (the
   # release.yml / nightly.yml callers) the full matrix is emitted, so their behavior is unchanged.
   setup:
+    if: ${{ !inputs.verify_only }}
     name: Resolve platform matrix
     runs-on: ubuntu-latest
     outputs:
