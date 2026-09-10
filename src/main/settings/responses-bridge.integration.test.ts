@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
+import { createInterface } from 'node:readline'
 
 import * as acp from '@agentclientprotocol/sdk'
 import { expect, it, vi } from 'vitest'
@@ -910,7 +911,11 @@ it.runIf(runLiveContract)(
               cwd: root,
               mcpServers: []
             })
-            expect(session.models?.currentModelId).toContain('gpt-6-astra')
+            expect(session.configOptions).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({ id: 'model', currentValue: 'gpt-6-astra' })
+              ])
+            )
             expect(JSON.stringify(session.configOptions)).toContain('gpt-6-astra')
             await ctx.request(acp.methods.agent.session.close, { sessionId: session.sessionId })
           }
@@ -923,4 +928,64 @@ it.runIf(runLiveContract)(
     }
   },
   30_000
+)
+
+it.runIf(runLiveContract)(
+  'bundles Astra in the native model catalog without generated metadata',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-native-models-'))
+    const child = spawn(nativeCodexPath!, ['app-server'], {
+      env: {
+        PATH: process.env.PATH,
+        SystemRoot: process.env.SystemRoot,
+        HOME: root,
+        USERPROFILE: root,
+        CODEX_HOME: root
+      },
+      stdio: 'pipe',
+      windowsHide: true
+    })
+    const lines = createInterface({ input: child.stdout })
+    child.stderr.resume()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const models = await new Promise<Array<{ model: string }>>((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('Native model/list timed out')), 10_000)
+        child.once('error', reject)
+        child.once('close', () => reject(new Error('Native app-server closed before model/list')))
+        lines.on('line', (line) => {
+          const response = JSON.parse(line) as {
+            id?: number
+            error?: unknown
+            result?: { data?: Array<{ model: string }> }
+          }
+          if (response.error) {
+            reject(new Error(JSON.stringify(response.error)))
+            return
+          }
+          if (response.id === 1)
+            child.stdin.write(
+              JSON.stringify({ id: 2, method: 'model/list', params: { includeHidden: true } }) +
+                '\n'
+            )
+          if (response.id === 2) resolve(response.result?.data ?? [])
+        })
+        child.stdin.write(
+          JSON.stringify({
+            id: 1,
+            method: 'initialize',
+            params: { clientInfo: { name: 'astra-model-contract', version: '1' } }
+          }) + '\n'
+        )
+      })
+      expect(models).toEqual(
+        expect.arrayContaining([expect.objectContaining({ model: 'gpt-6-astra' })])
+      )
+    } finally {
+      clearTimeout(timer)
+      lines.close()
+      await terminate(child)
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  }
 )
