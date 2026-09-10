@@ -206,6 +206,10 @@ test('explains disabled revision navigation while a turn is running', async ({ a
   await expect(previous).toBeDisabled()
   const explanation = 'Message revisions are unavailable while this session is busy or blocked.'
   const trigger = previous.locator('..')
+  // Scroll back like a reader before focusing: a focus-induced scroll dismisses Radix tooltips.
+  await conversation.hover()
+  await page.mouse.wheel(0, -100_000)
+  await trigger.hover()
   await trigger.focus()
   await expect(page.getByRole('tooltip', { name: explanation })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('revision-navigation-running.png') })
