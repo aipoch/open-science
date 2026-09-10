@@ -28,7 +28,10 @@ import {
 } from '../../../shared/session-persistence'
 import type { UploadedAttachment } from '../../../shared/uploads'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
-import { createLinearConversationGraph } from '../../../shared/conversation-graph'
+import {
+  createLinearConversationGraph,
+  validateConversationGraph
+} from '../../../shared/conversation-graph'
 import {
   createInitialSessionState,
   projectSessionActionability,
@@ -2194,6 +2197,59 @@ describe('session store', () => {
       unsavedTitle: true
     })
   })
+
+  it.each(['current', 'incoming'] as const)(
+    'retains the descendant branch head when the %s snapshot contains the latest reply',
+    (owner) => {
+      const messages = ['prompt', 'first-reply', 'latest-reply'].map((id, index) => ({
+        id,
+        role: index === 0 ? ('user' as const) : ('agent' as const),
+        content: id,
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: index + 1,
+        updatedAt: 3
+      }))
+      const current: PersistedChatSession = {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Delegated replies',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 1,
+        messages: owner === 'current' ? messages : messages.slice(0, 2),
+        createdAt: 1,
+        updatedAt: 3,
+        conversationGraph: createLinearConversationGraph({
+          sessionId: 'session-1',
+          messages: owner === 'current' ? messages : messages.slice(0, 2),
+          frameworkId: 'opencode',
+          createdAt: 1,
+          updatedAt: 3
+        })
+      }
+      const incoming = {
+        ...current,
+        revision: 2,
+        updatedAt: 4,
+        messages: owner === 'incoming' ? messages : messages.slice(0, 2),
+        conversationGraph: createLinearConversationGraph({
+          sessionId: 'session-1',
+          messages: owner === 'incoming' ? messages : messages.slice(0, 2),
+          frameworkId: 'opencode',
+          createdAt: 1,
+          updatedAt: owner === 'incoming' ? 2 : 4
+        })
+      }
+      validateConversationGraph(current.conversationGraph!)
+      validateConversationGraph(incoming.conversationGraph)
+      useSessionStore.getState().hydrateSessions([current])
+      useSessionStore.getState().upsertPersistedSession(incoming)
+      const merged = useSessionStore.getState().sessions[0]
+      expect(() => validateConversationGraph(merged.conversationGraph!)).not.toThrow()
+      expect(merged.messages.map(({ id }) => id)).toEqual(['prompt', 'first-reply', 'latest-reply'])
+    }
+  )
 
   it('merges a stale-timestamp child completion by durable identities without clearing root transient state', () => {
     const rootMessage = {
