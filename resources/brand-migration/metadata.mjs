@@ -30,9 +30,10 @@ export function metadataDigest(root) {
       .filter((line) => /^\s+\d+:/.test(line))
     metadata = JSON.stringify({ acl, rootAcl }) + run('/usr/bin/xattr', ['-rlxs', root])
   } else if (process.platform === 'linux') {
+    // Inspect links themselves: staged aliases can intentionally point at roots not yet published.
     metadata =
-      run('getfacl', ['-R', '-p', '-n', '--', root]) +
-      run('getfattr', ['-R', '-d', '-m-', '-e', 'hex', '--absolute-names', '--', root])
+      run('getfacl', ['-R', '-P', '-p', '-n', '--', root]) +
+      run('getfattr', ['-R', '-P', '-h', '-d', '-m-', '-e', 'hex', '--absolute-names', '--', root])
   } else {
     metadata = run('powershell.exe', [
       '-NoProfile',

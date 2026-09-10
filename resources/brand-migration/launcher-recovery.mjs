@@ -1,8 +1,8 @@
 import { readFile, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { inspect, readJson } from './paths.mjs'
-import { bundleInventory, copyBundle } from './reference-bundle.mjs'
+import { bundleInventory, copyBundle, durableMkdir } from './reference-bundle.mjs'
 import { inventory, copyTree, verify, durableJson, syncDirectory } from './transaction.mjs'
 
 const names = ['open-science.cmd', '.open-science-path-receipt', '.open-science-path-pending']
@@ -94,7 +94,11 @@ export async function prepareLauncherRollback(journal, stateDir, save, run = def
     const restored = join(scratch, 'bin', name)
     if (await inspect(restored)) await rm(restored)
     const backup = join(profile.backup, 'bin', name)
-    if (await inspect(backup)) await copyTree(backup, restored)
+    if (await inspect(backup)) {
+      // An adopted profile's current bundle may contain no launcher files, hence no staged bin/.
+      await durableMkdir(dirname(restored), syncDirectory)
+      await copyTree(backup, restored)
+    }
   }
   await verify(scratch, profile.published, profile)
   journal.launcherRollback = { status: 'prepared', scratch, profile: profile.to, accepted }
