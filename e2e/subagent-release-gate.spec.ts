@@ -10,6 +10,7 @@ import {
   sendPrompt
 } from './certification/helpers'
 import { test } from './fixtures/electron-app'
+import { retrySessionRevisionConflict } from './fixtures/session-revision-retry'
 
 const ROOT_PROMPT = 'Coordinate the release-gate delegates.'
 const CHILD_COUNT = 24
@@ -702,50 +703,53 @@ test('parks an upward message on branch switch and resumes it after restart and 
     .toBe('queued')
   expect(sessionId).toEqual(expect.any(String))
 
-  const inactiveBranchReload = page.waitForEvent('domcontentloaded')
-  await page.evaluate(
-    async ({ projectId, sessionId }) => {
-      const loaded = await window.api.sessions.loadAll()
-      const session = loaded.sessions.find(
-        (candidate) => candidate.projectId === projectId && candidate.id === sessionId
-      )!
-      const graph = session.conversationGraph!
-      const root = graph.frames.find(({ id }) => id === graph.rootFrameId)!
-      const parentBranch = graph.branches.find(({ id }) => id === root.activeBranchId)!
-      const forkTarget = graph.messages
-        .filter(
-          (message) =>
-            message.agentFrameId === root.id &&
-            message.introducedOnBranchId === parentBranch.id &&
-            message.role === 'user'
-        )
-        .sort((left, right) => right.createdAt - left.createdAt)[0]!
-      const now = Date.now()
-      graph.branches.push({
-        id: 'e2e-park-other-branch',
-        agentFrameId: root.id,
-        parentBranchId: parentBranch.id,
-        forkMessageId: forkTarget.parentMessageId,
-        supersededMessageId: forkTarget.id,
-        headMessageId: forkTarget.parentMessageId,
-        createdAt: now,
-        updatedAt: now
-      })
-      root.activeBranchId = 'e2e-park-other-branch'
-      graph.activeFrameId = root.id
-      await window.api.sessions.saveSession({
-        ...session,
-        conversationGraph: graph,
-        messages: [],
-        activities: [],
-        activityGroups: [],
-        updatedAt: now
-      })
-      window.setTimeout(() => window.location.reload(), 0)
-    },
-    { projectId, sessionId: sessionId! }
-  )
-  await inactiveBranchReload
+  await Promise.all([
+    page.waitForEvent('domcontentloaded'),
+    retrySessionRevisionConflict(() =>
+      page.evaluate(
+        async ({ projectId, sessionId }) => {
+          const loaded = await window.api.sessions.loadAll()
+          const session = loaded.sessions.find(
+            (candidate) => candidate.projectId === projectId && candidate.id === sessionId
+          )!
+          const graph = session.conversationGraph!
+          const root = graph.frames.find(({ id }) => id === graph.rootFrameId)!
+          const parentBranch = graph.branches.find(({ id }) => id === root.activeBranchId)!
+          const forkTarget = graph.messages
+            .filter(
+              (message) =>
+                message.agentFrameId === root.id &&
+                message.introducedOnBranchId === parentBranch.id &&
+                message.role === 'user'
+            )
+            .sort((left, right) => right.createdAt - left.createdAt)[0]!
+          const now = Date.now()
+          graph.branches.push({
+            id: 'e2e-park-other-branch',
+            agentFrameId: root.id,
+            parentBranchId: parentBranch.id,
+            forkMessageId: forkTarget.parentMessageId,
+            supersededMessageId: forkTarget.id,
+            headMessageId: forkTarget.parentMessageId,
+            createdAt: now,
+            updatedAt: now
+          })
+          root.activeBranchId = 'e2e-park-other-branch'
+          graph.activeFrameId = root.id
+          await window.api.sessions.saveSession({
+            ...session,
+            conversationGraph: graph,
+            messages: [],
+            activities: [],
+            activityGroups: [],
+            updatedAt: now
+          })
+          window.setTimeout(() => window.location.reload(), 0)
+        },
+        { projectId, sessionId: sessionId! }
+      )
+    )
+  ])
   await expect
     .poll(async () =>
       page.evaluate(
@@ -781,49 +785,52 @@ test('parks an upward message on branch switch and resumes it after restart and 
     )
     .toBe('queued')
 
-  const restoredBranchReload = page.waitForEvent('domcontentloaded')
-  await page.evaluate(
-    async ({ projectId, sessionId }) => {
-      const loaded = await window.api.sessions.loadAll()
-      const session = loaded.sessions.find(
-        (candidate) => candidate.projectId === projectId && candidate.id === sessionId
-      )!
-      const graph = session.conversationGraph!
-      const root = graph.frames.find(({ id }) => id === graph.rootFrameId)!
-      const command = session.runtimeContext?.delegatedWork?.messageCommands?.find(
-        ({ requestId }) => requestId === 'e2e-child-park'
+  await Promise.all([
+    page.waitForEvent('domcontentloaded'),
+    retrySessionRevisionConflict(() =>
+      page.evaluate(
+        async ({ projectId, sessionId }) => {
+          const loaded = await window.api.sessions.loadAll()
+          const session = loaded.sessions.find(
+            (candidate) => candidate.projectId === projectId && candidate.id === sessionId
+          )!
+          const graph = session.conversationGraph!
+          const root = graph.frames.find(({ id }) => id === graph.rootFrameId)!
+          const command = session.runtimeContext?.delegatedWork?.messageCommands?.find(
+            ({ requestId }) => requestId === 'e2e-child-park'
+          )
+          if (!command) throw new Error('Parked message command is unavailable.')
+          root.activeBranchId = command.rootBranchId
+          graph.activeFrameId = root.id
+          const restoredBranch = graph.branches.find(({ id }) => id === command.rootBranchId)!
+          const messagesById = new Map(graph.messages.map((message) => [message.id, message]))
+          const restoredMessages: typeof graph.messages = []
+          let cursor = restoredBranch.headMessageId
+          while (cursor) {
+            const message = messagesById.get(cursor)
+            if (!message) break
+            restoredMessages.unshift(message)
+            cursor = message.parentMessageId
+          }
+          const restoredMessageIds = new Set<string>(restoredMessages.map(({ id }) => id))
+          await window.api.sessions.saveSession({
+            ...session,
+            conversationGraph: graph,
+            messages: restoredMessages,
+            activities: graph.activities.filter((activity) =>
+              restoredMessageIds.has(activity.promptMessageId)
+            ),
+            activityGroups: graph.activityGroups.filter((group) =>
+              restoredMessageIds.has(group.promptMessageId)
+            ),
+            updatedAt: Date.now()
+          })
+          window.setTimeout(() => window.location.reload(), 0)
+        },
+        { projectId, sessionId: sessionId! }
       )
-      if (!command) throw new Error('Parked message command is unavailable.')
-      root.activeBranchId = command.rootBranchId
-      graph.activeFrameId = root.id
-      const restoredBranch = graph.branches.find(({ id }) => id === command.rootBranchId)!
-      const messagesById = new Map(graph.messages.map((message) => [message.id, message]))
-      const restoredMessages: typeof graph.messages = []
-      let cursor = restoredBranch.headMessageId
-      while (cursor) {
-        const message = messagesById.get(cursor)
-        if (!message) break
-        restoredMessages.unshift(message)
-        cursor = message.parentMessageId
-      }
-      const restoredMessageIds = new Set<string>(restoredMessages.map(({ id }) => id))
-      await window.api.sessions.saveSession({
-        ...session,
-        conversationGraph: graph,
-        messages: restoredMessages,
-        activities: graph.activities.filter((activity) =>
-          restoredMessageIds.has(activity.promptMessageId)
-        ),
-        activityGroups: graph.activityGroups.filter((group) =>
-          restoredMessageIds.has(group.promptMessageId)
-        ),
-        updatedAt: Date.now()
-      })
-      window.setTimeout(() => window.location.reload(), 0)
-    },
-    { projectId, sessionId: sessionId! }
-  )
-  await restoredBranchReload
+    )
+  ])
   await openRecentSession(page, RELIABLE_BRANCH_PARK_PROMPT)
   await expect(
     page.getByText('Main rendered the parked child question after branch restoration.')
