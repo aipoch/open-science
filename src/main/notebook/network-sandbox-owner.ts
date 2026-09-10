@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { assertProcessTreeSupport } from '../process-tree'
 
 import {
   buildNotebookNetworkPolicy,
@@ -235,6 +236,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       )
     }
     try {
+      assertProcessTreeSupport(this.platform)
       return this.recordStatus(presentStatus(await this.getOrCreateSandbox().status(this.platform)))
     } catch (error) {
       return this.recordStatus(
@@ -256,6 +258,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+    assertProcessTreeSupport(this.platform)
     await this.initialize()
     const target = invocation.target ?? { kind: 'native' as const }
     await this.reconcilePendingCommandCleanups(target)

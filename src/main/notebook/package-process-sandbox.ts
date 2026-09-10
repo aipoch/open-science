@@ -12,7 +12,7 @@ import {
 import { delimiter, dirname, isAbsolute, join, relative, resolve, win32 } from 'node:path'
 
 import { defaultSpawn, type InstallRequest, type InstallSpawn } from './package-manager'
-import { terminateProcessTree } from '../process-tree'
+import { assertProcessTreeSupport, terminateProcessTree } from '../process-tree'
 import { buildNotebookKernelEnvironment } from './process-environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
 
@@ -166,6 +166,7 @@ export const sandboxedPackageSpawn =
     spawnOptions?.signal?.throwIfAborted()
     const { processSandbox, request, runtimeRoot, storageRoot } = options
     const platform = options.platform ?? process.platform
+    assertProcessTreeSupport(platform)
     const projectedEnv = packageEnvironment(env ?? {}, platform)
     normalizeDarwinRepodataCachePermissions(projectedEnv, runtimeRoot, platform)
     const cwd =

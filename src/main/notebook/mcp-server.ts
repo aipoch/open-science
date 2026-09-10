@@ -2,6 +2,7 @@ import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
+import { executionRecoveryContext } from './execution-recovery'
 
 import {
   MAX_AGENT_USER_CHOICE_OPTIONS,
@@ -271,6 +272,7 @@ const buildShellExecuteDoc = (
     ...(platformContract ? [platformContract] : []),
     `Stateless: each call is a fresh process, so cwd, variables, jobs, and functions do not persist. It starts in the data-kernel workspace and shares the handoff directory exposed as ${handoffVariable}; do not resolve handoff relative to cwd.`,
     exitCodeContract,
+    'If a result includes recovery, follow its retry prerequisite and guidance. Recovery describes that attempt, not current runtime health; exitCode:null is not permission to repeat a command.',
     'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',
     'Background commands must stay application-managed. Do not use &, nohup, setsid, disown, Start-Process, Start-Job, or equivalent detached-process mechanisms; use background:true instead.',
     'Do NOT copy a generated notebook output into the workspace with this tool. For a final chart, image, report, CSV, or other user-facing file, call `write_artifact_file` with the same relative filename you saved with (it resolves against the notebook session data dir); it copies the file safely on every platform.',
@@ -753,6 +755,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
   const record = asRecord(raw)
   if (!record) return raw
   const request = asRecord(input)
+  const recovery = executionRecoveryContext(record.recovery)
   const text = asRecord(record.text)
   const stream = (field: 'stdout' | 'stderr' | 'traceback'): string => {
     const value = record[field] ?? text?.[field]
@@ -829,6 +832,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
       'runtimeStatus',
       'errorCode'
     ]),
+    ...(recovery ? { recovery } : {}),
     ...(staleness.value ? { staleness: staleness.value } : {}),
     ...(invalidatedRuns.length ? { invalidatedRuns } : {}),
     ...(stdout.text ? { stdout: stdout.text } : {}),
@@ -974,6 +978,7 @@ const compactStateRun = (
       : undefined
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const compactedStaleness = compactStaleness(staleness, STATE_STALENESS_LIMITS)
+  const recovery = includeOutputPreview ? executionRecoveryContext(record.recovery) : undefined
 
   return {
     ...pickDefined(record, [
@@ -990,6 +995,7 @@ const compactStateRun = (
     ]),
     ...(workingFiles.length ? { workingFiles } : {}),
     ...(compactedStaleness.value ? { staleness: compactedStaleness.value } : {}),
+    ...(recovery ? { recovery } : {}),
     ...(outputPreview ? { outputPreview } : {})
   }
 }

@@ -40,6 +40,7 @@ type ActiveCommand = {
   controller: AbortController
   preparation: Promise<void>
   prepared: boolean
+  cleanupTask?: Promise<NotebookSandboxCleanupResult>
   detachSignal?: () => void
   cleanupRequest?: Readonly<{
     reason: 'exit' | 'cancel' | 'timeout' | 'spawn-failed'
@@ -366,17 +367,33 @@ class NotebookNetworkSandbox {
       command.detachSignal?.()
       command.controller.abort(new Error('Notebook process ended.'))
     }
+    if (command.cleanupTask) return command.cleanupTask
+    const retry = Boolean(command.cleanupRequest)
     command.cleanupRequest ??= { reason, processOutcome }
-    return this.#backend
-      .cleanupAfterCommand(
+    command.cleanupTask = (async () => {
+      const retainedOutcome = command.cleanupRequest!.processOutcome
+      if (retry && !retainedOutcome.processesTerminated && retainedOutcome.confirmTermination) {
+        // Only the original process owner can supply new evidence. The runtime consumes a snapshot;
+        // resource-cleanup layers cannot upgrade an unverified outcome themselves.
+        const confirmed = await retainedOutcome.confirmTermination().catch(() => false)
+        if (confirmed) {
+          command.cleanupRequest = {
+            reason: command.cleanupRequest!.reason,
+            processOutcome: { processesTerminated: true }
+          }
+        }
+      }
+      const result = await this.#backend.cleanupAfterCommand(
         commandId,
-        command.cleanupRequest.reason,
-        command.cleanupRequest.processOutcome
+        command.cleanupRequest!.reason,
+        { processesTerminated: command.cleanupRequest!.processOutcome.processesTerminated }
       )
-      .then((result) => {
-        if (cleanupComplete(result)) this.#forgetCommand(commandId)
-        return result
-      })
+      if (cleanupComplete(result)) this.#forgetCommand(commandId)
+      return result
+    })().finally(() => {
+      command.cleanupTask = undefined
+    })
+    return command.cleanupTask
   }
 
   async #reconcilePendingCommands(target: NotebookSandboxTarget): Promise<void> {

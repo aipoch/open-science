@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { spawn } from 'node:child_process'
-import { access, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -155,7 +155,7 @@ const packagedLaunchArguments = (userDataRoot) => [
 const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }) => {
   const child = spawn(executable, packagedLaunchArguments(userDataRoot), {
     detached: true,
-    env,
+    env: { ...env, OPEN_SCIENCE_E2E_NATIVE_SHELL_CERTIFICATION: '1' },
     stdio: ['ignore', 'pipe', 'pipe']
   })
   let output = ''
@@ -192,6 +192,15 @@ const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }
       bootstrap.platform !== 'darwin'
     ) {
       throw new Error(`Unexpected packaged macOS bootstrap: ${JSON.stringify(bootstrap)}`)
+    }
+    const shellCertification = JSON.parse(
+      await readFile(
+        join(env.OPEN_SCIENCE_E2E_STORAGE_ROOT, 'native-shell-certification.json'),
+        'utf8'
+      )
+    )
+    if (shellCertification.status !== 'passed') {
+      throw new Error('Packaged macOS native shell lifecycle certification failed.')
     }
     const shutdown = await fetch(`${service.endpoint}/api/shutdown?${service.auth}`, {
       method: 'POST',
@@ -408,6 +417,7 @@ export {
   assertPackagedResources,
   findAppBundle,
   findArtifact,
+  launchAndProbe,
   packagedLaunchArguments,
   parseArguments,
   parsePackagedAppEndpoint

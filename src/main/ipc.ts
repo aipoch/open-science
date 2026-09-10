@@ -315,6 +315,7 @@ import { openWslSetupPowerShellTerminal } from './wsl/wsl-setup-terminal'
 import { FileWslSetupOperationJournal } from './wsl/wsl-setup-operation-journal'
 import { initializeWsl2BashPreview, wsl2BashPreviewStatus } from './wsl/wsl2-preview-gate'
 import { runPackagedWsl2RestartCertification } from './wsl/wsl2-packaged-restart-certification'
+import { certifyNativeShell } from './notebook/native-shell-certification'
 import { resolveAvailableShellRuntimeBinding } from './notebook/configured-shell-runtime'
 import type { WslSetupStatus } from '../shared/wsl-setup'
 import { probeWindowsVolume } from './wsl/windows-volume-probe'
@@ -778,6 +779,13 @@ const createApplicationModules = async (
   const storedSettings = await settingsService.getStoredSettings()
   const storageLog = createLogger('storage')
   await networkProxyRuntime.apply(storedSettings.networkProxy)
+  await certifyNativeShell({
+    appPackaged: app.isPackaged,
+    headless,
+    storageRoot: resolveConfigRoot(),
+    environment: process.env,
+    processSandbox: notebookNetworkSandbox
+  })
   await runPackagedWsl2RestartCertification({
     appPackaged: app.isPackaged,
     headless,

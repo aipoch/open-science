@@ -58,6 +58,7 @@ export const createPosixProcessTreeOwnership = (
   platform: NodeJS.Platform = process.platform
 ): PosixProcessTreeOwnership => {
   if (platform !== 'darwin' && platform !== 'linux') return { env, token: undefined }
+  assertProcessTreeSupport(platform)
   const token = randomUUID()
   return { env: { ...(env ?? process.env), [PROCESS_TREE_OWNERSHIP_ENV]: token }, token }
 }
@@ -306,17 +307,77 @@ type DarwinProcessBinding = Readonly<{
   listDarwinProcesses: () => DarwinProcessTable | null
 }>
 
-let darwinProcessBinding: DarwinProcessBinding | null | undefined
+let darwinProcessBinding: DarwinProcessBinding | undefined
+
+export class ProcessTreeUnavailableError extends Error {
+  readonly code = 'PROCESS_TREE_UNAVAILABLE'
+
+  constructor(cause: unknown) {
+    super(
+      'PROCESS_TREE_UNAVAILABLE: macOS process ownership is unavailable; no command was started. ' +
+        (cause instanceof Error ? cause.message : String(cause)),
+      { cause }
+    )
+    this.name = 'ProcessTreeUnavailableError'
+  }
+}
+
+const requireDarwinProcessBinding = (): DarwinProcessBinding => {
+  if (darwinProcessBinding) return darwinProcessBinding
+  // Cache only a successfully loaded, compatible binding. A failed preparation owns no child or
+  // cleanup debt and a subsequent request may retry after the installation has been repaired.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- Native Node-API binding.
+  const binding = require('@aipoch/process-tree-native') as DarwinProcessBinding
+  if (
+    typeof binding.getDarwinProcess !== 'function' ||
+    typeof binding.listDarwinProcesses !== 'function' ||
+    typeof binding.getDarwinEnvironmentValue !== 'function'
+  ) {
+    throw new Error('The macOS process ownership module is incompatible.')
+  }
+  darwinProcessBinding = binding
+  return binding
+}
+
+/** Admission belongs to the process owner, shared by development and packaged execution. */
+export const assertProcessTreeSupport = (platform: NodeJS.Platform = process.platform): void => {
+  if (platform !== 'darwin' || process.platform !== 'darwin') return
+  try {
+    const binding = requireDarwinProcessBinding()
+    const identity = binding.getDarwinProcess(process.pid)
+    if (
+      !identity ||
+      identity.pid !== process.pid ||
+      !identity.uniqueId ||
+      identity.uniqueId === '0'
+    ) {
+      throw new Error(
+        'The macOS process ownership module cannot read the current process identity.'
+      )
+    }
+    const table = binding.listDarwinProcesses()
+    if (
+      !table?.complete ||
+      !table.processes.some(
+        (entry) => entry.pid === identity.pid && entry.uniqueId === identity.uniqueId
+      )
+    ) {
+      throw new Error(
+        'The macOS process ownership module cannot obtain a complete process snapshot.'
+      )
+    }
+  } catch (error) {
+    throw new ProcessTreeUnavailableError(error)
+  }
+}
 
 const loadDarwinProcessBinding = (): DarwinProcessBinding | null => {
-  if (darwinProcessBinding !== undefined) return darwinProcessBinding
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- Native Node-API bindings load through CommonJS.
-    darwinProcessBinding = require('@aipoch/process-tree-native') as DarwinProcessBinding
+    return requireDarwinProcessBinding()
   } catch {
-    darwinProcessBinding = null
+    // Teardown still fails closed for children created by legacy callers without admission.
+    return null
   }
-  return darwinProcessBinding
 }
 
 const normalizeDarwinProcess = (identity: DarwinProcessIdentity): PosixProcessIdentity => ({

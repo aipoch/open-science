@@ -3754,7 +3754,7 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
 
       await vi.waitFor(() =>
         expect(sandbox.cleanup).toHaveBeenCalledWith('spawn-failed', {
-          processesTerminated: false
+          processesTerminated: true
         })
       )
       expect(completed).toBe(false)

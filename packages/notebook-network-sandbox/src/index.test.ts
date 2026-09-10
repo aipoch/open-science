@@ -39,6 +39,77 @@ beforeEach(() => {
 })
 
 describe('NotebookNetworkSandbox', () => {
+  it('shares one termination verification across concurrent admissions', async () => {
+    const sandbox = new NotebookNetworkSandbox(options())
+    vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+    backend.wrap.mockResolvedValue({ argv: ['sandboxed'], env: {} })
+    await sandbox.initialize()
+    const command = { command: 'true', cwd: '/workspace', onNetworkAccessRequest: denyNetwork }
+    const first = await sandbox.wrap(command)
+    let confirm!: (value: boolean) => void
+    const confirmTermination = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          confirm = resolve
+        })
+    )
+    await first.cleanup('exit', { processesTerminated: false, confirmTermination })
+    const next = Promise.all([sandbox.wrap(command), sandbox.wrap(command)])
+    await vi.waitFor(() => expect(confirmTermination).toHaveBeenCalledOnce())
+    confirm(true)
+    const commands = await next
+    expect(backend.cleanupAfterCommand).toHaveBeenCalledTimes(2)
+    await Promise.all(
+      commands.map((wrapped) => wrapped.cleanup('exit', { processesTerminated: true }))
+    )
+    await sandbox.dispose()
+  })
+  it('reconciles native cleanup only when the original process owner supplies new evidence', async () => {
+    const sandbox = new NotebookNetworkSandbox(options())
+    vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+    backend.wrap.mockResolvedValue({ argv: ['sandboxed'], env: {} })
+    await sandbox.initialize()
+    const command = { command: 'true', cwd: '/workspace', onNetworkAccessRequest: denyNetwork }
+    const first = await sandbox.wrap(command)
+    const confirmTermination = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    await first.cleanup('exit', { processesTerminated: false, confirmTermination })
+    expect(confirmTermination).not.toHaveBeenCalled()
+    await expect(sandbox.wrap(command)).rejects.toThrow('SHELL_CLEANUP_INCOMPLETE')
+    expect(backend.wrap).toHaveBeenCalledTimes(1)
+    const second = await sandbox.wrap(command)
+    expect(confirmTermination).toHaveBeenCalledTimes(2)
+    expect(backend.cleanupAfterCommand).toHaveBeenLastCalledWith(expect.any(String), 'exit', {
+      processesTerminated: true
+    })
+    await second.cleanup('exit', { processesTerminated: true })
+    await sandbox.dispose()
+  })
+  it('keeps native execution blocked without new termination evidence', async () => {
+    const sandbox = new NotebookNetworkSandbox(options())
+    vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+    backend.wrap.mockResolvedValue({ argv: ['sandboxed'], env: {} })
+    await sandbox.initialize()
+    const command = { command: 'true', cwd: '/workspace', onNetworkAccessRequest: denyNetwork }
+    const first = await sandbox.wrap(command)
+    await first.cleanup('exit', { processesTerminated: false })
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(sandbox.wrap(command)).rejects.toThrow(
+        'SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.'
+      )
+    }
+    expect(backend.wrap).toHaveBeenCalledTimes(1)
+    expect(backend.cleanupAfterCommand).toHaveBeenCalledTimes(4)
+    for (const call of backend.cleanupAfterCommand.mock.calls) {
+      expect(call[2]).toEqual({ processesTerminated: false })
+    }
+    // Release the module singleton after reproducing the retained failure.
+    backend.cleanupAfterCommand.mockResolvedValue({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    })
+    await sandbox.dispose()
+  })
   it('reports unsupported platforms without starting a backend', async () => {
     const sandbox = new NotebookNetworkSandbox(options())
 

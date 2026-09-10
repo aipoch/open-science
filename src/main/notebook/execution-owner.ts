@@ -287,7 +287,7 @@ const controlResultFromRun = (run: NotebookRunRecord): NotebookControlResult => 
 const publicShellResult = (
   run: Pick<
     NotebookRunRecord,
-    'text' | 'exitCode' | 'truncated' | 'shellRuntimeStatus' | 'shellErrorCode'
+    'text' | 'exitCode' | 'truncated' | 'shellRuntimeStatus' | 'shellErrorCode' | 'recovery'
   >
 ): NotebookShellResult => ({
   stdout: run.text.stdout,
@@ -295,6 +295,7 @@ const publicShellResult = (
   exitCode: run.exitCode ?? null,
   ...(run.shellRuntimeStatus ? { runtimeStatus: run.shellRuntimeStatus } : {}),
   ...(run.shellErrorCode ? { errorCode: run.shellErrorCode } : {}),
+  ...(run.recovery ? { recovery: run.recovery } : {}),
   ...(run.truncated ? { truncated: true } : {})
 })
 
@@ -1643,7 +1644,8 @@ class NotebookExecutionOwner {
                 fileEvidence,
                 exitCode: shellResult.exitCode,
                 runtimeStatus: shellResult.runtimeStatus,
-                errorCode: shellResult.errorCode
+                errorCode: shellResult.errorCode,
+                recovery: shellResult.recovery
               }
             }
           })
@@ -1657,6 +1659,7 @@ class NotebookExecutionOwner {
             exitCode: result.exitCode,
             ...(result.runtimeStatus ? { runtimeStatus: result.runtimeStatus } : {}),
             ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+            ...(result.recovery ? { recovery: result.recovery } : {}),
             ...(result.truncated ? { truncated: true } : {})
           }
         }

@@ -1001,6 +1001,12 @@ export const defaultSpawn = (
       signal.reason ?? new DOMException('Package operation cancelled.', 'AbortError')
     )
   }
+  let processTreeOwnership: ReturnType<typeof createPosixProcessTreeOwnership>
+  try {
+    processTreeOwnership = createPosixProcessTreeOwnership(env, platform)
+  } catch (error) {
+    return Promise.reject(error)
+  }
   let condaJsonCapture: CondaJsonCapture | undefined
   try {
     if (captureCondaJson ?? args.includes('--json')) condaJsonCapture = createCondaJsonCapture()
@@ -1033,7 +1039,6 @@ export const defaultSpawn = (
       })
       return
     }
-    const processTreeOwnership = createPosixProcessTreeOwnership(env, platform)
     let child: ReturnType<typeof nodeSpawn>
     try {
       child = nodeSpawn(command, args, {

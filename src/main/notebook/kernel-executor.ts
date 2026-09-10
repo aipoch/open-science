@@ -9,6 +9,7 @@ import { Transform, type TransformCallback } from 'node:stream'
 
 import {
   createPosixProcessTreeOwnership,
+  assertProcessTreeSupport,
   trackOwnedPosixProcessTree,
   terminateProcessTree,
   type ProcessTreeKillResult
@@ -932,6 +933,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     ) => Promise<NotebookSandboxCleanupResult>
     ownershipReceipt?: KernelProcessReceipt
   }> {
+    assertProcessTreeSupport(this.platform)
     const figuresDir = this.ensureFiguresDir()
     // Control-plane REPL may omit a runtime root; package cache belongs to a managed runtime directory.
     const workloadCacheEnv = request.runtimeRoot
@@ -1062,6 +1064,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
           ...kernelArgs
         ]
       : kernelArgs
+    // Admission has already been checked before any kernel resources are prepared.
     const processTreeOwnership = createPosixProcessTreeOwnership(
       sandboxed?.env ?? spawnEnv,
       this.platform
@@ -1089,7 +1092,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       })
     } catch (error) {
       if (ownershipIntent) this.processLifecycle?.abandonSpawn(ownershipIntent)
-      await cleanupSandbox('spawn-failed', { processesTerminated: false })
+      await cleanupSandbox('spawn-failed', { processesTerminated: true })
       throw error
     }
     if (this.platform !== 'win32' && this.canTrackPosixProcesses)

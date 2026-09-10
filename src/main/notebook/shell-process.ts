@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { dirname } from 'node:path'
+import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { assertShellSearchScope } from './shell-search-scope'
 
 import { protectManagedRuntimeWrites } from './managed-runtime-guard'
@@ -11,6 +12,8 @@ import type {
   NotebookSandboxProcessOutcome
 } from './process-sandbox'
 import {
+  assertProcessTreeSupport,
+  ProcessTreeUnavailableError,
   createPosixProcessTreeOwnership,
   trackOwnedPosixProcessTree,
   terminateProcessTree,
@@ -53,6 +56,7 @@ type NotebookShellResult = {
   // Runtime-private cleanup evidence. Public adapters project only the legacy result fields.
   ownedTreeReaped?: boolean
   runtimeStatus?: 'unavailable'
+  recovery?: NotebookExecutionRecovery
   errorCode?:
     'shell-runtime-unavailable' | 'shell-cleanup-incomplete' | 'shell-network-transport-unsupported'
 }
@@ -274,6 +278,18 @@ const prepareShellLaunchOptions = async (
   }
 ): Promise<PreparedShellLaunch> => {
   const hostPlatform = options.platform ?? process.platform
+  try {
+    assertProcessTreeSupport(hostPlatform)
+  } catch (error) {
+    throw new ShellPreparationError({
+      stdout: '',
+      stderr: error instanceof Error ? error.message : String(error),
+      exitCode: null,
+      runtimeStatus: 'unavailable',
+      errorCode: 'shell-runtime-unavailable',
+      recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
+    })
+  }
   const runtimeBinding = options.runtimeBinding ?? defaultShellRuntimeBinding(hostPlatform)
   if (
     runtimeBinding.kind === 'wsl2-bash' &&
@@ -285,7 +301,8 @@ const prepareShellLaunchOptions = async (
       stderr: 'SHELL_RUNTIME_UNAVAILABLE: The selected WSL2 Bash runtime is unavailable.',
       exitCode: null,
       runtimeStatus: 'unavailable',
-      errorCode: 'shell-runtime-unavailable'
+      errorCode: 'shell-runtime-unavailable',
+      recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
     })
   }
   const runtimePlatform = shellRuntimePlatform(runtimeBinding, hostPlatform)
@@ -363,16 +380,27 @@ const prepareShellLaunchOptions = async (
         })
       : undefined
   } catch (error) {
-    if (runtimeBinding.kind !== 'wsl2-bash') throw error
     const message = error instanceof Error ? error.message : String(error)
+    if (error instanceof ProcessTreeUnavailableError) {
+      throw new ShellPreparationError({
+        stdout: '',
+        stderr: message,
+        exitCode: null,
+        runtimeStatus: 'unavailable',
+        errorCode: 'shell-runtime-unavailable',
+        recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
+      })
+    }
     if (message.startsWith('SHELL_CLEANUP_INCOMPLETE:')) {
       throw new ShellPreparationError({
         stdout: '',
-        stderr: SHELL_CLEANUP_INCOMPLETE_MESSAGE,
+        stderr: message,
         exitCode: null,
-        errorCode: 'shell-cleanup-incomplete'
+        errorCode: 'shell-cleanup-incomplete',
+        recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
       })
     }
+    if (runtimeBinding.kind !== 'wsl2-bash') throw error
     if (options.signal?.aborted) {
       throw new ShellPreparationError({
         stdout: '',
@@ -386,7 +414,8 @@ const prepareShellLaunchOptions = async (
         stdout: '',
         stderr: message,
         exitCode: null,
-        errorCode: 'shell-network-transport-unsupported'
+        errorCode: 'shell-network-transport-unsupported',
+        recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
       })
     }
     throw new ShellPreparationError({
@@ -394,7 +423,8 @@ const prepareShellLaunchOptions = async (
       stderr: 'SHELL_RUNTIME_UNAVAILABLE: The selected WSL2 Bash runtime is unavailable.',
       exitCode: null,
       runtimeStatus: 'unavailable',
-      errorCode: 'shell-runtime-unavailable'
+      errorCode: 'shell-runtime-unavailable',
+      recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
     })
   }
   return {
@@ -476,20 +506,24 @@ const runShellCommand = (
       if (runtimeBinding.kind !== 'wsl2-bash' || cleanupCompleted(firstResult)) return firstResult
       return cleanupSandbox(reason, processOutcome)
     }
-    const withIncompleteCleanup = (result: NotebookShellResult): NotebookShellResult => ({
+    const withIncompleteCleanup = (
+      result: NotebookShellResult,
+      execution: NotebookExecutionRecovery['execution']
+    ): NotebookShellResult => ({
       ...result,
       stderr:
         result.stderr +
         `${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${SHELL_CLEANUP_INCOMPLETE_MESSAGE}`,
       exitCode: null,
-      errorCode: 'shell-cleanup-incomplete'
+      errorCode: 'shell-cleanup-incomplete',
+      recovery: { execution, retryAfter: 'cleanup-verified' }
     })
 
     if (options.signal?.aborted) {
       endSandboxExecution?.()
       let cleanupResult: NotebookSandboxCleanupResult | undefined
       try {
-        cleanupResult = await cleanupSandboxWithRetry('cancel', { processesTerminated: false })
+        cleanupResult = await cleanupSandboxWithRetry('cancel', { processesTerminated: true })
       } catch {
         cleanupResult = undefined
       }
@@ -501,17 +535,15 @@ const runShellCommand = (
       }
       return cleanupResult && cleanupCompleted(cleanupResult)
         ? cancelled
-        : withIncompleteCleanup(cancelled)
+        : withIncompleteCleanup(cancelled, 'not-started')
     }
 
     const spawnAdmission = sandboxed?.beginSpawn?.()
-    const processTreeOwnership = createPosixProcessTreeOwnership(
-      sandboxed?.env ?? baseEnv,
-      platform
-    )
+    let processTreeOwnership: ReturnType<typeof createPosixProcessTreeOwnership>
     const launchOwnership = options.prepareProcessOwnership?.()
     let child: ChildProcessWithoutNullStreams
     try {
+      processTreeOwnership = createPosixProcessTreeOwnership(sandboxed?.env ?? baseEnv, platform)
       child = spawn(
         sandboxed?.executable ?? invocation.executable,
         sandboxed?.args ?? invocation.args,
@@ -530,7 +562,7 @@ const runShellCommand = (
       let complete = false
       try {
         complete = cleanupCompleted(
-          await cleanupSandboxWithRetry('spawn-failed', { processesTerminated: false })
+          await cleanupSandboxWithRetry('spawn-failed', { processesTerminated: true })
         )
       } catch {
         // The stable cleanup failure below preserves the executor's never-reject contract.
@@ -540,7 +572,7 @@ const runShellCommand = (
         stderr: error instanceof Error ? error.message : String(error),
         exitCode: null
       }
-      return complete ? result : withIncompleteCleanup(result)
+      return complete ? result : withIncompleteCleanup(result, 'not-started')
     }
     spawnAdmission?.started()
     if (platform !== 'win32' && process.platform !== 'win32')
@@ -618,13 +650,32 @@ const runShellCommand = (
         const stderr = sandboxed ? sandboxed.annotateStderr(normalized) : normalized
         let complete = false
         try {
-          complete = cleanupCompleted(await cleanupSandboxWithRetry(cleanupReason, processOutcome))
+          complete = cleanupCompleted(
+            await cleanupSandboxWithRetry(cleanupReason, {
+              ...processOutcome,
+              ...(!processOutcome.processesTerminated && runtimeBinding.kind === 'native-posix'
+                ? {
+                    confirmTermination: async () => {
+                      const { reaped } = await terminateShellOnTimeout(
+                        child,
+                        platform,
+                        options.terminateTree
+                      )
+                      if (reaped) releaseProcessOwnership?.()
+                      return reaped
+                    }
+                  }
+                : {})
+            })
+          )
         } catch {
           complete = false
         }
         if (complete) releaseProcessOwnership?.()
         const normalizedResult = { ...result, stderr }
-        const completed = complete ? normalizedResult : withIncompleteCleanup(normalizedResult)
+        const completed = complete
+          ? normalizedResult
+          : withIncompleteCleanup(normalizedResult, 'may-have-run')
         if (!processOutcome.processesTerminated || !complete)
           Object.defineProperty(completed, 'ownedTreeReaped', { value: false })
         resolve(completed)

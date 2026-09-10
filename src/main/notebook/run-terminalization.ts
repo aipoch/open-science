@@ -35,6 +35,7 @@ type NotebookRunTerminalResult = {
   exitCode?: number | null
   runtimeStatus?: NotebookRunRecord['shellRuntimeStatus']
   errorCode?: NotebookRunRecord['shellErrorCode']
+  recovery?: NotebookRunRecord['recovery']
   workingFiles?: NotebookWorkingFile[]
   fileEvidence?: ExecutionFileEvidenceSummary
   environmentManifest?: NotebookEnvironmentManifest
@@ -412,6 +413,7 @@ class NotebookRunTerminalizationOwner {
       ...(limitedResult.exitCode !== undefined ? { exitCode: limitedResult.exitCode } : {}),
       ...(limitedResult.runtimeStatus ? { shellRuntimeStatus: limitedResult.runtimeStatus } : {}),
       ...(limitedResult.errorCode ? { shellErrorCode: limitedResult.errorCode } : {}),
+      ...(limitedResult.recovery ? { recovery: limitedResult.recovery } : {}),
       environmentCapture,
       ...(limitedResult.kernelDispatched !== undefined
         ? { kernelDispatched: limitedResult.kernelDispatched }

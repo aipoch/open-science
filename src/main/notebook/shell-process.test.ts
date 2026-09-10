@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import * as processTree from '../process-tree'
+import * as powerShellParser from './powershell-search-parser'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { EventEmitter } from 'node:events'
@@ -37,6 +38,58 @@ afterEach(async () => {
 const previewAvailable = (): boolean => true
 
 describe('notebook shell process behavior', () => {
+  it('returns application recovery facts when earlier cleanup blocks native preparation', async () => {
+    const result = await runShellCommand({
+      command: 'printf never-started',
+      cwd: process.cwd(),
+      handoffDir: process.cwd(),
+      runtimeRoot: portableRuntimeRoot,
+      sessionId: 'session',
+      projectId: 'project',
+      processSandbox: {
+        wrap: vi
+          .fn()
+          .mockRejectedValue(
+            new Error('SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.')
+          )
+      }
+    })
+    expect(result).toMatchObject({
+      stdout: '',
+      exitCode: null,
+      errorCode: 'shell-cleanup-incomplete',
+      recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
+    })
+  })
+  it('rejects unavailable process ownership before sandbox preparation', async () => {
+    const admission = vi.spyOn(processTree, 'assertProcessTreeSupport').mockImplementation(() => {
+      throw new processTree.ProcessTreeUnavailableError(new Error('native module missing'))
+    })
+    const wrap = vi.fn()
+    try {
+      const result = await runShellCommand({
+        command: 'printf should-not-run',
+        cwd: process.cwd(),
+        handoffDir: process.cwd(),
+        runtimeRoot: portableRuntimeRoot,
+        sessionId: 'session',
+        projectId: 'project',
+        processSandbox: { wrap }
+      })
+      expect(result).toMatchObject({
+        stdout: '',
+        exitCode: null,
+        runtimeStatus: 'unavailable',
+        errorCode: 'shell-runtime-unavailable',
+        recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
+      })
+      expect(result.stderr).toContain('native module missing')
+      expect(result.recovery).toEqual({ execution: 'not-started', retryAfter: 'runtime-ready' })
+      expect(wrap).not.toHaveBeenCalled()
+    } finally {
+      admission.mockRestore()
+    }
+  })
   describe('invocation', () => {
     it('uses a POSIX sh command on Unix platforms', () => {
       expect(resolveShellInvocation('echo hi', 'linux')).toEqual({
@@ -178,7 +231,8 @@ describe('notebook shell process behavior', () => {
         stderr: 'SHELL_RUNTIME_UNAVAILABLE: The selected WSL2 Bash runtime is unavailable.',
         exitCode: null,
         runtimeStatus: 'unavailable',
-        errorCode: 'shell-runtime-unavailable'
+        errorCode: 'shell-runtime-unavailable',
+        recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
       })
       expect(processSandbox.wrap).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -225,7 +279,8 @@ describe('notebook shell process behavior', () => {
         stderr: 'SHELL_RUNTIME_UNAVAILABLE: The selected WSL2 Bash runtime is unavailable.',
         exitCode: null,
         runtimeStatus: 'unavailable',
-        errorCode: 'shell-runtime-unavailable'
+        errorCode: 'shell-runtime-unavailable',
+        recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
       })
       expect(processSandbox.wrap).not.toHaveBeenCalled()
     })
@@ -263,7 +318,8 @@ describe('notebook shell process behavior', () => {
         stderr:
           'WSL2_NETWORK_TRANSPORT_UNSUPPORTED: WSL2 Bash Preview network access requires mirrored networking.',
         exitCode: null,
-        errorCode: 'shell-network-transport-unsupported'
+        errorCode: 'shell-network-transport-unsupported',
+        recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
       })
     })
 
@@ -300,7 +356,8 @@ describe('notebook shell process behavior', () => {
         })
       ).resolves.toMatchObject({
         exitCode: null,
-        errorCode: 'shell-cleanup-incomplete'
+        errorCode: 'shell-cleanup-incomplete',
+        recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
       })
     })
 
@@ -326,7 +383,8 @@ describe('notebook shell process behavior', () => {
         stderr: 'SHELL_RUNTIME_UNAVAILABLE: The selected WSL2 Bash runtime is unavailable.',
         exitCode: null,
         runtimeStatus: 'unavailable',
-        errorCode: 'shell-runtime-unavailable'
+        errorCode: 'shell-runtime-unavailable',
+        recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
       })
     })
   })
@@ -363,6 +421,10 @@ describe('notebook shell process behavior', () => {
     })
 
     it('normalizes CLIXML only for the PowerShell binding on a Windows host', async () => {
+      // This test exercises stderr projection, not the Windows-only AST parser executable.
+      const parser = vi
+        .spyOn(powerShellParser, 'parsePowerShellSearchCommands')
+        .mockResolvedValue([{ name: 'emit', arguments: ['stderr'] }])
       vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
       vi.stubEnv('SystemRoot', 'C:\\Windows')
       const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-shell-binding-stderr-'))
@@ -416,6 +478,7 @@ describe('notebook shell process behavior', () => {
         ).resolves.toBe(completedProgressClixml)
         await expect(execute({ kind: 'powershell', version: '5.1' })).resolves.toBe('')
       } finally {
+        parser.mockRestore()
         await rm(runtimeRoot, { recursive: true, force: true })
       }
     })
@@ -529,7 +592,7 @@ describe('notebook shell process behavior', () => {
     const cleanup = vi.fn(async () => {
       await cleanupGate
       return {
-        processesTerminated: false,
+        processesTerminated: true,
         networkClosed: true,
         temporaryResourcesRemoved: true
       }
@@ -567,7 +630,7 @@ describe('notebook shell process behavior', () => {
     })
 
     await vi.waitFor(
-      () => expect(cleanup).toHaveBeenCalledWith('spawn-failed', { processesTerminated: false }),
+      () => expect(cleanup).toHaveBeenCalledWith('spawn-failed', { processesTerminated: true }),
       { timeout: 5_000 }
     )
     expect(completed).toBe(false)
@@ -581,57 +644,64 @@ describe('notebook shell process behavior', () => {
     const result = await completion
     expect(result).toMatchObject({ exitCode: null })
     expect(result.stderr).toContain('null bytes')
+    expect(result.errorCode).toBeUndefined()
     expect(cleanup).toHaveBeenCalledOnce()
     expect(endExecution).toHaveBeenCalledOnce()
     await rm(runtimeRoot, { recursive: true, force: true })
   })
 
-  it('does not admit a WSL spawn when cancellation wins after preparation', async () => {
-    vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
-    const controller = new AbortController()
-    const beginSpawn = vi.fn()
-    const cleanup = vi.fn(async () => ({
-      processesTerminated: true,
-      networkClosed: true,
-      temporaryResourcesRemoved: true
-    }))
-    const processSandbox: NotebookProcessSandbox = {
-      wrap: vi.fn(async (invocation) => {
-        controller.abort()
-        return {
-          executable: process.execPath,
-          args: ['-e', 'process.exit(0)'],
-          env: invocation.env,
-          beginSpawn,
-          annotateStderr: (stderr: string) => stderr,
-          cleanup
-        }
-      })
-    }
+  it.each(['native-posix', 'wsl2-bash'] as const)(
+    'does not create cleanup debt when %s is cancelled before spawn',
+    async (kind) => {
+      vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+      const controller = new AbortController()
+      const beginSpawn = vi.fn()
+      const cleanup = vi.fn(async () => ({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }))
+      const processSandbox: NotebookProcessSandbox = {
+        wrap: vi.fn(async (invocation) => {
+          controller.abort()
+          return {
+            executable: process.execPath,
+            args: ['-e', 'process.exit(0)'],
+            env: invocation.env,
+            beginSpawn,
+            annotateStderr: (stderr: string) => stderr,
+            cleanup
+          }
+        })
+      }
 
-    await expect(
-      runShellCommand({
-        command: 'echo never-spawned',
-        cwd: 'C:\\workspace',
-        handoffDir: 'C:\\handoff',
-        runtimeRoot: portableRuntimeRoot,
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        platform: 'win32',
-        signal: controller.signal,
-        runtimeBinding: {
-          kind: 'wsl2-bash',
-          profileId: 'profile-1',
-          distro: 'Ubuntu-22.04',
-          user: 'researcher'
-        },
-        processSandbox,
-        previewAvailable
-      })
-    ).resolves.toMatchObject({ cancelled: true, exitCode: null })
-    expect(beginSpawn).not.toHaveBeenCalled()
-    expect(cleanup).toHaveBeenCalledWith('cancel', { processesTerminated: false })
-  })
+      await expect(
+        runShellCommand({
+          command: 'echo never-spawned',
+          cwd: 'C:\\workspace',
+          handoffDir: 'C:\\handoff',
+          runtimeRoot: portableRuntimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: kind === 'wsl2-bash' ? 'win32' : process.platform,
+          signal: controller.signal,
+          runtimeBinding:
+            kind === 'native-posix'
+              ? { kind, shell: '/bin/sh' }
+              : {
+                  kind: 'wsl2-bash',
+                  profileId: 'profile-1',
+                  distro: 'Ubuntu-22.04',
+                  user: 'researcher'
+                },
+          processSandbox,
+          previewAvailable
+        })
+      ).resolves.toMatchObject({ cancelled: true, exitCode: null })
+      expect(beginSpawn).not.toHaveBeenCalled()
+      expect(cleanup).toHaveBeenCalledWith('cancel', { processesTerminated: true })
+    }
+  )
 
   it('returns a stable failure instead of trusting an exit when sandbox cleanup is incomplete', async () => {
     const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-shell-incomplete-cleanup-'))
@@ -668,7 +738,8 @@ describe('notebook shell process behavior', () => {
         stderr:
           'SHELL_CLEANUP_INCOMPLETE: Shell execution cleanup did not complete; the result is not trusted.',
         exitCode: null,
-        errorCode: 'shell-cleanup-incomplete'
+        errorCode: 'shell-cleanup-incomplete',
+        recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
       })
       expect(cleanup).toHaveBeenCalledOnce()
       expect(cleanup).toHaveBeenCalledWith('exit', { processesTerminated: true })
@@ -985,7 +1056,10 @@ describe('notebook shell process behavior', () => {
         exitCode: null,
         errorCode: 'shell-cleanup-incomplete'
       })
-      expect(cleanup).toHaveBeenCalledWith('exit', { processesTerminated: false })
+      expect(cleanup).toHaveBeenCalledWith('exit', {
+        processesTerminated: false,
+        confirmTermination: expect.any(Function)
+      })
     })
 
     it.each([
@@ -1091,7 +1165,10 @@ describe('notebook shell process behavior', () => {
       expect(cleanup).not.toHaveBeenCalled()
       releaseReaping?.()
       await expect(completion).resolves.toMatchObject({ exitCode: null })
-      expect(cleanup).toHaveBeenCalledWith('timeout', { processesTerminated: reaped })
+      expect(cleanup).toHaveBeenCalledWith('timeout', {
+        processesTerminated: reaped,
+        ...(!reaped ? { confirmTermination: expect.any(Function) } : {})
+      })
     })
 
     it('awaits one structured cleanup when process spawning fails', async () => {
@@ -1155,7 +1232,10 @@ describe('notebook shell process behavior', () => {
         terminateTree: vi.fn(async () => ({ reaped: false }))
       })
 
-      expect(cleanup).toHaveBeenCalledWith('spawn-failed', { processesTerminated: false })
+      expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
+        processesTerminated: false,
+        confirmTermination: expect.any(Function)
+      })
     })
 
     it('reserves stderr capacity after stdout reaches its capture limit', async () => {

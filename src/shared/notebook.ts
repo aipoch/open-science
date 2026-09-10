@@ -606,6 +606,7 @@ export type NotebookRunRecord = {
   // Exact stateless-shell outcome. Optional keeps non-shell and historical records compatible.
   exitCode?: number | null
   shellRuntimeStatus?: 'unavailable'
+  recovery?: import('./execution-recovery').NotebookExecutionRecovery
   shellErrorCode?:
     'shell-runtime-unavailable' | 'shell-cleanup-incomplete' | 'shell-network-transport-unsupported'
   // Named env that produced this run (python/r only; omitted for repl/bash).

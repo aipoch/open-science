@@ -4204,7 +4204,8 @@ describe('notebook runtime service', () => {
         stderr: 'unavailable',
         exitCode: null,
         runtimeStatus: 'unavailable' as const,
-        errorCode: 'shell-runtime-unavailable' as const
+        errorCode: 'shell-runtime-unavailable' as const,
+        recovery: { execution: 'not-started', retryAfter: 'runtime-ready' } as const
       }
       const execute = vi.fn<NotebookShellProcess['execute']>().mockResolvedValue(unavailable)
       const service = new NotebookRuntimeService({

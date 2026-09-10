@@ -17,6 +17,8 @@ export type NotebookSandboxCleanupResult = Readonly<{
 
 export type NotebookSandboxProcessOutcome = Readonly<{
   processesTerminated: boolean
+  /** Retained by the command owner; rechecks the same owned tree, never a replacement PID. */
+  confirmTermination?: () => Promise<boolean>
 }>
 
 export type NotebookSandboxInvocation = Readonly<{

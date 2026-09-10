@@ -2386,6 +2386,36 @@ describe('manage_environments tool', () => {
 })
 
 describe('compactNotebookExecutionResult', () => {
+  it('preserves recovery prerequisites ahead of truncated output for foreground and background failures', () => {
+    const recovery = { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
+    const run = {
+      kernelKind: 'bash',
+      status: 'failed',
+      recovery,
+      stdout: 'x'.repeat(100_000),
+      stderr: 'cleanup failed',
+      exitCode: null
+    }
+    const foreground = compactNotebookExecutionResult(run) as Record<string, unknown>
+    const background = NOTEBOOK_RPC_TOOLS.find((tool) => tool.name === 'background_run')!
+      .mapResult!({ run }, { action: 'result' }) as Record<string, unknown>
+    expect(foreground.recovery).toMatchObject(recovery)
+    expect(background.recovery).toEqual(foreground.recovery)
+    for (const result of [foreground, background]) {
+      const serialized = serializeNotebookToolResult(result, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+      expect(JSON.parse(serialized).recovery).toEqual(foreground.recovery)
+    }
+    expect(foreground.truncated).toBe(true)
+  })
+
+  it('does not treat command output or historical error codes as current recovery facts', () => {
+    expect(
+      compactNotebookExecutionResult({ stdout: 'SHELL_CLEANUP_INCOMPLETE', exitCode: 0 })
+    ).not.toHaveProperty('recovery')
+    expect(
+      compactNotebookExecutionResult({ errorCode: 'shell-cleanup-incomplete', exitCode: null })
+    ).not.toHaveProperty('recovery')
+  })
   const runSummary = (text: {
     stdout?: string
     stderr?: string
@@ -2787,6 +2817,21 @@ describe('compactNotebookExecutionResult', () => {
 })
 
 describe('compactNotebookStateResult', () => {
+  it('keeps recovery on the latest attempt without repeating historical guidance', () => {
+    const recovery = { execution: 'not-started', retryAfter: 'cleanup-verified' }
+    const state = {
+      recentRuns: [
+        { runId: 'old', status: 'failed', recovery },
+        { runId: 'latest', status: 'failed', recovery }
+      ]
+    }
+    const compact = compactNotebookStateResult(state)
+    const parsed = JSON.parse(serializeNotebookToolResult(compact, NOTEBOOK_MCP_STATE_RESULT_LIMIT))
+    expect(parsed.recentRuns[0]).not.toHaveProperty('recovery')
+    expect(parsed.recentRuns[1].recovery).toMatchObject(recovery)
+    expect(parsed.recentRuns[1].recovery.guidance).toContain('not started')
+  })
+
   it('applies the state projection and smaller global budget to notebook_state', () => {
     const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_state')
     expect(tool?.mapResult).toBe(compactNotebookStateResult)
