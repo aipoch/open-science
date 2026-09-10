@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { StrictMode } from 'react'
+
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -35,6 +37,192 @@ describe('DatabaseStartupGate', () => {
         }
       }
     } as unknown as Window['api']
+  })
+
+  it('keeps the ready application mounted after a delayed retry snapshot', async () => {
+    let resolveRetry!: (state: DatabaseStartupState) => void
+    retry.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRetry = resolve
+        })
+    )
+    await act(async () => {
+      render(
+        <DatabaseStartupGate>
+          <div>Business application</div>
+        </DatabaseStartupGate>
+      )
+    })
+    act(() =>
+      publish({
+        phase: 'blocked',
+        error: {
+          code: 'database_open_failed',
+          message: 'Open-Science could not open its database.',
+          retryable: true
+        }
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    act(() => publish({ phase: 'ready' }))
+    const application = screen.getByText('Business application')
+    await act(async () => resolveRetry({ phase: 'starting' }))
+    expect(screen.queryByText('Business application')).toBe(application)
+    expect(screen.queryByText('Starting Open-Science…')).toBeNull()
+  })
+
+  it.each(['ready', 'blocked'] as const)(
+    'keeps a newer %s event when retry rejects',
+    async (phase) => {
+      let rejectRetry!: (error: Error) => void
+      retry.mockImplementation(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectRetry = reject
+          })
+      )
+      await act(async () => {
+        render(
+          <DatabaseStartupGate>
+            <div>Business application</div>
+          </DatabaseStartupGate>
+        )
+      })
+      const blocked: DatabaseStartupState = {
+        phase: 'blocked',
+        error: {
+          code: 'database_open_failed',
+          message: 'Open-Science could not open its database.',
+          retryable: true
+        }
+      }
+      act(() => publish(blocked))
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+      act(() => publish(phase === 'ready' ? { phase } : blocked))
+      await act(async () => rejectRetry(new Error('late failure')))
+      expect(screen.queryByText('Open-Science could not finish checking its database.')).toBeNull()
+      expect(
+        screen.getByText(phase === 'ready' ? 'Business application' : blocked.error.message)
+      ).toBeTruthy()
+    }
+  )
+
+  it('keeps a newer blocked event when a retry returns an older starting state', async () => {
+    let resolveRetry!: (state: DatabaseStartupState) => void
+    retry.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRetry = resolve
+        })
+    )
+    await act(async () => {
+      render(
+        <DatabaseStartupGate>
+          <div>Business application</div>
+        </DatabaseStartupGate>
+      )
+    })
+    act(() =>
+      publish({
+        phase: 'blocked',
+        error: {
+          code: 'database_open_failed',
+          message: 'Open-Science could not open its database.',
+          retryable: true
+        }
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    act(() =>
+      publish({
+        phase: 'blocked',
+        error: {
+          code: 'database_newer_than_app',
+          message: 'A newer app is required.',
+          retryable: false
+        }
+      })
+    )
+    await act(async () => resolveRetry({ phase: 'starting' }))
+    expect(screen.getByText('A newer app is required.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+  })
+
+  it('accepts a retry snapshot before ready and ignores events after unmount', async () => {
+    let resolveRetry!: (state: DatabaseStartupState) => void
+    retry.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRetry = resolve
+        })
+    )
+    const view = render(
+      <DatabaseStartupGate>
+        <div>Business application</div>
+      </DatabaseStartupGate>
+    )
+    act(() =>
+      publish({
+        phase: 'blocked',
+        error: {
+          code: 'database_open_failed',
+          message: 'Open-Science could not open its database.',
+          retryable: true
+        }
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await act(async () => resolveRetry({ phase: 'starting' }))
+    expect(screen.getByText('Starting Open-Science…')).toBeTruthy()
+    act(() => publish({ phase: 'ready' }))
+    expect(screen.getByText('Business application')).toBeTruthy()
+    view.unmount()
+    act(() => publish({ phase: 'starting' }))
+    expect(screen.queryByText('Starting Open-Science…')).toBeNull()
+  })
+
+  it('ignores a retry from an unmounted StrictMode gate after a new gate is ready', async () => {
+    let resolveRetry!: (state: DatabaseStartupState) => void
+    retry.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRetry = resolve
+        })
+    )
+    const view = render(
+      <StrictMode>
+        <DatabaseStartupGate>
+          <div>Old application</div>
+        </DatabaseStartupGate>
+      </StrictMode>
+    )
+    act(() =>
+      publish({
+        phase: 'blocked',
+        error: {
+          code: 'database_open_failed',
+          message: 'Open-Science could not open its database.',
+          retryable: true
+        }
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    view.unmount()
+    getState.mockResolvedValue({ phase: 'ready' })
+    await act(async () => {
+      render(
+        <StrictMode>
+          <DatabaseStartupGate>
+            <div>New application</div>
+          </DatabaseStartupGate>
+        </StrictMode>
+      )
+    })
+    const application = screen.getByText('New application')
+    await act(async () => resolveRetry({ phase: 'starting' }))
+    expect(screen.getByText('New application')).toBe(application)
+    expect(screen.queryByText('Starting Open-Science…')).toBeNull()
   })
 
   it('reuses the branded startup loader while checking and migrating the database', () => {

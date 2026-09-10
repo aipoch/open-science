@@ -81,11 +81,11 @@ const install = (
 }
 
 describe('runtime application commands', () => {
-  it('installs the exact 12-command Runtime group', () => {
+  it('installs every Runtime method contract', () => {
     install()
-    const runtimeChannels = RENDERER_CONTRACT_GROUPS.find(
-      (group) => group.capability === 'runtime'
-    )?.contracts.map((contract) => contract.channel)
+    const runtimeChannels = RENDERER_CONTRACT_GROUPS.find((group) => group.capability === 'runtime')
+      ?.contracts.filter((contract) => contract.kind === 'method')
+      .map((contract) => contract.channel)
 
     expect(runtimeChannels).toHaveLength(13)
     expect(runtimeApplicationCommandGroup.commands.map((command) => command.name)).toEqual(

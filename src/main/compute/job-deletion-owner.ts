@@ -161,7 +161,7 @@ const cleanupCommand = (
 class ComputeJobDeletionOwner {
   private operationQueue: Promise<unknown> = Promise.resolve()
   private runtime: ComputeJobRuntimePause | undefined
-  private preparedDeletion: PreparedOwnerDeletion | undefined
+  private readonly preparedDeletions = new Map<string, PreparedOwnerDeletion>()
   private readonly armedOwners = new Map<string, ComputeJobOwner>()
   private readonly retainedOwners = new Set<string>()
   private readonly dispatchTracker: Pick<DispatchTracker, 'waitFor'>
@@ -345,8 +345,8 @@ class ComputeJobDeletionOwner {
   private async prepareOwnerWhenAvailable(owner: ComputeJobOwner): Promise<void> {
     while (true) {
       const decision = await this.enqueue(async () => {
-        const prepared = this.preparedDeletion
-        if (prepared && !this.sameOwner(prepared.owner, owner)) {
+        const prepared = this.overlappingPlan(owner)
+        if (prepared) {
           return { status: 'wait' as const, outcome: prepared.outcome }
         }
         await this.prepareOwner(owner)
@@ -361,6 +361,15 @@ class ComputeJobDeletionOwner {
 
   private sameOwner(left: ComputeJobOwner, right: ComputeJobOwner): boolean {
     return left.projectId === right.projectId && left.sessionId === right.sessionId
+  }
+
+  private overlappingPlan(owner: ComputeJobOwner): PreparedOwnerDeletion | undefined {
+    return [...this.preparedDeletions.values()].find(
+      (plan) =>
+        !this.sameOwner(plan.owner, owner) &&
+        plan.owner.projectId === owner.projectId &&
+        (plan.owner.sessionId === undefined || owner.sessionId === undefined)
+    )
   }
 
   private ownerKey(owner: ComputeJobOwner): string {
@@ -412,9 +421,9 @@ class ComputeJobDeletionOwner {
   }
 
   private async prepareOwner(owner: ComputeJobOwner): Promise<void> {
-    if (this.preparedDeletion) {
-      if (this.sameOwner(this.preparedDeletion.owner, owner)) return
-      throw new Error('Another Compute Job owner deletion is already prepared.')
+    if (this.preparedDeletions.has(this.ownerKey(owner))) return
+    if (this.overlappingPlan(owner)) {
+      throw new Error('An overlapping Compute Job owner deletion is already prepared.')
     }
 
     await this.armOwner(owner, false)
@@ -446,7 +455,12 @@ class ComputeJobDeletionOwner {
       const outcome = new Promise<PreparedDeletionOutcome>((resolve) => {
         settleOutcome = resolve
       })
-      this.preparedDeletion = { owner, remoteCleanups, outcome, settleOutcome }
+      this.preparedDeletions.set(this.ownerKey(owner), {
+        owner,
+        remoteCleanups,
+        outcome,
+        settleOutcome
+      })
     } catch (error) {
       if (!this.retainedOwners.has(this.ownerKey(owner))) {
         await this.releaseOwnerBarrier(owner)
@@ -456,7 +470,7 @@ class ComputeJobDeletionOwner {
   }
 
   private async commitOwner(owner: ComputeJobOwner): Promise<void> {
-    const prepared = this.preparedDeletion
+    const prepared = this.preparedDeletions.get(this.ownerKey(owner))
     if (!prepared || !this.sameOwner(prepared.owner, owner)) {
       throw new Error('Compute Job owner deletion is not prepared.')
     }
@@ -469,22 +483,22 @@ class ComputeJobDeletionOwner {
       prepared.settleOutcome({ status: 'retained', error })
       throw error
     }
-    this.preparedDeletion = undefined
+    this.preparedDeletions.delete(this.ownerKey(owner))
     prepared.settleOutcome({ status: 'released' })
     this.releaseCommittedOwnerBarriers(owner)
   }
 
   private async abortOwner(owner: ComputeJobOwner): Promise<void> {
-    if (this.preparedDeletion && !this.sameOwner(this.preparedDeletion.owner, owner)) {
+    if (this.overlappingPlan(owner)) {
       // A parent Project abort can race a retained child Session cleanup plan. The parent never
       // armed a new barrier because prepareOwner rejected before armOwner, so leave the child plan
       // and any restored durable Project barrier untouched for the next recovery attempt.
       return
     }
-    const prepared = this.preparedDeletion
+    const prepared = this.preparedDeletions.get(this.ownerKey(owner))
     await this.releaseOwnerBarrier(owner)
     if (prepared) {
-      this.preparedDeletion = undefined
+      this.preparedDeletions.delete(this.ownerKey(owner))
       prepared.settleOutcome({ status: 'released' })
     }
   }
@@ -496,26 +510,28 @@ class ComputeJobDeletionOwner {
     const owners = (await this.deps.jobRepository.listOwners()).filter(
       (owner) => projectId === undefined || owner.projectId === projectId
     )
-    const prepared = this.preparedDeletion?.owner
-    if (prepared?.sessionId !== undefined) {
-      const preparedIndex = owners.findIndex((owner) => this.sameOwner(owner, prepared))
-      if (preparedIndex > 0) owners.unshift(...owners.splice(preparedIndex, 1))
-    }
+    const failures: unknown[] = []
     for (const owner of owners) {
-      const liveness = await isOwnerLive(owner)
-      if (liveness === 'unknown') continue
-      if (liveness) {
-        const key = this.ownerKey(owner)
-        if (
-          this.retainedOwners.has(key) &&
-          (!this.preparedDeletion || !this.sameOwner(this.preparedDeletion.owner, owner))
-        ) {
-          await this.releaseOwnerBarrier(owner)
+      try {
+        const liveness = await isOwnerLive(owner)
+        if (liveness === 'unknown') continue
+        if (liveness) {
+          const key = this.ownerKey(owner)
+          if (this.retainedOwners.has(key) && !this.preparedDeletions.has(key)) {
+            await this.releaseOwnerBarrier(owner)
+          }
+          continue
         }
-        continue
+        await this.prepareOwner(owner)
+        await this.commitOwner(owner)
+      } catch (error) {
+        failures.push(error)
       }
-      await this.prepareOwner(owner)
-      await this.commitOwner(owner)
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'Compute Job owner cleanup failed.', {
+        cause: failures[0]
+      })
     }
   }
 

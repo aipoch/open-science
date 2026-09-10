@@ -84,6 +84,30 @@ class ProjectDeletionRecoveryError extends AggregateError {
   }
 }
 
+// Production recovery order: finish retained child jobs, replay Session projection authority,
+// then remove Project tombstones. Kept callable without booting Electron or other runtimes.
+const recoverDeletionWork = async (owners: {
+  recoverOrphanJobs(): Promise<void>
+  replaySessionProjection(): Promise<void>
+  recoverProjects(): Promise<void>
+}): Promise<void> => {
+  const failures: unknown[] = []
+  try {
+    await owners.recoverOrphanJobs()
+  } catch (error) {
+    failures.push(error)
+  }
+  try {
+    // Projection replay is still a prerequisite: do not remove its tombstone on replay failure.
+    await owners.replaySessionProjection()
+    await owners.recoverProjects()
+  } catch (error) {
+    failures.push(error)
+  }
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1) throw new AggregateError(failures, 'Deletion recovery failed.')
+}
+
 class ProjectDeletionRecoveryLoop {
   private readonly retryDelayMs: number
   private readonly onError: (error: unknown) => void
@@ -175,8 +199,14 @@ class ProjectDeletionRecoveryLoop {
           this.running = false
           const rerunRequested = this.rerunRequested
           this.rerunRequested = false
-          if (error instanceof ProjectDeletionRecoveryError) {
-            const failedProjectIds = new Set(error.failures.map(({ projectId }) => projectId))
+          const projectFailures = [
+            error,
+            ...(error instanceof AggregateError ? error.errors : [])
+          ].flatMap((failure) =>
+            failure instanceof ProjectDeletionRecoveryError ? failure.failures : []
+          )
+          if (projectFailures.length > 0) {
+            const failedProjectIds = new Set(projectFailures.map(({ projectId }) => projectId))
             for (const projectId of this.failureCounts.keys()) {
               if (!failedProjectIds.has(projectId)) this.failureCounts.delete(projectId)
             }
@@ -252,11 +282,14 @@ class ProjectDeletionCoordinator {
   deleteProject(projectId: string): Promise<ProjectDeletionOutcome> {
     const generation = ++this.operationGeneration
     this.isRecoveryComplete = false
-    return this.enqueueProjectOperation(projectId, () =>
+    let intentCreated = false
+    const operation = this.enqueueProjectOperation(projectId, () =>
       withDataRootWrite(async () => {
         const recoveryComplete = await this.waitForProjectOperationsNow([projectId], projectId)
         try {
-          const outcome = await this.runDeletion(projectId)
+          const outcome = await this.runDeletion(projectId, () => {
+            intentCreated = true
+          })
           // Preserve sticky completion only when scoped admission did not suppress failures owned by
           // other Projects and no newer deletion started during this operation.
           this.isRecoveryComplete =
@@ -269,6 +302,16 @@ class ProjectDeletionCoordinator {
           throw error
         }
       })
+    )
+    return operation.then(
+      (outcome) => {
+        if (outcome.status === 'cleanup-pending') this.recoveryLoop?.wake()
+        return outcome
+      },
+      (error: unknown) => {
+        if (intentCreated) this.recoveryLoop?.wake()
+        throw error
+      }
     )
   }
 
@@ -363,10 +406,14 @@ class ProjectDeletionCoordinator {
   // retry authority before any destructive runtime cleanup. Once the intent exists, every failure
   // remains fail-closed: the Project may still be visible, but recovery retains the fence and replays
   // quiescence before continuing durable deletion.
-  private async runDeletion(projectId: string): Promise<ProjectDeletionOutcome> {
+  private async runDeletion(
+    projectId: string,
+    onIntentCreated: () => void
+  ): Promise<ProjectDeletionOutcome> {
     if (!(await this.projects.exists(projectId))) return { status: 'deleted' }
 
     await this.createDeletionIntentWithFence(projectId)
+    onIntentCreated()
     await this.lifecycle?.beforeProjectDelete(projectId)
     await this.sessions.deleteProjectSessions(projectId)
     const attempt = await this.finishDeletion(projectId)
@@ -564,7 +611,7 @@ class ProjectDeletionCoordinator {
   }
 }
 
-export { ProjectDeletionCoordinator, ProjectDeletionRecoveryLoop }
+export { ProjectDeletionCoordinator, ProjectDeletionRecoveryLoop, recoverDeletionWork }
 export type {
   ProjectDeletionRecoveryLoopOptions,
   ProjectDeletionRepository,

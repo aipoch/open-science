@@ -302,15 +302,15 @@ describe('Compute service architecture', () => {
       'await deletionOwner.reconcileProjectOrphanJobs(projectId, isComputeJobOwnerLive)'
     )
     const backgroundOrphanRecovery = source.indexOf(
-      'await jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive)',
+      'recoverOrphanJobs: () => jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive)',
       backgroundRecovery
     )
     const backgroundSessionRecovery = source.indexOf(
-      'await sessionRepository.reconcilePendingSessionProjection()',
+      'replaySessionProjection: () => sessionRepository.reconcilePendingSessionProjection()',
       backgroundOrphanRecovery
     )
     const backgroundProjectRecovery = source.indexOf(
-      'await projectDeletionCoordinator.recoverPendingDeletions()',
+      'recoverProjects: () => projectDeletionCoordinator.recoverPendingDeletions()',
       backgroundSessionRecovery
     )
     const committedDeletionWake = source.indexOf(

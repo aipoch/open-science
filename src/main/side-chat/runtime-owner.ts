@@ -666,7 +666,7 @@ class SideChatRuntimeOwner {
   }
 
   async close(request: SideChatSessionRequest): Promise<void> {
-    const active = this.findActive(request.sideSessionId)
+    const active = this.findActive(request.sideSessionId, true)
     if (active) {
       await this.closeActive(active)
       return
@@ -829,11 +829,16 @@ class SideChatRuntimeOwner {
       .map((dormant) => dormant.activating)
       .filter((activation): activation is Promise<ActiveSideChat> => Boolean(activation))
     for (const chat of starting) this.closeRequestedParents.add(chat.parentSessionId)
-    await settle(this.activeChats().map((active) => this.suspendActive(active)))
+    const initialActive = new Set(this.activeByParent.values())
+    await settle([...initialActive].map((active) => this.suspendActive(active)))
     await Promise.allSettled(dispatches)
     await Promise.all(activating.map((activation) => activation.catch(() => undefined)))
     await settle(starting.map((chat) => chat.done.promise))
-    await settle(this.activeChats().map((active) => this.suspendActive(active)))
+    await settle(
+      [...this.activeByParent.values()]
+        .filter((active) => !initialActive.has(active))
+        .map((active) => this.suspendActive(active))
+    )
     await settle([...this.closingByParent.values()])
     if (failures.length > 0) {
       throw new AggregateError(failures, 'Side chat shutdown did not persist every conversation.')
@@ -1494,9 +1499,10 @@ class SideChatRuntimeOwner {
     })
   }
 
-  private findActive(sideSessionId: string): ActiveSideChat | undefined {
+  private findActive(sideSessionId: string, includeClosing = false): ActiveSideChat | undefined {
     for (const active of this.activeByParent.values()) {
-      if (active.sideSessionId === sideSessionId && !active.closing) return active
+      if (active.sideSessionId === sideSessionId && (includeClosing || !active.closing))
+        return active
     }
     return undefined
   }
@@ -1580,10 +1586,14 @@ class SideChatRuntimeOwner {
 
   private async closeActive(active: ActiveSideChat, notify = true): Promise<void> {
     const existing = this.closingByParent.get(active.parentSessionId)
-    if (existing) return existing
-    if (active.closing || this.activeByParent.get(active.parentSessionId) !== active) {
+    if (existing || active.closing) {
+      // A retained suspension still owns its runtime. Reap it before clearing durable history.
+      await (existing ?? this.suspendActive(active))
+      const dormant = this.dormantByParent.get(active.parentSessionId)
+      if (dormant) await this.closeDormant(dormant)
       return
     }
+    if (this.activeByParent.get(active.parentSessionId) !== active) return
     active.closing = true
     this.touch(active)
     const closing = this.destroyActive(active)
@@ -1614,7 +1624,22 @@ class SideChatRuntimeOwner {
   ): Promise<void> {
     const existing = this.closingByParent.get(active.parentSessionId)
     if (existing) return existing
-    if (active.closing || this.activeByParent.get(active.parentSessionId) !== active) return
+    if (this.activeByParent.get(active.parentSessionId) !== active) return
+    const closing = this.suspendActiveRuntime(active, lifecycle)
+    this.closingByParent.set(active.parentSessionId, closing)
+    try {
+      await closing
+    } finally {
+      if (this.closingByParent.get(active.parentSessionId) === closing) {
+        this.closingByParent.delete(active.parentSessionId)
+      }
+    }
+  }
+
+  private async suspendActiveRuntime(
+    active: ActiveSideChat,
+    lifecycle: PersistedSideChat['lifecycle']
+  ): Promise<void> {
     active.closing = true
     active.turnAccepted?.reject(new Error('Side chat runtime stopped.'))
     if (active.turn) {
@@ -1648,9 +1673,27 @@ class SideChatRuntimeOwner {
         updatedAt: Math.max(active.createdAt, Date.now())
       }
     }
-    await active.runtime.shutdownForQuit().catch(() => undefined)
-    this.releaseRelaySenders(active)
-    this.unregisterBridgeScopes(active)
+    const failures: unknown[] = persistError ? [persistError] : []
+    try {
+      const result = await active.runtime.shutdownForQuit()
+      if (result?.reaped === false) throw new Error('Side chat process tree was not reaped.')
+    } catch (error) {
+      failures.push(error)
+    }
+    for (const cleanup of [
+      () => this.releaseRelaySenders(active),
+      () => this.unregisterBridgeScopes(active)
+    ]) {
+      try {
+        cleanup()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    if (failures.length > (persistError ? 1 : 0)) {
+      // Retain the closing runtime for another teardown; never reconnect it or report it reaped.
+      throw new AggregateError(failures, 'Side chat runtime cleanup failed.')
+    }
     this.activeByParent.delete(active.parentSessionId)
     const dormant: DormantSideChat = {
       revision: ++this.revision,

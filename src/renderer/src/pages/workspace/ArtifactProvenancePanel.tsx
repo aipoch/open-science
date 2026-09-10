@@ -1,3 +1,4 @@
+import { Tabs } from 'radix-ui'
 import { useVersionHistoryPages } from './use-version-history-pages'
 import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
 import {
@@ -1277,7 +1278,13 @@ const ArtifactProvenancePanel = ({
   ) : undefined
 
   return (
-    <div className="flex size-full min-h-0 flex-col bg-bg-000" data-testid="artifact-provenance">
+    <Tabs.Root
+      value={isUserEdit && literature ? 'sources' : activeTab}
+      activationMode="manual"
+      onValueChange={(value) => setActiveTab(value as ProvenanceTab)}
+      className="flex size-full min-h-0 flex-col bg-bg-000"
+      data-testid="artifact-provenance"
+    >
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border-300/60 px-2">
         <Button
           type="button"
@@ -1344,27 +1351,37 @@ const ArtifactProvenancePanel = ({
 
       <VersionHistoryLoadButton history={history} />
       {(!isUserEdit || literature) && !isLegacyVersion ? (
-        <div
+        <Tabs.List
           ref={tabScrollFadeRef}
-          role="tablist"
+          aria-label={t('Provenance')}
           className="scroll-fade-x flex shrink-0 gap-1 overflow-x-auto border-b border-border-300/60 px-2 py-1"
         >
           {visibleTabs.map((tab) => (
-            <button
+            <Tabs.Trigger
               key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={isUserEdit || activeTab === tab.id}
-              className={`rounded px-2 py-1 text-xs ${isUserEdit || activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
+              value={tab.id}
               onClick={() => setActiveTab(tab.id)}
+              className={`rounded px-2 py-1 text-xs ${isUserEdit || activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
             >
               {t(tab.label)}
-            </button>
+            </Tabs.Trigger>
           ))}
-        </div>
+        </Tabs.List>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {(!isUserEdit || literature) && !isLegacyVersion
+        ? visibleTabs
+            .filter((tab) => tab.id !== (isUserEdit && literature ? 'sources' : activeTab))
+            .map((tab) => <Tabs.Content key={tab.id} value={tab.id} />)
+        : null}
+      <Tabs.Content
+        value={isUserEdit && literature ? 'sources' : activeTab}
+        role={(!isUserEdit || literature) && !isLegacyVersion ? 'tabpanel' : 'region'}
+        {...((!isUserEdit || literature) && !isLegacyVersion
+          ? {}
+          : { 'aria-labelledby': undefined })}
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
         {error ? (
           <ProvenanceLoadNotice
             key={provenanceKey + ':core'}
@@ -2016,8 +2033,8 @@ const ArtifactProvenancePanel = ({
             </section>
           )
         ) : null}
-      </div>
-    </div>
+      </Tabs.Content>
+    </Tabs.Root>
   )
 }
 

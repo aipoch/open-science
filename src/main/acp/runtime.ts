@@ -59,6 +59,7 @@ import {
   type ResolvedAgentBackend
 } from '../agent-framework'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
+import { redactSensitiveText } from '../diagnostic-redaction'
 import type { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
 import { buildSessionReferencePrompt } from './session-reference-prompt'
@@ -568,24 +569,6 @@ const hasCodexWebSocketFallback = (text: string): boolean =>
     text
   )
 
-const utf8PrefixWithinBytes = (value: string, maxBytes: number): string => {
-  if (maxBytes <= 0) return ''
-  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value
-
-  let low = 0
-  let high = Math.min(value.length, maxBytes)
-  while (low < high) {
-    const middle = Math.ceil((low + high) / 2)
-    if (Buffer.byteLength(value.slice(0, middle), 'utf8') <= maxBytes) low = middle
-    else high = middle - 1
-  }
-  // Do not retain half of a UTF-16 surrogate pair at the byte boundary.
-  if (low > 0 && value.charCodeAt(low - 1) >= 0xd800 && value.charCodeAt(low - 1) <= 0xdbff) {
-    low -= 1
-  }
-  return value.slice(0, low)
-}
-
 type AgentStderrWindow = {
   process: ChildProcessWithoutNullStreams
   framework: AgentFrameworkId
@@ -603,7 +586,7 @@ type AgentStderrWindow = {
   codexTransportSignalSample: string
   codexWebSocketFallbackObserved: boolean
   eventEligible: boolean
-  timer: ReturnType<typeof setTimeout>
+  timer?: ReturnType<typeof setTimeout>
 }
 
 type PlanDeliveryClaimRetry = {
@@ -657,6 +640,15 @@ class AcpRuntime {
   private durablePlanDeliveries?: Map<string, { projectId: string; commandId: string }>
   private readonly planDeliveryClaimRetries = new Map<string, PlanDeliveryClaimRetry>()
   private readonly planDeliveryPreparations = new Set<string>()
+  // Incomplete lines belong to the process stream, not the one-second reporting window.
+  private readonly agentStderrTails = new WeakMap<
+    ChildProcessWithoutNullStreams,
+    {
+      text: string
+      discarding: boolean
+      window: AgentStderrWindow
+    }
+  >()
   private readonly agentStderrWindows = new Map<ChildProcessWithoutNullStreams, AgentStderrWindow>()
   private restoredContinuationContextResetSessionIds?: Set<string>
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
@@ -1416,6 +1408,14 @@ class AcpRuntime {
       },
       markProcessExitExpected: (process) => this.connectionClose.markExpected(process),
       onProcessStderr: (text, context) => this.handleAgentProcessStderr(text, context),
+      onProcessStderrEnd: (context) => {
+        const tail = this.agentStderrTails.get(context.process)
+        if (tail?.text || (tail?.discarding && this.agentStderrWindows.has(context.process))) {
+          this.handleAgentProcessStderr('', context, true)
+        }
+        this.agentStderrTails.delete(context.process)
+        this.flushAgentProcessStderr(context.process)
+      },
       onProcessError: (error, context) => this.handleAgentProcessError(error, context),
       onProcessExit: (code, signal, context) => this.handleAgentProcessExit(code, signal, context),
       onConnectionClosed: () => this.connectionClose.handleUnexpectedClose(),
@@ -2823,9 +2823,10 @@ class AcpRuntime {
   // Projects adapter-bound process diagnostics while retaining epoch classification and event state.
   private handleAgentProcessStderr(
     text: string,
-    context: Parameters<AcpAgentConnectionHooks['onProcessStderr']>[1]
+    context: Parameters<AcpAgentConnectionHooks['onProcessStderr']>[1],
+    ended = false
   ): void {
-    if (!text) return
+    if (!text && !ended) return
 
     const disposition = this.processEventDisposition(context.process, context.epoch)
     const inFlight = disposition === 'current' ? this.getInFlightSessionIds() : []
@@ -2835,7 +2836,7 @@ class AcpRuntime {
       : undefined
     const existing = this.agentStderrWindows.get(context.process)
     if (existing) {
-      existing.chunkCount += 1
+      existing.chunkCount += ended ? 0 : 1
       existing.byteCount += Buffer.byteLength(text, 'utf8')
       existing.eventEligible &&= disposition === 'current'
       existing.nonActionableCodexOnly &&=
@@ -2848,8 +2849,15 @@ class AcpRuntime {
         existing.interactionSequence = undefined
         existing.sessionAttributionConsistent = false
       }
-      this.appendAgentStderrSample(existing, text)
+      this.appendAgentStderrSample(existing, text, ended)
       this.observeCodexTransportSignal(existing, text)
+      if (!existing.timer) {
+        existing.timer = setTimeout(
+          () => this.flushAgentProcessStderr(context.process),
+          AGENT_STDERR_REPORT_WINDOW_MS
+        )
+        existing.timer.unref?.()
+      }
       return
     }
 
@@ -2863,7 +2871,7 @@ class AcpRuntime {
       framework: context.framework,
       epoch: context.epoch,
       startedAt: Date.now(),
-      chunkCount: 1,
+      chunkCount: ended ? 0 : 1,
       byteCount: Buffer.byteLength(text, 'utf8'),
       rawSample: '',
       rawSampleBytes: 0,
@@ -2877,7 +2885,7 @@ class AcpRuntime {
       eventEligible: disposition === 'current',
       timer
     }
-    this.appendAgentStderrSample(window, text)
+    this.appendAgentStderrSample(window, text, ended)
     this.observeCodexTransportSignal(window, text)
     this.agentStderrWindows.set(context.process, window)
   }
@@ -2911,29 +2919,68 @@ class AcpRuntime {
     return process.env[RAW_AGENT_STDERR_ENV]?.trim().toLowerCase() === 'raw'
   }
 
-  private appendAgentStderrSample(window: AgentStderrWindow, text: string): void {
-    if (!this.includeRawAgentStderr()) return
-    let available = MAX_RAW_AGENT_STDERR_SAMPLE_BYTES - window.rawSampleBytes
-    if (available <= 0) {
-      window.rawSampleTruncated = true
+  private appendAgentStderrSample(window: AgentStderrWindow, text: string, ended: boolean): void {
+    if (!this.includeRawAgentStderr()) {
+      this.agentStderrTails.delete(window.process)
       return
     }
-    if (window.rawSample) {
-      window.rawSample += '\n'
-      window.rawSampleBytes += 1
-      available -= 1
+    const tail = this.agentStderrTails.get(window.process) ?? {
+      text: '',
+      discarding: false,
+      window
     }
-    const prefix = utf8PrefixWithinBytes(text, available)
-    window.rawSample += prefix
-    window.rawSampleBytes += Buffer.byteLength(prefix, 'utf8')
-    if (prefix.length < text.length) window.rawSampleTruncated = true
+    if (tail.window !== window && (tail.text || tail.discarding)) {
+      // A line crossing reporting windows must not acquire a later prompt's attribution.
+      window.sessionAttributionConsistent = false
+    }
+    tail.window = window
+    let offset = 0
+    do {
+      const newline = text.indexOf('\n', offset)
+      const end = newline < 0 ? text.length : newline + 1
+      const part = text.slice(offset, end)
+      if (!tail.discarding) {
+        if (
+          Buffer.byteLength(tail.text, 'utf8') + Buffer.byteLength(part, 'utf8') >
+          MAX_RAW_AGENT_STDERR_SAMPLE_BYTES
+        ) {
+          tail.text = ''
+          tail.discarding = true
+        } else {
+          tail.text += part
+        }
+      }
+      if (tail.discarding) window.rawSampleTruncated = true
+      if (newline >= 0 || ended) {
+        if (!tail.discarding) {
+          const safe = redactSensitiveText(tail.text)
+          const bytes = Buffer.byteLength(safe, 'utf8')
+          if (window.rawSampleBytes + bytes <= MAX_RAW_AGENT_STDERR_SAMPLE_BYTES) {
+            window.rawSample += safe
+            window.rawSampleBytes += bytes
+          } else {
+            window.rawSampleTruncated = true
+          }
+        }
+        tail.text = ''
+        tail.discarding = false
+      }
+      offset = end
+      if (newline < 0) break
+    } while (offset < text.length)
+    this.agentStderrTails.set(window.process, tail)
   }
 
   private flushAgentProcessStderr(process: ChildProcessWithoutNullStreams): void {
     const window = this.agentStderrWindows.get(process)
     if (!window) return
-    this.agentStderrWindows.delete(process)
     clearTimeout(window.timer)
+    window.timer = undefined
+    // Keep the original counters and attribution until a bounded raw line is complete.
+    // With no more data there is no repeating timer; stream end/close finalizes the window.
+    const tail = this.agentStderrTails.get(process)
+    if (this.includeRawAgentStderr() && tail?.text && !tail.discarding) return
+    this.agentStderrWindows.delete(process)
 
     const windowMs = Math.max(1, Date.now() - window.startedAt)
     const includeRaw = this.includeRawAgentStderr() && window.rawSample.length > 0
@@ -2949,7 +2996,7 @@ class AcpRuntime {
       byteCount: window.byteCount,
       windowMs,
       chunksPerSecond: Number(((window.chunkCount * 1000) / windowMs).toFixed(1)),
-      ...(includeRaw
+      ...(this.includeRawAgentStderr()
         ? { rawSample: window.rawSample, rawSampleTruncated: window.rawSampleTruncated }
         : {})
     })
@@ -2978,7 +3025,7 @@ class AcpRuntime {
       level: 'warning',
       sessionId,
       title: 'agent',
-      text: includeRaw ? `${summary}\n${window.rawSample}${rawSuffix}` : summary
+      text: includeRaw ? `${summary}\n${window.rawSample}${rawSuffix}` : `${summary}${rawSuffix}`
     })
   }
 

@@ -1612,6 +1612,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'runtime.listPackages': callable<
     (language: NotebookLanguage, envId: string) => Promise<EnvPackage[]>
   >()('runtime', ['runtime:list-packages', WEB, RUNTIME_LANGUAGE_ENV]),
+  'runtime.onPolicyChanged': callable<(listener: () => void) => RemoveListener>()('runtime', [
+    'runtime:policy-changed',
+    EVENT
+  ]),
   'runtime.pickInterpreter': callable<() => Promise<string | null>>()('runtime', [
     'runtime:pick-interpreter',
     LOCAL

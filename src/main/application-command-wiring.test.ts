@@ -55,6 +55,12 @@ describe('production application command wiring', () => {
     )
   })
 
+  it('routes background deletion through the tested owner recovery sequence', () => {
+    expect(compact(ipcSource)).toContain(
+      'recoverDeletionWork({ recoverOrphanJobs: () => jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive), replaySessionProjection: () => sessionRepository.reconcilePendingSessionProjection(), recoverProjects: () => projectDeletionCoordinator.recoverPendingDeletions() })'
+    )
+  })
+
   it('restores durable deletion barriers before managed file version recovery', () => {
     const deletionBarrierRestore = ipcSource.indexOf(
       'projectDeletionCoordinator.restorePendingDeletionBarriers()'
@@ -274,8 +280,9 @@ describe('production application command wiring', () => {
       )
     )
     expect(occurrences(indexSource, 'RemoteAccessService.create()')).toBe(1)
+    // Ownership bookkeeping may sit between acquisition and binding; preserve their order.
     expect(startup).toMatch(
-      /const remoteAccess = await RemoteAccessService\.create\(\) bindRemoteAccess\(remoteAccess\) const webController = createWebServiceController\(\{[^}]*externalAccess: remoteAccess\.webAccess/
+      /const remoteAccess = await RemoteAccessService\.create\(\).*?bindRemoteAccess\(remoteAccess\) const webController = createWebServiceController\(\{[^}]*externalAccess: remoteAccess\.webAccess/
     )
     expect(startup).toContain('remoteAccess.attachWebController(webController)')
     expect(startup).toContain('registerRemoteAccessIpcHandlers(remoteAccess)')

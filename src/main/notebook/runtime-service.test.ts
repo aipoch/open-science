@@ -887,6 +887,56 @@ describe('notebook runtime service', () => {
     await expect(service.state(request)).rejects.toThrow('Session is being deleted.')
   })
 
+  it('disposes kernels even when Shell cancellation intent cannot be saved', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const shutdown = vi.fn(async () => ({ reaped: true }))
+    const shellStarted = createDeferred<void>()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository,
+      environmentStateTracker: verifiedPackageMutationTracker(),
+      executorFactory: () => ({
+        execute: async (request) => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown
+      }),
+      shellProcess: {
+        execute: async (request) => {
+          shellStarted.resolve()
+          await new Promise<void>((resolve) =>
+            request.signal?.addEventListener('abort', () => resolve(), { once: true })
+          )
+          return { stdout: '', stderr: '', exitCode: null, cancelled: true }
+        }
+      }
+    })
+    const scope = { sessionId: 'session-1', workspaceCwd: root }
+    await service.execute({ ...scope, code: '1' })
+    const shell = service.executeShell({ ...scope, command: 'wait-for-cancel' })
+    await shellStarted.promise
+    const write = vi
+      .spyOn(repository, 'requestRunCancellation')
+      .mockRejectedValue(new Error('cancellation intent unavailable'))
+    try {
+      await expect(service.dispose()).rejects.toThrow(
+        'Shell cancellation intent could not be persisted'
+      )
+      await shell
+      expect(shutdown).toHaveBeenCalledOnce()
+    } finally {
+      write.mockRestore()
+    }
+  })
+
   it('closes global admission, cancels and drains an active Run before terminal teardown', async () => {
     const root = await createStorageRoot()
     const events: string[] = []
@@ -4598,6 +4648,110 @@ describe('notebook runtime service', () => {
       admission.mockRestore()
       const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
       expect(state.runs).toEqual([])
+    })
+
+    it('finishes runtime disposal after a queued Shell cancellation write fails', async () => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      let releaseFirst!: () => void
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve
+      })
+      const execute = vi.fn<NotebookShellProcess['execute']>(async () => {
+        await firstGate
+        return { stdout: '', stderr: '', exitCode: 0 }
+      })
+      const disposePrepared = vi.fn()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository,
+        shellConcurrencyLimit: 1,
+        shellProcess: {
+          execute,
+          prepare: async (request) => ({
+            execute: () => execute(request),
+            dispose: disposePrepared
+          })
+        }
+      })
+      const scope = { sessionId: 'session-1', workspaceCwd: root }
+      const first = service.executeShell({ ...scope, command: 'occupy-slot' })
+      const cancellation = new AbortController()
+      let second: Promise<unknown> | undefined
+      const transition = repository.transitionRun.bind(repository)
+      const write = vi.spyOn(repository, 'transitionRun').mockImplementation(async (input) => {
+        if (input.run.script === 'queued-command' && input.run.status === 'cancelled') {
+          throw new Error('queued cancellation write unavailable')
+        }
+        return transition(input)
+      })
+      try {
+        await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce())
+        second = service.executeShell({ ...scope, command: 'queued-command' }, cancellation.signal)
+        const rejected = expect(second).rejects.toThrow('queued cancellation write unavailable')
+        await vi.waitFor(async () => {
+          expect(
+            (await service.state(scope)).runs.find((run) => run.script === 'queued-command')?.status
+          ).toBe('queued')
+        })
+        cancellation.abort(new Error('user cancellation'))
+        await rejected
+        expect(execute).toHaveBeenCalledOnce()
+        releaseFirst()
+        await first
+        expect(disposePrepared).toHaveBeenCalledTimes(2)
+        let settled = false
+        void service.dispose().then(
+          () => {
+            settled = true
+          },
+          () => {
+            settled = true
+          }
+        )
+        await vi.waitFor(() => expect(settled).toBe(true), { timeout: 1000 })
+      } finally {
+        releaseFirst()
+        await Promise.allSettled([first, ...(second ? [second] : [])])
+        write.mockRestore()
+      }
+    })
+
+    it('settles Shell ownership even when prepared resource disposal throws', async () => {
+      const root = await createStorageRoot()
+      const dispose = vi.fn(() => {
+        throw new Error('prepared resource cleanup failed')
+      })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellConcurrencyLimit: 1,
+        shellProcess: {
+          execute: vi.fn(),
+          prepare: async () => ({
+            execute: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+            dispose
+          })
+        }
+      })
+      await expect(
+        service.executeShell({ sessionId: 'session-1', workspaceCwd: root, command: 'complete' })
+      ).rejects.toThrow('prepared resource cleanup failed')
+      expect(dispose).toHaveBeenCalledOnce()
+      let settled = false
+      void service.dispose().then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        }
+      )
+      await vi.waitFor(() => expect(settled).toBe(true), { timeout: 1000 })
     })
 
     it('releases Shell admission after scope preflight rejects without persisting a Run', async () => {

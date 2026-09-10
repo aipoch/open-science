@@ -267,11 +267,16 @@ const canApplySnapshot = (state: SettingsStoreData, snapshot: SettingsSnapshot):
 const mergeSnapshot = (
   state: SettingsStoreData,
   snapshot: SettingsSnapshot,
+  writeCoordinator: SettingsWriteCoordinator,
   extra: Partial<SettingsStoreData> = {}
 ): Partial<SettingsStoreData> =>
   canApplySnapshot(state, snapshot)
     ? {
-        ...applySnapshot(snapshot),
+        ...omitInFlightOptimisticPreferences(
+          applySnapshot(snapshot),
+          writeCoordinator.hasPending,
+          writeCoordinator.acceptCommitted
+        ),
         ...(snapshot.revision === undefined ? {} : { settingsSnapshotRevision: snapshot.revision }),
         ...extra
       }
@@ -360,12 +365,13 @@ const createSettingsStoreState = (
     // Resolve browser globals only when an action runs; node-based renderer tests import this store.
     getCommands: () => window.api.settings,
     reconcileSnapshot: (snapshot, runtimePatch = {}) =>
-      set((state) => mergeSnapshot(state, snapshot, runtimePatch))
+      set((state) => mergeSnapshot(state, snapshot, writeCoordinator, runtimePatch))
   }),
   ...createProviderAuthSlice({
     get,
     getCommands: () => window.api.settings,
-    reconcileSnapshot: (snapshot) => set((state) => mergeSnapshot(state, snapshot)),
+    reconcileSnapshot: (snapshot) =>
+      set((state) => mergeSnapshot(state, snapshot, writeCoordinator)),
     refreshPreflight: () => get().refreshPreflight(),
     refreshFrameworkStatus: async (id) => {
       if (id === 'opencode') {
@@ -387,13 +393,7 @@ const createSettingsStoreState = (
     getCommands: () => window.api.settings,
     reconcileSnapshot: (snapshot) => {
       if (!canApplySnapshot(get(), snapshot)) return false
-      set((state) =>
-        omitInFlightOptimisticPreferences(
-          mergeSnapshot(state, snapshot),
-          writeCoordinator.hasPending,
-          writeCoordinator.acceptCommitted
-        )
-      )
+      set((state) => mergeSnapshot(state, snapshot, writeCoordinator))
       return true
     },
     writeCoordinator
@@ -456,7 +456,7 @@ const createSettingsStoreState = (
         // The persisted Settings authority is enough for an existing user to enter Home. Capability
         // probes continue in this same deduplicated pass; first-run onboarding still waits in App.
         set((state) =>
-          mergeSnapshot(state, snapshot, {
+          mergeSnapshot(state, snapshot, writeCoordinator, {
             ...(shouldInitializeRuntime ? { isLoaded: true } : {}),
             loadError: undefined
           })
@@ -529,14 +529,7 @@ const createSettingsStoreState = (
 
   clearSettingsWriteError: () => writeCoordinator.clearFailures(),
   acceptCommittedSnapshot: (snapshot) =>
-    set((state) => {
-      if (!canApplySnapshot(state, snapshot)) return {}
-      return omitInFlightOptimisticPreferences(
-        mergeSnapshot(state, snapshot),
-        writeCoordinator.hasPending,
-        writeCoordinator.acceptCommitted
-      )
-    })
+    set((state) => mergeSnapshot(state, snapshot, writeCoordinator))
 })
 
 export const useSettingsStore = create<SettingsStore>((set, get) =>

@@ -1,3 +1,4 @@
+import { Tabs } from 'radix-ui'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Download, LoaderCircle, X } from 'lucide-react'
@@ -347,7 +348,15 @@ const SessionNotebookContent = ({
   const exportAllCount = dataKernelsWithRuns.length
 
   return (
-    <>
+    <Tabs.Root
+      value={effectiveActiveKind}
+      activationMode="manual"
+      className="contents"
+      onValueChange={(value) => {
+        setActiveKind(value as NotebookKernelKind)
+        setExportSuccess(undefined)
+      }}
+    >
       <div className="flex shrink-0 items-center justify-between border-b border-border-300/90 px-5 py-3.5">
         <h2 className="flex min-w-0 items-center gap-3 text-lg font-semibold text-foreground">
           <span>{t('Session notebook')}</span>
@@ -477,22 +486,20 @@ const SessionNotebookContent = ({
                 </SelectContent>
               </Select>
             </div>
-            <div
-              role="tablist"
+            <Tabs.List
+              aria-label={t('Session notebook')}
               data-testid="session-kernel-switcher"
               className="flex shrink-0 items-center gap-1 border-y border-border bg-muted px-3 py-1.5"
             >
               {visibleKinds.map((kind) => (
-                <button
+                <Tabs.Trigger
                   key={kind}
-                  type="button"
-                  role="tab"
-                  aria-selected={effectiveActiveKind === kind}
-                  data-testid={`session-notebook-tab-${kind}`}
+                  value={kind}
                   onClick={() => {
                     setActiveKind(kind)
                     setExportSuccess(undefined)
                   }}
+                  data-testid={`session-notebook-tab-${kind}`}
                   className={cn(
                     'flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
                     effectiveActiveKind === kind
@@ -505,10 +512,16 @@ const SessionNotebookContent = ({
                     {historySummary?.kernelCounts[kind] ??
                       projectedRuns.filter((run) => resolveRunKernelKind(run) === kind).length}
                   </span>
-                </button>
+                </Tabs.Trigger>
               ))}
-            </div>
-            <div
+            </Tabs.List>
+            {visibleKinds
+              .filter((kind) => kind !== effectiveActiveKind)
+              .map((kind) => (
+                <Tabs.Content key={kind} value={kind} />
+              ))}
+            <Tabs.Content
+              value={effectiveActiveKind}
               className="divide-y divide-border-100"
               data-testid={`session-notebook-kernel-${effectiveActiveKind}`}
             >
@@ -529,7 +542,7 @@ const SessionNotebookContent = ({
                   </div>
                 ))
               )}
-            </div>
+            </Tabs.Content>
           </>
         )}
       </div>
@@ -623,7 +636,7 @@ const SessionNotebookContent = ({
           </TooltipProvider>
         </div>
       </div>
-    </>
+    </Tabs.Root>
   )
 }
 

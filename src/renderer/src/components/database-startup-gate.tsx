@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CircleArrowUp,
@@ -100,25 +100,27 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
   )
   const [retrying, setRetrying] = useState(false)
   const [issueDraftOpen, setIssueDraftOpen] = useState(false)
+  const subscription = useRef<{ events: number } | null>(null)
 
   useEffect(() => {
     if (!databaseStartup) return
-    let disposed = false
-    let receivedEvent = false
+    const owner = { events: 0 }
+    subscription.current = owner
     const unsubscribe = databaseStartup.onStateChanged((next) => {
-      receivedEvent = true
-      if (!disposed) setState(next)
+      owner.events += 1
+      if (subscription.current === owner) setState(next)
     })
     void databaseStartup
       .getState()
       .then((current) => {
-        if (!disposed && !receivedEvent) setState(current)
+        if (subscription.current === owner && owner.events === 0) setState(current)
       })
       .catch(() => {
-        if (!disposed && !receivedEvent) setState(applyUnavailableStartupFallback)
+        if (subscription.current === owner && owner.events === 0)
+          setState(applyUnavailableStartupFallback)
       })
     return () => {
-      disposed = true
+      if (subscription.current === owner) subscription.current = null
       unsubscribe()
     }
   }, [databaseStartup])
@@ -126,15 +128,26 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
   if (state.phase === 'ready') return <>{children}</>
 
   const retry = (): void => {
-    if (!databaseStartup) return
+    const owner = subscription.current
+    if (!databaseStartup || !owner) return
+    const events = owner.events
     setRetrying(true)
     void databaseStartup
       .retry()
-      .then(setState)
-      .catch(() => {
-        setState(restoreUnavailableUnlessReady)
+      .then((next) => {
+        if (subscription.current === owner && owner.events === events) setState(next)
       })
-      .finally(() => setRetrying(false))
+      .catch(() => {
+        if (subscription.current !== owner) return
+        // A retry may publish checking before failing. Recover that pending attempt, but keep
+        // newer starting/blocked/ready events authoritative over an obsolete rejection.
+        setState(
+          owner.events === events ? restoreUnavailableUnlessReady : applyUnavailableStartupFallback
+        )
+      })
+      .finally(() => {
+        if (subscription.current === owner) setRetrying(false)
+      })
   }
 
   const openIssueDraft = (): void => {

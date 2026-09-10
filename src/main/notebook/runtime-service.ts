@@ -2263,17 +2263,34 @@ class NotebookRuntimeService {
     const recoveryDisposal = this.recoveryCoordinator.dispose()
     const shutdown = this.executionOwner
       .cancelShellRuns({}, new Error('Notebook runtime is shutting down.'))
-      .then(async (shell) => {
-        const shellRecoveryReaped =
-          shell.reaped && !this.shellProcessOwnership.hasReceipts()
-            ? true
-            : await this.shellProcessOwnership
-                .recover()
-                .then(() => true)
-                .catch(() => false)
-        const sessions = await this.sessionLifecycle.dispose()
-        return { reaped: shellRecoveryReaped && sessions.reaped }
-      })
+      .then(
+        async (shell) => {
+          const shellRecoveryReaped =
+            shell.reaped && !this.shellProcessOwnership.hasReceipts()
+              ? true
+              : await this.shellProcessOwnership
+                  .recover()
+                  .then(() => true)
+                  .catch(() => false)
+          const sessions = await this.sessionLifecycle.dispose()
+          return { reaped: shellRecoveryReaped && sessions.reaped }
+        },
+        async (error: unknown) => {
+          const results = await Promise.allSettled([
+            this.shellProcessOwnership.recover(),
+            this.sessionLifecycle.dispose()
+          ])
+          const failures = results.flatMap((result) =>
+            result.status === 'rejected' ? [result.reason] : []
+          )
+          if (failures.length)
+            throw new AggregateError(
+              [error, ...failures],
+              'Notebook cleanup failed after Shell cancellation failed.'
+            )
+          throw error
+        }
+      )
     const disposal = Promise.allSettled([shutdown, recoveryDisposal]).then(
       ([shutdownResult, recoveryResult]) => {
         const failures = [shutdownResult, recoveryResult]

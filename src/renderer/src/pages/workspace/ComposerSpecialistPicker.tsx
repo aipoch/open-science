@@ -37,6 +37,7 @@ const ComposerSpecialistPicker = ({
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const composingRef = useRef(false)
   const listboxId = useId()
 
   useEffect(() => {
@@ -92,6 +93,7 @@ const ComposerSpecialistPicker = ({
     <Popover
       open={open}
       onOpenChange={(nextOpen) => {
+        composingRef.current = false
         setOpen(nextOpen)
         if (nextOpen) {
           setQuery('')
@@ -126,6 +128,10 @@ const ComposerSpecialistPicker = ({
         sideOffset={8}
         collisionPadding={8}
         className="w-[min(16rem,calc(100vw-1rem))] rounded-xl border border-border-200 bg-bg-000 p-1.5 text-text-000 shadow-menu"
+        onEscapeKeyDown={(event) => {
+          if (event.isComposing || composingRef.current || event.keyCode === 229)
+            event.preventDefault()
+        }}
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           inputRef.current?.focus()
@@ -149,7 +155,19 @@ const ComposerSpecialistPicker = ({
               setQuery(event.currentTarget.value)
               setActiveIndex(0)
             }}
+            onCompositionStart={() => {
+              composingRef.current = true
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false
+            }}
             onKeyDown={(event) => {
+              if (
+                event.nativeEvent.isComposing ||
+                composingRef.current ||
+                event.nativeEvent.keyCode === 229
+              )
+                return
               if (filteredOptions.length === 0) return
               if (event.key === 'ArrowDown') {
                 event.preventDefault()

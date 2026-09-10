@@ -12,6 +12,8 @@ import type { ChatMessage } from '@/stores/session-store'
 import type { SendEditedMessage } from './workspace-edited-message'
 import type { EditAnnotationTarget } from './WorkspaceMessageItem'
 import type { Annotation, TextAnnotation } from '../../../../shared/annotations'
+import { ComposerEditor } from './composer/ComposerEditor'
+import { domToDoc, docToMessageParts, emptyDoc } from './composer/composer-doc'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { WorkspaceMessageItem as MessageItem } from './WorkspaceMessageItem'
 
@@ -79,6 +81,9 @@ const renderItem = async (
       messageId: string,
       target: EditAnnotationTarget | undefined
     ) => void
+    onPreviewMentionArtifact?: React.ComponentProps<
+      typeof WorkspaceMessageItem
+    >['onPreviewMentionArtifact']
     canBranchInNewSession?: boolean
     onBranchInNewSession?: (messageId: string) => void
     subsequentTurns?: number
@@ -101,7 +106,7 @@ const renderItem = async (
         onPreviewArtifact={noop}
         onPreviewUploadAttachment={noop}
         onOpenSkillMention={noop}
-        onPreviewMentionArtifact={noop}
+        onPreviewMentionArtifact={options.onPreviewMentionArtifact ?? noop}
         canEditMessage={options.canEditMessage ?? false}
         showUserActions={options.showUserActions}
         onSendEditedMessage={options.onSendEditedMessage}
@@ -976,6 +981,85 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(onSendEditedMessage).not.toHaveBeenCalled()
   })
 
+  it('preserves file identities when a copied message is pasted into Composer', async () => {
+    const clipboard = new Map<string, string>()
+    vi.stubGlobal(
+      'ClipboardItem',
+      class {
+        constructor(readonly data: Record<string, Blob>) {}
+      }
+    )
+    const readBlob = (blob: Blob): Promise<string> =>
+      new Promise((resolve) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result))
+        reader.readAsText(blob)
+      })
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          clipboard.set('text/plain', text)
+        },
+        write: async (items: { data: Record<string, Blob> }[]) => {
+          for (const [type, blob] of Object.entries(items[0].data)) {
+            clipboard.set(type, await readBlob(blob))
+          }
+        }
+      }
+    })
+    const parts: NonNullable<ChatMessage['parts']> = [
+      {
+        type: 'artifact',
+        id: 'upload-1',
+        sourceFileId: 'file-1',
+        versionId: 'version-1',
+        name: 'volcano-plot.csv',
+        path: 'uploads/plot.csv',
+        source: 'upload',
+        mimeType: 'text/csv'
+      },
+      { type: 'text', text: ' Plot in R' }
+    ]
+    try {
+      await renderItem(createMessage({ content: '@volcano-plot.csv Plot in R', parts }))
+      await click(getButton('Copy message'))
+      await act(async () => {
+        await vi.waitFor(() => expect(clipboard.has('text/html')).toBe(true))
+      })
+      await act(async () => {
+        root.render(
+          <ComposerEditor
+            doc={emptyDoc}
+            onDocChange={noop}
+            onSubmit={noop}
+            onPaste={noop}
+            placeholder="Ask anything"
+            ariaLabel="Ask anything"
+            mentionPreviewContext={{ sessionId: 'target-session', projectId: 'project-1' }}
+          />
+        )
+      })
+      const composer = container.querySelector<HTMLElement>('[role="textbox"]')!
+      composer.focus()
+      const range = document.createRange()
+      range.selectNodeContents(composer)
+      window.getSelection()?.removeAllRanges()
+      window.getSelection()?.addRange(range)
+      await act(async () => {
+        const paste = new Event('paste', { bubbles: true, cancelable: true })
+        Object.defineProperty(paste, 'clipboardData', {
+          value: { files: [], getData: (type: string) => clipboard.get(type) ?? '' }
+        })
+        composer.dispatchEvent(paste)
+      })
+      expect(composer.querySelector('[data-mention-type="artifact"]')).not.toBeNull()
+      expect(docToMessageParts(domToDoc(composer))).toEqual(parts)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('opens an inline editor prefilled from the message, restoring mention chips', async () => {
     await renderItem(
       createMessage({
@@ -996,6 +1080,27 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(editor?.textContent).toBe('Run /forecast now')
     // The structured skill segment comes back as a chip, not flattened text.
     expect(editor?.querySelector('[data-mention-type="skill"]')).not.toBeNull()
+  })
+
+  it('uses the message owner preview action for a file chip in the inline editor', async () => {
+    const part = {
+      type: 'artifact' as const,
+      source: 'upload' as const,
+      id: 'mention-1',
+      sourceFileId: 'file-1',
+      versionId: 'version-1',
+      name: 'volcano.csv',
+      path: 'uploads/volcano.csv'
+    }
+    const preview = vi.fn()
+    await renderItem(createMessage({ content: '@volcano.csv', parts: [part] }), {
+      canEditMessage: true,
+      onPreviewMentionArtifact: preview
+    })
+    await click(getButton('Edit message'))
+    const chip = getEditor()!.querySelector<HTMLElement>('[data-mention-type="artifact"]')!
+    await click(chip)
+    expect(preview).toHaveBeenCalledWith(expect.objectContaining(part))
   })
 
   it('separates read-only uploaded files from the message editor', async () => {

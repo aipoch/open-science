@@ -149,6 +149,151 @@ describe('session persistence startup', () => {
     )
   }
 
+  it.each(['read-only', 'failed-save', 'pending-save', 'running'] as const)(
+    'bounds untouched historical bodies without discarding %s state',
+    async (mode) => {
+      const persisted = Array.from({ length: 40 }, (_, index) =>
+        createPersistedSession({
+          id: `history-${index}`,
+          number: index + 1,
+          messages: [
+            {
+              id: `message-${index}`,
+              role: 'user',
+              status: 'complete',
+              eventIds: [],
+              content: `History ${index}: ${'x'.repeat(64 * 1024)}`,
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        })
+      )
+      let finishSave: (() => void) | undefined
+      const loadOne = vi.fn(async ({ sessionId }: { sessionId: string }) =>
+        structuredClone(persisted.find((session) => session.id === sessionId))
+      )
+      window.api.sessions.list = vi.fn().mockResolvedValue({
+        sessions: persisted.map((session): SessionSummary => ({
+          number: session.number!,
+          id: session.id,
+          projectId: session.projectId,
+          title: session.title,
+          status: session.status,
+          presentedStatus: session.status,
+          pinned: false,
+          revision: 0,
+          activeMessageCount: 1,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          needsStartupRecovery: false
+        })),
+        manifest: { version: SESSION_MANIFEST_VERSION },
+        diagnostics: emptyLoadResult().diagnostics
+      })
+      window.api.sessions.loadOne = loadOne
+      await act(async () => root.render(<Probe />))
+      for (let index = 0; index < persisted.length; index++) {
+        await act(async () => {
+          useSessionStore.getState().selectSession(persisted[index].id)
+          await Promise.resolve()
+        })
+        expect(
+          useSessionStore.getState().sessions.find((session) => session.id === persisted[index].id)
+            ?.messages[0]?.content
+        ).toBe(persisted[index].messages[0].content)
+        if (index === 0 && mode === 'running') {
+          await act(async () => {
+            useSessionStore.getState().appendUserMessage({
+              sessionId: persisted[0].id,
+              messageId: persisted[0].messages[0].id,
+              content: persisted[0].messages[0].content,
+              rearmExisting: true
+            })
+          })
+          expect(
+            useSessionStore.getState().sessions.find((session) => session.id === persisted[0].id)
+              ?.status
+          ).toBe('running')
+        }
+        if (index === 0 && mode === 'pending-save') {
+          saveSession.mockImplementation(
+            (session) =>
+              new Promise((resolve) => {
+                finishSave = () => resolve(session)
+              })
+          )
+          await act(async () => {
+            useSessionStore.getState().renameSession(persisted[0].id, 'Pending title')
+            await Promise.resolve()
+          })
+        }
+        if (index === 0 && mode === 'failed-save') {
+          saveSession.mockRejectedValue(new Error('disk unavailable'))
+          await act(async () => {
+            useSessionStore.getState().renameSession(persisted[0].id, 'Unsaved title')
+            await flushSessionPersistence().catch(() => undefined)
+          })
+        }
+      }
+      await act(async () => {
+        const flushed = flushSessionPersistence().catch(() => undefined)
+        // A write awaiting its durable acknowledgement must keep the source body alive.
+        await Promise.resolve()
+        if (mode === 'pending-save') {
+          expect(
+            useSessionStore.getState().sessions.find((session) => session.id === persisted[0].id)
+              ?.messages[0]?.content
+          ).toBe(persisted[0].messages[0].content)
+          expect(finishSave).toBeTypeOf('function')
+          finishSave?.()
+        }
+        await flushed
+      })
+      const state = useSessionStore.getState()
+      expect(
+        state.sessions.filter((session) => session.contentLoaded !== false).length
+      ).toBeLessThanOrEqual(mode === 'read-only' ? 16 : 17)
+      const first = state.sessions.find((session) => session.id === persisted[0].id)!
+      if (mode === 'read-only') {
+        expect(first.contentLoaded).toBe(false)
+        expect(first.messages).toEqual([])
+        expect(saveSession).not.toHaveBeenCalled()
+      } else {
+        expect(first.contentLoaded).not.toBe(false)
+        expect(first.messages[0].content).toBe(persisted[0].messages[0].content)
+        if (mode === 'failed-save') expect(first.title).toBe('Unsaved title')
+      }
+      // Navigating back loads the original body; unloading must neither save empty content nor
+      // trigger an immediate reload of every evicted summary through the saver subscription.
+      expect(loadOne).toHaveBeenCalledTimes(40)
+      await act(async () => {
+        useSessionStore.getState().selectSession(persisted[0].id)
+        await Promise.resolve()
+      })
+      expect(
+        useSessionStore.getState().sessions.find((session) => session.id === persisted[0].id)
+          ?.messages[0]?.content
+      ).toBe(persisted[0].messages[0].content)
+      expect(loadOne).toHaveBeenCalledTimes(mode === 'read-only' ? 41 : 40)
+      expect(saveSession.mock.calls.every(([session]) => session.messages.length === 1)).toBe(true)
+      if (mode === 'read-only') {
+        await act(async () => {
+          useSessionStore.getState().renameSession(persisted[0].id, 'Renamed after reload')
+          await flushSessionPersistence()
+        })
+        expect(saveSession).toHaveBeenCalledOnce()
+        expect(saveSession.mock.calls[0][0]).toMatchObject({
+          id: persisted[0].id,
+          title: 'Renamed after reload',
+          messages: persisted[0].messages
+        })
+      }
+    }
+  )
+
   it('does not reload persisted sessions when the locale changes', async () => {
     loadAll.mockReset().mockResolvedValue(emptyLoadResult())
     await act(async () => root.render(<Probe />))

@@ -72,7 +72,7 @@ const DEFAULT_HANG_GRACE_MS = 10_000
 
 // Coordinates a close/quit confirmation. Main computes `sessions` plus activity without a Session row,
 // so the quit variant resolves without IPC only when both are idle; otherwise the renderer renders the
-// modal and replies with the choice, with a native/proceed fallback if it can't.
+// modal and replies with the choice, with a native confirmation fallback if it can't.
 export const createCloseConfirm = (
   deps: CloseConfirmDeps
 ): ((
@@ -105,7 +105,7 @@ export const createCloseConfirm = (
 
     // Never let a fallback rejection leave the confirm unsettled: a stranded promise would pin the
     // caller's in-flight guard forever and permanently block quit. On failure, keep the app resident
-    // for close-to-tray and proceed for quit.
+    // for close-to-tray and cancel an unconfirmed quit.
     const safeFallback = async (): Promise<CloseConfirmChoice> => {
       try {
         const result = await deps.nativeFallback(variant, sessions)
@@ -113,9 +113,7 @@ export const createCloseConfirm = (
         await persistPreference(choice, result.remember)
         return choice
       } catch {
-        return enforceDelegatedBlock(
-          variant === 'quit' ? 'quit' : variant === 'close-to-tray' ? 'minimize' : 'cancel'
-        )
+        return enforceDelegatedBlock(variant === 'close-to-tray' ? 'minimize' : 'cancel')
       }
     }
 

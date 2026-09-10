@@ -24,6 +24,8 @@ const MAX_BATCH_ITEMS = 32
 const MAX_BATCH_BYTES = 512 * 1024
 const DEFAULT_MAX_CONCURRENCY = 2
 const MAX_CONCURRENCY = 4
+// Includes running requests and every item retained by a batch (at most 2 MiB of prompts).
+const MAX_PENDING_REQUESTS = 32
 
 const HOST_LLM_SYSTEM_PROMPT = [
   'You are a temporary, tool-less model call inside Open-Science.',
@@ -172,6 +174,7 @@ class HostModelService {
   private readonly callDrainWaiters = new Set<() => void>()
   private readonly runSlotWaiters: Array<() => void> = []
   private activeRuns = 0
+  private pendingRequests = 0
   private shuttingDown = false
 
   constructor(private readonly options: HostModelServiceOptions) {}
@@ -318,10 +321,17 @@ class HostModelService {
     return target
   }
 
-  private callScope(callerSignal: AbortSignal | undefined): {
+  private callScope(
+    callerSignal: AbortSignal | undefined,
+    requestCount = 1
+  ): {
     controller: AbortController
     close: () => void
   } {
+    if (this.pendingRequests + requestCount > MAX_PENDING_REQUESTS) {
+      throw new Error('HOST_LLM_BUSY: host.llm is busy. Retry after pending calls finish.')
+    }
+    this.pendingRequests += requestCount
     const controller = new AbortController()
     const forwardAbort = (): void => controller.abort(callerSignal?.reason)
     callerSignal?.addEventListener('abort', forwardAbort, { once: true })
@@ -332,6 +342,7 @@ class HostModelService {
       close: () => {
         callerSignal?.removeEventListener('abort', forwardAbort)
         this.activeCalls.delete(controller)
+        this.pendingRequests -= requestCount
         if (this.activeCalls.size === 0) {
           for (const resolve of this.callDrainWaiters) resolve()
           this.callDrainWaiters.clear()
@@ -478,7 +489,7 @@ class HostModelService {
     callerSignal?: AbortSignal,
     context?: HostLlmCallContext
   ): Promise<readonly HostLlmBatchItem[]> {
-    const scope = this.callScope(callerSignal)
+    const scope = this.callScope(callerSignal, parsed.length)
     try {
       const target = await this.captureTarget(scope.controller.signal)
       const results = new Array<HostLlmBatchItem>(parsed.length)

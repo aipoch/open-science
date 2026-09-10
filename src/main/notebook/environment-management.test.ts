@@ -145,6 +145,22 @@ describe('NotebookEnvironmentManagementOwner', () => {
     expect(options.ensureRecovered).not.toHaveBeenCalled()
   })
 
+  it('does not publish a list cancelled while awaiting the manager', async () => {
+    const controller = new AbortController()
+    let finish!: (environments: []) => void
+    const pending = new Promise<[]>((resolve) => {
+      finish = resolve
+    })
+    const configured = manager()
+    vi.mocked(configured.listEnvironments).mockReturnValue(pending)
+    const { owner } = harness({ manager: configured })
+    const result = owner.manage({ action: 'list' }, controller.signal)
+    controller.abort(new Error('list cancelled'))
+    finish([])
+    await expect(result).rejects.toThrow('list cancelled')
+    expect(configured.listEnvironments).toHaveBeenCalledWith(controller.signal)
+  })
+
   it('keeps manager configuration inside the owner', async () => {
     const configuredHarness = harness()
     const owner = new NotebookEnvironmentManagementOwner({

@@ -93,6 +93,53 @@ describe('Session background activity ledger', () => {
     vi.unstubAllGlobals()
   })
 
+  it.each(['queued', 'running'] as const)(
+    'renders persisted cancellation intent for a %s Run on mount',
+    async (status) => {
+      const container = await renderLedger(
+        baseProps({ runs: [run({ status, cancellationRequestedAt: Date.now() })] })
+      )
+      expect(container.textContent).toContain('Cancelling')
+      expect(buttonByText(container, 'Cancel')?.disabled).toBe(true)
+    }
+  )
+
+  it('shows cancellation failure beside the Run and permits another request', async () => {
+    const cancelBackgroundRun = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('storage unavailable'))
+      .mockResolvedValueOnce(undefined)
+    vi.stubGlobal('window', { ...window, api: { notebook: { cancelBackgroundRun } } })
+    const container = await renderLedger(baseProps({ runs: [run()] }))
+    await act(async () => buttonByText(container, 'Cancel')?.click())
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('storage unavailable')
+    expect(buttonByText(container, 'Cancel')?.disabled).toBe(false)
+    await act(async () => buttonByText(container, 'Cancel')?.click())
+    expect(cancelBackgroundRun).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('drops the previous Session cancellation error when another Session is displayed', async () => {
+    const cancelBackgroundRun = vi.fn().mockRejectedValue(new Error('old session error'))
+    vi.stubGlobal('window', { ...window, api: { notebook: { cancelBackgroundRun } } })
+    const container = await renderLedger(baseProps({ runs: [run()] }))
+    await act(async () => buttonByText(container, 'Cancel')?.click())
+    expect(container.querySelector('[role="alert"]')).not.toBeNull()
+    await act(async () =>
+      roots[0].render(
+        <SessionBackgroundActivity
+          {...baseProps({
+            sessionId: 'another-session',
+            runs: [run()],
+            notebook: { ...notebook, sessionId: 'another-session' }
+          })}
+        />
+      )
+    )
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(buttonByText(container, 'Cancel')?.disabled).toBe(false)
+  })
+
   it('renders Compute Jobs in their own section with View all jobs and delegated Cancel', async () => {
     const jobsCancel = vi.fn().mockResolvedValue({ status: 'running' })
     const openComputeJob = vi.fn()

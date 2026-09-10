@@ -189,15 +189,15 @@ export const createSettingsPreferencesSlice = ({
       const snapshot = await write.run(command)
       const isCurrent = write.isCurrent()
       const accepted = reconcileSnapshot(snapshot) !== false
+      // Reconciliation records normalized defaults and authoritative clears. Do not replace
+      // those with an omitted raw field from an older/untyped snapshot.
       const confirmedValue = write.complete(
-        accepted
+        accepted && snapshot[field] !== undefined
           ? { value: snapshot[field] as unknown as SettingsPreferencesState[Field] }
           : undefined
       )
       if (!isCurrent) return
-      if (!accepted) {
-        setState({ [field]: confirmedValue } as Partial<SettingsPreferencesState>)
-      }
+      setState({ [field]: confirmedValue } as Partial<SettingsPreferencesState>)
       write.succeed()
     } catch (error) {
       const confirmedValue = write.complete()

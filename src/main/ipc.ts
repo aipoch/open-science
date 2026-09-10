@@ -263,7 +263,8 @@ import {
 import { ManagedFileVersionService } from './managed-file-versions/service'
 import {
   ProjectDeletionCoordinator,
-  ProjectDeletionRecoveryLoop
+  ProjectDeletionRecoveryLoop,
+  recoverDeletionWork
 } from './projects/deletion-coordinator'
 import { ProjectRuntimeQuiescenceOwner } from './projects/project-runtime-quiescence-owner'
 import { getProjectDbClient } from './projects/prisma-client'
@@ -3340,14 +3341,12 @@ const createApplicationModules = async (
   // Notebook, Side Chat, and the composed quiescence boundary are all initialized. The bounded
   // durable barrier restoration above still runs early enough to block admission during startup.
   const projectDeletionRecovery = new ProjectDeletionRecoveryLoop(
-    async () => {
-      // A retained child Session plan must finish before its parent Project intent can prepare.
-      await jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive)
-      // Replay a pending Session JSON write from the tombstone before Project recovery removes that
-      // temporary authority. The retained SQLite facts then remain available to historical Usage.
-      await sessionRepository.reconcilePendingSessionProjection()
-      await projectDeletionCoordinator.recoverPendingDeletions()
-    },
+    () =>
+      recoverDeletionWork({
+        recoverOrphanJobs: () => jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive),
+        replaySessionProjection: () => sessionRepository.reconcilePendingSessionProjection(),
+        recoverProjects: () => projectDeletionCoordinator.recoverPendingDeletions()
+      }),
     {
       onError: (error) =>
         createLogger('compute-job-deletion').error(
@@ -3977,6 +3976,7 @@ const createApplicationModules = async (
   // (getRuntimeRoot(<dataRoot>)); read lazily so a data-root switch is reflected without re-register.
   const runtimeWorkflows = createRuntimeWorkflows({
     settingsService,
+    onPolicyChanged: () => broadcastToRenderers('runtime:policy-changed', undefined),
     ...(notebookNetworkSandbox.supportsWindowsRuntimeAccess
       ? {
           setWindowsRuntimeAccess: (executable: string, authorized: boolean) =>

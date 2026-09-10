@@ -103,12 +103,14 @@ export const createComputeJobRuntime = (
         }
       ))
     : undefined
+  let stopRequested = false
   const deletionRuntime = {
     pause: async (): Promise<void> => {
       harvestAbortController.abort()
       await Promise.all([poller.pause(), cancellationReaper?.pause()])
     },
     resume: (): void => {
+      if (stopRequested) return
       harvestAbortController = new AbortController()
       poller.resume()
       cancellationReaper?.resume()
@@ -116,7 +118,7 @@ export const createComputeJobRuntime = (
   }
   const unbindDeletionRuntime = deps.jobDeletionOwner?.bindRuntime(deletionRuntime)
   let startTask: Promise<void> | undefined
-  let stopRequested = false
+  let stopTask: Promise<void> | undefined
   return {
     start: () => {
       if (stopRequested) return
@@ -134,13 +136,26 @@ export const createComputeJobRuntime = (
       })()
       return startTask
     },
-    stop: async () => {
+    stop: () => {
       stopRequested = true
-      unbindDeletionRuntime?.()
-      await deps.computeService.stopQueueReconciliation()
-      await startTask
-      harvestAbortController.abort()
-      await Promise.all([poller.stop(), cancellationReaper?.stop()])
+      stopTask ??= (async () => {
+        const failures: unknown[] = []
+        const attempt = async (cleanup: () => unknown): Promise<void> => {
+          try {
+            await cleanup()
+          } catch (error) {
+            failures.push(error)
+          }
+        }
+        await attempt(() => unbindDeletionRuntime?.())
+        await attempt(() => deps.computeService.stopQueueReconciliation())
+        await attempt(() => startTask)
+        harvestAbortController.abort()
+        await Promise.all([attempt(() => poller.stop()), attempt(() => cancellationReaper?.stop())])
+        if (failures.length === 1) throw failures[0]
+        if (failures.length) throw new AggregateError(failures, 'Compute runtime cleanup failed.')
+      })()
+      return stopTask
     }
   }
 }
