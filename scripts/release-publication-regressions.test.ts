@@ -1,6 +1,14 @@
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -170,27 +178,6 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
     }
   }
 }
-
-it.skipIf(process.platform === 'win32')(
-  'keeps the newer stable pointer when an older release is mirrored',
-  () => {
-    const { cwd, remote, env } = objectStore()
-    const script = workflowStep('mirror-to-website.yml', 'mirror', 'Upload version.json')
-    mkdirSync(join(cwd, 'dist-assets'))
-    for (const version of ['0.27.0', '0.26.0']) {
-      for (const name of ['latest.yml', 'latest-linux.yml', 'latest-mac.yml'])
-        writeFileSync(join(cwd, 'dist-assets', name), `version: ${version}\n`)
-      writeFileSync(join(cwd, 'version.json'), JSON.stringify({ version }))
-      const result = spawnSync('bash', ['-eu', '-c', script], { cwd, env, encoding: 'utf8' })
-      expect(result.status, result.stderr).toBe(0)
-    }
-    expect(
-      JSON.parse(
-        readFileSync(join(remote, 'test-bucket/open-science/app/stable/version.json'), 'utf8')
-      ).version
-    ).toBe('0.27.0')
-  }
-)
 
 it.skipIf(process.platform === 'win32')(
   'preserves published runtime bytes when the same version is restaged',
@@ -477,30 +464,77 @@ it.skipIf(process.platform === 'win32')(
   }
 )
 
+it('validates legacy installer bytes for version-directory backfill without updater feeds', () => {
+  const dir = installer('open-science-0.1.2-linux-x86_64.AppImage')
+  const args = {
+    dir,
+    version: '0.1.2',
+    cdnBase: 'https://cdn.example',
+    prefix: 'open-science',
+    allowLegacyNames: true
+  }
+  expect(buildManifest(args).downloads['linux-x64-appimage']).toMatchObject({
+    sha256: sha256('synthetic installer')
+  })
+  writeFileSync(join(dir, 'open-science-0.1.2-linux-x86_64.AppImage'), 'corrupted installer')
+  expect(() => buildManifest(args)).toThrow(/SHA256 mismatch/)
+})
+
 it.skipIf(process.platform === 'win32')(
-  'recovers a partially promoted channel without allowing an older queued run to roll its feeds back',
+  'backfills a legacy release through the real mirror steps without changing stable',
   () => {
-    const fixture = objectStore()
-    const { cwd, remote, env } = fixture
-    const script = workflowStep('mirror-to-website.yml', 'mirror', 'Upload version.json')
-    mkdirSync(join(cwd, 'dist-assets'))
-    const promote = (version: string): ReturnType<typeof spawnSync> => {
-      writeFileSync(join(cwd, 'version.json'), JSON.stringify({ version }))
-      for (const name of ['latest.yml', 'latest-linux.yml', 'latest-mac.yml'])
-        writeFileSync(join(cwd, 'dist-assets', name), `version: ${version}\n`)
-      return spawnSync('bash', ['-eu', '-c', script], { cwd, env, encoding: 'utf8' })
+    const { cwd, remote, env } = objectStore()
+    rmSync(join(cwd, 'scripts'))
+    mkdirSync(join(cwd, 'scripts'))
+    for (const name of [
+      'generate-version-manifest.mjs',
+      'release-artifact-validation.mjs',
+      'publish-update-channel.mjs',
+      'publish-release-assets.mjs'
+    ]) {
+      copyFileSync(join(repo, 'scripts', name), join(cwd, 'scripts', name))
     }
-    expect(promote('0.26.0').status).toBe(0)
-    env.TEST_FAIL_UPLOAD = '/version.json'
-    expect(promote('0.27.0').status).not.toBe(0)
-    delete env.TEST_FAIL_UPLOAD
-    expect(promote('0.26.0').status).toBe(0)
+    symlinkSync(join(repo, 'node_modules'), join(cwd, 'node_modules'), 'dir')
+    const dir = join(cwd, 'dist-assets')
+    mkdirSync(dir)
+    const name = 'open-science-0.1.2-linux-x86_64.AppImage'
+    writeFileSync(join(dir, name), 'synthetic installer')
+    writeFileSync(join(dir, 'SHA256SUMS.txt'), `${sha256('synthetic installer')}  ${name}\n`)
+    const notes = join(cwd, 'notes')
+    mkdirSync(notes)
+    writeFileSync(join(notes, 'en.md'), 'Historical release')
+    writeFileSync(
+      join(cwd, 'bin', 'gh'),
+      '#!/usr/bin/env node\nconsole.log("2026-01-01T00:00:00Z")\n',
+      { mode: 0o755 }
+    )
     const channel = join(remote, 'test-bucket/open-science/app/stable')
-    expect(
-      (load(readFileSync(join(channel, 'latest.yml'), 'utf8')) as { version: string }).version
-    ).toBe('0.27.0')
-    expect(promote('0.27.0').status).toBe(0)
-    expect(JSON.parse(readFileSync(join(channel, 'version.json'), 'utf8')).version).toBe('0.27.0')
-  },
-  30000
+    mkdirSync(channel, { recursive: true })
+    const current = JSON.stringify({ version: '0.27.0' })
+    writeFileSync(join(channel, 'version.json'), current)
+    const run = (step: string, mode: string): ReturnType<typeof spawnSync> =>
+      spawnSync('bash', ['-eu', '-c', workflowStep('mirror-to-website.yml', 'mirror', step)], {
+        cwd,
+        encoding: 'utf8',
+        env: {
+          ...env,
+          VERSION: '0.1.2',
+          MODE: mode,
+          METADATA_ONLY: 'false',
+          NOTES_DIR: notes,
+          CDN_BASE_URL: 'https://cdn.example',
+          TAG: 'v0.1.2',
+          GITHUB_REPOSITORY: 'fixture/repo'
+        }
+      })
+    const generated = run('Generate version.json', 'backfill')
+    expect(generated.status, generated.stderr).toBe(0)
+    const published = run('Sync installers to versioned path', 'backfill')
+    expect(published.status, published.stderr).toBe(0)
+    expect(readFileSync(join(channel, 'releases/0.1.2', name), 'utf8')).toBe('synthetic installer')
+    expect(readFileSync(join(channel, 'version.json'), 'utf8')).toBe(current)
+    expect(run('Generate version.json', 'promote').status).not.toBe(0)
+    expect(run('Sync installers to versioned path', 'promote').status).not.toBe(0)
+    expect(readFileSync(join(channel, 'version.json'), 'utf8')).toBe(current)
+  }
 )

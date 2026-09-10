@@ -148,9 +148,14 @@ const extractArtifactSize = (
   updater: MinimalAutoUpdater
 ): number | undefined => {
   if (!files || files.length === 0) return undefined
-  const targetExt = platform === 'linux'
-    ? updater instanceof DebUpdater ? '.deb' : updater instanceof AppImageUpdater ? '.AppImage' : undefined
-    : PLATFORM_ARTIFACT_EXT[platform]
+  const targetExt =
+    platform === 'linux'
+      ? updater instanceof DebUpdater
+        ? '.deb'
+        : updater instanceof AppImageUpdater
+          ? '.AppImage'
+          : undefined
+      : PLATFORM_ARTIFACT_EXT[platform]
   if (!targetExt) return undefined
   if (platform === 'linux') {
     const matches = files.filter((file) => file.url?.endsWith(targetExt) && file.size != null)

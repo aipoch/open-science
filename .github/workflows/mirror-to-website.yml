@@ -136,6 +136,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.ref.outputs.tag }}
           METADATA_ONLY: ${{ inputs.dry_run }}
+          MODE: ${{ inputs.mode }}
         run: |
           if [ ! -d "$NOTES_DIR" ]; then
             NOTES="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
@@ -144,7 +145,11 @@ jobs:
           fi
           RELEASE_DATE="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json publishedAt --jq .publishedAt)"
           export RELEASE_DATE
-          validation_args=(--require-complete)
+          case "$MODE" in
+            promote) validation_args=(--require-complete) ;;
+            backfill) validation_args=(--backfill) ;;
+            *) echo "Invalid mirror mode" >&2; exit 1 ;;
+          esac
           if [ "$METADATA_ONLY" = "true" ]; then validation_args+=(--metadata-only); fi
           node scripts/generate-version-manifest.mjs dist-assets version.json "${validation_args[@]}"
 

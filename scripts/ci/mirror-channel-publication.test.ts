@@ -39,7 +39,13 @@ function fixture(): {
 const fs = require('node:fs');
 const path = require('node:path');
 const [service, operation, source, destination] = process.argv.slice(2);
-if (service !== 's3' || !['cp', 'sync'].includes(operation)) throw new Error('Unexpected AWS command');
+if (service === 's3api' && operation === 'head-object') {
+ const args = process.argv.slice(2);
+ const file = path.join(process.env.FIXTURE_STORAGE, args[args.indexOf('--bucket') + 1], args[args.indexOf('--key') + 1]);
+ if (!fs.existsSync(file)) { process.stderr.write('An error occurred (404): Not Found'); process.exit(1); }
+ process.exit(0);
+}
+if (service !== 's3'  || !['cp', 'sync'].includes(operation)) throw new Error('Unexpected AWS command');
 const local = value => value.startsWith('s3://') ? path.join(process.env.FIXTURE_STORAGE, value.slice(5)) : value;
 if (process.env.FAIL_KEY && destination === 's3://fixture-bucket/stable/' + process.env.FAIL_KEY) {
   process.stderr.write('Injected upload failure'); process.exit(1);
@@ -49,6 +55,7 @@ else {
  const target = local(destination);
  fs.mkdirSync(path.dirname(target), {recursive:true});
  fs.cpSync(local(source), target, {recursive: operation === 'sync'});
+ if (process.env.FAIL_KEY === 'corrupt:' + destination) fs.appendFileSync(target, 'corrupted readback');
 }
 `,
     { mode: 0o755 }
@@ -123,6 +130,16 @@ describe.skipIf(process.platform === 'win32')('website channel publication', () 
     )
     expect(f.snapshot()).toEqual(before)
   })
+  it('rejects changed bytes before overwriting a published version', () => {
+    const f = fixture()
+    f.stage('2.1.0')
+    f.run('2.1.0')
+    writeFileSync(join(f.root, 'dist-assets', 'installer.deb'), 'replacement installer')
+    expect(() => f.run('2.1.0')).toThrow()
+    expect(readFileSync(join(f.channel, 'releases', '2.1.0', 'installer.deb'), 'utf8')).toBe(
+      'fixture installer'
+    )
+  })
   it('only promotes on explicit intent and makes same-version retries idempotent', () => {
     const f = fixture(),
       before = f.snapshot()
@@ -145,6 +162,13 @@ describe.skipIf(process.platform === 'win32')('website channel publication', () 
     f.stage('2.1.0')
     f.run('2.1.0', 'promote')
     expect(f.snapshot()).toEqual(before)
+  })
+  it('rejects successful uploads whose channel readback differs', () => {
+    const f = fixture()
+    f.stage('2.1.0')
+    expect(() =>
+      f.run('2.1.0', 'promote', 'corrupt:s3://fixture-bucket/stable/latest.yml')
+    ).toThrow(/Publication readback failed/)
   })
   it('rejects a promotion with a missing platform before channel writes', () => {
     const f = fixture(),

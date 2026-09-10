@@ -2,10 +2,9 @@
 // Called only after local validation, under the owning workflow's publication lock. Existing
 // versioned objects are compared by bytes, including objects predating this publisher.
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { load } from 'js-yaml'
 import { artifactHash } from './release-artifact-validation.mjs'
 
 const bucket = process.env.S3_BUCKET
@@ -66,57 +65,10 @@ function stableVersion(version) {
   }
   return version.split('.').map(BigInt)
 }
-function isNewer(a, b) {
-  const left = stableVersion(a),
-    right = stableVersion(b)
-  for (let i = 0; i < 3; i++) {
-    if (left[i] !== right[i]) return left[i] > right[i]
-  }
-  return false
-}
-function publishChannel(manifestFile, dir) {
-  const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'))
-  stableVersion(manifest.version)
-  const feeds = readdirSync(dir).filter((name) => /^(latest(?:-linux)?|.*-mac)\.yml$/.test(name))
-  for (const name of ['latest.yml', 'latest-linux.yml', 'latest-mac.yml']) {
-    if (!feeds.includes(name)) throw new Error(`Missing channel feed: ${name}`)
-  }
-  for (const name of feeds) {
-    if (load(readFileSync(join(dir, name), 'utf8'))?.version !== manifest.version) {
-      throw new Error(`Channel feed version mismatch: ${name}`)
-    }
-  }
-  const entries = [
-    ...feeds.map((name) => [join(dir, name), `${prefix}/${name}`]),
-    [manifestFile, `${prefix}/version.json`]
-  ]
-  // A newer feed may remain after a failed promotion whose final manifest was never written.
-  // Never let an older queued run roll that feed back either; rerun the newer release to recover.
-  for (const [, key] of entries) {
-    const existing = readObject(key)
-    if (!existing) continue
-    const text = readFileSync(existing, 'utf8')
-    const version = (key.endsWith('.json') ? JSON.parse(text) : load(text))?.version
-    if (isNewer(version, manifest.version)) {
-      console.log(`Backfill only: channel already contains newer release ${version}`)
-      return
-    }
-  }
-  // This is ordered, not atomic across keys. The version manifest is the final completion marker;
-  // a failed upload is recovered by rerunning the same version, without replacing installer bytes.
-  for (const [file, key] of entries) copy(file, key, false)
-  for (const [file, key] of entries) {
-    const actual = readObject(key)
-    if (!actual || artifactHash(actual, 'sha256') !== artifactHash(file, 'sha256')) {
-      throw new Error(`Publication readback failed: ${basename(file)}`)
-    }
-  }
-}
 
 try {
   const [mode, dir, argument] = process.argv.slice(2)
-  if (mode === 'channel') publishChannel(dir, argument)
-  else if (mode === 'runtime') {
+  if (mode === 'runtime') {
     if (
       !/^[1-9]\d*$/.test(process.env.VERSION ?? '') ||
       !/^(osx-arm64|osx-64|linux-64|win-64)$/.test(argument)
@@ -136,6 +88,7 @@ try {
       readdirSync(dir)
         .filter((name) => name !== 'version.json')
         .map((name) => [join(dir, name), `${base}/${name}`])
+        .concat(argument ? [[argument, `${base}/version.json`]] : [])
     )
   } else if (mode === 'blockmaps') {
     const entries = []

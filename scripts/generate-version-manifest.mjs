@@ -98,7 +98,8 @@ export function buildManifest({
   cdnBase,
   prefix,
   metadataOnly = false,
-  requireComplete = false
+  requireComplete = false,
+  allowLegacyNames = false
 }) {
   if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
     throw new Error(`Invalid stable release version: ${version}`)
@@ -116,7 +117,7 @@ export function buildManifest({
       }
       continue
     }
-    validateArtifactName(filename, version)
+    validateArtifactName(filename, version, allowLegacyNames)
     const sha256 = sums[filename]
     if (!sha256) throw new Error(`[version-manifest] no sha256 in SHA256SUMS.txt: ${filename}`)
     const stat = statSync(join(dir, filename))
@@ -131,7 +132,13 @@ export function buildManifest({
   for (const filename of readdirSync(dir).filter((name) =>
     /^(latest(?:-linux)?|.*-mac)\.yml$/.test(name)
   )) {
-    validateUpdateFeed(load(readFileSync(join(dir, filename), 'utf8')), dir, version, metadataOnly)
+    validateUpdateFeed(
+      load(readFileSync(join(dir, filename), 'utf8')),
+      dir,
+      version,
+      metadataOnly,
+      allowLegacyNames
+    )
   }
   if (requireComplete) {
     for (const { key } of KEY_RULES) {
@@ -240,7 +247,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     cdnBase,
     prefix,
     metadataOnly: process.argv.includes('--metadata-only'),
-    requireComplete: process.argv.includes('--require-complete')
+    requireComplete: process.argv.includes('--require-complete'),
+    allowLegacyNames: process.argv.includes('--backfill')
   })
 
   writeFileSync(outputPath, `${JSON.stringify(manifest, null, 2)}\n`)

@@ -20,26 +20,35 @@ export function artifactHash(file, algorithm, encoding = 'hex') {
   }
 }
 
-export function validateArtifactName(name, version) {
+export function validateArtifactName(name, version, allowLegacyNames = false) {
   if (
     typeof name !== 'string' ||
     /[/\\\r\n]/.test(name) ||
     !(
       name.startsWith(`aipoch-open-science-${version}-`) ||
-      name.startsWith(`aipoch-open-science_${version}_`)
+      name.startsWith(`aipoch-open-science_${version}_`) ||
+      (allowLegacyNames &&
+        (name.startsWith(`open-science-${version}-`) ||
+          name.startsWith(`open-science_${version}_`)))
     )
   ) {
     throw new Error(`Artifact name does not match release ${version}: ${name}`)
   }
 }
 
-export function validateUpdateFeed(feed, dir, version, metadataOnly = false) {
+export function validateUpdateFeed(
+  feed,
+  dir,
+  version,
+  metadataOnly = false,
+  allowLegacyNames = false
+) {
   if (feed?.version !== version || !Array.isArray(feed.files) || feed.files.length === 0) {
     throw new Error(`Invalid update feed for release ${version}`)
   }
   const seen = new Set()
   for (const file of feed.files) {
-    validateArtifactName(file.url, version)
+    validateArtifactName(file.url, version, allowLegacyNames)
     if (seen.has(file.url)) throw new Error(`Duplicate feed artifact: ${file.url}`)
     seen.add(file.url)
     const stat = statSync(join(dir, file.url))
