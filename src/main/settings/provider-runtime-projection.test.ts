@@ -351,3 +351,17 @@ describe('ProviderRuntimeProjectionOwner', () => {
     )
   })
 })
+
+it('rejects a persisted remote HTTP provider before projecting credentials into an agent process', () => {
+  const owner = new ProviderRuntimeProjectionOwner()
+  const provider: StoredProvider = {
+    id: 'legacy',
+    name: 'Legacy',
+    type: 'custom',
+    baseUrl: 'http://remote-gateway.invalid',
+    model: 'model',
+    keyRef: encryptKey('PRIVACY_CANARY')
+  }
+  expect(() => owner.resolveProvider(provider)).toThrow(/HTTPS/)
+  expect(owner.toProviderView(provider).baseUrl).toBe(provider.baseUrl)
+})

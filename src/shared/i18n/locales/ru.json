@@ -5333,6 +5333,10 @@
     "Verifying installer…": "Проверка установщика…",
     "Open Science couldn't display this page": "Open Science не удалось отобразить эту страницу",
     "Background work may still be running. Reloading may lose unsaved changes on this page.": "Фоновые задачи могут всё ещё выполняться. При перезагрузке несохранённые изменения на этой странице могут быть потеряны.",
-    "Reload page": "Перезагрузить страницу"
+    "Reload page": "Перезагрузить страницу",
+    "Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.": "URL удалённых моделей должны использовать HTTPS. HTTP разрешён только для localhost или адресов обратной петли.",
+    "Load media from {{domains}}": "Загрузить медиа с {{domains}}",
+    "Images in Mermaid diagrams are blocked": "Изображения в диаграммах Mermaid заблокированы",
+    "Use a separate Markdown image to load it explicitly.": "Используйте отдельное изображение Markdown, чтобы загрузить его явно."
   }
 }

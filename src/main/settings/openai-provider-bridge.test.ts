@@ -411,3 +411,33 @@ describe('OpenAiProviderBridge', () => {
     })
   })
 })
+
+it('refuses a persisted remote HTTP target before forwarding a prompt or credential', async () => {
+  const upstream = vi.fn<typeof fetch>(async () => new Response('{}'))
+  const bridge = new OpenAiProviderBridge(
+    [
+      {
+        id: 'legacy',
+        wire: 'chat-completions',
+        endpoint: 'http://remote-gateway.invalid/v1/chat/completions',
+        key: 'PRIVATE_KEY_CANARY',
+        model: 'test-model'
+      }
+    ],
+    'legacy',
+    upstream
+  )
+  const connection = await bridge.start()
+  try {
+    const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'PRIVATE_RESEARCH_CANARY' }] })
+    })
+    expect(upstream).not.toHaveBeenCalled()
+    expect(response.ok).toBe(false)
+    expect(await response.text()).toContain('HTTPS')
+  } finally {
+    await bridge.close()
+  }
+})
