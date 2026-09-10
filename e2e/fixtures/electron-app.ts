@@ -22,6 +22,7 @@ import {
 } from '../../scripts/performance/runtime-resource-profiler'
 import { terminateProcessTree } from '../../src/main/process-tree'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
+import type { DatabaseStartupState } from '../../src/shared/database-startup'
 import { RendererFailureGate } from './renderer-failure-gate'
 
 const APP_ROOT = resolve(process.cwd())
@@ -294,23 +295,37 @@ const makeTreeWritable = async (root: string): Promise<void> => {
   )
 }
 
-const waitForRendererReady = async (page: Page): Promise<void> => {
+const waitForRendererReady = async (page: Page, timeout = 60_000): Promise<void> => {
   await page.waitForLoadState('domcontentloaded')
+  const startedAt = Date.now()
+  const transitions: { elapsedMs: number; state: DatabaseStartupState }[] = []
   // A fresh Windows profile can spend longer than the general assertion budget applying the real
   // schema manifest under runner I/O contention. Keep the startup gate aligned with settings load.
-  await expect
-    .poll(
-      () =>
-        page.evaluate(async () => {
-          const bridge = globalThis as unknown as {
-            api: { databaseStartup: { getState: () => Promise<{ phase: string }> } }
+  try {
+    await expect
+      .poll(
+        async () => {
+          const state = await page.evaluate(async () => {
+            const bridge = globalThis as unknown as {
+              api: { databaseStartup: { getState: () => Promise<DatabaseStartupState> } }
+            }
+            // Preserve startup diagnostics when a migration blocks before the journey can begin.
+            return await bridge.api.databaseStartup.getState()
+          })
+          if (JSON.stringify(transitions.at(-1)?.state) !== JSON.stringify(state)) {
+            transitions.push({ elapsedMs: Date.now() - startedAt, state })
           }
-          // Preserve startup diagnostics when a migration blocks before the journey can begin.
-          return await bridge.api.databaseStartup.getState()
-        }),
-      { timeout: 60_000 }
+          return state
+        },
+        { timeout }
+      )
+      .toMatchObject({ phase: 'ready' })
+  } catch (cause) {
+    throw new Error(
+      `Database readiness failed after ${Date.now() - startedAt}ms. Startup transitions: ${JSON.stringify(transitions)}`,
+      { cause }
     )
-    .toMatchObject({ phase: 'ready' })
+  }
   await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
 }
 
@@ -357,7 +372,10 @@ class ElectronAppHarness implements ElectronApp {
     private readonly windowMode: E2eWindowMode
   ) {}
 
-  static async create(windowMode: E2eWindowMode): Promise<ElectronAppHarness> {
+  static async create(
+    windowMode: E2eWindowMode,
+    onStartupFailure?: (app: ElectronAppHarness) => Promise<void>
+  ): Promise<ElectronAppHarness> {
     const testRoot = await mkdtemp(join(tmpdir(), 'open-science-electron-e2e-'))
     const harness = new ElectronAppHarness(
       testRoot,
@@ -378,6 +396,9 @@ class ElectronAppHarness implements ElectronApp {
       await harness.launch()
       return harness
     } catch (error) {
+      // Startup failures occur before the fixture's normal teardown is installed.
+      // Copy evidence out of the disposable profile before removing it.
+      await onStartupFailure?.(harness).catch(() => undefined)
       await harness.dispose().catch(() => undefined)
       throw error
     }
@@ -1043,12 +1064,12 @@ class ElectronAppHarness implements ElectronApp {
       this.resourceProfiler !== undefined
     )
     await this.resourceProfiler?.attach(this.application)
+    this.mainLogDirectory = await this.application.evaluate(({ app }) => app.getPath('logs'))
     this.currentPage = await openMainWindow(
       this.application,
       this.rendererFailures,
       this.windowMode
     )
-    this.mainLogDirectory = await this.application.evaluate(({ app }) => app.getPath('logs'))
   }
 
   private get runningApplication(): ElectronApplication {
@@ -1135,17 +1156,24 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
   windowMode: ['hidden', { option: true }],
   // Playwright fixture callbacks require an object pattern even when no base fixture is needed.
   app: async ({ windowMode }, install, testInfo) => {
-    const app = await ElectronAppHarness.create(windowMode)
+    const attachFailureLog = async (app: ElectronApp): Promise<void> => {
+      // Attach bytes directly so concurrent jobs/tests cannot overwrite a shared evidence file.
+      const path = await app.captureMainLog(
+        `failure-${testInfo.testId.replace(/[^a-z0-9-]/giu, '-')}-${testInfo.retry}.log`
+      )
+      await testInfo.attach('main-process-log', {
+        body: await readFile(path),
+        contentType: 'text/plain'
+      })
+    }
+    const app = await ElectronAppHarness.create(windowMode, attachFailureLog)
 
     try {
       await install(app)
     } finally {
       if (testInfo.status !== testInfo.expectedStatus) {
         // Preserve the original test failure even if shutdown left no readable log.
-        await app
-          .captureMainLog('test-failure.log')
-          .then((path) => testInfo.attach('main-process-log', { path, contentType: 'text/plain' }))
-          .catch(() => undefined)
+        await attachFailureLog(app).catch(() => undefined)
       }
       await app.dispose()
     }
@@ -1154,10 +1182,12 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
 
 export {
   closeElectronApplicationForCleanup,
+  ElectronAppHarness,
   electronLaunchTarget,
   launchEnvironment,
   STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
   suppressWorkspaceStarNudge,
+  waitForRendererReady,
   test
 }
 export type { ElectronApp }
