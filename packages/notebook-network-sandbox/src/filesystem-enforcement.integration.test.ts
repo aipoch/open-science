@@ -50,7 +50,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       })
       const result = await run(wrapped, workspace)
       const diagnostic = wrapped.annotateStderr(result.stderr)
-      wrapped.cleanup()
+      await wrapped.cleanup('exit', { processesTerminated: true })
 
       expect(result.code, diagnostic).toBe(0)
     } finally {
@@ -97,7 +97,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       })
       const allowedResult = await run(allowed, workspace)
       expect(allowedResult.code, allowedResult.stderr).toBe(0)
-      allowed.cleanup()
+      await allowed.cleanup('exit', { processesTerminated: true })
       await expect(readFile(join(workspace, 'result.txt'), 'utf8')).resolves.toBe('allowed')
 
       const deniedRead = await sandbox.wrap({
@@ -112,7 +112,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       expect(deniedRead.annotateStderr(readResult.stderr)).toContain(
         'OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED'
       )
-      deniedRead.cleanup()
+      await deniedRead.cleanup('exit', { processesTerminated: true })
 
       const deniedSymlinkRead = await sandbox.wrap({
         command: `/bin/cat ${secretLink}`,
@@ -123,7 +123,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       })
       const symlinkResult = await run(deniedSymlinkRead, workspace)
       expect(symlinkResult.code).not.toBe(0)
-      deniedSymlinkRead.cleanup()
+      await deniedSymlinkRead.cleanup('exit', { processesTerminated: true })
 
       const deniedHostTempRead = await sandbox.wrap({
         command: `/bin/cat ${hostTempSecret}`,
@@ -134,7 +134,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       })
       const hostTempReadResult = await run(deniedHostTempRead, workspace)
       expect(hostTempReadResult.code).not.toBe(0)
-      deniedHostTempRead.cleanup()
+      await deniedHostTempRead.cleanup('exit', { processesTerminated: true })
 
       const deniedReadOnlyWrite = await sandbox.wrap({
         command: `printf blocked > ${join(readOnly, 'input.txt')}`,
@@ -145,7 +145,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       })
       const readOnlyWriteResult = await run(deniedReadOnlyWrite, workspace)
       expect(readOnlyWriteResult.code).not.toBe(0)
-      deniedReadOnlyWrite.cleanup()
+      await deniedReadOnlyWrite.cleanup('exit', { processesTerminated: true })
       await expect(readFile(join(readOnly, 'input.txt'), 'utf8')).resolves.toBe('input')
 
       const deniedWrite = await sandbox.wrap({
@@ -160,7 +160,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       expect(deniedWrite.annotateStderr(writeResult.stderr)).toContain(
         'OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED'
       )
-      deniedWrite.cleanup()
+      await deniedWrite.cleanup('exit', { processesTerminated: true })
       await expect(readFile(outsideWrite, 'utf8')).rejects.toThrow()
 
       const deniedHostTempWrite = await sandbox.wrap({
@@ -172,7 +172,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       })
       const hostTempWriteResult = await run(deniedHostTempWrite, workspace)
       expect(hostTempWriteResult.code).not.toBe(0)
-      deniedHostTempWrite.cleanup()
+      await deniedHostTempWrite.cleanup('exit', { processesTerminated: true })
     } finally {
       await sandbox.dispose()
       await rm(privateRoot, { recursive: true, force: true })

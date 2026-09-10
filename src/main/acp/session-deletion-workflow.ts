@@ -36,7 +36,8 @@ type AcpSessionDeletionWorkflowDependencies = Readonly<{
   clearUserChoiceProvenanceForSession: (sessionId: string) => void
   appContinuations: Pick<AcpAppContinuationOwner, 'delete'>
   interactions: Pick<AcpSessionInteractionOwner, 'supersedeCurrent'>
-  capabilities: Pick<AcpSessionCapabilityOwner, 'revokeSession'>
+  capabilities: Pick<AcpSessionCapabilityOwner, 'revokeSession'> &
+    Partial<Pick<AcpSessionCapabilityOwner, 'forgetSetupSession'>>
   promptContent: Pick<AcpPromptContentOwner, 'resetSession'>
   releasePromptResourcesForSession: (sessionId: string) => void
   handoff: Pick<AcpHandoffContinuityOwner, 'clearSession'>
@@ -81,6 +82,13 @@ class AcpSessionDeletionWorkflow {
       this.deps.registry.detach(attachment, 'provider')
     }
 
+    // Forget durable setup authority only after provider deletion and a proven app identity. Recheck
+    // after the durable write so a stale captured generation cannot erase replacement-owned state.
+    if (!this.stillOwnsTarget(appSessionId, target)) {
+      deletion.finish(target)
+      return this.deps.getSnapshot()
+    }
+    await this.deps.capabilities.forgetSetupSession?.(appSessionId)
     // No await occurs between this ownership check and local cleanup. A stale captured generation
     // may dispose its own provider object, but cannot erase app-keyed state owned by a replacement.
     if (!this.stillOwnsTarget(appSessionId, target)) {

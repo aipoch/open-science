@@ -1,14 +1,22 @@
 import * as filesystem from 'node:fs/promises'
 import * as runtimePaths from './runtime-paths'
 import { existsSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { operationJournalPath, RuntimeOperationJournal } from './operation-journal'
+import {
+  operationJournalPath,
+  readOperationChild,
+  recordOperationChildSync,
+  RuntimeOperationJournal
+} from './operation-journal'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
 import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, pythonBin, rBin } from './runtime-paths'
+import { retainMicromambaWorkingCache } from './windows-micromamba-working-cache'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -332,6 +340,55 @@ describe('NotebookRecoveryCoordinator', () => {
     })
     expect(await journal.pending()).toHaveLength(1)
     expect(finalizeWorkingCache).not.toHaveBeenCalled()
+  })
+
+  it('releases an interrupted named create when its target environment is absent', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const targetPath = join(runtimeRoot, 'envs', 'pandas-env')
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'missing-named-create',
+      kind: 'materialize',
+      runtimeId: 'pandas-env',
+      phase: 'create-python',
+      startedAt: 100,
+      targetPath,
+      archivePublicationPending: true
+    })
+    const exitedChild = spawn(process.execPath, ['-e', 'process.exit(0)'])
+    await once(exitedChild, 'exit')
+    recordOperationChildSync(runtimeRoot, 'missing-named-create', {
+      childPid: exitedChild.pid!,
+      childStartedAt: 100
+    })
+    const finalizeWorkingCache = vi.fn().mockResolvedValue(true)
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot, undefined, {
+      finalizeWorkingCache
+    })
+
+    expect(existsSync(targetPath)).toBe(false)
+
+    await coordinator.recover()
+
+    expect(coordinator.snapshot()).toMatchObject({
+      blockedPrefixes: [],
+      blockedRuntimeIds: []
+    })
+    expect(await journal.pending()).toEqual([])
+    expect(readOperationChild(runtimeRoot, 'missing-named-create')).toBeUndefined()
+    expect(finalizeWorkingCache).toHaveBeenCalledWith(runtimeRoot, {
+      mode: 'current-candidates'
+    })
+    const release = await retainMicromambaWorkingCache(
+      runtimeRoot,
+      {
+        platform: 'win32',
+        canonicalize: (path) => win32.normalize(path),
+        cleanup: () => true
+      },
+      'later-install'
+    )
+    await expect(release({ completedOperationId: 'later-install' })).resolves.toBe(true)
   })
 
   it('owns blocked and live-unconfirmed recovery state in one snapshot', async () => {

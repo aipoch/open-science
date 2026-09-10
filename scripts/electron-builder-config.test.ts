@@ -5,6 +5,11 @@ import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
 import {
+  WSL2_BASH_PREVIEW_MANIFEST,
+  matchesWsl2BashPreviewManifest
+} from '../src/shared/wsl2-preview-manifest'
+
+import {
   WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES,
   WINDOWS_CACHE_TRUSTED_OWNER_SIDS
 } from '../src/main/notebook/micromamba-cache'
@@ -17,6 +22,9 @@ describe('electron-builder native image processing', () => {
 
     expect(config.asarUnpack).toContain('node_modules/sharp/**')
     expect(config.asarUnpack).toContain('node_modules/@img/**')
+    expect(config.asarUnpack).toContain(
+      'node_modules/@aipoch/process-tree-native/build/Release/*.node'
+    )
   })
 
   it('ships the Notebook network sandbox helpers for every supported platform', () => {
@@ -28,12 +36,53 @@ describe('electron-builder native image processing', () => {
     }
 
     expect(config.files).toContain('!node_modules/@aipoch/notebook-network-sandbox{,/**/*}')
+    expect(config.files).toContain('!packages/notebook-network-sandbox{,/**/*}')
     expect(config.win?.extraResources).toContainEqual({
       from: 'packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe',
       to: 'notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe'
     })
+    expect(config.win?.extraResources).toContainEqual({
+      from: 'packages/notebook-network-sandbox/vendor/wsl2/manifest.json',
+      to: 'notebook-network-sandbox/wsl2/manifest.json'
+    })
     expect(config.mac?.extraResources).toHaveLength(1)
     expect(config.linux?.extraResources).toHaveLength(1)
+  })
+})
+
+describe('WSL2 Bash Preview resource compatibility', () => {
+  it('keeps the packaged manifest identical to the main-process certification contract', () => {
+    const packagedManifest = JSON.parse(
+      readFileSync(
+        join(
+          process.cwd(),
+          'packages',
+          'notebook-network-sandbox',
+          'vendor',
+          'wsl2',
+          'manifest.json'
+        ),
+        'utf8'
+      )
+    )
+
+    expect(packagedManifest).toEqual(WSL2_BASH_PREVIEW_MANIFEST)
+  })
+
+  it('uses a resource compatibility contract independent of application releases', () => {
+    expect(WSL2_BASH_PREVIEW_MANIFEST).not.toHaveProperty('appVersion')
+    expect(matchesWsl2BashPreviewManifest(WSL2_BASH_PREVIEW_MANIFEST)).toBe(true)
+  })
+
+  it.each([
+    null,
+    {},
+    { ...WSL2_BASH_PREVIEW_MANIFEST, schemaVersion: -1 },
+    { ...WSL2_BASH_PREVIEW_MANIFEST, assets: [] },
+    { ...WSL2_BASH_PREVIEW_MANIFEST, assets: [...WSL2_BASH_PREVIEW_MANIFEST.assets, 'unknown'] },
+    { ...WSL2_BASH_PREVIEW_MANIFEST, appVersion: 'old-release' }
+  ])('rejects incompatible resource metadata: %j', (manifest) => {
+    expect(matchesWsl2BashPreviewManifest(manifest)).toBe(false)
   })
 })
 

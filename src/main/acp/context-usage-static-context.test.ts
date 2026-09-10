@@ -70,6 +70,8 @@ describe('contextUsageMcpSections', () => {
     // Background execution adds one bounded query/cancel tool plus durable receipt and delivery
     // guidance (~450 tokens); retain the established Notebook guidance rather than trading it away.
     // Connector loading adds ~35 tokens for the composer boundary, supported reader and stop rule.
+    // Shell runtime binding and recovery guidance adds ~31 tokens so retries preserve the selected
+    // dialect and recovery prerequisite instead of guessing from the host platform.
     for (const { frameworkId, codexBridgeAliases } of frameworks) {
       const [{ text: schema }] = contextUsageMcpSections(frameworkId, {
         artifacts: false,
@@ -80,7 +82,7 @@ describe('contextUsageMcpSections', () => {
       expect(
         tokenCount(`${NOTEBOOK_SYSTEM_PROMPT_APPEND}\n${schema}`) + bashHeadroom,
         `${frameworkId}${codexBridgeAliases ? ' (bridge aliases)' : ''}`
-      ).toBeLessThanOrEqual(4_690)
+      ).toBeLessThanOrEqual(4_720)
     }
   })
 

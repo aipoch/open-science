@@ -34,7 +34,8 @@ import type {
   NotebookSessionStateRequest,
   NotebookSessionReference,
   NotebookSessionState,
-  RunNotebookCellRequest
+  RunNotebookCellRequest,
+  ShellRuntimeBinding
 } from '../../shared/notebook'
 import { publishUserFile } from '../user-file-publisher'
 import { NotebookBackgroundRunError } from '../../shared/notebook'
@@ -61,6 +62,7 @@ import type { NotebookKernelExecutorOptions } from './kernel-executor'
 import { saveIpynbAll } from './save-ipynb-all'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import type { ProbeDeps } from './mirror-probe'
+import { defaultShellRuntimeBinding, shellRuntimePlatform } from './shell-runtime'
 import { detachedShellMechanism } from './shell-detachment-policy.windows-posix'
 import {
   installPackages as installPackagesDefault,
@@ -251,6 +253,9 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   // environment projection, and timeout teardown; tests inject a fake without crossing IPC/shared.
   shellProcess?: NotebookShellProcess
   shellConcurrencyLimit?: number
+  // Immutable shell capability selected before execution. Later switching creates a fresh service /
+  // capability; an in-flight Run never re-reads Settings.
+  shellRuntimeBinding?: ShellRuntimeBinding
   processSandbox?: NotebookProcessSandbox
   // Latency-probe deps for the fastest-mirror auto-selection, injectable so tests stay hermetic (the
   // real probe does live HEAD requests). Undefined in production → effectiveMirrorAsync's real probe.
@@ -692,6 +697,7 @@ class NotebookRuntimeService {
       helperModules: this.helperModules,
       logger: this.runtimeLogger,
       platform: options.platform,
+      shellRuntimeBinding: options.shellRuntimeBinding,
       shellProcess:
         options.shellProcess ??
         new NotebookShellProcessAdapter(
@@ -1674,7 +1680,12 @@ class NotebookRuntimeService {
   private assertManagedShellCommand(request: ExecuteShellRequest): void {
     const mechanism = detachedShellMechanism(
       request.command,
-      this.options.platform ?? process.platform
+      shellRuntimePlatform(
+        request.shellRuntime ??
+          this.options.shellRuntimeBinding ??
+          defaultShellRuntimeBinding(this.options.platform),
+        this.options.platform
+      )
     )
     if (!mechanism) return
     throw new NotebookBackgroundRunError(

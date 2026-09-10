@@ -95,6 +95,10 @@ export type ChatSession = Omit<
   activePlanProjection?: ActivePlanProjection
   planHistoryProjections?: ActivePlanProjection[]
   isPending?: boolean
+  // Transient presentation hint returned from Main's durable WSL setup binding. It carries no
+  // authority and is refreshed from startup summaries and create/resume responses rather than
+  // persisted by renderer.
+  wslSetup?: true
   // Transient: the first send has captured Delegation, but Main has not acknowledged the new
   // Session policy yet. Binding an Agent Session does not make this policy authoritative.
   delegationPolicyAuthorityPending?: true
@@ -317,6 +321,7 @@ export const toPersistedSession = (
     activities,
     activityGroups,
     isPending,
+    wslSetup,
     delegationPolicyAuthorityPending,
     unsavedTitle,
     interrupted,
@@ -346,6 +351,7 @@ export const toPersistedSession = (
   } = session
 
   void isPending
+  void wslSetup
   void delegationPolicyAuthorityPending
   void unsavedTitle
   void interrupted
@@ -453,6 +459,7 @@ const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
   contentLoaded: false,
   activeMessageCount: summary.activeMessageCount,
   artifactCount: summary.artifactCount,
+  ...(summary.wslSetup ? { wslSetup: true as const } : {}),
   ...(summary.presentedActivityAt !== undefined
     ? { presentedActivityAt: summary.presentedActivityAt }
     : {}),
@@ -532,6 +539,7 @@ const withTransientSessionState = (
       sortIndex: sourceMessages.get(message.id)?.sortIndex
     })),
     isPending: source.isPending,
+    wslSetup: source.wslSetup,
     interrupted: source.interrupted ?? hydrated.interrupted,
     fixLoopActive: source.fixLoopActive,
     compacting: source.compacting,
@@ -673,6 +681,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         const authority = selectedById.get(summary.id)
         if (!authority) return hydrateSessionSummary(summary)
         const hydrated = hydrateSession(authority)
+        if (summary.wslSetup) hydrated.wslSetup = true
         markExternallyHydratedSession(hydrated, authority)
         return hydrated
       })
@@ -702,6 +711,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           revision: Math.max(existing.revision ?? 0, loaded.revision ?? 0),
           filesRevision: Math.max(existing.filesRevision ?? 0, loaded.filesRevision ?? 0),
           updatedAt: Math.max(existing.updatedAt, loaded.updatedAt),
+          ...(existing.wslSetup ? { wslSetup: true } : {}),
           ...(existing.unsavedTitle ? { unsavedTitle: true } : {})
         }
         markExternallyHydratedSession(hydrated, session)

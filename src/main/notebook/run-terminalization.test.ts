@@ -197,6 +197,23 @@ const createHarness = (
 }
 
 describe('NotebookRunTerminalizationOwner', () => {
+  it('persists failure-time recovery facts for replay and background queries', async () => {
+    const harness = createHarness()
+    const recovery = { execution: 'not-started', retryAfter: 'cleanup-verified' } as const
+    const terminalized = await harness.owner.run({
+      session,
+      runningRun: runningRun('shell-recovery', 'bash'),
+      invoke: async () => ({
+        ...completedResult('failed'),
+        exitCode: null,
+        errorCode: 'shell-cleanup-incomplete' as const,
+        recovery
+      })
+    })
+    expect(terminalized.result.recovery).toEqual(recovery)
+    expect(harness.document().runs[0].recovery).toEqual(recovery)
+    expect(terminalized.run.recovery).toEqual(recovery)
+  })
   it('allocates distinct run identities while preserving the shared sequence value', () => {
     const owner = new NotebookRunTerminalizationOwner({
       repository: {

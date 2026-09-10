@@ -35,6 +35,7 @@ import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type { LanguagePreference } from '../../shared/locale'
+import type { LocalShellRuntimePreference, WslSelection } from '../../shared/wsl-setup'
 import {
   type StoredComputeGrant,
   type StoredConnectors,
@@ -62,6 +63,7 @@ import {
 } from './subagent-model-settings'
 import { relocateManagedRuntimeEnablement } from '../notebook/managed-runtime-relocation'
 import { isApplicationRequiredSkillId } from '../skills/activation-policy'
+import type { LocalShellRuntimeMutation } from './local-shell-runtime-mutation'
 
 type SkillMutationGuard = <T>(operation: () => Promise<T>) => Promise<T>
 type Write = Promise<StoredSettings>
@@ -70,10 +72,16 @@ type DataRootUpdate = Readonly<{
   onboardingCompletedAt?: number
   previousDataRoot?: string
 }>
+type LocalShellRuntimeWrite = Readonly<{
+  settings: StoredSettings
+  mutation: LocalShellRuntimeMutation
+}>
 
 // Stable mutation facade; the document store owns atomic IO, and secrets stay above this layer.
 class SettingsRepository {
   private readonly store: SettingsDocumentStore
+  private localShellRuntimeRevision = 0
+  private currentLocalShellRuntimeRevision: number | undefined
 
   constructor(
     storage: string | SettingsDocumentStore,
@@ -499,6 +507,64 @@ class SettingsRepository {
   async setNotebookNetwork(value: NotebookNetworkSettings): Promise<StoredSettings> {
     const notebookNetwork = normalizeNotebookNetworkSettings(value)
     return this.mutate((settings) => ({ ...settings, notebookNetwork }))
+  }
+
+  async setWslSelection(selection: WslSelection): Promise<StoredSettings> {
+    const distro = selection.distro.trim()
+    const user = selection.user.trim()
+    if (!distro || !user) throw new Error('Invalid WSL profile selection.')
+    return this.mutate((settings) => ({ ...settings, wslSelection: { distro, user } }))
+  }
+
+  async setLocalShellRuntime(
+    runtime: LocalShellRuntimePreference,
+    activatedWslSelection?: WslSelection
+  ): Promise<LocalShellRuntimeWrite> {
+    if (runtime === 'wsl2-bash' && !activatedWslSelection) {
+      throw new Error('A verified WSL2 Shell profile is required for activation.')
+    }
+    let mutation: LocalShellRuntimeMutation | undefined
+    const settings = await this.mutate((current) => {
+      mutation = Object.freeze({
+        revision: ++this.localShellRuntimeRevision,
+        runtime,
+        previous: current.localShellRuntime,
+        ...(current.activatedWslSelection
+          ? { previousActivatedWslSelection: { ...current.activatedWslSelection } }
+          : {})
+      })
+      this.currentLocalShellRuntimeRevision = mutation.revision
+      if (runtime !== 'wsl2-bash') return { ...current, localShellRuntime: runtime }
+      if (!activatedWslSelection) {
+        throw new Error('A verified WSL2 Shell profile is required for activation.')
+      }
+      return {
+        ...current,
+        localShellRuntime: runtime,
+        activatedWslSelection: { ...activatedWslSelection }
+      }
+    })
+    if (!mutation) throw new Error('Local Shell runtime mutation was not recorded.')
+    return Object.freeze({ settings, mutation })
+  }
+
+  async restoreLocalShellRuntime(mutation: LocalShellRuntimeMutation): Promise<boolean> {
+    let restored = false
+    await this.mutate((settings) => {
+      if (this.currentLocalShellRuntimeRevision !== mutation.revision) return settings
+      restored = true
+      this.currentLocalShellRuntimeRevision = ++this.localShellRuntimeRevision
+      const restoredSettings = { ...settings }
+      if (mutation.previous) restoredSettings.localShellRuntime = mutation.previous
+      else delete restoredSettings.localShellRuntime
+      if (mutation.previousActivatedWslSelection) {
+        restoredSettings.activatedWslSelection = { ...mutation.previousActivatedWslSelection }
+      } else {
+        delete restoredSettings.activatedWslSelection
+      }
+      return restoredSettings
+    })
+    return restored
   }
 
   async setAgentFramework(id: AgentFrameworkId): Promise<StoredSettings> {

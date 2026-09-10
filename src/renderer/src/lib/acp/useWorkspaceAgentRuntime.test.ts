@@ -2383,6 +2383,58 @@ describe('workspace agent message sending', () => {
     vi.restoreAllMocks()
   })
 
+  it('drains ordinary user Message persistence before provider dispatch', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      selectedSessionId: 'transport-session-1',
+      sessions: [
+        {
+          id: 'transport-session-1',
+          projectId: 'project-1',
+          cwd: '/workspace/project',
+          title: 'Conversation',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        } as ChatSession
+      ]
+    })
+    const persistence = createDeferred<void>()
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    const sending = sendWorkspaceMessage(
+      runtime,
+      {
+        sessionId: 'transport-session-1',
+        text: 'Delegate this task',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        agentFrameworkId: 'opencode'
+      },
+      { flushPersistence: () => persistence.promise }
+    )
+
+    await vi.waitFor(() =>
+      expect(useSessionStore.getState().sessions[0]?.messages).toEqual([
+        expect.objectContaining({ role: 'user', content: 'Delegate this task' })
+      ])
+    )
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+
+    persistence.resolve()
+    await expect(sending).resolves.toEqual(
+      expect.objectContaining({ sessionId: 'transport-session-1' })
+    )
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
   it.each<AgentFrameworkId>(['claude-code', 'opencode', 'codex', 'codebuddy'])(
     'persists a stable application-owned Message before dispatching through %s',
     async (agentFrameworkId) => {
@@ -4797,7 +4849,9 @@ describe('workspace agent message sending', () => {
       'ask',
       undefined,
       undefined,
-      true
+      true,
+      undefined,
+      undefined
     )
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
@@ -4974,7 +5028,8 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       true,
-      true
+      true,
+      undefined
     )
     expect(linkPdfContext).toHaveBeenCalledWith({
       projectId: 'project-1',
@@ -5084,7 +5139,9 @@ describe('workspace agent message sending', () => {
       'ask',
       undefined,
       undefined,
-      true
+      true,
+      undefined,
+      undefined
     )
     expect(linkPdfContext).not.toHaveBeenCalled()
   })
@@ -5363,6 +5420,37 @@ describe('workspace agent message sending', () => {
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
   })
 
+  it('forwards a setup capability when creating its new runtime Session', async () => {
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'transport-session-1',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      text: 'Set up WSL2',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      setupSessionToken: 'setup-token-1'
+    })
+
+    expect(runtime.createSession).toHaveBeenCalledWith(
+      '/workspace/project',
+      'project-1',
+      'ask',
+      undefined,
+      undefined,
+      true,
+      undefined,
+      'setup-token-1'
+    )
+  })
+
   it('reports a denied new Session preparation failure without dispatching its prompt', async () => {
     const saveSession = vi.fn(async (session: PersistedChatSession) => session)
     const setDelegationPolicy = vi.fn().mockRejectedValue(new Error('Policy authority unavailable'))
@@ -5610,7 +5698,9 @@ describe('workspace agent message sending', () => {
       'ask',
       undefined,
       undefined,
-      true
+      true,
+      undefined,
+      undefined
     )
     expect(useSessionStore.getState().selectedSessionId).toBe(branched?.sessionId)
     expect(useSessionStore.getState().sessions).toHaveLength(2)
@@ -6413,7 +6503,9 @@ describe('workspace agent message sending', () => {
       'ask',
       undefined,
       undefined,
-      true
+      true,
+      undefined,
+      undefined
     )
   })
 
@@ -6815,7 +6907,9 @@ describe('workspace agent message sending', () => {
       'ask',
       undefined,
       undefined,
-      true
+      true,
+      undefined,
+      undefined
     )
     expect(runtime.createSession).toHaveBeenNthCalledWith(
       2,
@@ -6824,7 +6918,9 @@ describe('workspace agent message sending', () => {
       'ask',
       undefined,
       undefined,
-      true
+      true,
+      undefined,
+      undefined
     )
   })
 

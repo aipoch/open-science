@@ -124,7 +124,9 @@ Call `dispose()` during lifecycle shutdown.
   declare `bubblewrap`; AppImage users receive an actionable setup message when it is missing.
 - Windows starts in standard mode: Notebook processes receive the authenticated proxy environment,
   but applications that ignore proxy variables are not a security boundary. An explicit Settings
-  action enables protected mode. Protected mode launches commands in a capability-free AppContainer
+  action enables protected mode. Short-lived package installers are additionally contained by the
+  bundled host's kill-on-close Job Object in standard mode, without changing that mode's network or
+  filesystem guarantees. Protected mode launches commands in a capability-free AppContainer
   and installs Windows Filtering Platform (WFP) filters scoped to that AppContainer SID. The filters
   permit only TCP to the installation-owned authenticated gateway on `127.0.0.1`; all other IPv4 and
   IPv6 connect attempts from the AppContainer are blocked. Concurrent commands share that listener

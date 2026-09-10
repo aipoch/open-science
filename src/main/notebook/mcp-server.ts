@@ -2,6 +2,7 @@ import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
+import { executionRecoveryContext } from './execution-recovery'
 
 import {
   MAX_AGENT_USER_CHOICE_OPTIONS,
@@ -19,7 +20,12 @@ import {
 } from '../local-rpc-transport'
 import { resolveProjectId } from '../../shared/project-scope'
 import type { ProjectIdScope } from '../../shared/project-scope'
-import { NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
+import { NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS, type ShellRuntimeBinding } from '../../shared/notebook'
+import {
+  defaultShellRuntimeBinding,
+  shellRuntimeAgentContract,
+  shellRuntimeBindingSchema
+} from './shell-runtime'
 import {
   memoryAgentRememberMcpOutputSchema,
   memoryAgentRememberRequestSchema,
@@ -68,6 +74,8 @@ type NotebookMcpEnvironment = NotebookRpcConnection &
     sessionId: string
     workspaceCwd: string
     memoryTools?: boolean
+    shellRuntime?: ShellRuntimeBinding
+    wslSetupTools?: boolean
   }
 
 type NotebookMcpServerConfigRequest = Omit<NotebookMcpEnvironment, 'memoryTools'> & {
@@ -104,15 +112,6 @@ const replExecuteToolSchema = {
       'Return after durable admission; keep this JavaScript REPL Run active in the Session.'
     ),
   timeoutMs: z.number().int().positive().default(NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS)
-}
-
-const bashExecuteToolSchema = {
-  command: z.string(),
-  background: z
-    .boolean()
-    .optional()
-    .describe('Return after durable admission; keep this Shell Command active in the Session.'),
-  timeoutMs: z.number().int().positive().optional()
 }
 
 const backgroundRunToolSchema = {
@@ -185,6 +184,18 @@ const requestUserInputToolSchema = {
   questions: z.array(userChoiceQuestionSchema).min(1).max(MAX_AGENT_USER_CHOICE_QUESTIONS)
 }
 
+const wslSetupSelectProfileSchema = {
+  distro: z.string().trim().min(1).max(256),
+  user: z.string().trim().min(1).max(128),
+  expectedRevision: z.number().int().nonnegative()
+}
+
+const wslSetupOpenTerminalSchema = {
+  target: z.enum(['powershell', 'distro']),
+  distro: z.string().trim().min(1).max(256).optional(),
+  user: z.string().trim().min(1).max(128).optional()
+}
+
 // Install contract embedded as the manage_packages description so the agent always sees it (spec §8.2).
 // The process boundary enforces the same approved-domain policy for every installer worker.
 const INSPECT_PACKAGES_DOC = [
@@ -240,27 +251,28 @@ const REPL_EXECUTE_DOC = [
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
 // The tool name is retained for backward compatibility, but Windows deliberately runs PowerShell.
-const buildShellExecuteDoc = (platform: NodeJS.Platform = process.platform): string => {
-  const shellDescription =
-    platform === 'win32'
-      ? 'Run one Windows PowerShell command in the shared session workspace. This is not Bash: use PowerShell syntax and do not assume a POSIX shell exists.'
-      : 'Run one shell command with `sh -c` in the shared session workspace.'
+const buildShellExecuteDoc = (
+  runtime: NodeJS.Platform | ShellRuntimeBinding = process.platform
+): string => {
+  const binding = typeof runtime === 'string' ? defaultShellRuntimeBinding(runtime) : runtime
+  const agentContract = shellRuntimeAgentContract(binding)
   const handoffVariable =
-    platform === 'win32' ? '$env:OPEN_SCIENCE_HANDOFF_DIR' : '$OPEN_SCIENCE_HANDOFF_DIR'
+    binding.kind === 'powershell' ? '$env:OPEN_SCIENCE_HANDOFF_DIR' : '$OPEN_SCIENCE_HANDOFF_DIR'
   const platformContract =
-    platform === 'win32'
+    binding.kind === 'powershell'
       ? 'Target Windows PowerShell 5.1; aliases are not POSIX utilities and `&&` is unavailable. Use `if ($?) { ... }` for dependent commands.'
       : undefined
   const exitCodeContract =
-    platform === 'win32'
+    binding.kind === 'powershell'
       ? 'Returns { stdout, stderr, exitCode }. PowerShell host/cmdlet text is normalized to UTF-8; native programs must emit UTF-8 themselves or their output may be garbled. A failed native program preserves its exit code, while an unhandled cmdlet failure returns exitCode 1; inspect exitCode instead of assuming success.'
       : 'Returns { stdout, stderr, exitCode } and does not throw on a non-zero exit; inspect exitCode instead of assuming success.'
 
   return [
-    shellDescription,
+    agentContract.executionDescription,
     ...(platformContract ? [platformContract] : []),
     `Stateless: each call is a fresh process, so cwd, variables, jobs, and functions do not persist. It starts in the data-kernel workspace and shares the handoff directory exposed as ${handoffVariable}; do not resolve handoff relative to cwd.`,
     exitCodeContract,
+    'If a result includes recovery, follow its retry prerequisite and guidance. Recovery describes that attempt, not current runtime health; exitCode:null is not permission to repeat a command.',
     'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',
     'Background commands must stay application-managed. Do not use &, nohup, setsid, disown, Start-Process, Start-Job, or equivalent detached-process mechanisms; use background:true instead.',
     'Do NOT copy a generated notebook output into the workspace with this tool. For a final chart, image, report, CSV, or other user-facing file, call `write_artifact_file` with the same relative filename you saved with (it resolves against the notebook session data dir); it copies the file safely on every platform.',
@@ -268,7 +280,23 @@ const buildShellExecuteDoc = (platform: NodeJS.Platform = process.platform): str
   ].join('\n')
 }
 
+const buildShellExecuteToolSchema = (
+  runtime: NodeJS.Platform | ShellRuntimeBinding = process.platform
+): NotebookToolSchema => {
+  const binding = typeof runtime === 'string' ? defaultShellRuntimeBinding(runtime) : runtime
+
+  return {
+    command: z.string().describe(shellRuntimeAgentContract(binding).commandDescription),
+    background: z
+      .boolean()
+      .optional()
+      .describe('Return after durable admission; keep this Shell Command active in the Session.'),
+    timeoutMs: z.number().int().positive().optional()
+  }
+}
+
 const BASH_EXECUTE_DOC = buildShellExecuteDoc()
+const bashExecuteToolSchema = buildShellExecuteToolSchema()
 
 type RpcRequest = {
   method: string
@@ -323,6 +351,15 @@ const createNotebookMcpServerConfig = (request: NotebookMcpServerConfigRequest):
       { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_ID', value: projectId },
       { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: request.sessionId },
       { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: request.workspaceCwd },
+      ...(request.shellRuntime
+        ? [
+            {
+              name: 'OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME',
+              value: JSON.stringify(request.shellRuntime)
+            }
+          ]
+        : []),
+      ...(request.wslSetupTools ? [{ name: 'OPEN_SCIENCE_WSL_SETUP_TOOLS', value: '1' }] : []),
       {
         name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
         value: request.memoryTools ? '1' : '0'
@@ -355,6 +392,19 @@ const createNotebookMcpEnvironmentFromProcess = (
     throw new Error('Conflicting projectId and legacy projectName values.')
   }
   const projectId = resolveProjectId({ projectId: currentProjectId ?? legacyProjectId })
+  const shellRuntimeText = env.OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME
+  let shellRuntime: ShellRuntimeBinding | undefined
+  if (shellRuntimeText) {
+    let decoded: unknown
+    try {
+      decoded = JSON.parse(shellRuntimeText)
+    } catch {
+      throw new Error('Invalid notebook Shell runtime binding.')
+    }
+    const parsed = shellRuntimeBindingSchema.safeParse(decoded)
+    if (!parsed.success) throw new Error('Invalid notebook Shell runtime binding.')
+    shellRuntime = parsed.data
+  }
   return {
     endpoint: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT'),
     socketPath: env.OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH,
@@ -362,7 +412,9 @@ const createNotebookMcpEnvironmentFromProcess = (
     projectId,
     sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID'),
     workspaceCwd: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD'),
-    memoryTools: env.OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS === '1'
+    memoryTools: env.OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS === '1',
+    wslSetupTools: env.OPEN_SCIENCE_WSL_SETUP_TOOLS === '1',
+    ...(shellRuntime ? { shellRuntime } : {})
   }
 }
 
@@ -389,7 +441,10 @@ const callNotebookRpc = async (
           ...((params ?? {}) as Record<string, unknown>),
           sessionId: environment.sessionId,
           workspaceCwd: environment.workspaceCwd,
-          projectId
+          projectId,
+          ...(method === 'executeShell' && environment.shellRuntime
+            ? { shellRuntime: environment.shellRuntime }
+            : {})
         }
       } satisfies RpcRequest),
       // Control REPL does not yet consume cancellation below the RPC boundary. Keep its transport
@@ -700,6 +755,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
   const record = asRecord(raw)
   if (!record) return raw
   const request = asRecord(input)
+  const recovery = executionRecoveryContext(record.recovery)
   const text = asRecord(record.text)
   const stream = (field: 'stdout' | 'stderr' | 'traceback'): string => {
     const value = record[field] ?? text?.[field]
@@ -772,8 +828,11 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
       'environment',
       'startedAt',
       'endedAt',
-      'exitCode'
+      'exitCode',
+      'runtimeStatus',
+      'errorCode'
     ]),
+    ...(recovery ? { recovery } : {}),
     ...(staleness.value ? { staleness: staleness.value } : {}),
     ...(invalidatedRuns.length ? { invalidatedRuns } : {}),
     ...(stdout.text ? { stdout: stdout.text } : {}),
@@ -919,6 +978,7 @@ const compactStateRun = (
       : undefined
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const compactedStaleness = compactStaleness(staleness, STATE_STALENESS_LIMITS)
+  const recovery = includeOutputPreview ? executionRecoveryContext(record.recovery) : undefined
 
   return {
     ...pickDefined(record, [
@@ -935,6 +995,7 @@ const compactStateRun = (
     ]),
     ...(workingFiles.length ? { workingFiles } : {}),
     ...(compactedStaleness.value ? { staleness: compactedStaleness.value } : {}),
+    ...(recovery ? { recovery } : {}),
     ...(outputPreview ? { outputPreview } : {})
   }
 }
@@ -1605,12 +1666,75 @@ const MEMORY_NOTEBOOK_RPC_METHODS = new Set([
   'memoryRemember'
 ])
 
+const WSL_SETUP_RPC_TOOLS: readonly NotebookRpcToolDefinition[] = [
+  {
+    name: 'wsl_setup_diagnostics',
+    title: 'Refresh WSL2 setup diagnostics',
+    description:
+      'Call this first in a WSL setup Session. It refreshes app-owned diagnostics and returns the bundled, version-matched setup guide markdown that governs the available setup tools.',
+    method: 'wslSetupDiagnostics',
+    inputSchema: {},
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+  },
+  {
+    name: 'wsl_setup_install_platform',
+    title: 'Install the WSL platform',
+    description:
+      'Start the existing app-owned Windows WSL platform installation operation. Windows handles UAC; inspect the returned outcome and never claim success for restart-required, cancelled, failed, or unknown results.',
+    method: 'wslSetupInstallPlatform',
+    inputSchema: {},
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
+    progressMessage: 'The WSL platform operation is still running.'
+  },
+  {
+    name: 'wsl_setup_install_recommended_distro',
+    title: 'Install the recommended WSL distribution',
+    description:
+      'Start the existing app-owned recommended distribution operation after diagnostics show a distribution is required. Inspect the returned snapshot and do not claim completion unless it is ready.',
+    method: 'wslSetupInstallRecommendedDistro',
+    inputSchema: {},
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
+    progressMessage: 'The WSL distribution operation is still running.'
+  },
+  {
+    name: 'wsl_setup_select_profile',
+    title: 'Save a candidate WSL2 Shell profile',
+    description:
+      'Save and verify one detected WSL2 distribution and non-root Linux user. expectedRevision must match the latest app-owned diagnostics; stale writes are refused. This does not activate WSL2 Bash.',
+    method: 'wslSetupSelectProfile',
+    inputSchema: wslSetupSelectProfileSchema,
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+  },
+  {
+    name: 'wsl_setup_open_terminal',
+    title: 'Open a visible WSL setup terminal',
+    description:
+      'Open a visible host Windows PowerShell terminal with target="powershell", or the exact detected WSL distribution with target="distro", distro, and optionally a verified user. Use it for guided interactive configuration, first launch, password, sudo, or dependency repair. Opening a terminal is not installation success; wait for the user and rerun diagnostics.',
+    method: 'wslSetupOpenTerminal',
+    inputSchema: wslSetupOpenTerminalSchema,
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+  }
+]
+
 const notebookRpcToolsForEnvironment = (
   environment: NotebookMcpEnvironment
-): readonly NotebookRpcToolDefinition[] =>
-  environment.memoryTools
-    ? NOTEBOOK_RPC_TOOLS
-    : NOTEBOOK_RPC_TOOLS.filter((tool) => !MEMORY_NOTEBOOK_RPC_METHODS.has(tool.method))
+): readonly NotebookRpcToolDefinition[] => {
+  const definitions = environment.wslSetupTools
+    ? [...NOTEBOOK_RPC_TOOLS, ...WSL_SETUP_RPC_TOOLS]
+    : NOTEBOOK_RPC_TOOLS
+  const tools = definitions.map((tool) =>
+    tool.method === 'executeShell' && environment.shellRuntime
+      ? {
+          ...tool,
+          description: buildShellExecuteDoc(environment.shellRuntime),
+          inputSchema: buildShellExecuteToolSchema(environment.shellRuntime)
+        }
+      : tool
+  )
+  return environment.memoryTools
+    ? tools
+    : tools.filter((tool) => !MEMORY_NOTEBOOK_RPC_METHODS.has(tool.method))
+}
 
 // Creates the stdio MCP server and attaches every notebook tool to it.
 const createNotebookMcpServer = (
@@ -1648,6 +1772,7 @@ export {
   REPL_EXECUTE_DOC,
   BASH_EXECUTE_DOC,
   buildShellExecuteDoc,
+  buildShellExecuteToolSchema,
   buildNotebookToolContent,
   NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
   NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,

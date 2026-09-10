@@ -13,6 +13,7 @@ import type {
   NotebookRunProvenanceContext,
   NotebookRunSource,
   NotebookRunStatus,
+  ShellRuntimeBinding,
   NotebookWorkingFile,
   RunNotebookCellRequest
 } from '../../shared/notebook'
@@ -54,6 +55,11 @@ import {
 import type { NotebookHelperModuleHost, NotebookHelperModuleScope } from './helper-module-host'
 import { getNotebookFileEvidenceLocation } from './repository'
 import { getNotebookInputRoot } from './input-staging'
+import {
+  captureShellRuntimeBinding,
+  defaultShellRuntimeBinding,
+  shellRuntimePlatform
+} from './shell-runtime'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,
@@ -130,10 +136,11 @@ type NotebookExecutionOwnerOptions = {
     NotebookHelperModuleHost,
     'preflight' | 'plan' | 'commitInitialized' | 'loadedEvidence'
   >
-  logger: Pick<Logger, 'error'>
+  logger: Pick<Logger, 'error'> & Partial<Pick<Logger, 'info'>>
   platform?: NodeJS.Platform
   shellProcess?: NotebookShellProcess
   shellConcurrencyLimit?: number
+  shellRuntimeBinding?: ShellRuntimeBinding
 }
 
 const errorToExecutionResult = (error: unknown, cwd: string): NotebookSessionExecutionResult => {
@@ -243,7 +250,8 @@ const controlRunFingerprint = (
 const shellRunFingerprint = (
   session: NotebookSessionAggregate,
   request: ExecuteShellRequest,
-  frozenShellContext: NonNullable<NotebookRunRecord['frozenShellContext']>
+  frozenShellContext: NonNullable<NotebookRunRecord['frozenShellContext']>,
+  runtimeBinding: ShellRuntimeBinding
 ): string =>
   createHash('sha256')
     .update(
@@ -254,7 +262,8 @@ const shellRunFingerprint = (
         ...(request.background ? { executionMode: 'background' } : {}),
         provenanceContext: request.provenanceContext ?? null,
         inputFiles: immutableInputIdentities(request.registeredInputFiles),
-        frozenShellContext
+        frozenShellContext,
+        runtimeBinding
       })
     )
     .digest('hex')
@@ -276,11 +285,17 @@ const controlResultFromRun = (run: NotebookRunRecord): NotebookControlResult => 
 }
 
 const publicShellResult = (
-  run: Pick<NotebookRunRecord, 'text' | 'exitCode' | 'truncated'>
+  run: Pick<
+    NotebookRunRecord,
+    'text' | 'exitCode' | 'truncated' | 'shellRuntimeStatus' | 'shellErrorCode' | 'recovery'
+  >
 ): NotebookShellResult => ({
   stdout: run.text.stdout,
   stderr: run.text.stderr,
   exitCode: run.exitCode ?? null,
+  ...(run.shellRuntimeStatus ? { runtimeStatus: run.shellRuntimeStatus } : {}),
+  ...(run.shellErrorCode ? { errorCode: run.shellErrorCode } : {}),
+  ...(run.recovery ? { recovery: run.recovery } : {}),
   ...(run.truncated ? { truncated: true } : {})
 })
 
@@ -388,6 +403,7 @@ class BoundedShellAdmission {
 class NotebookExecutionOwner {
   private readonly shellProcess: NotebookShellProcess
   private readonly shellAdmission: BoundedShellAdmission
+  private readonly shellRuntimeBinding: ShellRuntimeBinding
   private controlCompletionInterceptor: NotebookControlCompletionInterceptor | undefined
   private readonly activeDataSubmissions = new Map<
     string,
@@ -446,6 +462,9 @@ class NotebookExecutionOwner {
   constructor(private readonly options: NotebookExecutionOwnerOptions) {
     this.shellProcess = options.shellProcess ?? new NotebookShellProcessAdapter(options.platform)
     this.shellAdmission = new BoundedShellAdmission(options.shellConcurrencyLimit ?? 6)
+    this.shellRuntimeBinding = captureShellRuntimeBinding(
+      options.shellRuntimeBinding ?? defaultShellRuntimeBinding(options.platform)
+    )
   }
 
   private inputRoot(session: NotebookSessionAggregate): string {
@@ -1311,6 +1330,9 @@ class NotebookExecutionOwner {
     signal?: AbortSignal,
     onAdmitted?: (run: NotebookRunRecord) => void
   ): Promise<NotebookShellResult> {
+    const runtimeBinding = captureShellRuntimeBinding(
+      request.shellRuntime ?? this.shellRuntimeBinding
+    )
     this.assertShellAdmissionAvailable(session)
     const platform = this.options.platform ?? process.platform
     const runtimeRoot = session.runtimeRoot
@@ -1319,7 +1341,7 @@ class NotebookExecutionOwner {
     const protectedDirs = [getAppClaudeConfigDir(this.options.configRoot)]
     const environment = buildShellEnv(
       handoffDir,
-      platform,
+      shellRuntimePlatform(runtimeBinding, platform),
       process.env,
       runtimeRoot,
       prepareNotebookWorkloadCache(runtimeRoot)
@@ -1339,7 +1361,12 @@ class NotebookExecutionOwner {
       timeoutMs: request.timeoutMs ?? 120_000,
       platform
     }
-    const submissionFingerprint = shellRunFingerprint(session, request, frozenShellContext)
+    const submissionFingerprint = shellRunFingerprint(
+      session,
+      request,
+      frozenShellContext,
+      runtimeBinding
+    )
     let runId: string | undefined
     const submissionIdentity =
       request.executionInvocationId ??
@@ -1396,6 +1423,7 @@ class NotebookExecutionOwner {
         source: 'agent',
         inputKind: 'cell',
         kernelKind: 'bash',
+        shellRuntime: runtimeBinding,
         script: request.command,
         status: 'queued',
         startedAt: admittedAt,
@@ -1437,6 +1465,8 @@ class NotebookExecutionOwner {
       this.liveShellRuns.set(runId, liveRun)
       const shellProcessRequest = {
         runId,
+        executionReference: runId,
+        runtimeBinding,
         command: request.command,
         cwd: frozenShellContext.cwd,
         handoffDir: frozenShellContext.handoffDir,
@@ -1520,10 +1550,10 @@ class NotebookExecutionOwner {
               let fileEvidence: ExecutionFileEvidenceSummary | undefined
               const blockedMutation = detectManagedRuntimeMutation({
                 source: request.command,
-                surface: platform === 'win32' ? 'powershell' : 'bash',
+                surface: runtimeBinding.kind === 'powershell' ? 'powershell' : 'bash',
                 runtimeRoot: frozenShellContext.runtimeRoot,
                 cwd: frozenShellContext.cwd,
-                platform
+                platform: shellRuntimePlatform(runtimeBinding)
               })
               let shellResult: NotebookShellResult | undefined
               try {
@@ -1553,14 +1583,46 @@ class NotebookExecutionOwner {
               }
               if (!shellResult)
                 throw new Error('Notebook shell execution completed without a result.')
-              ownedTreeReaped = shellResult.ownedTreeReaped !== false
-              const status: NotebookRunStatus = shellResult.cancelled
-                ? 'cancelled'
-                : shellResult.exitCode === 0
-                  ? 'completed'
-                  : shellResult.exitCode === null
-                    ? 'timeout'
-                    : 'failed'
+              ownedTreeReaped =
+                shellResult.ownedTreeReaped !== false &&
+                shellResult.errorCode !== 'shell-cleanup-incomplete'
+              const status: NotebookRunStatus =
+                shellResult.errorCode === 'shell-cleanup-incomplete'
+                  ? 'failed'
+                  : shellResult.cancelled
+                    ? 'cancelled'
+                    : shellResult.runtimeStatus === 'unavailable'
+                      ? 'failed'
+                      : shellResult.exitCode === 0
+                        ? 'completed'
+                        : shellResult.exitCode === null
+                          ? 'timeout'
+                          : 'failed'
+              this.options.logger.info?.('shell execution completed', {
+                executionId: runId,
+                runtime: runtimeBinding.kind,
+                ...(runtimeBinding.kind === 'wsl2-bash'
+                  ? { profileReference: runtimeBinding.profileId }
+                  : {}),
+                stage:
+                  shellResult.runtimeStatus === 'unavailable' ? 'sandbox-prepare' : 'execution',
+                status,
+                terminationReason:
+                  shellResult.errorCode === 'shell-cleanup-incomplete'
+                    ? 'cleanup-incomplete'
+                    : shellResult.cancelled
+                      ? 'cancel'
+                      : shellResult.exitCode === null
+                        ? 'timeout'
+                        : 'exit',
+                cleanupState:
+                  shellResult.errorCode === 'shell-cleanup-incomplete' ? 'incomplete' : 'complete',
+                exitCode: shellResult.exitCode,
+                stdoutByteCount: Buffer.byteLength(shellResult.stdout, 'utf8'),
+                stderrByteCount: Buffer.byteLength(shellResult.stderr, 'utf8'),
+                outputByteCount: Buffer.byteLength(shellResult.stdout + shellResult.stderr, 'utf8'),
+                truncated: shellResult.truncated === true
+              })
               const outputs: NotebookOutput[] = [
                 ...(shellResult.stdout
                   ? [{ type: 'stream' as const, name: 'stdout' as const, text: shellResult.stdout }]
@@ -1580,7 +1642,10 @@ class NotebookExecutionOwner {
                 truncated: shellResult.truncated,
                 workingFiles,
                 fileEvidence,
-                exitCode: shellResult.exitCode
+                exitCode: shellResult.exitCode,
+                runtimeStatus: shellResult.runtimeStatus,
+                errorCode: shellResult.errorCode,
+                recovery: shellResult.recovery
               }
             }
           })
@@ -1592,6 +1657,9 @@ class NotebookExecutionOwner {
             stdout: result.stdout,
             stderr: result.stderr,
             exitCode: result.exitCode,
+            ...(result.runtimeStatus ? { runtimeStatus: result.runtimeStatus } : {}),
+            ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+            ...(result.recovery ? { recovery: result.recovery } : {}),
             ...(result.truncated ? { truncated: true } : {})
           }
         }

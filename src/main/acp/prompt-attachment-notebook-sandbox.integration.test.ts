@@ -221,7 +221,7 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')(
         })
         const result = await run(wrapped.argv, notebookDataRoot, wrapped.env)
         const diagnostic = wrapped.annotateStderr(result.stderr)
-        wrapped.cleanup()
+        await wrapped.cleanup('exit', { processesTerminated: true })
 
         expect(result.code, diagnostic).toBe(0)
         expect(result.stdout).toBe(bytes.toString('utf8'))

@@ -3,14 +3,24 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Hoisted spawn double: process-tree spawns `taskkill` (win32) or `ps` (posix); each test wires the
 // return value to a controllable EventEmitter so it can drive exit/close/error and ps output.
-const { spawnMock } = vi.hoisted(() => ({
+const { readFileMock, readFileSyncMock, readdirMock, spawnMock } = vi.hoisted(() => ({
+  readFileMock: vi.fn(),
+  readFileSyncMock: vi.fn(),
+  readdirMock: vi.fn(),
   spawnMock: vi.fn()
 }))
 
 vi.mock('node:child_process', () => ({ spawn: spawnMock }))
+vi.mock('node:fs', () => ({ readFileSync: readFileSyncMock }))
+vi.mock('node:fs/promises', () => ({ readFile: readFileMock, readdir: readdirMock }))
 
-const { onProcessTreeReaped, registerOwnedPosixProcessGroup, terminateProcessTree } =
-  await import('./process-tree')
+const {
+  createPosixProcessTreeOwnership,
+  onProcessTreeReaped,
+  registerOwnedPosixProcessGroup,
+  trackOwnedPosixProcessTree,
+  terminateProcessTree
+} = await import('./process-tree')
 
 // Minimal ChildProcess stand-in: an EventEmitter (so waitForExit's once('exit') resolves) exposing the
 // pid/kill/killed/exitCode surface the code under test touches. kill() flips killed like Node does.
@@ -34,6 +44,22 @@ class FakePs extends EventEmitter {
 }
 
 const esrch = (): NodeJS.ErrnoException => Object.assign(new Error('ESRCH'), { code: 'ESRCH' })
+
+const linuxStat = (
+  pid: number,
+  ppid: number,
+  pgid: number,
+  sid: number,
+  starttime: number
+): string =>
+  `${pid} (test process) S ${ppid} ${pgid} ${sid} ${[...Array(15).fill('0'), starttime, 0, 0].join(' ')}`
+
+const trackLinux = (child: FakeChild, starttime: number): void => {
+  readFileSyncMock.mockReturnValueOnce(
+    linuxStat(child.pid as number, process.pid, child.pid as number, child.pid as number, starttime)
+  )
+  trackOwnedPosixProcessTree(child as never)
+}
 
 const originalPlatform = process.platform
 const setPlatform = (value: string): void => {
@@ -180,6 +206,356 @@ describe('terminateProcessTree (win32)', () => {
 })
 
 describe('terminateProcessTree (posix)', () => {
+  it.each(['linux', 'darwin'] as const)(
+    'preserves inherited environment when marking %s process ownership',
+    (platform) => {
+      const ownership = createPosixProcessTreeOwnership(undefined, platform)
+      expect(ownership.token).toEqual(expect.any(String))
+      expect(ownership.env).toMatchObject(process.env)
+      expect(ownership.env?.OPEN_SCIENCE_PROCESS_TREE_ID).toBe(ownership.token)
+      expect(createPosixProcessTreeOwnership(undefined, platform).token).not.toBe(ownership.token)
+    }
+  )
+
+  it.each([false, true])(
+    'checks inherited ownership against Linux PID reuse: %s',
+    async (reused) => {
+      setPlatform('linux')
+      const marker = 'command-ownership'
+      const child = new FakeChild(1000)
+      let releaseFirstSample: ((entries: string[]) => void) | undefined
+      readdirMock
+        .mockImplementationOnce(
+          () =>
+            new Promise<string[]>((resolve) => {
+              releaseFirstSample = resolve
+            })
+        )
+        .mockResolvedValue(['2000', '3000'])
+      readFileMock.mockImplementation(async (path: string) =>
+        path.includes('/2000/')
+          ? linuxStat(2000, 1, 2000, 2000, 200)
+          : linuxStat(3000, 1, 3000, 3000, 300)
+      )
+      readFileSyncMock.mockImplementation((path: string) => {
+        if (path === '/proc/1000/stat') return linuxStat(1000, process.pid, 1000, 1000, 100)
+        if (path === '/proc/2000/environ')
+          return Buffer.from('OTHER=x\0OPEN_SCIENCE_PROCESS_TREE_ID=' + marker + '\0')
+        if (path === '/proc/2000/stat') return linuxStat(2000, 1, 2000, 2000, reused ? 201 : 200)
+        return Buffer.from('OPEN_SCIENCE_PROCESS_TREE_ID=unrelated\0')
+      })
+      let helperAlive = true
+      const kill = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+        if (signal === 0 && !helperAlive) throw esrch()
+        if (signal === 'SIGTERM') helperAlive = false
+        return true
+      })
+      try {
+        trackOwnedPosixProcessTree(child as never, marker)
+        child.exitCode = 0
+        releaseFirstSample?.(['2000', '3000'])
+        await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
+        if (reused) expect(kill).not.toHaveBeenCalled()
+        else expect(kill).toHaveBeenCalledWith(2000, 'SIGTERM')
+        expect(kill).not.toHaveBeenCalledWith(3000, expect.anything())
+        expect(kill).not.toHaveBeenCalledWith(-3000, expect.anything())
+      } finally {
+        readFileSyncMock.mockReset()
+        readFileMock.mockReset()
+        readdirMock.mockReset()
+      }
+    }
+  )
+
+  it('pins the spawned Linux leader before a delayed first table sample observes its exit', async () => {
+    setPlatform('linux')
+    let releaseFirstSample: ((entries: string[]) => void) | undefined
+    readdirMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<string[]>((resolve) => {
+            releaseFirstSample = resolve
+          })
+      )
+      .mockResolvedValueOnce(['2000'])
+    readFileMock
+      .mockResolvedValueOnce(linuxStat(2000, 1, 2000, 2000, 200))
+      .mockResolvedValueOnce(linuxStat(2000, 1, 2000, 2000, 200))
+    const child = new FakeChild(1000)
+
+    trackLinux(child, 100)
+    child.exitCode = 0
+    releaseFirstSample?.(['2000'])
+
+    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
+  })
+
+  it('signals the exact live Linux leader when an unrelated proc entry disappears with ESRCH', async () => {
+    setPlatform('linux')
+    readdirMock.mockResolvedValueOnce(['1000', '1001']).mockResolvedValueOnce(['1000'])
+    readFileMock
+      .mockResolvedValueOnce(linuxStat(1000, process.pid, 1000, 1000, 100))
+      .mockRejectedValueOnce(esrch())
+      .mockResolvedValueOnce(linuxStat(1000, process.pid, 1000, 1000, 100))
+    let alive = true
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      expect(pid === 1000 || pid === -1000).toBe(true)
+      if (signal === 0 && !alive) throw esrch()
+      if (signal === 'SIGTERM') alive = false
+      return true
+    })
+    const child = new FakeChild(1000)
+
+    trackLinux(child, 100)
+    await vi.waitFor(() => expect(readFileMock).toHaveBeenCalledTimes(2))
+
+    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
+    expect(killSpy).toHaveBeenCalledWith(-1000, 'SIGTERM')
+    expect(killSpy).toHaveBeenCalledWith(1000, 'SIGTERM')
+  })
+
+  it('reaps an owned-group child created before the first Linux table sample', async () => {
+    setPlatform('linux')
+    let releaseFirstSample: ((entries: string[]) => void) | undefined
+    readdirMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<string[]>((resolve) => {
+            releaseFirstSample = resolve
+          })
+      )
+      .mockResolvedValueOnce(['1001'])
+    readFileMock
+      .mockResolvedValueOnce(linuxStat(1001, 1, 1000, 1000, 101))
+      .mockResolvedValueOnce(linuxStat(1001, 1, 1000, 1000, 101))
+    let groupAlive = true
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      expect(pid).toBe(-1000)
+      if (signal === 0 && !groupAlive) throw esrch()
+      if (signal === 'SIGTERM') groupAlive = false
+      return true
+    })
+    const child = new FakeChild(1000)
+
+    trackLinux(child, 100)
+    child.exitCode = 0
+    releaseFirstSample?.(['1001'])
+
+    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
+    expect(killSpy).toHaveBeenCalledWith(-1000, 'SIGTERM')
+    expect(killSpy).not.toHaveBeenCalledWith(1001, expect.anything())
+  })
+
+  it('reaps a reparented setsid descendant by its captured start identity', async () => {
+    setPlatform('linux')
+    readdirMock.mockResolvedValueOnce(['1000', '1001']).mockResolvedValueOnce(['1001'])
+    readFileMock
+      .mockResolvedValueOnce(linuxStat(1000, 1, 1000, 1000, 100))
+      .mockResolvedValueOnce(linuxStat(1001, 1000, 1000, 1000, 101))
+      .mockResolvedValueOnce(linuxStat(1001, 1, 1001, 1001, 101))
+    let helperAlive = true
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === -1000) throw esrch()
+      if (pid === -1001) {
+        if (signal === 0 && !helperAlive) throw esrch()
+        if (signal === 'SIGTERM') helperAlive = false
+        return true
+      }
+      expect(pid).toBe(1001)
+      if (signal === 0 && !helperAlive) throw esrch()
+      if (signal === 'SIGTERM') helperAlive = false
+      return true
+    })
+    const child = new FakeChild(1000)
+    trackLinux(child, 100)
+    await vi.waitFor(() => expect(readFileMock).toHaveBeenCalledTimes(2))
+    child.exitCode = 0
+
+    const pending = terminateProcessTree(child as never)
+
+    await expect(pending).resolves.toEqual({ reaped: true })
+    expect(killSpy).toHaveBeenCalledWith(1001, 'SIGTERM')
+    expect(killSpy).toHaveBeenCalledWith(-1001, 'SIGTERM')
+  })
+
+  it('reports tracked teardown incomplete when a proc entry cannot be read with EACCES', async () => {
+    setPlatform('linux')
+    readdirMock.mockResolvedValueOnce(['1000', '1001']).mockResolvedValueOnce(['2000'])
+    readFileMock
+      .mockResolvedValueOnce(linuxStat(1000, 1, 1000, 1000, 100))
+      .mockRejectedValueOnce(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
+      .mockResolvedValueOnce(linuxStat(2000, 1, 2000, 2000, 200))
+    const killSpy = vi.spyOn(process, 'kill')
+    const child = new FakeChild(1000)
+    trackLinux(child, 100)
+    await vi.waitFor(() => expect(readFileMock).toHaveBeenCalledTimes(2))
+    child.exitCode = 0
+
+    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: false })
+    expect(killSpy).not.toHaveBeenCalledWith(1001, expect.anything())
+    expect(child.kill).not.toHaveBeenCalled()
+  })
+
+  it('does not adopt or signal a same-second replacement of the tracked leader pid', async () => {
+    setPlatform('linux')
+    readdirMock.mockResolvedValueOnce(['1000', '1001']).mockResolvedValueOnce(['1000'])
+    readFileMock
+      .mockResolvedValueOnce(linuxStat(1000, 1, 1000, 1000, 100))
+      .mockResolvedValueOnce(linuxStat(1001, 1000, 1000, 1000, 101))
+      .mockResolvedValueOnce(linuxStat(1000, 1, 1000, 1000, 200))
+    let replacementAlive = true
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === 1000 && signal === 0 && !replacementAlive) throw esrch()
+      if (pid === 1000 && signal === 'SIGTERM') replacementAlive = false
+      return true
+    })
+    const child = new FakeChild(1000)
+
+    trackLinux(child, 100)
+    await vi.waitFor(() => expect(readFileMock).toHaveBeenCalledTimes(2))
+    child.exitCode = 0
+
+    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
+    expect(killSpy).not.toHaveBeenCalledWith(1000, 'SIGTERM')
+    expect(killSpy).not.toHaveBeenCalledWith(-1000, 'SIGTERM')
+  })
+
+  it('never adopts a leader pid that first appears after a complete sample found it missing', async () => {
+    setPlatform('linux')
+    readdirMock.mockResolvedValueOnce(['1001']).mockResolvedValueOnce(['1000'])
+    readFileMock
+      .mockResolvedValueOnce(linuxStat(1001, 1, 1001, 1001, 101))
+      .mockResolvedValueOnce(linuxStat(1000, 1, 1000, 1000, 200))
+    const killSpy = vi.spyOn(process, 'kill')
+    const child = new FakeChild(1000)
+
+    readFileSyncMock.mockImplementationOnce(() => {
+      throw new Error('leader already exited')
+    })
+    trackOwnedPosixProcessTree(child as never)
+    await vi.waitFor(() => expect(readFileMock).toHaveBeenCalledTimes(1))
+
+    const pending = terminateProcessTree(child as never)
+    await vi.waitFor(() => expect(child.kill).toHaveBeenCalledWith('SIGTERM'))
+    child.emit('exit', 0, null)
+
+    await expect(pending).resolves.toEqual({ reaped: false })
+    expect(killSpy).not.toHaveBeenCalledWith(1000, 'SIGTERM')
+    expect(killSpy).not.toHaveBeenCalledWith(-1000, 'SIGTERM')
+  })
+
+  it('gives a tracker registered during an older in-flight sample a fresh ownership sample', async () => {
+    setPlatform('linux')
+    let releaseFirstSample: ((entries: string[]) => void) | undefined
+    readdirMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<string[]>((resolve) => {
+            releaseFirstSample = resolve
+          })
+      )
+      .mockResolvedValueOnce(['2000', '2001'])
+      .mockResolvedValueOnce(['2001'])
+      .mockResolvedValueOnce([])
+    readFileMock
+      .mockResolvedValueOnce(linuxStat(1000, 1, 1000, 1000, 100))
+      .mockResolvedValueOnce(linuxStat(2000, 1, 2000, 2000, 200))
+      .mockResolvedValueOnce(linuxStat(2001, 2000, 2000, 2000, 201))
+      .mockResolvedValueOnce(linuxStat(2001, 1, 2001, 2001, 201))
+    let helperAlive = true
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === -2001) {
+        if (signal === 0 && !helperAlive) throw esrch()
+        if (signal === 'SIGTERM') helperAlive = false
+        return true
+      }
+      expect(pid).toBe(2001)
+      if (signal === 0 && !helperAlive) throw esrch()
+      if (signal === 'SIGTERM') helperAlive = false
+      return true
+    })
+    const firstChild = new FakeChild(1000)
+    const secondChild = new FakeChild(2000)
+
+    trackLinux(firstChild, 100)
+    await vi.waitFor(() => expect(readdirMock).toHaveBeenCalledTimes(1))
+    trackLinux(secondChild, 200)
+    releaseFirstSample?.(['1000'])
+
+    await vi.waitFor(() => expect(readFileMock).toHaveBeenCalledTimes(3))
+    secondChild.exitCode = 0
+    await expect(terminateProcessTree(secondChild as never)).resolves.toEqual({ reaped: true })
+    expect(killSpy).toHaveBeenCalledWith(2001, 'SIGTERM')
+    expect(killSpy).toHaveBeenCalledWith(-2001, 'SIGTERM')
+
+    firstChild.exitCode = 0
+    await terminateProcessTree(firstChild as never)
+  })
+
+  it('does not signal a replacement that reused a tracked pid within the same second', async () => {
+    setPlatform('linux')
+    readdirMock.mockResolvedValueOnce(['1000', '1001']).mockResolvedValueOnce(['1001'])
+    readFileMock
+      .mockResolvedValueOnce(linuxStat(1000, 1, 1000, 1000, 100))
+      .mockResolvedValueOnce(linuxStat(1001, 1000, 1001, 1001, 101))
+      .mockResolvedValueOnce(linuxStat(1001, 1, 1001, 1001, 102))
+    const killSpy = vi.spyOn(process, 'kill')
+    const child = new FakeChild(1000)
+
+    trackLinux(child, 100)
+    await vi.waitFor(() => expect(readFileMock).toHaveBeenCalledTimes(2))
+    child.exitCode = 0
+
+    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
+    expect(killSpy).not.toHaveBeenCalledWith(1001, expect.anything())
+  })
+
+  it('uses the detached group but fails closed without a Darwin leader identity', async () => {
+    setPlatform('darwin')
+    const ps = new FakePs()
+    spawnMock.mockReturnValueOnce(ps)
+    let groupAlive = true
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      expect(pid).toBe(-1000)
+      if (signal === 0 && !groupAlive) throw esrch()
+      if (signal === 'SIGTERM') groupAlive = false
+      return true
+    })
+    const child = new FakeChild(1000)
+    child.exitCode = 0
+
+    trackOwnedPosixProcessTree(child as never)
+    const pending = terminateProcessTree(child as never)
+    ps.stdout.emit('data', Buffer.from('1000 1\n'))
+    ps.emit('close', 0)
+
+    await expect(pending).resolves.toEqual({ reaped: false })
+    expect(killSpy).toHaveBeenCalledWith(-1000, 'SIGTERM')
+    expect(child.kill).not.toHaveBeenCalled()
+  })
+
+  it('retains an owned group identity after its leader exits', async () => {
+    setPlatform('linux')
+    const ps = new FakePs()
+    spawnMock.mockReturnValueOnce(ps)
+    let groupAlive = true
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      expect(pid).toBe(-1000)
+      if (signal === 0 && !groupAlive) throw esrch()
+      if (signal === 'SIGTERM') groupAlive = false
+      return true
+    })
+    const child = new FakeChild(1000)
+    child.exitCode = 0
+    registerOwnedPosixProcessGroup(child as never)
+
+    const pending = terminateProcessTree(child as never)
+    ps.emit('close', 0)
+
+    await expect(pending).resolves.toEqual({ reaped: true })
+    expect(killSpy).toHaveBeenCalledWith(-1000, 'SIGTERM')
+  })
+
   it('escalates an explicitly owned process group after snapshotting its descendants', async () => {
     vi.useFakeTimers()
     setPlatform('linux')

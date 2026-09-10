@@ -88,6 +88,7 @@ export type BindPendingSessionInput = {
   agentBackendId?: PersistedChatSession['agentBackendId']
   providerSessionId?: PersistedChatSession['providerSessionId']
   providerContinuityToken?: PersistedChatSession['providerContinuityToken']
+  wslSetup?: true
 }
 
 export type AppendMessageResult = {

@@ -679,9 +679,12 @@ test('parks an upward message on branch switch and resumes it after restart and 
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
   const projectId = await createProject(page, 'Reliable branch park release gate')
+  const releaseFile = join(await app.createTestDirectory('reliable-branch-park'), 'release')
 
   const composer = page.getByRole('textbox', { name: 'Ask anything' })
-  await composer.fill(RELIABLE_BRANCH_PARK_PROMPT)
+  await composer.fill(
+    `${RELIABLE_BRANCH_PARK_PROMPT}\nRelease file: ${JSON.stringify(releaseFile)}`
+  )
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect(page.getByText('Branch park upward message queued.')).toBeVisible({
     timeout: 120_000
@@ -750,6 +753,7 @@ test('parks an upward message on branch switch and resumes it after restart and 
       )
     )
   ])
+  await writeFile(releaseFile, '')
   await expect
     .poll(async () =>
       page.evaluate(

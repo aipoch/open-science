@@ -27,6 +27,7 @@ import {
 import type { MessageQueueEditIntent } from './workspace-message-queue-owner'
 
 export type ComposerDraft = {
+  setupSessionToken?: string
   queuedEdit?: MessageQueueEditIntent
   doc: ComposerDoc
   annotations: Annotation[]

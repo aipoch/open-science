@@ -120,7 +120,7 @@ export type SessionRunProjectionActions = {
       | 'providerSessionId'
       | 'providerContinuityToken'
       | 'pendingHistoryReplay'
-    >,
+    > & { wslSetup?: true },
     options?: { preserveCompaction?: boolean }
   ) => void
   prepareInterruptedTurnContinuation: (
@@ -658,6 +658,10 @@ export const createSessionRunProjectionOwner = <
           providerSessionId: update?.providerSessionId ?? session.providerSessionId,
           providerContinuityToken:
             update === undefined ? session.providerContinuityToken : update.providerContinuityToken,
+          wslSetup:
+            update && Object.prototype.hasOwnProperty.call(update, 'wslSetup')
+              ? update.wslSetup
+              : session.wslSetup,
           pendingHistoryReplay: update?.pendingHistoryReplay ?? session.pendingHistoryReplay,
           compacting: options?.preserveCompaction ? session.compacting : undefined,
           updatedAt: Date.now()

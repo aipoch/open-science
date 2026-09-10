@@ -180,6 +180,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       currentInteractionSequence: (sessionId) =>
         base.sessionInteractions.current(sessionId)?.sequence,
       mcpServerNamesFor: (sessionId) => base.sessionCapabilities.mcpServerNamesFor(sessionId),
+      shellRuntimeBindingFor: (sessionId) =>
+        base.sessionCapabilities.shellRuntimeBindingFor(sessionId),
       reviewerContextFor: (sessionId) => reviewerSessions.contextFor(sessionId),
       resolveReviewerPermission: (request) => reviewerSessions.resolvePermission(request),
       currentFramework: () => base.backendGeneration.current.framework,

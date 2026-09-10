@@ -4,11 +4,14 @@ import * as acp from '@agentclientprotocol/sdk'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import JSZip from 'jszip'
+import { randomUUID } from 'node:crypto'
 import { appendFile, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 
 const VERSION = '1.0.0'
+const WSL_SETUP_DIAGNOSTICS_PROMPT = 'Verify WSL setup diagnostic tools.'
+const WSL_SETUP_UNAVAILABLE_PROMPT = 'Verify WSL setup tools are unavailable.'
 const PERMISSION_PROMPT = 'Request fixture permission.'
 const SKILL_PERMISSION_PROMPT = 'Request fixture skill permission.'
 const MEMORY_RECALL_PROMPT = 'Verify automatic memory recall.'
@@ -937,6 +940,9 @@ if (process.argv.includes('--version')) {
   process.stdout.write(`${VERSION}\n`)
 } else {
   assertValidModelLimits()
+  // This opt-in test reconnects the provider when switching runtimes and restarting the app.
+  // Keep its new sessions and message chunks distinct from IDs persisted by an earlier process.
+  const fixtureInstanceId = process.env.OPEN_SCIENCE_E2E_WSL_SETUP === '1' ? `${randomUUID()}-` : ''
   let nextMessageId = 1
   let nextSessionId = 1
 
@@ -952,7 +958,7 @@ if (process.argv.includes('--version')) {
     }))
     .onRequest(acp.methods.agent.authenticate, () => ({}))
     .onRequest(acp.methods.agent.session.new, async (context) => {
-      const sessionId = `e2e-session-${nextSessionId++}`
+      const sessionId = `e2e-session-${fixtureInstanceId}${nextSessionId++}`
       const mcpServers = context.params.mcpServers ?? []
       sessionRoutes.set(sessionId, {
         cwd: context.params.cwd,
@@ -997,7 +1003,7 @@ if (process.argv.includes('--version')) {
           sessionId: context.params.sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
-            messageId: `e2e-message-${nextMessageId++}`,
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
             content: { type: 'text', text: 'Delegated immutable Artifact Version input verified.' }
           }
         })
@@ -1017,7 +1023,7 @@ if (process.argv.includes('--version')) {
           sessionId: context.params.sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
-            messageId: `e2e-message-${nextMessageId++}`,
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
             content: { type: 'text', text: 'Production delegation is running.' }
           }
         })
@@ -1038,13 +1044,61 @@ if (process.argv.includes('--version')) {
             '  A[begin] --> B[a node with a fairly long label] --> C[another node with an even longer label here] --> D[end]',
             '```'
           ].join('\n')
+        } else if (prompt.includes(WSL_SETUP_UNAVAILABLE_PROMPT)) {
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const catalog = await client.listTools()
+            if (catalog.tools.some((tool) => tool.name.startsWith('wsl_setup_'))) {
+              throw new Error('Ordinary Session unexpectedly received WSL setup tools.')
+            }
+          })
+          reply = 'WSL setup tools are unavailable in this ordinary conversation.'
+        } else if (prompt.includes(WSL_SETUP_DIAGNOSTICS_PROMPT)) {
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const catalog = await client.listTools()
+            if (!catalog.tools.some((tool) => tool.name === 'wsl_setup_diagnostics')) {
+              throw new Error('Setup Session is missing its WSL diagnostics tool.')
+            }
+            const shell = catalog.tools.find((tool) => tool.name === 'bash_execute')
+            if (!shell?.description?.includes('Windows PowerShell 5.1')) {
+              throw new Error('Setup Session did not retain its Windows PowerShell binding.')
+            }
+            const execution = toolResult(
+              'bash_execute',
+              await client.callTool({
+                name: 'bash_execute',
+                arguments: {
+                  command:
+                    "Write-Output ('wsl-setup-powershell-' + $PSVersionTable.PSVersion.Major + '.' + $PSVersionTable.PSVersion.Minor)"
+                }
+              })
+            )
+            if (!execution.stdout?.includes('wsl-setup-powershell-5.1')) {
+              throw new Error(
+                'Setup Session did not execute its command in Windows PowerShell 5.1.'
+              )
+            }
+            const diagnostics = toolResult(
+              'wsl_setup_diagnostics',
+              await client.callTool({ name: 'wsl_setup_diagnostics', arguments: {} })
+            )
+            if (
+              diagnostics.schemaVersion !== 1 ||
+              !diagnostics.capturedAt ||
+              !diagnostics.windows ||
+              !diagnostics.checks ||
+              Object.hasOwn(diagnostics, 'setupSessionToken')
+            ) {
+              throw new Error('WSL diagnostics are incomplete or expose the setup token.')
+            }
+          })
+          reply = 'WSL setup diagnostics completed through the application tools.'
         } else if (prompt.includes(MEMORY_RECALL_PROMPT)) {
           if (!prompt.includes('<memory_records>') || !prompt.includes(MEMORY_RECALL_ENTRY)) {
             throw new Error('Automatic memory recall did not reach the provider prompt.')
           }
           reply = 'Automatic memory recall reached the provider.'
         } else if (prompt.includes(BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT)) {
-          const intentMessageId = `e2e-message-${nextMessageId++}`
+          const intentMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
@@ -1108,7 +1162,7 @@ if (process.argv.includes('--version')) {
           }
           await delay(prompt.includes(TOOL_STATUS_LAYOUT_SHIFT_PROMPT) ? 2_000 : 750)
 
-          const finalMessageId = `e2e-message-${nextMessageId++}`
+          const finalMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
@@ -1120,7 +1174,7 @@ if (process.argv.includes('--version')) {
           reply = ''
         } else if (prompt.includes(TOOL_ORDER_PROMPT)) {
           // Mirrors a real agent turn: intent text, a slow tool call, then follow-up text.
-          const intentMessageId = `e2e-message-${nextMessageId++}`
+          const intentMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           // A long intent text, chunked quickly so live pacing trails far behind arrival.
           for (let chunk = 0; chunk < 30; chunk += 1) {
             await context.client.notify(acp.methods.client.session.update, {
@@ -1171,7 +1225,7 @@ if (process.argv.includes('--version')) {
               status: 'completed'
             }
           })
-          const followUpMessageId = `e2e-message-${nextMessageId++}`
+          const followUpMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
@@ -1184,7 +1238,7 @@ if (process.argv.includes('--version')) {
           await delay(150)
           reply = ''
         } else if (prompt.includes(RUNTIME_RESOURCE_STRESS_PROMPT)) {
-          const stressMessageId = `e2e-message-${nextMessageId++}`
+          const stressMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           const payload = 'x'.repeat(2_048)
           for (let chunk = 0; chunk < 90; chunk += 1) {
             await context.client.notify(acp.methods.client.session.update, {
@@ -1205,7 +1259,7 @@ if (process.argv.includes('--version')) {
           // Mirror a real agent turn: text segment -> tool call -> second text segment ->
           // tool completion -> trailing segment, with separate message ids per segment.
           const streamSegment = async (segment, paragraphs) => {
-            const streamMessageId = `e2e-message-${nextMessageId++}`
+            const streamMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
             for (let chunk = 0; chunk < paragraphs; chunk += 1) {
               await context.client.notify(acp.methods.client.session.update, {
                 sessionId: context.params.sessionId,
@@ -1250,7 +1304,7 @@ if (process.argv.includes('--version')) {
           // Regression journey for queue dispatch gating: a slow lead-in, then one large final
           // chunk so the renderer's paced reveal trails the store-complete state by seconds.
           // An ungated queue would dispatch the next message mid-reveal.
-          const gateMessageId = `e2e-message-${nextMessageId++}`
+          const gateMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           for (let chunk = 0; chunk < 4; chunk += 1) {
             await context.client.notify(acp.methods.client.session.update, {
               sessionId: context.params.sessionId,
@@ -1466,11 +1520,11 @@ if (process.argv.includes('--version')) {
             sessionId: context.params.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
-              messageId: `e2e-message-${nextMessageId++}`,
+              messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
               content: { type: 'text', text: 'Branch park upward message queued.' }
             }
           })
-          await delay(2_000)
+          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]))
           reply = 'Reliable branch park source turn completed.'
         } else if (prompt.includes(RELIABLE_BRANCH_WAKE_PROMPT)) {
           const receipt = controlResultValue(
@@ -1523,7 +1577,7 @@ if (process.argv.includes('--version')) {
             sessionId: context.params.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
-              messageId: `e2e-message-${nextMessageId++}`,
+              messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
               content: { type: 'text', text: 'Two upward lanes are starting.' }
             }
           })
@@ -1710,7 +1764,7 @@ if (process.argv.includes('--version')) {
               sessionId: context.params.sessionId,
               update: {
                 sessionUpdate: 'agent_message_chunk',
-                messageId: `e2e-message-${nextMessageId++}`,
+                messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
                 content: { type: 'text', text: 'Provider acceptance crossed the durable fence.' }
               }
             })
@@ -1872,7 +1926,7 @@ if (process.argv.includes('--version')) {
         sessionId: context.params.sessionId,
         update: {
           sessionUpdate: 'agent_message_chunk',
-          messageId: `e2e-message-${nextMessageId++}`,
+          messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
           content: { type: 'text', text: reply }
         }
       })

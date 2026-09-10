@@ -13,6 +13,25 @@ import { createInitialNotebookEnvState, useNotebookEnvStore } from '../../stores
 import { useRuntimeSettingsStore } from '../../stores/runtime-settings-store'
 import { RuntimesPanel } from './RuntimesPanel'
 
+vi.mock('./WslLocalShellSection', () => ({
+  WslLocalShellSection: ({
+    previewAvailable,
+    developmentPreview,
+    previewUnavailableReason
+  }: {
+    previewAvailable: boolean
+    developmentPreview?: boolean
+    previewUnavailableReason?: string
+  }) => (
+    <div
+      data-preview-available={String(previewAvailable)}
+      data-preview-development={String(developmentPreview === true)}
+      data-preview-reason={previewUnavailableReason}
+      data-testid="wsl2-preview-section"
+    />
+  )
+}))
+
 let container: HTMLDivElement
 let root: Root
 
@@ -127,6 +146,14 @@ beforeEach(() => {
   cancelBridge = vi.fn().mockResolvedValue(undefined)
   repairBridge = vi.fn().mockResolvedValue(undefined)
   ;(window as unknown as { api: unknown }).api = {
+    platform: 'linux',
+    settings: {
+      getWsl2BashPreviewStatus: vi.fn().mockResolvedValue({
+        available: false,
+        reason: 'unsupported-platform'
+      }),
+      getLocalShellRuntimePreference: vi.fn().mockResolvedValue(undefined)
+    },
     runtime: {
       listEnvironments,
       listPackages,
@@ -320,6 +347,48 @@ describe('RuntimesPanel', () => {
       expect(container.textContent?.includes('R access verified')).toBe(!cancelled)
     }
   )
+
+  it('shows WSL2 Bash Preview only when the main process admits this build and host', async () => {
+    window.api.platform = 'win32'
+    window.api.settings.getWsl2BashPreviewStatus = vi.fn().mockResolvedValue({
+      available: true,
+      reason: 'available',
+      development: true
+    })
+
+    await render()
+
+    expect(container.querySelector('[data-testid="wsl2-preview-section"]')).not.toBeNull()
+    expect(container.querySelector('[data-preview-available="true"]')).not.toBeNull()
+    expect(container.querySelector('[data-preview-development="true"]')).not.toBeNull()
+  })
+
+  it('leaves the runtime UI unchanged when main rejects the Preview', async () => {
+    window.api.platform = 'win32'
+    window.api.settings.getWsl2BashPreviewStatus = vi.fn().mockResolvedValue({
+      available: false,
+      reason: 'build-disabled'
+    })
+
+    await render()
+
+    expect(container.querySelector('[data-testid="wsl2-preview-section"]')).toBeNull()
+  })
+
+  it('keeps only the PowerShell recovery surface when a rejected Preview remains selected', async () => {
+    window.api.platform = 'win32'
+    window.api.settings.getWsl2BashPreviewStatus = vi.fn().mockResolvedValue({
+      available: false,
+      reason: 'assets-unavailable'
+    })
+    window.api.settings.getLocalShellRuntimePreference = vi.fn().mockResolvedValue('wsl2-bash')
+
+    await render()
+
+    expect(container.querySelector('[data-preview-available="false"]')).not.toBeNull()
+    expect(container.querySelector('[data-preview-reason="assets-unavailable"]')).not.toBeNull()
+  })
+
   it('shows the network protection entry only when Settings provides its route', async () => {
     const onOpenNetworkProtection = vi.fn()
     ;(window.api as unknown as { settings: unknown }).settings = {

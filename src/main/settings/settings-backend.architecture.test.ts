@@ -357,6 +357,7 @@ describe('Settings backend ownership architecture', () => {
       'markPathsNormalized',
       'rememberCodexAutoHttpsFallback',
       'removeCustomServer',
+      'restoreLocalShellRuntime',
       'setActiveProvider',
       'setAgentEnvironmentCreationEnabled',
       'setAgentFramework',
@@ -375,6 +376,7 @@ describe('Settings backend ownership architecture', () => {
       'setDataRoot',
       'setDefaultPermissionProfile',
       'setGitHubToken',
+      'setLocalShellRuntime',
       'setLocalePreference',
       'setManualInterpreters',
       'setNcbiCredentials',
@@ -396,6 +398,7 @@ describe('Settings backend ownership architecture', () => {
       'setToolBlocked',
       'setToolPolicy',
       'setVisionModel',
+      'setWslSelection',
       'updateClaudeIsolatedCredentialsIfExists',
       'updateClaudeIsolatedValidationIfKeyMatches',
       'updateClaudeSharedValidationIfUnchanged',
@@ -482,26 +485,26 @@ describe('Settings backend ownership architecture', () => {
         buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
         codexSkillDescriptorsForIds createDeviceCredential createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
         detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getActiveInstallId getAgentEnvironmentCreationEnabled getAppIconVariant getClosePreference
-        getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getManualInterpreters getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
-        getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail hasActiveInstall holdInstallAdmission
+        getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getLocalShellRuntimePreference getManualInterpreters getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
+        getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail getWsl2BashPreviewStatus getWslSetupStatus hasActiveInstall holdInstallAdmission
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
-        importSkillZipBatch installClaude installCodeBuddy installCodex installNotebookNetwork installOpencode isEncryptionAvailable
+        importSkillZipBatch installClaude installCodeBuddy installCodex installMissingWslDependencies installNotebookNetwork installOpencode installRecommendedWslDistro installWslPlatform isEncryptionAvailable
         isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listSkills listSpecialistSkillCatalog listUserSkills
         dispose loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
-        markPathsNormalized migrateAgentHomeSkillIdentities previewAgentHomeSkill previewCustomServerTemplateExport
+        markPathsNormalized migrateAgentHomeSkillIdentities openWslTerminal previewAgentHomeSkill previewCustomServerTemplateExport
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
-        provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog rememberCodexAutoHttpsFallback removeCustomServer removeDeviceCredential removeGitHubToken removeNotebookNetwork
-        removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort
+        createWslSupportHandoff probeWslSetup provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog rememberCodexAutoHttpsFallback removeCustomServer removeDeviceCredential removeGitHubToken removeNotebookNetwork
+        removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort restoreLocalShellRuntimePreference
         resolveAdmittedSubagentBackend resolveAgentBackend resolveDeviceOAuthCredential resolveExplicitAgentBackend resolveSkillDocument resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken
-        scanRepoSkills setActiveProvider setAgentEnvironmentCreationEnabled setAgentFramework setAgentRouting setAppIconVariant setClosePreference
+        scanRepoSkills selectWslProfile setActiveProvider setAgentEnvironmentCreationEnabled setAgentFramework setAgentRouting setAppIconVariant setClosePreference switchLocalShellToPowerShell
         setComputeBookmarks setConnectorAutoAllow setConnectorEnabled
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setDeviceCredentialAuthenticator setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotebookNetwork setNotificationsEnabled
         setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodeBuddy uninstallCodex
-        uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
+        uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
       `
         .trim()
         .split(/\s+/)
@@ -665,6 +668,7 @@ describe('Settings backend ownership architecture', () => {
 
   it('locks the durable Settings shape and secret-free explicit target seam', () => {
     expect(typePropertyNames(settingsPaths.types, 'StoredSettings')).toEqual([
+      'activatedWslSelection',
       'activeModel',
       'activeProviderId',
       'agentEnvironmentCreationEnabled',
@@ -687,6 +691,7 @@ describe('Settings backend ownership architecture', () => {
       'githubTokenRef',
       'grantedLocalRoots',
       'legacyDataMovePromptDismissedAt',
+      'localShellRuntime',
       'localePreference',
       'networkProxy',
       'notebookManualInterpreters',
@@ -706,7 +711,8 @@ describe('Settings backend ownership architecture', () => {
       'showNotificationContent',
       'subagentModel',
       'version',
-      'visionModel'
+      'visionModel',
+      'wslSelection'
     ])
     expect(typePropertyNames(settingsPaths.types, 'StoredProvider')).toEqual([
       'accountEmail',
@@ -775,7 +781,7 @@ describe('Settings backend ownership architecture', () => {
       mainIpc.indexOf('settingsServiceRef.current = settingsService')
     )
     expect(settingsModule).toContain(
-      'const capability = new SettingsService({\n      repository: settingsRepository,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      openAlexFetch: netFetchStandard,\n      applyNetworkProxy:'
+      'const capability = new SettingsService({\n      repository: settingsRepository,\n      installCoordinator: settingsInstallCoordinator,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      openAlexFetch: netFetchStandard,\n      applyNetworkProxy:'
     )
     expect(settingsModule).toContain("name: 'settings-service'")
     expect(settingsModule).toContain('rollback: () => capability.dispose()')
