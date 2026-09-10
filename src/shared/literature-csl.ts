@@ -69,6 +69,7 @@ type CslItem = Readonly<{
   issued?: CslDate
   accessed?: CslDate
   'container-title'?: string
+  'container-title-short'?: string
   'title-short'?: string
   abstract?: string
   language?: string
@@ -106,7 +107,30 @@ const creatorsFor = (
 }
 
 const issuedDate = (item: LiteratureItemInput): CslDate | undefined => {
-  const match = /^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?$/u.exec(item.issuedText.trim())
+  // PubMed DP uses English month abbreviations. Normalize only unambiguous dates;
+  // seasons and ranges retain the existing year fallback, and the original text is untouched.
+  const months = [
+    'jan',
+    'feb',
+    'mar',
+    'apr',
+    'may',
+    'jun',
+    'jul',
+    'aug',
+    'sep',
+    'oct',
+    'nov',
+    'dec'
+  ]
+  const dateText = item.issuedText
+    .trim()
+    .replace(
+      /^(\d{4})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:\s+(\d{1,2}))?$/iu,
+      (_match, year: string, month: string, day: string | undefined) =>
+        `${year}-${months.indexOf(month.toLowerCase()) + 1}${day === undefined ? '' : `-${day}`}`
+    )
+  const match = /^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?$/u.exec(dateText)
   if (match) {
     const year = Number(match[1])
     const month = match[2] ? Number(match[2]) : undefined
@@ -169,6 +193,7 @@ const toCslItem = (id: string, item: LiteratureItemInput): CslItem => {
   const publisher = typeField(item, 'publisher')
   const publisherPlace = typeField(item, 'publisherPlace')
   const edition = typeField(item, 'edition')
+  const journalAbbreviation = typeField(item, 'journalAbbreviation')
 
   return {
     id,
@@ -180,6 +205,7 @@ const toCslItem = (id: string, item: LiteratureItemInput): CslItem => {
     ...(issued ? { issued } : {}),
     ...(accessed ? { accessed } : {}),
     ...(item.containerTitle ? { 'container-title': item.containerTitle } : {}),
+    ...(journalAbbreviation ? { 'container-title-short': journalAbbreviation } : {}),
     ...(item.shortTitle ? { 'title-short': item.shortTitle } : {}),
     ...(item.abstract ? { abstract: item.abstract } : {}),
     ...(item.language ? { language: item.language } : {}),
@@ -275,7 +301,8 @@ const fromCslItem = (value: Record<string, unknown>): LiteratureItemInput => {
       ['pages', stringField(value, 'page')],
       ['publisher', stringField(value, 'publisher')],
       ['publisherPlace', stringField(value, 'publisher-place')],
-      ['edition', stringField(value, 'edition')]
+      ['edition', stringField(value, 'edition')],
+      ['journalAbbreviation', stringField(value, 'container-title-short')]
     ].filter((entry): entry is [string, string] => Boolean(entry[1]))
   )
 

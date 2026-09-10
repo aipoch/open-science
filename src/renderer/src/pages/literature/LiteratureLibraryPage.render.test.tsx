@@ -4551,6 +4551,29 @@ describe('LiteratureLibraryPage', () => {
     expect(headings.indexOf('Abstract')).toBeLessThan(headings.indexOf('Publication metadata'))
   })
 
+  it('uses the full journal title when only an article short title is available', async () => {
+    const entry: LiteratureItemView = {
+      ...libraryItem,
+      item: {
+        ...libraryItem.item,
+        containerTitle: 'Journal of Useful Results',
+        shortTitle: 'Article short title',
+        issuedText: '2024',
+        typeFields: {},
+        identifiers: []
+      }
+    }
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [entry] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await openReferenceDetail(await screen.findByText(entry.item.title))
+    expect(
+      within(screen.getByRole('dialog')).getByText('Journal of Useful Results. 2024')
+    ).not.toBeNull()
+  })
+
   it('orders a reference detail as publication, title, full authors, abstract, then metadata', async () => {
     const richItem: LiteratureItemView = {
       ...libraryItem,
@@ -4558,8 +4581,13 @@ describe('LiteratureLibraryPage', () => {
         ...libraryItem.item,
         itemType: 'review',
         issuedText: '2024 Jan',
-        shortTitle: 'J Retrieval',
-        typeFields: { volume: '12', issue: '3', pages: '44-58' },
+        shortTitle: 'Article short title',
+        typeFields: {
+          volume: '12',
+          issue: '3',
+          pages: '44-58',
+          journalAbbreviation: 'J Retrieval'
+        },
         creators: [
           ...libraryItem.item.creators,
           {

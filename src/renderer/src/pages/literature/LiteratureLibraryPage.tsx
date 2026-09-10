@@ -1094,7 +1094,7 @@ const typeFieldText = (item: LiteratureItemInput, field: string): string => {
 }
 
 const publicationSummary = (item: LiteratureItemInput): string => {
-  const publication = item.shortTitle || item.containerTitle
+  const publication = typeFieldText(item, 'journalAbbreviation') || item.containerTitle
   const date = item.issuedText || item.issuedYear?.toString() || ''
   const volume = typeFieldText(item, 'volume')
   const issue = typeFieldText(item, 'issue')
