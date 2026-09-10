@@ -2198,9 +2198,13 @@ describe('session store', () => {
     })
   })
 
-  it.each(['finish', 'fail', 'interrupt'] as const)(
-    'keeps late output on its originating branch through %s after another branch is selected',
-    (terminal) => {
+  it.each(
+    (['finish', 'fail', 'interrupt'] as const).flatMap((terminal) =>
+      (['hidden prompt', 'shared prompt'] as const).map((selection) => ({ terminal, selection }))
+    )
+  )(
+    'keeps late output on its originating branch through $terminal with a $selection',
+    ({ terminal, selection }) => {
       const prompt = {
         id: 'origin-prompt',
         role: 'user' as const,
@@ -2221,10 +2225,13 @@ describe('session store', () => {
         id: 'other-branch',
         agentFrameId: graph.rootFrameId,
         parentBranchId: originalBranch.id,
-        supersededMessageId: prompt.id,
+        ...(selection === 'shared prompt'
+          ? { forkMessageId: prompt.id, headMessageId: prompt.id }
+          : { supersededMessageId: prompt.id }),
         createdAt: 2,
         updatedAt: 2
       })
+      const selectedMessages = selection === 'shared prompt' ? [prompt] : []
       graph.frames[0].activeBranchId = 'other-branch'
       validateConversationGraph(graph)
       useSessionStore.getState().hydrateSessions([
@@ -2235,7 +2242,7 @@ describe('session store', () => {
           cwd: '/workspace',
           status: 'running',
           activeRun: { promptMessageId: prompt.id, startedAt: 1 },
-          messages: [],
+          messages: selectedMessages,
           conversationGraph: graph,
           createdAt: 1,
           updatedAt: 2
@@ -2279,7 +2286,12 @@ describe('session store', () => {
         ])
         const running = useSessionStore.getState()
         const saved = toPersistedSession(running.sessions[0], running.streamingMessages)
-        expect(saved.messages).toEqual([])
+        expect(
+          saved.conversationGraph?.messages.find(
+            ({ content }) => content === 'Original run completed'
+          )?.introducedOnBranchId
+        ).toBe(originalBranch.id)
+        expect(saved.messages.map(({ id }) => id)).toEqual(selectedMessages.map(({ id }) => id))
         expect(
           saved.conversationGraph?.messages.find(
             ({ content }) => content === 'Original run completed'
@@ -2302,7 +2314,7 @@ describe('session store', () => {
         const session = useSessionStore.getState().sessions[0]
         expect(errors).not.toHaveBeenCalled()
         expect(session.conversationGraphSyncBlocked).toBeUndefined()
-        expect(session.messages).toEqual([])
+        expect(session.messages.map(({ id }) => id)).toEqual(selectedMessages.map(({ id }) => id))
         expect(session.activeRun).toBeUndefined()
         expect(session.activities ?? []).toEqual([])
         expect(session.activityGroups ?? []).toEqual([])
@@ -2325,6 +2337,102 @@ describe('session store', () => {
       } finally {
         errors.mockRestore()
       }
+    }
+  )
+
+  it.each([1, 2])(
+    'preserves late output from a delegate at depth %i when its ancestor branch is hidden',
+    (depth) => {
+      const seed = (id: string): PersistedChatSession['messages'][number] => ({
+        id,
+        role: 'user' as const,
+        content: id,
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      })
+      const rootPrompt = seed('root-origin')
+      const graph = createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [rootPrompt],
+        createdAt: 1,
+        updatedAt: 1
+      })
+      let parentFrameId = graph.rootFrameId
+      let promptId = rootPrompt.id
+      let branchId = graph.branches[0].id
+      for (let level = 1; level <= depth; level += 1) {
+        const prompt = seed(`delegate-prompt-${level}`)
+        const child = createLinearConversationGraph({
+          sessionId: `delegate-${level}`,
+          messages: [prompt],
+          createdAt: 1,
+          updatedAt: 1
+        })
+        graph.frames.push({
+          ...child.frames[0],
+          parentFrameId,
+          originMessageId: promptId,
+          originBindingState: 'validated',
+          kind: 'delegate'
+        })
+        graph.branches.push(...child.branches)
+        graph.messages.push(...child.messages)
+        graph.runtimeSegments.push(...child.runtimeSegments)
+        parentFrameId = child.rootFrameId
+        promptId = prompt.id
+        branchId = child.branches[0].id
+      }
+      graph.branches.push({
+        id: 'selected-root-branch',
+        agentFrameId: graph.rootFrameId,
+        parentBranchId: graph.branches[0].id,
+        supersededMessageId: rootPrompt.id,
+        createdAt: 2,
+        updatedAt: 2
+      })
+      graph.frames[0].activeBranchId = 'selected-root-branch'
+      validateConversationGraph(graph)
+      useSessionStore.getState().hydrateSessions([
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Hidden delegate',
+          cwd: '/workspace',
+          status: 'running',
+          activeRun: { promptMessageId: promptId, startedAt: 1 },
+          messages: [],
+          conversationGraph: graph,
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ])
+      expect(() =>
+        useSessionStore.getState().appendAgentMessageChunk({
+          sessionId: 'session-1',
+          promptMessageId: promptId,
+          streamId: 'delegate-reply',
+          eventId: 'delegate-output',
+          content: 'Hidden delegate reply'
+        })
+      ).not.toThrow()
+      useSessionStore.getState().finishRun('session-1', undefined, promptId)
+      const session = useSessionStore.getState().sessions[0]
+      const saved = toPersistedSession(session)
+      expect(saved.messages).toEqual([])
+      expect(saved.conversationGraph?.activeFrameId).toBe(graph.rootFrameId)
+      expect(saved.conversationGraph?.frames[0].activeBranchId).toBe('selected-root-branch')
+      expect(
+        saved.conversationGraph?.messages.find(({ content }) => content === 'Hidden delegate reply')
+      ).toMatchObject({
+        introducedOnBranchId: branchId,
+        agentFrameId: parentFrameId,
+        responseToMessageId: promptId,
+        status: 'complete'
+      })
+      expect(session.conversationGraphSyncBlocked).toBeUndefined()
+      validateConversationGraph(saved.conversationGraph!)
     }
   )
 

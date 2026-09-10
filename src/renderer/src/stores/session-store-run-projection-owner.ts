@@ -1,4 +1,5 @@
 import {
+  type PersistedMessageNode,
   projectConversationMessage,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages
@@ -181,30 +182,60 @@ const projectSession = (
 ): ChatSession[] =>
   sessions.map((session) => (session.id === sessionId ? projector(session) : session))
 
+const findOffBranchRunPrompt = (
+  session: ChatSession,
+  promptMessageId: string | undefined
+): PersistedMessageNode | undefined => {
+  const graph = session.conversationGraph
+  const promptId = promptMessageId ?? session.activeRun?.promptMessageId
+  const prompt = graph?.messages.find(
+    (message) => message.id === promptId && message.role === 'user'
+  )
+  const activeFrame = graph?.frames.find((frame) => frame.id === graph.activeFrameId)
+  if (!graph || !prompt || !activeFrame) return undefined
+  if (
+    activeFrame.id === prompt.agentFrameId &&
+    activeFrame.activeBranchId === prompt.introducedOnBranchId
+  )
+    return undefined
+  // A flat transcript that disagrees with its selected graph path is an existing integrity error,
+  // not a valid branch switch. Leave it to the normal projection/error handling.
+  if (
+    session.messages.some((message) => message.id === prompt.id) &&
+    !resolveActiveConversationMessages(graph).some((message) => message.id === prompt.id)
+  )
+    return undefined
+  return prompt
+}
+
 // Runtime events keep their prompt owner even when a persisted branch selection arrives while
-// the run is in flight. Project hidden output through that branch, then restore the UI selection.
+// the run is in flight. Project through that branch, then restore the UI selection.
 const projectRunBranch = (
   session: ChatSession,
   promptMessageId: string | undefined,
   projector: (session: ChatSession) => ChatSession
 ): ChatSession => {
-  const promptId = promptMessageId ?? session.activeRun?.promptMessageId
+  const prompt = findOffBranchRunPrompt(session, promptMessageId)
   const graph = session.conversationGraph
-  if (!graph || !promptId || session.messages.some((message) => message.id === promptId)) {
-    return projector(session)
+  if (!graph || !prompt) return projector(session)
+  const runBranches = new Map([[prompt.agentFrameId, prompt.introducedOnBranchId]])
+  let frame = graph.frames.find((candidate) => candidate.id === prompt.agentFrameId)
+  // A hidden delegate also needs its ancestors on the branches containing each frame origin.
+  // These selections exist only during projection; the caller's selections are restored below.
+  while (frame?.parentFrameId) {
+    const { originMessageId, parentFrameId } = frame
+    const origin = graph.messages.find((message) => message.id === originMessageId)
+    if (!origin) break
+    runBranches.set(parentFrameId, origin.introducedOnBranchId)
+    frame = graph.frames.find((candidate) => candidate.id === parentFrameId)
   }
-  const prompt = graph.messages.find(
-    (message) => message.id === promptId && message.role === 'user'
-  )
-  if (!prompt) return projector(session)
   const runGraph = {
     ...graph,
     activeFrameId: prompt.agentFrameId,
-    frames: graph.frames.map((frame) =>
-      frame.id === prompt.agentFrameId
-        ? { ...frame, activeBranchId: prompt.introducedOnBranchId }
-        : frame
-    )
+    frames: graph.frames.map((frame) => {
+      const branchId = runBranches.get(frame.id)
+      return branchId ? { ...frame, activeBranchId: branchId } : frame
+    })
   }
   const activities = resolveActiveConversationActivities(runGraph)
   const runSession = {
@@ -268,13 +299,7 @@ export const createSessionRunProjectionOwner = <
       const indexes = inputIndexesBySessionId.get(session.id)
       if (!indexes) return session
       const sessionInputs = indexes.map((index) => inputs[index])
-      if (
-        session.conversationGraph &&
-        sessionInputs.some((input) => {
-          const promptId = input.promptMessageId ?? session.activeRun?.promptMessageId
-          return promptId && !session.messages.some((message) => message.id === promptId)
-        })
-      ) {
+      if (sessionInputs.some((input) => findOffBranchRunPrompt(session, input.promptMessageId))) {
         let next = session
         for (const index of indexes) {
           next = projectRunBranch(next, inputs[index].promptMessageId, (runSession) => {
