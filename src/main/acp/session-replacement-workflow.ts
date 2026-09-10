@@ -29,6 +29,7 @@ type AcpSessionReplacementWorkflowDependencies = Readonly<{
   ) => AcpPrimarySessionIdentityReservationResult
   adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
   reconfigureSession: (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
+  assertSkillScopeRefreshSupported: () => void
   permission: Pick<AcpPermissionContext, 'cancelForSession' | 'clearLivePermissionProfile'>
   elicitation: Pick<AcpElicitationOwner, 'cancelForSession'>
   clearUserChoiceProvenanceForSession: (sessionId: string) => void
@@ -148,6 +149,9 @@ export class AcpSessionReplacementWorkflow {
         throw new Error('ACP session startup was superseded.')
       }
     }
+    // Unsupported runtimes must leave the old binding and attachment intact. After mutation,
+    // failures deliberately detach a loader whose scope no longer matches the new binding.
+    if (refreshCodex) this.deps.assertSkillScopeRefreshSupported()
     // Projection is intentionally eager and is not rolled back if identity resolution or reset fails.
     aggregate.setSpecialistId(specialistId)
 

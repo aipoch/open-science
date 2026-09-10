@@ -635,7 +635,7 @@ export class AcpProviderSessionResumer {
     })
   }
 
-  private assertSkillScopeRefreshSupported(): void {
+  assertSkillScopeRefreshSupported(): void {
     const backend = this.deps.currentBackend()
     if (
       backend.framework.id === 'codex' &&
