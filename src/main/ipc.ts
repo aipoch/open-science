@@ -2232,17 +2232,8 @@ const createApplicationModules = async (
     artifactRepository.resolveManagedFilePath({ path })
   )
   const sessionLimitPersistence = {
-    load: async (): Promise<readonly (readonly [string, number])[]> => {
-      const catalog = await loadAllSessions()
-      if (!canReconcileSessionAbsences(catalog)) {
-        throw new Error('Session concurrency limits could not be restored authoritatively.')
-      }
-      return catalog.sessions.flatMap((session) =>
-        session.computeConcurrencyLimit === undefined
-          ? []
-          : [[session.id, session.computeConcurrencyLimit] as const]
-      )
-    },
+    resolve: (sessionId: string, expectedProjectId?: string) =>
+      sessionRepository.loadComputePolicy(expectedProjectId, sessionId),
     save: async (sessionId: string, limit: number): Promise<void> => {
       const session = await withDataRootWrite(async () => {
         const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
@@ -3342,7 +3333,17 @@ const createApplicationModules = async (
           } finally {
             markComputeResultAuthorityReady()
           }
-          await jobPoller.start()
+          // Catalog hydration also restores non-Compute projections and enabled Host selections.
+          // Keep those startup effects, but never make dispatch depend on catalog completeness.
+          await Promise.all([
+            jobPoller.start(),
+            loadAllSessions().catch((error) => {
+              createLogger('session-persistence').warn(
+                'Startup Session hydration failed',
+                errorLogFields(error)
+              )
+            })
+          ])
         },
         disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
         dispose: () => jobPoller.stop()

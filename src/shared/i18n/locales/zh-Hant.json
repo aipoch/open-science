@@ -4909,7 +4909,6 @@
     "Selected PDFs imported. You can close this window.": "所選 PDF 已匯入。您可以關閉此視窗。",
     "Failed: {{failed}} · Skipped: {{skipped}}": "失敗：{{failed}} · 已略過：{{skipped}}",
     "You can import unfinished files or close this window.": "您可以匯入未完成的檔案或關閉此視窗。",
-    "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "無法驗證已儲存的並行限制，新 Compute 任務可能會持續排隊。請保留受影響的檔案，還原有效副本後重新檢查，以恢復任務派發。",
     "Recheck saved conversations": "重新檢查已儲存的對話",
     "Some changes have not been saved.": "部分變更尚未儲存。",
     "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "允許一次適用於此執行環境的下一次執行，即使程式碼有所變更也仍然適用。該次執行期間可多次連線至此網域。",
@@ -4927,6 +4926,11 @@
     "Use a separate Markdown image to load it explicitly.": "請使用獨立的 Markdown 圖片，以便手動載入。",
     "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}": "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}",
     "Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.": "可更新至已驗證的 Codex CLI v{{version}}。更新前請關閉 Codex 工作階段。",
-    "Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.": "Codex CLI v{{version}} 已可用。請手動更新外部安裝，然後重新偵測。"
+    "Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.": "Codex CLI v{{version}} 已可用。請手動更新外部安裝，然後重新偵測。",
+    "Compute dispatch is stopped": "計算任務排程已停止",
+    "Session ownership could not be verified": "無法驗證工作階段歸屬",
+    "Waiting for Session recovery. Dispatch retries automatically.": "正在等待工作階段復原。排程將自動重試。",
+    "Session compute settings could not be read. Dispatch retries automatically.": "無法讀取工作階段的計算設定。排程將自動重試。",
+    "Compute jobs in affected Sessions may remain queued. Preserve the affected files and recover a valid copy; dispatch retries automatically.": "受影響工作階段中的計算任務可能仍在排隊。請保留受影響的檔案並復原有效副本；排程將自動重試。"
   }
 }

@@ -5227,7 +5227,6 @@
     "Selected PDFs imported. You can close this window.": "Les PDF sélectionnés ont été importés. Vous pouvez fermer cette fenêtre.",
     "Failed: {{failed}} · Skipped: {{skipped}}": "Échecs : {{failed}} · Ignorés : {{skipped}}",
     "You can import unfinished files or close this window.": "Vous pouvez importer les fichiers inachevés ou fermer cette fenêtre.",
-    "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "Les nouvelles tâches Compute peuvent rester en attente, car les limites de simultanéité enregistrées n’ont pas pu être vérifiées. Conservez les fichiers concernés, restaurez une copie valide, puis relancez la vérification pour reprendre l’envoi des tâches.",
     "Recheck saved conversations": "Revérifier les conversations enregistrées",
     "Some changes have not been saved.": "Certaines modifications n’ont pas été enregistrées.",
     "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "Autoriser une fois s’applique à la prochaine exécution dans cet environnement, même si le code change. Plusieurs connexions à ce domaine sont autorisées pendant cette exécution.",
@@ -5245,6 +5244,11 @@
     "Use a separate Markdown image to load it explicitly.": "Utilisez une image Markdown séparée pour la charger explicitement.",
     "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}": "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}",
     "Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.": "Mettez à jour vers la version testée Codex CLI v{{version}}. Fermez les sessions Codex avant la mise à jour.",
-    "Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.": "Codex CLI v{{version}} est disponible. Mettez à jour votre installation externe manuellement, puis relancez la détection."
+    "Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.": "Codex CLI v{{version}} est disponible. Mettez à jour votre installation externe manuellement, puis relancez la détection.",
+    "Compute dispatch is stopped": "L’envoi des tâches de calcul est arrêté",
+    "Session ownership could not be verified": "L’appartenance de la session n’a pas pu être vérifiée",
+    "Waiting for Session recovery. Dispatch retries automatically.": "En attente de la restauration de la session. L’envoi sera réessayé automatiquement.",
+    "Session compute settings could not be read. Dispatch retries automatically.": "Les paramètres de calcul de la session n’ont pas pu être lus. L’envoi sera réessayé automatiquement.",
+    "Compute jobs in affected Sessions may remain queued. Preserve the affected files and recover a valid copy; dispatch retries automatically.": "Les tâches de calcul des sessions concernées peuvent rester en attente. Conservez les fichiers concernés et restaurez une copie valide ; l’envoi sera réessayé automatiquement."
   }
 }

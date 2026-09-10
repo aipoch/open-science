@@ -314,7 +314,10 @@ class ComputeJobDeletionOwner {
     return this.enqueue(async () => {
       const owners = await this.deps.jobRepository.listOwners()
       for (const owner of owners) {
-        if ((await isOwnerLive(owner)) === true) continue
+        // Unreadable Session data is not evidence of deletion. The Compute policy authority
+        // gates new dispatch independently; existing jobs retain polling and recovery.
+        // Explicit durable deletion barriers are restored through their own owner paths.
+        if ((await isOwnerLive(owner)) !== false) continue
         await this.armOwner(owner, true)
       }
     })

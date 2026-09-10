@@ -106,7 +106,7 @@ const SessionCatalogRecoveryAlert = ({
                       'A damaged saved conversation was moved aside. Project archive stays unavailable because its state cannot be verified. You can still permanently delete the project.'
                   }
                 )
-          } ${t('New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.')}`}
+          } ${t('Compute jobs in affected Sessions may remain queued. Preserve the affected files and recover a valid copy; dispatch retries automatically.')}`}
           variant="warning"
           inline={inline}
           onRetry={onRetry}

@@ -5361,7 +5361,6 @@
     "Selected PDFs imported. You can close this window.": "Выбранные PDF импортированы. Можно закрыть это окно.",
     "Failed: {{failed}} · Skipped: {{skipped}}": "Ошибки: {{failed}} · Пропущено: {{skipped}}",
     "You can import unfinished files or close this window.": "Можно импортировать незавершённые файлы или закрыть это окно.",
-    "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "Новые задания Compute могут оставаться в очереди, поскольку не удалось проверить сохранённые ограничения параллельного выполнения. Сохраните затронутые файлы, восстановите корректную копию и повторите проверку, чтобы возобновить отправку заданий.",
     "Recheck saved conversations": "Повторно проверить сохранённые диалоги",
     "Some changes have not been saved.": "Некоторые изменения не сохранены.",
     "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "Однократное разрешение действует для следующего выполнения в этой среде, даже если код изменится. Во время этого выполнения разрешено несколько подключений к этому домену.",
@@ -5379,6 +5378,11 @@
     "Use a separate Markdown image to load it explicitly.": "Используйте отдельное изображение Markdown, чтобы загрузить его явно.",
     "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}": "Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}",
     "Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.": "Обновите до проверенной версии Codex CLI v{{version}}. Перед обновлением закройте сеансы Codex.",
-    "Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.": "Доступна Codex CLI v{{version}}. Обновите внешнюю установку вручную, затем повторите обнаружение."
+    "Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.": "Доступна Codex CLI v{{version}}. Обновите внешнюю установку вручную, затем повторите обнаружение.",
+    "Compute dispatch is stopped": "Отправка вычислительных задач остановлена",
+    "Session ownership could not be verified": "Не удалось проверить принадлежность сеанса",
+    "Waiting for Session recovery. Dispatch retries automatically.": "Ожидание восстановления сеанса. Отправка будет повторена автоматически.",
+    "Session compute settings could not be read. Dispatch retries automatically.": "Не удалось прочитать настройки вычислений сеанса. Отправка будет повторена автоматически.",
+    "Compute jobs in affected Sessions may remain queued. Preserve the affected files and recover a valid copy; dispatch retries automatically.": "Вычислительные задачи затронутых сеансов могут оставаться в очереди. Сохраните затронутые файлы и восстановите действительную копию; отправка будет повторена автоматически."
   }
 }

@@ -315,6 +315,7 @@ export class ComputeJobWorkflowOwner {
       const preview = await this.concurrencyManager.enqueue({
         jobId,
         sessionId: context.sessionId,
+        projectId: context.projectId,
         providerId
       })
       if (preview === 'queue_full') throw queueFullError()
@@ -473,7 +474,7 @@ export class ComputeJobWorkflowOwner {
         try {
           if (this.concurrencyManager) {
             const admitted = await this.concurrencyManager.admit(
-              { sessionId: context.sessionId, providerId },
+              { sessionId: context.sessionId, projectId: context.projectId, providerId },
               createRow
             )
             if (admitted === 'queue_full') throw queueFullError()
@@ -532,13 +533,24 @@ export class ComputeJobWorkflowOwner {
       job_id: jobId,
       provider_id: host.providerId,
       status: initialStatus,
-      remote_workdir: remoteWorkdir
+      remote_workdir: remoteWorkdir,
+      ...(initialStatus === 'queued' && this.concurrencyManager
+        ? {
+            queue_blocked_reason: await this.concurrencyManager.getQueueBlockedReason(
+              context.sessionId,
+              context.projectId
+            )
+          }
+        : {})
     }
   }
 
   async getJobStatus(jobId: string, scope?: ComputeJobReadScope): Promise<JobStatusResult> {
     const job = await this.getJob(jobId, scope)
-    return projectJobStatus(job, job.cancellation_status)
+    return {
+      ...projectJobStatus(job, job.cancellation_status),
+      ...(job.queue_blocked_reason ? { queue_blocked_reason: job.queue_blocked_reason } : {})
+    }
   }
 
   async getJob(jobId: string, scope?: ComputeJobReadScope): Promise<ComputeJob> {
@@ -558,7 +570,15 @@ export class ComputeJobWorkflowOwner {
     ) {
       throw new ComputeHostUnavailableError()
     }
-    return job
+    return job.status === 'queued' && this.concurrencyManager
+      ? {
+          ...job,
+          queue_blocked_reason: await this.concurrencyManager.getQueueBlockedReason(
+            job.session_id,
+            job.project_id
+          )
+        }
+      : job
   }
 
   async getJobResult(jobId: string, scope?: ComputeJobReadScope): Promise<JobResult> {
@@ -636,6 +656,7 @@ const jobResultWithFiles = (
   hiddenFiles: string[],
   leftOnRemote: Array<{ uri: string; size_mb: number; reason: string }>
 ): JobResult => ({
+  ...(job.queue_blocked_reason ? { queue_blocked_reason: job.queue_blocked_reason } : {}),
   job_id: job.job_id,
   ...(job.producer_run_id ? { producer_run_id: job.producer_run_id } : {}),
   ...(parseSlurmSchedulerJobId(job.remote_handle, job.remote_workdir)
