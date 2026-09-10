@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test'
 
+const imageBytes = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAQAAAACgCAIAAABseyVrAAAACXBIWXMAAAPoAAAD6AG1e1JrAAADPklEQVR4nO3b0QkAIQwE0ZQ+pVuF5CMPLOAYRk7N7kxZCMxZDfa/wEIgG4AECOQPQAIEcgQiAQK5A5AAgVyCSYBAXoFIgECeQUmAQOYAJEAggzASIJBJMAkQSBSCBAgkC0QCBBKGIwECSYOSAIHEoUmAQPoAJEAghRgSIJBGGAkQSCWSBAikE0yCFLKV4knQ7W2w/wUWAtkAJEAgfwASIJAjEAkQyB2ABAjkEkwCBPIKRAIE8gxKAgQyByABAhmEkQCBTIJJgECiECRAIFkgEiCQMBwJEEgalAQIJA5NAgTSByABAinEkACBNMJIgEAqkSRAIJ1gEqSQrRRPgm5vg/0vsBDIBiABAvkDkACBHIFIgEDuACRAIJdgEiCQVyASIJBnUBIgkDkACRDIIIwECGQSTAIEEoUgAQLJApEAgYThSIBA0qAkQCBxaBIgkD4ACRBIIYYECKQRRgIEUokkAQLpBJMghWyleBJ0exvsf4GFQDYACRDIH4AECOQIRAIEcgcgAQK5BJMAgbwCkQCBPIOSAIHMAUiAQAZhJEAgk2ASIJAoBAkQSBaIBAgkDEcCBJIGJQECiUOTAIH0AUiAQAoxJEBAI4wECIxKJAkQGJ1gEoxDkVI8Ceb4Ntj/AguBbAASIJA/AAkQyBGIBAjkDkACBHIJJgECeQUiAQJ5BiUBApkDkACBDMJIgEAmwSRAIFEIEiCQLBAJEEgYjgQIJA1KAgQShyYBAukDkACBFGJIgEAaYSRAIJVIEiCQTjAJUshWiidBt7fB/hdYCGQDkACB/AFIgECOQCRAIHcAEiCQSzAJEMgrEAkQyDMoCRDIHIAECGQQRgIEMgkmAQKJQpAAgWSBSIBAwnAkQCBpUBIgkDg0CRBIH4AECKQQQwIE0ggjAQKpRJIAgXSCSZBCtlI8Cbq9Dfa/wEIgG4AECOQPQAIEcgQiAQK5A5AAgVyCSYBAXoFIgECeQUmAQOYAJEAggzASIJBJMAkQSBSCBAgkC0QCBBKGIwECSYOSAIHEoUmAQPoAJEAghRgSIJBGGAkQSCWSBAikE0yCFLKV4knQ7W2w/wUWAtkAJEAgfwASIJAjEAkQyB2ABAj0fRs8ThEJYWBXp48AAAAASUVORK5CYII=',
+  'base64'
+)
+
 test('message image requests wait for activation, including after reopening history', async ({
   page
 }) => {
@@ -8,10 +13,7 @@ test('message image requests wait for activation, including after reopening hist
     requests.push(route.request().url())
     await route.fulfill({
       contentType: 'image/png',
-      body: Buffer.from(
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jS1sAAAAASUVORK5CYII=',
-        'base64'
-      )
+      body: imageBytes
     })
   })
   await page.goto('/media-privacy.html')
@@ -58,4 +60,19 @@ test('ordinary Mermaid charts retain shape metadata and render without image req
   await page.goto('/media-privacy.html?mermaid=ordinary')
   await expect(page.locator('svg[data-mermaid-render-id]')).toBeVisible()
   await expect(page.getByText('Images in Mermaid diagrams are blocked')).toHaveCount(0)
+})
+
+test('approved images retain the native download action', async ({ page }) => {
+  await page.route('https://privacy-canary.invalid/**', (route) =>
+    route.fulfill({ contentType: 'image/png', body: imageBytes })
+  )
+  await page.goto('/media-privacy.html')
+  await page.getByRole('button', { name: /privacy-canary.invalid/ }).click()
+  const wrapper = page.locator('[data-streamdown="image-wrapper"]')
+  await expect(wrapper.locator('img')).toHaveJSProperty('naturalWidth', 256)
+  await wrapper.hover()
+  await page.screenshot({ path: test.info().outputPath('approved-image-download.png') })
+  const download = page.waitForEvent('download')
+  await wrapper.getByRole('button', { name: 'Download image' }).click()
+  expect((await download).suggestedFilename()).toBe('image.png')
 })

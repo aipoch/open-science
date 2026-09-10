@@ -1,10 +1,13 @@
 import { createContext, useContext, useState, type ComponentProps, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { ExtraProps } from 'streamdown'
+import { Streamdown, type ExtraProps } from 'streamdown'
+import type { Root } from 'hast'
 
 // Approval is local to this rendered media element, and bound to the complete URL set. A streaming
 // replacement or added poster/source must never inherit consent for a different request.
 const MediaUrls = createContext<readonly string[]>([])
+// The rehype transform replaces this seed with exactly one image; it is never displayed.
+const imageSeed = '![]()'
 type MediaNode = NonNullable<ExtraProps['node']>
 const remoteUrls = (node?: MediaNode): string[] => {
   if (!node) return []
@@ -66,16 +69,34 @@ const DeferredImage = ({
   title
 }: ComponentProps<'img'> & ExtraProps): ReactNode => (
   <MediaGate node={node} alt={alt}>
-    <img
-      src={src}
-      alt={alt ?? ''}
-      width={width}
-      height={height}
-      title={title}
-      referrerPolicy="no-referrer"
-      className="max-w-full rounded-lg"
-      data-streamdown="image"
-    />
+    {/* The public renderer retains Streamdown's image wrapper, controls and download behavior.
+        Supply only one image node, so alt/URL text cannot introduce more Markdown or requests. */}
+    <Streamdown
+      mode="static"
+      className="contents"
+      rehypePlugins={[
+        () => (): Root => ({
+          type: 'root',
+          children: [
+            {
+              type: 'element',
+              tagName: 'img',
+              properties: {
+                src,
+                alt: alt ?? '',
+                width,
+                height,
+                title,
+                referrerPolicy: 'no-referrer'
+              },
+              children: []
+            }
+          ]
+        })
+      ]}
+    >
+      {imageSeed}
+    </Streamdown>
   </MediaGate>
 )
 const DeferredVideo = ({
