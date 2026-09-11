@@ -284,7 +284,52 @@ describe('sandboxedPackageSpawn', () => {
         { signal: cancellation.signal }
       )
     ).rejects.toMatchObject({ name: 'AbortError' })
-    expect(confirmTermination).toHaveBeenCalled()
+    expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
+      processesTerminated: true,
+      confirmTermination
+    })
+  })
+
+  it('does not consume Windows Job Object proof after a confirmed abort kill', async () => {
+    const confirmTermination = vi.fn(async () => false)
+    const cleanup = vi.fn().mockResolvedValue({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    })
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async (invocation) => ({
+        executable: invocation.executable,
+        args: invocation.args,
+        env: invocation.env,
+        confirmProcessTreeTermination: confirmTermination,
+        beginExecution: () => () => undefined,
+        annotateStderr: (stderr: string) => stderr,
+        cleanup
+      }))
+    }
+    const spawn = sandboxedPackageSpawn({
+      processSandbox,
+      request: { language: 'python', packages: ['example'] },
+      runtimeRoot: process.cwd(),
+      storageRoot: process.cwd()
+    })
+    const cancellation = new AbortController()
+    await expect(
+      spawn(
+        process.execPath,
+        ['-e', 'setTimeout(() => {}, 30_000)'],
+        process.env,
+        () => {
+          cancellation.abort(new DOMException('Package operation cancelled.', 'AbortError'))
+        },
+        undefined,
+        false,
+        undefined,
+        { signal: cancellation.signal }
+      )
+    ).rejects.toMatchObject({ name: 'AbortError', processesTerminated: true })
+    expect(confirmTermination).not.toHaveBeenCalled()
     expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
       processesTerminated: true,
       confirmTermination
