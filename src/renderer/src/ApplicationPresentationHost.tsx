@@ -3,7 +3,7 @@ import { memo, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
-import { ActionToast } from '@/components/ActionToast'
+import { ActionToast, ActionToastStack } from '@/components/ActionToast'
 import { ConnectorAuthToast } from '@/components/ConnectorAuthToast'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
 import { ErrorNotice } from '@/components/error-notice'
@@ -201,31 +201,6 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           ui={startup.environment.ui}
           onRetry={() => void startup.environment.retry()}
         />
-        {sessions.catalogRecovery.kind !== 'ready' ? (
-          <SessionCatalogRecoveryAlert
-            recovery={sessions.catalogRecovery}
-            onRetry={sessions.retryLoad}
-            onOpenRecoveryFolder={window.api.sessions.openRecoveryFolder}
-          />
-        ) : sessions.loadError ? (
-          <SessionPersistenceAlert
-            title={t('Saved conversations could not be loaded')}
-            message={sessions.loadError}
-            onRetry={sessions.retryLoad}
-          />
-        ) : startup.quitPersistence.notice ? null : writeErrorAlert ? (
-          writeErrorAlert
-        ) : sessions.loadWarning ? (
-          <SessionPersistenceAlert
-            title={t('Saved conversation data was damaged')}
-            message={sessions.loadWarning}
-            variant="warning"
-            onDismiss={sessions.dismissLoadWarning}
-          />
-        ) : null}
-        {sessions.catalogRecovery.kind !== 'ready' && !startup.quitPersistence.notice
-          ? writeErrorAlert
-          : null}
         <WorkspaceAgentRuntimeProvider onSessionSizeLimit={sessions.reportSessionSizeLimit}>
           <WorkspaceComposerDraftsProvider>
             <WorkspaceMessageQueueProvider>
@@ -255,27 +230,53 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
             </WorkspaceMessageQueueProvider>
           </WorkspaceComposerDraftsProvider>
         </WorkspaceAgentRuntimeProvider>
-        <LifecycleToast
-          notice={events.lifecycle.notice}
-          onDismiss={events.lifecycle.dismissNotice}
-          onView={events.lifecycle.viewNotice}
-        />
-        <ConnectorAuthToast />
-        {isBasePresentationActive ? <LanguageSaveToast /> : null}
-        <StorageCleanupToast />
-        <NotificationLiveToast />
-        <PermissionUndoSnackbar allowsArchiveShortcut={events.allowsArchiveUndoShortcut} />
-        {events.notification.unavailableToken !== undefined ? (
-          <ActionToast
-            key={events.notification.unavailableToken}
-            title={t('This session was deleted or is unavailable.')}
-            dismissLabel={t('Close')}
-            onDismiss={events.notification.dismissUnavailable}
-            autoDismissMs={6000}
-            className="top-44"
-            testId="notification-target-unavailable-toast"
+        <ActionToastStack>
+          {sessions.catalogRecovery.kind !== 'ready' ? (
+            <SessionCatalogRecoveryAlert
+              recovery={sessions.catalogRecovery}
+              onRetry={sessions.retryLoad}
+              onOpenRecoveryFolder={window.api.sessions.openRecoveryFolder}
+            />
+          ) : sessions.loadError ? (
+            <SessionPersistenceAlert
+              title={t('Saved conversations could not be loaded')}
+              message={sessions.loadError}
+              onRetry={sessions.retryLoad}
+            />
+          ) : startup.quitPersistence.notice ? null : writeErrorAlert ? (
+            writeErrorAlert
+          ) : sessions.loadWarning ? (
+            <SessionPersistenceAlert
+              title={t('Saved conversation data was damaged')}
+              message={sessions.loadWarning}
+              variant="warning"
+              onDismiss={sessions.dismissLoadWarning}
+            />
+          ) : null}
+          {sessions.catalogRecovery.kind !== 'ready' && !startup.quitPersistence.notice
+            ? writeErrorAlert
+            : null}
+          <LifecycleToast
+            notice={events.lifecycle.notice}
+            onDismiss={events.lifecycle.dismissNotice}
+            onView={events.lifecycle.viewNotice}
           />
-        ) : null}
+          <ConnectorAuthToast />
+          <StorageCleanupToast />
+          {events.notification.unavailableToken !== undefined ? (
+            <ActionToast
+              key={events.notification.unavailableToken}
+              title={t('This session was deleted or is unavailable.')}
+              dismissLabel={t('Close')}
+              onDismiss={events.notification.dismissUnavailable}
+              autoDismissMs={6000}
+              testId="notification-target-unavailable-toast"
+            />
+          ) : null}
+          {isBasePresentationActive ? <LanguageSaveToast /> : null}
+          <PermissionUndoSnackbar allowsArchiveShortcut={events.allowsArchiveUndoShortcut} />
+        </ActionToastStack>
+        <NotificationLiveToast />
       </div>
       {quitPersistenceAlert}
       <WebEventRecoveryDialog

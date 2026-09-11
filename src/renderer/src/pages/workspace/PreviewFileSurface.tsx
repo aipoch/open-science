@@ -59,7 +59,7 @@ import {
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import {
-  LocalFileActionErrorToast,
+  LocalFileActionErrorNotice,
   LocalFileHeaderActions,
   type LocalFileActionFailure,
   type SaveAsArtifactState
@@ -1672,6 +1672,14 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   <VersionHistoryLoadButton history={lineageHistory} />
                 </>
               ) : null}
+              {localActionFailure ? (
+                <div className="shrink-0 max-h-[40%] overflow-y-auto">
+                  <LocalFileActionErrorNotice
+                    failure={localActionFailure}
+                    onDismiss={() => setLocalActionFailure(undefined)}
+                  />
+                </div>
+              ) : null}
               <PreviewProvenanceSplit
                 mode={showProvenance ? (widePreview ? 'split' : 'provenance') : 'content'}
                 provenance={
@@ -1834,12 +1842,6 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   <BookOpen className="size-3.5" aria-hidden="true" />
                   {t('Literature')}
                 </Button>
-              ) : null}
-              {localActionFailure ? (
-                <LocalFileActionErrorToast
-                  failure={localActionFailure}
-                  onDismiss={() => setLocalActionFailure(undefined)}
-                />
               ) : null}
             </div>
           </ActionMenuTarget>

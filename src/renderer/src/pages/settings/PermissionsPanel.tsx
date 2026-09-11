@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { AlertTriangle, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
@@ -445,24 +446,12 @@ const PermissionsPanel = ({
         ) : null}
 
         {error ? (
-          <div
+          <ErrorNotice
             role="alert"
-            className="mb-4 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-          >
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-              <p>{t(error)}</p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="mt-3"
-              onClick={() => void load({ force: true })}
-            >
-              {t('Try again')}
-            </Button>
-          </div>
+            className="mb-4"
+            description={t(error)}
+            primaryButton={{ label: t('Try again'), onClick: () => void load({ force: true }) }}
+          />
         ) : null}
 
         <div className="scroll-pb-24">

@@ -295,7 +295,10 @@ const DownloadSessionArtifactsDialog = ({
             </Button>
             <div className="flex min-w-0 items-center gap-3">
               {status === 'ready' && downloadError ? (
-                <p role="alert" className="truncate text-xs text-danger-000">
+                <p
+                  role="alert"
+                  className="whitespace-normal [overflow-wrap:anywhere] text-xs text-danger-000"
+                >
                   {downloadError.kind === 'partial'
                     ? t(
                         'Downloaded {{downloaded}} of {{total}} artifacts. {{failed}} failed.',

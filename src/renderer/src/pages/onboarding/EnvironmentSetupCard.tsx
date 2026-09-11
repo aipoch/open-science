@@ -59,7 +59,7 @@ const EnvironmentSetupCard = ({
       {error ? (
         <ErrorNotice
           role="alert"
-          tone="red"
+          tone="amber"
           title={t('Setup could not be completed')}
           description={error}
         />

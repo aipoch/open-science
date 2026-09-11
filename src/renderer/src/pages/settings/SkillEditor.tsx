@@ -159,13 +159,7 @@ type SkillEditorProps = {
 }
 
 const SkillEditorAlert = ({ message }: { message: string }): React.JSX.Element => (
-  <div
-    role="alert"
-    className="mt-2 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-  >
-    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-    <span className="min-w-0 break-words">{message}</span>
-  </div>
+  <ErrorNotice role="alert" tone="amber" className="mt-2" description={message} />
 )
 
 // Create/edit form for a personal skill: Identity (name/description) + Content (SKILL.md body).

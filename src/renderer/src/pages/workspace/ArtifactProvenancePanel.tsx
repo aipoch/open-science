@@ -1763,7 +1763,10 @@ const ArtifactProvenancePanel = ({
                   />
                 </div>
               ) : codeReconstructionResult?.status === 'error' ? (
-                <p className="min-w-0 flex-1 truncate text-sm text-danger-000" role="alert">
+                <p
+                  className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere] text-sm text-danger-000"
+                  role="alert"
+                >
                   {codeReconstructionResult.message}
                 </p>
               ) : codeReconstructionState?.state === 'unavailable' ? (

@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V3
  * component: Connector catalog · genre: modern-minimal · theme: project tokens
  * states: default · hover · focus · active · disabled · loading · error · success
@@ -5,7 +6,6 @@
  * responsive: wrapping toolbar and rows · visual gates: pending user review
  */
 import {
-  AlertTriangle,
   ChevronDown,
   Download,
   FileUp,
@@ -640,43 +640,29 @@ export function ConnectorsPanel({
 
       <div className="flex flex-col gap-4">
         {skillProjectionStatus === 'degraded' ? (
-          <div
-            className="flex items-center justify-between gap-3 rounded-lg border border-status-warning-foreground/30 bg-status-warning-surface/40 px-3 py-2 text-xs text-status-warning-foreground dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20 dark:text-status-warning-dark-foreground"
+          <ErrorNotice
             role="alert"
-          >
-            <span className="flex items-start gap-2">
-              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-              <span>
-                {t(
-                  'Connector settings are saved, but their Agent Skill documents are out of date.'
-                )}
-              </span>
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={retryingProjection}
-              onClick={() => void retrySkillProjection()}
-            >
-              {retryingProjection ? t('Checking…') : t('Retry')}
-            </Button>
-          </div>
+            description={t(
+              'Connector settings are saved, but their Agent Skill documents are out of date.'
+            )}
+            primaryButton={{
+              label: retryingProjection ? t('Checking…') : t('Retry'),
+              loading: retryingProjection,
+              onClick: () => void retrySkillProjection()
+            }}
+          />
         ) : null}
         {operationError ? (
-          <div
-            className="flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+          <ErrorNotice
             role="alert"
-          >
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>
-              {operationError === 'Could not reconnect this Connector.'
+            description={
+              operationError === 'Could not reconnect this Connector.'
                 ? t('Could not reconnect this Connector.')
                 : operationError === 'Could not refresh the Agent Skill documents for Connectors.'
                   ? t('Could not refresh the Agent Skill documents for Connectors.')
-                  : t(operationError)}
-            </span>
-          </div>
+                  : t(operationError)
+            }
+          />
         ) : null}
         {showFeatured
           ? connectorGroup(
@@ -989,13 +975,12 @@ export function ConnectorsPanel({
                 </div>
               ) : null}
               {removalError ? (
-                <div
+                <ErrorNotice
                   role="alert"
-                  className="mt-4 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-                >
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                  <span>{t('Could not remove this Connector.')}</span>
-                </div>
+                  tone="amber"
+                  className="mt-4"
+                  description={t('Could not remove this Connector.')}
+                />
               ) : null}
             </div>
 

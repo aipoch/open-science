@@ -1428,59 +1428,40 @@ const ConversationPanel = ({
                   {/* Reconfigure failure banner: shown directly above the composer when a pre-send
                       specialist reconfigure failed. Draft is preserved; three recovery actions. */}
                   {!sideChat && reconfigureError ? (
-                    <div
-                      className="relative z-10 mb-2 flex items-start gap-2.5 rounded-xl border border-red-500/25 bg-red-500/[0.08] px-3 py-2.5"
-                      role="alert"
-                      data-testid="reconfigure-error-banner"
-                    >
-                      <AlertTriangle
-                        className="mt-0.5 size-3.5 shrink-0 text-red-400"
-                        strokeWidth={2}
-                        aria-hidden="true"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[12px] font-medium leading-5 text-red-300">
-                          {reconfigureError.committed
+                    <div className="relative z-10 mb-2" data-testid="reconfigure-error-banner">
+                      <ErrorNotice
+                        role="alert"
+                        title={
+                          reconfigureError.committed
                             ? t('Specialist switch is pending for {{name}}', {
                                 name: reconfigureError.specialistName
                               })
                             : t('Could not switch to {{name}}', {
                                 name: reconfigureError.specialistName
-                              })}
-                        </div>
-                        <div className="text-[11px] leading-4 text-red-400/80">
-                          {reconfigureError.committed
+                              })
+                        }
+                        description={
+                          reconfigureError.committed
                             ? t(
                                 'The selection is saved, but the Agent runtime has not applied it yet. Your draft and queued messages are preserved.'
                               )
                             : t(
                                 'The agent session could not be reconfigured. Your draft has been preserved.'
-                              )}
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          <button
-                            type="button"
-                            onClick={onReconfigureRetry}
-                            className="flex h-6 items-center rounded px-2 text-[11px] font-medium text-red-300 hover:bg-red-500/15 border border-red-500/30"
-                          >
+                              )
+                        }
+                      >
+                        <div className="flex flex-wrap gap-2">
+                          <Button size="sm" variant="outline" onClick={onReconfigureRetry}>
                             {t('Retry')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={onReconfigureChooseOther}
-                            className="flex h-6 items-center rounded px-2 text-[11px] text-red-400/80 hover:bg-red-500/10 border border-red-500/20"
-                          >
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={onReconfigureChooseOther}>
                             {t('Choose another specialist')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={onReconfigureUseNone}
-                            className="flex h-6 items-center rounded px-2 text-[11px] text-red-400/80 hover:bg-red-500/10 border border-red-500/20"
-                          >
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={onReconfigureUseNone}>
                             {t('Use None (Main Agent)')}
-                          </button>
+                          </Button>
                         </div>
-                      </div>
+                      </ErrorNotice>
                     </div>
                   ) : null}
 
@@ -2708,7 +2689,7 @@ const ConversationPanel = ({
                           ) : null}
                           {stopError ? (
                             <span
-                              className="max-w-48 truncate text-[11px] text-danger-000"
+                              className="max-w-48 whitespace-normal [overflow-wrap:anywhere] text-[11px] text-danger-000"
                               role="alert"
                               title={stopError}
                             >

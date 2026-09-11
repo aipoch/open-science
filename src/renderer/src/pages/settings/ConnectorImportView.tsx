@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 
 import { AlertTriangle, FileJson, Upload } from 'lucide-react'
@@ -143,15 +144,7 @@ export function ConnectorImportView({
           </p>
         ) : null}
 
-        {error ? (
-          <div
-            role="alert"
-            className="flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-          >
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>{error}</span>
-          </div>
-        ) : null}
+        {error ? <ErrorNotice role="alert" tone="amber" description={error} /> : null}
 
         {definition ? (
           <div>

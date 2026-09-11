@@ -156,7 +156,7 @@ describe('Connector configuration transfer views', () => {
     expect(onUse).toHaveBeenCalledWith(remoteDefinition)
   })
 
-  it('uses the Settings danger banner for import failures', async () => {
+  it('uses the shared inline notice for import failures', async () => {
     window.api = {
       settings: {
         selectCustomServerTemplate: vi.fn().mockRejectedValue(new Error('Could not read file'))
@@ -170,7 +170,7 @@ describe('Connector configuration transfer views', () => {
 
     const alert = document.body.querySelector('[role="alert"]')
     expect(alert?.textContent).toContain('Could not read file')
-    expect(alert?.className).toContain('border-danger-000/30')
+    expect(alert?.closest('section')?.className).toContain('border-border')
   })
 
   it('keeps a local-only path warning importable', async () => {
@@ -296,7 +296,7 @@ describe('Connector configuration transfer views', () => {
     expect(exportCustomServerTemplate).toHaveBeenCalledTimes(2)
   })
 
-  it('uses the Settings danger banner for export failures', async () => {
+  it('uses the shared inline notice for export failures', async () => {
     window.api = {
       settings: {
         previewCustomServerTemplateExport: vi
@@ -311,6 +311,6 @@ describe('Connector configuration transfer views', () => {
 
     const alert = document.body.querySelector('[role="alert"]')
     expect(alert?.textContent).toContain('Could not prepare export')
-    expect(alert?.className).toContain('border-danger-000/30')
+    expect(alert?.closest('section')?.className).toContain('border-border')
   })
 })

@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { cn } from '@/lib/utils'
 import { flushSync } from 'react-dom'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
@@ -60,7 +61,7 @@ import { CompletedJobCard } from '@/components/CompletedJobCard'
 import { JobDetailModal } from '@/components/JobDetailModal'
 import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
-import { Button } from '@/components/ui/button'
+
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ReviewerCard } from '@/components/ReviewerCard'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
@@ -1479,24 +1480,18 @@ const WorkspaceMessageScrollerImpl = ({
                   messageId={`review-load-error-${currentSessionId ?? 'unknown'}`}
                   className="min-w-0"
                 >
-                  <div
+                  <ErrorNotice
                     role="alert"
-                    className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-lg bg-danger-900 px-3 py-2 text-xs text-danger-000 ring-1 ring-inset ring-danger-000/25 md:mx-6"
-                  >
-                    <span>{t('Could not load review history.')}</span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => {
-                        if (currentSessionId) {
+                    className="mx-4 mb-2 w-auto md:mx-6"
+                    description={t('Could not load review history.')}
+                    primaryButton={{
+                      label: t('Retry'),
+                      onClick: () => {
+                        if (currentSessionId)
                           void loadReviewsForSession(currentSessionId, currentProjectId)
-                        }
-                      }}
-                    >
-                      {t('Retry')}
-                    </Button>
-                  </div>
+                      }
+                    }}
+                  />
                 </MessageScrollerItem>
               ) : null}
               {jobHydration.error ? (
@@ -1504,15 +1499,12 @@ const WorkspaceMessageScrollerImpl = ({
                   messageId={`job-load-error-${currentSessionId ?? 'unknown'}`}
                   className="min-w-0"
                 >
-                  <div
+                  <ErrorNotice
                     role="alert"
-                    className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-lg bg-danger-900 px-3 py-2 text-xs text-danger-000 ring-1 ring-inset ring-danger-000/25 md:mx-6"
-                  >
-                    <span>{t('Unable to load remote jobs.')}</span>
-                    <Button type="button" variant="ghost" size="xs" onClick={jobHydration.retry}>
-                      {t('Retry')}
-                    </Button>
-                  </div>
+                    className="mx-4 mb-2 w-auto md:mx-6"
+                    description={t('Unable to load remote jobs.')}
+                    primaryButton={{ label: t('Retry'), onClick: jobHydration.retry }}
+                  />
                 </MessageScrollerItem>
               ) : null}
               <VisibleMessageSnapshotCommit

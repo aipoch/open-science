@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { Folder, Info, Plus, Server } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -191,12 +192,9 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
 
       <div className="mt-4 flex flex-col gap-2.5">
         {loadError ? (
-          <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2">
-            <p className="text-sm text-destructive" role="alert">
-              {t("Couldn't load hosts.")}
-            </p>
+          <ErrorNotice role="alert" description={t("Couldn't load hosts.")}>
             <DiagnosticDetails detail={loadError} />
-          </div>
+          </ErrorNotice>
         ) : !isLoaded ? (
           <p className="py-6 text-center text-sm text-muted-foreground">{t('Loading hosts…')}</p>
         ) : hosts.length === 0 ? (

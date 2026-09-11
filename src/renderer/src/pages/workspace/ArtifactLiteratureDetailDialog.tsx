@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { useLiteratureChanges } from '@/pages/literature/useLiteratureChanges'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import * as Dialog from '@/components/ui/dialog'
@@ -175,14 +176,16 @@ const ArtifactLiteratureDetailDialog = ({
                 {t('Saved reference metadata. Attachments reflect the current Library entry.')}
               </p>
               {loadStatus === 'missing' || loadStatus === 'error' ? (
-                <p
+                <ErrorNotice
                   role="alert"
-                  className="my-4 rounded-lg border border-status-warning-foreground/30 bg-status-warning-surface/40 px-3 py-2 text-sm text-status-warning-foreground dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20 dark:text-status-warning-dark-foreground"
-                >
-                  {loadStatus === 'missing'
-                    ? t('This reference is no longer in your Library.')
-                    : t('Literature could not be loaded.')}
-                </p>
+                  tone="amber"
+                  className="my-4"
+                  description={
+                    loadStatus === 'missing'
+                      ? t('This reference is no longer in your Library.')
+                      : t('Literature could not be loaded.')
+                  }
+                />
               ) : null}
 
               {creatorNames(item).length > 0 ? (

@@ -33,10 +33,11 @@ describe('SessionPersistenceAlert', () => {
 
     expect(alert?.textContent).toContain('Storage unavailable')
     expect(alert?.textContent).toContain('Retry after reconnecting.')
-    expect(alert?.className).toContain('fixed')
-    expect(alert?.className).toContain('bg-card')
-    expect(alert?.className).toContain('border-destructive/40')
-    expect(alert?.className).not.toContain('border-border')
+    expect(
+      container.querySelector('[data-testid="session-persistence-alert"]')?.className
+    ).toContain('fixed')
+    expect(alert?.closest('section')?.className).toContain('bg-card')
+    expect(alert?.closest('section')?.className).toContain('border-border')
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
   })
 
@@ -59,8 +60,10 @@ describe('SessionPersistenceAlert', () => {
       '[data-testid="session-persistence-retry"]'
     )
 
-    expect(alert?.className).toContain('w-full max-w-md')
-    expect(alert?.className).toContain('border-border')
+    expect(
+      container.querySelector('[data-testid="session-persistence-alert"]')?.className
+    ).toContain('w-full max-w-md')
+    expect(alert?.closest('section')?.className).toContain('border-border')
     expect(alert?.className).not.toContain('fixed')
     expect(alert?.className).not.toContain('border-destructive/40')
     expect(retry?.dataset.slot).toBe('button')

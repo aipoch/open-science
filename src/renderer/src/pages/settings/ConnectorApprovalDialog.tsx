@@ -1,4 +1,5 @@
-import { AlertTriangle, ShieldAlert } from 'lucide-react'
+import { ErrorNotice } from '@/components/error-notice'
+import { ShieldAlert } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -194,13 +195,12 @@ export function ConnectorApprovalDialog({
               ) : null}
             </div>
             {responseErrorRequestId === request.id ? (
-              <div
+              <ErrorNotice
                 role="alert"
-                className="mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-              >
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                <span>{t('Could not submit this approval. Try again.')}</span>
-              </div>
+                tone="amber"
+                className="mt-3"
+                description={t('Could not submit this approval. Try again.')}
+              />
             ) : null}
           </div>
 

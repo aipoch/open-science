@@ -1,15 +1,8 @@
+import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · macrostructure: Workbench · tone: utilitarian · palette: existing warm paper + teal */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { useRef, useState } from 'react'
-import {
-  AlertTriangle,
-  ChevronDown,
-  ChevronUp,
-  LoaderCircle,
-  ScrollText,
-  SearchX,
-  Star
-} from 'lucide-react'
+import { ChevronDown, ChevronUp, LoaderCircle, ScrollText, SearchX, Star } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -251,13 +244,7 @@ const SkillImportView = ({
       </div>
       <div aria-busy={busy}>
         {message?.kind === 'error' ? (
-          <div
-            role="alert"
-            className="mt-2 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-          >
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <p className="min-w-0 flex-1 break-words py-0.5">{message.text}</p>
-          </div>
+          <ErrorNotice role="alert" tone="amber" className="mt-2" description={message.text} />
         ) : null}
 
         {repositories ? (

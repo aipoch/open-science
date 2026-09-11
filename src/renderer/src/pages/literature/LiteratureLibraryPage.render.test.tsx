@@ -1768,7 +1768,7 @@ describe('LiteratureLibraryPage', () => {
       search.mockImplementation(originalSearch)
       const warning = screen
         .getByText('The update could not be confirmed. Check the Inbox before trying again.')
-        .closest('[role="alert"]')!
+        .closest('section')!
       await act(async () =>
         fireEvent.click(within(warning as HTMLElement).getByRole('button', { name: 'Retry' }))
       )
@@ -3637,7 +3637,10 @@ describe('LiteratureLibraryPage', () => {
     expect.soft(alert.textContent).not.toBe('The attachment operation failed. Try again.')
     // A user must be able to inspect the blocking reference or recovery diagnosis.
     expect(
-      [...within(alert).queryAllByRole('button'), ...within(alert).queryAllByRole('link')].length
+      [
+        ...within(alert.closest('section')!).queryAllByRole('button'),
+        ...within(alert.closest('section')!).queryAllByRole('link')
+      ].length
     ).toBeGreaterThan(0)
   })
 
@@ -8621,16 +8624,14 @@ describe('LiteratureLibraryPage', () => {
       await waitFor(() =>
         expect(
           (
-            within(message.closest('[role="alert"]')!).getByRole('button', {
+            within(message.closest('section')!).getByRole('button', {
               name: 'Retry'
             }) as HTMLButtonElement
           ).disabled
         ).toBe(false)
       )
       failRefresh = false
-      fireEvent.click(
-        within(message.closest('[role="alert"]')!).getByRole('button', { name: 'Retry' })
-      )
+      fireEvent.click(within(message.closest('section')!).getByRole('button', { name: 'Retry' }))
       await waitFor(() =>
         expect(
           screen.queryByText(

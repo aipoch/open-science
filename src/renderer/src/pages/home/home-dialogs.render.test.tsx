@@ -85,7 +85,7 @@ const expectSettingsDialogChrome = (
 
   expect(overlay?.props.className).not.toContain('backdrop-blur')
   expect(panel?.props.className).toContain(expectedWidth)
-  expect(panel?.props.className).toContain('overflow-hidden')
+  expect(panel?.props.className).toContain('overflow-y-auto')
   expect(panel?.props.className).toContain('text-foreground')
   expect(panel?.props.className).toContain('shadow-dialog')
   expect(header?.props.className).toContain('px-5 py-3.5')

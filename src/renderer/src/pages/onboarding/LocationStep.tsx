@@ -185,17 +185,21 @@ const LocationStep = ({
           {dataRootError ? (
             <ErrorNotice
               role="alert"
-              tone="red"
+              tone="amber"
               title={t('Could not load the default data location:')}
               description={dataRootError}
-              primaryButton={{ label: t('Retry'), onClick: onRetryDataRootInfo, disabled: requestInFlight }}
+              primaryButton={{
+                label: t('Retry'),
+                onClick: onRetryDataRootInfo,
+                disabled: requestInFlight
+              }}
             />
           ) : null}
 
           {relaunchError ? (
             <ErrorNotice
               role="alert"
-              tone="red"
+              tone="amber"
               title={t('Could not finish setting up storage:')}
               description={`${t(relaunchError)} ${t('You can retry or keep the default location.')}`}
             />

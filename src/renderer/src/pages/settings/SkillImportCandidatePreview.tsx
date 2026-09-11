@@ -141,11 +141,7 @@ const SkillImportCandidatePreview = ({
                 {t('Loading preview…')}
               </div>
             ) : error ? (
-              <ErrorNotice
-                role="alert"
-                tone="red"
-                description={error}
-              />
+              <ErrorNotice role="alert" tone="amber" description={error} />
             ) : content ? (
               <>
                 {content.replacement ? (
