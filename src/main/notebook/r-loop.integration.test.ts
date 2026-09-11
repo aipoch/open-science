@@ -2690,7 +2690,8 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
           'indirect_lazy <- 9L; indirect_eager <- 100L'
       )
       const refreshed = await inspect(true)
-      expect(refreshed.namespace?.variables.map(({ name }) => name)).toEqual([
+      // R sorts with the host's LC_COLLATE; compare membership in a fixed JS order.
+      expect(refreshed.namespace?.variables.map(({ name }) => name).sort()).toEqual([
         '.Random.seed',
         '.private',
         'active_value',

@@ -79,8 +79,37 @@ describe('runtime certification workflow', () => {
     expect(step(source, 'Prepare local restoration archives').run).toContain(
       'OPEN_SCIENCE_TEST_CONDA_ARCHIVES='
     )
-    expect(verify.run).toContain('library(jsonlite)')
-    expect(verify.run).toContain('library(ggplot2)')
+    for (const name of ['matplotlib', 'numpy', 'pandas', 'openpyxl', 'pycirclize']) {
+      expect(create.run).toContain(name === 'matplotlib' ? 'matplotlib-base' : name)
+      expect(verify.run).toContain(name)
+    }
+    // The real replay fixtures need workbook, plotting, and data-transformation packages too.
+    for (const name of [
+      'jsonlite',
+      'ggplot2',
+      'renv',
+      'MASS',
+      'circlize',
+      'dplyr',
+      'ggrepel',
+      'ggVennDiagram',
+      'magrittr',
+      'openxlsx',
+      'patchwork',
+      'ragg',
+      'RColorBrewer',
+      'readxl',
+      'scales',
+      'showtext',
+      'sysfonts',
+      'systemfonts',
+      'tidyr',
+      'VennDiagram'
+    ]) {
+      expect(create.run).toContain(`r-${name.toLowerCase()}`)
+      expect(verify.run).toContain(`"${name}"`)
+    }
+    expect(verify.run).toContain('loadNamespace(package)')
   })
 
   it('activates the explicit real runtime suites without package or publication side effects', () => {
