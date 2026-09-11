@@ -403,7 +403,8 @@ class SettingsRepository {
     return applied
   }
 
-  // Removes a provider and clears the active pointer (and model) when it referenced the removed one.
+  // Removes a provider and moves the active pointer to the first remaining provider when the
+  // deleted provider was active. With no providers left, the active pointer and model are cleared.
   // Claude's two fixed records are one collapsed provider in the UI, so deleting either id removes
   // the whole subscription group atomically, including its persisted display preference.
   async deleteProvider(
@@ -418,8 +419,11 @@ class SettingsRepository {
       const providers = settings.providers.filter((provider) => !removedIds.has(provider.id))
       const clearedActive =
         settings.activeProviderId !== undefined && removedIds.has(settings.activeProviderId)
-      const activeProviderId = clearedActive ? undefined : settings.activeProviderId
-      const activeModel = clearedActive ? undefined : settings.activeModel
+      const fallbackProvider = clearedActive ? providers[0] : undefined
+      const activeProviderId = clearedActive
+        ? fallbackProvider?.id
+        : settings.activeProviderId
+      const activeModel = clearedActive ? fallbackProvider?.model : settings.activeModel
 
       const next: StoredSettings = {
         ...settings,

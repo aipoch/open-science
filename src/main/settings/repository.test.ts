@@ -1441,6 +1441,20 @@ describe('settings repository: v2 official providers & activeModel migration', (
     expect((await repository.getSettings()).activeModel).toBeUndefined()
   })
 
+  it('selects the first remaining provider when the active provider is deleted', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.upsertProvider(provider({ id: 'p1', model: 'm1' }))
+    await repository.upsertProvider(provider({ id: 'p2', model: 'm2' }))
+    await repository.setActiveProvider('p1', 'm1')
+
+    const settings = await repository.deleteProvider('p1')
+
+    expect(settings.providers.map((item) => item.id)).toEqual(['p2'])
+    expect(settings.activeProviderId).toBe('p2')
+    expect(settings.activeModel).toBe('m2')
+  })
+
   it('does not recreate a deleted Claude provider when a late credential save arrives', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
     await repository.upsertClaudeIsolatedProvider({
