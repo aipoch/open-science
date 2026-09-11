@@ -142,7 +142,14 @@ describe('NotebookPackageMutationOwner', () => {
         return {
           inventory: { source: 'full-scan', validation: 'full-scan' },
           packages: [
-            { requested: spec, name, status: 'installed', version: '2.0', versionStatus: 'known' }
+            {
+              requested: spec,
+              name,
+              status: 'installed',
+              version: '2.0',
+              versionStatus: 'known',
+              libraryScope: 'environment'
+            }
           ]
         }
       }
@@ -191,6 +198,37 @@ describe('NotebookPackageMutationOwner', () => {
     }
   )
 
+  it.each(['user', 'system', 'unknown', undefined] as const)(
+    'does not satisfy an R install from library scope %s',
+    async (libraryScope) => {
+      const { owner, options, target } = ownerHarness()
+      const request = { ...target.request, language: 'r' as const, packages: ['ggplot2'] }
+      vi.mocked(options.environmentStateTracker.inspectPackages).mockResolvedValue({
+        inventory: { source: 'full-scan', validation: 'full-scan' },
+        packages: [
+          {
+            requested: 'ggplot2',
+            name: 'ggplot2',
+            status: 'installed',
+            version: '4.0.3',
+            versionStatus: 'known',
+            libraryScope
+          }
+        ]
+      })
+      await owner.mutate({
+        target: {
+          ...target,
+          request,
+          environmentCaptureTarget: { ...target.environmentCaptureTarget, language: 'r' }
+        },
+        mirror: {}
+      })
+      expect(options.installPackages).toHaveBeenCalledWith(request, expect.anything())
+      expect(options.environmentStateTracker.markPackageMutationDirty).toHaveBeenCalled()
+    }
+  )
+
   it.each([
     { packages: ['numpy>=2'] },
     { packages: ['numpy[extra]'] },
@@ -198,6 +236,8 @@ describe('NotebookPackageMutationOwner', () => {
     { packages: [] },
     { channels: ['bioconda'] },
     { operation: 'uninstall' as const },
+    { language: 'r' as const, packages: ['r-ggplot2'] },
+    { language: 'r' as const, packages: ['bioconductor-deseq2'] },
     { language: 'r' as const, installer: 'github' as const, packages: ['owner/repo'] }
   ])('does not preflight unsupported request %j', async (overrides) => {
     const { owner, options, target } = ownerHarness()

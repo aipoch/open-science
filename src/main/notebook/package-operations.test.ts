@@ -163,7 +163,14 @@ describe('NotebookPackageOperations', () => {
       vi.mocked(options.environmentStateTracker.inspectPackages).mockResolvedValue({
         inventory: { source: 'full-scan', validation: 'full-scan' },
         packages: [
-          { requested: name, name, status: 'installed', version: '2.0', versionStatus: 'known' }
+          {
+            requested: name,
+            name,
+            status: 'installed',
+            version: '2.0',
+            versionStatus: 'known',
+            libraryScope: 'environment'
+          }
         ]
       })
       const result = await owner.manage({

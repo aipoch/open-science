@@ -107,6 +107,7 @@ class NotebookPackageMutationOwner {
             pkg.status !== 'installed' ||
             pkg.versionStatus !== 'known' ||
             !pkg.version ||
+            (request.language === 'r' && pkg.libraryScope !== 'environment') ||
             (exact !== undefined && pkg.version !== exact)
           )
         })
