@@ -438,8 +438,9 @@ export class UpdateService implements UpdateStrategy {
 
   private async applyAdmitted(
     admittedStatus: UpdateStatus,
-    _options?: UpdateApplyOptions
+    options?: UpdateApplyOptions
   ): Promise<UpdateStatus> {
+    void options
     if (this.status !== admittedStatus) return this.status
     let ownedStatus = admittedStatus
     const operation = startDiagnosticOperation(this.log, {
