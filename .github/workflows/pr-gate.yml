@@ -17,6 +17,7 @@ on:
           - classified
           - unit-coverage
           - i18n
+          - runtime-bundle
           - windows-e2e
           - e2e
 
@@ -161,6 +162,23 @@ jobs:
               >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "runtime-bundle" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["manual:runtime-bundle"],"lanes":["policy","runtime_bundle"],"bundles":["policy","static"],"reasonChains":["workflow_dispatch runtime-bundle -> focused dry-run"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy","runtime_bundle"]' >> "$GITHUB_OUTPUT"
+            printf '%s\n' \
+              '## PR Gate preflight' \
+              '' \
+              '- Mode: **selective (focused dry-run)**' \
+              '- Selected lanes: policy, runtime_bundle' \
+              '- Execution bundles: policy, static' \
+              '' \
+              '### Reason chains' \
+              '' \
+              '- `workflow_dispatch runtime-bundle -> focused dry-run`' \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "e2e" ]]; then
             plan='{"schemaVersion":1,"mode":"selective","roots":["manual:e2e"],"lanes":["policy","build","e2e_functional_macos","e2e_workspace_macos","e2e_accessibility_macos","e2e_visual_macos","e2e_functional_windows","e2e_workspace_windows"],"bundles":["policy","macos_e2e","windows_e2e"],"reasonChains":["workflow_dispatch e2e -> real desktop jobs and renderer pilot"]}'
             echo "plan=$plan" >> "$GITHUB_OUTPUT"
@@ -194,6 +212,7 @@ jobs:
             'interface_contracts',
             'cli_sdk',
             'i18n',
+            'runtime_bundle',
             'unit_macos',
             'linux_runtime',
             'windows_runtime',
@@ -389,6 +408,14 @@ jobs:
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'i18n') }}
         continue-on-error: true
         run: npx vitest run src/renderer/src/i18n/resources.test.ts
+      - name: Verify published runtime bundle
+        id: runtime_bundle
+        # Trusted-base classification cannot name a lane that does not exist on main yet, so the
+        # introducing PR's full plan would otherwise skip this check. After merge, version-file
+        # changes select the overlay lane; full plans keep fail-closed CDN coverage.
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'runtime_bundle') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
+        continue-on-error: true
+        run: node scripts/verify-runtime-bundle.mjs linux-64 osx-arm64 osx-64 win-64
       - name: Enforce selected static checks
         if: ${{ always() }}
         shell: bash
@@ -398,6 +425,7 @@ jobs:
           FORMAT_OUTCOME: ${{ steps.format.outcome }}
           I18N_OUTCOME: ${{ steps.i18n.outcome }}
           INTERFACE_CONTRACTS_OUTCOME: ${{ steps.interface_contracts.outcome }}
+          RUNTIME_BUNDLE_OUTCOME: ${{ steps.runtime_bundle.outcome }}
           LINT_OUTCOME: ${{ steps.lint.outcome }}
           TYPECHECK_NODE_OUTCOME: ${{ steps.typechecks.outputs.node }}
           TYPECHECKS_OUTCOME: ${{ steps.typechecks.outcome }}
@@ -420,6 +448,7 @@ jobs:
           check interface_contracts "$INTERFACE_CONTRACTS_OUTCOME"
           check cli_sdk "$CLI_SDK_OUTCOME"
           check i18n "$I18N_OUTCOME"
+          check runtime_bundle "$RUNTIME_BUNDLE_OUTCOME"
           exit "$failed"
 
   unit_shard:
