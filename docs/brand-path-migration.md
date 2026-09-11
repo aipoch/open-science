@@ -290,7 +290,8 @@ OPEN_SCIENCE_MIGRATION_PRIVILEGED_INSPECTION=1 node scripts/migrate-brand-paths.
 ```
 
 The new inspector does not change journal format, backup locations or commit/recovery ordering.
-Existing version 1 and version 2 receipts use the same resume/rollback validation described below.
+Existing version 1 and version 2 receipts, and version 3 snapshot-restart receipts, use the same
+version-specific resume/rollback validation described below.
 A read-only probe failure leaves the durable recovery state and both original/target backups intact.
 Proc inspection proves only the visible process namespace at each check; perform migration in the
 application's host namespace with all external writers stopped, not inside an unrelated container
@@ -416,6 +417,13 @@ continue. Temporary UI files are removed on a normal helper exit; forced OS term
 an isolated `open-science-migration-ui-*` temporary directory, containing UI caches only.
 
 ## Restarting a preparing snapshot after logs were appended
+
+The append exception applies only to the discovered standalone macOS `Library/Logs` brand roots.
+Linux and Windows profile contents remain subject to strict snapshot verification: a changed log
+inside a profile is not permission to accept other profile changes or overwrite a nonempty target.
+Portable state-machine tests explicitly select the macOS path plan while using real host filesystem,
+SQLite and process inspection. Separate native-plan CLI tests cover restart, resume and rollback;
+the portable macOS-plan tests do not establish Linux profile-log append recovery support.
 
 An integrity failure names the changed entries, not just their root. A count such as `5 / 5` is
 an inventory count; it does not mean publication or migration succeeded. The CLI stops heartbeat

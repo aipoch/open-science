@@ -2619,9 +2619,36 @@ describe('visible migration progress', () => {
 })
 
 describe('pre-publication snapshot restart', () => {
+  // These cases exercise the macOS standalone log-root policy on real host files/SQLite.
+  // Only discovery receives a platform input; process/metadata inspection remains host-native.
+  function migrationProcess(options: Record<string, unknown>): ReturnType<typeof cli> {
+    try {
+      const output = execFileSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `import {runMigration} from './resources/brand-migration/transaction.mjs';
+           runMigration(JSON.parse(process.argv[1])).then(result => console.log(JSON.stringify(result)))
+             .catch(error => { console.error(error.message); process.exitCode = 1; });`,
+          JSON.stringify(options)
+        ],
+        { encoding: 'utf8' }
+      )
+      return { status: 0, output, value: JSON.parse(output) }
+    } catch (error) {
+      const failure = error as { status?: number; stdout?: string; stderr?: string }
+      return {
+        status: failure.status ?? 1,
+        output: String(failure.stdout) + String(failure.stderr),
+        value: undefined
+      }
+    }
+  }
+
   async function interrupted(): Promise<
     Awaited<ReturnType<typeof fixture>> & {
-      options: { home: string; appData: string; mode: string }
+      options: { home: string; appData: string; mode: string; platform: string }
       oldLogs: string
       newLogs: string
       state: string
@@ -2641,7 +2668,12 @@ describe('pre-publication snapshot restart', () => {
     db.exec('CREATE TABLE GrantedLocalRoot(id TEXT PRIMARY KEY,path TEXT)')
     db.prepare('INSERT INTO GrantedLocalRoot VALUES (?,?)').run('stable-root', f.old)
     db.close()
-    const options = { home: f.home, appData: join(f.home, 'appData'), mode: 'dev' }
+    const options = {
+      home: f.home,
+      appData: join(f.home, 'appData'),
+      mode: 'dev',
+      platform: 'darwin'
+    }
     const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
     await expect(
       runMigration(
@@ -2664,13 +2696,13 @@ describe('pre-publication snapshot restart', () => {
     const f = await interrupted()
     const staged = f.receipt.participants.find((p) => p.from === f.oldLogs).stage
     const stagedBytes = await readFile(join(staged, 'main.log'), 'utf8')
-    expect(cli(f.home, '--resume').status).not.toBe(0)
-    const result = cli(f.home, '--restart-preparing')
+    expect(migrationProcess({ ...f.options, resume: true }).status).not.toBe(0)
+    const result = migrationProcess({ ...f.options, restartPreparing: true })
     expect(result.status, result.output).toBe(0)
     expect(result.value.status).toBe('committed')
     expect(result.value.id).not.toBe(f.receipt.id)
     expect(await readFile(join(f.newLogs, 'main.log'), 'utf8')).toBe('old log\nlate old log\n')
-    const target = result.value.existingTargetBackups.find((p) => p.from === f.newLogs)
+    const target = result.value.participants.find((p) => p.to === f.newLogs).previousTarget
     expect(await readFile(join(target.backup, 'main.log'), 'utf8')).toBe('new log\nlate new log\n')
     expect(await readFile(join(staged, 'main.log'), 'utf8')).toBe(stagedBytes)
     expect(
@@ -2683,15 +2715,17 @@ describe('pre-publication snapshot restart', () => {
       path: f.next
     })
     db.close()
-    expect(cli(f.home, '--restart-preparing').value.id).toBe(result.value.id)
-    expect(cli(f.home, '--rollback').status).toBe(0)
+    expect(migrationProcess({ ...f.options, restartPreparing: true }).value.id).toBe(
+      result.value.id
+    )
+    expect(migrationProcess({ ...f.options, rollback: true }).status).toBe(0)
     expect(await readFile(join(f.oldLogs, 'main.log'), 'utf8')).toBe('old log\nlate old log\n')
     expect(await readFile(join(f.newLogs, 'main.log'), 'utf8')).toBe('new log\nlate new log\n')
   })
 
   it('reports the changed file and explicit recovery action without silently accepting the new snapshot', async () => {
     const f = await interrupted()
-    const result = cli(f.home, '--resume')
+    const result = migrationProcess({ ...f.options, resume: true })
     expect(result.status).not.toBe(0)
     expect(result.output).toContain('main.log')
     expect(result.output).toContain('--restart-preparing')
@@ -2716,7 +2750,7 @@ describe('pre-publication snapshot restart', () => {
         join(f.state, `journal-${f.receipt.id}.superseded.json`),
         'utf8'
       )
-      const result = cli(f.home, '--restart-preparing')
+      const result = migrationProcess({ ...f.options, restartPreparing: true })
       expect(result.status, result.output).toBe(0)
       expect(result.value.status).toBe('committed')
       expect(await readFile(join(f.state, `journal-${f.receipt.id}.superseded.json`), 'utf8')).toBe(
@@ -2754,7 +2788,7 @@ describe('pre-publication snapshot restart', () => {
       await writeFile(join(f.state, 'journal.json'), JSON.stringify(f.receipt))
     }
     const before = await readFile(join(f.state, 'journal.json'), 'utf8')
-    const result = cli(f.home, '--restart-preparing')
+    const result = migrationProcess({ ...f.options, restartPreparing: true })
     expect(result.status).not.toBe(0)
     expect(result.output).not.toContain('Unknown argument')
     expect(await readFile(join(f.state, 'journal.json'), 'utf8')).toBe(before)
@@ -2796,11 +2830,11 @@ describe('pre-publication snapshot restart', () => {
       )
     ).rejects.toThrow('interrupted intent')
     const pending = await readFile(join(f.state, 'journal.json'), 'utf8')
-    const startup = cli(f.home, '--execute')
+    const startup = migrationProcess({ ...f.options, execute: true })
     expect(startup.status).not.toBe(0)
     expect(startup.output).toContain('Interrupted snapshot restart')
     expect(await readFile(join(f.state, 'journal.json'), 'utf8')).toBe(pending)
-    expect(cli(f.home, '--resume').value.status).toBe('committed')
+    expect(migrationProcess({ ...f.options, resume: true }).value.status).toBe('committed')
   })
 
   it('survives two actual process exits while preserving the initial archive and staged files', async () => {
@@ -2816,7 +2850,7 @@ describe('pre-publication snapshot restart', () => {
         import {runMigration} from './resources/brand-migration/transaction.mjs';
         import {join} from 'node:path';
         const [home,phase] = process.argv.slice(1);
-        await runMigration({home,appData:join(home,'appData'),mode:'dev',restartPreparing:true,recoverLock:true}, {
+        await runMigration({home,appData:join(home,'appData'),mode:'dev',platform:'darwin',restartPreparing:true,recoverLock:true}, {
           onProgress(e) { if(e.phase === phase) process.exit(74); }
         });
       `,
@@ -2827,7 +2861,7 @@ describe('pre-publication snapshot restart', () => {
       )
       expect(child.status, child.stderr).toBe(74)
     }
-    const result = cli(f.home, '--resume', '--recover-lock')
+    const result = migrationProcess({ ...f.options, resume: true, recoverLock: true })
     expect(result.status, result.output).toBe(0)
     expect(
       JSON.parse(await readFile(join(f.state, `journal-${f.receipt.id}.superseded.json`), 'utf8'))
@@ -2842,13 +2876,19 @@ describe('pre-publication snapshot restart', () => {
       {
         onProgress(event: { phase: string }) {
           if (event.phase !== 'restart-intent') return
-          const result = cli(f.home, '--restart-preparing', '--recover-lock')
+          const result = migrationProcess({
+            ...f.options,
+            restartPreparing: true,
+            recoverLock: true
+          })
           expect(result.status).not.toBe(0)
           expect(result.output).toContain('kernel lock unavailable or active')
         }
       }
     )
-    expect(cli(f.home, '--restart-preparing').value.status).toBe('committed')
+    expect(migrationProcess({ ...f.options, restartPreparing: true }).value.status).toBe(
+      'committed'
+    )
   })
 
   it('does not mutate the receipt when a real process holds an old-root descriptor', async () => {
@@ -2869,7 +2909,7 @@ describe('pre-publication snapshot restart', () => {
     await once(child, 'message')
     try {
       const before = await readFile(join(f.state, 'journal.json'), 'utf8')
-      const result = cli(f.home, '--restart-preparing')
+      const result = migrationProcess({ ...f.options, restartPreparing: true })
       expect(result.status).not.toBe(0)
       expect(result.output).toMatch(/occupied|using migration paths/)
       expect(await readFile(join(f.state, 'journal.json'), 'utf8')).toBe(before)
@@ -2897,19 +2937,35 @@ describe('pre-publication snapshot restart', () => {
     const pending = await readFile(file, 'utf8'),
       original = await readFile(archive, 'utf8')
     await writeFile(archive, '{}')
-    expect(cli(f.home, '--resume').output).toContain('archive does not match')
+    expect(migrationProcess({ ...f.options, resume: true }).output).toContain(
+      'archive does not match'
+    )
     expect(await readFile(file, 'utf8')).toBe(pending)
     await writeFile(archive, original)
     const forged = JSON.parse(pending)
     forged.restart.next.participants[0].stage = join(f.home, 'unrelated')
     await writeFile(file, JSON.stringify(forged))
-    expect(cli(f.home, '--resume').output).toContain('Invalid journal participant paths')
+    expect(migrationProcess({ ...f.options, resume: true }).output).toContain(
+      'Invalid journal participant paths'
+    )
     expect(await readFile(join(f.oldLogs, 'main.log'), 'utf8')).toBe('old log\nlate old log\n')
   })
 
   it('never turns a dry-run or mixed action into a snapshot restart', async () => {
-    const f = await interrupted()
-    const before = await readFile(join(f.state, 'journal.json'), 'utf8')
+    const f = await fixture()
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    await expect(
+      runMigration(
+        { home: f.home, appData: join(f.home, 'appData'), mode: 'dev', execute: true },
+        {
+          onProgress(event: { phase: string }) {
+            if (event.phase === 'copied') throw new Error('native CLI fixture interruption')
+          }
+        }
+      )
+    ).rejects.toThrow('native CLI fixture interruption')
+    const state = `${f.config}.brand-migration`
+    const before = await readFile(join(state, 'journal.json'), 'utf8')
     for (const args of [
       ['--dry-run', '--restart-preparing'],
       ['--execute', '--restart-preparing'],
@@ -2918,7 +2974,14 @@ describe('pre-publication snapshot restart', () => {
       expect(cli(f.home, ...args).status).not.toBe(0)
     }
     expect(cli(f.home).value.status).toBe('preparing')
-    expect(await readFile(join(f.state, 'journal.json'), 'utf8')).toBe(before)
+    expect(await readFile(join(state, 'journal.json'), 'utf8')).toBe(before)
+    const restarted = cli(f.home, '--restart-preparing')
+    expect(restarted.status, restarted.output).toBe(0)
+    expect(restarted.value.status).toBe('committed')
+    expect(cli(f.home, '--resume').value.id).toBe(restarted.value.id)
+    expect(cli(f.home, '--restart-preparing').value.id).toBe(restarted.value.id)
+    expect(cli(f.home, '--rollback').status).toBe(0)
+    expect(await readFile(join(f.old, 'uploads', 'paper.txt'), 'utf8')).toBe('research\n')
   })
   it('does not accept a data change between original verification and rebuilding its manifest', async () => {
     const f = await interrupted()
@@ -2962,7 +3025,7 @@ describe('pre-publication snapshot restart', () => {
     ).rejects.toThrow('partial new publication')
     const pending = JSON.parse(await readFile(join(f.state, 'journal.json'), 'utf8'))
     expect(pending.status).toBe('publishing')
-    const result = cli(f.home, '--restart-preparing')
+    const result = migrationProcess({ ...f.options, restartPreparing: true })
     expect(result.status, result.output).toBe(0)
     expect(result.value.id).toBe(pending.id)
     expect(result.value.status).toBe('committed')
