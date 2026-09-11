@@ -13,11 +13,15 @@ import {
 
 type SettingsSearchInputProps = Omit<ComponentProps<typeof Input>, 'ref' | 'type'> & {
   containerClassName?: string
+  // ⌘K priority within the same topmost dialog; the dialog-wide settings search passes a higher
+  // value so panel-scoped fields that mounted later do not capture the shortcut.
+  shortcutPriority?: number
 }
 
 export const SettingsSearchInput = ({
   className,
   containerClassName,
+  shortcutPriority,
   value,
   defaultValue,
   onChange,
@@ -26,7 +30,7 @@ export const SettingsSearchInput = ({
   const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
   const isMac = window.api?.platform === 'darwin'
-  useSettingsSearchShortcut(inputRef)
+  useSettingsSearchShortcut(inputRef, true, shortcutPriority ?? 0)
   const [uncontrolledText, setUncontrolledText] = useState(
     typeof defaultValue === 'string' ? defaultValue : ''
   )

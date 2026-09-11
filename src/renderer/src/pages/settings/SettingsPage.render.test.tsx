@@ -1022,6 +1022,44 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[data-slot="settings-write-error"]')).toBeNull()
   })
 
+  it('keeps the dialog open when Escape closes the global search results', async () => {
+    const onClose = vi.fn()
+    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+
+    const search = document.body.querySelector<HTMLInputElement>(
+      '[data-slot="settings-global-search"] input'
+    )
+    expect(search).not.toBeNull()
+
+    await act(async () => {
+      search?.focus()
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+        search,
+        'proxy'
+      )
+      search?.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
+
+    // First Escape closes only the results list; the dialog stays open.
+    await act(async () => {
+      search?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    expect(document.body.querySelector('[role="listbox"]')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[data-slot="settings-surface"]')).not.toBeNull()
+
+    // Second Escape, with the list closed, falls through to the dialog's normal close path.
+    await act(async () => {
+      document.body.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    expect(onClose).toHaveBeenCalled()
+  })
+
   it('mounts the sidebar + content with grouped nav items and a close control', () => {
     useSettingsStore.setState({
       providers: [

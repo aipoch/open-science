@@ -1106,7 +1106,8 @@ export type SkillActivationPolicy = 'always-on' | 'user-controlled'
 
 // Stable machine codes for failed Settings writes. The renderer display layer translates by code,
 // so no English message text ever crosses the store boundary or gets string-compared to decide a
-// translation.
+// translation. Codes are single hyphenated tokens with no spaces: concurrent failures are joined
+// with spaces in the visible error string and split back apart by the display layer.
 export type SettingsWriteErrorCode =
   | 'active-provider'
   | 'agent-framework'

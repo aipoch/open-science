@@ -91,6 +91,72 @@ describe('SettingsSearchInput', () => {
     )
   })
 
+  it('lets a higher-priority field win over a later-mounted panel search in the same dialog', () => {
+    ;(window as unknown as { api: unknown }).api = { platform: 'darwin' }
+    act(() => {
+      root.render(
+        <div role="dialog">
+          <SettingsSearchInput
+            aria-label="Search settings"
+            shortcutPriority={1}
+            value=""
+            onChange={() => undefined}
+          />
+          <SettingsSearchInput aria-label="Search skills" value="" onChange={() => undefined} />
+        </div>
+      )
+    })
+
+    pressSearchShortcut({ metaKey: true })
+
+    expect(document.activeElement).toBe(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Search settings"]')
+    )
+  })
+
+  it('keeps last-mounted-wins for same-priority fields in the same dialog', () => {
+    ;(window as unknown as { api: unknown }).api = { platform: 'darwin' }
+    act(() => {
+      root.render(
+        <div role="dialog">
+          <SettingsSearchInput aria-label="First search" value="" onChange={() => undefined} />
+          <SettingsSearchInput aria-label="Second search" value="" onChange={() => undefined} />
+        </div>
+      )
+    })
+
+    pressSearchShortcut({ metaKey: true })
+
+    expect(document.activeElement).toBe(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Second search"]')
+    )
+  })
+
+  it('keeps a nested dialog search ahead of a higher-priority field in the dialog below', () => {
+    ;(window as unknown as { api: unknown }).api = { platform: 'darwin' }
+    act(() => {
+      root.render(
+        <div role="dialog" aria-label="Settings">
+          <SettingsSearchInput
+            aria-label="Search settings"
+            shortcutPriority={1}
+            value=""
+            onChange={() => undefined}
+          />
+          <div role="dialog" aria-label="Bulk manage">
+            <SettingsSearchInput aria-label="Filter selected" value="" onChange={() => undefined} />
+          </div>
+        </div>
+      )
+    })
+
+    pressSearchShortcut({ metaKey: true })
+
+    expect(document.activeElement).toBe(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Filter selected"]')
+    )
+  })
+
   it.each([
     ['closing', { 'data-state': 'closed' }],
     ['hidden', { hidden: true }]

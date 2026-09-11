@@ -13,7 +13,6 @@ import {
   Pencil,
   Plus,
   ScrollText,
-  Search,
   Trash2,
   Users,
   X
@@ -59,6 +58,7 @@ import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
 import { ConnectorsNavIcon } from './connector-icons'
 import { SettingsIconAction } from './SettingsLayout'
+import { SettingsSearchInput } from './SettingsSearchInput'
 import { SettingsPanelHeader } from './SettingsPanelHeader'
 import { TAG_COLORS, TAG_ICONS, tagPresentation } from './tag-presentation'
 import { TagBadge } from './tag-visuals'
@@ -715,13 +715,13 @@ const TagsList = ({
           title={t('Tags')}
           description={t('Create and reorder tags, then browse everything attached to each tag.')}
           search={
-            <Input
-              type="search"
+            <SettingsSearchInput
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t('Search resources…')}
-              aria-label={t('Search resources…')}
-              className="h-8 w-44"
+              aria-label={t('Search tagged resources')}
+              className="h-8"
+              containerClassName="w-52 flex-none"
             />
           }
           action={
@@ -861,16 +861,6 @@ const TagsList = ({
                   </li>
                 )
               })}
-              <li>
-                <button
-                  type="button"
-                  onClick={onCreate}
-                  className="flex h-9 w-full cursor-pointer items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground active:bg-muted/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 [@media(pointer:coarse)]:min-h-11"
-                >
-                  <Plus className="size-4 shrink-0" aria-hidden="true" />
-                  <span className="truncate">{t('New Tag')}</span>
-                </button>
-              </li>
             </ol>
           </aside>
 
@@ -945,20 +935,6 @@ const TagsList = ({
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <div className="relative min-w-40 flex-1">
-                    <Search
-                      className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    <Input
-                      type="search"
-                      aria-label={t('Search tagged resources')}
-                      placeholder={t('Search resources…')}
-                      className="pl-8"
-                      value={query}
-                      onChange={(event) => setQuery(event.target.value)}
-                    />
-                  </div>
                 </div>
                 {assignmentError ? (
                   <p role="alert" className="mb-3 text-xs text-destructive">

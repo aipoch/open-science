@@ -1135,7 +1135,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           // closed intentionally via the ✕ button or Escape.
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => {
-            // Global search: the input's own Escape closes the results list first; keep that
+            // Global search: the combobox's own Escape closes the results list first; keep that
             // keypress from also dismissing the whole dialog (Radix listens in capture phase).
             if (
               event.target instanceof HTMLElement &&
