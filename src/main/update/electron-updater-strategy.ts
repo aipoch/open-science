@@ -619,10 +619,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         operation.cancel({ reason: 'apply-interrupted' })
         return this.status
       }
-      if (
-        (!readiness.completed || !readiness.reaped) &&
-        (!options.force || !readiness.blockedBy?.length)
-      ) {
+      if ((!readiness.completed || !readiness.reaped) && !options.force) {
         this.releaseAbortedInstallHandoff()
         this.log.error('update install gate refused: backend teardown degraded', readiness)
         this.applying = false
