@@ -401,6 +401,16 @@ describe('pull request change classification', () => {
     expect(plan.reasonChains).toContain(`${path} -> windows_sensitive`)
   })
 
+  it('requires a live CDN bundle when the immutable runtime version changes', () => {
+    const plan = classifyChanges([
+      { path: 'src/main/notebook/runtime-paths.ts', status: 'modified' }
+    ])
+
+    expect(plan.roots).toEqual(expect.arrayContaining(['main_runtime', 'runtime_bundle']))
+    expect(plan.lanes).toContain('runtime_bundle')
+    expect(plan.reasonChains).toContain('src/main/notebook/runtime-paths.ts -> runtime_bundle')
+  })
+
   it('does not add focused Windows lanes for platform-neutral Main changes', () => {
     const plan = classifyChanges([
       { path: 'src/main/notebook/runtime-service.ts', status: 'modified' }

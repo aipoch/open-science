@@ -120,7 +120,7 @@ describe('PR Gate workflow', () => {
           required: false,
           default: 'classified',
           type: 'choice',
-          options: ['classified', 'unit-coverage', 'i18n', 'windows-e2e', 'e2e']
+          options: ['classified', 'unit-coverage', 'i18n', 'runtime-bundle', 'windows-e2e', 'e2e']
         }
       }
     })
@@ -178,6 +178,9 @@ describe('PR Gate workflow', () => {
     )
     expect(classify?.run).toContain(
       '[[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "i18n" ]]'
+    )
+    expect(classify?.run).toContain(
+      '[[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "runtime-bundle" ]]'
     )
     expect(classify?.run).toContain('"lanes":["policy","unit_macos"]')
     expect(classify?.run).toContain('"bundles":["policy","unit"]')
@@ -384,6 +387,28 @@ describe('PR Gate workflow', () => {
     expect(enforce?.run).toContain('check i18n "$I18N_OUTCOME"')
     expect(manifest.laneBundles.i18n).toBe('static')
     expect(manifest.laneOrder).toContain('i18n')
+  })
+
+  it('verifies the published runtime bundle as a named static check', () => {
+    const runtimeBundle = workflow.jobs.static.steps?.find(
+      ({ name }) => name === 'Verify published runtime bundle'
+    )
+    const enforce = workflow.jobs.static.steps?.find(
+      ({ name }) => name === 'Enforce selected static checks'
+    )
+
+    expect(runtimeBundle).toMatchObject({
+      id: 'runtime_bundle',
+      'continue-on-error': true,
+      run: 'node scripts/verify-runtime-bundle.mjs linux-64 osx-arm64 osx-64 win-64'
+    })
+    expect(runtimeBundle?.if).toContain("'runtime_bundle'")
+    expect(enforce?.env).toMatchObject({
+      RUNTIME_BUNDLE_OUTCOME: '${{ steps.runtime_bundle.outcome }}'
+    })
+    expect(enforce?.run).toContain('check runtime_bundle "$RUNTIME_BUNDLE_OUTCOME"')
+    expect(manifest.laneBundles.runtime_bundle).toBe('static')
+    expect(manifest.laneOrder).toContain('runtime_bundle')
   })
 
   it('shards full portable tests on Ubuntu and merges coverage into the stable unit bundle', () => {

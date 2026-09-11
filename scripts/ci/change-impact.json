@@ -11,6 +11,7 @@
     "interface_contracts",
     "cli_sdk",
     "i18n",
+    "runtime_bundle",
     "unit_macos",
     "linux_runtime",
     "windows_runtime",
@@ -42,6 +43,7 @@
     "interface_contracts": "static",
     "cli_sdk": "static",
     "i18n": "static",
+    "runtime_bundle": "static",
     "unit_macos": "unit",
     "linux_runtime": "linux_runtime",
     "windows_runtime": "windows_core",
@@ -260,6 +262,28 @@
       "role": "overlay",
       "paths": ["src/main/settings/ipc.ts"],
       "capabilities": ["settings_ipc"]
+    },
+    {
+      "id": "default_env_staging",
+      "role": "owner",
+      "paths": [
+        "scripts/stage-default-envs.mjs",
+        "scripts/stage-default-envs.test.ts",
+        "scripts/verify-runtime-bundle.mjs",
+        "scripts/verify-runtime-bundle.test.ts"
+      ],
+      "capabilities": ["runtime_bundle"]
+    },
+    {
+      "id": "runtime_bundle",
+      "role": "overlay",
+      "paths": [
+        "src/main/notebook/runtime-paths.ts",
+        "scripts/stage-default-envs.mjs",
+        "scripts/verify-runtime-bundle.mjs",
+        ".github/workflows/stage-runtime-bundle.yml"
+      ],
+      "capabilities": ["runtime_bundle"]
     }
   ],
   "capabilities": {
@@ -332,6 +356,10 @@
     "i18n_catalog": {
       "consumers": [],
       "lanes": ["i18n"]
+    },
+    "runtime_bundle": {
+      "consumers": [],
+      "lanes": ["runtime_bundle"]
     },
     "renderer_state": {
       "consumers": ["e2e_workspace"],
