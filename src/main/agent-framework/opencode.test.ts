@@ -202,6 +202,60 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(config.env?.OPENCODE_DISABLE_PROJECT_CONFIG).toBe('true')
   })
 
+  it('injects the native session id as x-opencode-session only for OpenCode Go providers', () => {
+    const goProvider = {
+      type: 'official' as const,
+      vendorId: 'opencode-go' as const,
+      agentProviderId: 'open-science-go-model',
+      baseUrl: 'http://127.0.0.1:41001/v1',
+      apiEndpoints: ['openai' as const],
+      model: 'glm-5.3-flash',
+      key: 'local-go-token'
+    }
+    const otherProvider = {
+      type: 'official' as const,
+      vendorId: 'deepseek' as const,
+      agentProviderId: 'open-science-deepseek-model',
+      baseUrl: 'http://127.0.0.1:41002/v1',
+      apiEndpoints: ['openai' as const],
+      model: 'deepseek-v4-flash',
+      key: 'local-deepseek-token'
+    }
+    const config = opencodeFramework.prepareModelConfig(goProvider, {
+      storageRoot: '/data',
+      executablePath: '/bin/opencode',
+      providerModelCatalog: [{ provider: goProvider }, { provider: otherProvider }]
+    })
+
+    const plugin = config.configFiles?.find((file) =>
+      file.path.endsWith('plugins/open-science-opencode-go-session.js')
+    )
+    expect(plugin?.content).toContain('new Set(["open-science-go-model"])')
+    expect(plugin?.content).not.toContain('open-science-deepseek-model')
+    expect(plugin?.content).toContain('if (!providerIDs.has(input.model.providerID)) return')
+    expect(plugin?.content).toContain('output.headers["x-opencode-session"] = input.sessionID')
+  })
+
+  it('rewrites the OpenCode Go session plugin as an inert module for other vendors', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      {
+        type: 'official',
+        vendorId: 'deepseek',
+        agentProviderId: 'open-science-deepseek-model',
+        baseUrl: 'http://127.0.0.1:41002/v1',
+        apiEndpoints: ['openai'],
+        model: 'deepseek-v4-flash',
+        key: 'local-deepseek-token'
+      },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    const plugin = config.configFiles?.find((file) =>
+      file.path.endsWith('plugins/open-science-opencode-go-session.js')
+    )
+    expect(plugin?.content).toContain('new Set([])')
+  })
+
   it('pins the authoritative provider/model/baseURL (not just permission) in OPENCODE_CONFIG_CONTENT', () => {
     const config = opencodeFramework.prepareModelConfig(
       {
