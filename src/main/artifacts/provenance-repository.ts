@@ -8,6 +8,8 @@ import { ManagedFileVersionService } from '../managed-file-versions/service'
 
 import type {
   AppGeneratedArtifactProducer,
+  SaveArtifactVersionRequest,
+  ArtifactWriteSourceScope,
   ArtifactLineageProvenance,
   ArtifactVersionDescriptor,
   ArtifactVersionFile,
@@ -36,6 +38,7 @@ import { defaultArtifactDurability, type ArtifactDurability } from './durability
 import {
   ArtifactProvenanceVersionWriter,
   normalizeArtifactFilename as normalizeFilename,
+  type PublishCompatibilityRouting,
   type PersistedVersionFileRecord
 } from './provenance-version-writer'
 import { getNotebookSessionRoot, NotebookRunRepository } from '../notebook/repository'
@@ -60,7 +63,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ArtifactProvenanceDependencyReader } from './provenance-dependency-reader'
 import type { HostLineageDependencyRelation, HostLineageDirection } from '../../shared/host-lineage'
 import { requireAgentArtifactVersion } from './provenance-version-kind'
-import type { LocalResourceBudgetOverrides } from '../resource-budget'
+import { LOCAL_RESOURCE_BUDGETS, type LocalResourceBudgetOverrides } from '../resource-budget'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 import {
   NodeVersionFileOperator,
@@ -85,6 +88,8 @@ import {
   type RecordArtifactLiteraturePdfReadRequest,
   type RecordArtifactLiteratureSearchRequest
 } from './literature-manifest'
+import { readPreparedLiteratureSidecar } from './prepared-literature-sidecar'
+import { validateArtifactSaveSource } from './save-request'
 import type { NotebookDependencyAnalyzer } from '../notebook/dependency-analysis'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -562,85 +567,216 @@ class ArtifactProvenanceRepository {
     request: WriteAppGeneratedArtifactVersionRequest
   ): Promise<ArtifactVersionFile> {
     const { content, encoding = 'utf8', kind, producer, ...versionRequest } = request
-    const writeOperationId = `artifact-app-write-${this.createId()}`
-    const reservationScope = {
-      projectId: request.projectId,
-      appSessionId: request.appSessionId,
-      artifactStorageSessionId: request.artifactStorageSessionId,
-      artifactRunId: request.artifactRunId
+    return this.writeGeneratedVersion(
+      {
+        ...versionRequest,
+        writeOperationId: `artifact-app-write-${this.createId()}`,
+        source: { kind: 'inline', content, encoding }
+      },
+      { allowedImportRoots: [] },
+      undefined,
+      { kind, producer, encoding }
+    )
+  }
+
+  withSessionMutation<Result>(
+    scope: { projectId: string; appSessionId: string },
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    return this.versionWriter.withSessionWrite(scope, operation)
+  }
+
+  async saveVersion(
+    request: SaveArtifactVersionRequest,
+    sourceScope: ArtifactWriteSourceScope,
+    signal?: AbortSignal,
+    onMetadataBytes?: (bytes: number) => void
+  ): Promise<ArtifactVersionFile> {
+    validateArtifactSaveSource(request.source)
+    if (!sourceScope || !Array.isArray(sourceScope.allowedImportRoots)) {
+      throw new Error('Artifact save requires a trusted source scope.')
     }
+    return this.writeGeneratedVersion(request, sourceScope, signal, undefined, onMetadataBytes)
+  }
 
-    return this.versionWriter.withSessionWrite(versionRequest, (writeVersion) =>
-      this.compatibilityRepository.withPendingFileTransaction(
-        {
-          projectId: request.projectId,
-          sessionId: request.artifactStorageSessionId,
-          runId: request.artifactRunId,
-          filename: request.filename,
-          mimeType: request.contentType,
-          kind,
-          source: { kind: 'inline', content, encoding }
-        },
-        {
-          reserveFile: (fileBytes) =>
-            this.writeBudgetOwner.reserve({
-              ...reservationScope,
-              writeOperationId,
-              filename: request.filename,
-              fileBytes
-            }),
-          releaseFileReservation: (reservationId) =>
-            this.writeBudgetOwner.release({ ...reservationScope, reservationId })
-        },
-        async (
-          _pendingFile,
-          _sourceFileObservation,
-          bindVersionRouting,
-          fileDigest,
-          reservation
-        ) => {
-          if (!reservation) throw new Error('App-owned Artifact write reservation was not created.')
-          const contentChecksum = fileDigest.checksum
-          const writeRequestChecksum = sha256(
-            canonicalJson({
-              contentChecksum,
-              contentType: request.contentType ?? null,
-              encoding,
-              filename: request.filename,
-              literature: request.literature ?? null,
-              producerRunId: null,
-              sourceKind: 'inline',
-              sourceFileObservation: null
-            })
-          )
-
+  private writeGeneratedVersion(
+    request: SaveArtifactVersionRequest,
+    sourceScope: ArtifactWriteSourceScope,
+    signal?: AbortSignal,
+    app?: {
+      kind?: 'plan'
+      producer?: AppGeneratedArtifactProducer
+      encoding: ArtifactWriteEncoding
+    },
+    onMetadataBytes?: (bytes: number) => void
+  ): Promise<ArtifactVersionFile> {
+    return this.versionWriter.withSessionWrite(
+      request,
+      async (writeVersion) => {
+        signal?.throwIfAborted()
+        if (request.source.kind === 'localPath') {
+          const replay = await this.replayVersionWithinSession(request)
+          if (replay) return replay
+        }
+        if (
+          !app &&
+          request.source.kind === 'inline' &&
+          (await (
+            await this.options.getClient()
+          ).artifactVersion.findUnique({
+            where: { writeOperationId: request.writeOperationId },
+            select: { id: true }
+          }))
+        ) {
+          const { source, ...versionRequest } = request
           return writeVersion(
             {
               ...versionRequest,
-              writeOperationId,
-              writeRequestChecksum,
               sourceKind: 'inline',
-              resourceReservationId: reservation.id,
-              resourceSizeBytes: fileDigest.sizeBytes,
-              resourceChecksum: fileDigest.checksum
+              writeRequestChecksum: sha256(
+                JSON.stringify({
+                  contentChecksum: sha256(Buffer.from(source.content, source.encoding)),
+                  contentType: request.contentType ?? null,
+                  filename: request.filename,
+                  producerRunId: request.producerRunId ?? null,
+                  literature: request.literature ?? null,
+                  sourceKind: 'inline',
+                  sourceFileObservation: null
+                })
+              )
             },
-            async (version) =>
-              bindVersionRouting(
-                {
-                  artifactId: version.artifactId,
-                  versionId: version.id,
-                  versionNumber: version.versionNumber,
-                  artifactRunId: version.artifactRunId,
-                  checksum: version.checksum,
-                  mimeType: version.contentType ?? undefined
-                },
-                resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
-              ),
-            undefined,
-            producer
+            this.replayRoutingPublisher(
+              request.projectId,
+              request.artifactStorageSessionId,
+              request.filename
+            ),
+            signal
           )
         }
-      )
+        const segments =
+          request.source.kind === 'localPath'
+            ? request.source.path
+                .replaceAll('\\', '/')
+                .split('/')
+                .filter((part) => part && part !== '.')
+            : []
+        const workingPath = segments[0] === 'data' && !segments.includes('..')
+        const relativeBaseDirs = [
+          ...(sourceScope.notebookDataDir ? [sourceScope.notebookDataDir] : []),
+          ...(workingPath && sourceScope.notebookSessionRoot
+            ? [sourceScope.notebookSessionRoot]
+            : []),
+          ...(sourceScope.workspaceCwd ? [sourceScope.workspaceCwd] : [])
+        ]
+        const prepared = request.literature
+          ? undefined
+          : await readPreparedLiteratureSidecar(
+              request.source,
+              sourceScope.allowedImportRoots,
+              relativeBaseDirs,
+              {
+                signal,
+                maxBytes: Math.max(
+                  0,
+                  LOCAL_RESOURCE_BUDGETS.requestBytes -
+                    Buffer.byteLength(
+                      JSON.stringify({ method: 'artifactSaveVersion', params: request })
+                    )
+                ),
+                onBytes: onMetadataBytes
+              }
+            )
+        const literature = request.literature ?? prepared?.literature
+        const { source, ...versionRequest } = request
+        let replacementChecksum: string | undefined
+        return this.compatibilityRepository.withPendingFileTransaction(
+          {
+            projectId: request.projectId,
+            sessionId: request.artifactStorageSessionId,
+            runId: request.artifactRunId,
+            filename: request.filename,
+            mimeType: request.contentType,
+            source,
+            kind: app?.kind
+          },
+          {
+            allowedImportRoots: sourceScope.allowedImportRoots,
+            relativeBaseDirs,
+            signal,
+            reserveFile: (fileBytes) => this.writeBudgetOwner.reserve({ ...request, fileBytes }),
+            releaseFileReservation: (reservationId) =>
+              this.writeBudgetOwner.release({ ...request, reservationId }),
+            preserveRecoveryState: async () => {
+              const client = await this.options.getClient()
+              const version = await client.artifactVersion.findUnique({
+                where: { writeOperationId: request.writeOperationId },
+                select: { checksum: true }
+              })
+              return version !== null && version.checksum === replacementChecksum
+            }
+          },
+          async (_file, sourceFileObservation, bindVersionRouting, fileDigest, reservation) => {
+            replacementChecksum = fileDigest.checksum
+            if (!reservation) throw new Error('Artifact write reservation was not created.')
+            if (prepared && prepared.contentChecksum !== fileDigest.checksum) {
+              throw new Error(
+                'Prepared citation metadata does not match this file. Run the Literature preparation tool again.'
+              )
+            }
+            const writeRequestChecksum = app
+              ? sha256(
+                  canonicalJson({
+                    contentChecksum: fileDigest.checksum,
+                    contentType: request.contentType ?? null,
+                    encoding: app.encoding,
+                    filename: request.filename,
+                    literature: request.literature ?? null,
+                    producerRunId: null,
+                    sourceKind: 'inline',
+                    sourceFileObservation: null
+                  })
+                )
+              : sha256(
+                  JSON.stringify({
+                    contentChecksum: fileDigest.checksum,
+                    contentType: request.contentType ?? null,
+                    filename: request.filename,
+                    producerRunId: request.producerRunId ?? null,
+                    literature: literature ?? null,
+                    sourceKind: source.kind,
+                    sourceFileObservation: sourceFileObservation ?? null
+                  })
+                )
+            return writeVersion(
+              {
+                ...versionRequest,
+                literature,
+                writeRequestChecksum,
+                sourceKind: source.kind,
+                sourceFileObservation,
+                resourceReservationId: reservation.id,
+                resourceSizeBytes: fileDigest.sizeBytes,
+                resourceChecksum: fileDigest.checksum
+              },
+              (version) =>
+                bindVersionRouting(
+                  {
+                    artifactId: version.artifactId,
+                    versionId: version.id,
+                    versionNumber: version.versionNumber,
+                    artifactRunId: version.artifactRunId,
+                    checksum: version.checksum,
+                    mimeType: version.contentType ?? undefined
+                  },
+                  resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
+                ),
+              signal,
+              app?.producer
+            )
+          }
+        )
+      },
+      signal
     )
   }
 
@@ -695,6 +831,51 @@ class ArtifactProvenanceRepository {
   async replayVersion(
     request: ReplayArtifactVersionRequest
   ): Promise<ArtifactVersionFile | undefined> {
+    return this.versionWriter.withSessionWrite(request, () =>
+      this.replayVersionWithinSession(request)
+    )
+  }
+
+  private replayRoutingPublisher(
+    projectId: string,
+    artifactStorageSessionId: string,
+    filename: string
+  ): PublishCompatibilityRouting {
+    return async (version, options) => {
+      // Retrying an older successful operation must not replace a newer same-run publication.
+      // Validate/repair the durable successor's route while returning the originally requested Version.
+      const client = await this.options.getClient()
+      const successor = await client.artifactVersion.findFirst({
+        where: {
+          artifactId: version.artifactId,
+          artifactRunId: version.artifactRunId,
+          versionNumber: { gt: version.versionNumber },
+          state: { in: ['pending', 'finalized'] }
+        },
+        orderBy: { versionNumber: 'desc' }
+      })
+      if (successor) {
+        await this.stagingRecovery.routingPublisher(
+          projectId,
+          artifactStorageSessionId,
+          successor.filename
+        )(requireAgentArtifactVersion(successor), {
+          replaceUnroutedBytes: true,
+          signal: options?.signal
+        })
+      } else {
+        await this.stagingRecovery.routingPublisher(
+          projectId,
+          artifactStorageSessionId,
+          filename
+        )(version, options)
+      }
+    }
+  }
+
+  private async replayVersionWithinSession(
+    request: ReplayArtifactVersionRequest
+  ): Promise<ArtifactVersionFile | undefined> {
     const projectId = assertSafeSegment(request.projectId, 'project id')
     const appSessionId = assertSafeSegment(request.appSessionId, 'session id')
     const artifactStorageSessionId = assertSafeSegment(
@@ -734,14 +915,14 @@ class ArtifactProvenanceRepository {
         projectId,
         appSessionId,
         request.filename,
-        this.stagingRecovery.routingPublisher(projectId, artifactStorageSessionId, request.filename)
+        this.replayRoutingPublisher(projectId, artifactStorageSessionId, request.filename)
       )
     }
     if (agentVersion.state !== 'pending' && agentVersion.state !== 'finalized') {
       throw new Error(`Artifact write has an invalid lifecycle state: ${writeOperationId}`)
     }
     if (agentVersion.state === 'pending') {
-      await this.stagingRecovery.routingPublisher(
+      await this.replayRoutingPublisher(
         projectId,
         artifactStorageSessionId,
         request.filename
@@ -799,6 +980,29 @@ class ArtifactProvenanceRepository {
   }
 
   async reconcileSession(
+    projectIdInput: string,
+    appSessionIdInput: string,
+    durableSession?: PersistedChatSession,
+    options?: {
+      removeOrphanStaging?: boolean
+      projectReconciliation?: ArtifactProjectReconciliationSnapshot
+      artifactRunIds?: string[]
+      artifactVersionIds?: string[]
+    }
+  ): Promise<ArtifactStorageReconciliationResult> {
+    return this.versionWriter.withSessionWrite(
+      { projectId: projectIdInput, appSessionId: appSessionIdInput },
+      () =>
+        this.reconcileSessionWithinSession(
+          projectIdInput,
+          appSessionIdInput,
+          durableSession,
+          options
+        )
+    )
+  }
+
+  private async reconcileSessionWithinSession(
     projectIdInput: string,
     appSessionIdInput: string,
     durableSession?: PersistedChatSession,

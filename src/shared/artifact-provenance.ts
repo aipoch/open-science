@@ -59,6 +59,26 @@ export type CreateArtifactVersionRequest = {
   literature?: ArtifactLiteratureRequest
 }
 
+// The source scope is supplied only by the main-process capability issuer.
+export type ArtifactWriteSourceScope = {
+  allowedImportRoots: string[]
+  workspaceCwd?: string
+  notebookDataDir?: string
+  notebookSessionRoot?: string
+}
+
+export type SaveArtifactVersionRequest = Omit<
+  CreateArtifactVersionRequest,
+  | 'writeRequestChecksum'
+  | 'sourceKind'
+  | 'sourceFileObservation'
+  | 'resourceReservationId'
+  | 'resourceSizeBytes'
+  | 'resourceChecksum'
+> & {
+  source: ArtifactWriteSource
+}
+
 export type ReserveArtifactWriteRequest = {
   projectId: string
   appSessionId: string
@@ -95,6 +115,7 @@ export type ReplayArtifactVersionRequest = {
 }
 
 export type ArtifactRpcMethod =
+  | 'artifactSaveVersion'
   | 'artifactReserveWrite'
   | 'artifactReleaseWrite'
   | 'artifactCreateVersion'
@@ -117,6 +138,7 @@ export type ArtifactRpcCapabilityBinding = {
   promptMessageId: string
   agentName?: string
   notebookSessionId?: string
+  sourceScope?: ArtifactWriteSourceScope
   allowedMethods?: ArtifactRpcMethod[]
 }
 

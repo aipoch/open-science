@@ -11,6 +11,7 @@ type SessionKey = Readonly<{ projectId: string; sessionId: string }>
 
 type DelegatedArtifactScope = Readonly<{
   session: SessionKey
+  workspaceCwd?: string
   executionId: string
   attemptId: string
   rootFrameId: string
@@ -58,7 +59,7 @@ const createDelegatedTurnLifecycle = (options: {
   now(): number
   createMessageId(): string
 }): Readonly<{
-  openInitial(context: TurnContext): Promise<void>
+  openInitial(context: TurnContext, workspaceCwd?: string): Promise<void>
   currentArtifact(): DelegatedArtifactHandle | undefined
   lastTurnMessage(): DurableMessage | undefined
   unstagedRuntimeScope(context: TurnContext | undefined): TurnContext | undefined
@@ -66,6 +67,7 @@ const createDelegatedTurnLifecycle = (options: {
   finalizeFallback(terminalMessageId: string): Promise<void>
   dispose(): Promise<void>
 }> => {
+  let workspaceCwd: string | undefined
   let currentArtifact: DelegatedArtifactHandle | undefined
   const artifactHandles: DelegatedArtifactHandle[] = []
   let artifactHandoffFile: string | undefined
@@ -78,6 +80,7 @@ const createDelegatedTurnLifecycle = (options: {
   const openArtifact = async (context: TurnContext, executionId: string): Promise<void> => {
     const artifact = await options.artifactEvidence?.open({
       session: options.session,
+      workspaceCwd,
       executionId,
       attemptId: options.attemptId,
       rootFrameId: context.rootFrameId,
@@ -95,7 +98,10 @@ const createDelegatedTurnLifecycle = (options: {
   }
 
   return {
-    openInitial: (context) => openArtifact(context, options.attemptId),
+    openInitial: (context, cwd) => {
+      workspaceCwd = cwd
+      return openArtifact(context, options.attemptId)
+    },
     currentArtifact: () => currentArtifact,
     lastTurnMessage: () => completedTurnMessage,
     unstagedRuntimeScope: (context) =>

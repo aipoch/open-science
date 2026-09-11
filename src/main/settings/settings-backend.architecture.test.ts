@@ -632,6 +632,7 @@ describe('Settings backend ownership architecture', () => {
 
   it('locks the complete Notebook local-RPC capability inventory', () => {
     expect(stringSetValues(settingsPaths.notebookLocalRpcServer, 'ARTIFACT_RPC_METHODS')).toEqual([
+      'artifactSaveVersion',
       'artifactReserveWrite',
       'artifactReleaseWrite',
       'artifactCreateVersion',

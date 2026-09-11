@@ -220,6 +220,8 @@ describe('Artifact Provenance repository architecture', () => {
   it('keeps the established public facade and private projection helpers', () => {
     expect(methods(facade, 'public')).toEqual(
       [
+        'saveVersion',
+        'withSessionMutation',
         'activateFinalizedRun',
         'createVersion',
         'deleteProjectProvenance',
@@ -254,6 +256,10 @@ describe('Artifact Provenance repository architecture', () => {
     )
     expect(methods(facade, 'private')).toEqual(
       [
+        'writeGeneratedVersion',
+        'replayVersionWithinSession',
+        'replayRoutingPublisher',
+        'reconcileSessionWithinSession',
         'inspectVersionContent',
         'openVersionContent',
         'resolveOwnedVersion',

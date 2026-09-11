@@ -1,9 +1,6 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { strToU8, zipSync } from 'fflate'
 import { z } from 'zod'
 
 const { log } = vi.hoisted(() => ({
@@ -15,22 +12,25 @@ vi.mock('../logger', async (importOriginal) => ({
   createLogger: () => log
 }))
 
-import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
-import { ARTIFACT_LITERATURE_SIDECAR_SUFFIX } from '../../shared/artifact-literature'
+import { createPngBytes } from './artifact-test-fixtures'
 import { ArtifactRepository } from './repository'
 import {
   createArtifactMcpEnvironmentFromProcess,
   createArtifactMcpServerConfig,
   toWriteArtifactToolResult,
   writeArtifactFileToolDefinition,
-  writeArtifactFileForCurrentRun,
+  writeArtifactFileForCurrentRun as saveThroughMcp,
   type ArtifactMcpEnvironment
 } from './mcp-server'
 
+import { createArtifactSaveFixture } from './save-test-fixtures'
+
+let activeFixture: Awaited<ReturnType<typeof createArtifactSaveFixture>> | undefined
 let storageRoot: string | undefined
 
 const createStorageRoot = async (): Promise<string> => {
-  storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-mcp-'))
+  activeFixture = await createArtifactSaveFixture()
+  storageRoot = activeFixture.storageRoot
   return storageRoot
 }
 
@@ -51,9 +51,48 @@ const createEnvironment = async (
   }
 }
 
+const writeArtifactFileForCurrentRun: typeof saveThroughMcp = async (
+  repository,
+  env,
+  input,
+  invocation
+) => {
+  const context = JSON.parse(await readFile(env.currentRunFile, 'utf8'))
+  const run = context.artifactRunId ?? context.runId
+  if (!run) return saveThroughMcp(repository, env, input, invocation)
+  const binding = {
+    ...activeFixture!.binding,
+    projectId: env.projectId!,
+    artifactRunId: run,
+    artifactStorageSessionId: context.artifactStorageSessionId ?? env.sessionId,
+    sourceScope: {
+      allowedImportRoots: [
+        ...env.allowedImportRoots,
+        ...(context.notebookSessionRoot ? [context.notebookSessionRoot] : [])
+      ],
+      workspaceCwd: env.allowedImportRoots[0],
+      notebookDataDir: context.notebookDataDir,
+      notebookSessionRoot: context.notebookSessionRoot
+    }
+  }
+  const token = activeFixture!.server.issueArtifactRunCapability(binding)
+  await writeFile(
+    env.currentRunFile,
+    JSON.stringify({ ...context, ...binding, rpcCapabilityToken: token })
+  )
+  return saveThroughMcp(
+    repository,
+    { ...env, rpcEndpoint: activeFixture!.connection.endpoint },
+    input,
+    invocation
+  )
+}
+
 afterEach(async () => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  await activeFixture?.dispose()
+  activeFixture = undefined
   if (storageRoot) {
     await rm(storageRoot, { recursive: true, force: true })
     storageRoot = undefined
@@ -97,33 +136,15 @@ describe('artifact MCP server', () => {
     })
 
     expect(artifact).toMatchObject({
-      id: 'session-1:run-1:plot.svg',
+      versionId: expect.any(String),
       projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       name: 'plot.svg',
       mimeType: 'image/svg+xml'
     })
-    expect(artifact.path).toBe(
-      join(root, 'artifacts', 'default-project', 'session-1', '.pending', 'run-1', 'plot.svg')
-    )
     await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg />')
-    expect(log.warn).toHaveBeenCalledWith(
-      'writing a legacy pending file without durable Provenance',
-      {
-        artifactRunId: 'run-1',
-        missingContext: [
-          'rpcEndpoint',
-          'rpcCapabilityToken',
-          'appSessionId',
-          'rootFrameId',
-          'agentFrameId',
-          'messageBranchId',
-          'runtimeSegmentId',
-          'promptMessageId'
-        ]
-      }
-    )
+    expect(log.warn).not.toHaveBeenCalled()
   })
 
   it('writes localPath artifact sources for the current run', async () => {
@@ -528,340 +549,6 @@ describe('artifact MCP server', () => {
     await expect(readFile(artifact.path, 'utf8')).resolves.toBe('a,b\n1,2\n')
   })
 
-  it('publishes a stable Version receipt through the main-process Provenance RPC', async () => {
-    const root = await createStorageRoot()
-    const repository = new ArtifactRepository(root)
-    const environment = {
-      ...(await createEnvironment(root, {
-        artifactRunId: 'artifact-run-1',
-        appSessionId: 'session-1',
-        rootFrameId: 'root-frame-1',
-        agentFrameId: 'root-frame-1',
-        messageBranchId: 'branch-1',
-        messageBranchAncestry: ['branch-parent', 'branch-1'],
-        messageAncestry: ['message-user-parent', 'message-user-1'],
-        runtimeSegmentId: 'runtime-1',
-        promptMessageId: 'message-user-1',
-        agentName: 'Codex',
-        notebookSessionId: 'session-1',
-        rpcCapabilityToken: 'run-capability'
-      })),
-      rpcEndpoint: 'http://127.0.0.1:9000'
-    }
-    const persisted = {
-      id: 'version-1',
-      artifactId: 'artifact-1',
-      versionId: 'version-1',
-      versionNumber: 1,
-      checksum: 'a'.repeat(64),
-      createdAt: '2026-07-27T00:00:00.000Z',
-      producerRunId: 'notebook-run-17',
-      environment: 'analysis-python',
-      projectId: 'default-project',
-      sessionId: 'session-1',
-      runId: 'artifact-run-1',
-      name: 'sin.png',
-      path: join(root, 'immutable-content'),
-      fileUrl: 'file:///immutable-content',
-      mimeType: 'image/png',
-      size: 4,
-      mtimeMs: 1
-    }
-    const calls: Array<{ url: string; init: RequestInit }> = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string, init: RequestInit) => {
-        calls.push({ url, init })
-        const body = JSON.parse(String(init.body)) as { method: string }
-        const result =
-          body.method === 'artifactReserveWrite'
-            ? { id: `reservation-${calls.length}`, fileBytes: 4, expiresAt: Date.now() + 60_000 }
-            : persisted
-        return new Response(JSON.stringify({ result }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' }
-        })
-      })
-    )
-
-    const result = await writeArtifactFileForCurrentRun(
-      repository,
-      environment,
-      {
-        filename: 'sin.png',
-        mimeType: 'image/png',
-        source: createPngInlineSource('plot'),
-        producerRunId: 'notebook-run-17',
-        literature: {
-          styleId: 'apa',
-          locale: 'en-US',
-          citations: [{ citationId: 'citation-1', itemId: 'item-1' }]
-        }
-      },
-      { requestId: 'rpc-request-42' }
-    )
-    await writeArtifactFileForCurrentRun(
-      repository,
-      environment,
-      {
-        filename: 'sin.png',
-        mimeType: 'image/png',
-        source: createPngInlineSource('plot'),
-        producerRunId: 'notebook-run-17',
-        literature: {
-          styleId: 'apa',
-          locale: 'en-US',
-          citations: [{ citationId: 'citation-1', itemId: 'item-1' }]
-        }
-      },
-      { requestId: 'rpc-request-42' }
-    )
-
-    expect(result).toEqual(persisted)
-    expect(calls).toHaveLength(4)
-    expect(calls[0].url).toBe(environment.rpcEndpoint)
-    expect(calls[0].init.headers).toMatchObject({ authorization: 'Bearer run-capability' })
-    const bodies = calls.map(
-      (call) =>
-        JSON.parse(String(call.init.body)) as {
-          method: string
-          params: Record<string, unknown>
-        }
-    )
-    expect(bodies.map((body) => body.method)).toEqual([
-      'artifactReserveWrite',
-      'artifactCreateVersion',
-      'artifactReserveWrite',
-      'artifactCreateVersion'
-    ])
-    const body = bodies[1] as {
-      method: string
-      params: Record<string, unknown>
-    }
-    expect(body.method).toBe('artifactCreateVersion')
-    expect(body.params).toMatchObject({
-      projectId: 'default-project',
-      appSessionId: 'session-1',
-      artifactStorageSessionId: 'session-1',
-      artifactRunId: 'artifact-run-1',
-      writeOperationId: expect.stringMatching(/^artifact-write-[a-f0-9]{64}$/u),
-      agentName: 'Codex',
-      messageBranchAncestry: ['branch-parent', 'branch-1'],
-      messageAncestry: ['message-user-parent', 'message-user-1'],
-      producerRunId: 'notebook-run-17',
-      notebookSessionId: 'session-1',
-      sourceKind: 'inline',
-      filename: 'sin.png',
-      contentType: 'image/png',
-      literature: {
-        styleId: 'apa',
-        locale: 'en-US',
-        citations: [{ citationId: 'citation-1', itemId: 'item-1' }]
-      }
-    })
-    const retryBody = bodies[3]!
-    expect(retryBody.params.writeOperationId).toBe(body.params.writeOperationId)
-    expect(body.params).toMatchObject({
-      resourceReservationId: 'reservation-1',
-      resourceSizeBytes: expect.any(Number),
-      resourceChecksum: expect.stringMatching(/^[a-f0-9]{64}$/u)
-    })
-    expect(body.params.writeRequestChecksum).toMatch(/^[a-f0-9]{64}$/)
-    expect(toWriteArtifactToolResult(result)).toEqual({
-      artifact: {
-        artifact_id: 'artifact-1',
-        version_id: 'version-1',
-        version_number: 1,
-        filename: 'sin.png',
-        size_bytes: 4,
-        producer_run_id: 'notebook-run-17'
-      }
-    })
-    expect(JSON.stringify(toWriteArtifactToolResult(result))).not.toContain(root)
-    expect(JSON.stringify(toWriteArtifactToolResult(result))).not.toContain('checksum')
-    expect(JSON.stringify(toWriteArtifactToolResult(result))).not.toContain('environment')
-  })
-
-  it('discovers checksum-bound citation metadata beside a prepared LaTeX ZIP', async () => {
-    const root = await createStorageRoot()
-    const workspace = join(root, 'workspace')
-    await mkdir(workspace)
-    const sourcePath = join(workspace, 'review.latex.zip')
-    const content = Buffer.from(
-      zipSync({
-        '[Content_Types].xml': strToU8('<Types/>'),
-        'word/document.xml': strToU8('<w:document/>')
-      })
-    )
-    await writeFile(sourcePath, content)
-    await writeFile(
-      `${sourcePath}${ARTIFACT_LITERATURE_SIDECAR_SUFFIX}`,
-      JSON.stringify({
-        schemaVersion: 1,
-        contentChecksum: createHash('sha256').update(content).digest('hex'),
-        literature: {
-          styleId: 'apa',
-          locale: 'en-US',
-          citations: [{ citationId: 'open-science-1', itemId: 'item-1' }]
-        }
-      })
-    )
-    const repository = new ArtifactRepository(root)
-    const environment = {
-      ...(await createEnvironment(root, {
-        artifactRunId: 'artifact-run-1',
-        appSessionId: 'session-1',
-        rootFrameId: 'root-frame-1',
-        agentFrameId: 'root-frame-1',
-        messageBranchId: 'branch-1',
-        runtimeSegmentId: 'runtime-1',
-        promptMessageId: 'message-user-1',
-        rpcCapabilityToken: 'run-capability'
-      })),
-      allowedImportRoots: [workspace],
-      rpcEndpoint: 'http://127.0.0.1:9000'
-    }
-    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_url: string, init: RequestInit) => {
-        const request = JSON.parse(String(init.body)) as {
-          method: string
-          params: Record<string, unknown>
-        }
-        requests.push(request)
-        const result =
-          request.method === 'artifactReplayVersion'
-            ? null
-            : request.method === 'artifactReserveWrite'
-              ? { id: 'reservation-1', fileBytes: content.length, expiresAt: Date.now() + 60_000 }
-              : {
-                  id: 'version-1',
-                  artifactId: 'artifact-1',
-                  versionId: 'version-1',
-                  versionNumber: 1,
-                  checksum: 'a'.repeat(64),
-                  createdAt: '2026-09-03T00:00:00.000Z',
-                  projectId: 'default-project',
-                  sessionId: 'session-1',
-                  runId: 'artifact-run-1',
-                  name: 'review.docx',
-                  path: join(root, 'immutable-content'),
-                  fileUrl: 'file:///immutable-content',
-                  size: content.length,
-                  mtimeMs: 1
-                }
-        return new Response(JSON.stringify({ result }), { status: 200 })
-      })
-    )
-
-    await writeArtifactFileForCurrentRun(repository, environment, {
-      filename: 'review.zip',
-      mimeType: 'application/zip',
-      source: { kind: 'localPath', path: sourcePath }
-    })
-
-    expect(requests.map(({ method }) => method)).toEqual([
-      'artifactReplayVersion',
-      'artifactReserveWrite',
-      'artifactCreateVersion'
-    ])
-    expect(requests[2]!.params.literature).toEqual({
-      styleId: 'apa',
-      locale: 'en-US',
-      citations: [{ citationId: 'open-science-1', itemId: 'item-1' }]
-    })
-  })
-
-  it('uses the execution handoff storage Session for a delegated durable write', async () => {
-    const root = await createStorageRoot()
-    const repository = new ArtifactRepository(root)
-    const environment = {
-      ...(await createEnvironment(root, {
-        artifactRunId: 'artifact-run-delegated',
-        appSessionId: 'parent-session-1',
-        artifactStorageSessionId: 'parent-session-1',
-        rootFrameId: 'root-frame-1',
-        agentFrameId: 'child-frame-1',
-        messageBranchId: 'child-branch-1',
-        runtimeSegmentId: 'child-runtime-1',
-        promptMessageId: 'child-prompt-1',
-        rpcCapabilityToken: 'delegated-run-capability'
-      })),
-      sessionId: 'child-routing-session',
-      rpcEndpoint: 'http://127.0.0.1:9000'
-    }
-    const rpcRequests: Record<string, unknown>[] = []
-    const pendingSessionsObserved: string[] = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_url: string, init: RequestInit) => {
-        const body = JSON.parse(String(init.body)) as {
-          method: string
-          params: Record<string, unknown>
-        }
-        rpcRequests.push({ method: body.method, ...body.params })
-        for (const sessionId of ['parent-session-1', 'child-routing-session']) {
-          const pendingPath = join(
-            root,
-            'artifacts',
-            'default-project',
-            sessionId,
-            '.pending',
-            'artifact-run-delegated',
-            'delegated.txt'
-          )
-          if (
-            await stat(pendingPath)
-              .then(() => true)
-              .catch(() => false)
-          ) {
-            pendingSessionsObserved.push(sessionId)
-          }
-        }
-        const result =
-          body.method === 'artifactReserveWrite'
-            ? { id: 'reservation-delegated', fileBytes: 17, expiresAt: Date.now() + 60_000 }
-            : {
-                id: 'version-delegated',
-                artifactId: 'artifact-delegated',
-                versionId: 'version-delegated',
-                versionNumber: 1,
-                checksum: 'b'.repeat(64),
-                createdAt: '2026-08-07T00:00:00.000Z',
-                projectId: 'default-project',
-                sessionId: 'parent-session-1',
-                runId: 'artifact-run-delegated',
-                name: 'delegated.txt',
-                path: join(root, 'immutable-delegated'),
-                fileUrl: 'file:///immutable-delegated',
-                size: 17,
-                mtimeMs: 1
-              }
-        return new Response(JSON.stringify({ result }), { status: 200 })
-      })
-    )
-
-    const result = await writeArtifactFileForCurrentRun(repository, environment, {
-      filename: 'delegated.txt',
-      source: { kind: 'inline', content: 'delegated content', encoding: 'utf8' }
-    })
-
-    expect(result).toMatchObject({ sessionId: 'parent-session-1' })
-    expect(pendingSessionsObserved).toEqual(['parent-session-1'])
-    expect(rpcRequests).toHaveLength(2)
-    expect(rpcRequests).toEqual([
-      expect.objectContaining({
-        method: 'artifactReserveWrite',
-        artifactStorageSessionId: 'parent-session-1'
-      }),
-      expect.objectContaining({
-        method: 'artifactCreateVersion',
-        artifactStorageSessionId: 'parent-session-1'
-      })
-    ])
-  })
-
   it('returns a compact legacy artifact receipt without echoing local paths', () => {
     const result = toWriteArtifactToolResult({
       id: 'legacy-artifact-1',
@@ -886,200 +573,5 @@ describe('artifact MCP server', () => {
       }
     })
     expect(JSON.stringify(result)).not.toContain('/private/session')
-  })
-
-  it('restores the previous pending file when a durable Version RPC rejects the write', async () => {
-    const root = await createStorageRoot()
-    const repository = new ArtifactRepository(root)
-    const environment = {
-      ...(await createEnvironment(root, {
-        artifactRunId: 'artifact-run-1',
-        appSessionId: 'session-1',
-        rootFrameId: 'root-frame-1',
-        agentFrameId: 'root-frame-1',
-        messageBranchId: 'branch-1',
-        runtimeSegmentId: 'runtime-1',
-        promptMessageId: 'message-user-1',
-        rpcCapabilityToken: 'run-capability'
-      })),
-      rpcEndpoint: 'http://127.0.0.1:9000'
-    }
-    const pendingPath = join(
-      root,
-      'artifacts',
-      'default-project',
-      'session-1',
-      '.pending',
-      'artifact-run-1',
-      'sin.png'
-    )
-    let createCallCount = 0
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_url: string, init: RequestInit) => {
-        const body = JSON.parse(String(init.body)) as { method: string }
-        if (body.method === 'artifactReserveWrite') {
-          return new Response(
-            JSON.stringify({
-              result: {
-                id: `reservation-${createCallCount + 1}`,
-                fileBytes: 8,
-                expiresAt: Date.now() + 60_000
-              }
-            }),
-            { status: 200 }
-          )
-        }
-        if (body.method === 'artifactReleaseWrite') {
-          return new Response(JSON.stringify({ result: null }), { status: 200 })
-        }
-        createCallCount += 1
-        if (createCallCount === 2) {
-          return new Response(JSON.stringify({ error: 'idempotency conflict' }), { status: 409 })
-        }
-        return new Response(
-          JSON.stringify({
-            result: {
-              id: 'version-1',
-              artifactId: 'artifact-1',
-              versionId: 'version-1',
-              versionNumber: 1,
-              checksum: 'a'.repeat(64),
-              createdAt: '2026-07-27T00:00:00.000Z',
-              projectId: 'default-project',
-              sessionId: 'session-1',
-              runId: 'artifact-run-1',
-              name: 'sin.png',
-              path: join(root, 'immutable-content'),
-              fileUrl: 'file:///immutable-content',
-              size: 8,
-              mtimeMs: 1
-            }
-          }),
-          { status: 200 }
-        )
-      })
-    )
-
-    await writeArtifactFileForCurrentRun(
-      repository,
-      environment,
-      { filename: 'sin.png', source: createPngInlineSource('original') },
-      { requestId: 'same-operation' }
-    )
-    await expect(
-      writeArtifactFileForCurrentRun(
-        repository,
-        environment,
-        { filename: 'sin.png', source: createPngInlineSource('conflicting replacement') },
-        { requestId: 'same-operation' }
-      )
-    ).rejects.toThrow('idempotency conflict')
-
-    await expect(readFile(pendingPath)).resolves.toEqual(createPngBytes('original'))
-  })
-
-  it('replays a localPath Version before reading a source file that no longer exists', async () => {
-    const root = await createStorageRoot()
-    const sourceRoot = join(root, 'notebook-session')
-    const sourcePath = join(sourceRoot, 'sin.png')
-    await mkdir(sourceRoot, { recursive: true })
-    await writeFile(sourcePath, createPngBytes('plot'))
-    const sourceStat = await stat(sourcePath)
-    const resolvedSourcePath = await realpath(sourcePath)
-    const repository = new ArtifactRepository(root)
-    const environment = {
-      ...(await createEnvironment(root, {
-        artifactRunId: 'artifact-run-1',
-        appSessionId: 'session-1',
-        rootFrameId: 'root-frame-1',
-        agentFrameId: 'root-frame-1',
-        messageBranchId: 'branch-1',
-        runtimeSegmentId: 'runtime-1',
-        promptMessageId: 'message-user-1',
-        notebookSessionId: 'session-1',
-        notebookSessionRoot: sourceRoot,
-        rpcCapabilityToken: 'run-capability'
-      })),
-      allowedImportRoots: [sourceRoot],
-      rpcEndpoint: 'http://127.0.0.1:9000'
-    }
-    const persisted = {
-      id: 'version-1',
-      artifactId: 'artifact-1',
-      versionId: 'version-1',
-      versionNumber: 1,
-      checksum: 'a'.repeat(64),
-      createdAt: '2026-07-27T00:00:00.000Z',
-      producerRunId: 'notebook-run-17',
-      environment: 'analysis-python',
-      projectId: 'default-project',
-      sessionId: 'session-1',
-      runId: 'artifact-run-1',
-      name: 'sin.png',
-      path: join(root, 'immutable-content'),
-      fileUrl: 'file:///immutable-content',
-      mimeType: 'image/png',
-      size: 4,
-      mtimeMs: 1
-    }
-    const methods: string[] = []
-    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_url: string, init: RequestInit) => {
-        const body = JSON.parse(String(init.body)) as {
-          method: string
-          params: Record<string, unknown>
-        }
-        requests.push(body)
-        methods.push(body.method)
-        const result =
-          body.method === 'artifactReplayVersion' && methods.length === 1
-            ? null
-            : body.method === 'artifactReserveWrite'
-              ? {
-                  id: 'reservation-local-path',
-                  fileBytes: body.params.fileBytes,
-                  expiresAt: Date.now() + 60_000
-                }
-              : persisted
-        return new Response(JSON.stringify({ result }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' }
-        })
-      })
-    )
-    const input = {
-      filename: 'sin.png',
-      mimeType: 'image/png',
-      source: { kind: 'localPath' as const, path: sourcePath },
-      producerRunId: 'notebook-run-17'
-    }
-
-    await expect(
-      writeArtifactFileForCurrentRun(repository, environment, input, {
-        requestId: 'same-local-operation'
-      })
-    ).resolves.toEqual(persisted)
-    await rm(sourcePath)
-    await expect(
-      writeArtifactFileForCurrentRun(repository, environment, input, {
-        requestId: 'same-local-operation'
-      })
-    ).resolves.toEqual(persisted)
-
-    expect(methods).toEqual([
-      'artifactReplayVersion',
-      'artifactReserveWrite',
-      'artifactCreateVersion',
-      'artifactReplayVersion'
-    ])
-    expect(requests[2]?.params.sourceFileObservation).toEqual({
-      path: resolvedSourcePath,
-      sizeBytes: sourceStat.size,
-      mtimeMs: sourceStat.mtimeMs
-    })
-    expect(requests[2]?.params.sourceKind).toBe('localPath')
   })
 })

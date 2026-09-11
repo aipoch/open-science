@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 
 import type { ComputeHost } from '../../shared/compute'
-import { ArtifactRepository } from '../artifacts/repository'
+import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
 import { decodeDataPath } from '../storage/data-path'
 import {
@@ -1482,28 +1482,34 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     expect(result.producer_run_id).toBe('notebook-run-submit')
     expect(result.featured_files).toEqual(['hpc/job-result-1/featured/results.bin'])
 
-    const currentRunFile = join(tmpDir, 'current-run.json')
-    await writeFile(currentRunFile, JSON.stringify({ runId: 'analysis-run-1' }), 'utf8')
-    const artifact = await writeArtifactFileForCurrentRun(
-      new ArtifactRepository(tmpDir),
-      {
-        storageRoot: tmpDir,
-        projectId: 'proj-1',
-        sessionId: 'sess-1',
-        currentRunFile,
-        allowedImportRoots: [localOutputRoot!]
-      },
-      {
-        filename: 'results.bin',
-        mimeType: 'application/octet-stream',
-        source: {
-          kind: 'localPath',
-          path: join(localOutputRoot!, result.featured_files[0]!)
+    const artifacts = await createArtifactSaveFixture()
+    try {
+      const environment = await artifacts.environment(
+        { allowedImportRoots: [localOutputRoot!] },
+        {
+          projectId: 'proj-1',
+          appSessionId: 'sess-1',
+          artifactStorageSessionId: 'sess-1',
+          artifactRunId: 'analysis-run-1'
         }
-      }
-    )
-
-    await expect(readFile(artifact.path)).resolves.toEqual(bytes)
+      )
+      const artifact = await writeArtifactFileForCurrentRun(
+        artifacts.compatibilityRepository,
+        environment,
+        {
+          filename: 'results.bin',
+          mimeType: 'application/octet-stream',
+          source: {
+            kind: 'localPath',
+            path: join(localOutputRoot!, result.featured_files[0]!)
+          }
+        }
+      )
+      await expect(readFile(artifact.path)).resolves.toEqual(bytes)
+      expect(await artifacts.client.artifactVersion.count()).toBe(1)
+    } finally {
+      await artifacts.dispose()
+    }
   })
 
   it('reads attach_job results from the data-root workspace when config and data roots differ', async () => {

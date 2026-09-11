@@ -220,7 +220,7 @@ const createDurableDelegatedWork = (
         if (cancelRequested || !latest || currentAttempt(latest).status !== 'running') {
           throw new Error('delegate execution was cancelled before launch establishment')
         }
-        await turnLifecycle.openInitial(startedContext)
+        await turnLifecycle.openInitial(startedContext, workspace?.cwd)
         const artifact = turnLifecycle.currentArtifact()
         const runningAttempt = running.get(child.frameId)
         if (runningAttempt?.attemptId === attempt.id) runningAttempt.artifact = artifact

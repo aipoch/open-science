@@ -5,6 +5,10 @@ const GIB = 1024 * MIB
 
 const LOCAL_RESOURCE_BUDGETS = Object.freeze({
   requestBytes: 64 * MIB,
+  artifactSaveSessionRequests: 16,
+  artifactSaveProcessRequests: 64,
+  artifactSaveSessionPayloadBytes: 128 * MIB,
+  artifactSaveProcessPayloadBytes: 512 * MIB,
   artifactInlineBytes: 32 * MIB,
   artifactFileBytes: 1 * GIB,
   artifactTurnBytes: 2 * GIB,
@@ -60,7 +64,7 @@ const declaredContentLength = (request: IncomingMessage): number | undefined => 
 const readBoundedJsonBody = async <Result = unknown>(
   request: IncomingMessage,
   maxBytes = LOCAL_RESOURCE_BUDGETS.requestBytes,
-  options?: { emptyValue: Result }
+  options?: { emptyValue?: Result; onBytes?: (bytes: number) => void }
 ): Promise<Result> => {
   const declared = declaredContentLength(request)
   if (declared !== undefined) assertWithinResourceBudget('request', declared, maxBytes)
@@ -71,10 +75,11 @@ const readBoundedJsonBody = async <Result = unknown>(
     const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk)
     observedBytes += buffer.byteLength
     assertWithinResourceBudget('request', observedBytes, maxBytes)
+    options?.onBytes?.(buffer.byteLength)
     chunks.push(buffer)
   }
 
-  if (chunks.length === 0 && options) return options.emptyValue
+  if (chunks.length === 0 && options && 'emptyValue' in options) return options.emptyValue as Result
   return JSON.parse(Buffer.concat(chunks, observedBytes).toString('utf8')) as Result
 }
 
@@ -86,3 +91,61 @@ export {
 }
 export type { ResourceBudgetDimension }
 export type { LocalResourceBudgetOverrides }
+
+export class PendingRequestLimitError extends Error {
+  readonly code = 'ARTIFACT_SAVE_RESOURCE_LIMIT'
+  constructor() {
+    super('ARTIFACT_SAVE_RESOURCE_LIMIT: too many pending Artifact requests or payload bytes.')
+  }
+}
+
+// Admission accounts for bodies while they arrive as well as while dispatch is queued/running.
+// It owns no file reservations and never waits for a session write queue.
+export class PendingRequestBudget {
+  private count = 0
+  private bytes = 0
+  private readonly sessions = new Map<string, { count: number; bytes: number }>()
+  constructor(
+    private readonly limits: {
+      [Key in keyof typeof LOCAL_RESOURCE_BUDGETS]: number
+    } = LOCAL_RESOURCE_BUDGETS
+  ) {}
+
+  acquire(sessionKey: string): { addBytes(bytes: number): void; release(): void } {
+    const session = this.sessions.get(sessionKey) ?? { count: 0, bytes: 0 }
+    if (
+      session.count >= this.limits.artifactSaveSessionRequests ||
+      this.count >= this.limits.artifactSaveProcessRequests
+    )
+      throw new PendingRequestLimitError()
+    session.count++
+    this.count++
+    this.sessions.set(sessionKey, session)
+    let bytes = 0
+    let released = false
+    return {
+      addBytes: (amount) => {
+        if (released) throw new Error('Request admission is already released.')
+        if (!Number.isSafeInteger(amount) || amount < 0)
+          throw new TypeError('Invalid request payload byte count.')
+        if (
+          session.bytes + amount > this.limits.artifactSaveSessionPayloadBytes ||
+          this.bytes + amount > this.limits.artifactSaveProcessPayloadBytes
+        )
+          throw new PendingRequestLimitError()
+        bytes += amount
+        session.bytes += amount
+        this.bytes += amount
+      },
+      release: () => {
+        if (released) return
+        released = true
+        session.count--
+        this.count--
+        session.bytes -= bytes
+        this.bytes -= bytes
+        if (session.count === 0) this.sessions.delete(sessionKey)
+      }
+    }
+  }
+}
