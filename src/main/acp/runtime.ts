@@ -58,6 +58,7 @@ import {
   type AgentModelChangeTarget,
   type ResolvedAgentBackend
 } from '../agent-framework'
+import { renderAppMcpToolReferences } from '../agent-framework/app-mcp-names'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { redactSensitiveText } from '../diagnostic-redaction'
 import type { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
@@ -143,7 +144,15 @@ import type {
   AcpBackendGenerationView
 } from './backend-generation-owner'
 import type { AcpSessionConfigurator } from './session-configurator'
-import type { AcpSessionUpdateProjector } from './session-update-projector'
+import type {
+  AcpSessionUpdateProjector,
+  AcpToolFailureDiagnostic
+} from './session-update-projector'
+import { RepeatedToolFailureGuard } from './repeated-tool-failure-guard'
+import {
+  artifactPublicationContinuationText,
+  type NotebookWorkingFile
+} from './artifact-publication-continuation'
 import type { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
 import type { AcpModelChangeWorkflow } from './model-change-workflow'
@@ -694,6 +703,7 @@ class AcpRuntime {
     string,
     { revision: number; tail: Promise<void> }
   >()
+  private readonly repeatedToolFailureGuard = new RepeatedToolFailureGuard()
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(
@@ -739,6 +749,8 @@ class AcpRuntime {
         disconnect: () => this.disconnect(false),
         resume: (request) => this.resumeSession(request)
       },
+      requestArtifactPublicationContinuation: (input) =>
+        this.parkArtifactPublicationContinuation(input),
       onPromptEnded: (sessionId, turnToken) => this.nativeFollowUp.releaseTurn(sessionId, turnToken)
     })
     this.contextCompactionWorkflow = prompt.contextCompactionWorkflow
@@ -805,6 +817,32 @@ class AcpRuntime {
     this.providerSessionResumer = providerSessions.providerSessionResumer
     this.sessionReplacement = providerSessions.sessionReplacement
     this.sessionDeletion = providerSessions.sessionDeletion
+    session.bindToolFailureObserver((failure) => this.handleToolFailure(failure))
+  }
+
+  private handleToolFailure(failure: AcpToolFailureDiagnostic): void {
+    const interaction = this.sessionInteractions.current(failure.sessionId)
+    if (interaction?.kind !== 'prompt' || interaction.signal.aborted) return
+    if (
+      !this.repeatedToolFailureGuard.observe({
+        interactionSequence: interaction.sequence,
+        reason: failure.reason,
+        sessionId: failure.sessionId,
+        tool: failure.tool,
+        toolCallId: failure.toolCallId
+      })
+    ) {
+      return
+    }
+
+    log.warn('stopping prompt after repeated MCP input validation failures', {
+      sessionId: failure.sessionId,
+      tool: failure.tool
+    })
+    void this.cancelPrompt({ sessionId: failure.sessionId }).catch((error) => {
+      this.repeatedToolFailureGuard.clearSession(failure.sessionId)
+      safeLogError('repeated MCP input validation cancellation failed', errorLogFields(error))
+    })
   }
 
   private get backend(): AcpBackendGenerationView {
@@ -1649,6 +1687,7 @@ class AcpRuntime {
         response = await this.promptTurnWorkflow.run(request, intent, onPromptAdmitted)
         return response
       } finally {
+        this.repeatedToolFailureGuard.clearSession(request.sessionId)
         this.schedulePendingAppContinuation(request.sessionId, response?.stopReason)
       }
     })
@@ -2488,6 +2527,25 @@ class AcpRuntime {
     }
     queueMicrotask(() => {
       void this.flushPendingAppContinuation(sessionId)
+    })
+  }
+
+  private parkArtifactPublicationContinuation(input: {
+    sessionId: string
+    provenanceContext?: AcpPromptRequest['provenanceContext']
+    files: readonly NotebookWorkingFile[]
+  }): void {
+    if (this.appContinuations.has(input.sessionId)) return
+    const backend = this.backendGeneration.current
+    const toolName = renderAppMcpToolReferences(backend.framework.id, 'write_artifact_file')
+    this.appContinuations.set(input.sessionId, {
+      condition: 'always',
+      request: {
+        sessionId: input.sessionId,
+        text: artifactPublicationContinuationText(input.files, toolName),
+        suppressUserMessage: true,
+        ...(input.provenanceContext ? { provenanceContext: input.provenanceContext } : {})
+      }
     })
   }
 

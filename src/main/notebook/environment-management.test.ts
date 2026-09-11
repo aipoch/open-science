@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { NotebookKernelMetadata } from '../../shared/notebook'
+import type { NotebookEnvironmentLock, NotebookKernelMetadata } from '../../shared/notebook'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import {
   NotebookEnvironmentManagementOwner,
@@ -19,6 +19,10 @@ const manager = (): NotebookEnvironmentManager => ({
     ready: true,
     isDefault: false
   })),
+  createNamedEnvironmentFromLock: vi.fn(async (name, language) => ({
+    environment: { name, language, ready: true, isDefault: false },
+    reused: false
+  })),
   listEnvironments: vi.fn(() => []),
   removeEnvironment: vi.fn(() => [])
 })
@@ -34,6 +38,23 @@ const session = (
 })
 
 const managedPythonRuntimeId = (name: string): string => pythonBin(envPrefix('/runtime', name))
+
+const importedLock = (): NotebookEnvironmentLock => ({
+  schemaVersion: 1,
+  format: 'environment-lock-bundle',
+  kernelKind: 'python',
+  environmentName: 'default-python',
+  components: [
+    {
+      ecosystem: 'conda',
+      format: 'conda-explicit-md5',
+      resolution: 'locked',
+      explicitLock:
+        '@EXPLICIT\nhttps://repo.example.test/python.conda#0123456789abcdef0123456789abcdef\n',
+      packages: ['python']
+    }
+  ]
+})
 
 const runtimeBinding = (
   name: string,
@@ -159,6 +180,33 @@ describe('NotebookEnvironmentManagementOwner', () => {
     finish([])
     await expect(result).rejects.toThrow('list cancelled')
     expect(configured.listEnvironments).toHaveBeenCalledWith(controller.signal)
+  })
+
+  it('imports a lock under a deterministic cross-project environment name', async () => {
+    const configured = manager()
+    const { owner, options } = harness({ manager: configured })
+    const checksum = 'a'.repeat(64)
+
+    await expect(
+      owner.importLock({
+        projectId: 'project-2',
+        language: 'python',
+        lock: importedLock(),
+        lockChecksum: checksum
+      })
+    ).resolves.toEqual({ environmentName: 'repro-aaaaaaaaaaaa', reused: false })
+
+    expect(options.ensureRecovered).toHaveBeenCalled()
+    expect(options.assertPrefixRecoverable).toHaveBeenCalledWith(
+      envPrefix('/runtime', 'repro-aaaaaaaaaaaa')
+    )
+    expect(configured.createNamedEnvironmentFromLock).toHaveBeenCalledWith(
+      'repro-aaaaaaaaaaaa',
+      'python',
+      importedLock(),
+      checksum,
+      { projectId: 'project-2' }
+    )
   })
 
   it('keeps manager configuration inside the owner', async () => {

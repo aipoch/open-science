@@ -27,6 +27,13 @@ import {
 import { describe, expect, it } from 'vitest'
 
 const productionFiles = [
+  'artifact-provenance-graph.ts',
+  'artifact-reproducibility-execution.ts',
+  'artifact-reproducibility-export.ts',
+  'artifact-reproducibility-ipc.ts',
+  'artifact-reproducibility-lifecycle.ts',
+  'artifact-reproducibility-receipts.ts',
+  'artifact-reproducibility-recipe.ts',
   'provenance-canonical.ts',
   'provenance-content-status.ts',
   'compute-output-evidence.ts',
@@ -38,10 +45,13 @@ const productionFiles = [
   'provenance-message-snapshot.ts',
   'provenance-producer-capture.ts',
   'provenance-read-model.ts',
+  'provenance-reproducibility-execution-evidence.ts',
+  'provenance-reproducibility-projection.ts',
   'provenance-repository.ts',
   'reviewer-turn-file-evidence-reader.ts',
   'provenance-staging-recovery.ts',
   'provenance-storage.ts',
+  'provenance-storage-contract.ts',
   'provenance-unindexed-recovery.ts',
   'provenance-version-writer.ts',
   'write-budget-owner.ts'
@@ -246,7 +256,9 @@ describe('Artifact Provenance repository architecture', () => {
       [
         'inspectVersionContent',
         'openVersionContent',
+        'resolveOwnedVersion',
         'resolveVersionDerivedPath',
+        'resolveVersionDirectory',
         'toArtifactVersionFile',
         'toDescriptor'
       ].sort()
@@ -255,6 +267,7 @@ describe('Artifact Provenance repository architecture', () => {
 
   it('composes each state owner exactly once without mutable facade fields', () => {
     for (const owner of [
+      'ArtifactReproducibilityReceiptStore',
       'ArtifactProvenanceDependencyReader',
       'ArtifactProvenanceFinalizationRecovery',
       'ArtifactLiteratureManifestOwner',
@@ -403,35 +416,55 @@ describe('Artifact Provenance repository architecture', () => {
     const module = manifest.modules.artifact_provenance
 
     expect(module.ownerPaths).toEqual(
-      productionFiles.map((file) => `src/main/artifacts/${file}`).sort()
+      [
+        ...productionFiles.map((file) => `src/main/artifacts/${file}`),
+        'src/main/notebook/reproduction-runtime.ts',
+        'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.tsx',
+        'src/shared/artifact-reproducibility.ts'
+      ].sort()
     )
     expect(module.interfacePaths).toEqual(
       [
         'src/main/artifacts/provenance-message-snapshot.ts',
-        'src/main/artifacts/provenance-repository.ts'
+        'src/main/artifacts/provenance-repository.ts',
+        'src/main/artifacts/provenance-storage-contract.ts',
+        'src/shared/artifact-reproducibility.ts'
       ].sort()
     )
     expect(module.consumerModules).toEqual(['session_persistence'])
     expect(module.testFiles.owner).toEqual(
       [
+        'src/main/artifacts/artifact-provenance-graph.test.ts',
+        'src/main/artifacts/artifact-reproducibility-execution.test.ts',
+        'src/main/artifacts/artifact-reproducibility-export.test.ts',
+        'src/main/artifacts/artifact-reproducibility-lifecycle.test.ts',
+        'src/main/artifacts/artifact-reproducibility-receipts.test.ts',
+        'src/main/artifacts/artifact-reproducibility-recipe.test.ts',
         'src/main/artifacts/provenance-lifecycle-contract.test.ts',
         'src/main/artifacts/provenance-dependency-read.test.ts',
         'src/main/artifacts/provenance-message-snapshot-durability.test.ts',
         'src/main/artifacts/provenance-message-snapshot.test.ts',
+        'src/main/artifacts/provenance-reproducibility-projection.test.ts',
         'src/main/artifacts/provenance-repository.architecture.test.ts',
         'src/main/artifacts/provenance-repository.test.ts',
         'src/main/artifacts/reviewer-turn-file-evidence-reader.test.ts',
         'src/main/artifacts/provenance-write-contract.test.ts',
-        'src/main/artifacts/write-budget-owner.test.ts'
+        'src/main/artifacts/write-budget-owner.test.ts',
+        'src/main/notebook/reproduction-runtime.test.ts',
+        'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx'
       ].sort()
     )
     expect(module.testFiles.contract).toEqual(
       [
+        'src/main/artifacts/artifact-reproducibility-ipc.test.ts',
         'src/main/artifacts/ipc.test.ts',
         'src/main/artifacts/mcp-server.test.ts',
         'src/main/data-content-application-commands.test.ts',
         'src/main/notebook/local-rpc-notebook-adapter.test.ts',
-        'src/preload/index.test.ts'
+        'src/preload/index.test.ts',
+        'src/shared/renderer-contract-catalog.test.ts',
+        'src/shared/renderer-surface-inventory.test.ts',
+        'src/shared/renderer-surface-matrix.test.ts'
       ].sort()
     )
     expect(module.testFiles.consumer).toEqual(

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
+import type {
+  ArtifactProvenanceGraph,
+  ArtifactReproducibilityRecipe,
+  PersistedArtifactExecutionSnapshot
+} from '../../shared/artifact-provenance'
 import { decodeArtifactExecutionSnapshot } from './provenance-execution-evidence'
+import { sealArtifactReproducibilityRecipe } from './artifact-reproducibility-recipe'
+import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 import {
   decodeArtifactMessageSnapshot,
   decodeReviewScopeSnapshot
@@ -45,6 +52,55 @@ const executionSnapshot = (schemaVersion: number): Record<string, unknown> => ({
     }
   ]
 })
+
+const provenanceGraph = (): Record<string, unknown> => ({
+  schemaVersion: 1,
+  targetEntityId: 'artifact-version:version-1',
+  completeness: 'incomplete',
+  reasonCodes: ['target-generation-unavailable'],
+  activities: [
+    {
+      activityId: 'artifact-publication:version-1',
+      kind: 'artifact-publication',
+      sequence: 1,
+      parentActivityId: 'run-1',
+      inclusion: 'target-closure',
+      evidenceState: 'available'
+    }
+  ],
+  entities: [
+    {
+      entityId: 'artifact-version:version-1',
+      kind: 'artifact-version',
+      versionId: 'version-1',
+      filename: 'result.csv',
+      checksum: 'a'.repeat(64),
+      sizeBytes: 10
+    }
+  ],
+  edges: [
+    {
+      kind: 'generated',
+      activityId: 'artifact-publication:version-1',
+      entityId: 'artifact-version:version-1',
+      authority: 'authoritative',
+      evidenceSource: 'artifact-publication'
+    }
+  ]
+})
+
+const resignRecipe = (
+  recipe: ArtifactReproducibilityRecipe,
+  patch: Partial<Omit<ArtifactReproducibilityRecipe, 'recipeId'>>
+): ArtifactReproducibilityRecipe => {
+  const { recipeId: _recipeId, ...draft } = recipe
+  void _recipeId
+  const changed = { ...draft, ...patch }
+  return {
+    ...changed,
+    recipeId: sha256(canonicalJson(changed as unknown as CanonicalJson))
+  }
+}
 
 describe('Artifact persistence decoders', () => {
   it('preserves attribution from a not-yet-known Agent framework', () => {
@@ -113,6 +169,117 @@ describe('Artifact persistence decoders', () => {
       expect(decodeArtifactExecutionSnapshot(JSON.stringify(value))).toEqual({ status: 'corrupt' })
     }
   )
+  it('accepts additive Environment lock references without changing Execution v2', () => {
+    const snapshot = executionSnapshot(2)
+    const run = (snapshot.runs as Record<string, unknown>[])[0]!
+    run.environmentLock = {
+      state: 'partial',
+      format: 'environment-lock-bundle',
+      lockChecksum: 'a'.repeat(64),
+      partialReasons: ['non-conda-package-detected']
+    }
+
+    expect(decodeArtifactExecutionSnapshot(JSON.stringify(snapshot)).status).toBe('valid')
+    const partial = run.environmentLock as Record<string, unknown>
+    partial.diagnostics = [
+      {
+        reason: 'package-version-mismatch',
+        packageName: 'pandas',
+        observedVersion: '3.0.5',
+        lockedVersion: '2.0'
+      }
+    ]
+    expect(decodeArtifactExecutionSnapshot(JSON.stringify(snapshot)).status).toBe('valid')
+    partial.diagnostics = [{ reason: 'invented-reason' }]
+    expect(decodeArtifactExecutionSnapshot(JSON.stringify(snapshot)).status).toBe('corrupt')
+    partial.diagnostics = Array.from({ length: 21 }, () => ({ reason: 'source-mismatch' }))
+    expect(decodeArtifactExecutionSnapshot(JSON.stringify(snapshot)).status).toBe('corrupt')
+    delete partial.diagnostics
+    run.environmentLock = {
+      state: 'available',
+      format: 'environment-lock-bundle',
+      lockChecksum: 'not-a-checksum'
+    }
+    expect(decodeArtifactExecutionSnapshot(JSON.stringify(snapshot))).toEqual({ status: 'corrupt' })
+  })
+
+  it('accepts an additive v2 provenance graph and rejects a malformed graph', () => {
+    expect(
+      decodeArtifactExecutionSnapshot(
+        JSON.stringify({ ...executionSnapshot(2), provenanceGraph: provenanceGraph() })
+      ).status
+    ).toBe('valid')
+    expect(
+      decodeArtifactExecutionSnapshot(
+        JSON.stringify({
+          ...executionSnapshot(2),
+          provenanceGraph: { ...provenanceGraph(), unexpected: true }
+        })
+      )
+    ).toEqual({ status: 'corrupt' })
+  })
+
+  it('keeps Execution evidence readable when nested graph or recipe versions are newer', () => {
+    const snapshot = executionSnapshot(2) as unknown as PersistedArtifactExecutionSnapshot
+    const graph = provenanceGraph() as unknown as ArtifactProvenanceGraph
+    const recipe = sealArtifactReproducibilityRecipe({
+      provenanceGraph: graph,
+      inputFiles: [],
+      runs: snapshot.runs
+    })
+
+    const futureGraph = decodeArtifactExecutionSnapshot(
+      JSON.stringify({
+        ...snapshot,
+        provenanceGraph: { ...graph, schemaVersion: 2 },
+        reproducibilityRecipe: recipe
+      })
+    )
+    expect(futureGraph).toMatchObject({
+      status: 'valid',
+      value: { runs: expect.any(Array) }
+    })
+    if (futureGraph.status !== 'valid') throw new Error('Expected readable Execution evidence.')
+    expect(futureGraph.value.provenanceGraph).toBeUndefined()
+    expect(futureGraph.value.reproducibilityRecipe).toBeUndefined()
+
+    const futureRecipe = decodeArtifactExecutionSnapshot(
+      JSON.stringify({
+        ...snapshot,
+        provenanceGraph: graph,
+        reproducibilityRecipe: { ...recipe, schemaVersion: 2 }
+      })
+    )
+    expect(futureRecipe).toMatchObject({
+      status: 'valid',
+      value: { provenanceGraph: expect.any(Object) }
+    })
+    if (futureRecipe.status !== 'valid') throw new Error('Expected readable Execution evidence.')
+    expect(futureRecipe.value.reproducibilityRecipe).toBeUndefined()
+  })
+
+  it('accepts a sealed recipe inside Execution v2 and rejects recipe tampering', () => {
+    const snapshot = executionSnapshot(2) as unknown as PersistedArtifactExecutionSnapshot
+    const graph = provenanceGraph() as unknown as ArtifactProvenanceGraph
+    const recipe = sealArtifactReproducibilityRecipe({
+      provenanceGraph: graph,
+      inputFiles: [],
+      runs: snapshot.runs
+    })
+    const value = { ...snapshot, provenanceGraph: graph, reproducibilityRecipe: recipe }
+
+    expect(decodeArtifactExecutionSnapshot(JSON.stringify(value)).status).toBe('valid')
+    expect(
+      decodeArtifactExecutionSnapshot(
+        JSON.stringify({
+          ...value,
+          reproducibilityRecipe: resignRecipe(recipe, {
+            capture: { state: 'blocked', reasonCodes: ['target-source-missing'] }
+          })
+        })
+      )
+    ).toEqual({ status: 'corrupt' })
+  })
 
   it('classifies Review scope v2 as valid, v1 as legacy, and future versions as unsupported', () => {
     expect(decodeReviewScopeSnapshot('{"schemaVersion":2,"blocks":[]}').status).toBe('valid')

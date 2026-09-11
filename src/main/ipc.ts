@@ -80,6 +80,28 @@ import { VisionEvidenceRepository } from './acp/vision-evidence-repository'
 import { ArtifactTurnOwner } from './acp/artifact-turn-owner'
 import { ArchiveCoordinator } from './archive/coordinator'
 import { ArtifactCodeReconstructionService } from './artifacts/code-reconstruction'
+import { readReproducibilityOutputFile } from './artifacts/artifact-reproducibility-outputs'
+import { resolveStorageKey } from './artifacts/provenance-storage'
+import { sha256 } from './artifacts/provenance-canonical'
+import { createArtifactReproducibilityReceiptExporter } from './artifacts/artifact-reproducibility-export'
+import { registerArtifactReproducibilityIpcHandlers } from './artifacts/artifact-reproducibility-ipc'
+import { withReproducibilityNotebookLifecycle } from './artifacts/reproducibility-notebook-lifecycle'
+import { ArtifactReproducibilityAttemptOwner } from './artifacts/artifact-reproducibility-lifecycle'
+import {
+  appendArtifactReproducibilityReceipt,
+  getArtifactReproducibilityOutput,
+  retainArtifactReproducibilityOutput,
+  getArtifactReproducibilityOutputStorage,
+  clearArtifactReproducibilityOutputs,
+  pruneArtifactReproducibilityOutputs,
+  getArtifactReproducibilityCheckLog,
+  getArtifactReproducibilityReceipt,
+  listArtifactReproducibilityReceipts,
+  recordFailedArtifactReproducibilityAttempt,
+  type ArtifactReproducibilityCheckLogDraft,
+  type ArtifactReproducibilityFailedAttemptDraft,
+  type ArtifactReproducibilityReceiptDraft
+} from './artifacts/artifact-reproducibility-receipts'
 import {
   createArtifactHandlers,
   createDefaultArtifactRepository,
@@ -87,6 +109,7 @@ import {
   type ArtifactHandlers
 } from './artifacts/ipc'
 import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
+import { readArtifactReproducibilityExecutionEvidence } from './artifacts/provenance-reproducibility-execution-evidence'
 import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { broadcastJobUpdated, createComputeIpcModule, toJobSummary } from './compute/ipc'
@@ -196,6 +219,7 @@ import { OfficePreviewSupervisor } from './office-preview/office-preview-supervi
 import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { registerRuntimeIpcHandlers } from './notebook/runtime-ipc'
 import { NotebookRunRepository, getRuntimeRoot } from './notebook/repository'
+import { NotebookDependencyAnalyzer } from './notebook/dependency-analysis'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
 import { createNotebookArtifactSourceScopeProvider } from './notebook/artifact-source-scope'
 import {
@@ -218,6 +242,11 @@ import { HostViewImageService } from './notebook/host-view-image-service'
 import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
 import { PENDING_UPLOAD_SESSION_ID, parseUploadVersionReference } from '../shared/uploads'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from '../shared/artifacts'
+import type {
+  ArtifactReproducibilityCheckRequest,
+  GetArtifactReproducibilityCheckLogRequest,
+  ListArtifactReproducibilityReceiptsRequest
+} from '../shared/artifact-reproducibility'
 import type { NotebookLanguage } from '../shared/notebook'
 import { MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID } from '../shared/lifecycle-events'
 import {
@@ -1151,6 +1180,11 @@ const createApplicationModules = async (
 
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
   const artifactRepository = createDefaultArtifactRepository()
+  const notebookRepository = new NotebookRunRepository(resolveDataRoot())
+  const notebookDependencyAnalyzer = new NotebookDependencyAnalyzer({
+    storageRoot: resolveDataRoot(),
+    repository: notebookRepository
+  })
   const immutableInputAuthority = new ImmutableInputAuthority({
     storageRoot: resolveDataRoot(),
     managedFileVersions: managedFileVersionService
@@ -1161,6 +1195,8 @@ const createApplicationModules = async (
     inputAuthority: immutableInputAuthority,
     managedFileVersions: managedFileVersionService,
     compatibilityRepository: artifactRepository,
+    notebookRepository,
+    dependencyAnalyzer: notebookDependencyAnalyzer,
     loadSession: (projectId, appSessionId) => sessionRepository.loadSession(projectId, appSessionId)
   })
   const contentRepository = new ContentRepository({
@@ -1315,6 +1351,9 @@ const createApplicationModules = async (
     }
   } = {}
   const projectRuntimeQuiescenceRef: { current?: ProjectRuntimeQuiescenceOwner } = {}
+  const artifactReproducibilityAttemptOwnerRef: {
+    current?: ArtifactReproducibilityAttemptOwner
+  } = {}
   const computeJobDeletionPort = {
     restoreProjectJobDeletion: (projectId: string): Promise<void> => {
       if (!computeJobDeletionRef.current) {
@@ -1507,6 +1546,7 @@ const createApplicationModules = async (
         if (!owner) throw new Error('Project runtime cleanup is not initialized.')
         await archiveCoordinator.withProjectDeletion(projectId, async () => {
           notebookService.beginProjectDeletion(projectId)
+          await artifactReproducibilityAttemptOwnerRef.current?.cancelProject(projectId)
           await owner.quiesceProject(projectId)
         })
       },
@@ -1582,6 +1622,12 @@ const createApplicationModules = async (
         return (await computeJobs.findNonTerminal()).some((job) => job.project_id === projectId)
       },
       liveSessionProjectId: (sessionId) => runtimeRef.current?.liveSessionProjectId(sessionId)
+    },
+    {
+      cancelProject: async (projectId) =>
+        artifactReproducibilityAttemptOwnerRef.current?.cancelProject(projectId),
+      cancelSession: async (projectId, sessionId) =>
+        artifactReproducibilityAttemptOwnerRef.current?.cancelSession(projectId, sessionId)
     }
   )
   notificationInbox.setSessionAvailability((sessionId) =>
@@ -1799,7 +1845,8 @@ const createApplicationModules = async (
       configRoot: resolveConfigRoot(),
       dataRoot: resolveDataRoot(),
       projectId: DEFAULT_ARTIFACT_PROJECT_ID,
-      repository: new NotebookRunRepository(resolveDataRoot()),
+      repository: notebookRepository,
+      dependencyAnalyzer: notebookDependencyAnalyzer,
       getPackageMirror: () => settingsService.getPackageMirror(),
       getAgentEnvironmentCreationEnabled: () =>
         settingsService.getAgentEnvironmentCreationEnabled(),
@@ -3183,8 +3230,13 @@ const createApplicationModules = async (
       beforeSessionDelete: async (sessionId) => {
         await sideChatOwnerRef.current?.invalidateParents([sessionId])
         const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
-        await notebookService.shutdownSession(sessionId)
-        if (projectId) await notebookService.deleteSessionInputs(projectId, sessionId)
+        const operation = async (): Promise<void> => {
+          await notebookService.shutdownSession(sessionId)
+          if (projectId) await notebookService.deleteSessionInputs(projectId, sessionId)
+        }
+        const owner = artifactReproducibilityAttemptOwnerRef.current
+        if (projectId && owner) await owner.withSessionStopped(projectId, sessionId, operation)
+        else await operation()
       },
       afterSessionDelete: (sessionId, retained) =>
         computeIpcModule.handlers.approvalFinishSessionDeletion(sessionId, retained),
@@ -3668,6 +3720,10 @@ const createApplicationModules = async (
   let reviewerModelRuntimeShutdown:
     | Pick<ReviewerModelRuntimeOwner, 'hasActiveWork' | 'shutdown' | 'shutdownForUpdateGate'>
     | undefined
+  const notebookLifecycle = withReproducibilityNotebookLifecycle(
+    notebookService,
+    () => artifactReproducibilityAttemptOwnerRef.current
+  )
   const shutdownCoordinator = new BackendShutdownCoordinator({
     runtime: {
       shutdownForQuit: async () => {
@@ -3689,7 +3745,7 @@ const createApplicationModules = async (
         return { reaped: main.reaped && reviewer.reaped }
       }
     },
-    notebook: notebookService,
+    notebook: notebookLifecycle,
     sideChat: {
       shutdown: () => sideChatRuntime.shutdown(),
       suspendAll: (options) => sideChatRuntime.suspendAll(options)
@@ -3708,7 +3764,7 @@ const createApplicationModules = async (
       runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
       sideChat: { getActivePromptSessions: getActiveSideChatSessions },
       delegated: { getActiveDelegatedSessions },
-      notebook: notebookService
+      notebook: notebookLifecycle
     }).map((session) => session.kind)
     if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
     if (settingsService.hasActiveInstall()) blockers.push('settings-install')
@@ -3931,12 +3987,18 @@ const createApplicationModules = async (
   // binding in one place.
   const originalDeleteSession =
     sessionPersistenceBackend.deleteSession.bind(sessionPersistenceBackend)
-  sessionPersistenceBackend.deleteSession = withSessionDeletionCleanup(
+  const deleteSessionWithCleanup = withSessionDeletionCleanup(
     withSessionDeletionCleanup(originalDeleteSession, (_projectId, sessionId) =>
       sessionSpecialistReconfiguration.clearSession(sessionId)
     ),
     (_projectId, sessionId) => wslSetupSessions.forget(sessionId)
   )
+  sessionPersistenceBackend.deleteSession = async (projectId, sessionId) => {
+    const owner = artifactReproducibilityAttemptOwnerRef.current
+    const operation = (): Promise<void> => deleteSessionWithCleanup(projectId, sessionId)
+    if (owner) await owner.withSessionStopped(projectId, sessionId, operation)
+    else await operation()
+  }
   const sessionPersistenceHandlers = createSessionPersistenceHandlersWithAttributionAuthority(
     sessionPersistenceBackend,
     reviewRepository,
@@ -4333,7 +4395,7 @@ const createApplicationModules = async (
   }
   const storageCommandOwner = createStorageCommandOwner({
     runtime,
-    notebook: notebookService,
+    notebook: notebookLifecycle,
     getActivePromptSessions: () => runtime.getActivePromptSessions(),
     getActiveSideChatSessions,
     getActiveDelegatedSessions,
@@ -4374,7 +4436,7 @@ const createApplicationModules = async (
     registerStorageIpcHandlers(
       {
         runtime,
-        notebook: notebookService,
+        notebook: notebookLifecycle,
         getActivePromptSessions: () => runtime.getActivePromptSessions(),
         getActiveSideChatSessions,
         getActiveDelegatedSessions,
@@ -4404,7 +4466,10 @@ const createApplicationModules = async (
       sessionPersistenceCoordinator.retryArtifactFinalization(request)
   })
   artifactHandlersRef.current = artifactHandlers
-  declareElectronAdapter('artifacts', () =>
+  declareElectronAdapter('artifacts', () => {
+    if (!artifactReproducibilityAttemptOwnerRef.current) {
+      throw new Error('Artifact reproducibility lifecycle is not configured.')
+    }
     registerArtifactIpcHandlers(
       artifactRepository,
       artifactRunRegistry,
@@ -4413,7 +4478,139 @@ const createApplicationModules = async (
         sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation),
       artifactHandlers
     )
-  )
+    const reproducibilityOwner = artifactReproducibilityAttemptOwnerRef.current
+    const receiptExporter = createArtifactReproducibilityReceiptExporter({
+      readVersion: (request) =>
+        withDataRootWrite(
+          async () =>
+            // Read metadata only; exporting a version label must not scan large Artifact contents.
+            (await artifactProvenanceRepository.getLineage(request))?.selectedVersion
+        ),
+      readOutputStorage: (request) =>
+        withDataRootWrite(() =>
+          getArtifactReproducibilityOutputStorage(artifactProvenanceRepository, request)
+        ),
+      downloadsDirectory: app.getPath('downloads'),
+      readOutput: (request, checksum, entityId) =>
+        withDataRootWrite(() =>
+          getArtifactReproducibilityOutput(
+            artifactProvenanceRepository,
+            request,
+            checksum,
+            entityId
+          )
+        ),
+      readOriginalOutput: (request, entityId) =>
+        withDataRootWrite(async () => {
+          const execution = await readArtifactReproducibilityExecutionEvidence(
+            artifactProvenanceRepository,
+            request
+          )
+          const entity = execution.provenanceGraph?.entities.find(
+            (item) => item.entityId === entityId
+          )
+          if (entity?.kind !== 'file-generation') throw new Error('Original output is unavailable.')
+          const bytes = await readReproducibilityOutputFile(
+            resolveStorageKey(resolveDataRoot(), entity.contentStorageKey)
+          )
+          if (bytes.length !== entity.sizeBytes || sha256(bytes) !== entity.checksum)
+            throw new Error('Original output checksum mismatch.')
+          return bytes
+        }),
+      readExecution: (request) =>
+        withDataRootWrite(() =>
+          readArtifactReproducibilityExecutionEvidence(artifactProvenanceRepository, request)
+        ),
+      readEnvironmentLock: (lockChecksum) =>
+        withDataRootWrite(() =>
+          readFile(
+            join(
+              resolveDataRoot(),
+              'runtime',
+              'provenance',
+              'environment-locks',
+              `${lockChecksum}.json`
+            ),
+            'utf8'
+          ).catch((error: unknown) => {
+            if (
+              typeof error === 'object' &&
+              error !== null &&
+              'code' in error &&
+              error.code === 'ENOENT'
+            ) {
+              return undefined
+            }
+            throw error
+          })
+        ),
+      readReceipt: (request, receiptChecksum) =>
+        withDataRootWrite(() =>
+          getArtifactReproducibilityReceipt(artifactProvenanceRepository, request, receiptChecksum)
+        ),
+      readCheckLog: (request) =>
+        withDataRootWrite(() =>
+          getArtifactReproducibilityCheckLog(artifactProvenanceRepository, request)
+        ),
+      showSaveDialog: (sender, options) => {
+        const parentWindow = BrowserWindow.fromWebContents(sender as WebContents)
+        return parentWindow
+          ? dialog.showSaveDialog(parentWindow, options)
+          : dialog.showSaveDialog(options)
+      },
+      showOpenDialog: (sender, options) => {
+        const parentWindow = BrowserWindow.fromWebContents(sender as WebContents)
+        return parentWindow
+          ? dialog.showOpenDialog(parentWindow, options)
+          : dialog.showOpenDialog(options)
+      },
+      createEnvironmentFromLock: ({ projectId, lockChecksum, kernelKind, lock }) =>
+        notebookService.importEnvironmentLock({
+          projectId,
+          language: kernelKind,
+          lock,
+          lockChecksum
+        }),
+      writeArchive: (filePath, bytes) =>
+        publishUserFile(filePath, (temporaryPath) => writeFile(temporaryPath, bytes)),
+      translate
+    })
+    registerArtifactReproducibilityIpcHandlers(reproducibilityOwner, {
+      outputStorage: (request) =>
+        withDataRootWrite(() =>
+          getArtifactReproducibilityOutputStorage(artifactProvenanceRepository, request)
+        ),
+      clearOutputs: (request) =>
+        archiveCoordinator.withSessionAvailable(request.projectId, request.appSessionId, () =>
+          sessionPersistenceCoordinator.runSessionMutation(
+            request.projectId,
+            request.appSessionId,
+            () =>
+              reproducibilityOwner.withIdleVersion(request, () =>
+                withDataRootWrite(() =>
+                  clearArtifactReproducibilityOutputs(artifactProvenanceRepository, request)
+                )
+              )
+          )
+        ),
+      previewOutput: (request) => receiptExporter.previewOutput(request),
+      withSessionAvailable: (request, start) =>
+        archiveCoordinator.withSessionAvailable(request.projectId, request.appSessionId, () =>
+          sessionPersistenceCoordinator.runSessionMutation(
+            request.projectId,
+            request.appSessionId,
+            start
+          )
+        ),
+      describeEnvironmentLock: (request) => receiptExporter.describeEnvironmentLock(request),
+      createEnvironmentFromLock: (request) => receiptExporter.createEnvironmentFromLock(request),
+      exportEnvironmentLock: (sender, request) =>
+        receiptExporter.exportEnvironmentLock(sender, request),
+      exportReceipt: (sender, request) => receiptExporter.export(sender, request),
+      importEnvironmentLock: (sender, request) =>
+        receiptExporter.importEnvironmentLock(sender, request)
+    })
+  })
   declareElectronAdapter('uploads', () =>
     registerUploadIpcHandlers(uploadCommandOwner, {
       // Standalone "Save as artifact" uploads have no session mutation to piggyback on, so the
@@ -4435,6 +4632,12 @@ const createApplicationModules = async (
   const sessionDeletionOwner = new SessionDeletionOwner({
     runtime,
     backgroundResults: backgroundResultDelivery,
+    withStoppedWork: (request, operation) => {
+      const owner = artifactReproducibilityAttemptOwnerRef.current
+      return owner
+        ? owner.withSessionStopped(request.projectId, request.sessionId, operation)
+        : operation()
+    },
     persistence: {
       deleteSession: (request) =>
         withDataRootWrite(() =>
@@ -4966,6 +5169,53 @@ const createApplicationModules = async (
     dispose: async () => BackendShutdownOutcomeError.assertClean(await coordinator.runForQuit())
   }))
   backendTeardownOwnedByCoordinator = true
+  artifactReproducibilityAttemptOwnerRef.current = await modules.add(
+    {
+      storageRoot: resolveDataRoot(),
+      processSandbox: notebookNetworkSandbox,
+      retainOutput: (request: ArtifactReproducibilityCheckRequest, bytes: Buffer) =>
+        retainArtifactReproducibilityOutput(artifactProvenanceRepository, request, bytes),
+      pruneOutputs: (request: ArtifactReproducibilityCheckRequest) =>
+        pruneArtifactReproducibilityOutputs(artifactProvenanceRepository, request),
+      loadExecution: (request: ArtifactReproducibilityCheckRequest) =>
+        readArtifactReproducibilityExecutionEvidence(artifactProvenanceRepository, request),
+      persistReceipt: (
+        request: ArtifactReproducibilityCheckRequest,
+        receipt: ArtifactReproducibilityReceiptDraft,
+        checkLog: ArtifactReproducibilityCheckLogDraft
+      ) =>
+        appendArtifactReproducibilityReceipt(
+          artifactProvenanceRepository,
+          request,
+          receipt,
+          checkLog
+        ),
+      persistFailure: (
+        request: ArtifactReproducibilityCheckRequest,
+        attempt: ArtifactReproducibilityFailedAttemptDraft,
+        checkLog: ArtifactReproducibilityCheckLogDraft
+      ) =>
+        recordFailedArtifactReproducibilityAttempt(
+          artifactProvenanceRepository,
+          request,
+          attempt,
+          checkLog
+        ),
+      listReceipts: (request: ListArtifactReproducibilityReceiptsRequest) =>
+        listArtifactReproducibilityReceipts(artifactProvenanceRepository, request),
+      getCheckLog: (request: GetArtifactReproducibilityCheckLogRequest) =>
+        getArtifactReproducibilityCheckLog(artifactProvenanceRepository, request),
+      withStorageLease: withDataRootWrite
+    },
+    (dependencies) => {
+      const owner = new ArtifactReproducibilityAttemptOwner(dependencies)
+      return {
+        name: 'artifact-reproducibility-lifecycle',
+        capability: owner,
+        dispose: () => owner.dispose()
+      }
+    }
+  )
   const applicationCommandComposition = await modules.add(
     applicationCommandDependencies,
     (dependencies) => {
@@ -5013,7 +5263,7 @@ const createApplicationModules = async (
         runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
         sideChat: { getActivePromptSessions: getActiveSideChatSessions },
         delegated: { getActiveDelegatedSessions },
-        notebook: notebookService
+        notebook: notebookLifecycle
       }),
     hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
     getActiveSettingsInstallId: () => settingsService.getActiveInstallId(),

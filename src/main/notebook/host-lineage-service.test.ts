@@ -432,7 +432,8 @@ describe('HostLineageService', () => {
             type: 'github' as const,
             repository: 'numpy/numpy',
             ref: 'v2.0.0',
-            commit: 'abc123'
+            commit: 'abc123',
+            subdirectory: 'packages/numpy'
           }
         }
       ],
@@ -483,7 +484,8 @@ describe('HostLineageService', () => {
                 type: 'github' as const,
                 repository: 'numpy/numpy',
                 ref: 'v2.0.0',
-                commit: 'abc123'
+                commit: 'abc123',
+                subdirectory: 'packages/numpy'
               }
             }
           ]

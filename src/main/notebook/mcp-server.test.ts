@@ -2025,7 +2025,8 @@ describe('compactManagePackagesResult', () => {
             type: 'github',
             repository: 'r-lib/cli',
             ref: 'main',
-            commit: 'abc123'
+            commit: 'abc123',
+            subdirectory: 'packages/cli'
           }
         }
       ],
@@ -2081,7 +2082,8 @@ describe('compactManagePackagesResult', () => {
             type: 'github',
             repository: 'r-lib/cli',
             ref: 'main',
-            commit: 'abc123'
+            commit: 'abc123',
+            subdirectory: 'packages/cli'
           }
         }
       ]

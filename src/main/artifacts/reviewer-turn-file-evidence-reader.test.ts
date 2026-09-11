@@ -15,7 +15,7 @@ afterEach(async () => {
 })
 
 describe('ReviewerTurnFileEvidenceReader', () => {
-  it('upgrades an artifact-only input when the same Version was directly read by a later run', async () => {
+  it('restores directly-read input evidence from the persisted Artifact Version', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'reviewer-turn-file-evidence-'))
     const source = 'sample,value\na,1\n'
     const output = 'result,value\na,2\n'
@@ -35,7 +35,16 @@ describe('ReviewerTurnFileEvidenceReader', () => {
         id: 'work-version',
         messageId: 'agent-1',
         producerRunId: 'producer-run',
-        evidenceJson: JSON.stringify({ producer: { state: 'available' } }),
+        evidenceJson: JSON.stringify({
+          producer: { state: 'available' },
+          inputs: [
+            {
+              source_kind: 'upload-version',
+              input_file_version_id: 'source-version',
+              access_evidence: 'file-evidence'
+            }
+          ]
+        }),
         filename: 'result.csv',
         contentType: 'text/csv',
         sizeBytes: BigInt(Buffer.byteLength(output)),
@@ -44,6 +53,7 @@ describe('ReviewerTurnFileEvidenceReader', () => {
         inputs: [
           {
             inputFileVersionId: 'source-version',
+            sourceKind: 'upload-version',
             filename: 'source.csv',
             contentType: 'text/csv',
             sizeBytes: BigInt(Buffer.byteLength(source)),
@@ -58,31 +68,7 @@ describe('ReviewerTurnFileEvidenceReader', () => {
       storageRoot,
       getClient: async () => ({ artifactVersion: { findMany } }) as never,
       notebookRepository: {
-        readSessionDocuments: async () => [
-          {
-            runs: [
-              {
-                runId: 'direct-run',
-                promptMessageId: 'user-1',
-                inputFiles: [
-                  {
-                    inputFileVersionId: 'source-version',
-                    sourceKind: 'upload-version',
-                    sourceFileId: 'upload-1',
-                    sourceProjectId: 'project-1',
-                    sourceSessionId: 'source-session',
-                    filename: 'source.csv',
-                    contentType: 'text/csv',
-                    sizeBytes: Buffer.byteLength(source),
-                    checksum: checksum(source),
-                    storageKey: sourceKey,
-                    association: 'resolver-accessed'
-                  }
-                ]
-              }
-            ]
-          } as never
-        ]
+        readSessionDocuments: async () => []
       }
     })
 
@@ -103,7 +89,7 @@ describe('ReviewerTurnFileEvidenceReader', () => {
         versionId: 'source-version',
         role: 'source_document',
         scopeReason: 'read-by-turn',
-        executionId: 'direct-run',
+        executionId: 'producer-run',
         directlyRead: true,
         contentStatus: 'available'
       })

@@ -68,6 +68,7 @@ import {
 } from './runtime-paths'
 import { toErrorMessage } from '../error-message'
 import { buildManagedRuntimeProcessEnvironment } from './process-environment'
+import { withPipInstallEvidence } from './pip-install-evidence'
 
 export type InstallRequest = OptionalProjectIdScope & {
   language: NotebookLanguage
@@ -147,6 +148,7 @@ export type SpawnResult = {
 export type InstallSpawnOptions = Readonly<{
   signal?: AbortSignal
   timeoutMs?: number
+  onOutput?: (output: { stream: 'stdout' | 'stderr'; text: string }) => void
 }>
 export type InstallSpawn = (
   command: string,
@@ -172,6 +174,9 @@ export const DEFAULT_PACKAGE_OPERATION_TIMEOUT_MS = 600_000
 // integration passes the effectiveMirror() output, this module stays mirror-shape agnostic.
 export type InstallDeps = {
   spawn: InstallSpawn
+  // Internal tool preparation must remain covered by the exact Conda lock. Never bootstrap renv
+  // through the very native-package fallback whose capture depends on it.
+  requireConda?: boolean
   // Caller lifetime and the app-owned maximum duration for every subprocess in this package
   // operation. The real spawn confirms the whole process tree stopped before rejecting either one.
   signal?: AbortSignal
@@ -995,6 +1000,7 @@ export const defaultSpawn = (
   platform: NodeJS.Platform = process.platform,
   confirmProcessTreeTermination?: () => Promise<boolean>
 ): Promise<SpawnResult> => {
+  const onOutput = options?.onOutput
   const signal = options?.signal
   if (signal?.aborted) {
     return Promise.reject(
@@ -1089,9 +1095,19 @@ export const defaultSpawn = (
     const stderr = new InstallerLogTailBuffer(INSTALLER_STREAM_LOG_LIMIT_BYTES)
     child.stdout?.on('data', (chunk) => {
       stdout.push(chunk)
+      try {
+        onOutput?.({ stream: 'stdout', text: String(chunk) })
+      } catch {
+        // Installer output is observational and must not interrupt the package operation.
+      }
     })
     child.stderr?.on('data', (chunk) => {
       stderr.push(chunk)
+      try {
+        onOutput?.({ stream: 'stderr', text: String(chunk) })
+      } catch {
+        // Installer output is observational and must not interrupt the package operation.
+      }
     })
     if (condaJsonCapture) {
       if (child.stdout) child.stdout.pipe(condaJsonCapture.stdoutLimiter)
@@ -1317,11 +1333,11 @@ export async function installPackages(
     ...process.env,
     ...caBundleEnv(deps.caBundle)
   }
-  const run: InstallSpawn = (command, args) =>
+  const run: InstallSpawn = (command, args, env = spawnEnv) =>
     baseSpawn(
       command,
       args,
-      spawnEnv,
+      env,
       deps.onChild,
       deps.onBeforeSpawn,
       undefined,
@@ -1694,7 +1710,9 @@ export async function installPackages(
     if (req.usePip) {
       const pip = pipBin(prefix)
       const args = ['install', ...(deps.pypiIndex ? ['-i', deps.pypiIndex] : []), ...req.packages]
-      const result = await run(pip, args)
+      const result = await withPipInstallEvidence(prefix, (reportPath) =>
+        run(pip, args, { ...spawnEnv, ...(reportPath ? { PIP_REPORT: reportPath } : {}) })
+      )
       return {
         ok: result.code === 0,
         needsRestart: false,
@@ -1773,11 +1791,13 @@ export async function installPackages(
     const classification = classifyCondaFailure(result)
     const condaAttempt = installerAttempt(0, 'conda', req.packages, result, classification)
     if (condaFallbackIsAuthorized(classification)) {
-      const fallback = await run(pipBin(prefix), [
-        'install',
-        ...(deps.pypiIndex ? ['-i', deps.pypiIndex] : []),
-        ...req.packages
-      ])
+      const fallback = await withPipInstallEvidence(prefix, (reportPath) =>
+        run(
+          pipBin(prefix),
+          ['install', ...(deps.pypiIndex ? ['-i', deps.pypiIndex] : []), ...req.packages],
+          { ...spawnEnv, ...(reportPath ? { PIP_REPORT: reportPath } : {}) }
+        )
+      )
       const ok = fallback.code === 0
       return {
         ok,
@@ -1803,6 +1823,42 @@ export async function installPackages(
       fallbackUsed: false,
       prefix,
       error: condaFailureMessage('install', result)
+    }
+  }
+
+  const prepareRLockTool = async (): Promise<InstallResult | undefined> => {
+    const readIdentity = deps.readCondaPackageIdentity ?? readCondaPackageIdentity
+    const installed = readIdentity(prefix, 'r-renv')
+    if (installed?.name === 'r-renv' && hasVerifiableCondaBuild(installed)) return undefined
+    const preparation = await installPackages(
+      { ...req, packages: ['renv'], installer: undefined },
+      { ...deps, requireConda: true }
+    )
+    if (!preparation.ok) return preparation
+    const prepared = readIdentity(prefix, 'r-renv')
+    if (prepared?.name === 'r-renv' && hasVerifiableCondaBuild(prepared)) return preparation
+    return {
+      ...preparation,
+      ok: false,
+      error:
+        'Cannot verify the installed renv lock tool. Repair this R runtime before installing native packages.'
+    }
+  }
+  const withPreparation = (
+    preparation: InstallResult | undefined,
+    result: InstallResult
+  ): InstallResult => {
+    if (!preparation) return result
+    const droppedBytes =
+      (preparation.logTruncation?.droppedBytes ?? 0) + (result.logTruncation?.droppedBytes ?? 0)
+    return {
+      ...result,
+      needsRestart: preparation.needsRestart || result.needsRestart,
+      log: [preparation.log, result.log].filter(Boolean).join('\n'),
+      ...(droppedBytes > 0 ? { logTruncation: { droppedBytes } } : {}),
+      attempts: [...(preparation.attempts ?? []), ...(result.attempts ?? [])].map(
+        (attempt, groupOrdinal) => ({ ...attempt, groupOrdinal })
+      )
     }
   }
 
@@ -1844,6 +1900,8 @@ export async function installPackages(
       }
     }
 
+    const preparation = await prepareRLockTool()
+    if (preparation && !preparation.ok) return preparation
     const rLib = envRLibrary(prefix)
     const cran = deps.cranMirror ?? DEFAULT_CRAN_MIRROR
     const vector = req.packages.map((pkg) => JSON.stringify(pkg.trim())).join(', ')
@@ -1853,6 +1911,9 @@ export async function installPackages(
     const script =
       `dir.create(${JSON.stringify(rLib)}, recursive=TRUE, showWarnings=FALSE); ` +
       `.libPaths(c(${JSON.stringify(rLib)}, .libPaths())); ` +
+      // BiocManager rejects repos=; it combines this CRAN option with release-specific Bioc
+      // repositories. remotes also reads it for CRAN dependencies after its own bootstrap.
+      `options(repos=c(CRAN=${JSON.stringify(cran)})); ` +
       (req.installer === 'biocmanager'
         ? bootstrap('BiocManager') +
           `BiocManager::install(c(${vector}), lib=${JSON.stringify(rLib)}, ask=FALSE, update=FALSE); ` +
@@ -1868,7 +1929,7 @@ export async function installPackages(
         : req.packages.length === 1
           ? githubSource(req.packages[0].trim())
           : undefined
-    return {
+    return withPreparation(preparation, {
       ok,
       needsRestart: ok,
       log: mergeLog(result),
@@ -1879,7 +1940,7 @@ export async function installPackages(
       prefix: rLib,
       ...(ok && source ? { source } : {}),
       error: ok ? undefined : `${req.installer} install failed.`
-    }
+    })
   }
 
   // language === 'r': prefer conda, fall back to CRAN install.packages into the env R library.
@@ -1918,6 +1979,15 @@ export async function installPackages(
     approvedPlan?: SpawnResult
   ): Promise<InstallResult> => {
     const condaLog = mergeLog(conda)
+    const preparation = await prepareRLockTool()
+    const preceding: InstallResult = {
+      ok: false,
+      needsRestart: false,
+      log: [approvedPlan ? mergeLog(approvedPlan) : '', condaLog].filter(Boolean).join('\n'),
+      ...installLogTruncation(approvedPlan, conda),
+      attempts: [condaAttempt]
+    }
+    if (preparation && !preparation.ok) return withPreparation(preceding, preparation)
     const cran = deps.cranMirror ?? DEFAULT_CRAN_MIRROR
     const vector = req.packages.map((pkg) => JSON.stringify(pkg)).join(', ')
     // Pin install.packages to the env's own R library with an explicit lib=, rather than letting it
@@ -1928,15 +1998,13 @@ export async function installPackages(
       `install.packages(c(${vector}), lib=${JSON.stringify(rLib)}, repos=${JSON.stringify(cran)})`
     const fallback = await run(rScriptBin(prefix), ['--vanilla', '--slave', '-e', script])
     const ok = fallback.code === 0
-    return {
+    return withPreparation(preparation ? withPreparation(preceding, preparation) : preceding, {
       ok,
       needsRestart: ok,
-      log: [approvedPlan ? mergeLog(approvedPlan) : '', condaLog, mergeLog(fallback)]
-        .filter(Boolean)
-        .join('\n'),
-      ...installLogTruncation(approvedPlan, conda, fallback),
+      log: mergeLog(fallback),
+      ...installLogTruncation(fallback),
       method: 'cran',
-      attempts: [condaAttempt, installerAttempt(1, 'r-install-packages', req.packages, fallback)],
+      attempts: [installerAttempt(0, 'r-install-packages', req.packages, fallback)],
       fallbackUsed: true,
       prefix: rLib,
       error:
@@ -1946,7 +2014,7 @@ export async function installPackages(
             : 'conda and CRAN install both failed.'
           : 'conda failed after short Windows package cache recovery, and CRAN install also failed. ' +
             'Retry Repair; if it fails again, choose a shorter data location.'
-    }
+    })
   }
 
   // r-base is part of the kernel, not a package dependency the solver may rewrite. Pin the exact
@@ -1967,7 +2035,7 @@ export async function installPackages(
       ...classification,
       mutationRisk: 'none'
     })
-    if (condaFallbackIsAuthorized(classification)) {
+    if (!deps.requireConda && condaFallbackIsAuthorized(classification)) {
       return cranFallback(preflight, condaAttempt)
     }
     return {
@@ -2069,7 +2137,7 @@ export async function installPackages(
   const condaLog = [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n')
   const classification = classifyCondaFailure(conda)
   const condaAttempt = installerAttempt(0, 'conda', condaPkgs, conda, classification)
-  if (!condaFallbackIsAuthorized(classification)) {
+  if (deps.requireConda || !condaFallbackIsAuthorized(classification)) {
     return {
       ok: false,
       needsRestart: false,

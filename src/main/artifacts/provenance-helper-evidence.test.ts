@@ -66,6 +66,77 @@ const snapshot = (runs: NotebookRunRecord[]): PersistedArtifactExecutionSnapshot
   )
 
 describe('Artifact helper execution evidence', () => {
+  it.each(['r', 'python'] as const)(
+    'preserves bounded per-run %s random state in immutable snapshot round trips',
+    (language) => {
+      const producer = run(
+        'random-run',
+        language === 'r' ? 'cat(runif(5))' : 'import random\nprint(random.random())',
+        []
+      )
+      const observation = { locale: 'C', timezone: 'UTC', threadLimits: {}, randomLibraries: [] }
+      producer.kernelKind = language
+      producer.environmentManifest = {
+        schemaVersion: 1,
+        captureKind: 'completed-run',
+        capturedAt: '2026-09-09T00:00:00Z',
+        installedInventory: {
+          capturedAt: '2026-09-09T00:00:00Z',
+          source: 'full-scan',
+          validation: 'full-scan'
+        },
+        kernelKind: language,
+        environmentName: `default-${language}`,
+        runtimeSource: 'managed',
+        inventorySources: ['kernel-native'],
+        packages: [],
+        complete: true,
+        captureStatus: 'complete',
+        executionContext: {
+          schemaVersion: 1,
+          before: {
+            ...observation,
+            ...(language === 'r'
+              ? {
+                  rRandomState: {
+                    state: 'available' as const,
+                    kinds: ["L'Ecuyer-CMRG", 'Inversion', 'Rejection'] as [
+                      "L'Ecuyer-CMRG",
+                      'Inversion',
+                      'Rejection'
+                    ],
+                    seed: [10407, 1, 2, 3, 4, 5, 6]
+                  }
+                }
+              : {
+                  pythonRandomState: {
+                    state: 'available' as const,
+                    standard: { words: [...Array<number>(624).fill(1), 624], gaussian: 0.7 },
+                    numpy: {
+                      words: Array<number>(624).fill(1),
+                      position: 2,
+                      hasGaussian: 1,
+                      gaussian: -0.3
+                    }
+                  }
+                })
+          },
+          after: observation
+        }
+      }
+      const value = snapshot([producer])
+      const decoded = parseArtifactExecutionSnapshot(JSON.stringify(value))
+      expect(decoded.runs[0]?.executionContext).toEqual(
+        producer.environmentManifest.executionContext
+      )
+      expect(decoded.runs[0]?.script).toBe(producer.script)
+      const damaged = JSON.parse(JSON.stringify(value))
+      if (language === 'r') damaged.runs[0].executionContext.before.rRandomState.seed = [10407]
+      else damaged.runs[0].executionContext.before.pythonRandomState.standard.words = [1]
+      expect(() => parseArtifactExecutionSnapshot(JSON.stringify(damaged))).toThrow()
+    }
+  )
+
   it('preserves explicit non-dispatch evidence through immutable snapshot serialization', () => {
     const failed = {
       ...run('failed-run', 'seed = 40', []),
@@ -79,6 +150,17 @@ describe('Artifact helper execution evidence', () => {
     expect(decoded.runs[0]).toHaveProperty('kernelDispatched', false)
     expect(decoded.runs[1]).toHaveProperty('kernelDispatched', true)
     expect(decoded.runs[2]).not.toHaveProperty('kernelDispatched')
+  })
+
+  it('carries each run Environment lock reference into the bounded Artifact snapshot', () => {
+    const producer = run('run-1', 'write_result()', [])
+    producer.environmentLock = {
+      state: 'available',
+      format: 'environment-lock-bundle',
+      lockChecksum: 'a'.repeat(64)
+    }
+
+    expect(snapshot([producer]).runs[0]?.environmentLock).toEqual(producer.environmentLock)
   })
 
   it('freezes and deterministically deduplicates sticky helper generations', () => {
@@ -170,6 +252,24 @@ describe('Artifact helper execution evidence', () => {
 
   it('projects helper identity without source into renderer-facing execution evidence', () => {
     const value = snapshot([run('run-1', 'helper_a()', [helper('helper-a')])])
+    value.provenanceGraph = {
+      schemaVersion: 1,
+      targetEntityId: 'artifact-version:version-1',
+      completeness: 'incomplete',
+      reasonCodes: ['target-generation-unavailable'],
+      activities: [],
+      entities: [
+        {
+          entityId: 'artifact-version:version-1',
+          kind: 'artifact-version',
+          versionId: 'version-1',
+          filename: 'result.csv',
+          checksum: 'a'.repeat(64),
+          sizeBytes: 10
+        }
+      ],
+      edges: []
+    }
 
     const projected = projectPublicArtifactExecutionSnapshot(value, [])
 
@@ -187,5 +287,11 @@ describe('Artifact helper execution evidence', () => {
     ])
     expect(JSON.stringify(projected)).not.toContain('return "helper-a"')
     expect(JSON.stringify(projected)).not.toContain('"source"')
+    expect(JSON.stringify(projected)).not.toContain('contentStorageKey')
+    expect(projected).not.toHaveProperty('provenanceGraph')
+    expect(projected.reproducibility).toMatchObject({
+      targetEntityId: 'artifact-version:version-1',
+      completeness: 'incomplete'
+    })
   })
 })

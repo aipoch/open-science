@@ -23,6 +23,13 @@ import { createProjectDbClient, migrateApplicationDatabase } from '../projects/p
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { NotebookRunRepository } from '../notebook/repository'
 import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
+import { artifactReproducibilityRecipeMatchesSnapshot } from './artifact-reproducibility-recipe'
+import {
+  appendArtifactReproducibilityReceipt,
+  getArtifactReproducibilityCheckLog,
+  listArtifactReproducibilityReceipts
+} from './artifact-reproducibility-receipts'
+import { parseArtifactExecutionSnapshot } from './provenance-execution-snapshot-decoder'
 import {
   ArtifactOwnershipPersistenceRaceError,
   ArtifactProvenanceRepository
@@ -254,75 +261,187 @@ describe('artifact provenance repository', () => {
     ).rejects.toThrow('Artifact Version not found: version-1')
   })
 
-  it('stores reconstruction cache beside the exact owned immutable Version', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-reconstruction-cache-'))
-    const client = createProjectDbClient(storageRoot)
-    disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
-    const repository = new ArtifactProvenanceRepository({
-      storageRoot,
-      getClient: () => Promise.resolve(client)
-    })
-    const contentStorageKey = 'artifacts/project-1/session-1/.provenance/versions/version-1/content'
-    const contentPath = join(storageRoot, ...contentStorageKey.split('/'))
-    await mkdir(dirname(contentPath), { recursive: true })
-    const content = 'artifact bytes'
-    const contentChecksum = createHash('sha256').update(content).digest('hex')
-    await writeFile(contentPath, content)
-    await client.fileOriginSession.create({
-      data: { projectId: 'project-1', sessionId: 'session-1' }
-    })
-    await client.artifactLineage.create({
-      data: {
-        id: 'artifact-1',
+  it.each(['missing', 'size-mismatch', 'checksum-mismatch', 'quarantined'] as const)(
+    'keeps verification records auditable with %s content and gates reconstruction',
+    async (contentFailure) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-reconstruction-cache-'))
+      const client = createProjectDbClient(storageRoot)
+      disconnect = () => client.$disconnect()
+      await migrateApplicationDatabase(client)
+      const repository = new ArtifactProvenanceRepository({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const contentStorageKey =
+        'artifacts/project-1/session-1/.provenance/versions/version-1/content'
+      const contentPath = join(storageRoot, ...contentStorageKey.split('/'))
+      await mkdir(dirname(contentPath), { recursive: true })
+      const content = 'artifact bytes'
+      const contentChecksum = createHash('sha256').update(content).digest('hex')
+      await writeFile(contentPath, content)
+      await client.fileOriginSession.create({
+        data: { projectId: 'project-1', sessionId: 'session-1' }
+      })
+      await client.artifactLineage.create({
+        data: {
+          id: 'artifact-1',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          normalizedFilename: 'plot.png',
+          filename: 'plot.png'
+        }
+      })
+      await client.artifactVersion.create({
+        data: {
+          id: 'version-1',
+          artifactId: 'artifact-1',
+          versionNumber: 1,
+          filename: 'plot.png',
+          artifactRunId: 'artifact-run-1',
+          rootFrameId: 'root-1',
+          agentFrameId: 'agent-1',
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'segment-1',
+          promptMessageId: 'prompt-1',
+          state: 'finalized',
+          contentStorageKey,
+          evidenceStorageKey:
+            'artifacts/project-1/session-1/.provenance/versions/version-1/evidence.json',
+          evidenceSchemaVersion: 1,
+          sizeBytes: BigInt(14),
+          checksum: contentChecksum,
+          evidenceJson: '{}',
+          evidenceChecksum: 'b'.repeat(64)
+        }
+      })
+      const request = {
         projectId: 'project-1',
-        sessionId: 'session-1',
-        normalizedFilename: 'plot.png',
-        filename: 'plot.png'
-      }
-    })
-    await client.artifactVersion.create({
-      data: {
-        id: 'version-1',
+        appSessionId: 'session-1',
         artifactId: 'artifact-1',
-        versionNumber: 1,
-        filename: 'plot.png',
-        artifactRunId: 'artifact-run-1',
-        rootFrameId: 'root-1',
-        agentFrameId: 'agent-1',
-        messageBranchId: 'branch-1',
-        runtimeSegmentId: 'segment-1',
-        promptMessageId: 'prompt-1',
-        state: 'finalized',
-        contentStorageKey,
-        evidenceStorageKey:
-          'artifacts/project-1/session-1/.provenance/versions/version-1/evidence.json',
-        evidenceSchemaVersion: 1,
-        sizeBytes: BigInt(14),
-        checksum: contentChecksum,
-        evidenceJson: '{}',
-        evidenceChecksum: 'b'.repeat(64)
+        versionId: 'version-1'
       }
-    })
-    const request = {
-      projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactId: 'artifact-1',
-      versionId: 'version-1'
-    }
 
-    await expect(repository.readCodeReconstructionCache(request)).resolves.toBeUndefined()
-    await repository.writeCodeReconstructionCache(request, '{"schemaVersion":1}\n')
-    await expect(repository.readCodeReconstructionCache(request)).resolves.toBe(
-      '{"schemaVersion":1}\n'
-    )
-    await expect(
-      readFile(join(dirname(contentPath), 'code-reconstruction.json'), 'utf8')
-    ).resolves.toBe('{"schemaVersion":1}\n')
-    await expect(
-      repository.readCodeReconstructionCache({ ...request, appSessionId: 'other-session' })
-    ).rejects.toThrow('Artifact Version not found')
-  })
+      await expect(repository.readCodeReconstructionCache(request)).resolves.toBeUndefined()
+      await repository.writeCodeReconstructionCache(request, '{"schemaVersion":1}\n')
+      await expect(repository.readCodeReconstructionCache(request)).resolves.toBe(
+        '{"schemaVersion":1}\n'
+      )
+      await expect(
+        readFile(join(dirname(contentPath), 'code-reconstruction.json'), 'utf8')
+      ).resolves.toBe('{"schemaVersion":1}\n')
+      const checkLog = {
+        entries: [
+          {
+            source: 'notebook' as const,
+            stepId: 'notebook:run-1',
+            runIndex: 0,
+            kernelKind: 'python' as const,
+            stream: 'stdout' as const,
+            text: 'verification finished'
+          }
+        ],
+        truncated: false
+      }
+      const receipt = await appendArtifactReproducibilityReceipt(
+        repository,
+        request,
+        {
+          schemaVersion: 1,
+          receiptId: 'attempt-1',
+          startedAt: '2026-09-02T00:00:00.000Z',
+          completedAt: '2026-09-02T00:01:00.000Z',
+          outcome: 'matched',
+          artifactVersion: { ...request, targetChecksum: 'c'.repeat(64) },
+          frontier: { frontierId: 'original-inputs', claimScope: 'end-to-end' },
+          recipe: { recipeId: 'd'.repeat(64), graphChecksum: 'e'.repeat(64) },
+          environmentLocks: [],
+          completedStepIds: ['notebook:run-1'],
+          comparisons: [
+            {
+              stepId: 'notebook:run-1',
+              entityId: 'file-1',
+              relativePath: 'plot.png',
+              expectedChecksum: 'c'.repeat(64),
+              expectedSizeBytes: 14,
+              actualChecksum: 'c'.repeat(64),
+              actualSizeBytes: 14,
+              status: 'matched'
+            }
+          ]
+        },
+        checkLog
+      )
+      await expect(listArtifactReproducibilityReceipts(repository, request)).resolves.toEqual({
+        receipts: [receipt]
+      })
+      await expect(
+        readFile(
+          join(
+            dirname(contentPath),
+            'reproducibility-checks',
+            `sha256-${receipt.receiptChecksum}.json`
+          ),
+          'utf8'
+        )
+      ).resolves.toContain(`"receiptChecksum":"${receipt.receiptChecksum}"`)
+      if (contentFailure === 'missing') {
+        await rm(contentPath)
+      } else if (contentFailure === 'size-mismatch') {
+        await writeFile(contentPath, 'short')
+      } else if (contentFailure === 'checksum-mismatch') {
+        await writeFile(contentPath, 'different data')
+      } else {
+        await client.contentBlob.create({
+          data: {
+            id: 'content-1',
+            storageKey: contentStorageKey,
+            checksum: contentChecksum,
+            sizeBytes: BigInt(content.length),
+            state: 'quarantined'
+          }
+        })
+        await client.artifactVersion.update({
+          where: { id: request.versionId },
+          data: { contentBlobId: 'content-1' }
+        })
+      }
+      await expect(listArtifactReproducibilityReceipts(repository, request)).resolves.toEqual({
+        receipts: [receipt]
+      })
+      await expect(
+        getArtifactReproducibilityCheckLog(repository, {
+          ...request,
+          receiptChecksum: receipt.receiptChecksum
+        })
+      ).resolves.toMatchObject(checkLog)
+      await expect(repository.readCodeReconstructionCache(request)).rejects.toThrow()
+      await expect(
+        repository.writeCodeReconstructionCache(request, 'replacement')
+      ).rejects.toThrow()
+      await expect(
+        readFile(join(dirname(contentPath), 'code-reconstruction.json'), 'utf8')
+      ).resolves.toBe('{"schemaVersion":1}\n')
+      for (const wrongScope of [
+        { ...request, projectId: 'other-project' },
+        { ...request, appSessionId: 'other-session' },
+        { ...request, artifactId: 'other-artifact' },
+        { ...request, versionId: 'other-version' }
+      ]) {
+        await expect(listArtifactReproducibilityReceipts(repository, wrongScope)).rejects.toThrow(
+          'Artifact Version not found'
+        )
+        await expect(
+          getArtifactReproducibilityCheckLog(repository, {
+            ...wrongScope,
+            receiptChecksum: receipt.receiptChecksum
+          })
+        ).rejects.toThrow('Artifact Version not found')
+        await expect(repository.readCodeReconstructionCache(wrongScope)).rejects.toThrow(
+          'Artifact Version not found'
+        )
+      }
+    }
+  )
 
   it('removes a stale orphaned staging directory that has no SQLite lifecycle row', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-orphan-staging-'))
@@ -1727,11 +1846,20 @@ describe('artifact provenance repository', () => {
     const contentChecksum = createHash('sha256').update(content).digest('hex')
     const evidenceJson = '{"schema_version":1}'
     const evidenceChecksum = createHash('sha256').update(evidenceJson).digest('hex')
+    const executionSnapshotJson = JSON.stringify({
+      schemaVersion: 2,
+      reproducibilityRecipe: { schemaVersion: 1, recipeId: 'recipe-recovery-1' }
+    })
+    const executionSnapshotChecksum = createHash('sha256')
+      .update(executionSnapshotJson)
+      .digest('hex')
     const versionId = 'version-recovery-1'
     const contentStorageKey =
       'artifacts/project-1/session-1/.provenance/artifact-1/versions/version-recovery-1/content'
     const evidenceStorageKey =
       'artifacts/project-1/session-1/.provenance/artifact-1/versions/version-recovery-1/evidence.json'
+    const executionSnapshotStorageKey =
+      'artifacts/project-1/session-1/.provenance/artifact-1/versions/version-recovery-1/execution.json'
     const stagingDirectory = join(
       storageRoot,
       'artifacts',
@@ -1789,6 +1917,10 @@ describe('artifact provenance repository', () => {
         checksum: contentChecksum,
         evidenceJson,
         evidenceChecksum,
+        executionSnapshotJson,
+        executionSnapshotChecksum,
+        executionSnapshotStorageKey,
+        executionSnapshotSchemaVersion: 2,
         createdAt
       }
     })
@@ -1855,6 +1987,14 @@ describe('artifact provenance repository', () => {
       readFile(join(storageRoot, ...evidenceStorageKey.split('/')), 'utf8')
     ).resolves.toBe(evidenceJson)
     await expect(
+      readFile(join(storageRoot, ...executionSnapshotStorageKey.split('/')), 'utf8')
+    ).resolves.toBe(executionSnapshotJson)
+    await expect(
+      readFile(join(storageRoot, ...executionSnapshotStorageKey.split('/')), 'utf8').then(
+        (serialized) => JSON.parse(serialized).reproducibilityRecipe
+      )
+    ).resolves.toEqual({ schemaVersion: 1, recipeId: 'recipe-recovery-1' })
+    await expect(
       client.artifactVersion.findUniqueOrThrow({ where: { id: versionId } })
     ).resolves.toMatchObject({ state: 'pending', createdAt })
     await expect(
@@ -1883,11 +2023,23 @@ describe('artifact provenance repository', () => {
 
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const notebookRepository = new NotebookRunRepository(storageRoot)
+    const projectDependencies = vi.fn(async () => ({
+      stalenessByRunId: {
+        'notebook-run-1': { state: 'clear' as const },
+        'notebook-run-2': { state: 'clear' as const }
+      },
+      invalidatedByRunId: {},
+      dependenciesByRunId: {
+        'notebook-run-1': [],
+        'notebook-run-2': ['notebook-run-1']
+      }
+    }))
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
       getClient: () => Promise.resolve(client),
       compatibilityRepository,
-      notebookRepository
+      notebookRepository,
+      dependencyAnalyzer: { project: projectDependencies }
     })
     const graph = {
       rootFrameId: 'root-frame-1',
@@ -1924,7 +2076,8 @@ describe('artifact provenance repository', () => {
             type: 'github',
             repository: 'numpy/numpy',
             ref: 'v2.2.0',
-            commit: 'abc123'
+            commit: 'abc123',
+            subdirectory: 'packages/numpy'
           }
         }
       ],
@@ -1960,7 +2113,8 @@ describe('artifact provenance repository', () => {
                 type: 'github',
                 repository: 'numpy/numpy',
                 ref: 'v2.2.0',
-                commit: 'abc123'
+                commit: 'abc123',
+                subdirectory: 'packages/numpy'
               }
             }
           ]
@@ -1987,6 +2141,7 @@ describe('artifact provenance repository', () => {
       outputs: [],
       artifacts: [],
       workingFiles: [],
+      kernelEpochId: 'kernel-epoch-1',
       environment: 'analysis-python',
       environmentCapture: {
         state: 'available' as const,
@@ -2054,9 +2209,55 @@ describe('artifact provenance repository', () => {
       workspaceCwd: '/workspace'
     })
     const producerSourcePath = join(notebookDocument.notebookSessionRoot, 'data', 'sin.png')
+    const producerContent = createPngBytes('plot bytes')
     await mkdir(dirname(producerSourcePath), { recursive: true })
-    await writeFile(producerSourcePath, createPngBytes('plot bytes'))
+    await writeFile(producerSourcePath, producerContent)
     const producerSourceStat = await stat(producerSourcePath)
+    const producerChecksum = createHash('sha256').update(producerContent).digest('hex')
+    const producerGenerationId = 'generation-notebook-run-2-sin'
+    const producerGenerationStorageKey = `execution-file-evidence/project-1/session-1/blobs/sha256-${producerChecksum}`
+    const producerEvidenceStorageKey =
+      'execution-file-evidence/project-1/session-1/activity-notebook-run-2/evidence.json'
+    const producerEvidence = {
+      schemaVersion: 1,
+      evidenceId: 'execution-file-evidence-notebook-run-2',
+      activityId: 'notebook-run-2',
+      activityKind: 'notebook-run',
+      state: 'partial',
+      observedRoots: ['data'],
+      initialViewState: 'complete',
+      managedRootsFinalState: 'partial',
+      fileReads: 'unavailable',
+      externalPaths: 'unavailable',
+      writerAttribution: 'complete',
+      reasonCodes: ['file-reads-not-observed'],
+      scientificOutputs: [],
+      relations: [
+        {
+          relation: 'created',
+          relativePath: 'data/sin.png',
+          pathPortability: 'relative',
+          authority: 'advisory',
+          generation: {
+            generationId: producerGenerationId,
+            relativePath: 'data/sin.png',
+            checksum: producerChecksum,
+            sizeBytes: producerContent.byteLength,
+            contentStorageKey: producerGenerationStorageKey,
+            capturedAt: '2026-07-27T12:00:00.000Z'
+          }
+        }
+      ]
+    }
+    const producerEvidenceJson = `${JSON.stringify(producerEvidence, null, 2)}\n`
+    for (const [storageKey, content] of [
+      [producerGenerationStorageKey, producerContent],
+      [producerEvidenceStorageKey, producerEvidenceJson]
+    ] as const) {
+      const path = join(storageRoot, ...storageKey.split('/'))
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(path, content)
+    }
     await notebookRepository.appendRun({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -2129,10 +2330,31 @@ describe('artifact provenance repository', () => {
             kind: 'other',
             size: producerSourceStat.size,
             mtimeMs: producerSourceStat.mtimeMs,
-            createdByRunId: 'notebook-run-2'
+            createdByRunId: 'notebook-run-2',
+            generationId: producerGenerationId,
+            checksum: producerChecksum
           }
         ],
-        inputFiles: [{ ...inputFile, association: 'resolver-accessed' }]
+        fileEvidence: {
+          schemaVersion: 1,
+          activityId: 'notebook-run-2',
+          activityKind: 'notebook-run',
+          state: 'partial',
+          evidenceId: producerEvidence.evidenceId,
+          checksum: createHash('sha256').update(producerEvidenceJson).digest('hex'),
+          storageKey: producerEvidenceStorageKey,
+          relationCount: 1,
+          generationCount: 1,
+          scientificOutputCount: 0,
+          initialViewState: 'complete',
+          managedRootsFinalState: 'partial',
+          scientificOutputAnalysis: 'partial',
+          fileReads: 'unavailable',
+          externalPaths: 'unavailable',
+          writerAttribution: 'complete',
+          reasonCodes: ['file-reads-not-observed']
+        },
+        inputFiles: [{ ...inputFile, association: 'resolver-accessed', accessEvidence: 'resolver' }]
       }
     })
     await client.computeJob.create({
@@ -2236,14 +2458,104 @@ describe('artifact provenance repository', () => {
     )
     const evidence = JSON.parse(row.evidenceJson) as Record<string, unknown>
     const execution = JSON.parse(row.executionSnapshotJson ?? '{}') as {
+      schemaVersion: number
       producerRunId: string
       producerRunIndex: number
       runs: Array<{ runId: string; script: string }>
-      inputFiles: Array<{ inputFileVersionId: string; association: string }>
+      inputFiles: Array<{
+        inputFileVersionId: string
+        association: string
+        accessEvidence?: string
+      }>
+      provenanceGraph: {
+        schemaVersion: number
+        targetEntityId: string
+        completeness: string
+        activities: Array<{ activityId: string; kind: string }>
+        entities: Array<{ entityId: string; kind: string }>
+        edges: Array<{
+          kind: string
+          activityId: string
+          entityId?: string
+          dependencyActivityId?: string
+        }>
+      }
+      reproducibilityRecipe: {
+        schemaVersion: number
+        targetVersionId: string
+        graphChecksum: string
+        steps: Array<{ kind: string; activityId: string }>
+        capture: { state: string; reasonCodes: string[] }
+      }
     }
 
     expect(row.producerRunId).toBe('notebook-run-2')
     expect(row.producerRunIndex).toBe(3)
+    expect(projectDependencies).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      throughRunId: 'notebook-run-2'
+    })
+    expect(evidence.schema_version).toBe(1)
+    expect(execution.schemaVersion).toBe(2)
+    expect(execution.provenanceGraph).toMatchObject({
+      schemaVersion: 1,
+      targetEntityId: `artifact-version:${version.versionId}`,
+      completeness: 'incomplete'
+    })
+    expect(execution.provenanceGraph.activities).toContainEqual(
+      expect.objectContaining({
+        activityId: `artifact-publication:${version.versionId}`,
+        kind: 'artifact-publication'
+      })
+    )
+    expect(execution.provenanceGraph.edges).toContainEqual(
+      expect.objectContaining({
+        kind: 'generated',
+        activityId: `artifact-publication:${version.versionId}`,
+        entityId: `artifact-version:${version.versionId}`
+      })
+    )
+    expect(execution.reproducibilityRecipe).toMatchObject({
+      schemaVersion: 1,
+      targetVersionId: version.versionId,
+      steps: expect.arrayContaining([
+        expect.objectContaining({ kind: 'notebook-run', activityId: 'notebook-run-1' }),
+        expect.objectContaining({ kind: 'notebook-run', activityId: 'notebook-run-2' })
+      ]),
+      capture: {
+        state: 'blocked',
+        reasonCodes: expect.arrayContaining([
+          'target-graph-incomplete',
+          'environment-lock-missing',
+          'activity-evidence-not-complete',
+          'advisory-dependency'
+        ])
+      }
+    })
+    expect(execution.reproducibilityRecipe.graphChecksum).toHaveLength(64)
+    expect(execution.provenanceGraph.edges).toContainEqual({
+      kind: 'depends-on',
+      activityId: 'notebook-run-2',
+      dependencyActivityId: 'notebook-run-1',
+      authority: 'authoritative',
+      evidenceSource: 'dependency-analysis'
+    })
+    expect(execution.provenanceGraph.edges).toContainEqual(
+      expect.objectContaining({
+        kind: 'generated',
+        activityId: 'notebook-run-2',
+        entityId: `file-generation:${producerGenerationId}`
+      })
+    )
+    expect(execution.provenanceGraph.edges).toContainEqual(
+      expect.objectContaining({
+        kind: 'used',
+        activityId: `artifact-publication:${version.versionId}`,
+        entityId: `file-generation:${producerGenerationId}`,
+        authority: 'authoritative'
+      })
+    )
     expect(evidence).toMatchObject({
       reproduction_code: 'save_plot()',
       producer: {
@@ -2270,7 +2582,8 @@ describe('artifact provenance repository', () => {
               type: 'github',
               repository: 'numpy/numpy',
               ref: 'v2.2.0',
-              commit: 'abc123'
+              commit: 'abc123',
+              subdirectory: 'packages/numpy'
             }
           })
         ],
@@ -2295,7 +2608,8 @@ describe('artifact provenance repository', () => {
                   type: 'github',
                   repository: 'numpy/numpy',
                   ref: 'v2.2.0',
-                  commit: 'abc123'
+                  commit: 'abc123',
+                  subdirectory: 'packages/numpy'
                 }
               })
             ]
@@ -2314,7 +2628,8 @@ describe('artifact provenance repository', () => {
           ordinal: 0,
           input_file_version_id: 'upload-version-1',
           source_kind: 'upload-version',
-          strongest_association: 'resolver-accessed'
+          strongest_association: 'resolver-accessed',
+          access_evidence: 'resolver'
         }
       ],
       compute_executions: [
@@ -2352,7 +2667,8 @@ describe('artifact provenance repository', () => {
     expect(execution.inputFiles).toEqual([
       expect.objectContaining({
         inputFileVersionId: 'upload-version-1',
-        association: 'resolver-accessed'
+        association: 'resolver-accessed',
+        accessEvidence: 'resolver'
       })
     ])
     const executionProjection = await repository.getVersionExecution({
@@ -2365,6 +2681,7 @@ describe('artifact provenance repository', () => {
       expect.objectContaining({
         inputFileVersionId: 'upload-version-1',
         association: 'resolver-accessed',
+        accessEvidence: 'resolver',
         availability: { state: 'available' }
       })
     ])
@@ -2789,7 +3106,7 @@ describe('artifact provenance repository', () => {
         artifactId: version.artifactId,
         versionId: version.versionId
       })
-    ).rejects.toThrow(/execution snapshot input metadata mismatch/i)
+    ).rejects.toThrow(/execution snapshot schema is invalid/i)
   })
 
   it('rejects an omitted Notebook producer when mtime is the only association', async () => {
@@ -3026,6 +3343,21 @@ describe('artifact provenance repository', () => {
       omittedOutputCount: 128,
       omittedInputCount: 0
     })
+
+    const persistedExecution = parseArtifactExecutionSnapshot(executionJson)
+    if (!persistedExecution.provenanceGraph || !persistedExecution.reproducibilityRecipe) {
+      throw new Error('bounded execution snapshot did not retain its reproducibility contract')
+    }
+    expect(
+      artifactReproducibilityRecipeMatchesSnapshot(persistedExecution.reproducibilityRecipe, {
+        provenanceGraph: persistedExecution.provenanceGraph,
+        inputFiles: persistedExecution.inputFiles,
+        runs: persistedExecution.runs,
+        helperModules: persistedExecution.helperModules,
+        helperEvidenceStatus: persistedExecution.helperEvidenceStatus,
+        truncation: persistedExecution.truncation
+      })
+    ).toBe(true)
   })
 
   it('uses exact observed ownership and scope-validates an inline producer declaration', async () => {

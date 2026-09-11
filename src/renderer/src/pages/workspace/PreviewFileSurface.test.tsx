@@ -34,6 +34,7 @@ vi.mock('./ArtifactProvenancePanel', () => ({
     onClose: () => void
     onVersionChange?: (item: PreviewFileItem) => boolean
     initialTab?: 'sources'
+    tooltipClassName?: string
   }) => {
     provenancePanelSpy(props)
     return (
@@ -2774,7 +2775,14 @@ describe('PreviewFileSurface Provenance entry', () => {
 
   it('opens and closes Provenance from the full-screen preview header', async () => {
     await act(async () => {
-      root.render(<PreviewFileSurface item={item} provenanceEntry="leading" onClose={vi.fn()} />)
+      root.render(
+        <PreviewFileSurface
+          item={item}
+          provenanceEntry="leading"
+          tooltipClassName="z-[70]"
+          onClose={vi.fn()}
+        />
+      )
     })
 
     expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
@@ -2793,7 +2801,8 @@ describe('PreviewFileSurface Provenance entry', () => {
           selectedVersionId: 'version-1',
           versionNumber: 1
         }),
-        projectId: 'project-1'
+        projectId: 'project-1',
+        tooltipClassName: 'z-[70]'
       })
     )
 
@@ -2866,9 +2875,19 @@ describe('PreviewFileSurface Provenance entry', () => {
       await act(async () => resizePreview(900))
       expect(container.querySelector('[data-testid="provenance-panel"]')).not.toBeNull()
       expect(container.querySelector('[data-testid="preview-content"]')).toBe(content)
-      expect(
-        container.querySelector('[data-testid="preview-provenance-pane"]')?.className
-      ).toContain('basis-[40%]')
+      const separator = container.querySelector<HTMLElement>(
+        '[aria-label="Resize provenance panel"]'
+      )!
+      expect(separator.getAttribute('aria-hidden')).toBe('false')
+      const capturePointer = vi.spyOn(separator, 'setPointerCapture')
+      const pointerDown = new MouseEvent('pointerdown', { bubbles: true, button: 0 })
+      Object.defineProperty(pointerDown, 'pointerId', { value: 17 })
+      await act(async () => separator.dispatchEvent(pointerDown))
+      expect(capturePointer).toHaveBeenCalledWith(17)
+      await act(async () =>
+        separator.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
+      )
+      capturePointer.mockRestore()
       await act(async () => resizePreview(600))
       expect(container.querySelector('[data-testid="provenance-panel"]')).toBeNull()
       expect(container.querySelector('[data-testid="preview-content"]')).toBe(content)
@@ -2918,6 +2937,45 @@ describe('PreviewFileSurface Provenance entry', () => {
     })
 
     expect(container.querySelector('[data-testid="artifact-literature-entry"]')).toBeNull()
+  })
+
+  it('restores each workbench tab view after its file surface unmounts', async () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.upsertAndActivateItem(item)
+    const other = { ...item, id: 'artifact-2', artifactId: 'artifact-2', title: 'other.png' }
+    const show = async (next: PreviewFileItem): Promise<void> => {
+      await act(async () => {
+        store.upsertAndActivateItem(next)
+        root.render(
+          <PreviewFileSurface
+            key={next.id}
+            item={next}
+            workbenchConnected
+            provenanceEntry="leading"
+            onClose={vi.fn()}
+          />
+        )
+      })
+    }
+    await show(item)
+    await click(container.querySelector('[aria-label="Open Provenance for sin.png"]'))
+    await act(async () => {
+      provenancePanelSpy.mock.lastCall?.[0].onTabChange('reproducibility')
+    })
+    await show(other)
+    expect(container.querySelector('[data-testid="provenance-panel"]')).toBeNull()
+    await click(container.querySelector('[aria-label^="Open Provenance for "]'))
+    await act(async () => {
+      provenancePanelSpy.mock.lastCall?.[0].onTabChange('environment')
+    })
+    await show(item)
+    expect(container.querySelector('[data-testid="provenance-panel"]')).not.toBeNull()
+    expect(provenancePanelSpy.mock.lastCall?.[0].selectedTab).toBe('reproducibility')
+    await click(container.querySelector('[data-testid="provenance-panel"] button'))
+    await show(other)
+    expect(provenancePanelSpy.mock.lastCall?.[0].selectedTab).toBe('environment')
+    await show(item)
+    expect(container.querySelector('[data-testid="provenance-panel"]')).toBeNull()
   })
 
   it('does not offer Provenance for uploaded inputs', async () => {

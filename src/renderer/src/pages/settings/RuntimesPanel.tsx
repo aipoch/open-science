@@ -2,7 +2,16 @@
 /* Hallmark · macrostructure: Workbench · genre: modern-minimal · tone: technical/austere
  * theme: existing Open Science Settings tokens · enrichment: none · motion: existing controls only
  */
-import { CheckCircle2, FolderInput, Package, RefreshCw, Search, X } from 'lucide-react'
+import {
+  CheckCircle2,
+  FolderInput,
+  LoaderCircle,
+  Package,
+  RefreshCw,
+  Search,
+  Upload,
+  X
+} from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import * as Dialog from '@/components/ui/dialog'
 import { useEffect, useRef, useState } from 'react'
@@ -36,6 +45,7 @@ import {
 } from '../../../../shared/notebook-runtime'
 import type { NotebookLanguage } from '../../../../shared/notebook'
 import type { Wsl2BashPreviewStatus } from '../../../../shared/wsl-setup'
+import type { ImportArtifactEnvironmentLockResult } from '../../../../shared/artifact-reproducibility'
 import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
 import {
   getSettingsSearchKeyShortcuts,
@@ -152,6 +162,9 @@ const RuntimesPanel = ({
   const [managedOperations, setManagedOperations] = useState<
     Partial<Record<NotebookLanguage, boolean>>
   >({})
+  const [importingEnvironmentLock, setImportingEnvironmentLock] = useState(false)
+  const [environmentLockImportResult, setEnvironmentLockImportResult] =
+    useState<ImportArtifactEnvironmentLockResult>()
   // Set while confirming a disable that would affect live sessions (WS11): the runtime being disabled
   // plus its current usage, so the dialog can warn before revoking.
   const [disableImpact, setDisableImpact] = useState<{
@@ -258,6 +271,29 @@ const RuntimesPanel = ({
       await recheckRuntimeSettings()
     } catch {
       setError('Could not re-check runtimes.')
+    }
+  }
+
+  const importEnvironmentLock = async (): Promise<void> => {
+    const importBundle = window.api?.artifacts?.importEnvironmentLock
+    if (!importBundle || importingEnvironmentLock) return
+    setImportingEnvironmentLock(true)
+    setEnvironmentLockImportResult(undefined)
+    setError(null)
+    try {
+      const result = await importBundle({})
+      setEnvironmentLockImportResult(result)
+      if (result.imported) {
+        try {
+          await recheckRuntimeSettings()
+        } catch {
+          setError('Could not re-check runtimes.')
+        }
+      }
+    } catch {
+      setError(t('Environment lock could not be imported.'))
+    } finally {
+      setImportingEnvironmentLock(false)
     }
   }
 
@@ -702,17 +738,49 @@ const RuntimesPanel = ({
         actionClassName="ml-auto"
         action={
           <div className="flex flex-col items-end gap-1.5">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="runtimes-recheck"
-              onClick={() => void recheck()}
-              disabled={busy || loading || LANGUAGES.some(({ id }) => languageOperationActive(id))}
-            >
-              <RefreshCw className={cn(busy && 'animate-spin')} aria-hidden="true" />
-              {t('Recheck')}
-            </Button>
+            <div className="flex flex-wrap justify-end gap-2">
+              {window.api?.artifacts?.importEnvironmentLock ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="runtimes-import-environment"
+                  onClick={() => void importEnvironmentLock()}
+                  disabled={
+                    importingEnvironmentLock ||
+                    busy ||
+                    loading ||
+                    LANGUAGES.some(({ id }) => languageOperationActive(id))
+                  }
+                >
+                  {importingEnvironmentLock ? (
+                    <LoaderCircle
+                      className="animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Upload aria-hidden="true" />
+                  )}
+                  {importingEnvironmentLock ? t('Importing…') : t('Import environment…')}
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="runtimes-recheck"
+                onClick={() => void recheck()}
+                disabled={
+                  importingEnvironmentLock ||
+                  busy ||
+                  loading ||
+                  LANGUAGES.some(({ id }) => languageOperationActive(id))
+                }
+              >
+                <RefreshCw className={cn(busy && 'animate-spin')} aria-hidden="true" />
+                {t('Recheck')}
+              </Button>
+            </div>
             {checkedAt !== null ? (
               <span
                 className="whitespace-nowrap text-xs tabular-nums text-muted-foreground"
@@ -728,6 +796,17 @@ const RuntimesPanel = ({
       >
         {onOpenNetworkProtection ? (
           <NotebookNetworkProtectionBanner onOpen={onOpenNetworkProtection} />
+        ) : null}
+        {environmentLockImportResult?.imported ? (
+          <p role="status" className="text-sm text-status-info-foreground">
+            {environmentLockImportResult.reused
+              ? t('Environment {{name}} is already available.', {
+                  name: environmentLockImportResult.environmentName
+                })
+              : t('Environment imported as {{name}}.', {
+                  name: environmentLockImportResult.environmentName
+                })}
+          </p>
         ) : null}
         {error !== null && (
           <p role="alert" className="text-sm text-destructive" data-testid="runtimes-error">

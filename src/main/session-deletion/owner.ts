@@ -25,6 +25,10 @@ type SessionDeletionOwnerOptions = {
   runtime: SessionDeletionRuntime
   persistence: SessionDeletionPersistence
   backgroundResults?: SessionDeletionBackgroundResults
+  withStoppedWork?: (
+    request: DeleteSessionRequest,
+    operation: () => Promise<SessionDeletionResult>
+  ) => Promise<SessionDeletionResult>
   log?: Pick<Logger, 'warn'>
 }
 
@@ -42,7 +46,7 @@ class SessionDeletionOwner {
   private readonly log: Pick<Logger, 'warn'>
   private readonly activeBySessionId = new Map<string, ActiveSessionDeletion>()
 
-  constructor(options: SessionDeletionOwnerOptions) {
+  constructor(private readonly options: SessionDeletionOwnerOptions) {
     this.runtime = options.runtime
     this.persistence = options.persistence
     this.backgroundResults = options.backgroundResults
@@ -65,11 +69,19 @@ class SessionDeletionOwner {
       })
     }
 
-    const promise = this.run(request).finally(() => {
-      if (this.activeBySessionId.get(request.sessionId)?.promise === promise) {
-        this.activeBySessionId.delete(request.sessionId)
-      }
-    })
+    const operation = (): Promise<SessionDeletionResult> => this.run(request)
+    const promise = (
+      this.options.withStoppedWork ? this.options.withStoppedWork(request, operation) : operation()
+    )
+      .catch((error: unknown): SessionDeletionResult => {
+        this.log.warn('Session background work could not be stopped', diagnosticErrorFields(error))
+        return { status: 'failed', reason: 'runtime', runtimeDetached: false }
+      })
+      .finally(() => {
+        if (this.activeBySessionId.get(request.sessionId)?.promise === promise) {
+          this.activeBySessionId.delete(request.sessionId)
+        }
+      })
     this.activeBySessionId.set(request.sessionId, { projectId: request.projectId, promise })
     return promise
   }

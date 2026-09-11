@@ -134,6 +134,13 @@ export const assertSafeEnvName = (name: string | undefined): string => {
 // <storageRoot>/runtime — the shared runtime root holding envs, the pkgs cache and the ready marker.
 export const runtimeRoot = (storageRoot: string): string => join(storageRoot, 'runtime')
 
+export const normalizeRuntimeArchitecture = (value: string): string => {
+  const normalized = value.toLowerCase()
+  if (normalized === 'aarch64') return 'arm64'
+  if (normalized === 'amd64' || normalized === 'x86_64') return 'x64'
+  return normalized
+}
+
 // A conda environment prefix under the runtime root. Callers use logical names; this is the sole seam
 // that maps them to physical directories. The platform argument keeps the Windows mapping directly
 // testable on non-Windows hosts.
@@ -176,6 +183,9 @@ export const envPrefix = (
   // repair resumes in the new layout instead of creating a second prefix.
   return physical
 }
+
+export const importedEnvironmentLockMarkerPath = (prefix: string): string =>
+  join(prefix, '.open-science-environment-lock')
 
 // The pre-shortening prefix is used only for best-effort migration cleanup/export. Never provision a
 // new default into this location.

@@ -66,6 +66,7 @@ import { ConversationExportDialog } from './ConversationExportDialog'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { DownloadProjectArtifactsDialog } from './DownloadProjectArtifactsDialog'
 import { DownloadSessionArtifactsDialog } from './DownloadSessionArtifactsDialog'
+import { SessionReproducibilityDialog } from './SessionReproducibilityDialog'
 import { FilePreviewDialog } from './FilePreviewDialog'
 import { EditSessionDialog } from './EditSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
@@ -243,6 +244,7 @@ const WorkspacePage = ({
   // disabled as the first defense.
   const [isDownloadingProjectArtifacts, setIsDownloadingProjectArtifacts] = useState(false)
   const [isProjectDownloadOpen, setIsProjectDownloadOpen] = useState(false)
+  const [checkSession, setCheckSession] = useState<ChatSession>()
   const [artifactFinalizationRetrySessionId, setArtifactFinalizationRetrySessionId] =
     useState<string>()
   const [manualReviewRequests, setManualReviewRequests] = useState<
@@ -1224,6 +1226,9 @@ const WorkspacePage = ({
             onRenameSessionTitle={sessionController.actions.renameTitle}
             canDownloadArtifacts={typeof window.api?.saveSessionArtifacts === 'function'}
             onDownloadArtifacts={sessionController.actions.openDownloadArtifacts}
+            onCheckArtifacts={
+              window.api.artifacts?.sessionReproducibility ? setCheckSession : undefined
+            }
             onViewNotebook={sessionController.actions.openNotebook}
             onExportSession={
               typeof window.api.sessions?.exportConversation === 'function'
@@ -1300,6 +1305,14 @@ const WorkspacePage = ({
               close()
               sessionController.actions.openDownloadArtifacts(session)
             }}
+            onCheckArtifacts={
+              window.api.artifacts?.sessionReproducibility
+                ? (session) => {
+                    close()
+                    setCheckSession(session)
+                  }
+                : undefined
+            }
             onViewNotebook={(session) => {
               close()
               sessionController.actions.openNotebook(session)
@@ -1491,6 +1504,10 @@ const WorkspacePage = ({
       <DownloadSessionArtifactsDialog
         session={sessionController.view.dialogs.downloadArtifacts ?? undefined}
         onClose={sessionController.actions.closeDownloadArtifacts}
+      />
+      <SessionReproducibilityDialog
+        session={checkSession}
+        onClose={() => setCheckSession(undefined)}
       />
       <ConversationExportDialog
         session={sessionController.view.dialogs.exportConversation ?? undefined}

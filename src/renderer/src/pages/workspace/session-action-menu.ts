@@ -1,4 +1,13 @@
-import { Archive, BookOpen, Download, Pencil, Pin, PinOff, Trash2 } from 'lucide-react'
+import {
+  Archive,
+  BookOpen,
+  Download,
+  Pencil,
+  Pin,
+  PinOff,
+  Trash2,
+  PackageCheck
+} from 'lucide-react'
 
 import type {
   ActionMenuBinding,
@@ -8,7 +17,14 @@ import type {
 import type { ChatSession, SessionStatus } from '@/stores/session-store'
 
 export type SessionActionId =
-  'toggle-pin' | 'edit' | 'download-artifacts' | 'view-notebook' | 'export' | 'archive' | 'delete'
+  | 'toggle-pin'
+  | 'edit'
+  | 'download-artifacts'
+  | 'check-artifacts'
+  | 'view-notebook'
+  | 'export'
+  | 'archive'
+  | 'delete'
 
 export type SessionActionInvocation = Readonly<{
   session: ChatSession
@@ -19,6 +35,7 @@ export const SESSION_ACTION_CATALOG = {
   'toggle-pin': { labelKey: 'Pin', icon: Pin },
   edit: { labelKey: 'Edit…', icon: Pencil },
   'download-artifacts': { labelKey: 'Download all artifacts', icon: Download },
+  'check-artifacts': { labelKey: 'Check session artifacts', icon: PackageCheck },
   'view-notebook': { labelKey: 'View notebook', icon: BookOpen },
   export: { labelKey: 'Export conversation…', icon: Download },
   archive: { labelKey: 'Archive', icon: Archive },
@@ -30,6 +47,7 @@ export const SESSION_ACTION_RECIPE = [
   { kind: 'action', action: 'edit' },
   { kind: 'separator' },
   { kind: 'action', action: 'download-artifacts' },
+  { kind: 'action', action: 'check-artifacts' },
   { kind: 'action', action: 'view-notebook' },
   { kind: 'action', action: 'export' },
   { kind: 'action', action: 'archive' },
@@ -45,6 +63,7 @@ type SessionActionOptions = {
   onTogglePin: (session: ChatSession) => void
   onRenameSession: (session: ChatSession) => void
   onDownloadArtifacts: (session: ChatSession) => void
+  onCheckArtifacts?: (session: ChatSession) => void
   onViewNotebook: (session: ChatSession) => void
   onExportSession?: (session: ChatSession) => void
   onArchiveSession?: (session: ChatSession) => void
@@ -74,6 +93,11 @@ export const createSessionActionBindings = (
   'download-artifacts': {
     execute: ({ session }) => options.onDownloadArtifacts(session),
     hidden: !options.canDownloadArtifacts
+  },
+  'check-artifacts': {
+    execute: ({ session }) => options.onCheckArtifacts?.(session),
+    hidden: !options.onCheckArtifacts,
+    disabled: !options.canMutateConversations
   },
   'view-notebook': {
     execute: ({ session }) => options.onViewNotebook(session)

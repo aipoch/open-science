@@ -89,6 +89,7 @@ type WorkspaceSidebarProps = {
   ) => Promise<boolean> | void
   canDownloadArtifacts: boolean
   onDownloadArtifacts: (session: ChatSession) => void
+  onCheckArtifacts?: (session: ChatSession) => void
   onViewNotebook: (session: ChatSession) => void
   onExportSession?: (session: ChatSession) => void
   onTogglePin: (session: ChatSession) => void
@@ -391,6 +392,7 @@ const WorkspaceSidebarView = ({
   onRenameSessionTitle,
   canDownloadArtifacts,
   onDownloadArtifacts,
+  onCheckArtifacts,
   onViewNotebook,
   onExportSession,
   onTogglePin,
@@ -912,6 +914,7 @@ const WorkspaceSidebarView = ({
                         onTogglePin,
                         onRenameSession,
                         onDownloadArtifacts,
+                        onCheckArtifacts,
                         onViewNotebook,
                         onExportSession,
                         onArchiveSession,

@@ -590,7 +590,7 @@ describe('NotebookInputRegistry', () => {
     expect(concurrentPath).toBe(stagedPath)
     await expect(readFile(stagedPath, 'utf8')).resolves.toBe('group\nA\n')
     await expect(lease.close()).resolves.toEqual([
-      expect.objectContaining({ association: 'resolver-accessed' })
+      expect.objectContaining({ association: 'resolver-accessed', accessEvidence: 'resolver' })
     ])
     expect(() => lease.getRunInputFiles()).toThrow(/closed/i)
   })

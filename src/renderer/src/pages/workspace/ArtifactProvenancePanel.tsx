@@ -1,5 +1,13 @@
 import { Tabs } from 'radix-ui'
+import {
+  createEnvironmentFromLock,
+  describeEnvironmentLock,
+  environmentLockKey,
+  retainEnvironmentLocks,
+  useArtifactEnvironmentLockStore
+} from './artifact-environment-lock-store'
 import { useVersionHistoryPages } from './use-version-history-pages'
+import { ExecutionContextDetails } from './ExecutionContextDetails'
 import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
 import {
   provenanceReadFailure,
@@ -7,12 +15,24 @@ import {
   type ProvenanceReadFailure
 } from '../../../../shared/provenance-read-result'
 import { ProvenanceLoadNotice } from './ProvenanceLoadNotice'
-import { ChevronLeft, ChevronRight, Circle, Download, LoaderCircle, X } from 'lucide-react'
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
+/* Hallmark · component: environment-lock-list · genre: modern-minimal · theme: existing system */
+import {
+  ChevronLeft,
+  ChevronRight,
+  Circle,
+  CircleAlert,
+  Download,
+  LoaderCircle,
+  PackagePlus,
+  X
+} from 'lucide-react'
 import type { TFunction } from 'i18next'
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { EnvironmentPackageSearch } from './EnvironmentPackageSearch'
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -23,13 +43,18 @@ import {
 } from '@/components/ui/message-scroller'
 import { ReviewerCard } from '@/components/ReviewerCard'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem, PreviewProvenanceTab } from '@/stores/preview-workbench-store'
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import {
   createSessionReviewerPreviewItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import type {
+  ArtifactEnvironmentLockPackageManager,
+  DescribeArtifactEnvironmentLockRequest
+} from '../../../../shared/artifact-reproducibility'
+import type {
+  NotebookEnvironmentLockPartialReason,
   NotebookInputFileSummary,
   NotebookOutput,
   NotebookRunRecord
@@ -53,6 +78,7 @@ import {
   resolveArtifactVersionDescriptor
 } from './preview-file-item'
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
+import { ArtifactReproducibilityPanel } from './ArtifactReproducibilityPanel'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookDialogCell } from './SessionNotebookDialog'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
@@ -60,12 +86,12 @@ import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompact
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceAssistantTurnCompletion, WorkspaceMessageItem } from './WorkspaceMessageItem'
-import { TooltipProvider } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 import { ArtifactSourcesPanel } from './ArtifactSourcesPanel'
 
-type ProvenanceTab = 'code' | 'sources' | 'execution' | 'messages' | 'environment' | 'review'
+type ProvenanceTab = PreviewProvenanceTab
 type DeferredProvenanceTab = Extract<ProvenanceTab, 'execution' | 'messages' | 'review'>
 type DeferredSection =
   | Pick<ArtifactVersionProvenance, 'execution'>
@@ -91,10 +117,14 @@ type ArtifactProvenancePanelProps = {
   onClose: () => void
   onVersionChange?: (item: PreviewFileItem) => boolean
   initialTab?: ProvenanceTab
+  selectedTab?: ProvenanceTab
+  onTabChange?: (tab: ProvenanceTab) => void
+  tooltipClassName?: string
 }
 
 const tabs: Array<{ id: ProvenanceTab; label: string }> = [
   { id: 'code', label: 'Code' },
+  { id: 'reproducibility', label: 'Reproducibility' },
   { id: 'execution', label: 'Execution Log' },
   { id: 'messages', label: 'Messages' },
   { id: 'environment', label: 'Environment' },
@@ -110,6 +140,86 @@ const scriptDownloadFormats = {
   bash: { extension: 'sh', mimeType: 'text/x-sh' },
   repl: { extension: 'txt', mimeType: 'text/plain' }
 } satisfies Record<ArtifactCodeReconstruction['language'], { extension: string; mimeType: string }>
+
+type CapturedEnvironmentLock = {
+  lockChecksum: string
+  state: 'available' | 'partial'
+  kernelKind: 'python' | 'r'
+  environmentName?: string
+  partialReasons?: NotebookEnvironmentLockPartialReason[]
+}
+
+const packageManagerLabel = (manager: ArtifactEnvironmentLockPackageManager): string => {
+  if (manager === 'conda') return 'Conda'
+  if (manager === 'poetry') return 'Poetry'
+  return manager
+}
+
+const platformLabel = (platform: string | undefined): string => {
+  if (platform === 'darwin') return 'macOS'
+  if (platform === 'win32') return 'Windows'
+  if (platform === 'linux') return 'Linux'
+  return platform ?? '—'
+}
+
+const partialEnvironmentLockSummary = (
+  reasons: NotebookEnvironmentLockPartialReason[] | undefined,
+  t: TFunction
+): string => {
+  const details = new Set<string>()
+  for (const reason of reasons ?? []) {
+    if (reason === 'environment-manifest-partial') {
+      details.add(t('Package inventory was incomplete.'))
+    } else if (
+      reason === 'non-conda-package-detected' ||
+      reason === 'non-conda-installer-detected'
+    ) {
+      details.add(t('Some packages are not covered by the exact Conda lock.'))
+    } else if (reason === 'native-lock-file-best-effort') {
+      details.add(t('A native package lock was captured on a best-effort basis.'))
+    } else if (reason === 'native-lock-file-rejected') {
+      details.add(t('A native package lock was rejected because it was unsafe or invalid.'))
+    }
+  }
+  return [
+    t('Inspection only; this partial lock cannot run a reproducibility check.'),
+    ...details
+  ].join(' ')
+}
+
+const capturedEnvironmentLocksForRuns = (
+  runs: ProvenanceNotebookRun[],
+  relevantRunIds?: Set<string>
+): CapturedEnvironmentLock[] => {
+  const locks = new Map<string, CapturedEnvironmentLock>()
+  for (const run of runs) {
+    if (relevantRunIds && !relevantRunIds.has(run.runId)) continue
+    const lock = run.environmentLock
+    if (
+      (run.kernelKind !== 'python' && run.kernelKind !== 'r') ||
+      (lock?.state !== 'available' && lock?.state !== 'partial')
+    ) {
+      continue
+    }
+    const previous = locks.get(lock.lockChecksum)
+    if (previous?.state === 'partial' && lock.state === 'partial') {
+      previous.partialReasons = [
+        ...new Set([...(previous.partialReasons ?? []), ...(lock.partialReasons ?? [])])
+      ]
+      continue
+    }
+    if (!previous || (previous.state === 'partial' && lock.state === 'available')) {
+      locks.set(lock.lockChecksum, {
+        lockChecksum: lock.lockChecksum,
+        state: lock.state,
+        kernelKind: run.kernelKind,
+        ...(run.environmentName ? { environmentName: run.environmentName } : {}),
+        ...(lock.partialReasons ? { partialReasons: [...lock.partialReasons] } : {})
+      })
+    }
+  }
+  return [...locks.values()]
+}
 
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -567,7 +677,10 @@ const ArtifactProvenancePanel = ({
   projectId,
   onClose,
   onVersionChange,
-  initialTab
+  initialTab,
+  selectedTab,
+  onTabChange,
+  tooltipClassName
 }: ArtifactProvenancePanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
@@ -593,7 +706,11 @@ const ArtifactProvenancePanel = ({
     value?: ArtifactVersionProvenance
     error?: ProvenanceReadFailure
   }>()
-  const [requestedTab, setActiveTab] = useState<ProvenanceTab | undefined>(initialTab)
+  const [requestedTab, setRequestedTab] = useState<ProvenanceTab | undefined>(initialTab)
+  const setActiveTab = (tab: ProvenanceTab): void => {
+    setRequestedTab(tab)
+    onTabChange?.(tab)
+  }
   const [literatureResult, setLiteratureResult] = useState<{
     key: string
     value?: ArtifactLiteratureManifest
@@ -609,7 +726,14 @@ const ArtifactProvenancePanel = ({
   const [lineageRetry, setLineageRetry] = useState(0)
   const [coreRetry, setCoreRetry] = useState(0)
   const [showAllPackagesKey, setShowAllPackagesKey] = useState<string>()
+  const [packageSearch, setPackageSearch] = useState({ key: '', query: '' })
   const [exportingNotebook, setExportingNotebook] = useState(false)
+  const [exportingEnvironmentLockChecksum, setExportingEnvironmentLockChecksum] = useState<string>()
+  const [environmentLockExportFailure, setEnvironmentLockExportFailure] = useState<{
+    key: string
+    message: string
+  }>()
+  const environmentLockEntries = useArtifactEnvironmentLockStore((state) => state.entries)
   const [notebookExportFailure, setNotebookExportFailure] = useState<{
     key: string
     message: string
@@ -662,14 +786,23 @@ const ArtifactProvenancePanel = ({
       : undefined)
   const selectedVersionUnavailable = Boolean(lineage && requestedVersionId && !selectedVersionId)
   const provenanceKey = `${lineageKey}:${selectedVersionId ?? ''}`
+  const searchPackages = useCallback(
+    (query: string) => setPackageSearch({ key: provenanceKey, query }),
+    [provenanceKey]
+  )
   const coreProvenance =
     provenanceResult?.key === provenanceKey ? provenanceResult.value : undefined
   const activeTab =
+    selectedTab ??
     requestedTab ??
     (selectedVersionDescriptor?.hasLiterature || coreProvenance?.literature ? 'sources' : 'code')
   const showAllPackages = showAllPackagesKey === provenanceKey
   const notebookExportError =
     notebookExportFailure?.key === provenanceKey ? notebookExportFailure.message : undefined
+  const environmentLockExportError =
+    environmentLockExportFailure?.key === provenanceKey
+      ? environmentLockExportFailure.message
+      : undefined
   const codeActionError =
     codeActionFailure?.key === provenanceKey ? codeActionFailure.message : undefined
   const codeReconstructionResult = codeReconstructionResults[provenanceKey]
@@ -852,9 +985,11 @@ const ArtifactProvenancePanel = ({
 
   const reviewReloadKey = activeTab === 'review' ? reviewRevision : 0
   const deferredTab = (
-    activeTab === 'execution' || activeTab === 'messages' || activeTab === 'review'
-      ? activeTab
-      : undefined
+    activeTab === 'reproducibility' || activeTab === 'environment'
+      ? 'execution'
+      : activeTab === 'execution' || activeTab === 'messages' || activeTab === 'review'
+        ? activeTab
+        : undefined
   ) as DeferredProvenanceTab | undefined
   const deferredSectionKey = deferredTab
     ? `${provenanceKey}:${deferredTab}:${deferredTab === 'review' ? reviewReloadKey : 0}`
@@ -909,11 +1044,12 @@ const ArtifactProvenancePanel = ({
       ? [tabs[0]!, sourcesTab, ...tabs.slice(1)]
       : tabs
   useEffect(() => {
-    if (requestedTab === 'sources' && provenance && !provenance.literature) setActiveTab(undefined)
-  }, [requestedTab, provenance])
-  const deferredTabLabel = deferredTab
-    ? tabs.find((tab) => tab.id === deferredTab)?.label
-    : undefined
+    if ((selectedTab ?? requestedTab) === 'sources' && provenance && !provenance.literature) {
+      setRequestedTab(undefined)
+      if (selectedTab === 'sources') onTabChange?.('code')
+    }
+  }, [selectedTab, requestedTab, provenance, onTabChange])
+  const deferredTabLabel = deferredTab ? tabs.find((tab) => tab.id === activeTab)?.label : undefined
   const translatedDeferredTabLabel = deferredTabLabel ? t(deferredTabLabel) : undefined
   const deferredSectionLoading = Boolean(deferredSectionKey && deferredSectionState === undefined)
   const deferredSectionReady = !deferredSectionKey || deferredSectionState === 'loaded'
@@ -931,15 +1067,15 @@ const ArtifactProvenancePanel = ({
     }
     if (deferredSectionState !== undefined) return
     const load =
-      activeTab === 'execution'
+      deferredTab === 'execution'
         ? window.api.artifacts.getVersionExecution(request)
-        : activeTab === 'messages'
+        : deferredTab === 'messages'
           ? window.api.artifacts.getVersionMessages(request)
-          : activeTab === 'review'
+          : deferredTab === 'review'
             ? window.api.artifacts.getVersionReview(request)
             : undefined
     if (!load) return
-    const sectionKey = `${provenanceKey}:${activeTab}:${activeTab === 'review' ? reviewReloadKey : 0}`
+    const sectionKey = `${provenanceKey}:${deferredTab}:${deferredTab === 'review' ? reviewReloadKey : 0}`
     void load
       .then((value) => unwrapProvenanceRead<DeferredSection>(value))
       .then((section) => {
@@ -964,6 +1100,7 @@ const ArtifactProvenancePanel = ({
     }
   }, [
     activeTab,
+    deferredTab,
     deferredSectionState,
     item.mtimeMs,
     item.versionNumber,
@@ -1024,6 +1161,12 @@ const ArtifactProvenancePanel = ({
   const environmentWarnings = Array.isArray(environment?.warnings)
     ? environment.warnings.filter((warning): warning is string => typeof warning === 'string')
     : []
+  // Cache reuse is informational only when capture itself is complete. The same legacy
+  // warning can also accompany an unverified fingerprint; do not hide that partial capture.
+  const isInventoryNote = (warning: string): boolean =>
+    warning === 'inventory-cache-best-effort' && environment?.capture_status === 'complete'
+  const captureProblems = environmentWarnings.filter((warning) => !isInventoryNote(warning))
+  const inventoryNotes = environmentWarnings.filter(isInventoryNote)
   const requestedPackageKeys = new Set(
     environmentOperations.flatMap((operation) =>
       Array.isArray(operation.packages)
@@ -1048,14 +1191,71 @@ const ArtifactProvenancePanel = ({
     : environmentPackages
   const filteredEnvironmentPackages =
     relevantEnvironmentPackages.length > 0 ? relevantEnvironmentPackages : environmentPackages
-  const visibleEnvironmentPackages = showAllPackages
-    ? environmentPackages
-    : filteredEnvironmentPackages
+  const packageQuery = packageSearch.key === provenanceKey ? packageSearch.query : ''
+  const normalizedPackageQuery = packageQuery.trim().toLocaleLowerCase()
+  const visibleEnvironmentPackages = normalizedPackageQuery
+    ? environmentPackages.filter((pkg) =>
+        (asString(pkg.name) ?? '').toLocaleLowerCase().includes(normalizedPackageQuery)
+      )
+    : showAllPackages
+      ? environmentPackages
+      : filteredEnvironmentPackages
   const hasFilteredEnvironmentPackages =
     filteredEnvironmentPackages.length < environmentPackages.length
-  const rawExecutionRuns = Array.isArray(provenance?.execution?.runs)
-    ? provenance.execution.runs
-    : []
+  const rawExecutionRuns = useMemo(
+    () => (Array.isArray(provenance?.execution?.runs) ? provenance.execution.runs : []),
+    [provenance?.execution?.runs]
+  )
+  const capturedEnvironmentLocks = useMemo(() => {
+    const activities = provenance?.execution?.reproducibility?.activities
+    const relevantRunIds = activities
+      ? new Set(
+          activities
+            .filter((activity) => activity.kind === 'notebook-run')
+            .map((activity) => activity.activityId)
+        )
+      : undefined
+    return capturedEnvironmentLocksForRuns(rawExecutionRuns, relevantRunIds)
+  }, [provenance?.execution?.reproducibility?.activities, rawExecutionRuns])
+  const lockRequest = (lock: CapturedEnvironmentLock): DescribeArtifactEnvironmentLockRequest => ({
+    projectId,
+    appSessionId: item.sessionId,
+    artifactId: item.artifactId!,
+    versionId: selectedVersionId!,
+    lockChecksum: lock.lockChecksum
+  })
+  const creatingEnvironment = capturedEnvironmentLocks.some(
+    (lock) =>
+      environmentLockEntries.get(environmentLockKey(lockRequest(lock)))?.creation?.status ===
+      'pending'
+  )
+  useEffect(() => {
+    if (
+      activeTab !== 'environment' ||
+      !window.api?.artifacts.describeEnvironmentLock ||
+      !item.artifactId ||
+      !selectedVersionId
+    )
+      return
+    const artifactId = item.artifactId
+    const requests = capturedEnvironmentLocks.map((lock) => ({
+      projectId,
+      appSessionId: item.sessionId,
+      artifactId,
+      versionId: selectedVersionId,
+      lockChecksum: lock.lockChecksum
+    }))
+    const release = retainEnvironmentLocks(requests)
+    for (const request of requests) void describeEnvironmentLock(request)
+    return release
+  }, [
+    activeTab,
+    capturedEnvironmentLocks,
+    item.artifactId,
+    item.sessionId,
+    projectId,
+    selectedVersionId
+  ])
   const executionRuns = useMemo(
     () => (provenance?.execution?.runs ?? []).map(toNotebookRun),
     [provenance]
@@ -1087,7 +1287,8 @@ const ArtifactProvenancePanel = ({
       contentType: input.content_type,
       sizeBytes: input.size_bytes,
       checksum: input.checksum,
-      association: input.strongest_association
+      association: input.strongest_association,
+      accessEvidence: input.access_evidence
     })
   )
 
@@ -1157,6 +1358,29 @@ const ArtifactProvenancePanel = ({
       })
     } finally {
       setExportingNotebook(false)
+    }
+  }
+
+  const downloadEnvironmentLock = async (lock: CapturedEnvironmentLock): Promise<void> => {
+    const exportEnvironmentLock = window.api?.artifacts.exportEnvironmentLock
+    if (!item.artifactId || !selectedVersionId || !exportEnvironmentLock) return
+    setExportingEnvironmentLockChecksum(lock.lockChecksum)
+    setEnvironmentLockExportFailure(undefined)
+    try {
+      await exportEnvironmentLock({
+        projectId,
+        appSessionId: item.sessionId,
+        artifactId: item.artifactId,
+        versionId: selectedVersionId,
+        lockChecksum: lock.lockChecksum
+      })
+    } catch {
+      setEnvironmentLockExportFailure({
+        key: provenanceKey,
+        message: t('Environment lock could not be exported.')
+      })
+    } finally {
+      setExportingEnvironmentLockChecksum(undefined)
     }
   }
 
@@ -1354,14 +1578,15 @@ const ArtifactProvenancePanel = ({
         <Tabs.List
           ref={tabScrollFadeRef}
           aria-label={t('Provenance')}
-          className="scroll-fade-x flex shrink-0 gap-1 overflow-x-auto border-b border-border-300/60 px-2 py-1"
+          className="scroll-fade-x flex shrink-0 gap-1 overflow-hidden border-b border-border-300/60 px-2 py-1"
         >
           {visibleTabs.map((tab) => (
             <Tabs.Trigger
               key={tab.id}
               value={tab.id}
+              title={t(tab.label)}
               onClick={() => setActiveTab(tab.id)}
-              className={`rounded px-2 py-1 text-xs ${isUserEdit || activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
+              className={`min-w-0 truncate whitespace-nowrap rounded px-2 py-1 text-xs ${isUserEdit || activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
             >
               {t(tab.label)}
             </Tabs.Trigger>
@@ -1499,7 +1724,13 @@ const ArtifactProvenancePanel = ({
                   {t('Retry')}
                 </Button>
               ) : codeReconstructionState?.state === 'unavailable' ? (
-                <Button type="button" size="sm" className="shrink-0 whitespace-nowrap" disabled>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 whitespace-nowrap"
+                  disabled
+                >
                   {t('Generate script')}
                 </Button>
               ) : (
@@ -1536,9 +1767,25 @@ const ArtifactProvenancePanel = ({
                   {codeReconstructionResult.message}
                 </p>
               ) : codeReconstructionState?.state === 'unavailable' ? (
-                <p className="min-w-0 flex-1 text-sm text-text-200">
-                  {codeReconstructionUnavailableLabel(codeReconstructionState.reason, t)}
-                </p>
+                <TooltipProvider delayDuration={100}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div
+                        role="status"
+                        tabIndex={0}
+                        className="flex min-w-0 flex-1 items-center gap-2 rounded-sm text-status-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-status-warning-dark-foreground"
+                      >
+                        <CircleAlert className="size-3.5 shrink-0" aria-hidden="true" />
+                        <p className="min-w-0 truncate text-xs leading-5">
+                          {codeReconstructionUnavailableLabel(codeReconstructionState.reason, t)}
+                        </p>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" align="start">
+                      {codeReconstructionUnavailableLabel(codeReconstructionState.reason, t)}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               ) : codeReconstructionResult?.status === 'generating' ? (
                 <p className="min-w-0 flex-1 truncate text-sm text-text-200">
                   {codeReconstructionState?.state === 'ready' &&
@@ -1681,7 +1928,10 @@ const ArtifactProvenancePanel = ({
                   onClick={() => void downloadExecutionNotebook()}
                 >
                   {exportingNotebook ? (
-                    <LoaderCircle className="animate-spin" aria-hidden="true" />
+                    <LoaderCircle
+                      className="animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
                   ) : (
                     <Download aria-hidden="true" />
                   )}
@@ -1719,6 +1969,27 @@ const ArtifactProvenancePanel = ({
             </p>
           )
         ) : null}
+        {provenance && activeTab === 'reproducibility' && deferredSectionReady ? (
+          <ArtifactReproducibilityPanel
+            key={provenanceKey}
+            projection={provenance.execution?.reproducibility}
+            analysisRevision={provenance.execution?.analysisRevision}
+            environmentRuns={provenance.execution?.runs}
+            executionAvailable={provenance.execution !== undefined}
+            artifactName={item.name}
+            artifactVersion={
+              item.artifactId && selectedVersionId
+                ? {
+                    projectId,
+                    appSessionId: item.sessionId,
+                    artifactId: item.artifactId,
+                    versionId: selectedVersionId
+                  }
+                : undefined
+            }
+            tooltipClassName={tooltipClassName}
+          />
+        ) : null}
         {provenance && activeTab === 'messages' && deferredSectionReady ? (
           provenance.messages.state === 'available' ? (
             <ProvenanceMessagesTimeline
@@ -1747,112 +2018,329 @@ const ArtifactProvenancePanel = ({
             </div>
           )
         ) : null}
-        {provenance && activeTab === 'environment' ? (
-          <section className="space-y-4 p-5 text-sm">
-            <h3 className="font-semibold text-text-000">
-              {asString(environment?.environment_name) ??
-                provenance.descriptor.environment ??
-                t('Environment unavailable')}
-            </h3>
+        {provenance && activeTab === 'environment' && deferredSectionReady ? (
+          <section className="min-w-0 space-y-5 p-4 text-sm">
+            <header className="space-y-1">
+              <h3 className="break-words font-semibold text-text-000">
+                {asString(environment?.environment_name) ??
+                  provenance.descriptor.environment ??
+                  t('Environment unavailable')}
+              </h3>
+              {environment ? (
+                <p className="text-xs text-text-200">
+                  {asString(environment.kernel_kind) === 'r'
+                    ? 'R'
+                    : asString(environment.kernel_kind) === 'python'
+                      ? 'Python'
+                      : t('Runtime')}{' '}
+                  {asString(environment.runtime_version) ?? t('Version unavailable')}
+                </p>
+              ) : null}
+            </header>
+            <section
+              aria-labelledby="captured-environment-locks"
+              className="@container/environment-lock space-y-2"
+            >
+              <h4 id="captured-environment-locks" className="text-xs font-medium text-text-200">
+                {t('Captured environment locks')}
+              </h4>
+              {capturedEnvironmentLocks.length > 0 ? (
+                <ul className="divide-y divide-border-300/50 overflow-hidden rounded-md border border-border-300/60">
+                  {capturedEnvironmentLocks.map((lock) => {
+                    const lockName = lock.kernelKind === 'python' ? t('Python lock') : t('R lock')
+                    const exporting = exportingEnvironmentLockChecksum === lock.lockChecksum
+                    const entry = environmentLockEntries.get(environmentLockKey(lockRequest(lock)))
+                    const creating = entry?.creation?.status === 'pending'
+                    const created =
+                      entry?.creation?.status === 'ready' ? entry.creation.value : undefined
+                    const details =
+                      entry?.details?.status === 'ready' ? entry.details.value : undefined
+                    return (
+                      <li key={lock.lockChecksum} className="min-w-0 space-y-3 p-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <span className="truncate font-medium text-text-100">{lockName}</span>
+                            <span className="rounded bg-bg-100 px-2 py-0.5 text-xs text-text-200">
+                              {lock.state === 'available' ? t('Complete lock') : t('Partial lock')}
+                            </span>
+                          </div>
+                          {lock.environmentName &&
+                          lock.environmentName !==
+                            (asString(environment?.environment_name) ??
+                              provenance.descriptor.environment) ? (
+                            <p className="mt-1 break-words text-xs text-text-200">
+                              {lock.environmentName}
+                            </p>
+                          ) : null}
+                          {details ? (
+                            <p className="mt-1 text-xs text-text-300">
+                              {platformLabel(details.platform)} · {details.architecture ?? '—'} ·{' '}
+                              {details.packageManagers.map(packageManagerLabel).join(', ')}
+                            </p>
+                          ) : (
+                            <p className="mt-1 text-xs text-text-300">
+                              {entry?.details?.status === 'error'
+                                ? t('Unavailable')
+                                : t('Loading…')}
+                            </p>
+                          )}
+                          {lock.state === 'partial' ? (
+                            <p className="mt-1 text-xs leading-5 text-status-warning-foreground dark:text-status-warning-dark-foreground">
+                              {partialEnvironmentLockSummary(lock.partialReasons, t)}
+                            </p>
+                          ) : null}
+                        </div>
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          {window.api?.artifacts.exportEnvironmentLock ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="max-w-full whitespace-nowrap text-xs"
+                              disabled={
+                                exportingEnvironmentLockChecksum !== undefined ||
+                                details === undefined
+                              }
+                              aria-label={t('Download {{name}}', { name: lockName })}
+                              onClick={() => void downloadEnvironmentLock(lock)}
+                            >
+                              {exporting ? (
+                                <LoaderCircle
+                                  className="animate-spin motion-reduce:animate-none"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <Download aria-hidden="true" />
+                              )}
+                              {exporting ? t('Preparing…') : t('Download bundle')}
+                            </Button>
+                          ) : null}
+                          {lock.state === 'available' &&
+                          window.api?.artifacts.createEnvironmentFromLock ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="max-w-full whitespace-nowrap text-xs"
+                              aria-label={t('Create reusable environment')}
+                              disabled={creatingEnvironment || details === undefined}
+                              onClick={() => void createEnvironmentFromLock(lockRequest(lock))}
+                            >
+                              {creating ? (
+                                <LoaderCircle
+                                  className="animate-spin motion-reduce:animate-none"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <PackagePlus aria-hidden="true" />
+                              )}
+                              {creating ? t('Creating…') : t('Reuse environment')}
+                            </Button>
+                          ) : null}
+                        </div>
+                        {entry?.details?.status === 'error' ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void describeEnvironmentLock(lockRequest(lock), true)}
+                          >
+                            {t('Retry')}
+                          </Button>
+                        ) : null}
+                        {entry?.creation?.status === 'error' ? (
+                          <p className="text-xs text-danger-000" role="alert">
+                            {t('Reusable environment could not be created.')}
+                          </p>
+                        ) : created ? (
+                          <p
+                            className="text-xs text-status-info-foreground dark:text-status-info-dark-foreground"
+                            role="status"
+                          >
+                            {created.reused
+                              ? t('Environment {{name}} is already available.', {
+                                  name: created.environmentName
+                                })
+                              : t('Reusable environment created as {{name}}.', {
+                                  name: created.environmentName
+                                })}
+                          </p>
+                        ) : null}
+                        <details className="text-xs text-text-300">
+                          <summary className="w-fit cursor-pointer rounded-sm text-text-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            {t('Lock details')}
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            <p className="select-text break-all font-mono text-[11px]">
+                              sha256-{lock.lockChecksum}
+                            </p>
+                            <p>
+                              {t(
+                                'Downloads include Open Science metadata and tool-native lock files.'
+                              )}
+                            </p>
+                          </div>
+                        </details>
+                      </li>
+                    )
+                  })}
+                </ul>
+              ) : (
+                <p className="rounded-md border border-border-300/60 px-3 py-2.5 text-xs text-text-300">
+                  {t('No downloadable Environment lock was captured for this Artifact version.')}
+                </p>
+              )}
+              {environmentLockExportError ? (
+                <p className="text-xs text-danger-000" role="alert">
+                  {environmentLockExportError}
+                </p>
+              ) : null}
+            </section>
             {environment ? (
               <>
-                <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-                  <dt className="text-text-300">{t('Runtime')}</dt>
-                  <dd className="text-text-100">
-                    {asString(environment.runtime_version) ?? t('Version unavailable')}
-                  </dd>
-                  <dt className="text-text-300">{t('Source')}</dt>
-                  <dd className="text-text-100">
-                    {asString(environment.runtime_source) ?? t('unknown')} ·{' '}
-                    {asString(environment.kernel_kind) ?? t('unknown')}
-                  </dd>
-                  <dt className="text-text-300">{t('Capture')}</dt>
-                  <dd className="text-text-100">
-                    {asString(environment.capture_status) ?? t('partial')} ·{' '}
-                    {t('{{count}} packages', {
-                      count: environmentPackages.length,
-                      defaultValue_one: '{{count}} package'
-                    })}
-                  </dd>
-                </dl>
-                {environmentWarnings.length > 0 ? (
+                <ExecutionContextDetails value={environment.execution_context} />
+                {captureProblems.length > 0 ? (
                   <div
                     role="status"
-                    className="rounded-md border border-warning-100/50 bg-warning-100/10 px-3 py-2 text-xs text-text-200"
+                    className="rounded-md border border-status-warning-foreground/20 bg-status-warning-surface/40 px-3 py-2 text-xs text-status-warning-foreground dark:border-status-warning-dark-foreground/20 dark:bg-status-warning-dark-surface/40 dark:text-status-warning-dark-foreground"
                   >
-                    <p className="font-medium text-text-100">{t('Partial capture details')}</p>
+                    <p className="font-medium">{t('Partial capture details')}</p>
                     <ul className="mt-1 list-disc space-y-1 pl-4">
-                      {environmentWarnings.map((warning) => (
+                      {captureProblems.map((warning) => (
                         <li key={warning}>{environmentWarningLabel(warning, t)}</li>
                       ))}
                     </ul>
                   </div>
                 ) : null}
-                <div className="overflow-hidden rounded-md border border-border-300/60">
-                  <table className="w-full table-fixed text-left text-xs">
-                    <thead className="bg-bg-100 text-text-300">
-                      <tr>
-                        <th className="w-1/2 px-3 py-2 font-medium">{t('Package')}</th>
-                        <th className="w-1/4 px-3 py-2 font-medium">{t('Version')}</th>
-                        <th className="w-1/4 px-3 py-2 font-medium">{t('State')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visibleEnvironmentPackages.map((pkg) => (
-                        <tr
-                          key={`${asString(pkg.name)}:${asString(pkg.version)}`}
-                          className="border-t border-border-300/40"
-                        >
-                          <td className="truncate px-3 py-2 text-text-100">
-                            {asString(pkg.name) ?? t('Unknown package')}
-                          </td>
-                          <td className="px-3 py-2 text-text-300">
-                            {asString(pkg.version) ?? '—'}
-                          </td>
-                          <td className="px-3 py-2 text-text-300">
-                            {asString(pkg.loaded_state) ?? t('unknown')}
-                          </td>
-                        </tr>
+                <details className="border-b border-border-300/60 pb-3 text-xs">
+                  <summary className="w-fit cursor-pointer rounded-sm font-medium text-text-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    {t('Capture details')}
+                  </summary>
+                  <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs">
+                    <dt className="text-text-300">{t('Runtime')}</dt>
+                    <dd className="text-text-100">
+                      {asString(environment.runtime_version) ?? t('Version unavailable')}
+                    </dd>
+                    <dt className="text-text-300">{t('Source')}</dt>
+                    <dd className="text-text-100">
+                      {asString(environment.runtime_source) ?? t('unknown')} ·{' '}
+                      {asString(environment.kernel_kind) ?? t('unknown')}
+                    </dd>
+                    <dt className="text-text-300">{t('Capture')}</dt>
+                    <dd className="text-text-100">
+                      {asString(environment.capture_status) ?? t('partial')} ·{' '}
+                      {t('{{count}} packages', {
+                        count: environmentPackages.length,
+                        defaultValue_one: '{{count}} package'
+                      })}
+                    </dd>
+                  </dl>
+                  {inventoryNotes.length > 0 ? (
+                    <ul className="mt-2 list-disc space-y-1 pl-4 text-text-300">
+                      {inventoryNotes.map((warning) => (
+                        <li key={warning}>{environmentWarningLabel(warning, t)}</li>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
-                {hasFilteredEnvironmentPackages ? (
-                  <button
-                    type="button"
-                    className="text-xs font-medium text-accent-000 hover:underline"
-                    onClick={() =>
-                      setShowAllPackagesKey((key) =>
-                        key === provenanceKey ? undefined : provenanceKey
-                      )
-                    }
-                  >
-                    {showAllPackages
-                      ? t('Show relevant {{count}} packages', {
-                          count: filteredEnvironmentPackages.length
-                        })
-                      : t('Show all {{count}} packages', { count: environmentPackages.length })}
-                  </button>
-                ) : null}
-                {omittedOperationCount > 0 ? (
-                  <p className="rounded-md bg-bg-100 px-3 py-2 text-xs text-text-300">
-                    {omittedOperationCount === 1
-                      ? t('{{count}} earlier operation omitted from this bounded history.', {
-                          count: omittedOperationCount
-                        })
-                      : t('{{count}} earlier operations omitted from this bounded history.', {
-                          count: omittedOperationCount
-                        })}
-                    {earliestRetainedOperationAt
-                      ? ` ${t('Retained entries begin {{time}}.', {
-                          time: formatDate(earliestRetainedOperationAt, 'dateTime')
-                        })}`
-                      : ''}
-                  </p>
-                ) : null}
-                {environmentOperations.length > 0 ? (
-                  <div className="space-y-2">
-                    <h4 className="font-semibold text-text-000">{t('Operations')}</h4>
+                    </ul>
+                  ) : null}
+                </details>
+                <details className="group/packages min-w-0">
+                  <summary className="w-fit cursor-pointer rounded-sm font-medium text-text-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    {t('Packages')}{' '}
+                    <span className="ml-2 text-xs font-normal text-text-300">
+                      {environmentPackages.length}
+                    </span>
+                  </summary>
+                  <div className="mt-3 space-y-3">
+                    <EnvironmentPackageSearch
+                      key={provenanceKey}
+                      initialQuery={packageQuery}
+                      onSearch={searchPackages}
+                    />
+                    <div className="overflow-hidden rounded-md border border-border-300/60">
+                      <table className="w-full table-fixed text-left text-xs">
+                        <thead className="bg-bg-100 text-text-300">
+                          <tr>
+                            <th className="w-1/2 px-3 py-2 font-medium">{t('Package')}</th>
+                            <th className="w-1/4 px-3 py-2 font-medium">{t('Version')}</th>
+                            <th className="w-1/4 px-3 py-2 font-medium">{t('State')}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {visibleEnvironmentPackages.length === 0 ? (
+                            <tr>
+                              <td colSpan={3} className="px-3 py-4 text-center text-text-300">
+                                {t('No matching packages')}
+                              </td>
+                            </tr>
+                          ) : null}
+                          {visibleEnvironmentPackages.map((pkg) => (
+                            <tr
+                              key={`${asString(pkg.name)}:${asString(pkg.version)}`}
+                              className="border-t border-border-300/40"
+                            >
+                              <td className="break-words px-3 py-2 text-text-100">
+                                {asString(pkg.name) ?? t('Unknown package')}
+                              </td>
+                              <td className="break-words px-3 py-2 text-text-300">
+                                {asString(pkg.version) ?? '—'}
+                              </td>
+                              <td className="break-words px-3 py-2 text-text-300">
+                                {pkg.loaded_state === 'loaded'
+                                  ? t('Loaded')
+                                  : pkg.loaded_state === 'attached'
+                                    ? t('Attached')
+                                    : pkg.loaded_state === 'installed-only'
+                                      ? t('Installed only')
+                                      : t('unknown')}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {hasFilteredEnvironmentPackages && !normalizedPackageQuery ? (
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-accent-000 hover:underline"
+                        onClick={() =>
+                          setShowAllPackagesKey((key) =>
+                            key === provenanceKey ? undefined : provenanceKey
+                          )
+                        }
+                      >
+                        {showAllPackages
+                          ? t('Show relevant {{count}} packages', {
+                              count: filteredEnvironmentPackages.length
+                            })
+                          : t('Show all {{count}} packages', { count: environmentPackages.length })}
+                      </button>
+                    ) : null}
+                  </div>
+                </details>
+                {environmentOperations.length > 0 || omittedOperationCount > 0 ? (
+                  <details className="min-w-0 space-y-3 border-t border-border-300/60 pt-3">
+                    <summary className="w-fit cursor-pointer rounded-sm font-medium text-text-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      {t('Operations')}{' '}
+                      <span className="ml-2 text-xs font-normal text-text-300">
+                        {environmentOperations.length}
+                      </span>
+                    </summary>
+                    {omittedOperationCount > 0 ? (
+                      <p className="rounded-md bg-bg-100 px-3 py-2 text-xs text-text-300">
+                        {omittedOperationCount === 1
+                          ? t('{{count}} earlier operation omitted from this bounded history.', {
+                              count: omittedOperationCount
+                            })
+                          : t('{{count}} earlier operations omitted from this bounded history.', {
+                              count: omittedOperationCount
+                            })}
+                        {earliestRetainedOperationAt
+                          ? ` ${t('Retained entries begin {{time}}.', {
+                              time: formatDate(earliestRetainedOperationAt, 'dateTime')
+                            })}`
+                          : ''}
+                      </p>
+                    ) : null}
                     <div className="overflow-hidden rounded-md border border-border-300/60">
                       <table className="w-full table-fixed text-left text-xs">
                         <thead className="bg-bg-100 text-text-300">
@@ -1981,7 +2469,7 @@ const ArtifactProvenancePanel = ({
                         </tbody>
                       </table>
                     </div>
-                  </div>
+                  </details>
                 ) : null}
               </>
             ) : (

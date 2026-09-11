@@ -13,6 +13,7 @@ import type {
   ReleaseManagedPreviewRequest
 } from '../shared/preview-resources'
 import type { ManagedFileReadLease } from './managed-file-versions/service'
+import { waitForManagedFilePublication } from './managed-file-preview'
 import {
   exceedsDecodedImagePixelLimit,
   isPixelLimitedRasterMimeType,
@@ -636,26 +637,35 @@ class ManagedPreviewResources {
     if (request.source !== 'artifact' && request.source !== 'upload') {
       return Promise.resolve(undefined)
     }
-    if (!request.projectId?.trim() || !request.fileId?.trim()) {
+    const projectId = request.projectId
+    const fileId = request.fileId
+    if (!projectId?.trim() || !fileId?.trim()) {
       return Promise.reject(new Error('Managed preview requires a logical identity.'))
     }
     if (request.versionId) {
-      if (!this.options.openManagedFileVersion) {
+      const versionId = request.versionId
+      const openManagedFileVersion = this.options.openManagedFileVersion
+      if (!openManagedFileVersion) {
         return Promise.reject(new Error('Managed preview Version lease is not configured.'))
       }
-      return this.options.openManagedFileVersion(request.source, {
-        projectId: request.projectId,
-        fileId: request.fileId,
-        versionId: request.versionId
-      })
+      return waitForManagedFilePublication(() =>
+        openManagedFileVersion(request.source, {
+          projectId,
+          fileId,
+          versionId
+        })
+      )
     }
-    if (!this.options.openLatestManagedFile) {
+    const openLatestManagedFile = this.options.openLatestManagedFile
+    if (!openLatestManagedFile) {
       return Promise.reject(new Error('Managed preview Version lease is not configured.'))
     }
-    return this.options.openLatestManagedFile(request.source, {
-      projectId: request.projectId,
-      fileId: request.fileId
-    })
+    return waitForManagedFilePublication(() =>
+      openLatestManagedFile(request.source, {
+        projectId,
+        fileId
+      })
+    )
   }
 }
 

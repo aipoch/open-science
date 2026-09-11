@@ -32,6 +32,7 @@ import {
   discardStagedCopy,
   MIGRATED_DIRS,
   PROJECT_DATABASE_FILE,
+  RUNTIME_ENVIRONMENT_LOCKS_DIR,
   RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
   RUNTIME_REPAIR_REGISTRY_FILE,
   runDataRootMigration,
@@ -919,6 +920,7 @@ describe('runDataRootMigration (copy phase)', () => {
         dirs: [
           ...MIGRATED_DIRS,
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
+          RUNTIME_ENVIRONMENT_LOCKS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
           join('runtime', 'pkgs')
         ]
@@ -1158,6 +1160,12 @@ describe('runDataRootMigration (copy phase)', () => {
     const sourceManifest = join(currentDataRoot, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, manifestName)
     await mkdir(join(currentDataRoot, RUNTIME_ENVIRONMENT_MANIFESTS_DIR), { recursive: true })
     await writeFile(sourceManifest, '{"schemaVersion":1}\n')
+    const lockName = `${'b'.repeat(64)}.json`
+    await mkdir(join(currentDataRoot, RUNTIME_ENVIRONMENT_LOCKS_DIR), { recursive: true })
+    await writeFile(
+      join(currentDataRoot, RUNTIME_ENVIRONMENT_LOCKS_DIR, lockName),
+      '{"schemaVersion":1}\n'
+    )
     const repairRegistry = {
       runtimeIds: ['managed:python:default-python'],
       reasons: { 'managed:python:default-python': 'interrupted-install' }
@@ -1185,6 +1193,7 @@ describe('runDataRootMigration (copy phase)', () => {
 
     expect(result).toEqual({ ok: true })
     expect(existsSync(join(target, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, manifestName))).toBe(true)
+    expect(existsSync(join(target, RUNTIME_ENVIRONMENT_LOCKS_DIR, lockName))).toBe(true)
     await expect(readFile(join(target, RUNTIME_REPAIR_REGISTRY_FILE), 'utf8')).resolves.toBe(
       `${JSON.stringify(repairRegistry)}\n`
     )
@@ -2467,6 +2476,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
         dirs: [
           ...MIGRATED_DIRS,
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
+          RUNTIME_ENVIRONMENT_LOCKS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
           join('runtime', 'pkgs')
         ]
@@ -2500,6 +2510,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
         dirs: [
           ...MIGRATED_DIRS,
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
+          RUNTIME_ENVIRONMENT_LOCKS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
           join('runtime', 'pkgs')
         ]
@@ -2537,6 +2548,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
         dirs: [
           ...MIGRATED_DIRS,
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
+          RUNTIME_ENVIRONMENT_LOCKS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
           join('runtime', 'pkgs')
         ]

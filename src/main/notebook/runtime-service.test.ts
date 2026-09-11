@@ -1569,6 +1569,90 @@ describe('notebook runtime service', () => {
     ])
   })
 
+  it('passes the same-epoch file-analysis context to the executor', async () => {
+    const root = await createStorageRoot()
+    const input: NotebookRunInputFile = {
+      inputFileVersionId: 'frozen-upload-version',
+      sourceKind: 'upload-version',
+      sourceFileId: 'upload',
+      sourceProjectId: 'default-project',
+      sourceSessionId: 'session-1',
+      filename: 'sample.csv',
+      sizeBytes: 10,
+      checksum: 'a'.repeat(64),
+      storageKey: 'upload-key',
+      association: 'turn-attached'
+    }
+    const sourceFileAccessContext = vi.fn(async () => {
+      input.inputFileVersionId = 'changed-after-admission'
+      return {
+        staticStrings: [{ name: 'output_path', value: 'figures/result.png' }],
+        staticCollections: [],
+        localFileWrappers: []
+      }
+    })
+    const execute = vi.fn(async (request: NotebookExecutionRequest) => ({
+      status: 'completed' as const,
+      stdout: '',
+      stderr: '',
+      traceback: '',
+      cwdAfter: request.cwd,
+      outputs: []
+    }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentStateTracker: verifiedPackageMutationTracker(),
+      dependencyAnalyzer: {
+        project: async () => ({ stalenessByRunId: {}, invalidatedByRunId: {} }),
+        sourceFileAccessContext
+      },
+      executorFactory: () => ({
+        execute,
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+
+    await service.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: 'plt.savefig(output_path)',
+      provenanceContext: {
+        rootFrameId: 'root',
+        agentFrameId: 'root',
+        messageBranchId: 'branch',
+        runtimeSegmentId: 'runtime',
+        promptMessageId: 'prompt'
+      },
+      registeredInputFiles: [input]
+    })
+
+    expect(sourceFileAccessContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        currentRunId: expect.any(String),
+        language: 'python',
+        environment: 'default-python',
+        kernelEpochId: expect.any(String)
+      })
+    )
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registeredInputFiles: [
+          expect.objectContaining({ inputFileVersionId: 'frozen-upload-version' })
+        ],
+        sourceFileAccessContext: {
+          staticStrings: [{ name: 'output_path', value: 'figures/result.png' }],
+          staticCollections: [],
+          localFileWrappers: []
+        }
+      })
+    )
+  })
+
   it('streams agent code into a locked cell and runs it through the shared executor', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
@@ -1743,10 +1827,18 @@ describe('notebook runtime service', () => {
       expect.objectContaining({
         language: 'python',
         environmentName: 'default-python',
-        runtimeSource: 'managed'
+        runtimeSource: 'managed',
+        condaPrefix: envPrefix(join(root, 'runtime'), 'default-python')
       }),
       { runtimeVersion: '3.13.2', packages: [] },
-      { fingerprint: 'stable', inventoryRefreshed: false, warnings: [] }
+      { fingerprint: 'stable', inventoryRefreshed: false, warnings: [] },
+      {
+        sessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
+        searchRoots: [
+          join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+          join(root, 'notebooks', 'default-project', 'session-1')
+        ]
+      }
     )
 
     const rawRunJson = await readFile(
@@ -3870,9 +3962,13 @@ describe('notebook runtime service', () => {
         const root = await createStorageRoot()
         const entered: string[] = []
         const releaseFirst = createDeferred<void>()
+        const firstStarted = createDeferred<void>()
         const execute = vi.fn<NotebookShellProcess['execute']>(async ({ command }) => {
           entered.push(command)
-          if (command === 'first') await releaseFirst.promise
+          if (command === 'first') {
+            firstStarted.resolve()
+            await releaseFirst.promise
+          }
           return { stdout: command, stderr: '', exitCode: 0 }
         })
         const service = new NotebookRuntimeService({
@@ -3898,20 +3994,19 @@ describe('notebook runtime service', () => {
         }
         const second = await service.executeShellBackground(secondRequest)
 
-        await vi.waitFor(async () => {
-          const state = await service.state(scope)
-          expect(state.runs.find((run) => run.runId === first.runId)).toMatchObject({
-            status: 'running',
-            executionMode: 'background',
-            shellConcurrency: { limit: 1, slot: 1 }
-          })
-          expect(state.runs.find((run) => run.runId === second.runId)).toMatchObject({
-            status: 'queued',
-            executionMode: 'background',
-            shellConcurrency: { limit: 1 }
-          })
+        await firstStarted.promise
+        const state = await service.state(scope)
+        expect(state.runs.find((run) => run.runId === first.runId)).toMatchObject({
+          status: 'running',
+          executionMode: 'background',
+          shellConcurrency: { limit: 1, slot: 1 }
         })
-        await vi.waitFor(() => expect(entered).toEqual(['first']))
+        expect(state.runs.find((run) => run.runId === second.runId)).toMatchObject({
+          status: 'queued',
+          executionMode: 'background',
+          shellConcurrency: { limit: 1 }
+        })
+        expect(entered).toEqual(['first'])
 
         const cancelled = await service.cancelBackgroundRun({
           ...secondRequest,
@@ -6945,6 +7040,11 @@ describe('notebook runtime service', () => {
       executionInvocationId: 'shared-submission',
       provenanceContext: provenance('frame-b')
     })
+    // Finish execution-time dependency capture before measuring the query/cancel reads.
+    await Promise.all([
+      service.waitForBackgroundRun(first.runId),
+      service.waitForBackgroundRun(second.runId)
+    ])
     readSessionRuns.mockClear()
 
     await expect(
@@ -8206,12 +8306,17 @@ describe('notebook runtime service', () => {
   it('idle-shutdown reports a terminated kernel status and notifies listeners', async () => {
     const root = await createStorageRoot()
     const changedSessions: string[] = []
+    const finalizeEpochs = vi.fn(async () => undefined)
     let lifecycle!: NotebookExecutorLifecycleCallbacks
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
       repository: new NotebookRunRepository(root),
+      dependencyAnalyzer: {
+        project: async () => ({ stalenessByRunId: {}, invalidatedByRunId: {} }),
+        finalizeEpochs
+      },
       callbacks: {
         onNotebookChanged: (event) => changedSessions.push(event.sessionId)
       },
@@ -8232,7 +8337,7 @@ describe('notebook runtime service', () => {
     })
 
     // Establishes the runtime session (and its persisted run.json) the idle-shutdown hook targets.
-    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+    const run = await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
 
     // Simulates NotebookKernelExecutor's onIdleShutdown firing after its idle window elapses.
     await lifecycle.onIdleShutdown('python', DEFAULT_PY_ENV)
@@ -8240,6 +8345,11 @@ describe('notebook runtime service', () => {
     const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(state.kernelStatus).toBe('terminated')
     expect(changedSessions).toContain('session-1')
+    expect(finalizeEpochs).toHaveBeenCalledWith({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      kernelEpochIds: [run.kernelEpochId]
+    })
   })
 
   it.each(['idle-shutdown', 'termination'] as const)(

@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { describe, expect, it, vi } from 'vitest'
 
 // Force the fallback micromamba resolver to "not found" so the "cannot be resolved" case is
@@ -95,14 +97,145 @@ const base = {
   // Keep baseline tests hermetic on Windows; Windows cache behavior is covered by explicit overrides.
   micromambaEnv: { platform: 'linux' as const },
   condaChannel: 'https://mirror.test/conda-forge',
-  readCondaPackageIdentity: () => ({
-    name: 'r-base',
-    version: '4.4.3',
+  readCondaPackageIdentity: (_prefix?: string, packageName = 'r-base') => ({
+    name: packageName,
+    version: packageName === 'r-renv' ? '1.1.5' : '4.4.3',
     build: 'h123_0',
     buildNumber: 0,
     channel: 'conda-forge'
   })
 }
+
+describe('managed R native lock tool preparation', () => {
+  it.each(['biocmanager', 'github', 'cran'] as const)(
+    'prepares a Conda-covered renv before %s and retains both transactions',
+    async (installer) => {
+      let prepared = false
+      const calls: string[][] = []
+      const onBeforeSpawn = vi.fn()
+      const onChild = vi.fn()
+      const result = await installPackages(
+        {
+          language: 'r',
+          packages: [installer === 'github' ? 'owner/package@main' : 'analysisPkg'],
+          environment: 'analysis-r',
+          ...(installer === 'cran' ? {} : { installer })
+        },
+        {
+          ...base,
+          pathExists: () => true,
+          onBeforeSpawn,
+          onChild,
+          readCondaPackageIdentity: (prefix, name) =>
+            name === 'r-renv' && !prepared
+              ? undefined
+              : base.readCondaPackageIdentity(prefix, name),
+          spawn: async (_command, args, _env, child, before) => {
+            if (isCacheClean(args)) return ok
+            calls.push(args)
+            before?.()
+            child?.(123)
+            if (args.includes('--dry-run'))
+              return args.includes('r-renv') ? safeRPlan : packageUnavailable
+            if (args.includes('r-renv')) {
+              prepared = true
+              return { ...ok, stdout: 'renv prepared' }
+            }
+            return { ...ok, stdout: 'native installed' }
+          }
+        }
+      )
+      expect(result).toMatchObject({ ok: true, needsRestart: true, method: installer })
+      const preparationCalls = calls.filter((args) => args.includes('r-renv'))
+      expect(preparationCalls).toHaveLength(2)
+      expect(preparationCalls[0]).toContain('--dry-run')
+      expect(preparationCalls[1]).toContain('r-base=4.4.3=h123_0')
+      expect(calls.at(-1)?.join(' ')).toContain(
+        installer === 'cran'
+          ? 'install.packages'
+          : `${installer === 'github' ? 'remotes' : 'BiocManager'}::install`
+      )
+      expect(onBeforeSpawn).toHaveBeenCalledTimes(2)
+      expect(onChild).toHaveBeenCalledTimes(2)
+      expect(result.log).toContain('renv prepared\nnative installed')
+      expect(result.attempts?.map((attempt) => [attempt.groupOrdinal, attempt.installer])).toEqual(
+        installer === 'cran'
+          ? [
+              [0, 'conda'],
+              [1, 'conda'],
+              [2, 'r-install-packages']
+            ]
+          : [
+              [0, 'conda'],
+              [1, installer]
+            ]
+      )
+    }
+  )
+
+  it('does not bootstrap renv through CRAN when its Conda package cannot be resolved', async () => {
+    const { spawn, calls } = scriptedSpawn([packageUnavailable])
+    const result = await installPackages(
+      { language: 'r', packages: ['DESeq2'], installer: 'biocmanager' },
+      {
+        ...base,
+        spawn,
+        readCondaPackageIdentity: (prefix, name) =>
+          name === 'r-renv' ? undefined : base.readCondaPackageIdentity(prefix, name)
+      }
+    )
+    expect(result).toMatchObject({ ok: false, fallbackUsed: false, needsRestart: false })
+    expect(calls).toHaveLength(1)
+    expect(calls[0][1]).toContain('--dry-run')
+    expect(result.attempts?.[0].packages).toEqual(['r-renv'])
+  })
+
+  it.each([true, false])(
+    'preserves restart evidence when native installation fails (tool verified: %s)',
+    async (verified) => {
+      const { spawn, calls } = scriptedSpawn([safeRPlan, ok, fail])
+      const result = await installPackages(
+        { language: 'r', packages: ['DESeq2'], installer: 'biocmanager' },
+        {
+          ...base,
+          spawn,
+          readCondaPackageIdentity: (prefix, name) =>
+            name === 'r-renv' && (!verified || calls.length < 2)
+              ? undefined
+              : base.readCondaPackageIdentity(prefix, name)
+        }
+      )
+      expect(result).toMatchObject({ ok: false, needsRestart: true })
+      expect(calls).toHaveLength(verified ? 3 : 2)
+      expect(result.attempts?.[0]).toMatchObject({
+        installer: 'conda',
+        status: 'succeeded',
+        packages: ['r-renv']
+      })
+      if (!verified) expect(result.error).toContain('Cannot verify the installed renv')
+    }
+  )
+
+  it('stops native installation if lock tool preparation changes the protected interpreter', async () => {
+    const { spawn, calls } = scriptedSpawn([safeRPlan, ok])
+    const result = await installPackages(
+      { language: 'r', packages: ['DESeq2'], installer: 'biocmanager' },
+      {
+        ...base,
+        spawn,
+        readCondaPackageIdentity: (prefix, name) =>
+          name === 'r-renv'
+            ? undefined
+            : {
+                ...base.readCondaPackageIdentity(prefix, name),
+                version: calls.length < 2 ? '4.4.3' : '4.5.0'
+              }
+      }
+    )
+    expect(result).toMatchObject({ ok: false, repairRequired: true })
+    expect(calls).toHaveLength(2)
+  })
+})
 
 describe('defaultSpawn (fail-closed spawn hooks)', () => {
   it('does not spawn when the caller aborts while recording the spawn intent', async () => {
@@ -261,6 +394,25 @@ describe('defaultSpawn (fail-closed spawn hooks)', () => {
     expect(result.stderr).toMatch(/Failed to record the installer worker/)
     expect(killedPid).toBeGreaterThan(0)
     await vi.waitFor(() => expect(() => process.kill(killedPid as number, 0)).toThrow())
+  })
+
+  it('does not start a package process after its operation is cancelled', async () => {
+    const controller = new AbortController()
+    const onChild = vi.fn()
+    controller.abort()
+    const result = defaultSpawn(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 60000)'],
+      undefined,
+      onChild,
+      undefined,
+      false,
+      undefined,
+      { signal: controller.signal }
+    )
+
+    await expect(result).rejects.toMatchObject({ name: 'AbortError' })
+    expect(onChild).not.toHaveBeenCalled()
   })
 
   it('retains bounded stdout/stderr tails and reports the exact discarded byte counts', async () => {
@@ -558,6 +710,7 @@ describe('installPackages', () => {
     expect(calls[0][0]).toBe(pipBin(prefix))
     expect(calls[0][1]).toEqual(['install', '-i', 'https://mirror.test/simple', 'seaborn'])
     expect(calls[0][2]?.PYTHONNOUSERSITE).toBe('1')
+    expect(calls[0][2]?.PIP_REPORT).toMatch(/report\.json$/u)
   })
 
   it('installs into an EXTERNAL interpreter via its own pip, never the app-managed prefix', async () => {
@@ -835,6 +988,7 @@ describe('installPackages', () => {
     expect(calls[0][0]).toBe(rScriptBin(envPrefix(runtimeRoot('/root'), DEFAULT_R_ENV)))
     expect(calls[0][1].join(' ')).toContain('BiocManager::install')
     expect(calls[0][1].join(' ')).toContain('update=FALSE')
+    expect(calls[0][1].join(' ')).toContain('options(repos=c(CRAN="https://cran.mirror.test"))')
     expect(result).toMatchObject({
       ok: true,
       method: 'biocmanager',
@@ -842,6 +996,66 @@ describe('installPackages', () => {
       source: { type: 'bioconductor', version: '3.21' }
     })
   })
+
+  it.skipIf(!process.env.OPEN_SCIENCE_TEST_R_ENV).each([false, true])(
+    'uses the configured CRAN mirror for mixed BiocManager installation (bootstrap: %s)',
+    async (bootstrap) => {
+      const root = mkdtempSync(join(tmpdir(), 'biocmanager-install-contract-'))
+      const library = rLibraryDir(envPrefix(runtimeRoot(root), DEFAULT_R_ENV))
+      const mirror = 'https://cran.mirror.test'
+      // Execute the generated installer in real R with offline installer doubles. The doubles
+      // inspect evaluated arguments/options; no repository access or package installation occurs.
+      const setup = [
+        `bootstrapped <- FALSE`,
+        `requireNamespace <- function(...) ${bootstrap ? 'FALSE' : 'TRUE'}`,
+        `install.packages <- function(pkgs, lib, repos) {`,
+        `  stopifnot(identical(pkgs, "BiocManager"), identical(lib, ${JSON.stringify(library)}), identical(repos, ${JSON.stringify(mirror)}))`,
+        `  bootstrapped <<- TRUE`,
+        `}`,
+        '`::` <- function(package, name) {',
+        '  stopifnot(identical(as.character(substitute(package)), "BiocManager"))',
+        '  switch(as.character(substitute(name)),',
+        '    install = function(pkgs, lib, ask, update, ...) {',
+        '      stopifnot(identical(pkgs, c("DESeq2", "org.Hs.eg.db", "ggplot2")), !ask, !update, length(list(...)) == 0L)',
+        `      stopifnot(identical(lib, ${JSON.stringify(library)}), dir.exists(lib))`,
+        `      stopifnot(identical(getOption("repos"), c(CRAN=${JSON.stringify(mirror)})))`,
+        `      stopifnot(identical(bootstrapped, ${bootstrap ? 'TRUE' : 'FALSE'}))`,
+        '      cat("INSTALL_CONTRACT_OK\\n")',
+        '    },',
+        '    version = function() "3.20",',
+        '    stop("Unexpected BiocManager call")',
+        '  )',
+        '}'
+      ].join('\n')
+      try {
+        const result = await installPackages(
+          {
+            language: 'r',
+            packages: ['DESeq2', 'org.Hs.eg.db', 'ggplot2'],
+            installer: 'biocmanager'
+          },
+          {
+            ...base,
+            storageRoot: root,
+            cranMirror: mirror,
+            spawn: async (_command, args) => {
+              const { stdout, stderr } = await promisify(execFile)(
+                rScriptBin(process.env.OPEN_SCIENCE_TEST_R_ENV!),
+                ['--vanilla', '--slave', '-e', `${setup}\n${args.at(-1)}`],
+                { env: { ...process.env, LC_ALL: 'en_US.UTF-8' }, timeout: 15_000 }
+              )
+              return { code: 0, stdout, stderr }
+            }
+          }
+        )
+        expect(result.ok).toBe(true)
+        expect(result.log).toContain('INSTALL_CONTRACT_OK')
+        expect(result.source).toEqual({ type: 'bioconductor', version: '3.20' })
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('installs an R package from GitHub with the requested ref', async () => {
     const { spawn, calls } = scriptedSpawn([ok])
@@ -859,6 +1073,7 @@ describe('installPackages', () => {
     expect(calls[0][1].join(' ')).toContain('remotes::install_github')
     expect(calls[0][1].join(' ')).toContain('dependencies=TRUE')
     expect(calls[0][1].join(' ')).toContain('upgrade="never"')
+    expect(calls[0][1].join(' ')).toContain('options(repos=c(CRAN="https://cran.mirror.test"))')
     expect(result).toMatchObject({
       ok: true,
       method: 'github',
@@ -2112,9 +2327,18 @@ describe('installPackages shared pkgs cache lock', () => {
     // directly (unlocked). An exclusive repair requested meanwhile runs WITHOUT waiting — this both
     // documents the intended scope and guards against over-locking pip behind the cache lock.
     const order: string[] = []
+    let markStarted!: () => void
+    let finishInstall!: () => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const finish = new Promise<void>((resolve) => {
+      finishInstall = resolve
+    })
     const spawn: InstallSpawn = async () => {
       order.push('pip-start')
-      await new Promise((r) => setTimeout(r, 10))
+      markStarted()
+      await finish
       order.push('pip-end')
       return ok
     }
@@ -2123,11 +2347,13 @@ describe('installPackages shared pkgs cache lock', () => {
       { language: 'python', packages: ['seaborn'], usePip: true, environment: 'my-analysis' },
       { spawn, ...base, pathExists: () => true }
     )
+    await started
     const cacheKey = micromambaCacheLockKey(join(runtimeRoot(base.storageRoot), 'pkgs'), {
       platform: 'linux'
     })
     const exclusive = withExclusiveCacheLock(cacheKey, async () => {
       order.push('repair')
+      finishInstall()
     })
     await Promise.all([install, exclusive])
 

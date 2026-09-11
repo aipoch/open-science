@@ -14,6 +14,7 @@ import {
 import type { AcpRuntimeOptions } from './runtime'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
+import type { NotebookWorkingFile } from './artifact-publication-continuation'
 
 type AcpRuntimePromptReloadHost = Readonly<{
   disconnect: AcpPromptTurnWorkflowOptions['disconnectForReload']
@@ -24,6 +25,11 @@ type AcpRuntimePromptHost = Readonly<{
   plan: AcpPromptTurnPlanWorkflow
   reload: AcpRuntimePromptReloadHost
   onPromptEnded?: (sessionId: string, turnToken: string) => void
+  requestArtifactPublicationContinuation?: (input: {
+    sessionId: string
+    provenanceContext?: AcpPromptRequest['provenanceContext']
+    files: readonly NotebookWorkingFile[]
+  }) => void
 }>
 
 const log = createLogger('acp')
@@ -288,6 +294,7 @@ const composeAcpRuntimePromptOwners = (
       sideChatRelays: options.sideChatRelays,
       routeNotification: (notification, sessionId) =>
         session.sessionUpdateProjector.route(notification, { appSessionId: sessionId }),
+      requestArtifactPublicationContinuation: host.requestArtifactPublicationContinuation,
       diagnosticContext,
       pushUserMessage: ({ sessionId, promptMessageId, text, attribution }) =>
         session.publication.pushEvent({
@@ -309,7 +316,12 @@ const composeAcpRuntimePromptOwners = (
       promptMessageIdFor: (artifact) =>
         artifact ? base.artifactTurns?.snapshot(artifact).promptMessageId : undefined,
       publish: publishArtifact,
-      dispose: disposeArtifact
+      dispose: disposeArtifact,
+      publicationCount: (artifact) => {
+        if (!artifact || !base.artifactTurns) return 0
+        const terminal = base.artifactTurns.snapshot(artifact).terminalResult
+        return terminal?.kind === 'publication' ? terminal.artifactCount : 0
+      }
     },
     plan: host.plan,
     finalization: {

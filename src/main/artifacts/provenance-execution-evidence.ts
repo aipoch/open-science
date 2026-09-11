@@ -18,10 +18,12 @@ import type {
   NotebookRunRecord
 } from '../../shared/notebook'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
+import { artifactProvenanceGraphMatchesTarget } from './artifact-provenance-graph'
 import {
   decodeArtifactExecutionSnapshot,
   parseArtifactExecutionSnapshot
 } from './provenance-execution-snapshot-decoder'
+import { sealArtifactReproducibilityRecipe } from './artifact-reproducibility-recipe'
 import {
   decodeNotebookHelperEvidence,
   notebookHelperEvidenceKey
@@ -152,6 +154,10 @@ const sanitizeRun = (
       : {}),
     kernelKind: run.kernelKind,
     ...(run.environment ? { environmentName: run.environment } : {}),
+    ...(run.environmentLock ? { environmentLock: run.environmentLock } : {}),
+    ...(run.environmentManifest?.executionContext
+      ? { executionContext: run.environmentManifest.executionContext }
+      : {}),
     script,
     ...(script !== run.script ? { scriptTruncated: true } : {}),
     status: run.status,
@@ -179,7 +185,11 @@ const mergeExecutionInputs = (runs: EligibleNotebookRun[]): NotebookRunInputFile
         association:
           existing?.association === 'resolver-accessed' || input.association === 'resolver-accessed'
             ? 'resolver-accessed'
-            : 'turn-attached'
+            : 'turn-attached',
+        accessEvidence:
+          existing?.accessEvidence === 'resolver' || input.accessEvidence === 'resolver'
+            ? 'resolver'
+            : (existing?.accessEvidence ?? input.accessEvidence)
       })
     }
   }
@@ -269,7 +279,10 @@ function helperEvidenceFields(
 }
 
 const buildBoundedExecutionSnapshot = (
-  base: Omit<PersistedArtifactExecutionSnapshot, 'inputFiles' | 'runs' | 'truncation'>,
+  base: Omit<
+    PersistedArtifactExecutionSnapshot,
+    'inputFiles' | 'runs' | 'truncation' | 'reproducibilityRecipe'
+  >,
   eligibleRuns: EligibleNotebookRun[]
 ): PersistedArtifactExecutionSnapshot => {
   const { helperModulesByKey, helperEvidenceReasons, runHelperKeys } =
@@ -296,7 +309,24 @@ const buildBoundedExecutionSnapshot = (
     remainingOutputs -= retainedCount
   }
 
-  const allInputs = mergeExecutionInputs(eligibleRuns)
+  const usedEntityIds = base.provenanceGraph
+    ? new Set(
+        base.provenanceGraph.edges.flatMap((edge) => (edge.kind === 'used' ? [edge.entityId] : []))
+      )
+    : undefined
+  const graphInputKeys = base.provenanceGraph
+    ? new Set(
+        base.provenanceGraph.entities.flatMap((entity) =>
+          entity.kind === 'registered-input-generation' && usedEntityIds?.has(entity.entityId)
+            ? [`${entity.sourceKind}\0${entity.inputFileVersionId}`]
+            : []
+        )
+      )
+    : undefined
+  const allInputs = mergeExecutionInputs(eligibleRuns).filter(
+    (input) =>
+      !graphInputKeys || graphInputKeys.has(`${input.sourceKind}\0${input.inputFileVersionId}`)
+  )
   let inputFiles = allInputs.slice(0, MAX_EXECUTION_SNAPSHOT_INPUTS)
   let omittedInputCount = allInputs.length - inputFiles.length
   const materializedRuns = runs.map(({ run, runIndex, outputs }) => {
@@ -308,57 +338,96 @@ const buildBoundedExecutionSnapshot = (
 
   const retainedInputKeys = (): Set<string> =>
     new Set(inputFiles.map((input) => `${input.sourceKind}\0${input.inputFileVersionId}`))
+  const relevantInputKeys = new Set(
+    allInputs.map((input) => `${input.sourceKind}\0${input.inputFileVersionId}`)
+  )
   const filterRunInputKeys = (): void => {
     const retained = retainedInputKeys()
     for (const run of materializedRuns) {
-      const filtered = run.inputFileVersionKeys.filter((input) =>
+      const relevant = run.inputFileVersionKeys.filter((input) =>
+        relevantInputKeys.has(`${input.sourceKind}\0${input.inputFileVersionId}`)
+      )
+      const filtered = relevant.filter((input) =>
         retained.has(`${input.sourceKind}\0${input.inputFileVersionId}`)
       )
-      if (filtered.length !== run.inputFileVersionKeys.length) run.hasOmittedInputs = true
+      if (filtered.length !== relevant.length) run.hasOmittedInputs = true
       run.inputFileVersionKeys = filtered
     }
   }
   filterRunInputKeys()
 
-  const snapshot = (): PersistedArtifactExecutionSnapshot => ({
-    ...base,
-    inputFiles,
-    runs: materializedRuns,
-    ...helperEvidenceFields(helperModules, helperModulesByKey.size, helperEvidenceReasons),
-    ...(omittedLeadingRunCount > 0 || omittedOutputCount > 0 || omittedInputCount > 0
-      ? {
-          truncation: {
-            reason: 'payload-limit' as const,
-            omittedLeadingRunCount,
-            omittedOutputCount,
-            omittedInputCount
+  // Output payload trimming does not change a recipe. Re-seal only when a recipe input changes.
+  let cachedRecipe: PersistedArtifactExecutionSnapshot['reproducibilityRecipe']
+  const invalidateRecipe = (): void => {
+    cachedRecipe = undefined
+  }
+  const snapshot = (): PersistedArtifactExecutionSnapshot => {
+    const execution = {
+      ...base,
+      inputFiles,
+      runs: materializedRuns,
+      ...helperEvidenceFields(helperModules, helperModulesByKey.size, helperEvidenceReasons),
+      ...(omittedLeadingRunCount > 0 || omittedOutputCount > 0 || omittedInputCount > 0
+        ? {
+            truncation: {
+              reason: 'payload-limit' as const,
+              omittedLeadingRunCount,
+              omittedOutputCount,
+              omittedInputCount
+            }
           }
-        }
-      : {})
-  })
+        : {})
+    }
+    return {
+      ...execution,
+      ...(base.provenanceGraph
+        ? {
+            reproducibilityRecipe:
+              cachedRecipe ??
+              (cachedRecipe = sealArtifactReproducibilityRecipe({
+                provenanceGraph: base.provenanceGraph,
+                inputFiles,
+                runs: materializedRuns,
+                ...(execution.helperModules ? { helperModules: execution.helperModules } : {}),
+                ...(execution.helperEvidenceStatus
+                  ? { helperEvidenceStatus: execution.helperEvidenceStatus }
+                  : {}),
+                ...(execution.truncation ? { truncation: execution.truncation } : {})
+              }))
+          }
+        : {})
+    }
+  }
   const snapshotBytes = (): number =>
     Buffer.byteLength(canonicalJson(snapshot() as unknown as CanonicalJson), 'utf8')
 
   while (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES && materializedRuns.length > 1) {
     materializedRuns.shift()
     omittedLeadingRunCount += 1
+    invalidateRecipe()
   }
   while (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES) {
     const runWithOutput = materializedRuns.find((run) => run.outputs.length > 0)
     if (!runWithOutput) break
+    const hadTruncation =
+      omittedLeadingRunCount > 0 || omittedOutputCount > 0 || omittedInputCount > 0
     runWithOutput.outputs.pop()
     runWithOutput.omittedOutputCount = (runWithOutput.omittedOutputCount ?? 0) + 1
     omittedOutputCount += 1
+    if (!hadTruncation) invalidateRecipe()
   }
   while (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES && inputFiles.length > 0) {
     inputFiles = inputFiles.slice(0, Math.floor(inputFiles.length / 2))
     omittedInputCount = allInputs.length - inputFiles.length
     filterRunInputKeys()
+    invalidateRecipe()
   }
   if (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES) {
     while (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES && helperModules.length > 0) {
+      const evidenceWasIncomplete = helperEvidenceReasons.size > 0
       helperModules = helperModules.slice(0, -1)
       helperEvidenceReasons.add('payload-limit')
+      if (!evidenceWasIncomplete) invalidateRecipe()
     }
   }
   if (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES) {
@@ -366,6 +435,7 @@ const buildBoundedExecutionSnapshot = (
     if (producer) {
       producer.script = clipText(producer.script, 1_000)
       producer.scriptTruncated = true
+      invalidateRecipe()
     }
   }
   if (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES) {
@@ -393,7 +463,8 @@ const inputEvidence = (
   size_bytes: input.sizeBytes,
   checksum: input.checksum,
   storage_key: input.storageKey,
-  strongest_association: input.association
+  strongest_association: input.association,
+  ...(input.accessEvidence ? { access_evidence: input.accessEvidence } : {})
 })
 
 const environmentPackageEvidence = (
@@ -418,6 +489,7 @@ const environmentEvidence = (
 ): ArtifactVersionEnvironmentEvidence => ({
   capture_kind: manifest.captureKind,
   environment_name: manifest.environmentName,
+  ...(manifest.executionContext ? { execution_context: manifest.executionContext } : {}),
   kernel_kind: manifest.kernelKind,
   runtime_source: manifest.runtimeSource,
   ...(manifest.runtimeVersion ? { runtime_version: manifest.runtimeVersion } : {}),
@@ -567,6 +639,17 @@ const validateArtifactExecutionSnapshot = (
     (runIndex, index) => index === 0 || runIndex > runIndexes[index - 1]!
   )
   const terminalRun = snapshot.runs.at(-1)
+  const graph = snapshot.provenanceGraph
+  const graphIsBound =
+    graph === undefined ||
+    (expected.producerRunId !== null &&
+      artifactProvenanceGraphMatchesTarget(graph, {
+        versionId: expected.evidence.version_id,
+        filename: expected.evidence.filename,
+        checksum: expected.evidence.checksum,
+        sizeBytes: expected.evidence.size_bytes,
+        producerRunId: expected.producerRunId
+      }))
   if (
     snapshot.rootFrameId !== expected.rootFrameId ||
     snapshot.agentFrameId !== expected.agentFrameId ||
@@ -584,7 +667,8 @@ const validateArtifactExecutionSnapshot = (
     !indexesAreStrictlyIncreasing ||
     runIndexes.some((runIndex) => runIndex > expected.producerRunIndex!) ||
     terminalRun?.runId !== expected.producerRunId ||
-    terminalRun.runIndex !== expected.producerRunIndex
+    terminalRun.runIndex !== expected.producerRunIndex ||
+    !graphIsBound
   ) {
     throw new ProvenanceIntegrityError('Artifact Version execution snapshot metadata mismatch.')
   }

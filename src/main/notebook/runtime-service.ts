@@ -19,6 +19,7 @@ import type {
   ExportNotebookKernelRequest,
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
+  NotebookEnvironmentLock,
   NotebookLanguage,
   NotebookNamespaceRequest,
   NotebookNamespaceSnapshot,
@@ -117,6 +118,7 @@ import {
 import { NotebookSessionRegistry } from './session-registry'
 import { createLogger, errorLogFields } from '../logger'
 import { EnvironmentStateTracker, type EnvironmentCaptureTarget } from './environment-state-tracker'
+import { resolveMicromamba } from './micromamba'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
@@ -183,6 +185,8 @@ type NotebookExecutionRequest = NotebookSessionExecutionRequest
 type NotebookExecutionResult = NotebookSessionExecutionResult
 
 type NotebookExecutor = NotebookSessionExecutor
+type NotebookDependencyAnalyzerPort = Pick<NotebookDependencyAnalyzer, 'project'> &
+  Partial<Pick<NotebookDependencyAnalyzer, 'sourceFileAccessContext' | 'finalizeEpochs'>>
 
 type NotebookRuntimeServiceCallbacks = NotebookSessionLifecycleCallbacks
 
@@ -292,7 +296,7 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
     | 'markPackageMutationDirty'
     | 'refreshAfterPackageMutation'
   >
-  dependencyAnalyzer?: Pick<NotebookDependencyAnalyzer, 'project'>
+  dependencyAnalyzer?: NotebookDependencyAnalyzerPort
   helperModuleCatalog?: NotebookHelperModuleCatalog
 }
 
@@ -396,7 +400,7 @@ class NotebookRuntimeService {
   private readonly executionOwner: NotebookExecutionOwner
   private readonly shellProcessOwnership: ShellProcessOwnershipRegistry
   private readonly helperModules: NotebookHelperModuleHost
-  private readonly dependencyAnalyzer: Pick<NotebookDependencyAnalyzer, 'project'>
+  private readonly dependencyAnalyzer: NotebookDependencyAnalyzerPort
   private readonly dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
   private readonly packageOperations: NotebookPackageOperations
   private readonly repairPolicy: NotebookRuntimeRepairPolicy
@@ -547,6 +551,18 @@ class NotebookRuntimeService {
       platform: options.platform,
       callbacks: options.callbacks,
       toSessionReference: (session) => this.sessionReadModel.toSessionReference(session),
+      finalizeKernelEpochs: async (request) => {
+        try {
+          await this.dependencyAnalyzer.finalizeEpochs?.(request)
+        } catch (error) {
+          this.runtimeLogger.error('Notebook dependency epoch finalization failed', {
+            ...errorLogFields(error),
+            projectId: request.projectId,
+            sessionId: request.sessionId,
+            kernelEpochIds: request.kernelEpochIds
+          })
+        }
+      },
       onKernelStatusPersistenceFailure: ({ operation, lane, kind, env, error }) => {
         const message = 'notebook kernel lifecycle persistence failed'
         const fields = {
@@ -585,6 +601,10 @@ class NotebookRuntimeService {
       new EnvironmentStateTracker({
         dataRoot: options.dataRoot,
         platform: options.platform,
+        resolveMicromamba: async () =>
+          options.micromambaRunner
+            ? options.micromambaRunner.resolve()
+            : resolveMicromamba({ platform: options.platform }),
         logger: this.runtimeLogger
       })
     this.packageOperations = new NotebookPackageOperations({
@@ -694,6 +714,19 @@ class NotebookRuntimeService {
           completedRun: run,
           ...(interpreter ? { interpreter } : {})
         }),
+      sourceFileAccessContext: (session, run) =>
+        (run.kernelKind === 'python' || run.kernelKind === 'r') &&
+        run.kernelEpochId &&
+        this.dependencyAnalyzer.sourceFileAccessContext
+          ? this.dependencyAnalyzer.sourceFileAccessContext({
+              projectId: session.projectId,
+              sessionId: session.sessionId,
+              currentRunId: run.runId,
+              language: run.kernelKind,
+              environment: run.environment,
+              kernelEpochId: run.kernelEpochId
+            })
+          : Promise.resolve(undefined),
       helperModules: this.helperModules,
       logger: this.runtimeLogger,
       platform: options.platform,
@@ -803,7 +836,7 @@ class NotebookRuntimeService {
           ? rScriptBin(prefix, this.options.platform)
           : pythonBin(prefix, this.options.platform)),
       args: resolvedInterpreter?.args,
-      ...(language === 'r' && (resolvedInterpreter?.condaPrefix || binding?.source !== 'external')
+      ...(resolvedInterpreter?.condaPrefix || binding?.source !== 'external'
         ? { condaPrefix: resolvedInterpreter?.condaPrefix ?? prefix }
         : {})
     }
@@ -1977,6 +2010,15 @@ class NotebookRuntimeService {
     signal?: AbortSignal
   ): Promise<ManageEnvironmentsResult> {
     return this.environmentManagement.manage(request, signal)
+  }
+
+  async importEnvironmentLock(input: {
+    projectId?: string
+    language: NotebookLanguage
+    lock: NotebookEnvironmentLock
+    lockChecksum: string
+  }): Promise<{ environmentName: string; reused: boolean }> {
+    return this.environmentManagement.importLock(input)
   }
 
   // Shuts down one session executor and removes its in-memory routing state.

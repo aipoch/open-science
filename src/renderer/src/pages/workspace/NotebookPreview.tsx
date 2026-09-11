@@ -145,15 +145,42 @@ const DependencyStatusBadge = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isStale = staleness.state === 'stale'
-  const label = isStale ? t('Variable changed after this run') : t('Variable tracking is limited')
+  const missingGraphicsState =
+    staleness.state === 'unknown' && staleness.reasons.includes('graphics-state-unavailable')
+  const missingPackages =
+    staleness.state === 'unknown'
+      ? [
+          ...new Set(
+            staleness.reasons
+              .filter((reason) => reason.startsWith('missing-package-load:'))
+              .map((reason) => reason.slice('missing-package-load:'.length))
+          )
+        ]
+      : []
+  const label = isStale
+    ? t('Variable changed after this run')
+    : missingPackages.length
+      ? t('Package setup is missing')
+      : missingGraphicsState
+        ? t('Plot setup is incomplete')
+        : t('Variable tracking is limited')
   const detail = isStale
     ? t(
         'Run [{{index}}] later changed {{names}}. This output is the snapshot recorded before that change; this run completed normally.',
         { names: staleness.names.join(', '), index: causedByRunIndex }
       )
-    : t(
-        'This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.'
-      )
+    : missingPackages.length
+      ? t(
+          'Package loading steps were not captured for {{packageNames}}. Run the package setup cells again, then rerun this cell to capture its dependencies.',
+          { packageNames: missingPackages.join(', ') }
+        )
+      : missingGraphicsState
+        ? t(
+            'Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.'
+          )
+        : t(
+            'This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.'
+          )
 
   return (
     <>

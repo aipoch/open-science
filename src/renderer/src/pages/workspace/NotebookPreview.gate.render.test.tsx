@@ -940,6 +940,40 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(container.textContent).not.toContain('result is current')
   })
 
+  it('explains which package setup must be captured for replay', async () => {
+    await mountWithRuns(
+      [makeRun({ runId: 'run-2', cellId: 'make-result', script: 'read_excel("input.xlsx")' })],
+      [],
+      { 'run-2': { state: 'unknown', reasons: ['missing-package-load:readxl'] } }
+    )
+    expect(
+      container.querySelector('[data-testid="notebook-cell-dependency-unknown"]')?.textContent
+    ).toBe('Package setup is missing')
+    const badge = container.querySelector<HTMLButtonElement>(
+      '[data-testid="notebook-cell-dependency-unknown"]'
+    )!
+    fireEvent.focus(badge)
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'Package loading steps were not captured for readxl. Run the package setup cells again, then rerun this cell to capture its dependencies.'
+    )
+  })
+
+  it('explains missing plotting state instead of describing a variable parser failure', async () => {
+    await mountWithRuns(
+      [makeRun({ runId: 'run-2', cellId: 'plot', script: 'chordDiagram(mat)' })],
+      [],
+      { 'run-2': { state: 'unknown', reasons: ['graphics-state-unavailable'] } }
+    )
+    const badge = container.querySelector<HTMLButtonElement>(
+      '[data-testid="notebook-cell-dependency-unknown"]'
+    )!
+    expect(badge.textContent).toBe('Plot setup is incomplete')
+    fireEvent.focus(badge)
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.'
+    )
+  })
+
   it('keeps incomplete-tracking metadata on every run when a cell is reused', async () => {
     await mountWithRuns(
       [
