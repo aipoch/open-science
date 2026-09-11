@@ -889,6 +889,96 @@ describe('recovery ownership', () => {
 })
 
 describe('copy and lock metadata', () => {
+  it.skipIf(process.platform !== 'darwin')(
+    'resumes and rolls back a receipt with legacy metadata hashes',
+    async () => {
+      const f = await fixture()
+      const { runMigration, inventory } =
+        await import('../resources/brand-migration/transaction.mjs')
+      const { bundleInventory } = await import('../resources/brand-migration/reference-bundle.mjs')
+      const options = { home: f.home, appData: join(f.home, 'appData'), mode: 'dev' }
+      await expect(
+        runMigration(
+          { ...options, execute: true },
+          {
+            onProgress(event: { phase: string }) {
+              if (event.phase === 'copied') throw new Error('legacy interruption')
+            }
+          }
+        )
+      ).rejects.toThrow('legacy interruption')
+      const journalFile = join(`${f.config}.brand-migration`, 'journal.json')
+      const journal = JSON.parse(await readFile(journalFile, 'utf8'))
+      for (const p of journal.participants) {
+        p.original = p.files
+          ? await bundleInventory(p.from, p.files, (path: string) =>
+              inventory(path, 'scanning', 'legacy')
+            )
+          : await inventory(p.from, 'scanning', 'legacy')
+      }
+      await writeFile(journalFile, JSON.stringify(journal))
+      const result = await runMigration({ ...options, resume: true })
+      expect(result.id).toBe(journal.id)
+      expect(result.participants.map((p) => p.original)).toEqual(
+        journal.participants.map((p) => p.original)
+      )
+      await runMigration({ ...options, rollback: true })
+      expect(await readFile(join(f.old, 'uploads', 'paper.txt'), 'utf8')).toBe('research\n')
+      expect(JSON.parse(await readFile(join(f.config, 'settings.json'), 'utf8')).dataRoot).toBe(
+        f.old
+      )
+    }
+  )
+  it.skipIf(process.platform !== 'darwin')(
+    'preserves setgid on runtime cache directories during native copying',
+    async () => {
+      const f = await fixture()
+      const cache = join(f.old, 'runtime', 'pkgs', 'cache')
+      await mkdir(cache, { recursive: true })
+      const { chmod } = await import('node:fs/promises')
+      await chmod(cache, 0o2775)
+      const { copyTree, inventory, verify } =
+        await import('../resources/brand-migration/transaction.mjs')
+      const original = await inventory(f.old)
+      await copyTree(f.old, f.next)
+      expect((await lstat(join(f.next, 'runtime', 'pkgs', 'cache'))).mode & 0o7777).toBe(0o2775)
+      await verify(f.next, original)
+    }
+  )
+  it.skipIf(process.platform !== 'darwin')(
+    'preserves signature and quarantine xattrs during native copying',
+    async () => {
+      const f = await fixture()
+      const file = join(f.old, 'uploads', 'paper.txt')
+      for (const [name, value] of [
+        ['com.apple.cs.CodeSignature', ''],
+        ['com.apple.quarantine', '0081;65000000;Fixture;'],
+        ['org.open-science.test', 'user-metadata']
+      ])
+        execFileSync('/usr/bin/xattr', ['-w', name, value, file])
+      const { copyTree, inventory, verify } =
+        await import('../resources/brand-migration/transaction.mjs')
+      const original = await inventory(f.old)
+      await copyTree(f.old, f.next)
+      await verify(f.next, original)
+    }
+  )
+  it.skipIf(process.platform !== 'darwin')(
+    'versions macOS metadata while retaining strict verification for old receipts',
+    async () => {
+      const f = await fixture()
+      const { inventory, verify } = await import('../resources/brand-migration/transaction.mjs')
+      const current = await inventory(f.old)
+      expect(current[0].metadata).toMatch(/^darwin-v2:/)
+      const legacy = await inventory(f.old, 'scanning', 'legacy')
+      expect(legacy[0].metadata).toMatch(/^[a-f0-9]{64}$/)
+      await verify(f.old, legacy)
+      const file = join(f.old, 'uploads', 'paper.txt')
+      execFileSync('/usr/bin/xattr', ['-w', 'org.open-science.test', 'changed', file])
+      await expect(verify(f.old, legacy)).rejects.toThrow('Integrity')
+      await expect(verify(f.old, current)).rejects.toThrow('Integrity')
+    }
+  )
   it.each(['--state-dir', '--data-parent'])(
     'rejects relative %s before creating state',
     async (flag) => {
@@ -2721,6 +2811,194 @@ describe('pre-publication snapshot restart', () => {
     expect(migrationProcess({ ...f.options, rollback: true }).status).toBe(0)
     expect(await readFile(join(f.oldLogs, 'main.log'), 'utf8')).toBe('old log\nlate old log\n')
     expect(await readFile(join(f.newLogs, 'main.log'), 'utf8')).toBe('new log\nlate new log\n')
+  })
+
+  it('fresh dev migration preserves rotated logs and changed configuration then rolls back to the retry snapshot', async () => {
+    const f = await interrupted()
+    const stage = f.receipt.participants.find((p) => p.from === f.oldLogs).stage
+    const stagedBytes = await readFile(join(stage, 'main.log'), 'utf8')
+    await writeFile(join(f.newLogs, 'main.1.log'), await readFile(join(f.newLogs, 'main.log')))
+    await writeFile(join(f.newLogs, 'main.log'), 'new log after rotation\n')
+    const settings = JSON.stringify({
+      version: 2,
+      providers: [],
+      dataRoot: f.old,
+      localePreference: 'zh-Hans'
+    })
+    await writeFile(join(f.config, 'settings.json'), settings)
+    await writeFile(join(f.old, 'uploads', 'paper.txt'), 'latest research\n')
+    const options = { ...f.options, execute: true, freshDevMigration: true }
+    const result = await f.runMigration(options)
+    expect(result.status).toBe('committed')
+    expect(result.id).not.toBe(f.receipt.id)
+    expect(
+      JSON.parse(await readFile(join(f.state, `journal-${f.receipt.id}.abandoned.json`), 'utf8'))
+    ).toEqual(f.receipt)
+    expect(await readFile(join(stage, 'main.log'), 'utf8')).toBe(stagedBytes)
+    expect(await readFile(join(f.next, 'uploads', 'paper.txt'), 'utf8')).toBe('latest research\n')
+    expect(JSON.parse(await readFile(join(f.config, 'settings.json'), 'utf8'))).toMatchObject({
+      dataRoot: f.next,
+      localePreference: 'zh-Hans'
+    })
+    const target = result.participants.find((p) => p.to === f.newLogs).previousTarget.backup
+    expect(await readFile(join(target, 'main.log'), 'utf8')).toBe('new log after rotation\n')
+    expect(await readFile(join(target, 'main.1.log'), 'utf8')).toBe('new log\nlate new log\n')
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(join(f.config, 'open-science.db'), { readOnly: true })
+    expect(db.prepare('SELECT id,path FROM GrantedLocalRoot').get()).toEqual({
+      id: 'stable-root',
+      path: f.next
+    })
+    db.close()
+    expect((await f.runMigration(options)).id).toBe(result.id)
+    await f.runMigration({ ...f.options, rollback: true })
+    expect(await readFile(join(f.config, 'settings.json'), 'utf8')).toBe(settings)
+    expect(await readFile(join(f.old, 'uploads', 'paper.txt'), 'utf8')).toBe('latest research\n')
+    expect(await readFile(join(f.newLogs, 'main.log'), 'utf8')).toBe('new log after rotation\n')
+    const restored = new DatabaseSync(join(f.config, 'open-science.db'), { readOnly: true })
+    expect(restored.prepare('SELECT id,path FROM GrantedLocalRoot').get()).toEqual({
+      id: 'stable-root',
+      path: f.old
+    })
+    restored.close()
+  })
+
+  it('fresh dev migration survives an exit after archiving and another failed copy without reusing either stage', async () => {
+    const f = await interrupted()
+    const options = { ...f.options, execute: true, freshDevMigration: true, recoverLock: true }
+    // Exit without finally/unlock, exercising the actual durable rename and abandoned lease.
+    let exitStatus: number | undefined
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `import {runMigration} from './resources/brand-migration/transaction.mjs';
+         await runMigration(JSON.parse(process.argv[1]), {onProgress(event) {
+           if (event.phase === 'restart-archived') process.exit(74);
+         }});`,
+          JSON.stringify(options)
+        ],
+        { stdio: 'pipe' }
+      )
+    } catch (error) {
+      exitStatus = (error as { status?: number }).status
+    }
+    expect(exitStatus).toBe(74)
+    await expect(readFile(join(f.state, 'journal.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      f.runMigration(options, {
+        onProgress(event: { phase: string }) {
+          if (event.phase === 'copied') throw new Error('second copy interruption')
+        }
+      })
+    ).rejects.toThrow('second copy interruption')
+    const second = JSON.parse(await readFile(join(f.state, 'journal.json'), 'utf8'))
+    expect(second.id).not.toBe(f.receipt.id)
+    const result = await f.runMigration(options)
+    expect(result.id).not.toBe(second.id)
+    for (const receipt of [f.receipt, second]) {
+      expect(
+        JSON.parse(await readFile(join(f.state, `journal-${receipt.id}.abandoned.json`), 'utf8'))
+      ).toEqual(receipt)
+      expect((await lstat(receipt.participants[0].stage)).isDirectory()).toBe(true)
+    }
+  })
+
+  it('fresh dev migration remains read-only in previews and preserves the receipt when a writer exists', async () => {
+    const f = await interrupted()
+    const before = await readFile(join(f.state, 'journal.json'), 'utf8')
+    await f.runMigration({ ...f.options, freshDevMigration: true })
+    expect(await readFile(join(f.state, 'journal.json'), 'utf8')).toBe(before)
+    const child = await writer(f.old)
+    try {
+      await expect(
+        f.runMigration({ ...f.options, freshDevMigration: true, execute: true })
+      ).rejects.toThrow(/active|open|process|writer/i)
+      expect(await readFile(join(f.state, 'journal.json'), 'utf8')).toBe(before)
+    } finally {
+      await stop(child)
+    }
+  })
+
+  it('fresh dev migration refuses publication evidence and nonempty target conflicts before archiving', async () => {
+    const f = await interrupted()
+    const before = await readFile(join(f.state, 'journal.json'), 'utf8')
+    const backup = f.receipt.participants[0].backup
+    await mkdir(backup)
+    await expect(
+      f.runMigration({ ...f.options, execute: true, freshDevMigration: true })
+    ).rejects.toThrow(/Publication evidence/)
+    expect(await readFile(join(f.state, 'journal.json'), 'utf8')).toBe(before)
+    await rm(backup, { recursive: true })
+    await mkdir(f.next)
+    await writeFile(join(f.next, 'user-file'), 'keep')
+    await expect(
+      f.runMigration({ ...f.options, execute: true, freshDevMigration: true })
+    ).rejects.toThrow(/destination|conflict/i)
+    expect(await readFile(join(f.state, 'journal.json'), 'utf8')).toBe(before)
+    expect(await readFile(join(f.next, 'user-file'), 'utf8')).toBe('keep')
+  })
+
+  it('fresh dev migration CLI requires dev mode and cannot modify a rollback or resume action', async () => {
+    const f = await fixture()
+    expect(cli(f.home, '--fresh-dev-migration').status).toBe(0)
+    expect(
+      cli(f.home, '--fresh-dev-migration', '--mode', 'packaged', '--execute').output
+    ).toContain('dev')
+    for (const action of ['--rollback', '--resume', '--restart-preparing']) {
+      expect(cli(f.home, '--fresh-dev-migration', action).status).not.toBe(0)
+    }
+    const result = cli(f.home, '--fresh-dev-migration', '--execute')
+    expect(result.status, result.output).toBe(0)
+  })
+
+  it.each(['restoreIntent', 'restored'])(
+    'fresh dev migration refuses an existing-target %s marker even without backup directories',
+    async (marker) => {
+      const f = await interrupted()
+      f.receipt.participants[0].previousTarget[marker] = true
+      const before = JSON.stringify(f.receipt)
+      await writeFile(join(f.state, 'journal.json'), before)
+      await expect(
+        f.runMigration({ ...f.options, execute: true, freshDevMigration: true })
+      ).rejects.toThrow(/restoration intent/)
+      expect(await readFile(join(f.state, 'journal.json'), 'utf8')).toBe(before)
+    }
+  )
+
+  it('fresh dev migration resumes partial publication with the original receipt instead of resetting it', async () => {
+    const f = await fixture()
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    const options = {
+      home: f.home,
+      appData: join(f.home, 'appData'),
+      mode: 'dev',
+      execute: true,
+      freshDevMigration: true
+    }
+    await expect(
+      runMigration(options, {
+        onProgress(event: { phase: string }) {
+          if (event.phase === 'source-backed-up') throw new Error('publication interruption')
+        }
+      })
+    ).rejects.toThrow('publication interruption')
+    const state = `${f.config}.brand-migration`
+    const receipt = JSON.parse(await readFile(join(state, 'journal.json'), 'utf8'))
+    expect(receipt.status).toBe('publishing')
+    const result = await runMigration(options)
+    expect(result.id).toBe(receipt.id)
+    expect(result.status).toBe('committed')
+    expect((await readdir(state)).filter((name) => name.endsWith('.abandoned.json'))).toEqual([])
+    await runMigration({
+      home: f.home,
+      appData: join(f.home, 'appData'),
+      mode: 'dev',
+      rollback: true
+    })
+    expect(await readFile(join(f.old, 'uploads', 'paper.txt'), 'utf8')).toBe('research\n')
   })
 
   it('reports the changed file and explicit recovery action without silently accepting the new snapshot', async () => {

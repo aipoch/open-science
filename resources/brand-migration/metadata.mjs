@@ -1,9 +1,18 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
+
+const darwinHelper = fileURLToPath(new URL('./darwin-metadata.py', import.meta.url))
+export function repairDarwinMetadata(from, to) {
+  execFileSync('python3', [darwinHelper, 'repair', from, to], { stdio: 'pipe' })
+}
+// Existing unprefixed receipts retain their exact, legacy comparison, including provenance.
+export const metadataFormat = (expected) =>
+  expected?.startsWith('darwin-v2:') ? 'darwin-v2' : 'legacy'
 
 // Copy success is not metadata proof. Compare the platform's ACL/xattr representation as well.
 // Linux requires the standard acl/attr tools; missing tools stop before originals are renamed.
-export function metadataDigest(root) {
+export function metadataDigest(root, format = 'darwin-v2') {
   const run = (command, args) =>
     execFileSync(command, args, {
       encoding: 'utf8',
@@ -28,7 +37,11 @@ export function metadataDigest(root) {
     const rootAcl = run('/bin/ls', ['-ldne', root])
       .split('\n')
       .filter((line) => /^\s+\d+:/.test(line))
-    metadata = JSON.stringify({ acl, rootAcl }) + run('/usr/bin/xattr', ['-rlxs', root])
+    metadata =
+      JSON.stringify({ acl, rootAcl }) +
+      (format === 'legacy'
+        ? run('/usr/bin/xattr', ['-rlxs', root])
+        : run('python3', [darwinHelper, 'inspect', root]))
   } else if (process.platform === 'linux') {
     // Inspect links themselves: staged aliases can intentionally point at roots not yet published.
     metadata =
@@ -57,5 +70,8 @@ export function metadataDigest(root) {
     `
     ])
   }
-  return createHash('sha256').update(metadata).digest('hex')
+  return (
+    (process.platform === 'darwin' && format !== 'legacy' ? 'darwin-v2:' : '') +
+    createHash('sha256').update(metadata).digest('hex')
+  )
 }

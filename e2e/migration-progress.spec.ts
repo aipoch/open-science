@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { spawn } from 'node:child_process'
+import { build } from 'esbuild'
 
 const root = process.cwd()
 const environment = (): NodeJS.ProcessEnv => {
@@ -12,6 +13,78 @@ const environment = (): NodeJS.ProcessEnv => {
   delete env.ELECTRON_RUN_AS_NODE
   return env
 }
+
+test('macOS startup hides the blocked owner Dock icon until ready without opening the real profile', async () => {
+  test.skip(process.platform !== 'darwin', 'Native macOS activation policy')
+  const fixture = await mkdtemp(join(tmpdir(), 'open-science-dock-migration-'))
+  const entry = join(fixture, 'owner.cjs')
+  const evidence = join(fixture, 'dock.json')
+  const source = resolve('src/main/brand-path-migration.ts')
+  // Bundle the real startup adapter. Wrap the app boundary only to observe native Dock state;
+  // migration, Electron activation policy, ready and filesystem operations all remain real.
+  await build({
+    stdin: {
+      contents: `
+        const { app } = require('electron');
+        const { writeFileSync, mkdirSync } = require('node:fs');
+        const { join } = require('node:path');
+        const { prepareBrandPathMigration } = require(${JSON.stringify(source)});
+        const fixture = ${JSON.stringify(fixture)};
+        for (const name of ['userData', 'sessionData', 'logs', 'crashDumps']) {
+          const path = join(fixture, name); mkdirSync(path); app.setPath(name, path);
+        }
+        app.commandLine.appendSwitch('open-science-headless');
+        let hiddenBeforeReady;
+        prepareBrandPathMigration({
+          isPackaged: false,
+          getAppPath: () => ${JSON.stringify(root)},
+          getPath: app.getPath.bind(app),
+          commandLine: app.commandLine,
+          on: app.on.bind(app), once: app.once.bind(app),
+          setActivationPolicy(policy) {
+            app.setActivationPolicy(policy);
+            if (policy === 'accessory') hiddenBeforeReady = !app.dock.isVisible() && !app.isReady();
+          }
+        });
+        app.whenReady().then(() => {
+          writeFileSync(${JSON.stringify(evidence)}, JSON.stringify({hiddenBeforeReady, visibleAfterReady: app.dock.isVisible()}));
+          app.quit();
+        });`,
+      resolveDir: root,
+      loader: 'ts'
+    },
+    outfile: entry,
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    packages: 'external'
+  })
+  const executable = createRequire(resolve('package.json'))('electron') as string
+  const child = spawn(executable, [entry], {
+    env: { ...environment(), OPEN_SCIENCE_E2E_STORAGE_ROOT: fixture },
+    stdio: ['ignore', 'ignore', 'pipe']
+  })
+  let stderr = ''
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk
+  })
+  const timer = setTimeout(() => child.kill(), 60000)
+  try {
+    const code = await new Promise((resolve, reject) => {
+      child.once('exit', resolve)
+      child.once('error', reject)
+    })
+    expect(code, stderr).toBe(0)
+    expect(JSON.parse(await readFile(evidence, 'utf8'))).toEqual({
+      hiddenBeforeReady: true,
+      visibleAfterReady: true
+    })
+  } finally {
+    clearTimeout(timer)
+    if (child.exitCode === null) child.kill()
+    await rm(fixture, { recursive: true, force: true })
+  }
+})
 
 test('shows an isolated progress window and retains a failure without opening the real profile', async ({}, info) => {
   const fixture = await mkdtemp(join(tmpdir(), 'open-science-progress-e2e-'))

@@ -4,7 +4,10 @@ import { isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { App } from 'electron'
 
-type BrandMigrationApp = Pick<App, 'isPackaged' | 'getPath' | 'getAppPath' | 'commandLine' | 'on'>
+type BrandMigrationApp = Pick<
+  App,
+  'isPackaged' | 'getPath' | 'getAppPath' | 'commandLine' | 'on' | 'once' | 'setActivationPolicy'
+>
 
 // Synchronous on purpose: Electron must not reach ready (and open Chromium databases/logs) while
 // the offline child prepares the profile. The child has no Electron imports or application writers.
@@ -43,6 +46,9 @@ export const prepareBrandPathMigration = (
     '--startup-owner',
     String(process.pid)
   ]
+  // A failed unpublished dev attempt is replaceable, while its receipt and stages remain archived.
+  // Packaged startup and explicit offline resume/rollback retain strict snapshot recovery.
+  if (!app.isPackaged) args.push('--fresh-dev-migration')
   if (!app.commandLine.hasSwitch('open-science-headless')) args.push('--show-progress-window')
   if (!app.isPackaged && process.env.OPEN_SCIENCE_ALLOW_MULTI_INSTANCE === '1')
     args.push('--allow-multi-instance')
@@ -61,6 +67,9 @@ export const prepareBrandPathMigration = (
       args.push('--temp-parent', temp!)
   }
   // Node mode uses the already-running Electron payload (also works inside an AppImage mount).
+  // This owner cannot process macOS launch events while spawnSync waits. The independent progress
+  // window owns the visible Dock presence until this process actually reaches ready.
+  if (process.platform === 'darwin') app.setActivationPolicy('accessory')
   const result = spawnSync(process.execPath, args, {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: '' },
     encoding: 'utf8',
@@ -79,6 +88,7 @@ export const prepareBrandPathMigration = (
     relayOnly?: boolean
     lease?: { path: string; token: string }
   }
+  if (process.platform === 'darwin') app.once('ready', () => app.setActivationPolicy('regular'))
   if (receipt.lease) {
     const lease = receipt.lease
     app.on('quit', () => {

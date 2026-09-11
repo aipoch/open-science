@@ -1,5 +1,5 @@
 import { expect, test as base } from '@playwright/test'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import {
   chmod,
   copyFile,
@@ -13,7 +13,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
 import {
@@ -144,7 +144,7 @@ type ElectronApp = {
   configureFileBrowserFixture: () => Promise<void>
   configureFakeAgent: () => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
-  restartWithLegacyBrandPaths: () => Promise<{
+  restartWithLegacyBrandPaths: (failedPreparing?: boolean) => Promise<{
     page: Page
     oldRoot: string
     newRoot: string
@@ -967,7 +967,7 @@ class ElectronAppHarness implements ElectronApp {
     return this.page
   }
 
-  async restartWithLegacyBrandPaths(): Promise<{
+  async restartWithLegacyBrandPaths(failedPreparing = false): Promise<{
     page: Page
     oldRoot: string
     newRoot: string
@@ -1043,6 +1043,43 @@ class ElectronAppHarness implements ElectronApp {
     if (receipt.participants.length)
       throw new Error('Fixture already contains a real migration receipt')
     await rm(state, { recursive: true })
+    if (failedPreparing) {
+      // Leave a real copied stage and receipt, then change the current source while stopped.
+      // All paths are the same disposable roots used by the subsequent actual Electron startup.
+      const migrationUrl = pathToFileURL(
+        join(APP_ROOT, 'resources', 'brand-migration', 'transaction.mjs')
+      ).href
+      const { runMigration } = await import(migrationUrl)
+      await expect(
+        runMigration(
+          {
+            home: this.roots.storageRoot,
+            appData: join(this.roots.storageRoot, 'electron-app-data'),
+            configRoot: this.roots.storageRoot,
+            userData: this.roots.userDataRoot,
+            mode: 'dev',
+            execute: true
+          },
+          {
+            onProgress(event: { phase: string }) {
+              if (event.phase === 'copied') throw new Error('disposable migration interruption')
+            }
+          }
+        )
+      ).rejects.toThrow('disposable migration interruption')
+      await writeFile(settingsFile, `${JSON.stringify(settings, null, 2)}\n`)
+      await writeFile(join(oldRoot, 'fresh-retry.txt'), 'created after the failed attempt')
+      if (process.platform === 'darwin') {
+        const cache = join(oldRoot, 'runtime', 'pkgs', 'cache')
+        await mkdir(cache, { recursive: true })
+        await chmod(cache, 0o2775)
+        for (const [name, value] of [
+          ['com.apple.cs.CodeSignature', ''],
+          ['com.apple.quarantine', '0081;65000000;Fixture;']
+        ])
+          execFileSync('/usr/bin/xattr', ['-w', name, value, join(oldRoot, 'fresh-retry.txt')])
+      }
+    }
     await this.launch()
     const migratedDb = new DatabaseSync(dbPath, { readOnly: true })
     try {

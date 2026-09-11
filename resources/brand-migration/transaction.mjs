@@ -19,9 +19,9 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { assertNoLinuxOpenFiles } from './linux-occupancy.mjs'
 import { acquireKernelGuard } from './lock-guard.mjs'
-import { restartPreparing } from './preparing-restart.mjs'
+import { assertUnpublished, restartPreparing } from './preparing-restart.mjs'
 import { reportProgress, withMigrationProgress } from './progress.mjs'
-import { metadataDigest } from './metadata.mjs'
+import { metadataDigest, metadataFormat, repairDarwinMetadata } from './metadata.mjs'
 import {
   changedReferenceFiles,
   bundleInventory,
@@ -71,7 +71,7 @@ async function digest(file) {
 
 // Never follow nested symlinks. Their targets, directory layout, mode, timestamp and every file's
 // bytes are inventoried; special nodes are refused because they cannot be safely snapshotted.
-export async function inventory(root, phase = 'scanning') {
+export async function inventory(root, phase = 'scanning', format) {
   await reportProgress({ phase, path: root, completed: 0 }, true)
   const entries = []
   const hardlinks = new Map()
@@ -105,7 +105,7 @@ export async function inventory(root, phase = 'scanning') {
   }
   await visit('')
   await reportProgress({ phase: 'metadata', path: root })
-  entries[0].metadata = metadataDigest(root)
+  entries[0].metadata = metadataDigest(root, format)
   await reportProgress(
     { phase, path: root, completed: entries.length, total: entries.length },
     true
@@ -121,8 +121,14 @@ const signature = (entries) =>
   )
 export async function verify(root, expected, participant) {
   const actual = participant?.files
-    ? await bundleInventory(root, participant.files, (path) => inventory(path, 'verifying'))
-    : await inventory(root, 'verifying')
+    ? await bundleInventory(root, participant.files, (path) =>
+        inventory(
+          path,
+          'verifying',
+          metadataFormat(expected.find((e) => e.path === relative(root, path))?.metadata)
+        )
+      )
+    : await inventory(root, 'verifying', metadataFormat(expected[0]?.metadata))
   if (signature(actual) !== signature(expected)) {
     const before = new Map(expected.map((entry) => [entry.path, entry]))
     const after = new Map(actual.map((entry) => [entry.path, entry]))
@@ -474,9 +480,10 @@ async function inspectDocuments(root, entries, plan) {
 export async function copyTree(from, to) {
   // Native copying preserves ACLs, extended attributes and hardlinks in addition to portable metadata.
   // No shell interpolation; all paths are separate argv. Source roots have already passed symlink checks.
-  if (process.platform === 'darwin')
+  if (process.platform === 'darwin') {
     execFileSync('/usr/bin/ditto', ['--rsrc', '--extattr', '--acl', from, to])
-  else if (process.platform === 'linux') {
+    repairDarwinMetadata(from, to)
+  } else if (process.platform === 'linux') {
     if ((await lstat(from)).isDirectory()) {
       await mkdir(to)
       execFileSync('cp', ['-a', '--', `${from}/.`, to])
@@ -950,6 +957,17 @@ export async function runMigration(options, deps = {}) {
 async function migrate(options, deps) {
   const progress = reportProgress
   if (
+    options.freshDevMigration &&
+    (options.mode !== 'dev' ||
+      options.resume ||
+      options.rollback ||
+      options.restartPreparing ||
+      options.restartAfterRollback ||
+      options.auditAliases ||
+      options.retireAliases)
+  )
+    throw new Error('--fresh-dev-migration requires dev mode and preview or --execute')
+  if (
     options.restartPreparing &&
     (options.startupOwner ||
       options.execute ||
@@ -1036,6 +1054,44 @@ async function migrate(options, deps) {
       } else await durableJson(archive, journal)
       journal = { ...journal, version: 2, id, platform: journal.platform ?? plan.platform }
       await durableJson(journalFile, journal)
+    }
+    if (options.freshDevMigration && journal?.status === 'preparing') {
+      // No source has been published in this phase. Prove that invariant using the actual trees
+      // and recovery intents before accepting current data/configuration as a new snapshot.
+      // Never reset publishing, rollback, committed or ambiguous legacy states.
+      const checkWriters = () => {
+        assertHeld()
+        ;(deps.assertNoProcesses ?? assertNoProcesses)(
+          [
+            current.configRoot,
+            ...journal.participants.flatMap((p) =>
+              [p.from, p.to, p.stage, p.backup, p.previousTarget?.backup].filter(Boolean)
+            )
+          ],
+          [...(options.ignorePids ?? []), ...(options.startupOwner ? [options.startupOwner] : [])]
+        )
+      }
+      await assertUnpublished(journal, current)
+      checkWriters()
+      const next = await planRoots(await discover(options))
+      if (next.blockers.length) throw new Error(next.blockers.join('\n'))
+      // Changed preferences cannot silently abandon a previously selected owned source tree.
+      for (const prior of journal.mappings) {
+        if (!next.mappings.some((m) => m.from === prior.from && m.to === prior.to))
+          throw new Error('Migration roots changed; reconcile the previous dev plan explicitly')
+      }
+      const archive = join(plan.stateDir, `journal-${journal.id}.abandoned.json`)
+      if (await inspect(archive)) throw new Error(`Receipt archive conflict: ${archive}`)
+      await assertUnpublished(journal, current)
+      checkWriters()
+      // One atomic rename retires only the active receipt. No stage, source, target or backup is
+      // deleted. A crash before rename keeps the old receipt; after rename, normal discovery is
+      // safe because all originals are still in place. The next transaction gets a fresh UUID.
+      await rename(journalFile, archive)
+      await syncDirectory(plan.stateDir)
+      await progress({ phase: 'restart-archived', path: archive })
+      current = next
+      journal = undefined
     }
     if (journal?.status === 'restarting' && !options.resume && !options.restartPreparing)
       throw new Error(

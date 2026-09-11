@@ -36,6 +36,7 @@ export async function main(argv = process.argv.slice(2)) {
     else if (flag === '--audit-aliases') options.auditAliases = true
     else if (flag === '--retire-aliases') options.retireAliases = true
     else if (flag === '--execute') options.execute = true
+    else if (flag === '--fresh-dev-migration') options.freshDevMigration = true
     else if (flag === '--restart-preparing') options.restartPreparing = true
     else if (flag === '--resume') options.resume = true
     else if (flag === '--rollback') options.rollback = true
@@ -49,7 +50,7 @@ export async function main(argv = process.argv.slice(2)) {
       options.maps.push(pair)
     } else if (flag === '--help') {
       console.log(
-        'Usage: node scripts/migrate-brand-paths.mjs [--mode dev|packaged] [--home PATH] [--app-data PATH] [--config-root PATH] [--user-data PATH] [--map JSON] [--execute|--resume|--rollback|--restart-preparing] [--recover-lock] [--recover-incomplete-lock SHA256] [--restart-after-rollback] [--audit-aliases|--retire-aliases] [--state-dir PATH] [--data-parent PATH]\nWithout an action this command only prints a dry-run plan. Stop all app and runtime processes before execution.'
+        'Usage: node scripts/migrate-brand-paths.mjs [--mode dev|packaged] [--home PATH] [--app-data PATH] [--config-root PATH] [--user-data PATH] [--map JSON] [--execute|--resume|--rollback|--restart-preparing] [--fresh-dev-migration] [--recover-lock] [--recover-incomplete-lock SHA256] [--restart-after-rollback] [--audit-aliases|--retire-aliases] [--state-dir PATH] [--data-parent PATH]\nWithout an action this command only prints a dry-run plan. Stop all app and runtime processes before execution.'
       )
       return
     } else throw new Error(`Unknown argument: ${flag}`)

@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, rename } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { documentKind, transformDocument, rewriteDatabase } from './references.mjs'
 import { inspect } from './paths.mjs'
+import { metadataFormat } from './metadata.mjs'
 
 const databaseFile = /^open-science\.db(?:-wal|-shm)?$/
 // Read names and supported documents only. An adopted normalized tree needs neither an all-file
@@ -74,7 +75,9 @@ export async function copyBundle(p, copy, verify, syncDirectory) {
 
 const entryAt = (manifest, path) => manifest?.find((e) => e.path === path)
 async function verifyMember(root, path, expected, inventory) {
-  const current = await bundleInventory(root, [path], inventory)
+  const current = await bundleInventory(root, [path], (file) =>
+    inventory(file, 'verifying', metadataFormat(expected?.metadata))
+  )
   if (JSON.stringify(current[1]) !== JSON.stringify(expected))
     throw new Error(`Integrity mismatch or missing backup: ${join(root, path)}`)
 }

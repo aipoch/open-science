@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { open } from 'node:fs/promises'
 import { join } from 'node:path'
 import { assertPlainAncestors, inspect, readJson } from './paths.mjs'
+import { metadataFormat } from './metadata.mjs'
 
 const shape = (journal) =>
   JSON.stringify({
@@ -16,7 +17,7 @@ const stable = ({ mtimeMs, ...entry }) => ({
 // An explicit restart accepts appended bytes in existing application log files only. Rotation,
 // deletion, metadata changes and any change in user data/configuration still need reconciliation.
 async function verifyLogAppends(root, expected, inventory) {
-  const actual = await inventory(root, 'verifying')
+  const actual = await inventory(root, 'verifying', metadataFormat(expected[0]?.metadata))
   if (actual.length !== expected.length) throw new Error(`Log entries changed at ${root}`)
   for (let i = 0; i < expected.length; i++) {
     const before = expected[i]
@@ -60,7 +61,7 @@ async function verifyLogAppends(root, expected, inventory) {
   }
 }
 
-async function assertUnpublished(journal, plan) {
+export async function assertUnpublished(journal, plan) {
   if (
     !['preparing', 'restarting'].includes(journal.status) ||
     journal.protectedMigration ||
@@ -76,8 +77,12 @@ async function assertUnpublished(journal, plan) {
       p.publishIntents?.length ||
       p.restoreIntents?.length ||
       p.rollbackSnapshot ||
+      p.rollbackOriginalInPlace ||
+      p.rollbackOriginals?.length ||
       p.restoreIntent ||
-      p.restored
+      p.restored ||
+      p.previousTarget?.restoreIntent ||
+      p.previousTarget?.restored
     )
       throw new Error('Publication or restoration intent prevents a preparing snapshot restart')
     for (const root of [p.from, p.to, p.stage]) await assertPlainAncestors(root)
