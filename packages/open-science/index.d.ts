@@ -261,7 +261,9 @@ export type ModelRouting =
     }
 export type RequestOptions = {
   idempotencyKey?: string
+  /** Aborts this request, not work already accepted by the service. */
   signal?: AbortSignal
+  /** Per-request deadline in milliseconds, including response-body consumption. */
   timeoutMs?: number
 }
 export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
@@ -612,13 +614,18 @@ export class OpenScienceClient {
     options?: RequestOptions
   ): Promise<Run>
   getRun(runId: string, options?: RequestOptions): Promise<Run>
+  /** Explicitly cancels the server run and waits for finalization. */
   cancelRun(runId: string, options?: RequestOptions): Promise<Run>
   waitForRun(
     runId: string,
     options?: {
+      /** Finite positive delay between polls; defaults to 250 milliseconds. */
       pollIntervalMs?: number
+      /** Returns a still-running run when it needs attention; defaults to false. */
       returnOnAttention?: boolean
+      /** Stops local waiting without cancelling the run. */
       signal?: AbortSignal
+      /** Total wait budget; omitted means no total deadline. Each poll retains requestTimeoutMs. */
       timeoutMs?: number
     }
   ): Promise<Run>

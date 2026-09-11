@@ -588,6 +588,26 @@ describe('AcpPromptPreparationOwner', () => {
     expect(recallForPrompt).not.toHaveBeenCalled()
   })
 
+  it('discards recalled records when the Session disables Memory during recall', async () => {
+    let enabled = true
+    const fixture = setup(
+      undefined,
+      {
+        recallForPrompt: vi.fn(async () => {
+          enabled = false
+          return 'recalled memory'
+        })
+      },
+      () => enabled
+    )
+    const handle = await fixture.prepare()
+    expect(handle.status).toBe('ready')
+    const preparedText = (
+      fixture.promptContent.prepare.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0].text
+    expect(preparedText).not.toContain('recalled memory')
+  })
+
   it('continues prompt preparation when automatic memory recall fails', async () => {
     const fixture = setup(undefined, {
       recallForPrompt: vi.fn(async () => {

@@ -217,8 +217,9 @@ class NotebookPackageAdmissionOwner {
     if (runtimeIdBlocked || prefixBlocked || corruptBlockedExternal) {
       return refusal(
         `RUNTIME_RECOVERY_BLOCKED: the ${request.language} environment is recovering from an ` +
-          'interrupted operation whose process could not be confirmed stopped. Restart the app to ' +
-          're-check and recover it before installing packages.',
+          'interrupted operation that has not been safely reconciled. Use Recheck in Settings → ' +
+          'Runtimes to inspect the reason and retry recovery. Restarting the app does not prove ' +
+          'that an old worker stopped; do not delete the operation journal or force package writes.',
         receipt
       )
     }

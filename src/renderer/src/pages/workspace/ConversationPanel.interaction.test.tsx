@@ -567,6 +567,7 @@ const createPanelDefaults = (): PanelProps => ({
       stageFiles: onStageAttachmentFiles,
       stagePastedText: vi.fn(),
       cancelTransfer: vi.fn(),
+      retryTransfer: vi.fn(),
       removeAttachment: vi.fn(),
       restorePastedText: vi.fn(),
       undo: vi.fn(() => false),
@@ -2423,6 +2424,39 @@ describe('ConversationPanel composer intake', () => {
       'hidden'
     )
     expect(container.querySelector('[data-testid="menu-view-plan"]')).not.toBeNull()
+  })
+
+  it('offers retry only for a failed attachment whose source is still available', () => {
+    const retryTransfer = vi.fn()
+    const failed = {
+      transferId: 'failed',
+      name: 'failed.csv',
+      receivedBytes: 0,
+      totalBytes: 12,
+      status: 'error' as const,
+      canRetry: true,
+      error: 'Upload failed',
+      errorDetail: 'disk full'
+    }
+    renderPanel({
+      composer: {
+        view: {
+          transfers: [
+            failed,
+            { ...failed, transferId: 'restored', name: 'restored.csv', canRetry: false }
+          ]
+        },
+        actions: { retryTransfer }
+      }
+    })
+    const retry = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Retry attachment failed.csv"]'
+    )
+    expect(retry).not.toBeNull()
+    expect(container.querySelector('[aria-label="Retry attachment restored.csv"]')).toBeNull()
+    expect(container.querySelector('[title="disk full"]')).not.toBeNull()
+    act(() => retry?.click())
+    expect(retryTransfer).toHaveBeenCalledExactlyOnceWith(failed)
   })
 
   it('shows per-file progress and cancels only the selected transfer', () => {

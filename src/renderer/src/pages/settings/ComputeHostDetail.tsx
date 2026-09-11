@@ -507,9 +507,13 @@ export function ComputeHostDetail({
           <p className="mt-2 text-xs text-status-failure-strong dark:text-status-failure-dark-emphasis">
             {probed.authenticationCode
               ? computeRuntimeRecoveryCopy(probed.authenticationCode, t)
-              : t(
-                  'The Compute Host connection failed. Check the Host and network, then try again.'
-                )}
+              : probed.sshConnected === false
+                ? t(
+                    'The Compute Host connection failed. Check the Host and network, then try again.'
+                  )
+                : t(
+                    'A connection check failed. Review the recent checks, update the Host configuration, then probe again.'
+                  )}
           </p>
           {probed.authenticationCode ? (
             <Button
@@ -533,6 +537,31 @@ export function ComputeHostDetail({
           {errorText(probeError)}
         </p>
       ) : null}
+
+      <SettingsSection
+        className="mt-6"
+        title={t('Recent connection checks')}
+        description={t(
+          'These are past observations. Each operation checks the current connection again.'
+        )}
+      >
+        <dl className="grid grid-cols-2 gap-2 text-sm">
+          {[
+            [t('SSH connection'), probed?.sshConnected],
+            [t('Command execution'), probed?.commandExecutable],
+            [t('Scratch write check'), probed?.scratchWritable],
+            [t('Slurm query'), probed?.schedulerAvailable]
+          ].map(([label, value]) => (
+            <div key={String(label)}>
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd>{value === true ? t('Passed') : value === false ? t('Failed') : t('Unknown')}</dd>
+            </div>
+          ))}
+        </dl>
+        {probed?.scratchPath ? (
+          <p className="mt-2 break-all font-mono text-xs">{probed.scratchPath}</p>
+        ) : null}
+      </SettingsSection>
 
       {/* Resource summary — shown only when a successful probe has populated resource fields */}
       {status === 'last_probe_ok' && probed ? (

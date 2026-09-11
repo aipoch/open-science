@@ -43,6 +43,11 @@ export class JobHarvestScheduler {
     return task
   }
 
+  retry(job: ComputeJob, signal?: AbortSignal): Promise<void> {
+    this.retries.delete(job.job_id)
+    return this.schedule(job, signal)
+  }
+
   async waitForIdle(): Promise<void> {
     while (this.inFlightJobs.size > 0) {
       await Promise.all([...this.inFlightJobs.values()])

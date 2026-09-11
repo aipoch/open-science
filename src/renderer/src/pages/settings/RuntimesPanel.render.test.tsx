@@ -1499,3 +1499,46 @@ it('does not use a stale write fallback after a policy event even when rereading
   ).toBe('checked')
   expect(useRuntimeSettingsStore.getState().error).toBe('Could not load runtimes.')
 })
+
+it('rechecks recovery before discovery without resetting or changing package permissions', async () => {
+  const getStatus = vi.mocked(window.api.notebookEnv.getStatus)
+  getStatus.mockResolvedValue({
+    ...provisionStatus,
+    pythonRecoveryBlocked: true,
+    recovery: {
+      checkedAt: 123,
+      corruptJournal: false,
+      operations: [
+        { operationId: 'old-install', runtimeId: '/own/python', reason: 'child-unrecorded' }
+      ]
+    }
+  })
+  await act(async () => root.render(<RuntimesPanel title="Runtimes" description="" />))
+  expect(container.textContent).toContain('old-install')
+  expect(container.textContent).toContain('The worker identity was not recorded.')
+  getStatus.mockResolvedValue({
+    ...provisionStatus,
+    recovery: { checkedAt: 456, corruptJournal: false, operations: [] }
+  })
+  const before = getStatus.mock.calls.length
+  await act(async () =>
+    (container.querySelector('[data-testid="runtimes-recheck"]') as HTMLButtonElement).click()
+  )
+  expect(getStatus).toHaveBeenCalledTimes(before + 1)
+  expect(container.textContent).not.toContain('old-install')
+  expect(repairBridge).not.toHaveBeenCalled()
+  expect(provision).not.toHaveBeenCalled()
+  expect(setInstallAuthorized).not.toHaveBeenCalled()
+})
+
+it('distinguishes a durable repair requirement from an unconfirmed worker', async () => {
+  vi.mocked(window.api.notebookEnv.getStatus).mockResolvedValue({
+    ...provisionStatus,
+    pythonRecoveryBlocked: true,
+    pythonRepairRequired: true
+  })
+  await act(async () => root.render(<RuntimesPanel title="Runtimes" description="" />))
+  expect(container.textContent).toContain('Runtime repair required')
+  expect(container.textContent).not.toContain('The previous worker may still be running')
+  expect(container.querySelector('[data-testid="runtime-reset-python"]')).not.toBeNull()
+})

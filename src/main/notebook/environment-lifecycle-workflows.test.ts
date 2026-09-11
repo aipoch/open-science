@@ -937,3 +937,24 @@ describe('environment lifecycle startup', () => {
     expect(order).toEqual(['recovery', 'restore', 'upgrade'])
   })
 })
+
+it.each([true, false])(
+  'reads recovery diagnostics after the shared barrier (provisioner: %s)',
+  async (available) => {
+    const order: string[] = []
+    const lifecycle = createNotebookEnvironmentLifecycle({
+      root: '/runtime',
+      provisioner: available ? fakeProvisioner() : undefined,
+      projectProgress: () => undefined,
+      waitForRecovery: async () => {
+        order.push('barrier')
+      },
+      recoveryStatus: () => {
+        order.push('snapshot')
+        return { checkedAt: 123, corruptJournal: false, operations: [] }
+      }
+    })
+    expect(await lifecycle.status()).toMatchObject({ recovery: { checkedAt: 123 } })
+    expect(order).toEqual(['barrier', 'snapshot'])
+  }
+)

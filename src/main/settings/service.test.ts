@@ -6726,8 +6726,10 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
       repository,
       configRoot: storageRoot,
       userClaudeDir,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      userSkills: { previewAgentHomeSkill } as any
+      userSkills: {
+        previewAgentHomeSkill,
+        listAgentHomeSkills: vi.fn().mockResolvedValue([])
+      } as unknown as UserSkillRepositoryType
     })
     await repository.setAgentFramework('claude-code')
 

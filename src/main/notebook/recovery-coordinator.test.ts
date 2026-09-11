@@ -857,3 +857,61 @@ it.each(['download', 'materialize'] as const)(
     }
   }
 )
+
+it('rechecks only startup leftovers while preserving new operations and their cache', async () => {
+  const runtimeRoot = await createRuntimeRoot()
+  const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+  const journal = await beginInterruptedMaterialize(runtimeRoot, 'old-worker', prefix)
+  await journal.update('old-worker', { childPid: process.pid, childStartedAt: Date.now() })
+  const recovery = new NotebookRecoveryCoordinator(runtimeRoot)
+  await recovery.recover()
+  expect(recovery.status()).toMatchObject({
+    checkedAt: expect.any(Number),
+    operations: [{ operationId: 'old-worker', reason: 'child-unconfirmed', targetPath: prefix }]
+  })
+  const newStaging = join(runtimeRoot, 'packs', '.cache', 'new-download')
+  await mkdir(newStaging, { recursive: true })
+  await writeFile(join(newStaging, 'keep'), 'in-progress')
+  await journal.begin({
+    operationId: 'new-download',
+    kind: 'download',
+    runtimeId: 'new',
+    phase: 'fetch-python',
+    startedAt: Date.now(),
+    targetPath: newStaging
+  })
+  await recovery.ensureReady()
+  expect((await journal.pending()).map((record) => record.operationId)).toEqual([
+    'old-worker',
+    'new-download'
+  ])
+  expect(existsSync(join(newStaging, 'keep'))).toBe(true)
+  expect(recovery.isPrefixBlocked(newStaging)).toBe(false)
+  expect(recovery.status().operations).toHaveLength(1)
+  const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+    throw Object.assign(new Error('gone'), { code: 'ESRCH' })
+  })
+  try {
+    await Promise.all([recovery.ensureReady(), recovery.ensureReady()])
+    expect(recovery.isPrefixBlocked(prefix)).toBe(false)
+    expect(recovery.status().operations).toEqual([])
+    expect((await journal.pending()).map((record) => record.operationId)).toEqual(['new-download'])
+    expect(existsSync(join(newStaging, 'keep'))).toBe(true)
+  } finally {
+    kill.mockRestore()
+  }
+})
+
+it('removes stale recovery details after explicit repair clears the affected block', async () => {
+  const runtimeRoot = await createRuntimeRoot()
+  const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+  const journal = await beginInterruptedMaterialize(runtimeRoot, 'repair-cleared', prefix)
+  await journal.update('repair-cleared', { childPid: process.pid, childStartedAt: Date.now() })
+  const recovery = new NotebookRecoveryCoordinator(runtimeRoot)
+  await recovery.recover()
+  expect(recovery.status().operations).toHaveLength(1)
+  // The authorized repair owner clears its journal before releasing the coordinator's block.
+  await journal.complete('repair-cleared')
+  recovery.clearPrefixBlock(prefix)
+  expect(recovery.status().operations).toEqual([])
+})

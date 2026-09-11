@@ -686,6 +686,11 @@ export const GlobalSearchDialog = ({
                 )
               })}
             </div>
+            <p className="px-4 pb-2 text-xs text-muted-foreground">
+              {t(
+                'Uploaded files: names and indexed content. Generated files: names only. Unindexed content is not searched.'
+              )}
+            </p>
           </header>
           <div className="global-search-body min-h-0 flex-1" data-expanded={!!selected}>
             <section

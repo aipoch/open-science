@@ -157,15 +157,22 @@ const PermissionRow = ({
           : grant.qualifierLabel
   const summary = grant.approvalSummary ? t(grant.approvalSummary) : undefined
   const createdLabel =
-    grant.qualifierKind === 'command_group' && grant.createdAt !== undefined
+    typeof grant.createdAt === 'number' && Number.isFinite(grant.createdAt)
       ? t('Approved {{date}}', {
           date: new Intl.DateTimeFormat(i18n.language, {
             dateStyle: 'medium',
             timeStyle: 'medium'
           }).format(grant.createdAt)
         })
-      : undefined
-  const revokeName = [title, summary, scopeLabel, createdLabel].filter(Boolean).join(' · ')
+      : t('Approval time unknown')
+  const revokeName = [
+    title,
+    summary,
+    scopeLabel,
+    grant.qualifierKind === 'command_group' ? createdLabel : undefined
+  ]
+    .filter(Boolean)
+    .join(' · ')
   const policyHint =
     grant.effectiveState === 'blocked_by_policy'
       ? t('Blocked in Connectors; this permission is currently inactive')
@@ -202,9 +209,9 @@ const PermissionRow = ({
         {grant.qualifierKind === 'command_group' ? (
           <p className="mt-0.5 text-xs text-muted-foreground">
             {summary ?? t('Command details unavailable for this permission')}
-            {createdLabel ? <span className="ml-2">{createdLabel}</span> : null}
           </p>
         ) : null}
+        <p className="mt-0.5 text-xs text-muted-foreground">{createdLabel}</p>
         {grant.coveredBy ? (
           <p className="mt-0.5 text-xs text-muted-foreground">
             {t('Also allowed {{scope}}', {

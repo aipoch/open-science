@@ -37,6 +37,7 @@ const upsertReview = (
   updated: ReviewWithChecks
 ): ReviewWithChecks[] => {
   const current = reviews.find((r) => r.id === updated.id)
+  if (current && updated.updatedAt < current.updatedAt) return reviews
   const merged = current
     ? {
         ...updated,

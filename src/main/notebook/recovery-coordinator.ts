@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { lstat, readFile, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 
+import type { NotebookRecoveryStatus } from '../../shared/notebook-env'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import { createLogger } from '../logger'
 import {
@@ -66,6 +67,9 @@ type NotebookRecoveryCoordinatorDeps = {
 }
 
 export class NotebookRecoveryCoordinator {
+  private startupOperationIds: Set<string> | undefined
+  private checkedAt: number | undefined
+  private retainedOperations: NotebookRecoveryStatus['operations'] = []
   private recoveryComplete: Promise<void> | undefined
   private recoveryInFlight: Promise<void> | undefined
   private readiness: NotebookRecoveryReadiness = 'not-started'
@@ -112,6 +116,7 @@ export class NotebookRecoveryCoordinator {
       if (!this.disposed) this.readiness = 'failed'
       throw error
     } finally {
+      this.checkedAt = Date.now()
       if (isCurrentInFlight(this.recoveryInFlight, run)) this.recoveryInFlight = undefined
     }
   }
@@ -133,6 +138,21 @@ export class NotebookRecoveryCoordinator {
     this.disposed = true
     this.readiness = 'disposed'
     await this.recoveryInFlight?.catch(() => undefined)
+  }
+
+  status(): NotebookRecoveryStatus {
+    return {
+      checkedAt: this.checkedAt,
+      corruptJournal: this.recoveryCorrupt,
+      operations: this.retainedOperations
+        .filter(
+          (operation) =>
+            this.startupBlockedRuntimeIds.has(operation.runtimeId) ||
+            (operation.targetPath !== undefined &&
+              this.startupBlockedPrefixes.has(operation.targetPath))
+        )
+        .map((operation) => ({ ...operation }))
+    }
   }
 
   snapshot(): NotebookRecoverySnapshot {
@@ -198,17 +218,24 @@ export class NotebookRecoveryCoordinator {
     const publishedArchiveRecords: RuntimeOperationRecord[] = []
     let recoveryIncomplete = false
 
-    await rm(join(this.runtimeRoot, 'packs', '.cache'), { recursive: true, force: true }).catch(
-      () => undefined
-    )
+    const initialRecovery = this.startupOperationIds === undefined
+    if (initialRecovery) {
+      await rm(join(this.runtimeRoot, 'packs', '.cache'), { recursive: true, force: true }).catch(
+        () => undefined
+      )
+    }
     const journal = RuntimeOperationJournal.forPath(operationJournalPath(this.runtimeRoot))
-    if ((await journal.readState()) === 'corrupt') {
+    const startupState = await journal.readState()
+    if (startupState === 'corrupt') {
       log.error('operation journal is unreadable; blocking all runtime writes until recovery')
       this.recoveryCorrupt = true
       return
     }
 
+    this.startupOperationIds ??= new Set(startupState.records.map((record) => record.operationId))
+    this.retainedOperations = []
     const reconciled = await reconcileInterruptedOperations(journal, {
+      operationIds: this.startupOperationIds,
       operationChildLiveness: defaultOperationChildLiveness,
       hydrateInterruptedChild: (record) => {
         const state = readOperationChild(this.runtimeRoot, record.operationId)
@@ -358,7 +385,13 @@ export class NotebookRecoveryCoordinator {
         publishedArchiveRecords.push(record)
       },
       deferArchiveCompletion: true,
-      onRetained: (record) => {
+      onRetained: (record, reason) => {
+        this.retainedOperations.push({
+          operationId: record.operationId,
+          runtimeId: record.runtimeId,
+          targetPath: record.targetPath,
+          reason
+        })
         recoveryIncomplete = true
         // A failed repair or journal commit is no safer than an unconfirmed writer. Keep the
         // existing admission block until the retained operation can be reconciled durably.
@@ -452,6 +485,7 @@ export class NotebookRecoveryCoordinator {
       this.recoveryCorrupt = true
     }
     if (
+      initialRecovery &&
       nextStartupBlockedPrefixes.size === 0 &&
       nextStartupBlockedRuntimeIds.size === 0 &&
       !recoveryIncomplete

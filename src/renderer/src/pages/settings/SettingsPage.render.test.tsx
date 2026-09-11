@@ -1936,6 +1936,45 @@ describe('SettingsPage layout', () => {
     expect(persistProvider).not.toHaveBeenCalled()
   })
 
+  it('keeps a conflicting provider draft and reapplies only edited fields to the latest revision', async () => {
+    const provider = installCustomProviderSnapshot()
+    const persistProvider = vi.fn().mockResolvedValue(provider.id)
+    useSettingsStore.setState({
+      persistProvider,
+      validateProvider: vi.fn().mockResolvedValue(undefined)
+    })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    fireEvent.change(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')!, {
+      target: { value: 'new-secret' }
+    })
+    act(() =>
+      useSettingsStore.setState({
+        providers: [{ ...provider, baseUrl: 'https://new.example', configRevision: 1 }]
+      })
+    )
+    const button = (label: string): HTMLButtonElement | undefined =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (entry) => entry.textContent?.trim() === label
+      )
+    expect(button('Save')?.disabled).toBe(true)
+    expect(document.body.textContent).toContain(
+      'Provider configuration changed. Your draft has not been saved.'
+    )
+    await act(async () => button('Reapply my changes to the latest configuration')?.click())
+    await act(async () => button('Save')?.click())
+    expect(persistProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'https://new.example',
+        key: 'new-secret',
+        expectedConfigRevision: 1,
+        requireExisting: true
+      })
+    )
+  })
+
   it('marks a Provider edit save as requiring the existing target', async () => {
     const provider = installCustomProviderSnapshot()
     const persistProvider = vi.fn().mockResolvedValue(provider.id)

@@ -97,14 +97,46 @@ class SettingsRepository {
 
   // Inserts or replaces a provider without reordering existing entries. existingId, when supplied,
   // is checked in the same mutation so stale edits cannot append a deleted provider.
-  async upsertProvider(provider: StoredProvider, existingId?: string): Promise<StoredSettings> {
+  async upsertProvider(
+    provider: StoredProvider,
+    existingId?: string,
+    configEdit?: { expectedConfigRevision?: number }
+  ): Promise<StoredSettings> {
     return this.mutate((settings) => {
       const index = settings.providers.findIndex((existing) => existing.id === provider.id)
       if (existingId && !settings.providers.some(({ id }) => id === existingId))
         throw new Error('Provider no longer exists.')
+      const source = settings.providers.find(({ id }) => id === (existingId ?? provider.id))
+      if (
+        configEdit?.expectedConfigRevision !== undefined &&
+        (!source || (source.configRevision ?? 0) !== configEdit.expectedConfigRevision)
+      )
+        throw new Error('Provider configuration changed. Your draft has not been saved.')
+      const revision = Math.max(
+        source?.configRevision ?? 0,
+        settings.providers[index]?.configRevision ?? 0
+      )
+      if (configEdit && revision >= Number.MAX_SAFE_INTEGER)
+        throw new Error('Provider revision limit reached.')
+      provider = {
+        ...provider,
+        ...(configEdit
+          ? { configRevision: revision + 1 }
+          : source?.configRevision !== undefined
+            ? { configRevision: source.configRevision }
+            : {})
+      }
       const providers = [...settings.providers]
       if (index >= 0) {
         const existing = providers[index]
+        if (
+          existing.type === provider.type &&
+          existing.vendorId === provider.vendorId &&
+          existing.region === provider.region &&
+          existing.keyRef === provider.keyRef &&
+          existing.fetchedModels
+        )
+          provider = { ...provider, fetchedModels: existing.fetchedModels }
         // Full-provider saves can be based on a snapshot read before the runtime learned its Auto
         // fallback. Keep that main-owned state across Auto-to-Auto replacement; explicit transport
         // changes still clear it because either side of this guard is no longer Auto.

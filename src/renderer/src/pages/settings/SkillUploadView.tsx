@@ -1,3 +1,4 @@
+import type { SkillReplacementPreview } from '../../../../shared/settings'
 import { AlertTriangle, Upload } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -8,7 +9,7 @@ import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SKILL_IMPORT_LIMITS } from '../../../../shared/skill-import-limits'
 import { parseSkillDocument } from '../../../../shared/skill-frontmatter'
-import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
+import { SkillImportCandidatePreview, SkillReplacementSummary } from './SkillImportCandidatePreview'
 import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
 // Rounds a byte count to whole MB for a user-facing size-limit message.
@@ -71,6 +72,7 @@ type Candidate =
       previewError?: string
       files: string[]
       alreadyImported: boolean
+      replacement?: SkillReplacementPreview
       replaceableId?: string
     }
   | {
@@ -197,6 +199,7 @@ const SkillUploadView = ({
             previewError: preview.previewError,
             files: preview.files,
             alreadyImported: preview.alreadyImported,
+            replacement: preview.replacement,
             replaceableId: preview.replaceableId
           })),
           skipped: skippedEntries
@@ -463,7 +466,7 @@ const SkillUploadView = ({
                   ? `${candidate.fileName} · ${candidate.subPath}`
                   : candidate.fileName
               return (
-                <li key={candidate.key} className="flex items-center gap-3 py-2.5">
+                <li key={candidate.key} className="flex flex-wrap items-center gap-3 py-2.5">
                   <input
                     type="checkbox"
                     aria-label={t('Select {{name}}', {
@@ -495,6 +498,8 @@ const SkillUploadView = ({
                           sourceLabel: secondary,
                           metadata: candidate.metadata,
                           body: candidate.body,
+                          replacement:
+                            candidate.kind === 'bundle' ? candidate.replacement : undefined,
                           files:
                             candidate.kind === 'bundle' ? candidate.files : [candidate.fileName]
                         }
@@ -520,6 +525,11 @@ const SkillUploadView = ({
                       </span>
                     ) : null}
                   </button>
+                  {candidate.kind === 'bundle' && candidate.replacement ? (
+                    <div className="w-full">
+                      <SkillReplacementSummary replacement={candidate.replacement} />
+                    </div>
+                  ) : null}
                 </li>
               )
             })}

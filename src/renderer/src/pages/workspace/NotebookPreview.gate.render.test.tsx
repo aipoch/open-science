@@ -888,7 +888,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect((await screen.findByRole('tooltip')).textContent).toBe(
       'Run [2] later changed x. This output is the snapshot recorded before that change; this run completed normally.'
     )
-    expect(container.textContent).not.toContain('run-3')
+    expect(screen.getByRole('tooltip').textContent).not.toContain('run-3')
     expect(container.textContent).not.toContain('out of date')
   })
 

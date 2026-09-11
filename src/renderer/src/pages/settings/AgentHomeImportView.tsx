@@ -335,6 +335,13 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
         </p>
       ) : null}
 
+      {selected.size > 0 ? (
+        <p className="my-3 text-xs text-muted-foreground">
+          {t(
+            'Reimporting an existing source replaces its local copy, including local edits. Preview selected skills before importing.'
+          )}
+        </p>
+      ) : null}
       <SkillImportCandidatePreview {...candidatePreview.previewProps} />
     </div>
   )

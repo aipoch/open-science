@@ -337,6 +337,49 @@ describe('OpenScienceClient', () => {
     }
   })
 
+  it.each([0, -1, NaN, Infinity, -Infinity, '250'])(
+    'rejects invalid pollIntervalMs %s before polling',
+    async (pollIntervalMs) => {
+      const fetch = vi.fn()
+      const client = new OpenScienceClient({ baseUrl: 'http://localhost', token: 'test', fetch })
+      await expect(client.waitForRun('run-1', { pollIntervalMs })).rejects.toThrow(
+        'pollIntervalMs must be a positive number.'
+      )
+      expect(fetch).not.toHaveBeenCalled()
+    }
+  )
+
+  it('preserves the single-request deadline inside a longer total wait', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetch = vi.fn(
+        (_input: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+              once: true
+            })
+          })
+      )
+      const client = new OpenScienceClient({
+        baseUrl: 'http://localhost',
+        token: 'test',
+        fetch,
+        requestTimeoutMs: 100
+      })
+      const outcome = client
+        .waitForRun('run-1', { timeoutMs: 1000 })
+        .catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(100)
+      expect(await Promise.race([outcome, Promise.resolve('pending')])).toMatchObject({
+        code: 'timeout',
+        message: 'Open Science request timed out after 100 milliseconds.'
+      })
+      expect(fetch).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('cancels one run through the explicit server operation', async () => {
     const fetch = vi.fn().mockResolvedValue(
       response(200, {

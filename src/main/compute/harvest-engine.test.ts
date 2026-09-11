@@ -808,7 +808,7 @@ describe('harvestJob — harvest_failed', () => {
     ).resolves.toContain('published.result')
   })
 
-  it('freezes successful outputs without publishing a partial workspace after a sibling download fails', async () => {
+  it('freezes successful outputs without publishing a partial workspace after a sibling exceeds the transfer limit', async () => {
     const storageRoot = await mkTmp()
     const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
     await beginComputeJobFileEvidence({
@@ -822,7 +822,13 @@ describe('harvestJob — harvest_failed', () => {
     const userPartial = join(harvestDir, 'featured', 'user-history.partial')
     await mkdir(dirname(userPartial), { recursive: true })
     await writeFile(userPartial, 'user-owned')
-    const scp = makeScpRunner(2)
+    const scp = makeScpRunner()
+    const copy = scp.copyFromRemoteBounded!
+    let copies = 0
+    scp.copyFromRemoteBounded = async (...args) => {
+      const result = await copy(...args)
+      return ++copies === 2 ? { ...result, exceeded: true } : result
+    }
     const { repo, updates } = makeJobRepo(job)
 
     await harvestJob(job, {
@@ -975,34 +981,68 @@ describe('harvestJob — harvest_failed', () => {
     }
   )
 
-  it('sets harvestError on scp failure, still sets harvestedAt, keeps partial files', async () => {
+  it('keeps a transient local host lookup failure pending without exposing its diagnostics', async () => {
     const storageRoot = await mkTmp()
-    const job = makeJob({
-      output_manifest: JSON.stringify(['*.result', { glob: '*.log', visibility: 'hidden' }])
-    })
-    const ssh = makeSshRunner(
-      findOutput([
-        { path: 'stdout', size_bytes: 50 },
-        { path: 'run.result', size_bytes: 100 },
-        { path: 'train.log', size_bytes: 200 }
-      ])
-    )
-    // scp fails on 2nd copy call (run.result)
-    const scp = makeScpRunner(2)
-    const { repo: jobRepo, updates } = makeJobRepo(job)
-
-    await harvestJob(job, {
-      connectionBroker: brokerFromRunners(ssh, scp),
-      hostRepository: makeHostRepo(sampleHost()),
-      jobRepository: jobRepo,
-      storageRoot
-    })
-
-    const finalUpdate = updates[0]!.data as Record<string, unknown>
-    expect(finalUpdate.harvestedAt).toBeInstanceOf(Date)
-    expect(typeof finalUpdate.harvestError).toBe('string')
-    expect((finalUpdate.harvestError as string).length).toBeGreaterThan(0)
+    const job = makeJob()
+    const { repo: jobRepository, updates } = makeJobRepo(job)
+    const connectionBroker = brokerFromRunners(makeSshRunner(''), makeScpRunner())
+    await expect(
+      harvestJob(job, {
+        connectionBroker,
+        jobRepository,
+        storageRoot,
+        hostRepository: { get: vi.fn().mockRejectedValue(new Error('private database diagnostic')) }
+      })
+    ).rejects.toThrow('Host lookup failed.')
+    expect(updates.at(-1)?.data).toEqual({ harvestError: 'harvest pending: Host lookup failed.' })
+    expect(connectionBroker.acquire).not.toHaveBeenCalled()
   })
+
+  it.each(['transfer', 'disk-full'])(
+    'keeps %s failure pending and retries collection without replacing the old generation',
+    async (failure) => {
+      const storageRoot = await mkTmp()
+      const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+      const ssh = makeSshRunner(
+        findOutput([
+          { path: 'first.result', size_bytes: 10 },
+          { path: 'second.result', size_bytes: 10 }
+        ])
+      )
+      const harvestDir = getJobHarvestDir(storageRoot, job.project_id, job.session_id, job.job_id)
+      await mkdir(join(harvestDir, 'featured'), { recursive: true })
+      await writeFile(join(harvestDir, 'featured', 'old.result'), 'old generation')
+      const scp = makeScpRunner(failure === 'transfer' ? 2 : undefined)
+      if (failure === 'disk-full') {
+        const copy = scp.copyFromRemoteBounded!
+        let count = 0
+        scp.copyFromRemoteBounded = async (...args) => {
+          if (++count === 2) throw Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+          return copy(...args)
+        }
+      }
+      const message = failure === 'transfer' ? 'File transfer failed.' : 'Local storage is full.'
+      const { repo: jobRepository, updates } = makeJobRepo(job)
+      const deps = {
+        connectionBroker: brokerFromRunners(ssh, scp),
+        hostRepository: makeHostRepo(sampleHost()),
+        jobRepository,
+        storageRoot
+      }
+      await expect(harvestJob(job, deps)).rejects.toThrow(message)
+      expect(updates.at(-1)?.data).toEqual({ harvestError: `harvest pending: ${message}` })
+      expect(updates.some(({ data }) => 'harvestedAt' in (data as object))).toBe(false)
+      await expect(readFile(join(harvestDir, 'featured', 'old.result'), 'utf8')).resolves.toBe(
+        'old generation'
+      )
+      await harvestJob(job, deps)
+      expect(updates.at(-1)?.data).toMatchObject({
+        harvestedAt: expect.any(Date),
+        harvestError: null
+      })
+      expect(await readdir(join(harvestDir, 'featured'))).toEqual(['first.result', 'second.result'])
+    }
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -1600,16 +1640,18 @@ describe('harvestJob - bounded logs and disk reserve', () => {
     }
     const { repo: jobRepo, updates } = makeJobRepo(job)
 
-    await harvestJob(job, {
-      connectionBroker: brokerFromRunners(
-        makeSshRunner(findOutput([{ path: 'retry.result', size_bytes: 13 }])),
-        scp
-      ),
-      hostRepository: makeHostRepo(sampleHost()),
-      jobRepository: jobRepo,
-      storageRoot,
-      getFreeDiskBytesFn: async () => HARVEST_FREE_DISK_RESERVE_BYTES + 1024 * 1024
-    })
+    await expect(
+      harvestJob(job, {
+        connectionBroker: brokerFromRunners(
+          makeSshRunner(findOutput([{ path: 'retry.result', size_bytes: 13 }])),
+          scp
+        ),
+        hostRepository: makeHostRepo(sampleHost()),
+        jobRepository: jobRepo,
+        storageRoot,
+        getFreeDiskBytesFn: async () => HARVEST_FREE_DISK_RESERVE_BYTES + 1024 * 1024
+      })
+    ).rejects.toThrow('File transfer failed.')
 
     const temporaryPath = copyFromRemoteBounded.mock.calls[0]?.[2]
     expect(temporaryPath).not.toBe(localPath)
@@ -1617,7 +1659,7 @@ describe('harvestJob - bounded logs and disk reserve', () => {
     await expect(readFile(localPath, 'utf8')).resolves.toBe('previous successful harvest')
     await expect(readFile(temporaryPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     expect((updates[0]!.data as Record<string, unknown>).harvestError).toContain(
-      'remote copy failed for retry.result'
+      'harvest pending: File transfer failed.'
     )
   })
 })

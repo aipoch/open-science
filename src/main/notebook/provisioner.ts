@@ -908,6 +908,8 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       bundleSource: this.deps.bundleSource,
       // Surface both in-memory recovery quarantine and the durable explicit-repair marker so the UI
       // offers Reset whether the interpreter still reads ready or the failed rebuild removed it.
+      ...(isRepairRequired(this.deps.root, DEFAULT_PY_ENV) ? { pythonRepairRequired: true } : {}),
+      ...(isRepairRequired(this.deps.root, DEFAULT_R_ENV) ? { rRepairRequired: true } : {}),
       pythonRecoveryBlocked: recoveryBlocked(DEFAULT_PY_ENV),
       rRecoveryBlocked: recoveryBlocked(DEFAULT_R_ENV)
     }

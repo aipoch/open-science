@@ -1,3 +1,4 @@
+import { once } from 'node:events'
 import { describe, it, expect } from 'vitest'
 import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -46,6 +47,7 @@ const LOOP = join(__dirname, '../../../resources/notebook/python_loop.py')
 // One wire response from python_loop.py, mirroring kernel-protocol's KernelLoopResponse but with
 // the raw snake_case field names as they appear on the wire.
 type LoopResponse = {
+  output_truncated?: boolean
   req_id: string
   stdout: string
   stderr: string
@@ -1505,4 +1507,40 @@ gate('python_loop.py data-kernel isolation', () => {
       child.kill()
     }
   }, 60_000)
+})
+
+gate('Python execution boundaries', () => {
+  it('bounds large Unicode stdout and continues serving after SystemExit', async () => {
+    const { child, send } = startLoop(pyBin as string, {
+      OPEN_SCIENCE_NOTEBOOK_TEXT_LIMIT_BYTES: '32768'
+    })
+    try {
+      const output = await send('print("界" * 1000000)')
+      expect(Buffer.byteLength(output.stdout, 'utf8')).toBeLessThanOrEqual(32768)
+      expect(output.output_truncated).toBe(true)
+      expect(output.stdout).not.toContain('\uFFFD')
+      expect((await send('raise SystemExit(7)')).error).toContain('SystemExit')
+      expect((await send('print(42)')).stdout).toContain('42')
+    } finally {
+      child.kill()
+    }
+  }, 60000)
+
+  it('starts a fresh namespace after a real kernel process is killed', async () => {
+    const first = startLoop(pyBin as string, {})
+    try {
+      await first.send('old_value = 42')
+      const exited = once(first.child, 'exit')
+      first.child.kill('SIGKILL')
+      await exited
+      const second = startLoop(pyBin as string, {})
+      try {
+        expect((await second.send('"old_value" in globals()')).result).toBe('False')
+      } finally {
+        second.child.kill()
+      }
+    } finally {
+      first.child.kill()
+    }
+  }, 60000)
 })

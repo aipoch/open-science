@@ -1,3 +1,4 @@
+import { literatureFailureSchema } from './literature-failure'
 import { z } from 'zod'
 import {
   literatureFullTextCandidateSchema,
@@ -16,6 +17,7 @@ export const literatureJobRowSchema = z
     item: literatureItemViewSchema.optional(),
     status: z.enum(['pending', 'searching', 'ready', 'skipped', 'error', 'saving', 'done']),
     message: z.string().optional(),
+    failures: z.array(literatureFailureSchema).max(10).optional(),
     notices: z.array(z.string()).max(20).optional(),
     checked: z.boolean(),
     metadata: literatureMetadataCompletionResultSchema.optional(),
@@ -60,6 +62,13 @@ export type LiteratureJobRowView = z.infer<typeof literatureJobRowViewSchema>
 
 export const literatureJobRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }).strict(),
+  z
+    .object({
+      action: z.literal('retry-failed'),
+      jobId: z.string().uuid(),
+      itemIds: z.array(id).min(1).max(LITERATURE_JOB_MAX_ITEMS).optional()
+    })
+    .strict(),
   z
     .object({
       action: z.literal('create'),
@@ -148,14 +157,13 @@ export function literatureJobProgress(job: LiteratureJobView): {
   phaseTotal: number
 } {
   const selected = job.phaseItemIds ? new Set(job.phaseItemIds) : undefined
-  const rows =
-    job.phase === 'search'
+  const rows = selected
+    ? job.rows.filter((row) => selected.has(row.id))
+    : job.phase === 'search'
       ? job.rows
-      : selected
-        ? job.rows.filter((row) => selected.has(row.id))
-        : job.rows.filter(
-            (row) => row.checked && ['ready', 'saving', 'done', 'error'].includes(row.status)
-          )
+      : job.rows.filter(
+          (row) => row.checked && ['ready', 'saving', 'done', 'error'].includes(row.status)
+        )
   return {
     phaseTotal: rows.length,
     processed: rows.filter((row) =>

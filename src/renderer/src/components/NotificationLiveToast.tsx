@@ -333,7 +333,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
 }
 
 const NotificationLiveToast = (): React.JSX.Element => (
-  <NotificationErrorBoundary>
+  <NotificationErrorBoundary surface="toast">
     <NotificationLiveToastContent />
   </NotificationErrorBoundary>
 )

@@ -925,9 +925,15 @@ class SkillCatalogModule {
           ? '~/.claude/skills'
           : '~/.codex/skills'
     const sourceLabel = `${sourceRoot}/${canonical.slug}`
+    const discovered = await this.discoverAgentHomeSkills(availableSources)
+    const pathKey = process.platform === 'win32' ? sourcePath.toLowerCase() : sourcePath
+    const aliases = discovered.find(
+      (item) =>
+        (process.platform === 'win32' ? item.realPath.toLowerCase() : item.realPath) === pathKey
+    )?.aliases ?? [request]
     try {
       return {
-        ...(await this.userSkills.previewAgentHomeSkill(sourcePath)),
+        ...(await this.userSkills.previewAgentHomeSkill(sourcePath, canonical, aliases)),
         sourceLabel
       }
     } catch (error) {

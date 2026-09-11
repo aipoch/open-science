@@ -3169,6 +3169,7 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     const status = provisioner.status()
     expect(status.pythonRecoveryBlocked).toBe(true)
     expect(status.rRecoveryBlocked).toBe(false)
+    expect(status.pythonRepairRequired).not.toBe(true)
     expect(isPrefixBlocked).toHaveBeenCalledWith(blockedPrefix)
   })
 
@@ -3179,6 +3180,7 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     const status = new DefaultRuntimeProvisioner(makeDeps(root)).status()
 
     expect(status.pythonRecoveryBlocked).toBe(true)
+    expect(status.pythonRepairRequired).toBe(true)
     expect(status.rRecoveryBlocked).not.toBe(true)
   })
 

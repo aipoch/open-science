@@ -1048,3 +1048,127 @@ it('releases worker payloads after their durable checkpoint', async () => {
     'checkpoint is missing or invalid'
   )
 })
+
+it('retries only the selected failed row and retains durable reviews and completed rows', async () => {
+  const { jobs, metadata, options } = await setup()
+  const jobId = randomUUID()
+  metadata.mockImplementation(async ({ itemId }: { itemId: string }) => {
+    if (itemId === 'failed' || itemId === 'other-failed') throw new TypeError('fetch failed')
+    return preview(itemId)
+  })
+  await jobs.run({
+    action: 'create',
+    mode: 'metadata',
+    itemIds: ['done', 'ready', 'failed', 'other-failed'],
+    requestId: jobId
+  })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  await jobs.run({ action: 'apply', jobId, selections: [{ itemId: 'done' }] })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('completed'))
+  const before = await state(jobs, jobId)
+  expect(before.rows[2].failures).toEqual([
+    { code: 'network', phase: 'search', source: 'crossref', retryable: true }
+  ])
+  await jobs.close()
+  const reopened = new LiteratureBatchJobs(options)
+  cleanup.push(() => reopened.close())
+  metadata.mockClear().mockImplementation(async ({ itemId }: { itemId: string }) => preview(itemId))
+  await reopened.run({ action: 'retry-failed', jobId, itemIds: ['failed'] })
+  await vi.waitFor(async () => expect((await state(reopened, jobId)).state).toBe('review'))
+  const after = await state(reopened, jobId)
+  expect(metadata).toHaveBeenCalledTimes(1)
+  expect(metadata).toHaveBeenCalledWith({ mode: 'preview', itemId: 'failed' })
+  expect(after.rows.map(({ status }) => status)).toEqual(['done', 'ready', 'ready', 'error'])
+  expect(after.rows[0]).toEqual(before.rows[0])
+  expect(after.rows[1]).toEqual(before.rows[1])
+  expect(after.rows[3]).toEqual(before.rows[3])
+  expect(after.rows[2].failures).toBeUndefined()
+})
+
+it('keeps pending work paused when retrying a legacy failed row without diagnostic fields', async () => {
+  const { jobs, path, options, metadata } = await setup()
+  await jobs.close()
+  const jobId = randomUUID()
+  await writeFile(
+    path,
+    JSON.stringify({
+      version: 1,
+      jobs: [
+        {
+          id: jobId,
+          mode: 'metadata',
+          phase: 'search',
+          state: 'paused',
+          createdAt: 1,
+          updatedAt: 1,
+          rows: [
+            { id: 'failed', status: 'error', checked: true },
+            { id: 'pending', status: 'pending', checked: true }
+          ]
+        }
+      ]
+    })
+  )
+  const reopened = new LiteratureBatchJobs(options)
+  cleanup.push(() => reopened.close())
+  await reopened.run({ action: 'retry-failed', jobId, itemIds: ['failed'] })
+  await vi.waitFor(async () => expect((await state(reopened, jobId)).state).toBe('review'))
+  expect(metadata).toHaveBeenCalledTimes(1)
+  expect((await state(reopened, jobId)).rows.map(({ status }) => status)).toEqual([
+    'ready',
+    'pending'
+  ])
+})
+
+it('rejects retries of unavailable references while retaining safe diagnostics after reopen', async () => {
+  const { jobs, options, metadata } = await setup()
+  options.catalog.get = async () => ({ ...item('gone'), deletedAt: 2 })
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['gone'], requestId: jobId })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  await jobs.close()
+  const reopened = new LiteratureBatchJobs(options)
+  cleanup.push(() => reopened.close())
+  const before = await state(reopened, jobId)
+  expect(before.rows[0].failures).toEqual([
+    { code: 'unavailable', phase: 'search', source: 'catalog', retryable: false }
+  ])
+  await expect(reopened.run({ action: 'retry-failed', jobId })).rejects.toThrow(
+    'No retryable failed references.'
+  )
+  expect(metadata).not.toHaveBeenCalled()
+  expect(await state(reopened, jobId)).toEqual(before)
+})
+
+it('reports the metadata provider actually selected by identifier order', async () => {
+  const { jobs, options, metadata } = await setup()
+  options.catalog.get = async (id) => ({
+    ...item(id),
+    item: {
+      ...item(id).item,
+      identifiers: [
+        { scheme: 'pmid', value: '123', isPrimary: true },
+        { scheme: 'doi', value: '10.1234/example', isPrimary: false }
+      ]
+    }
+  })
+  metadata.mockRejectedValueOnce(new TypeError('fetch failed'))
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  expect((await state(jobs, jobId)).rows[0].failures?.[0].source).toBe('pubmed')
+})
+
+it('distinguishes deletion during review from a retryable metadata revision conflict', async () => {
+  const { jobs, options } = await setup()
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  options.catalog.get = async (id) => ({ ...item(id), deletedAt: 2 })
+  await jobs.run({ action: 'apply', jobId, selections: [{ itemId: 'a' }] })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('completed'))
+  expect((await state(jobs, jobId)).rows[0].failures).toEqual([
+    { code: 'unavailable', phase: 'apply', source: 'catalog', retryable: false }
+  ])
+  expect(options.metadata.applyReviewed).not.toHaveBeenCalled()
+})

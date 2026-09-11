@@ -1,3 +1,4 @@
+import { once } from 'node:events'
 import { describe, it, expect } from 'vitest'
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
@@ -3761,4 +3762,26 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
       rmSync(figuresDir, { recursive: true, force: true })
     }
   }, 60_000)
+})
+
+gate('R execution boundaries', () => {
+  it('starts a fresh namespace after a real kernel process is killed', async () => {
+    const first = startLoop(rscriptBin(), {})
+    try {
+      await first.send('old_value <- 42')
+      const exited = once(first.child, 'exit')
+      first.child.kill('SIGKILL')
+      await exited
+      const second = startLoop(rscriptBin(), {})
+      try {
+        expect(
+          (await second.send('exists("old_value", envir=.GlobalEnv, inherits=FALSE)')).stdout
+        ).toContain('FALSE')
+      } finally {
+        second.child.kill()
+      }
+    } finally {
+      first.child.kill()
+    }
+  }, 60000)
 })

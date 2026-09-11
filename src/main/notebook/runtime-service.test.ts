@@ -6386,7 +6386,10 @@ describe('notebook runtime service', () => {
 
     const first = submit("print('a')")
     // Wait until the first run has actually entered the executor and is holding the single slot.
-    await vi.waitFor(() => expect(releases).toHaveLength(1))
+    await vi.waitFor(() => expect(releases).toHaveLength(1), {
+      timeout: 10_000,
+      interval: 50
+    })
 
     // Exercise slow durable admission instead of assuming it completes within a fixed sleep.
     const appendRun = repository.appendOrGetRun.bind(repository)

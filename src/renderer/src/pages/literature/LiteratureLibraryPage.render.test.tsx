@@ -2384,6 +2384,53 @@ describe('LiteratureLibraryPage', () => {
     }
   )
 
+  it('previews promoted children and opens the conflicting child in the existing editor', async () => {
+    const parent = {
+      id: 'parent',
+      revision: 1,
+      name: 'Parent',
+      description: '',
+      itemCount: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const child = { ...parent, id: 'child', name: 'Review', parentId: parent.id }
+    const root = { ...parent, id: 'root', name: 'review' }
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(
+        request.scope === 'collections' ? { entries: [parent, child, root] } : { entries: [] }
+      )
+    )
+    useNavigationStore.setState({ pendingLiteratureCollectionId: parent.id })
+    render(<LiteratureLibraryPage />)
+    await screen.findByRole('heading', { name: parent.name })
+    await openMenu(screen.getByRole('button', { name: 'Collection actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete collection' }))
+    const alert = await screen.findByRole('alertdialog')
+    expect(within(alert).getByText('Child collections will move to the top level.')).not.toBeNull()
+    expect(
+      within(alert).getByRole('button', { name: 'Delete collection' }).hasAttribute('disabled')
+    ).toBe(true)
+    fireEvent.click(within(alert).getByRole('button', { name: 'Rename conflicting collection' }))
+    const editor = await screen.findByRole('dialog', { name: 'Edit collection' })
+    const name = within(editor).getByLabelText('Name')
+    expect((name as HTMLInputElement).value).toBe(child.name)
+    fireEvent.change(name, { target: { value: 'Child review' } })
+    fireEvent.click(within(editor).getByRole('button', { name: 'Save changes' }))
+    await waitFor(() =>
+      expect(transact).toHaveBeenCalledWith({
+        kind: 'update-collection',
+        collectionId: child.id,
+        expectedRevision: 1,
+        name: 'Child review',
+        description: ''
+      })
+    )
+    expect(transact).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'delete-collection' })
+    )
+  })
+
   it('truncates a long Collection view name without squeezing the action toolbar', async () => {
     const longCollectionName = `Collection ${'research '.repeat(12)}`.trim()
     const collection = {

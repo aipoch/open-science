@@ -1,3 +1,7 @@
+import {
+  configureComposerDraftStorage,
+  preserveComposerDraftsForRecovery
+} from '@/pages/workspace/composer-draft-storage'
 import { flushSync } from 'react-dom'
 import {
   unwrapApplicationCommandOutcome,
@@ -123,7 +127,10 @@ const withRequestTimeout = async <T>(
 }
 
 const responseError = (response: Response, body: string, fallback: string): Error => {
-  if (response.status === 401) return new AuthorizationExpiredError(AUTHORIZATION_EXPIRED_MESSAGE)
+  if (response.status === 401) {
+    requireAuthorization()
+    return new AuthorizationExpiredError(AUTHORIZATION_EXPIRED_MESSAGE)
+  }
   try {
     const payload = JSON.parse(body) as {
       error?: string | { message?: string }
@@ -301,6 +308,7 @@ type EventCursor = {
 let eventCursor: EventCursor
 let eventReconnectAttempt = 0
 let eventRecoveryRequired = false
+let activeEventSocket: WebSocket | undefined
 
 const publishEventConnectionPhase = (phase: WebEventConnectionPhase): void => {
   window.dispatchEvent(
@@ -308,6 +316,14 @@ const publishEventConnectionPhase = (phase: WebEventConnectionPhase): void => {
       detail: { phase }
     })
   )
+}
+
+const requireAuthorization = (): void => {
+  preserveComposerDraftsForRecovery()
+  eventRecoveryRequired = true
+  eventConnectionController.abort(new AuthorizationExpiredError(AUTHORIZATION_EXPIRED_MESSAGE))
+  publishEventConnectionPhase('authorization-required')
+  activeEventSocket?.close(1000, 'Authorization required')
 }
 
 const requireEventReload = (socket: WebSocket): void => {
@@ -331,6 +347,9 @@ const connectEvents = (): void => {
   url.searchParams.set('after', String(eventCursor.latestSequence))
   url.searchParams.set('liveness', '1')
   const socket = new WebSocket(url.toString())
+  activeEventSocket = socket
+  let closed = false
+  const isCurrent = (): boolean => !closed && eventConnectionController === connectionLease
   const expireConnection = (): void => {
     if (eventConnectionController === connectionLease && !connectionLease.signal.aborted) {
       connectionLease.abort(new DOMException('Event stream liveness timed out.', 'TimeoutError'))
@@ -344,10 +363,12 @@ const connectEvents = (): void => {
   }
 
   socket.addEventListener('open', () => {
+    if (!isCurrent() || eventRecoveryRequired || connectionLease.signal.aborted) return
     armIdleTimeout()
     publishEventConnectionPhase('replaying')
   })
   socket.addEventListener('message', (event) => {
+    if (!isCurrent() || eventRecoveryRequired || connectionLease.signal.aborted) return
     armIdleTimeout()
     let decoded: unknown
     try {
@@ -398,8 +419,14 @@ const connectEvents = (): void => {
     flushSync(() => publishEventConnectionPhase('live'))
     window.dispatchEvent(new Event(WEB_EVENTS_OPEN_EVENT))
   })
-  socket.addEventListener('close', () => {
+  socket.addEventListener('close', (event) => {
+    if (!isCurrent()) return
+    closed = true
     window.clearTimeout(idleTimeout)
+    if (event.code === 1008) {
+      requireAuthorization()
+      return
+    }
     if (eventConnectionController === connectionLease && !connectionLease.signal.aborted) {
       connectionLease.abort(new DOMException('Event stream disconnected.', 'NetworkError'))
     }
@@ -453,6 +480,7 @@ const installWebApi = async (): Promise<EventCursor> => {
     )
   }
   const bootstrap = parsedBootstrap.data
+  configureComposerDraftStorage(bootstrap.draftScope)
   const callerLocation =
     bootstrap.webCallerLocation ??
     (bootstrap.rpcCapabilities?.includes(WEB_RPC_CAPABILITY_UPDATE_CLI_V1) ? 'local' : 'remote')

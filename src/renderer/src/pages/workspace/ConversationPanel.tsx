@@ -51,6 +51,7 @@ import {
   MessageCircleMore,
   PanelRight,
   Plus,
+  RotateCcw,
   ScanEye,
   Square,
   X
@@ -464,6 +465,7 @@ const ConversationPanel = ({
       stageFiles: onStageAttachmentFiles,
       stagePastedText: onStagePastedText,
       cancelTransfer: onCancelAttachmentTransfer,
+      retryTransfer: onRetryAttachmentTransfer,
       removeAttachment: onRemoveAttachment,
       restorePastedText: onRestorePastedText,
       undo: onUndo,
@@ -2021,7 +2023,7 @@ const ConversationPanel = ({
                                           ? 'text-red-600'
                                           : 'text-text-300'
                                       }`}
-                                      title={statusLabel}
+                                      title={transfer.errorDetail ?? statusLabel}
                                     >
                                       {statusLabel}
                                     </div>
@@ -2043,6 +2045,19 @@ const ConversationPanel = ({
                                       </div>
                                     ) : null}
                                   </div>
+                                  {transfer.canRetry ? (
+                                    <button
+                                      type="button"
+                                      className={attachmentRemoveButtonClassName}
+                                      disabled={!canEditDraft}
+                                      aria-label={t('Retry attachment {{name}}', {
+                                        name: transfer.name
+                                      })}
+                                      onClick={() => onRetryAttachmentTransfer(transfer)}
+                                    >
+                                      <RotateCcw className="size-3.5" aria-hidden="true" />
+                                    </button>
+                                  ) : null}
                                   <button
                                     type="button"
                                     className={attachmentRemoveButtonClassName}

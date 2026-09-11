@@ -86,6 +86,7 @@ class ProviderRuntimeProjectionOwner {
 
     return {
       id: provider.id,
+      configRevision: provider.configRevision,
       type: provider.type,
       codexAuthMode: provider.codexAuthMode,
       codexTransport: provider.codexTransport,

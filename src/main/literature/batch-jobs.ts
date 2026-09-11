@@ -1,3 +1,4 @@
+import { literatureFailure } from './provider-error'
 import {
   acquireDataRootWriter,
   isMigrationPending,
@@ -68,7 +69,10 @@ export class LiteratureBatchJobs {
     }))
   }
 
-  private save(job: LiteratureJob, resetReview = false): Promise<void> {
+  private save(
+    job: LiteratureJob,
+    resetReview: boolean | ReadonlySet<string> = false
+  ): Promise<void> {
     const snapshot = this.journal.controlSnapshot(job)
     const write = (): Promise<void> => this.journal.save(snapshot, false, resetReview)
     this.writes = this.writes.then(write, write)
@@ -242,6 +246,7 @@ export class LiteratureBatchJobs {
       return { jobs: snapshot ? [snapshot] : [], progress: download }
     }
     const job = this.journal.controlSnapshot(publishedJob)
+    const retryIds = new Set<string>()
     if (request.action === 'review') {
       for (const selection of request.selections) {
         const row = job.rows.find((row) => row.id === selection.itemId)
@@ -292,20 +297,32 @@ export class LiteratureBatchJobs {
         job.phase = 'apply'
         job.phaseItemIds = request.selections.map((selection) => selection.itemId)
         job.state = 'running'
-      } else if (request.action === 'retry') {
+      } else if (request.action === 'retry' || request.action === 'retry-failed') {
+        if (request.action === 'retry-failed') {
+          for (const row of job.rows) {
+            if (row.status !== 'error' || (request.itemIds && !request.itemIds.includes(row.id)))
+              continue
+            const payload = await this.journal.readRow(publishedJob, row)
+            if (!payload.failures?.length || payload.failures.some(({ retryable }) => retryable))
+              retryIds.add(row.id)
+          }
+          if (!retryIds.size) throw new Error('No retryable failed references.')
+        }
         for (const row of job.rows)
-          if (row.status !== 'done') {
+          if (request.action === 'retry' ? row.status !== 'done' : retryIds.has(row.id)) {
             row.status = 'pending'
             row.metadata = undefined
             row.candidates = undefined
             row.candidateId = undefined
             row.message = undefined
             row.notices = undefined
+            row.failures = undefined
           }
         job.phase = 'search'
-        job.phaseItemIds = undefined
+        job.phaseItemIds = request.action === 'retry-failed' ? [...retryIds] : undefined
         job.state = 'running'
       } else if (request.action === 'resume' && job.state === 'paused') {
+        if (job.phase === 'search') job.phaseItemIds = undefined
         if (job.phase === 'apply') {
           const previousPhase = new Set(
             job.phaseItemIds ??
@@ -327,7 +344,7 @@ export class LiteratureBatchJobs {
       this.jobs = nextJobs
       await this.journal.remove(job.id).catch(this.options.onError)
     } else {
-      await this.save(job, request.action === 'retry')
+      await this.save(job, request.action === 'retry' ? true : retryIds)
       // Active provider calls retain these objects. Publish only command-owned fields so a
       // completed row is not replaced by the earlier draft while its checkpoint is waiting.
       if (request.action === 'pause') publishedJob.state = job.state
@@ -396,18 +413,36 @@ export class LiteratureBatchJobs {
         await this.commands
         if (this.closed || isMigrationPending() || job.state !== 'running') break
         if (
-          job.phase === 'search' ? row.status !== 'pending' : row.status !== 'ready' || !row.checked
+          job.phase === 'search'
+            ? row.status !== 'pending' ||
+              Boolean(job.phaseItemIds && !job.phaseItemIds.includes(row.id))
+            : row.status !== 'ready' || !row.checked
         )
           continue
         await this.journal.hydrate(job, [row])
         row.status = job.phase === 'search' ? 'searching' : 'saving'
         row.message = undefined
+        row.failures = undefined
         job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
         // Pending/ready is already durable. An interrupted row resumes from that checkpoint.
         try {
           if (job.phase === 'search') await this.search(job, row)
           else await this.apply(job, row)
-        } catch {
+        } catch (error) {
+          row.failures = [
+            literatureFailure(
+              error,
+              job.phase,
+              job.mode === 'metadata'
+                ? (row.metadata?.provider ??
+                    (row.item?.item.identifiers.find(
+                      ({ scheme }) => scheme === 'doi' || scheme === 'pmid'
+                    )?.scheme === 'doi'
+                      ? 'crossref'
+                      : 'pubmed'))
+                : (row.candidates?.find(({ id }) => id === row.candidateId)?.provider ?? 'provider')
+            )
+          ]
           row.status = 'error'
           row.message =
             job.mode === 'metadata'
@@ -480,9 +515,14 @@ export class LiteratureBatchJobs {
       if (result.mode !== 'search') throw new Error('Unexpected full-text response')
       row.candidates = result.candidates
       row.notices = result.notices
+      row.failures = result.failures
       row.candidateId = result.candidates[0]?.id
       const partial = result.notices.some((notice) => notice.endsWith('-unavailable'))
       row.status = result.candidates.length ? 'ready' : partial ? 'error' : 'skipped'
+      if (!result.candidates.length && !partial && !result.notices.includes('missing-identifiers'))
+        row.failures = [
+          { code: 'no-full-text', phase: 'search', source: 'provider', retryable: false }
+        ]
       row.message = result.notices.includes('missing-identifiers')
         ? 'Needs identifiers'
         : partial
@@ -495,17 +535,21 @@ export class LiteratureBatchJobs {
 
   private async apply(job: LiteratureJob, row: LiteratureJobRow): Promise<void> {
     const current = await this.options.catalog.get(row.id)
-    if (
-      !current ||
-      current.id !== row.id ||
-      current.deletedAt ||
-      (job.mode === 'full-text' && current.metadataRevision !== row.item?.metadataRevision)
-    )
+    if (!current || current.id !== row.id || current.deletedAt)
+      throw new Error('Reference unavailable')
+    if (job.mode === 'full-text' && current.metadataRevision !== row.item?.metadataRevision)
       throw new Error('Reference changed')
     if (job.mode === 'metadata') {
       if (!row.metadata) throw new Error('Metadata review unavailable')
       if (row.metadata.reviewVersion !== 1) {
         row.status = 'error'
+        row.failures = [
+          literatureFailure(
+            new Error('Search again to refresh this older metadata review.'),
+            'apply',
+            'catalog'
+          )
+        ]
         row.message = 'Search again to refresh this older metadata review.'
         return
       }
@@ -528,6 +572,9 @@ export class LiteratureBatchJobs {
       const origin = new URL(candidate.url).origin
       if ((this.cooldowns.get(origin) ?? 0) > Date.now()) {
         row.status = 'error'
+        row.failures = [
+          { code: 'rate-limit', phase: 'apply', source: candidate.provider, retryable: true }
+        ]
         row.message = 'Source rate limit reached. Search again later.'
         return
       }
@@ -538,6 +585,9 @@ export class LiteratureBatchJobs {
       )
       if (!confirmed) {
         row.status = 'error'
+        row.failures = refreshed.failures?.length
+          ? refreshed.failures
+          : [{ code: 'conflict', phase: 'apply', source: candidate.provider, retryable: true }]
         row.message = 'The selected source changed. Search again and review the results.'
         return
       }
@@ -550,6 +600,9 @@ export class LiteratureBatchJobs {
       if (result.mode === 'attach-error') {
         this.cooldowns.set(origin, result.retryAt)
         row.status = 'error'
+        row.failures = [
+          { code: 'rate-limit', phase: 'apply', source: candidate.provider, retryable: true }
+        ]
         row.message = 'Source rate limit reached. Search again later.'
         return
       }

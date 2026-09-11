@@ -440,6 +440,17 @@ const SubagentPreview = ({
                 {t('Imported history may be incomplete')}
               </span>
             ) : null}
+            {detail.status === 'completed' ? (
+              <p className="pt-1">
+                {t(
+                  'Execution completed. Check the Main Agent conversation to confirm it received the result.'
+                )}
+              </p>
+            ) : null}
+            {detail.attempt?.terminalMessageId &&
+            detail.messages.some((message) => message.id === detail.attempt?.terminalMessageId) ? (
+              <p className="pt-1">{t('Saved result available below.')}</p>
+            ) : null}
             {detail.attempt?.cancellationReason ? (
               <span> · {detail.attempt.cancellationReason}</span>
             ) : null}

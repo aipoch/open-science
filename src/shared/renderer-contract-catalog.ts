@@ -140,6 +140,7 @@ import type {
 } from './specialist-package'
 import type {
   CancelComputeJobRequest,
+  RetryComputeJobHarvestRequest,
   ComputeApprovalDecision,
   ComputeApprovalRequest,
   ComputeJobsListFilter,
@@ -1077,6 +1078,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'compute.jobsCancel': callable<(request: CancelComputeJobRequest) => Promise<JobStatusResult>>()(
     'compute',
     ['compute:jobs:cancel']
+  ),
+  'compute.jobsRetryHarvest': callable<(request: RetryComputeJobHarvestRequest) => Promise<void>>()(
+    'compute',
+    ['compute:jobs:retry-harvest']
   ),
   'compute.jobsSetRemoteCleanup': callable<
     (request: SetComputeJobRemoteCleanupRequest) => Promise<void>
@@ -2602,6 +2607,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'uploads.onTransferProgress': callable<
     (listener: AcpListener<UploadTransferProgress>) => RemoveListener
   >()('uploads', ['uploads:transfer-progress', ELECTRON_EVENT], { optionalMember: true }),
+  'uploads.recoverDraft': callable<
+    (request: { receipt: string }) => Promise<UploadedAttachment | null>
+  >()('uploads', ['uploads:recover-draft', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'uploads.readPreview': callable<
     (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
   >()('uploads', ['uploads:read-preview']),

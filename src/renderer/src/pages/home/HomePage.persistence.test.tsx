@@ -47,7 +47,8 @@ vi.mock('./DeleteProjectDialog', () => ({
     </>
   )
 }))
-vi.mock('radix-ui', () => ({
+vi.mock('radix-ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('radix-ui')>()),
   Tooltip: {
     Provider: ({ children }: { children: ReactNode }) => <>{children}</>,
     Root: ({ children }: { children: ReactNode }) => <>{children}</>,

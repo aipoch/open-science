@@ -7,6 +7,7 @@ import type {
   ExecResult,
   JobResult,
   ProbeResult,
+  RetryComputeJobHarvestRequest,
   SubmitJobResult
 } from '../../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
@@ -120,6 +121,22 @@ export class ComputeService {
       operationRepository && jobRepository
         ? new ComputeJobCancellationOwner(operationRepository, jobRepository)
         : undefined
+  }
+
+  private harvestRetry?: (request: RetryComputeJobHarvestRequest) => Promise<void>
+
+  bindJobHarvestRetry(
+    retry: (request: RetryComputeJobHarvestRequest) => Promise<void>
+  ): () => void {
+    this.harvestRetry = retry
+    return () => {
+      if (this.harvestRetry === retry) this.harvestRetry = undefined
+    }
+  }
+
+  async retryJobHarvest(request: RetryComputeJobHarvestRequest): Promise<void> {
+    if (!this.harvestRetry) throw new Error('Compute recovery is unavailable.')
+    await this.harvestRetry(request)
   }
 
   async probe(providerId: string, signal?: AbortSignal): Promise<ProbeResult> {
