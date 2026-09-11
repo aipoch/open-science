@@ -16,7 +16,7 @@ const createDraftOwner = (): ComposerDraftOwner => ({
 
 const ComposerDraftsContext = createContext<ComposerDraftOwner | null>(null)
 
-// Renderer-memory only. The owner survives route changes without retaining WorkspacePage.
+// Live owner survives route changes. Web refresh snapshots are saved by composer-draft-storage.
 export const WorkspaceComposerDraftsProvider = ({
   children
 }: {

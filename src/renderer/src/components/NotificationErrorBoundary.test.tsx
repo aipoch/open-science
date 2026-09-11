@@ -24,7 +24,11 @@ it('isolates notification render failures from sibling app content', () => {
     )
   })
 
-  expect(container.textContent).toBe('Task content remains available')
+  expect(container.textContent).toContain('Task content remains available')
+  expect(container.querySelector('[role=alert]')?.textContent).toContain(
+    'This message could not be displayed.'
+  )
+  expect(container.querySelector('button')?.textContent).toBe('Retry')
   act(() => root.unmount())
   consoleError.mockRestore()
 })

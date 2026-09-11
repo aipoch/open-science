@@ -595,3 +595,38 @@ it.each([false, true])(
     })
   }
 )
+
+it('shows safe source diagnostics and retries only the chosen failed reference', async () => {
+  job.state = 'review'
+  job.rows = [
+    {
+      id: item.id,
+      item,
+      checked: true,
+      status: 'error',
+      failures: [{ code: 'network', source: 'crossref', phase: 'search', retryable: true }]
+    },
+    {
+      id: 'auth',
+      checked: true,
+      status: 'error',
+      failures: [{ code: 'authentication', source: 'openalex', phase: 'search', retryable: false }]
+    },
+    { id: 'ready', checked: false, status: 'ready' }
+  ]
+  open(id)
+  await flush()
+  expect(
+    screen.getByText('The source could not be reached. Check the connection and retry.')
+  ).toBeTruthy()
+  expect(
+    screen.getByText('Check this source’s credentials in Settings, then search again.')
+  ).toBeTruthy()
+  expect(screen.getAllByRole('button', { name: 'Retry this reference' })).toHaveLength(1)
+  fireEvent.click(screen.getByRole('button', { name: 'Retry this reference' }))
+  await flush()
+  expect(jobs).toHaveBeenCalledWith({ action: 'retry-failed', jobId: id, itemIds: [item.id] })
+  fireEvent.click(screen.getByRole('button', { name: 'Retry failed references' }))
+  await flush()
+  expect(jobs).toHaveBeenCalledWith({ action: 'retry-failed', jobId: id })
+})

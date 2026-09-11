@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { configureComposerDraftStorage, revokeComposerDraftStorage } from './composer-draft-storage'
 import { act, createElement, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -195,6 +196,8 @@ afterEach(() => {
   for (const hook of mounted.splice(0)) hook.unmount()
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   window.api = originalApi
+  revokeComposerDraftStorage()
+  sessionStorage.clear()
 })
 
 describe('workspace composer controller', () => {
@@ -248,6 +251,76 @@ describe('workspace composer controller', () => {
     act(() => expect(hook.result.current.actions.discardWslSetupDraft()).toBe(false))
 
     expect(hook.result.current.view.doc).toEqual(textDoc('ordinary unsent message'))
+  })
+
+  it('restores an active scratch from a new provider after reload and removes sent drafts', () => {
+    configureComposerDraftStorage('scope')
+    const first = renderController(uploads(), undefined, [
+      { id: 'old', messageId: 'old', doc: textDoc('old prompt') }
+    ])
+    act(() => first.result.current.actions.changeDoc(textDoc('unsent long draft')))
+    act(() => first.result.current.actions.addAnnotation(annotation()))
+    act(() => first.result.current.actions.navigateHistory('previous'))
+    const saved = sessionStorage.getItem('open-science-composer-drafts-v1')!
+    first.unmount()
+    sessionStorage.setItem('open-science-composer-drafts-v1', saved)
+    configureComposerDraftStorage('scope')
+    const reloaded = renderController()
+    expect(reloaded.result.current.view.doc).toEqual(textDoc('unsent long draft'))
+    expect(reloaded.result.current.view.annotations).toEqual([annotation()])
+    const snapshot = reloaded.result.current.lifecycle.captureSend()
+    act(() => reloaded.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
+    reloaded.unmount()
+    configureComposerDraftStorage('scope')
+    const afterSend = renderController()
+    mounted.push(afterSend)
+    expect(afterSend.result.current.view.doc).toEqual(emptyDoc)
+  })
+
+  it('revalidates completed attachments after provider recreation while retaining interrupted file notices', async () => {
+    configureComposerDraftStorage('scope')
+    const file = {
+      id: 'f',
+      sessionId: '.pending',
+      name: 'finished.txt',
+      originalName: 'finished.txt',
+      path: '/pending/f',
+      size: 4,
+      draftReceipt: 'receipt'
+    }
+    const staging = deferred<UploadedAttachment>()
+    const first = renderController(
+      uploads(
+        vi
+          .fn()
+          .mockResolvedValueOnce(file)
+          .mockImplementationOnce(() => staging.promise)
+      )
+    )
+    act(() => first.result.current.actions.changeDoc(textDoc('keep text')))
+    act(() => first.result.current.actions.stageFiles([new File(['done'], 'finished.txt')]))
+    await flushAsyncWork()
+    act(() => first.result.current.actions.stageFiles([new File(['wait'], 'pending.txt')]))
+    await flushAsyncWork()
+    const saved = sessionStorage.getItem('open-science-composer-drafts-v1')!
+    first.unmount()
+    sessionStorage.setItem('open-science-composer-drafts-v1', saved)
+    configureComposerDraftStorage('scope')
+    window.api = {
+      ...originalApi,
+      uploads: { ...originalApi?.uploads, recoverDraft: vi.fn().mockResolvedValue(file) }
+    } as Window['api']
+    const restored = renderController()
+    mounted.push(restored)
+    expect(restored.result.current.view.attachments).toEqual([])
+    await flushAsyncWork()
+    expect(window.api.uploads.recoverDraft).toHaveBeenCalledWith({ receipt: 'receipt' })
+    expect(restored.result.current.view.attachments).toEqual([file])
+    expect(restored.result.current.view.transfers).toEqual([
+      expect.objectContaining({ name: 'pending.txt', status: 'error' })
+    ])
+    expect(restored.result.current.view.doc).toEqual(textDoc('keep text'))
+
   })
 
   it('DF-01 retains both conversation drafts and annotations after route remount', () => {
@@ -1865,6 +1938,98 @@ describe('workspace composer controller', () => {
     expect(uploadApi.stageLocalFile).toHaveBeenCalledTimes(2)
   })
 
+  it('retries only the failed file in a mixed batch and deduplicates repeated clicks', async () => {
+    const retryResult = deferred<UploadedAttachment | null>()
+    const attachment = (name: string): UploadedAttachment => ({
+      id: name,
+      sessionId: '.pending',
+      name,
+      originalName: name,
+      path: `/uploads/.pending/${name}`,
+      size: 1
+    })
+    const stageLocalFile = vi
+      .fn()
+      .mockResolvedValueOnce(attachment('a.txt'))
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockResolvedValueOnce(attachment('c.txt'))
+      .mockReturnValueOnce(retryResult.promise)
+    const uploadApi = uploads(stageLocalFile)
+    const hook = renderController(uploadApi)
+    mounted.push(hook)
+    const files = ['a.txt', 'b.txt', 'c.txt'].map((name) => new File(['x'], name))
+    act(() => hook.result.current.actions.stageFiles(files))
+    await flushAsyncWork()
+    const completed = hook.result.current.view.attachments
+    expect(completed.map((item) => item.id)).toEqual(['a.txt', 'c.txt'])
+    const failed = hook.result.current.view.transfers[0]
+    expect(failed).toMatchObject({ name: 'b.txt', status: 'error', canRetry: true })
+    act(() => {
+      hook.result.current.actions.retryTransfer(failed)
+      hook.result.current.actions.retryTransfer(failed)
+    })
+    expect(stageLocalFile).toHaveBeenCalledTimes(4)
+    expect(stageLocalFile.mock.calls[3][0]).toBe(files[1])
+    expect(stageLocalFile.mock.calls[3][1].transferId).not.toBe(failed.transferId)
+    retryResult.resolve(attachment('b.txt'))
+    await flushAsyncWork()
+    expect(hook.result.current.view.transfers).toEqual([])
+    expect(hook.result.current.view.attachments).toEqual([...completed, attachment('b.txt')])
+    expect(uploadApi.deleteUpload).not.toHaveBeenCalled()
+    act(() => hook.result.current.actions.retryTransfer(failed))
+    expect(stageLocalFile).toHaveBeenCalledTimes(4)
+  })
+
+  it('cancels a retry without removing earlier successful attachments', async () => {
+    const pending = deferred<UploadedAttachment | null>()
+    const successful: UploadedAttachment = {
+      id: 'done',
+      sessionId: '.pending',
+      name: 'done.txt',
+      originalName: 'done.txt',
+      path: '/uploads/.pending/done.txt',
+      size: 1
+    }
+    const stageLocalFile = vi
+      .fn()
+      .mockResolvedValueOnce(successful)
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockReturnValueOnce(pending.promise)
+    const uploadApi = uploads(stageLocalFile)
+    const hook = renderController(uploadApi)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['x'], 'done.txt'),
+        new File(['y'], 'retry.txt')
+      ])
+    )
+    await flushAsyncWork()
+    act(() => hook.result.current.actions.retryTransfer(hook.result.current.view.transfers[0]))
+    const retry = hook.result.current.view.transfers[0]
+    act(() => hook.result.current.actions.cancelTransfer(retry))
+    pending.resolve({ ...successful, id: 'cancelled', path: '/uploads/.pending/cancelled.txt' })
+    await flushAsyncWork()
+    expect(hook.result.current.view.transfers).toEqual([])
+    expect(hook.result.current.view.attachments).toEqual([successful])
+    expect(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: '/uploads/.pending/cancelled.txt' })
+    expect(uploadApi.deleteUpload).not.toHaveBeenCalledWith({ path: successful.path })
+  })
+
+  it('ignores a retry requested from a different active draft', async () => {
+    const stageLocalFile = vi.fn().mockRejectedValue(new Error('offline'))
+    const hook = renderController(uploads(stageLocalFile))
+    mounted.push(hook)
+    act(() => hook.result.current.actions.stageFiles([new File(['x'], 'a.txt')]))
+    await flushAsyncWork()
+    const failed = hook.result.current.view.transfers[0]
+    act(() => hook.selectDraft('session-b'))
+    act(() => hook.result.current.actions.retryTransfer(failed))
+    expect(stageLocalFile).toHaveBeenCalledOnce()
+    act(() => hook.selectDraft('session-a'))
+    expect(hook.result.current.view.transfers[0]).toMatchObject({ canRetry: true, status: 'error' })
+  })
+
   it('restores a failed upload on redo without retrying it', async () => {
     const stageLocalFile = vi.fn().mockRejectedValue(new Error('disk full'))
     const hook = renderController(uploads(stageLocalFile))
@@ -2824,6 +2989,7 @@ describe('workspace composer controller', () => {
     act(() => hook.result.current.actions.changeDoc(textDoc('new intent')))
     act(() => hook.result.current.lifecycle.restoreFailedSend(superseded))
     expect(hook.result.current.view.doc).toEqual(textDoc('new intent'))
+    expect(hook.result.current.view.errorDetail).toBe('original')
   })
 
   it.each(['ordinary', 'revision'] as const)(

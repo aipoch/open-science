@@ -101,7 +101,9 @@ const SpecialistEditor = ({
   const [isSaving, setIsSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | undefined>()
   // Tracks a revision conflict that requires the user to reload before saving.
-  const [hasConflict, setHasConflict] = useState(false)
+  const [saveConflict, setHasConflict] = useState(false)
+  const hasConflict =
+    saveConflict || (editSpecialist !== undefined && form.baseRevision < editSpecialist.revision)
   const [isReloading, setIsReloading] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(initialInput?.id !== undefined)
 

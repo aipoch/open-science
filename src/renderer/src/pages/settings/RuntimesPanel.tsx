@@ -17,6 +17,7 @@ import * as Dialog from '@/components/ui/dialog'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ErrorNotice } from '@/components/error-notice'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -52,6 +53,7 @@ import {
   useSettingsSearchShortcut
 } from './settings-search-shortcut'
 import { PythonIcon, RIcon } from './language-icons'
+import { NotebookRecoveryNotice } from './NotebookRecoveryNotice'
 import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
 import { WslLocalShellSection } from './WslLocalShellSection'
 import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'
@@ -219,6 +221,13 @@ const RuntimesPanel = ({
   const provisionEnv = useNotebookEnvStore((state) => state.provision)
   const cancelEnv = useNotebookEnvStore((state) => state.cancel)
   const resetEnv = useNotebookEnvStore((state) => state.reset)
+  const envStatus = useNotebookEnvStore((state) => state.status)
+  const recovery = envStatus.recovery
+  const blockedLabel = (language: NotebookLanguage): string =>
+    (language === 'python' ? envStatus.pythonRepairRequired : envStatus.rRepairRequired)
+      ? t('Runtime repair required')
+      : t('Runtime recovery blocked')
+  const [rechecking, setRechecking] = useState(false)
   const statusError = useNotebookEnvStore((state) => state.statusError)
   // Per-language provisioning state: python and R each track their own progress/preparing/error, so
   // requesting one never makes the other's card look cancelled (the provisioner serializes the runs).
@@ -265,12 +274,16 @@ const RuntimesPanel = ({
   // cleared after a successful refresh so every badge refetches against the new env list; a failed
   // refresh retains both the last complete registry snapshot and its matching counts.
   const recheck = async (): Promise<void> => {
-    if (LANGUAGES.some(({ id }) => languageOperationActive(id))) return
+    if (rechecking || LANGUAGES.some(({ id }) => languageOperationActive(id))) return
+    setRechecking(true)
     setError(null)
     try {
+      await initEnv()
       await recheckRuntimeSettings()
     } catch {
       setError('Could not re-check runtimes.')
+    } finally {
+      setRechecking(false)
     }
   }
 
@@ -573,7 +586,7 @@ const RuntimesPanel = ({
                 className="mt-1 text-[13px] text-destructive"
                 data-testid={`runtime-operation-error-${language}`}
               >
-                {operation.error}
+                {recoveryBlocked ? blockedLabel(language) : operation.error}
               </p>
             ) : null}
             <code className="mt-1 block truncate text-xs text-muted-foreground">
@@ -754,10 +767,7 @@ const RuntimesPanel = ({
                   }
                 >
                   {importingEnvironmentLock ? (
-                    <LoaderCircle
-                      className="animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
+                    <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
                   ) : (
                     <Upload aria-hidden="true" />
                   )}
@@ -771,6 +781,7 @@ const RuntimesPanel = ({
                 data-testid="runtimes-recheck"
                 onClick={() => void recheck()}
                 disabled={
+                  rechecking ||
                   importingEnvironmentLock ||
                   busy ||
                   loading ||
@@ -794,6 +805,14 @@ const RuntimesPanel = ({
           </div>
         }
       >
+        {statusError ? (
+          <ErrorNotice
+            tone="amber"
+            title={t('Could not re-check runtimes.')}
+            errorCode={statusError}
+          />
+        ) : null}
+        <NotebookRecoveryNotice recovery={recovery} />
         {onOpenNetworkProtection ? (
           <NotebookNetworkProtectionBanner onOpen={onOpenNetworkProtection} />
         ) : null}
@@ -946,7 +965,9 @@ const RuntimesPanel = ({
                               className="mt-1 text-[13px] text-destructive"
                               data-testid={`runtimes-provision-error-${id}`}
                             >
-                              {langError}
+                              {langError.includes('RUNTIME_RECOVERY_BLOCKED')
+                                ? blockedLabel(id)
+                                : langError}
                             </p>
                           ) : null}
                         </div>

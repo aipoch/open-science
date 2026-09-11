@@ -205,9 +205,54 @@ describe('useProjectFormDialog', () => {
 
     expect(hook.current().dialogProps.open).toBe(true)
     expect(hook.current().dialogProps.error).toBe(
-      'Project changed elsewhere. Reopen Project Settings and try again.'
+      'Project changed elsewhere. Your draft is kept. Compare the latest values before saving again.'
     )
     expect(hook.current().dialogProps.isSubmitting).toBe(false)
+    hook.unmount()
+  })
+
+  it('keeps local inputs while comparing latest values and requires an explicit rebase', async () => {
+    const latest = createProject({
+      name: 'Other name',
+      description: 'Other description',
+      agentContext: 'Other context',
+      updatedAt: 2
+    })
+    const update = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Project changed elsewhere.'))
+      .mockResolvedValueOnce({ ...latest, name: 'My name' })
+    setProjectsApi({ update, get: vi.fn().mockResolvedValue(latest) })
+    const hook = renderHook()
+    act(() => hook.current().openEditDialog(createProject()))
+    act(() => hook.current().dialogProps.onNameChange('My name'))
+    await act(async () => submitForm(hook.current()))
+    expect(hook.current().dialogProps.nameDraft).toBe('My name')
+    expect(hook.current().dialogProps.conflictProject).toEqual(latest)
+    await act(async () => submitForm(hook.current()))
+    expect(update).toHaveBeenCalledTimes(1)
+    act(() => hook.current().dialogProps.onKeepDraft?.())
+    expect(hook.current().dialogProps.nameDraft).toBe('My name')
+    await act(async () => submitForm(hook.current()))
+    expect(update).toHaveBeenLastCalledWith(
+      expect.objectContaining({ name: 'My name', expectedUpdatedAt: 2 })
+    )
+    hook.unmount()
+  })
+
+  it('loads latest values only when the user selects that action', async () => {
+    const latest = createProject({ name: 'Latest', agentContext: 'Latest context', updatedAt: 2 })
+    setProjectsApi({
+      update: vi.fn().mockRejectedValue(new Error('Project changed elsewhere.')),
+      get: vi.fn().mockResolvedValue(latest)
+    })
+    const hook = renderHook()
+    act(() => hook.current().openEditDialog(createProject()))
+    await act(async () => submitForm(hook.current()))
+    act(() => hook.current().dialogProps.onLoadLatest?.())
+    expect(hook.current().dialogProps.nameDraft).toBe('Latest')
+    expect(hook.current().dialogProps.agentContextDraft).toBe('Latest context')
+    expect(hook.current().dialogProps.conflictProject).toBeUndefined()
     hook.unmount()
   })
 

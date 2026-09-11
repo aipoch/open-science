@@ -147,6 +147,60 @@ describe('JobDetailModal — detail view', () => {
     expect(container.textContent).not.toContain('Session compute settings could not be read.')
   })
 
+  it('retries only collection for the same completed job and displays remote leftovers independently from analysis', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      status: 'success',
+      harvested_at: undefined,
+      harvest_error: 'temporary transfer failure',
+      analysis_state: 'failed',
+      left_on_remote: [
+        { uri: 'ssh://cluster/scratch/large.dat', size_mb: 512, reason: 'exceeds_max_file_mb' }
+      ]
+    })
+    const jobsRetryHarvest = vi.fn(async () => undefined)
+    const jobsList = vi.fn(async () => [job])
+    Object.assign(window, { api: { compute: { jobsRetryHarvest, jobsList } } })
+    useSessionJobStore.getState().applyUpdate(job)
+    act(() =>
+      root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+    )
+    expect(container.textContent).toContain('Results pending')
+    expect(container.textContent).toContain('ssh://cluster/scratch/large.dat')
+    expect(container.textContent).toContain('The command will not run again.')
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Retry collection'
+    )!
+    await act(async () => button.click())
+    expect(jobsRetryHarvest).toHaveBeenCalledExactlyOnceWith({
+      jobId: job.job_id,
+      projectId: job.project_id,
+      sessionId: job.session_id,
+      providerId: job.provider_id
+    })
+    act(() => useSessionJobStore.getState().applyUpdate({ ...job, harvested_at: Date.now() }))
+    expect(container.textContent).toContain('Collection finished with errors')
+    expect(
+      Array.from(container.querySelectorAll('button')).some(
+        (b) => b.textContent === 'Retry collection'
+      )
+    ).toBe(false)
+  })
+
+  it.each(['dispatch_recovery_pending', 'dispatch_recovery_ambiguous', 'host_unreachable'])(
+    'shows observation %s without changing the running result',
+    async (last_poll_error) => {
+      const { JobDetailModal } = await import('./JobDetailModal')
+      const job = makeJob({ last_poll_error })
+      act(() =>
+        root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+      )
+      expect(container.textContent).toContain('Running')
+      expect(container.querySelector('[role="status"]')).not.toBeNull()
+    }
+  )
+
+
   it('requests cancellation with the complete owner tuple and disables while cancelling', async () => {
     const { JobDetailModal } = await import('./JobDetailModal')
     const job = makeJob()

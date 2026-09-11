@@ -100,6 +100,36 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+it('shows unknown facts for legacy snapshots and separates failed scratch from successful SSH', () => {
+  const legacy = host({
+    probeResult: { ok: true, probedAt: new Date().toISOString(), exitCode: 0, errorTail: null }
+  })
+  useComputeStore.setState({ hosts: [legacy] })
+  act(() => root.render(<ComputeHostDetail providerId={legacy.providerId} />))
+  expect(container.textContent).toContain('Unknown')
+  act(() =>
+    useComputeStore.setState({
+      hosts: [
+        {
+          ...legacy,
+          probeResult: {
+            ...legacy.probeResult!,
+            ok: false,
+            sshConnected: true,
+            commandExecutable: true,
+            scratchWritable: false,
+            scratchPath: '/scratch/readonly'
+          }
+        }
+      ]
+    })
+  )
+  expect(container.textContent).toContain('/scratch/readonly')
+  expect(container.textContent).toContain('Scratch write check')
+  expect(container.textContent).toContain('Passed')
+  expect(container.textContent).toContain('Failed')
+})
+
 describe('ComputeHostDetail', () => {
   it('keeps ordinary Settings sections uncarded while retaining the resource status surface', () => {
     useComputeStore.setState({

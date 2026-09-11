@@ -129,6 +129,8 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   const [revealError, setRevealError] = useState<string | undefined>()
   const [workspaceOpenError, setWorkspaceOpenError] = useState<string | undefined>()
   const [newPath, setNewPath] = useState('')
+  const [pathError, setPathError] = useState<string>()
+  const [isInspecting, setIsInspecting] = useState(false)
   // The classification of `newPath` (a PARENT the user typed/picked), keyed by the exact path it
   // was computed for so a stale response for an already-superseded path never drives the action
   // buttons. `dataRoot` is the derived `<newPath>/OpenScience` the app will actually use.
@@ -151,6 +153,12 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   const [expandedCategory, setExpandedCategory] = useState<UsageCategoryKey | null>(null)
   // Guards against a stale inspectDataRoot response (from a superseded path) overwriting a newer one.
   const inspectRequestRef = useRef(0)
+  useEffect(
+    () => () => {
+      inspectRequestRef.current += 1
+    },
+    []
+  )
 
   useEffect(() => {
     void loadStorageStatus().catch(() => undefined)
@@ -213,21 +221,43 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   // route correctly; an empty path clears the classification instead of calling the IPC.
   const inspectPath = async (path: string): Promise<void> => {
     const requestId = ++inspectRequestRef.current
-    if (!path) {
-      setInspection(null)
-      return
+    setInspection(null)
+    setPathError(undefined)
+    setDefaultError(undefined)
+    setIsInspecting(Boolean(path))
+    if (!path) return
+    try {
+      const result = await window.api.storage.inspectDataRoot(path)
+      if (inspectRequestRef.current !== requestId) return
+      setInspection({ path, ...result })
+    } catch {
+      if (inspectRequestRef.current !== requestId) return
+      setPathError(t('Could not check this folder. Try again.'))
+    } finally {
+      if (inspectRequestRef.current === requestId) setIsInspecting(false)
     }
-    const result = await window.api.storage.inspectDataRoot(path)
-    if (inspectRequestRef.current !== requestId) return
-    setInspection({ path, ...result })
   }
 
   const handleBrowse = async (): Promise<void> => {
-    const picked = await window.api.storage.pickDirectory()
-    if (!picked) return
-    setNewPath(picked)
-    setAdoptError(undefined)
-    await inspectPath(picked)
+    const requestId = ++inspectRequestRef.current
+    setInspection(null)
+    setIsInspecting(false)
+    setPathError(undefined)
+    setDefaultError(undefined)
+    try {
+      const picked = await window.api.storage.pickDirectory()
+      if (inspectRequestRef.current !== requestId) return
+      if (!picked) {
+        await inspectPath(newPath.trim())
+        return
+      }
+      setNewPath(picked)
+      setAdoptError(undefined)
+      await inspectPath(picked)
+    } catch {
+      if (inspectRequestRef.current === requestId)
+        setPathError(t('Could not open the folder picker. Try again.'))
+    }
   }
 
   const handleNewPathChange = (value: string): void => {
@@ -237,8 +267,12 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   }
 
   const handleCancelNewPath = (): void => {
+    inspectRequestRef.current += 1
     setNewPath('')
     setInspection(null)
+    setIsInspecting(false)
+    setPathError(undefined)
+    setDefaultError(undefined)
     setAdoptError(undefined)
     setIsEditing(false)
   }
@@ -258,10 +292,15 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     setIsAdopting(true)
     setAdoptError(undefined)
 
-    const result = await window.api.storage.setDataRootAndRelaunch(trimmedNewPath, false)
-    if (!result.ok) {
+    try {
+      const result = await window.api.storage.setDataRootAndRelaunch(trimmedNewPath, false)
+      if (!result.ok) {
+        setIsAdopting(false)
+        setAdoptError(result.error ?? t('Could not switch to this folder.'))
+      }
+    } catch {
       setIsAdopting(false)
-      setAdoptError(result.error ?? t('Could not switch to this folder.'))
+      setAdoptError(t('Could not switch to this folder.'))
     }
     // On success the app relaunches; nothing left to update here.
   }
@@ -273,31 +312,43 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   // folder still holds data ('adopt' → repoint as-is), or it is somehow unusable ('invalid' → error).
   const handleUseDefault = async (): Promise<void> => {
     if (!info) return
+    const requestId = ++inspectRequestRef.current
+    setInspection(null)
+    setPathError(undefined)
     setDefaultError(undefined)
-    const result = await window.api.storage.inspectDataRoot(info.defaultParent)
-    if (result.kind === 'move') {
-      setMigrationTarget({
-        path: info.defaultParent,
-        targetAvailableBytes: result.targetAvailableBytes
-      })
-      return
+    setIsInspecting(true)
+    try {
+      const result = await window.api.storage.inspectDataRoot(info.defaultParent)
+      if (inspectRequestRef.current !== requestId) return
+      if (result.kind === 'move') {
+        setMigrationTarget({
+          path: info.defaultParent,
+          targetAvailableBytes: result.targetAvailableBytes
+        })
+        return
+      }
+      if (result.kind === 'adopt') {
+        setNewPath(info.defaultParent)
+        setInspection({ path: info.defaultParent, ...result })
+        setIsEditing(true)
+        setAdoptConfirmOpen(true)
+        return
+      }
+      if (result.kind === 'recover' && result.recoveryStatus) {
+        setMigrationTarget({
+          path: info.defaultParent,
+          recoveryStatus: result.recoveryStatus,
+          targetAvailableBytes: result.targetAvailableBytes
+        })
+        return
+      }
+      setDefaultError(result.error ?? t('The default location is not usable.'))
+    } catch {
+      if (inspectRequestRef.current === requestId)
+        setDefaultError(t('The default location is not usable.'))
+    } finally {
+      if (inspectRequestRef.current === requestId) setIsInspecting(false)
     }
-    if (result.kind === 'adopt') {
-      setNewPath(info.defaultParent)
-      setInspection({ path: info.defaultParent, ...result })
-      setIsEditing(true)
-      setAdoptConfirmOpen(true)
-      return
-    }
-    if (result.kind === 'recover' && result.recoveryStatus) {
-      setMigrationTarget({
-        path: info.defaultParent,
-        recoveryStatus: result.recoveryStatus,
-        targetAvailableBytes: result.targetAvailableBytes
-      })
-      return
-    }
-    setDefaultError(result.error ?? t('The default location is not usable.'))
   }
 
   const trimmedNewPath = newPath.trim()
@@ -437,8 +488,19 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                 : t('Scanning…')}
             </p>
 
+            {storageStatus.cleanupPending ? (
+              <p className="mt-2 text-xs text-muted-foreground" role="status">
+                {t(
+                  'Cleanup from an earlier move is still pending. The current location remains selected; old copies may still use disk space.'
+                )}
+              </p>
+            ) : null}
+
             {isEditing && info ? (
-              <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3">
+              <fieldset
+                disabled={isAdopting}
+                className="mt-3 min-w-0 rounded-lg border border-border bg-muted/40 p-3"
+              >
                 <label
                   htmlFor="data-dir-path-input"
                   className="mb-1 block text-xs font-medium text-muted-foreground"
@@ -476,6 +538,17 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                       components={{ path: <span className="font-mono no-underline" /> }}
                     />
                   </button>
+                ) : null}
+
+                {isInspecting ? (
+                  <p className="mt-2 text-xs text-muted-foreground" role="status">
+                    {t('Checking…')}
+                  </p>
+                ) : null}
+                {pathError ? (
+                  <p className="mt-2 text-xs text-destructive" role="alert">
+                    {pathError}
+                  </p>
                 ) : null}
 
                 {defaultError ? (
@@ -602,7 +675,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                     {tCommon('Cancel')}
                   </Button>
                 </div>
-              </div>
+              </fieldset>
             ) : null}
           </>
         )}
@@ -656,6 +729,11 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                   {workspaceOpenError}
                 </p>
               ) : null}
+              <p className="mb-3 text-xs text-muted-foreground">
+                {t(
+                  'Sizes count hard-linked files once within each category. They are not estimates of space freed by deletion.'
+                )}
+              </p>
               {totalBytes > 0 ? (
                 <div className="flex h-2 gap-0.5 overflow-hidden rounded bg-muted">
                   {categories
@@ -723,9 +801,14 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                               key={child.name}
                               className="flex items-center justify-between gap-2 text-xs"
                             >
-                              <span className="truncate text-muted-foreground" title={child.name}>
-                                {child.name}
-                              </span>
+                              <div className="min-w-0 text-muted-foreground">
+                                <span className="block truncate" title={child.name}>
+                                  {child.name}
+                                </span>
+                                {category.key === 'workspaces' && child.retainedAfterDelete ? (
+                                  <span className="block">{t('Retained after deletion')}</span>
+                                ) : null}
+                              </div>
                               <div className="flex shrink-0 items-center gap-1">
                                 <span className="tabular-nums text-muted-foreground">
                                   {formatBytes(child.bytes)}

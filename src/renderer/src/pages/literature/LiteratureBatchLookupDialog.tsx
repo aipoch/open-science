@@ -236,7 +236,9 @@ export const LiteratureBatchLookupDialog = ({
       setSending(false)
     }
   }
-  const command = async (action: 'apply' | 'retry' | 'resume' | 'pause'): Promise<void> => {
+  const command = async (
+    action: 'apply' | 'retry' | 'retry-failed' | 'resume' | 'pause'
+  ): Promise<void> => {
     if (!job) return
     await sendCommand(
       action === 'apply'
@@ -249,6 +251,17 @@ export const LiteratureBatchLookupDialog = ({
           }
         : { action, jobId: job.id }
     )
+  }
+  const failureLabels = {
+    'rate-limit': t('Source rate limit reached. Search again later.'),
+    authentication: t('Check this source’s credentials in Settings, then search again.'),
+    timeout: t('The source timed out. Retry this reference.'),
+    network: t('The source could not be reached. Check the connection and retry.'),
+    unavailable: t('This reference is deleted or unavailable. Check it in the Library.'),
+    conflict: t('This reference changed. Search again and review the results.'),
+    'no-result': t('No metadata was found. Check the identifier or edit the reference.'),
+    'no-full-text': t('No freely accessible full-text PDF was found.'),
+    unknown: t('The source could not complete this operation. Retry or edit the reference.')
   }
   const messageLabels: Record<string, string> = {
     'Search again to refresh this older metadata review.': t(
@@ -366,6 +379,21 @@ export const LiteratureBatchLookupDialog = ({
               <>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-medium text-foreground">{statusLabel}</span>
+                  {!running &&
+                  rows.some(
+                    (row) =>
+                      row.status === 'error' &&
+                      (!row.failures?.length || row.failures.some(({ retryable }) => retryable))
+                  ) ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={sending}
+                      onClick={() => void command('retry-failed')}
+                    >
+                      {t('Retry failed references')}
+                    </Button>
+                  ) : null}
                   {!running && done < rows.length ? (
                     <Button
                       variant="link"
@@ -462,7 +490,34 @@ export const LiteratureBatchLookupDialog = ({
                         {labels[row.status]}
                       </span>
                     </div>
-                    {row.message ? (
+                    {row.failures?.map((failure, index) => (
+                      <p key={index} className="mt-1 text-xs text-muted-foreground">
+                        {failureLabels[failure.code]}{' '}
+                        <span>
+                          {failure.source} · {failure.code} · {failure.phase}
+                        </span>
+                      </p>
+                    ))}
+                    {!running &&
+                    row.status === 'error' &&
+                    (!row.failures?.length || row.failures.some(({ retryable }) => retryable)) ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={sending}
+                        onClick={() =>
+                          job &&
+                          void sendCommand({
+                            action: 'retry-failed',
+                            jobId: job.id,
+                            itemIds: [row.id]
+                          })
+                        }
+                      >
+                        {t('Retry this reference')}
+                      </Button>
+                    ) : null}
+                    {row.message && !row.failures?.length ? (
                       <p className="text-xs text-muted-foreground">
                         {messageLabels[row.message] ?? row.message}
                       </p>

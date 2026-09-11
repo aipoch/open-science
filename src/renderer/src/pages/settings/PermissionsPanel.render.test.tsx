@@ -517,6 +517,22 @@ describe('PermissionsPanel', () => {
     expect(filterTrigger?.parentElement?.className).toContain('mb-2')
   })
 
+  it('shows approval time for ordinary grants and leaves legacy time unknown', async () => {
+    setPermissionApi({
+      list: vi.fn().mockResolvedValue({
+        ...snapshot,
+        grants: [
+          { ...snapshot.grants[0], createdAt: Date.UTC(2026, 8, 10) },
+          { ...snapshot.grants[0], id: 'legacy' }
+        ]
+      })
+    })
+    await act(async () => root.render(<PermissionsPanel />))
+    const rows = container.querySelectorAll('[data-slot="permission-row"]')
+    expect(rows[0].textContent).toContain('Approved ')
+    expect(rows[1].textContent).toContain('Approval time unknown')
+  })
+
   it('renders grouped grants with a scope filter and per-row revoke control', async () => {
     setPermissionApi({ list: vi.fn().mockResolvedValue(snapshot) })
 

@@ -97,11 +97,12 @@ type WorkspaceComposerUploadController = {
       caret?: ComposerCaretPosition
     ) => void
     cancelTransfer: (transfer: ComposerUploadTransfer) => void
+    retryTransfer: (transfer: ComposerUploadTransfer) => void
     removeAttachment: (attachment: UploadedAttachment) => void
     restorePastedText: (pastedTextId: string) => void
     undo: (caret?: ComposerCaretPosition) => boolean
     redo: (caret?: ComposerCaretPosition) => boolean
-    setError: (error: string | null) => void
+    setError: (error: string | null, detail?: string) => void
     clearPastedTextUndo: (draftKey?: string) => void
     clearUndo: (draftKey?: string) => void
     captureUndo: (draftKey?: string, caret?: ComposerCaretPosition) => void
@@ -168,14 +169,14 @@ export const useWorkspaceComposerUploadController = ({
 }: WorkspaceComposerUploadControllerInput): WorkspaceComposerUploadController => {
   const [attachments, setAttachments] = useState<UploadedAttachment[]>(initialDraft.attachments)
   const [transfers, setTransfers] = useState<ComposerUploadTransfer[]>(
-    initialDraft.attachmentTransfers
+    initialDraft.attachmentTransfers.map((transfer) => ({ ...transfer, canRetry: false }))
   )
   const { t } = useTranslation()
   const [error, setErrorText] = useState<string | null>(null)
   const [errorDetail, setErrorDetail] = useState<string>()
-  const setError = useCallback((message: string | null): void => {
+  const setError = useCallback((message: string | null, detail?: string): void => {
     setErrorText(message)
-    setErrorDetail(undefined)
+    setErrorDetail(detail)
   }, [])
   const attachmentsRef = useRef(attachments)
   const transfersRef = useRef<ComposerUploadTransfer[]>(initialDraft.attachmentTransfers)
@@ -199,8 +200,15 @@ export const useWorkspaceComposerUploadController = ({
     [setActiveAttachments]
   )
   const setActiveTransfers = useCallback((next: ComposerUploadTransfer[]): void => {
-    transfersRef.current = next
-    setTransfers(next)
+    const available = next.map((transfer) => ({
+      ...transfer,
+      canRetry:
+        transfer.status === 'error' &&
+        !transfer.pastedTextId &&
+        !!transferFilesRef.current[transfer.transferId]
+    }))
+    transfersRef.current = available
+    setTransfers(available)
   }, [])
   const updateActiveTransfers = useCallback(
     (update: (current: ComposerUploadTransfer[]) => ComposerUploadTransfer[]): void => {
@@ -263,7 +271,9 @@ export const useWorkspaceComposerUploadController = ({
             draft.doc = restorePastedTextNode(draft.doc, transfer.pastedTextId)?.doc ?? draft.doc
           }
         }
-        draft.attachmentTransfers = []
+        draft.attachmentTransfers = draft.attachmentTransfers.filter((transfer) =>
+          transfer.transferId.startsWith('recovered-')
+        )
       }
       transferFilesRef.current = {}
     },
@@ -502,6 +512,51 @@ export const useWorkspaceComposerUploadController = ({
     },
     [activeDraftKeyRef, draftsRef, updateActiveTransfers]
   )
+  useEffect(() => {
+    const draftKey = activeDraftKeyRef.current
+    const pending = transfers.filter((transfer) => transfer.recoveryReceipt)
+    if (!pending.length) return
+    let cancelled = false
+    void Promise.all(
+      pending.map(async (transfer) => {
+        const attachment = await window.api.uploads
+          .recoverDraft({ receipt: transfer.recoveryReceipt! })
+          .catch(() => null)
+        if (cancelled || cancelledTransfersRef.current.has(transfer.transferId)) return
+        const live =
+          activeDraftKeyRef.current === draftKey
+            ? transfersRef.current
+            : draftsRef.current[draftKey]?.attachmentTransfers
+        if (!live?.some((candidate) => candidate.transferId === transfer.transferId)) return
+        if (attachment) {
+          if (activeDraftKeyRef.current === draftKey)
+            updateActiveAttachments((current) => [...current, attachment])
+          else draftsRef.current[draftKey]?.attachments.push(attachment)
+        }
+        updateDraftTransfers(draftKey, (current) =>
+          attachment
+            ? current.filter((candidate) => candidate.transferId !== transfer.transferId)
+            : current.map((candidate) =>
+                candidate.transferId === transfer.transferId
+                  ? { ...candidate, recoveryReceipt: undefined }
+                  : candidate
+              )
+        )
+        markChanged(draftKey)
+      })
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeDraftKeyRef,
+    draftsRef,
+    markChanged,
+    transfers,
+    updateActiveAttachments,
+    updateDraftTransfers
+  ])
+
   const updateDraftDoc = useCallback(
     (draftKey: string, update: (current: ComposerDoc) => ComposerDoc): void => {
       if (activeDraftKeyRef.current === draftKey) {
@@ -664,9 +719,13 @@ export const useWorkspaceComposerUploadController = ({
                 reconcileFailedPastedTextUndo(draftKey, transfer.pastedTextId, transfer.transferId)
                 restorePastedTextInline(draftKey, transfer.pastedTextId)
               } else {
-                updateTransfer({ status: 'error', error: message })
+                updateTransfer({
+                  status: 'error',
+                  error: message,
+                  errorDetail: asText(uploadError)
+                })
               }
-              delete transferFilesRef.current[transfer.transferId]
+              if (transfer.pastedTextId) delete transferFilesRef.current[transfer.transferId]
               if (activeDraftKeyRef.current === draftKey) {
                 setError(message)
                 setErrorDetail(asText(uploadError))
@@ -688,6 +747,59 @@ export const useWorkspaceComposerUploadController = ({
       uploads,
       setError,
       t
+    ]
+  )
+
+  const retryTransfer = useCallback(
+    (requested: ComposerUploadTransfer): void => {
+      const transfer = transfersRef.current.find((item) => item.transferId === requested.transferId)
+      const file = transferFilesRef.current[requested.transferId]
+      const draftKey = activeDraftKeyRef.current
+      if (
+        !canStageAttachments ||
+        !transfer ||
+        transfer.status !== 'error' ||
+        !file ||
+        transfer.pastedTextId ||
+        deletionCleanupRef.current[draftKey]
+      )
+        return
+      if (imageAttachmentMimeType(file.name, file.type) && supportsImageInput !== true) {
+        setError(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
+        return
+      }
+      // The failed staging attempt has settled. A fresh attempt cannot collide with delayed cleanup;
+      // only this failed row changes, so completed attachments keep their identities.
+      const retry: ComposerUploadTransfer = {
+        ...transfer,
+        transferId: crypto.randomUUID(),
+        receivedBytes: 0,
+        status: 'queued',
+        error: undefined,
+        errorDetail: undefined
+      }
+      transferFilesRef.current[retry.transferId] = file
+      delete transferFilesRef.current[transfer.transferId]
+      const replace = (items: ComposerUploadTransfer[]): ComposerUploadTransfer[] =>
+        items.map((item) => (item.transferId === transfer.transferId ? retry : item))
+      reconcileHistorySnapshots(draftKey, (snapshot) => ({
+        ...snapshot,
+        attachmentTransfers: replace(snapshot.attachmentTransfers)
+      }))
+      updateActiveTransfers(replace)
+      markChanged(draftKey)
+      setError(null)
+      runPendingUploads(draftKey, [{ file, transfer: retry }])
+    },
+    [
+      activeDraftKeyRef,
+      canStageAttachments,
+      supportsImageInput,
+      setError,
+      reconcileHistorySnapshots,
+      updateActiveTransfers,
+      markChanged,
+      runPendingUploads
     ]
   )
 
@@ -1341,6 +1453,7 @@ export const useWorkspaceComposerUploadController = ({
       stageFiles,
       stagePastedText: (doc, node, caret) => stagePastedText(doc, node, false, caret),
       cancelTransfer,
+      retryTransfer,
       removeAttachment,
       restorePastedText,
       undo,

@@ -1481,7 +1481,7 @@ describe('SpecialistEditor', () => {
     )
   })
 
-  it('ignores a stale draft when the specialist revision advanced meanwhile', async () => {
+  it('restores a stale draft and blocks save when the specialist revision advanced meanwhile', async () => {
     const profile: SpecialistView = {
       id: 'stale-bot',
       name: 'Stale Bot',
@@ -1528,8 +1528,13 @@ describe('SpecialistEditor', () => {
       )
     })
     expect(document.body.querySelector<HTMLInputElement>('#sp-description')?.value).toBe(
-      'Newer saved description'
+      'Edit on revision 1'
     )
+    expect(document.body.querySelector('[aria-label="Revision conflict"]')).not.toBeNull()
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )
+    expect(save?.disabled).toBe(true)
   })
 
   it('restores a create-form draft across mounts', async () => {

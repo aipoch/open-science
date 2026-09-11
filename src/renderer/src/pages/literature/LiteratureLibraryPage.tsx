@@ -2448,8 +2448,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     collectionEditorRef.current?.openEdit(collection)
   }
 
+  const promotedCollections = collectionPendingDelete
+    ? collections.filter(({ parentId }) => parentId === collectionPendingDelete.id)
+    : []
+  const rootCollectionNames = new Set(
+    collections.filter(({ parentId }) => !parentId).map(({ name }) => name.toLowerCase())
+  )
+  const conflictingCollections = promotedCollections.filter(({ name }) =>
+    rootCollectionNames.has(name.toLowerCase())
+  )
+
   const deleteCollection = async (): Promise<void> => {
-    if (!collectionPendingDelete || isDeletingCollection) return
+    if (!collectionPendingDelete || isDeletingCollection || conflictingCollections.length) return
     const deletingCollection = collectionPendingDelete
     setIsDeletingCollection(true)
     setCollectionDeleteError(undefined)
@@ -2471,6 +2481,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             )
           : t('Collection could not be deleted.')
       )
+      await loadCollections().catch(() => undefined)
     } finally {
       setIsDeletingCollection(false)
     }
@@ -4094,6 +4105,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           onSelect={() => {
                             setCollectionDeleteError(undefined)
                             setCollectionPendingDelete(selectedCollection)
+                            void loadCollections().catch(() =>
+                              setCollectionDeleteError(t('Literature could not be loaded.'))
+                            )
                           }}
                         >
                           <span className="flex size-4 shrink-0 items-center justify-center">
@@ -6477,6 +6491,42 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   'References in this collection will remain in All references. This action cannot be undone.'
                 )}
               </AlertDialog.Description>
+              {promotedCollections.length ? (
+                <div className="mt-3 space-y-2 text-sm">
+                  <p>{t('Child collections will move to the top level.')}</p>
+                  <ul className="space-y-2">
+                    {promotedCollections.map((child) => (
+                      <li
+                        key={child.id}
+                        className="flex flex-wrap items-center justify-between gap-2"
+                      >
+                        <span className="min-w-0 break-words">{child.name}</span>
+                        {conflictingCollections.some(({ id }) => id === child.id) ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isDeletingCollection}
+                            onClick={() => {
+                              setCollectionPendingDelete(undefined)
+                              openEditCollection(child)
+                            }}
+                          >
+                            {t('Rename conflicting collection')}
+                          </Button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {conflictingCollections.length ? (
+                    <p role="alert">
+                      {t(
+                        'A child collection would duplicate a top-level name. Rename it before deleting this collection.'
+                      )}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               {collectionDeleteError ? (
                 <p className="mt-3 text-sm text-danger-000" role="alert">
                   {collectionDeleteError}
@@ -6499,7 +6549,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               <Button
                 type="button"
                 variant="destructive"
-                disabled={isDeletingCollection}
+                disabled={isDeletingCollection || conflictingCollections.length > 0}
                 onClick={() => void deleteCollection()}
               >
                 {isDeletingCollection ? (

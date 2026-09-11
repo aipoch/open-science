@@ -503,6 +503,13 @@ const SkillImportView = ({
         )}
       </section>
 
+      {scanned?.some((skill) => selected.has(skill.url) && skill.installedId) ? (
+        <p className="my-3 text-xs text-muted-foreground">
+          {t(
+            'The installed folder will be replaced, including local edits and files absent from this package. Cancel to keep the current copy.'
+          )}
+        </p>
+      ) : null}
       <SkillImportCandidatePreview {...candidatePreview.previewProps} />
     </div>
   )
