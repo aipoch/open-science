@@ -2329,7 +2329,6 @@
     "Run {{runNumber}} · Message {{messageNumber}}": "実行 {{runNumber}} · メッセージ {{messageNumber}}",
     "Run {{run}}, {{state}}, {{tokens}} context-window tokens": "実行 {{run}}、{{state}}、コンテキストウィンドウ {{tokens}} トークン",
     "Running": "実行中",
-    "Running jobs in this session": "このセッションで実行中のジョブ",
     "Runtime": "ランタイム",
     "Runtime_duration": "実行時間",
     "Runtimes": "ランタイム",

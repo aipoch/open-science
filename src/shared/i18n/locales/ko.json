@@ -2336,7 +2336,6 @@
     "Run {{runNumber}} · Message {{messageNumber}}": "{{runNumber}} · 메시지 {{messageNumber}} 실행",
     "Run {{run}}, {{state}}, {{tokens}} context-window tokens": "{{run}}, {{state}}, {{tokens}} 컨텍스트-창 토큰 실행",
     "Running": "실행 중",
-    "Running jobs in this session": "이 세션에서 실행 중인 작업",
     "Runtime": "런타임",
     "Runtime_duration": "런타임",
     "Runtimes": "런타임",

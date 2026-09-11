@@ -2431,7 +2431,6 @@
     "Run {{runNumber}} · Message {{messageNumber}}": "Запускать {{runNumber}} · сообщение {{messageNumber}}",
     "Run {{run}}, {{state}}, {{tokens}} context-window tokens": "Запускать {{run}}, {{state}}, {{tokens}} токенов окна контекста",
     "Running": "Запущено",
-    "Running jobs in this session": "Запущенные задания в этом сеансе",
     "Runtime": "Среда выполнения",
     "Runtime_duration": "Время выполнения",
     "Runtimes": "Среды выполнения",

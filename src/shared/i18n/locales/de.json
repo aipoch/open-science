@@ -2144,7 +2144,6 @@
     "Run {{runNumber}} · Message {{messageNumber}}": "Ausführung {{runNumber}} · Nachricht {{messageNumber}}",
     "Run {{run}}, {{state}}, {{tokens}} context-window tokens": "Ausführung {{run}}, {{state}}, {{tokens}} Kontextfenster-Tokens",
     "Running": "Wird ausgeführt",
-    "Running jobs in this session": "Laufende Jobs in dieser Sitzung",
     "Runtime": "Laufzeit",
     "Runtime_duration": "Laufzeit",
     "Runtimes": "Laufzeiten",

@@ -2413,7 +2413,6 @@
     "Run {{runNumber}} · Message {{messageNumber}}": "執行 {{runNumber}} · 訊息 {{messageNumber}}",
     "Run {{run}}, {{state}}, {{tokens}} context-window tokens": "執行 {{run}}，{{state}}，{{tokens}} 個脈絡視窗詞元",
     "Running": "執行中",
-    "Running jobs in this session": "本會話中執行的任務",
     "Runtime": "執行環境",
     "Runtime_duration": "執行時長",
     "Runtimes": "執行環境",

@@ -2416,7 +2416,6 @@
     "Run {{runNumber}} · Message {{messageNumber}}": "运行 {{runNumber}} · 消息 {{messageNumber}}",
     "Run {{run}}, {{state}}, {{tokens}} context-window tokens": "运行 {{run}}，{{state}}，{{tokens}} 个上下文窗口词元",
     "Running": "运行中",
-    "Running jobs in this session": "本会话中运行的任务",
     "Runtime": "运行时",
     "Runtime_duration": "运行时长",
     "Runtimes": "运行时",
