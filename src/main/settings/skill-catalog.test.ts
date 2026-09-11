@@ -973,6 +973,9 @@ describe('SkillCatalogModule', () => {
     expect(
       (await catalog.deleteSkill({ id: 'personal-my-skill' })).map((skill) => skill.id)
     ).toEqual(['demo'])
+    await expect(catalog.deleteSkill({ id: 'demo' })).rejects.toThrow(
+      'Built-in Skills cannot be deleted.'
+    )
   })
 
   it.each(['personal', 'imported'] as const)(
