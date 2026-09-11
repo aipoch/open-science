@@ -846,7 +846,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         const { stdout } = await promisify(execFile)(invocation.executable, [...invocation.args], {
           cwd,
           env: invocation.env,
-          timeout: 20_000,
+          // This bounds the native host, including ACL preparation and rollback, rather
+          // than only R execution. Live kernels can make directory propagation exceed 20s.
+          timeout: 60_000,
           windowsHide: true,
           maxBuffer: 1024 * 1024
         })

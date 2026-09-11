@@ -2509,9 +2509,16 @@ mod windows_host {
             }
             return Ok(());
         };
+        let changes_permissions = state
+            .leases
+            .iter()
+            .find(|lease| lease.lease_id == lease_id)
+            .map_or(true, |lease| !lease.grants.is_empty());
         state.leases.retain(|lease| lease.lease_id != lease_id);
         write_acl_state(ownership_root, &state)?;
-        rebuild_acl_state(&mut state, ownership_root)?;
+        if changes_permissions {
+            rebuild_acl_state(&mut state, ownership_root)?;
+        }
         remove_acl_receipt(&acl_directory(ownership_root).join(format!("{lease_id}.json")))?;
         prune_acl_snapshots(&mut state);
         write_acl_state(ownership_root, &state)
@@ -2550,6 +2557,7 @@ mod windows_host {
             }
             bail!("ACL state is missing; preserving lease receipts and filesystem ACLs");
         };
+        let original_lease_count = state.leases.len();
         let mut retained = Vec::new();
         for lease in state.leases.drain(..) {
             let Some((_, receipt)) = receipts.get(&lease.lease_id) else {
@@ -2561,6 +2569,14 @@ mod windows_host {
             if !include_running && process_is_running(lease.owner_process_id) {
                 retained.push(lease);
             }
+        }
+        // A complete set of live, matching receipts has nothing to recover. Rebuilding it
+        // would revoke and propagate the same active grants through entire runtime trees.
+        if !retained.is_empty()
+            && retained.len() == original_lease_count
+            && retained.len() == receipts.len()
+        {
+            return Ok(());
         }
         state.leases = retained;
         write_acl_state(ownership_root, &state)?;
@@ -2630,14 +2646,27 @@ mod windows_host {
                 .leases
                 .sort_by(|left, right| left.lease_id.cmp(&right.lease_id));
             write_acl_state(ownership_root, &state)?;
-            if let Err(error) = write_acl_record(&path, &record)
-                .and_then(|()| rebuild_acl_state(&mut state, ownership_root))
-            {
+            // Network-fence probes have no filesystem grants. Adding their process receipt
+            // must not revoke and re-propagate another live kernel's directory permissions.
+            let changes_permissions = !record.grants.is_empty();
+            if let Err(error) = write_acl_record(&path, &record).and_then(|()| {
+                if changes_permissions {
+                    rebuild_acl_state(&mut state, ownership_root)
+                } else {
+                    Ok(())
+                }
+            }) {
                 state
                     .leases
                     .retain(|lease| lease.lease_id != record.lease_id);
                 let rollback = write_acl_state(ownership_root, &state)
-                    .and_then(|()| rebuild_acl_state(&mut state, ownership_root))
+                    .and_then(|()| {
+                        if changes_permissions {
+                            rebuild_acl_state(&mut state, ownership_root)
+                        } else {
+                            Ok(())
+                        }
+                    })
                     .and_then(|()| remove_acl_receipt(&path))
                     .and_then(|()| {
                         prune_acl_snapshots(&mut state);
@@ -3535,6 +3564,54 @@ mod windows_host {
                 );
             }
             fs::remove_dir_all(&parent).unwrap();
+        }
+
+        #[test]
+        fn empty_command_lease_does_not_rebuild_a_live_filesystem_lease() {
+            let installation_id = "abab1212abab1212abab1213";
+            let parent = unique_test_root("empty-command-lease");
+            let root = parent.join(installation_id);
+            let directory = parent.join("live-runtime");
+            fs::create_dir_all(&directory).unwrap();
+            let make_capability = || {
+                let id = new_lease_id().unwrap();
+                let capability =
+                    CommandCapability::new(command_capability_name(installation_id, &id)).unwrap();
+                (id, capability)
+            };
+            let spec = LaunchSpec {
+                executable: "unused".into(),
+                arguments: vec![],
+                verbatim_arguments: false,
+                cwd: parent.to_string_lossy().into_owned(),
+                read_only_roots: vec![directory.to_string_lossy().into_owned()],
+                read_write_roots: vec![],
+                denied_read_roots: vec![],
+                denied_write_roots: vec![],
+                termination_proof_path: None,
+                termination_proof_token: None,
+            };
+            let (id, capability) = make_capability();
+            let mut live =
+                AclLease::acquire(installation_id, &root, id, &capability, &spec).unwrap();
+            let before = fs::read(acl_state_path(&root)).unwrap();
+            // A live process may retain its receipt after its data directory disappears.
+            // An unrelated network probe must not try to re-grant that directory.
+            fs::remove_dir(&directory).unwrap();
+            recover_acl_leases(installation_id, &root, false).unwrap();
+            assert_eq!(fs::read(acl_state_path(&root)).unwrap(), before);
+            let empty = LaunchSpec {
+                read_only_roots: vec![],
+                ..spec
+            };
+            let (id, empty_capability) = make_capability();
+            let mut probe =
+                AclLease::acquire(installation_id, &root, id, &empty_capability, &empty).unwrap();
+            probe.release().unwrap();
+            assert_eq!(fs::read(acl_state_path(&root)).unwrap(), before);
+            fs::create_dir(&directory).unwrap();
+            live.release().unwrap();
+            fs::remove_dir_all(parent).unwrap();
         }
 
         #[test]
