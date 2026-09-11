@@ -459,6 +459,7 @@ jobs:
           --testTimeout=30000
           --shard=${{ matrix.shard }}/3
           --reporter=blob
+          --reporter=github-actions
           --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
       - name: Upload full-suite blob report
         if: ${{ always() }}

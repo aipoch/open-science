@@ -63,6 +63,47 @@ describe('npm ci Electron mirror policy', () => {
     expect(DEFAULT_NPM_CI_ARGS).toEqual(['--no-audit'])
   })
 
+  it('retries a failed Windows GitHub Actions install once after a short delay', () => {
+    const spawn = vi.fn().mockReturnValueOnce({ status: 1 }).mockReturnValueOnce({ status: 0 })
+    const sleep = vi.fn()
+
+    expect(
+      runNpmCi({
+        env: { GITHUB_ACTIONS: 'true' },
+        platform: 'win32',
+        sleep,
+        spawn
+      })
+    ).toBe(0)
+    expect(spawn).toHaveBeenCalledTimes(2)
+    expect(sleep).toHaveBeenCalledTimes(1)
+    expect(sleep).toHaveBeenCalledWith(5_000)
+  })
+
+  it('does not retry a failed install outside Windows GitHub Actions', () => {
+    const spawn = vi.fn(() => ({ status: 1 }))
+    const sleep = vi.fn()
+
+    expect(
+      runNpmCi({
+        env: { GITHUB_ACTIONS: 'true' },
+        platform: 'linux',
+        sleep,
+        spawn
+      })
+    ).toBe(1)
+    expect(
+      runNpmCi({
+        env: {},
+        platform: 'win32',
+        sleep,
+        spawn
+      })
+    ).toBe(1)
+    expect(spawn).toHaveBeenCalledTimes(2)
+    expect(sleep).not.toHaveBeenCalled()
+  })
+
   it('routes Electron-installing workflow npm ci through the GitHub mirror helper and disables audit for direct installs', () => {
     const workflowDir = join(process.cwd(), '.github', 'workflows')
     const leftover: string[] = []

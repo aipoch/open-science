@@ -208,6 +208,7 @@
         "src/main/storage-root.ts",
         "src/main/storage/**",
         "src/main/tray.ts",
+        "src/main/window-shortcuts.ts",
         "src/main/update/create-strategy.ts",
         "src/main/update/electron-updater-strategy.ts",
         "src/main/wsl/**",

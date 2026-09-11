@@ -391,7 +391,8 @@ describe('pull request change classification', () => {
     ['managed CodeBuddy', 'src/main/settings/managed-codebuddy.ts'],
     ['immutable notebook inputs', 'src/main/immutable-input-authority.ts'],
     ['notebook package process sandbox', 'src/main/notebook/package-process-sandbox.ts'],
-    ['WSL setup ownership', 'src/main/wsl/wsl-setup-owner.ts']
+    ['WSL setup ownership', 'src/main/wsl/wsl-setup-owner.ts'],
+    ['window shortcuts', 'src/main/window-shortcuts.ts']
   ])('adds native Windows lanes for %s changes', (_category, path) => {
     const plan = classifyChanges([{ path, status: 'modified' }])
 

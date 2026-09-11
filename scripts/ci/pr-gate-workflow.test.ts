@@ -456,6 +456,7 @@ describe('PR Gate workflow', () => {
         '--testTimeout=30000',
         '--shard=${{ matrix.shard }}/3',
         '--reporter=blob',
+        '--reporter=github-actions',
         '--outputFile=vitest-reports/blob-${{ matrix.shard }}.json'
       ].join(' ')
     })

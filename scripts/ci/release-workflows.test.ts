@@ -439,6 +439,8 @@ describe('build verification throughput', () => {
     })
     expect(step(tests, 'Test complete suite shard').run).toContain('--shard=${{ matrix.shard }}/3')
     expect(step(tests, 'Test complete suite shard').run).toContain('--coverage')
+    expect(step(tests, 'Test complete suite shard').run).toContain('--reporter=blob')
+    expect(step(tests, 'Test complete suite shard').run).toContain('--reporter=github-actions')
     expect(step(tests, 'Enforce full-suite shard').if).toBe('${{ always() }}')
     expect(step(verify, 'Check translation catalogs').run).toBe(
       'npx vitest run src/renderer/src/i18n/resources.test.ts'
