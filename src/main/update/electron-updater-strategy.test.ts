@@ -900,6 +900,63 @@ describe('ElectronUpdaterStrategy', () => {
     })
   })
 
+  it('forces active work through teardown and durability before installing', async () => {
+    const updater = new FakeUpdater()
+    let active = true
+    const teardown = vi.fn(async () => {
+      active = false
+      return { completed: true, reaped: true }
+    })
+    const durability = vi.fn(async () => true)
+    const strategy = createStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      installGate: createActiveResearchSafeInstallGate(
+        () => (active ? ['agent'] : []),
+        createDurableInstallGate(teardown, durability)
+      )
+    })
+    await markUpdateReady(strategy, updater)
+    await strategy.apply()
+    expect(teardown).not.toHaveBeenCalled()
+    await strategy.apply({ force: true })
+    expect(teardown).toHaveBeenCalledOnce()
+    expect(durability).toHaveBeenCalledOnce()
+    expect(teardown.mock.invocationCallOrder[0]).toBeLessThan(
+      durability.mock.invocationCallOrder[0]
+    )
+    expect(durability.mock.invocationCallOrder[0]).toBeLessThan(
+      updater.quitAndInstall.mock.invocationCallOrder[0]
+    )
+    expect(updater.quitAndInstall).toHaveBeenCalledOnce()
+  })
+
+  it.each(['migration', 'durability', 'unreaped', 'remaining-work'] as const)(
+    'does not force through %s refusal',
+    async (reason) => {
+      const updater = new FakeUpdater()
+      const teardown = vi.fn(async () => ({ completed: true, reaped: reason !== 'unreaped' }))
+      const durability = vi.fn(async () => reason !== 'durability')
+      const strategy = createStrategy({
+        updater,
+        currentVersion: '0.2.0',
+        broadcast: vi.fn(),
+        installGate: createActiveResearchSafeInstallGate(
+          () => (reason === 'remaining-work' ? ['agent'] : []),
+          createDurableInstallGate(teardown, durability),
+          () => reason === 'migration'
+        )
+      })
+      await markUpdateReady(strategy, updater)
+      const status = await strategy.apply({ force: true })
+      expect(status.state).toBe('ready')
+      expect(updater.quitAndInstall).not.toHaveBeenCalled()
+      if (reason === 'migration') expect(teardown).not.toHaveBeenCalled()
+      if (reason === 'unreaped') expect(durability).not.toHaveBeenCalled()
+    }
+  )
+
   it('blocks restart before backend teardown when delegated work is running', async () => {
     const updater = new FakeUpdater()
     const backendTeardownGate = vi.fn(async () => ({ completed: true, reaped: true }))
