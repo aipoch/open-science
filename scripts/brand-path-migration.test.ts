@@ -2620,7 +2620,7 @@ describe('visible migration progress', () => {
 
 describe('pre-publication snapshot restart', () => {
   // These cases exercise the macOS standalone log-root policy on real host files/SQLite.
-  // Only discovery receives a platform input; process/metadata inspection remains host-native.
+  // The path/reference plan is macOS; process/metadata inspection remains host-native.
   function migrationProcess(options: Record<string, unknown>): ReturnType<typeof cli> {
     try {
       const output = execFileSync(
