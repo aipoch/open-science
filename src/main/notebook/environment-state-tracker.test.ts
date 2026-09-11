@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, win32, posix } from 'node:path'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -53,6 +53,45 @@ const readBinding = async (
 }
 
 describe('EnvironmentStateTracker', () => {
+  it.each(['win32', 'darwin', 'linux'] as const)(
+    'isolates fresh managed Python/R metadata from host libraries on %s',
+    async (platform) => {
+      const path = platform === 'win32' ? win32 : posix
+      const root = platform === 'win32' ? 'C:\\runtime-test' : '/runtime-test'
+      const condaPrefix = path.join(root, 'envs', 'analysis')
+      vi.stubEnv('PYTHONPATH', '/host-only-python')
+      vi.stubEnv('PYTHONNOUSERSITE', '0')
+      vi.stubEnv('R_LIBS', '/host-only-r')
+      vi.stubEnv('R_LIBS_USER', '/host-user-r')
+      vi.stubEnv('R_LIBS_SITE', '/host-site-r')
+      try {
+        const execute = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+        const tracker = new EnvironmentStateTracker({ dataRoot: root, platform, execFile: execute })
+        for (const language of ['python', 'r'] as const) {
+          await tracker.inspectPackages(
+            { ...target, language, runtimeSource: 'managed', condaPrefix },
+            ['numpy'],
+            { fresh: true }
+          )
+          const [, args, options] = execute.mock.calls.at(-1)!
+          expect(options.env.HOME).toBe(path.join(join(root, 'runtime'), 'home'))
+          if (language === 'python') {
+            expect(options.env.PYTHONPATH).toBeUndefined()
+            expect(options.env.PYTHONNOUSERSITE).toBe('1')
+            expect(args).toContain('-I')
+          } else {
+            expect(options.env.R_LIBS).toBeUndefined()
+            expect(options.env.R_LIBS_SITE).toBeUndefined()
+            expect(options.env.R_LIBS_USER).toBe(
+              join(condaPrefix, platform === 'win32' ? 'Lib' : 'lib', 'R', 'library')
+            )
+          }
+        }
+      } finally {
+        vi.unstubAllEnvs()
+      }
+    }
+  )
   it.each(['python', 'r'] as const)(
     'fresh %s inspection bypasses cache and does not publish state',
     async (language) => {
