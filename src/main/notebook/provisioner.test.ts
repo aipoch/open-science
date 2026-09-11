@@ -1868,7 +1868,9 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
 
     await provisioner.createNamedEnvironment('r-stats', 'r')
 
-    expect(argvs[0]).toEqual(expect.arrayContaining(['r-base', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2']))
+    expect(argvs[0]).toEqual(
+      expect.arrayContaining(['r-base', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2'])
+    )
   })
 
   it('holds the shared pkgs cache lock, so a concurrent exclusive repair cannot run mid-create', async () => {
