@@ -154,15 +154,14 @@ describe('ProviderList', () => {
     expect(del?.textContent?.trim()).toBe('')
   })
 
-  it('allows deleting the selected provider when another provider remains', () => {
+  it('disables delete for the selected provider so it cannot drop back to onboarding', () => {
     renderList([provider({ id: 'p1' }), provider({ id: 'p2', name: 'Other' })], 'p1')
 
     const deletes = Array.from(container.querySelectorAll('button')).filter(
       (button) => button.getAttribute('aria-label') === 'Delete'
     )
-    // Deleting the selected provider is allowed because existing conversations keep their
-    // session-scoped model; only the last remaining provider stays protected.
-    expect((deletes[0] as HTMLButtonElement).disabled).toBe(false)
+    // p1 is selected -> its delete is disabled; p2 is unselected with siblings -> enabled.
+    expect((deletes[0] as HTMLButtonElement).disabled).toBe(true)
     expect((deletes[1] as HTMLButtonElement).disabled).toBe(false)
   })
 
