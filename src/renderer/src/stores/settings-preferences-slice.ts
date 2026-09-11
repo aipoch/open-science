@@ -17,7 +17,8 @@ import type { PermissionProfileId } from '../../../shared/permission-profiles'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type {
   OptimisticSettingsWriteKey,
-  SettingsWriteCoordinator
+  SettingsWriteCoordinator,
+  SettingsWriteErrorCode
 } from './settings-write-coordinator'
 
 type SettingsPreferencesState = {
@@ -139,17 +140,16 @@ export const omitInFlightOptimisticPreferences = <Patch extends Partial<Settings
   return next
 }
 
-const SETTINGS_WRITE_ERRORS: Record<OptimisticSettingsWriteKey, string> = {
-  reasoningEffort: 'Could not save reasoning effort. Try again.',
-  sessionDetailsModel:
-    'Could not save Session details model. Refresh the model catalog and try again.',
-  notifications: 'Could not save notification preference. Try again.',
-  notificationContent: 'Could not save notification preference. Try again.',
-  conversationSkillImport: 'Could not save conversation Skill import preference. Try again.',
-  closePreference: 'Could not save window close preference. Try again.',
-  appIcon: 'Could not save app icon preference. Try again.',
-  projectFilesFilter: 'Could not save files filter preference. Try again.',
-  defaultPermissionProfile: 'Could not save the default permission mode. Try again.'
+const SETTINGS_WRITE_ERRORS: Record<OptimisticSettingsWriteKey, SettingsWriteErrorCode> = {
+  reasoningEffort: 'reasoning-effort',
+  sessionDetailsModel: 'session-details-model',
+  notifications: 'notifications',
+  notificationContent: 'notification-content',
+  conversationSkillImport: 'conversation-skill-import',
+  closePreference: 'close-preference',
+  appIcon: 'app-icon',
+  projectFilesFilter: 'project-files-filter',
+  defaultPermissionProfile: 'default-permission-profile'
 }
 
 // Owns renderer preference commands and their optimistic settlement. Core remains the sole owner of
@@ -236,7 +236,7 @@ export const createSettingsPreferencesSlice = ({
         reconcileSnapshot(snapshot)
         write.succeed()
       } catch (error) {
-        write.fail('Could not save Reviewer model. Refresh the model catalog and try again.')
+        write.fail('reviewer-model')
         console.error('Failed to set Reviewer model', error)
         const refresh = getCommands().getSettings
         if (refresh) {
@@ -260,7 +260,7 @@ export const createSettingsPreferencesSlice = ({
         reconcileSnapshot(snapshot)
         write.succeed()
       } catch (error) {
-        write.fail('Could not save Subagent model. Refresh the model catalog and try again.')
+        write.fail('subagent-model')
         console.error('Failed to set Subagent model', error)
         const refresh = getCommands().getSettings
         if (refresh) {
@@ -284,7 +284,7 @@ export const createSettingsPreferencesSlice = ({
         reconcileSnapshot(snapshot)
         write.succeed()
       } catch (error) {
-        write.fail('Could not save Vision model. Refresh the model catalog and try again.')
+        write.fail('vision-model')
         console.error('Failed to set Vision model', error)
         const refresh = getCommands().getSettings
         if (refresh) {

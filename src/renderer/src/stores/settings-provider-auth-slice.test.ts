@@ -421,9 +421,7 @@ describe('provider auth slice: active selections', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     await expect(store.getState().setActiveProvider('next')).rejects.toBe(error)
-    expect(store.getState().settingsWriteError).toBe(
-      'Could not switch active provider or model. Try again.'
-    )
+    expect(store.getState().settingsWriteError).toBe('active-provider')
     expect(store.getState().settingsWriteError).not.toContain('/Users/example')
   })
 

@@ -94,6 +94,9 @@ import {
 import { SettingsPanelLoadingBoundary } from './SettingsPanelLoadingBoundary'
 import { localizeProviderResourceMessage } from './validation-message'
 import { loadSettingsPanel } from './settings-panel-loader'
+import { ErrorNotice } from '@/components/error-notice'
+import { SettingsGlobalSearch } from './SettingsGlobalSearch'
+import type { SettingsWriteErrorCode } from '../../../../shared/settings'
 
 const AgentPanel = lazy(async () => ({ default: (await import('./AgentPanel')).AgentPanel }))
 const GeneralPanel = lazy(async () => ({ default: (await import('./GeneralPanel')).GeneralPanel }))
@@ -294,37 +297,47 @@ type DrillablePanelName = keyof typeof PANEL_NAME_LOWER
 type SettingsGroup = {
   // The union rather than `string` is deliberate: a group added later cannot compile until its
   // heading is a known catalog key, so it can never reach the nav as a raw untranslated label.
-  labelKey: 'Capabilities' | 'Workspace'
+  labelKey: 'Intelligence' | 'Connections' | 'Workspace' | 'System'
   panels: ReadonlyArray<SettingsPanel>
 }
 
+// Four purpose-based groups: model/agent intelligence, external connections, workspace
+// organization, and the app-level system panel.
 const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
   {
-    labelKey: 'Capabilities',
+    labelKey: 'Intelligence',
     panels: [
+      { id: 'model', labelKey: 'Model', Icon: Brain },
+      { id: 'agent', labelKey: 'Agent', Icon: Bot },
       { id: 'skills', labelKey: 'Skills', Icon: ScrollText },
-      { id: 'connectors', labelKey: 'Connectors', Icon: ConnectorsNavIcon },
       { id: 'specialists', labelKey: 'Specialists', Icon: Users },
-      { id: 'memory', labelKey: 'Memory', Icon: BrainCircuit },
-      { id: 'compute', labelKey: 'Compute', Icon: Zap },
-      { id: 'network', labelKey: 'Network', Icon: Globe }
+      { id: 'memory', labelKey: 'Memory', Icon: BrainCircuit }
+    ]
+  },
+  {
+    labelKey: 'Connections',
+    panels: [
+      { id: 'connectors', labelKey: 'Connectors', Icon: ConnectorsNavIcon },
+      { id: 'network', labelKey: 'Network', Icon: Globe },
+      { id: 'remote-control', labelKey: 'Remote', Icon: MonitorSmartphone },
+      { id: 'credentials', labelKey: 'Credentials', Icon: KeyRound }
     ]
   },
   {
     labelKey: 'Workspace',
     panels: [
-      { id: 'model', labelKey: 'Model', Icon: Brain },
-      { id: 'agent', labelKey: 'Agent', Icon: Bot },
       { id: 'tags', labelKey: 'Tags', Icon: TagsIcon },
       { id: 'permissions', labelKey: 'Permissions', Icon: LockKeyhole },
-      { id: 'credentials', labelKey: 'Credentials', Icon: KeyRound },
       { id: 'runtimes', labelKey: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', labelKey: 'Storage', Icon: Cloud },
-      { id: 'remote-control', labelKey: 'Remote', Icon: MonitorSmartphone },
+      { id: 'compute', labelKey: 'Compute', Icon: Zap },
       { id: 'usage', labelKey: 'Usage', Icon: ChartNoAxesCombined },
-      { id: 'general', labelKey: 'General', Icon: Settings2 },
       { id: 'archived', labelKey: 'Archived', Icon: Archive }
     ]
+  },
+  {
+    labelKey: 'System',
+    panels: [{ id: 'general', labelKey: 'General', Icon: Settings2 }]
   }
 ]
 
@@ -332,6 +345,27 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
 const SETTINGS_PANELS: ReadonlyArray<SettingsPanel> = SETTINGS_GROUPS.flatMap(
   (group) => group.panels
 )
+
+// Display copy for the write-failure codes produced by settings-write-coordinator. Module-level
+// table of catalog keys (not resolved strings), resolved through t() at render time.
+const SETTINGS_WRITE_ERROR_COPY: Record<SettingsWriteErrorCode, string> = {
+  'reasoning-effort': 'Could not save reasoning effort. Try again.',
+  'session-details-model':
+    'Could not save Session details model. Refresh the model catalog and try again.',
+  'reviewer-model': 'Could not save Reviewer model. Refresh the model catalog and try again.',
+  'subagent-model': 'Could not save Subagent model. Refresh the model catalog and try again.',
+  'vision-model': 'Could not save Vision model. Refresh the model catalog and try again.',
+  notifications: 'Could not save notification preference. Try again.',
+  'notification-content': 'Could not save notification preference. Try again.',
+  'conversation-skill-import': 'Could not save conversation Skill import preference. Try again.',
+  'close-preference': 'Could not save window close preference. Try again.',
+  'app-icon': 'Could not save app icon preference. Try again.',
+  'project-files-filter': 'Could not save files filter preference. Try again.',
+  'default-permission-profile': 'Could not save the default permission mode. Try again.',
+  'active-provider': 'Could not switch active provider or model. Try again.',
+  'agent-framework': 'Could not switch agent framework. Try again.'
+}
+
 const EMPTY_USAGE_SESSIONS = [] as const
 const EMPTY_USAGE_PROJECTS = [] as const
 
@@ -1101,6 +1135,16 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           // closed intentionally via the ✕ button or Escape.
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => {
+            // Global search: the input's own Escape closes the results list first; keep that
+            // keypress from also dismissing the whole dialog (Radix listens in capture phase).
+            if (
+              event.target instanceof HTMLElement &&
+              event.target.closest('[data-slot="settings-global-search"]') &&
+              document.querySelector('[data-slot="settings-global-search"] [role="listbox"]')
+            ) {
+              event.preventDefault()
+              return
+            }
             if (!isMobileNavOpen) return
             event.preventDefault()
             setIsMobileNavOpen(false)
@@ -1319,6 +1363,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     </h2>
                   )}
                 </div>
+                {/* Not mounted below the md breakpoint, so ⌘K never targets an invisible field. */}
+                {!isMobile ? (
+                  <div
+                    data-slot="settings-global-search"
+                    className="min-w-0 flex-1 px-2 md:max-w-xs"
+                  >
+                    <SettingsGlobalSearch panels={SETTINGS_PANELS} onNavigate={navigatePanel} />
+                  </div>
+                ) : null}
                 <div className="flex shrink-0 items-center gap-1">
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -1377,38 +1430,33 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               ) : null}
 
               {settingsWriteError ? (
-                <div
-                  data-slot="settings-write-error"
-                  role="alert"
-                  className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-                >
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                  <p className="min-w-0 flex-1 break-words py-0.5">
-                    {settingsWriteError ===
-                    'Could not save Vision model. Refresh the model catalog and try again.'
-                      ? t('Could not save Vision model. Refresh the model catalog and try again.')
-                      : settingsWriteError}
-                  </p>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={t('Dismiss settings error')}
-                        className="-my-1 -mr-1 shrink-0 rounded-md text-danger-000 hover:bg-danger-000/10 hover:text-danger-000"
-                        onClick={clearSettingsWriteError}
-                      >
-                        <X className="size-3.5" aria-hidden="true" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{t('Close')}</TooltipContent>
-                  </Tooltip>
+                <div data-slot="settings-write-error" className="mx-3 mt-3">
+                  <ErrorNotice
+                    tone="amber"
+                    role="alert"
+                    icon={AlertTriangle}
+                    title={t('Settings could not be saved')}
+                    description={settingsWriteError
+                      .split(' ')
+                      .map((code) => {
+                        const copyKey = SETTINGS_WRITE_ERROR_COPY[code as SettingsWriteErrorCode]
+                        return copyKey ? t(copyKey) : code
+                      })
+                      .join(' ')}
+                    secondaryButton={{
+                      label: t('Dismiss'),
+                      onClick: clearSettingsWriteError
+                    }}
+                  />
                 </div>
               ) : null}
             </TooltipProvider>
 
-            <div data-slot="settings-content-scroll" className="min-h-0 flex-1 overflow-y-auto">
+            <div
+              data-slot="settings-content-scroll"
+              data-settings-active-panel={activePanel}
+              className="min-h-0 flex-1 overflow-y-auto"
+            >
               <div
                 className={cn(
                   'mx-auto w-full max-w-[880px]',

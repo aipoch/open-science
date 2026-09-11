@@ -59,6 +59,7 @@ import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
 import { ConnectorsNavIcon } from './connector-icons'
 import { SettingsIconAction } from './SettingsLayout'
+import { SettingsPanelHeader } from './SettingsPanelHeader'
 import { TAG_COLORS, TAG_ICONS, tagPresentation } from './tag-presentation'
 import { TagBadge } from './tag-visuals'
 import { ArtifactLiteratureDetailDialog } from '../workspace/ArtifactLiteratureDetailDialog'
@@ -709,6 +710,27 @@ const TagsList = ({
   return (
     <TooltipProvider delayDuration={200}>
       <div data-slot="tags-panel" className="flex h-full min-h-0 flex-col px-3 py-3 md:px-4">
+        <SettingsPanelHeader
+          className="mb-3"
+          title={t('Tags')}
+          description={t('Create and reorder tags, then browse everything attached to each tag.')}
+          search={
+            <Input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t('Search resources…')}
+              aria-label={t('Search resources…')}
+              className="h-8 w-44"
+            />
+          }
+          action={
+            <Button type="button" size="sm" onClick={onCreate}>
+              <Plus className="size-4" aria-hidden="true" />
+              {t('New Tag')}
+            </Button>
+          }
+        />
         {error ? (
           <p role="alert" className="mb-3 text-xs text-destructive">
             {t('Tags could not be loaded.')}

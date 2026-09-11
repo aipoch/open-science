@@ -1141,9 +1141,7 @@ describe('settings store: provider/model selection', () => {
     api.setReasoningEffort.mockRejectedValueOnce(new Error('reasoning unavailable'))
 
     await useSettingsStore.getState().setReasoningEffort('high')
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save reasoning effort. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('reasoning-effort')
 
     await useSettingsStore.getState().setActiveProvider('p1', 'glm-4.7')
 
@@ -1159,9 +1157,7 @@ describe('settings store: provider/model selection', () => {
       ipcError
     )
 
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not switch active provider or model. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('active-provider')
     expect(useSettingsStore.getState().settingsWriteError).not.toContain('/Users/example')
     expect(consoleError).toHaveBeenCalledWith('Failed to set active provider', ipcError)
   })
@@ -1799,9 +1795,7 @@ describe('settings store: setAgentFramework', () => {
     await expect(useSettingsStore.getState().setAgentFramework('opencode')).rejects.toBe(ipcError)
 
     expect(useSettingsStore.getState().agentFrameworkId).toBe('claude-code')
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not switch agent framework. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('agent-framework')
     expect(consoleError).toHaveBeenCalledWith('Failed to switch agent framework', expect.any(Error))
   })
 
@@ -2018,9 +2012,7 @@ describe('settings store: setSessionDetailsModel', () => {
       reasoningEffort: 'low'
     })
     expect(useSettingsStore.getState().sessionDetailsModelPending).toBe(false)
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save Session details model. Refresh the model catalog and try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('session-details-model')
   })
 })
 
@@ -2071,9 +2063,7 @@ describe('settings store: setReasoningEffort', () => {
     rejectReasoning(new Error('stale failure'))
     await olderWrite
 
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save reasoning effort. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('reasoning-effort')
   })
 
   it('keeps a newer write failure when an older settings write succeeds later', async () => {
@@ -2093,9 +2083,7 @@ describe('settings store: setReasoningEffort', () => {
     resolveReasoning({ ...snapshot([]), reasoningEffort: 'high' })
     await olderWrite
 
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save notification preference. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('notifications')
   })
 
   it('retains failures from concurrent writes to different preferences', async () => {
@@ -2123,12 +2111,8 @@ describe('settings store: setReasoningEffort', () => {
     rejectReasoning(new Error('reasoning unavailable'))
     await reasoningWrite
 
-    expect(useSettingsStore.getState().settingsWriteError).toContain(
-      'Could not save notification preference. Try again.'
-    )
-    expect(useSettingsStore.getState().settingsWriteError).toContain(
-      'Could not save reasoning effort. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toContain('notifications')
+    expect(useSettingsStore.getState().settingsWriteError).toContain('reasoning-effort')
   })
 
   it('ignores a stale failure from an older write to the same preference', async () => {
@@ -2158,9 +2142,7 @@ describe('settings store: setReasoningEffort', () => {
     await Promise.all([olderWrite, newerWrite])
 
     expect(useSettingsStore.getState().reasoningEffort).toBe('default')
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save reasoning effort. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('reasoning-effort')
   })
 
   it('restores the last successful value when a queued newer write fails', async () => {
@@ -2175,9 +2157,7 @@ describe('settings store: setReasoningEffort', () => {
     await Promise.all([olderWrite, newerWrite])
 
     expect(useSettingsStore.getState().reasoningEffort).toBe('high')
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save reasoning effort. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('reasoning-effort')
   })
 
   it('reverts to the previous level and exposes a visible failure when main rejects', async () => {
@@ -2187,9 +2167,7 @@ describe('settings store: setReasoningEffort', () => {
     await useSettingsStore.getState().setReasoningEffort('low')
 
     expect(useSettingsStore.getState().reasoningEffort).toBe('default')
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save reasoning effort. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('reasoning-effort')
     expect(consoleError).toHaveBeenCalledWith('Failed to set reasoning effort', expect.any(Error))
   })
 
@@ -2217,9 +2195,7 @@ describe('settings store: setNotificationsEnabled', () => {
     await useSettingsStore.getState().setNotificationsEnabled(false)
 
     expect(useSettingsStore.getState().notificationsEnabled).toBe(true)
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save notification preference. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('notifications')
     expect(consoleError).toHaveBeenCalledWith(
       'Failed to set notifications enabled',
       expect.any(Error)
@@ -2397,9 +2373,7 @@ describe('settings store: acceptCommittedSnapshot vs in-flight optimistic prefer
 
     expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
     expect(useSettingsStore.getState().appIconVariant).toBe('dark')
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save notification preference. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('notifications')
     expect(consoleError).toHaveBeenCalledWith(
       'Failed to set notifications enabled',
       expect.any(Error)
@@ -2464,9 +2438,7 @@ describe('settings store: setConversationSkillImportEnabled', () => {
     await useSettingsStore.getState().setConversationSkillImportEnabled(false)
 
     expect(useSettingsStore.getState().conversationSkillImportEnabled).toBe(true)
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save conversation Skill import preference. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('conversation-skill-import')
     expect(consoleError).toHaveBeenCalledWith(
       'Failed to set conversation Skill import enabled',
       expect.any(Error)
@@ -2504,9 +2476,7 @@ describe('settings store: setClosePreference', () => {
     await useSettingsStore.getState().setClosePreference(undefined)
 
     expect(useSettingsStore.getState().closePreference).toBe('quit')
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save window close preference. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('close-preference')
     expect(consoleError).toHaveBeenCalledWith('Failed to set close preference', expect.any(Error))
   })
 
@@ -2545,9 +2515,7 @@ describe('settings store: setProjectFilesFilter', () => {
     await useSettingsStore.getState().setProjectFilesFilter(undefined)
 
     expect(useSettingsStore.getState().projectFilesFilter).toEqual({ sourceMode: 'local' })
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save files filter preference. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('project-files-filter')
     expect(consoleError).toHaveBeenCalledWith(
       'Failed to set project files filter',
       expect.any(Error)
@@ -2585,9 +2553,7 @@ describe('settings store: setAppIconVariant', () => {
     await useSettingsStore.getState().setAppIconVariant('dark')
 
     expect(useSettingsStore.getState().appIconVariant).toBe('light')
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save app icon preference. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('app-icon')
     expect(consoleError).toHaveBeenCalledWith('Failed to set app icon variant', expect.any(Error))
   })
 
@@ -2616,9 +2582,7 @@ describe('settings store: setDefaultPermissionProfile', () => {
     await useSettingsStore.getState().setDefaultPermissionProfile('full')
 
     expect(useSettingsStore.getState().defaultPermissionProfile).toBe('ask')
-    expect(useSettingsStore.getState().settingsWriteError).toBe(
-      'Could not save the default permission mode. Try again.'
-    )
+    expect(useSettingsStore.getState().settingsWriteError).toBe('default-permission-profile')
     expect(consoleError).toHaveBeenCalledWith(
       'Failed to set default permission profile',
       expect.any(Error)
