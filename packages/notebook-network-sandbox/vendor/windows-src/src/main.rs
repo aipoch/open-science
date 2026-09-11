@@ -2520,7 +2520,9 @@ mod windows_host {
             rebuild_acl_state(&mut state, ownership_root)?;
         }
         remove_acl_receipt(&acl_directory(ownership_root).join(format!("{lease_id}.json")))?;
-        prune_acl_snapshots(&mut state);
+        if changes_permissions {
+            prune_acl_snapshots(&mut state);
+        }
         write_acl_state(ownership_root, &state)
     }
 
@@ -2669,7 +2671,9 @@ mod windows_host {
                     })
                     .and_then(|()| remove_acl_receipt(&path))
                     .and_then(|()| {
-                        prune_acl_snapshots(&mut state);
+                        if changes_permissions {
+                            prune_acl_snapshots(&mut state);
+                        }
                         write_acl_state(ownership_root, &state)
                     });
                 return match rollback {
@@ -3610,6 +3614,35 @@ mod windows_host {
             probe.release().unwrap();
             assert_eq!(fs::read(acl_state_path(&root)).unwrap(), before);
             fs::create_dir(&directory).unwrap();
+
+            // A granted lease can stop after removing its state entry but before restoring
+            // ACLs. A different empty lease must preserve that interrupted removal's snapshot.
+            let (id, second_capability) = make_capability();
+            let mut second_probe =
+                AclLease::acquire(installation_id, &root, id, &second_capability, &empty).unwrap();
+            let mut interrupted = read_acl_state(installation_id, &root).unwrap().unwrap();
+            let baseline = interrupted.snapshots[0].clone();
+            apply_acl_grant(
+                &baseline.path,
+                &live.record.capability_sid,
+                AclGrant::ReadOnlyTree,
+            )
+            .unwrap();
+            assert_ne!(capture_acl_snapshot(&baseline.path).unwrap(), baseline);
+            interrupted
+                .leases
+                .retain(|lease| lease.lease_id != live.record.lease_id);
+            write_acl_state(&root, &interrupted).unwrap();
+            second_probe.release().unwrap();
+            assert_eq!(
+                read_acl_state(installation_id, &root)
+                    .unwrap()
+                    .unwrap()
+                    .snapshots,
+                interrupted.snapshots
+            );
+            recover_acl_leases(installation_id, &root, false).unwrap();
+            assert_eq!(capture_acl_snapshot(&baseline.path).unwrap(), baseline);
             live.release().unwrap();
             fs::remove_dir_all(parent).unwrap();
         }
