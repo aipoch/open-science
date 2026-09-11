@@ -83,6 +83,26 @@ describe('Electron E2E startup failure evidence', () => {
     }
   })
 
+  it('prepares an explicitly selected fake agent before the first Electron launch', async () => {
+    const stopped = new Error('stop before launching an actual process')
+    let initialSettings: Record<string, unknown> = {}
+    let initialEnvironment: Record<string, string | undefined> = {}
+    vi.spyOn(electron, 'launch').mockImplementation(async (options) => {
+      initialEnvironment = options!.env!
+      initialSettings = JSON.parse(
+        await readFile(
+          join(options!.env!.OPEN_SCIENCE_STORAGE_ROOT!, 'settings.json'),
+          'utf8'
+        ).catch(() => '{}')
+      )
+      throw stopped
+    })
+    await expect(ElectronAppHarness.create('hidden', undefined, true)).rejects.toBe(stopped)
+    expect(initialEnvironment.OPEN_SCIENCE_AGENT_FRAMEWORK).toBe('opencode')
+    expect(initialSettings).toMatchObject({ opencodeVersion: '1.0.0', localePreference: 'en' })
+    expect(initialSettings.opencodePath).toMatch(/fake-agent-bin[/\\]opencode(?:\.cmd)?$/)
+  })
+
   it('retains the startup error and cleans up when evidence capture fails', async () => {
     const startupError = new Error('Electron failed to launch')
     let storageRoot = ''

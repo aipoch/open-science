@@ -234,8 +234,16 @@ command lines. A parent terminal is not exempt: change its working directory out
 before running the CLI. The application startup coordinator is exempt from the executable-name
 check only; another process's open files are never exempted by that flag. No process is killed.
 
-On macOS/Linux the helper requires `lsof` and consumes its NUL-delimited cwd, descriptor, and mapped
-file records. Failed, truncated, empty or permission-denied inspections stop the operation. It checks
+On macOS the helper uses the system `lsof` and its NUL-delimited cwd, descriptor and mapped-file
+records. Linux uses the bundled read-only `linux-occupancy.py` with `/usr/bin/python3 -I -S -B`: it inspects
+all visible user-space processes and their threads, including cwd/root/exe, every descriptor and mapped file.
+Directory boundaries and device/inode identities detect retained handles even through hardlinks or
+alternate mount paths. Kernel threads are outside this user-space inspection capability; kernel NFS/VM services and
+remote/shared-filesystem writers must be stopped separately. Exited/zombie task state is checked per
+thread, not inferred for an entire thread group; PID 1, another UID or a private data directory never establish that a process is safe.
+Unreadable maps, incomplete proc views (including hidepid), unstable inventories and malformed helper
+reports stop the operation. A positive writer is never retried away. Failed, truncated, empty or
+permission-denied inspections are not treated as an empty process list. It checks
 originals, stages, destinations, original backups, existing-target backups and rollback parking
 locations. Checks run before preparation, before publication, at publication boundaries and before
 the committed receipt is saved. All published targets and both kinds of backups are reverified at
@@ -243,6 +251,43 @@ commit. Renaming a root does not make an already-open POSIX descriptor safe: the
 under its new name too. These checks and the application lease do not prevent an arbitrary external
 program from reopening a path in the future. Keep all such writers stopped throughout migration,
 recovery and retirement; the tool does not claim a mandatory filesystem-wide write lock.
+
+Linux ordinary users commonly cannot inspect system processes. By default this blocks migration,
+with an actionable error, before publication. An administrator can explicitly authorize just the
+bundled read-only inspector using the following environment switch and an existing non-interactive
+sudo authorization. It runs the fixed `/usr/bin/sudo -n -- /usr/bin/python3 -I -S -B -c <bundled inspector>`
+with a minimal environment and JSON roots on stdin. Python site initialization and bytecode writes
+are disabled. It does not prompt for a password or run the
+migration, SQLite operations, copies, tests or application as root. No arbitrary helper command is
+accepted. Review the bundled inspector before granting this permission; unrestricted passwordless
+Python permission is not recommended as a permanent sudoers policy. Without sufficient existing
+sudo authorization, or if the privileged inspection is still incomplete, migration remains blocked.
+
+```bash
+# Preview remains read-only and does not need elevated inspection.
+node scripts/migrate-brand-paths.mjs --home /isolated/home --app-data /isolated/profiles --mode dev
+# Explicit permission for the read-only probe; all migration writes keep the current user.
+OPEN_SCIENCE_MIGRATION_PRIVILEGED_INSPECTION=1 node scripts/migrate-brand-paths.mjs \
+  --home /isolated/home --app-data /isolated/profiles --mode dev --execute
+# Same opt-in applies to startup, --resume, --rollback and --retire-aliases.
+OPEN_SCIENCE_MIGRATION_PRIVILEGED_INSPECTION=1 node scripts/migrate-brand-paths.mjs \
+  --home /isolated/home --app-data /isolated/profiles --mode dev --rollback
+```
+
+The new inspector does not change journal format, backup locations or commit/recovery ordering.
+Existing version 1 and version 2 receipts use the same resume/rollback validation described below.
+A read-only probe failure leaves the durable recovery state and both original/target backups intact.
+Proc inspection proves only the visible process namespace at each check; perform migration in the
+application's host namespace with all external writers stopped, not inside an unrelated container
+that hides host writers. It is not a mandatory lock against future or privileged adversarial writes.
+
+The PR Gate Linux test job installs `acl`, `attr` and `python3` and explicitly enables this probe on
+the disposable runner. `lsof` is no longer a Linux dependency. Vitest and its real temporary-directory
+and SQLite migrations run as the ordinary runner user. These changes are deliberately visible in
+`.github/workflows/pr-gate.yml`: `protected-gate-control-plane` requires an explicit **maintainer
+ruleset bypass**. Do not relocate installation or disable integrity checks to conceal that change.
+The two migration Electron specs belong to `test:e2e:regressions`, the existing macOS-only PR Gate
+command with Electron/Web builds and a 1200-second group budget; they are not added to Windows groups.
 
 **Platform capability limit:** actual Windows migration currently stops because command-line
 inspection does not prove that directory/file handles are unused. There is no fallback that silently

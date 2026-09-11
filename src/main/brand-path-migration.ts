@@ -10,7 +10,7 @@ type BrandMigrationApp = Pick<App, 'isPackaged' | 'getPath' | 'getAppPath' | 'co
 // the offline child prepares the profile. The child has no Electron imports or application writers.
 export const prepareBrandPathMigration = (
   app: BrandMigrationApp
-): { userData?: string; reconcileProtectedPaths: () => Promise<void> } => {
+): { userData?: string; logs?: string; reconcileProtectedPaths: () => Promise<void> } => {
   const isolatedRoot =
     process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT?.trim() ||
     (!app.isPackaged ? process.env.OPEN_SCIENCE_STORAGE_ROOT?.trim() : undefined)
@@ -93,6 +93,10 @@ export const prepareBrandPathMigration = (
   }
   return {
     userData: receipt.userData,
+    // Electron macOS logs do not follow --user-data-dir. Keep disposable E2E runs off real logs.
+    logs: process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT?.trim()
+      ? join(home, 'electron-logs')
+      : undefined,
     reconcileProtectedPaths: async () => {
       if (receipt.relayOnly) return
       const { safeStorage } = await import('electron')

@@ -17,6 +17,7 @@ import {
 import { constants } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { assertNoLinuxOpenFiles } from './linux-occupancy.mjs'
 import { acquireKernelGuard } from './lock-guard.mjs'
 import { restartPreparing } from './preparing-restart.mjs'
 import { reportProgress, withMigrationProgress } from './progress.mjs'
@@ -330,6 +331,7 @@ async function lock(
 // lsof enumerates cwd, regular descriptors and mapped executable/library files, including
 // paths outside argv and roots renamed into backups. A failed or incomplete probe is not empty.
 export function assertNoOpenFiles(roots, probe = spawnSync) {
+  if (process.platform === 'linux') return assertNoLinuxOpenFiles(roots, { probe })
   if (process.platform === 'win32')
     throw new Error(
       'Reliable Windows directory/handle inspection is unavailable; migration is blocked. Use a verified native occupancy provider before migrating on Windows.'

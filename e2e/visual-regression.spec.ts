@@ -340,6 +340,35 @@ test('keeps representative conversation, project, and recovery states visually s
   await expect(provenance).toBeVisible()
   await expect(provenance.getByLabel('Loading Provenance')).toBeHidden({ timeout: 30_000 })
   await expectStableScreenshot(page, 'provenance-desktop-light.png')
+  // Narrow tabs intentionally truncate; every label remains discoverable and reachable.
+  const tabList = provenance.getByRole('tablist', { name: 'Provenance' })
+  for (const label of [
+    'Code',
+    'Execution Log',
+    'Messages',
+    'Environment',
+    'Reproducibility',
+    'Review'
+  ]) {
+    const tab = tabList.getByRole('tab', { name: label, exact: true })
+    await expect(tab).toHaveAttribute('title', label)
+    expect(
+      await tab.evaluate((element) => {
+        const bounds = element.getBoundingClientRect()
+        const parent = element.parentElement!.getBoundingClientRect()
+        return bounds.width > 0 && bounds.left >= parent.left && bounds.right <= parent.right
+      })
+    ).toBe(true)
+    await tab.click()
+    await expect(tab).toHaveAttribute('aria-selected', 'true')
+  }
+  await tabList.getByRole('tab', { name: 'Review', exact: true }).press('Home')
+  await expect(tabList.getByRole('tab', { name: 'Code', exact: true })).toBeFocused()
+  await tabList.getByRole('tab', { name: 'Code', exact: true }).press('Enter')
+  await expect(tabList.getByRole('tab', { name: 'Code', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
   await provenance.getByRole('button', { name: 'Close Provenance' }).click()
   await preview.getByRole('button', { name: 'Close preview of provenance-evidence.txt' }).click()
   await page

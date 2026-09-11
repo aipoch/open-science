@@ -51,3 +51,45 @@ it('keeps headless startup terminal-only while still streaming migration diagnos
   expect(args).not.toContain('--show-progress-window')
   expect(options).toMatchObject({ stdio: ['ignore', 'pipe', 'inherit'] })
 })
+
+it('returns a fixture-owned log directory instead of the real macOS application logs', () => {
+  vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', '/isolated/fixture')
+  vi.mocked(spawnSync).mockReturnValue({
+    status: 0,
+    stdout: '{}',
+    stderr: '',
+    pid: 1,
+    output: [],
+    signal: null
+  })
+  const paths = prepareBrandPathMigration({
+    isPackaged: false,
+    getAppPath: () => '/app',
+    getPath: () => '/real/user/profile',
+    commandLine: { hasSwitch: () => false },
+    on: vi.fn()
+  } as never)
+  expect(paths.logs).toBe('/isolated/fixture/electron-logs')
+})
+
+it('leaves ordinary application log locations unchanged for a custom storage root', () => {
+  vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', '')
+  vi.stubEnv('OPEN_SCIENCE_STORAGE_ROOT', '/custom/storage')
+  vi.mocked(spawnSync).mockReturnValue({
+    status: 0,
+    stdout: '{}',
+    stderr: '',
+    pid: 1,
+    output: [],
+    signal: null
+  })
+  expect(
+    prepareBrandPathMigration({
+      isPackaged: false,
+      getAppPath: () => '/app',
+      getPath: () => '/real/user/profile',
+      commandLine: { hasSwitch: () => false },
+      on: vi.fn()
+    } as never).logs
+  ).toBeUndefined()
+})

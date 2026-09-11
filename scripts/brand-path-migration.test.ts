@@ -65,6 +65,32 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
 
+async function writer(cwd: string): Promise<import('node:child_process').ChildProcess> {
+  const { spawn } = await import('node:child_process')
+  const { once } = await import('node:events')
+  const child = spawn(
+    process.execPath,
+    [
+      '-e',
+      `
+    const fs = require('node:fs');
+    const fd = fs.openSync('uploads/paper.txt', 'a');
+    process.on('message', () => { fs.writeSync(fd, 'child-write\\n'); process.send('written'); });
+    process.send('ready');
+  `
+    ],
+    { cwd, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+  )
+  await once(child, 'message')
+  return child
+}
+async function stop(child: import('node:child_process').ChildProcess): Promise<void> {
+  const { once } = await import('node:events')
+  const exited = once(child, 'exit')
+  child.kill()
+  await exited
+}
+
 describe('offline brand migration', () => {
   it('defaults to a read-only plan and leaves both settings and file bytes untouched', async () => {
     const f = await fixture()
@@ -1556,32 +1582,6 @@ it('blocks alias retirement while a Windows registry PATH still depends on the o
 })
 
 describe('deep review migration regressions', () => {
-  async function writer(cwd: string): Promise<import('node:child_process').ChildProcess> {
-    const { spawn } = await import('node:child_process')
-    const { once } = await import('node:events')
-    const child = spawn(
-      process.execPath,
-      [
-        '-e',
-        `
-      const fs = require('node:fs');
-      const fd = fs.openSync('uploads/paper.txt', 'a');
-      process.on('message', () => { fs.writeSync(fd, 'child-write\\n'); process.send('written'); });
-      process.send('ready');
-    `
-      ],
-      { cwd, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
-    )
-    await once(child, 'message')
-    return child
-  }
-  async function stop(child: import('node:child_process').ChildProcess): Promise<void> {
-    const { once } = await import('node:events')
-    const exited = once(child, 'exit')
-    child.kill()
-    await exited
-  }
-
   it('blocks a real writer whose cwd and open handle are absent from its command line', async () => {
     const f = await fixture()
     const child = await writer(f.old)
@@ -1899,6 +1899,225 @@ describe('hardening recovery boundaries', () => {
     ])
       expect(() => assertNoOpenFiles(['/tmp/fixture'], () => result)).toThrow()
   })
+
+  it('requires explicit permission before retrying an incomplete Linux inventory with a read-only privileged probe', async () => {
+    const { assertNoLinuxOpenFiles } =
+      await import('../resources/brand-migration/linux-occupancy.mjs')
+    const probe = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        stderr: '',
+        stdout: JSON.stringify({
+          version: 1,
+          complete: false,
+          permissionDenied: true,
+          occupied: [],
+          errors: ['Cannot inspect PID 1 maps']
+        })
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stderr: '',
+        stdout: JSON.stringify({
+          version: 1,
+          complete: true,
+          permissionDenied: false,
+          occupied: [],
+          errors: []
+        })
+      })
+    expect(() =>
+      assertNoLinuxOpenFiles(['/tmp/fixture'], { probe, privileged: true })
+    ).not.toThrow()
+    expect(probe.mock.calls.map(([command]) => command)).toEqual([
+      '/usr/bin/python3',
+      '/usr/bin/sudo'
+    ])
+    expect(probe.mock.calls[1][1].slice(0, 7)).toEqual([
+      '-n',
+      '--',
+      '/usr/bin/python3',
+      '-I',
+      '-S',
+      '-B',
+      '-c'
+    ])
+    probe.mockReset().mockReturnValue({
+      status: 0,
+      stderr: '',
+      stdout: JSON.stringify({
+        version: 1,
+        complete: false,
+        permissionDenied: true,
+        occupied: [],
+        errors: ['Cannot inspect PID 1 maps']
+      })
+    })
+    expect(() => assertNoLinuxOpenFiles(['/tmp/fixture'], { probe, privileged: false })).toThrow(
+      /Cannot verify.*occupancy/
+    )
+    expect(probe).toHaveBeenCalledTimes(1)
+  })
+
+  it('never retries away an observed Linux writer or accepts an incomplete privileged inventory', async () => {
+    const { assertNoLinuxOpenFiles } =
+      await import('../resources/brand-migration/linux-occupancy.mjs')
+    const probe = vi.fn().mockReturnValue({
+      status: 0,
+      stderr: '',
+      stdout: JSON.stringify({
+        version: 1,
+        complete: false,
+        permissionDenied: true,
+        occupied: [{ pid: 42, descriptor: 'fd/3' }],
+        errors: ['Cannot inspect PID 1 maps']
+      })
+    })
+    expect(() => assertNoLinuxOpenFiles(['/tmp/fixture'], { probe, privileged: true })).toThrow(
+      /occupied.*PID 42/
+    )
+    expect(probe).toHaveBeenCalledTimes(1)
+    for (const result of [
+      { status: 1, stdout: '', stderr: 'sudo: a password is required' },
+      { status: 0, stdout: '{}', stderr: '' },
+      {
+        status: 0,
+        stdout: JSON.stringify({
+          version: 1,
+          complete: false,
+          permissionDenied: true,
+          occupied: [],
+          errors: ['Cannot inspect PID 1 maps']
+        }),
+        stderr: ''
+      }
+    ]) {
+      probe.mockReset().mockReturnValue(result)
+      expect(() => assertNoLinuxOpenFiles(['/tmp/fixture'], { probe, privileged: true })).toThrow(
+        /Cannot verify.*occupancy/
+      )
+    }
+  })
+
+  it.runIf(process.platform === 'linux')(
+    'inspects real unreadable Linux system processes without elevating the migrator',
+    async () => {
+      const { assertNoLinuxOpenFiles } =
+        await import('../resources/brand-migration/linux-occupancy.mjs')
+      const { readlink } = await import('node:fs/promises')
+      expect(
+        process.env.OPEN_SCIENCE_MIGRATION_PRIVILEGED_INSPECTION,
+        'Linux integration requires explicit read-only probe authorization'
+      ).toBe('1')
+      expect(process.getuid!()).not.toBe(0)
+      await expect(readlink('/proc/1/cwd')).rejects.toMatchObject({ code: 'EACCES' })
+      const f = await fixture()
+      expect(() => assertNoLinuxOpenFiles([f.old], { privileged: false })).toThrow(
+        /Cannot verify.*occupancy/
+      )
+      expect(() => assertNoLinuxOpenFiles([f.old], { privileged: true })).not.toThrow()
+      const child = await writer(f.old)
+      try {
+        expect(() => assertNoLinuxOpenFiles([f.old], { privileged: true })).toThrow(/occupied/)
+        expect(cli(f.home, '--execute').status).not.toBe(0)
+        await expect(lstat(f.next)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        await stop(child)
+      }
+      expect(process.getuid!()).not.toBe(0)
+    }
+  )
+
+  it.runIf(process.platform === 'linux').each(['fd', 'maps', 'cwd'])(
+    'blocks a real nondumpable Linux process retaining only %s occupancy',
+    async (kind) => {
+      expect(process.env.OPEN_SCIENCE_MIGRATION_PRIVILEGED_INSPECTION).toBe('1')
+      const { spawn } = await import('node:child_process')
+      const { once } = await import('node:events')
+      const { assertNoLinuxOpenFiles } =
+        await import('../resources/brand-migration/linux-occupancy.mjs')
+      const f = await fixture()
+      const child = spawn(
+        '/usr/bin/python3',
+        [
+          '-I',
+          '-c',
+          `
+import ctypes, mmap, os, sys
+kind = sys.stdin.readline().strip()
+file = open('uploads/paper.txt', 'r+b')
+if kind == 'maps':
+    mapping = mmap.mmap(file.fileno(), 0)
+    file.close()
+if kind != 'cwd': os.chdir('..')
+else: file.close()
+assert ctypes.CDLL(None).prctl(4, 0, 0, 0, 0) == 0
+print('ready', flush=True)
+sys.stdin.read()
+`
+        ],
+        { cwd: f.old, stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+      child.stdin.write(kind + '\n')
+      try {
+        await once(child.stdout, 'data')
+        expect(() => assertNoLinuxOpenFiles([f.old], { privileged: false })).toThrow(
+          /Cannot verify.*occupancy/
+        )
+        expect(() => assertNoLinuxOpenFiles([f.old], { privileged: true })).toThrow(
+          new RegExp('occupied.*PID ' + child.pid)
+        )
+        await expect(lstat(f.next)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        await stop(child)
+      }
+    }
+  )
+
+  it.runIf(process.platform === 'linux')(
+    'does not declare a thread group safe after its leader exits',
+    async () => {
+      const { spawn } = await import('node:child_process')
+      const { once } = await import('node:events')
+      const { assertNoLinuxOpenFiles } =
+        await import('../resources/brand-migration/linux-occupancy.mjs')
+      expect(process.env.OPEN_SCIENCE_MIGRATION_PRIVILEGED_INSPECTION).toBe('1')
+      const f = await fixture()
+      const child = spawn(
+        '/usr/bin/python3',
+        [
+          '-I',
+          '-c',
+          `
+import ctypes, os, sys, threading
+file = open('uploads/paper.txt', 'r+b')
+os.chdir('..')
+def worker():
+    print('ready', flush=True)
+    sys.stdin.read()
+threading.Thread(target=worker).start()
+ctypes.CDLL(None).pthread_exit(None)
+`
+        ],
+        { cwd: f.old, stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+      try {
+        await once(child.stdout, 'data')
+        await expect
+          .poll(
+            async () => (await readFile('/proc/' + child.pid + '/stat', 'utf8')).split(') ')[1][0]
+          )
+          .toBe('Z')
+        expect(() => assertNoLinuxOpenFiles([f.old], { privileged: true })).toThrow(
+          /occupied|Cannot verify.*occupancy/
+        )
+        await expect(lstat(f.next)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        await stop(child)
+      }
+    }
+  )
 
   it.each(['', '{"pid":', 'empty-recovery'])(
     'requires identity approval for incomplete legacy lock %j',

@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   writeFile
@@ -378,7 +379,8 @@ class ElectronAppHarness implements ElectronApp {
 
   static async create(
     windowMode: E2eWindowMode,
-    onStartupFailure?: (app: ElectronAppHarness) => Promise<void>
+    onStartupFailure?: (app: ElectronAppHarness) => Promise<void>,
+    fakeAgentOnLaunch = false
   ): Promise<ElectronAppHarness> {
     const testRoot = await mkdtemp(join(tmpdir(), 'open-science-electron-e2e-'))
     const harness = new ElectronAppHarness(
@@ -397,6 +399,10 @@ class ElectronAppHarness implements ElectronApp {
       await writeFile(harness.roots.fakeRemoteItState, JSON.stringify({ services: [] }), 'utf8')
       await writeFakeAgentLauncher(harness.roots.fakeAgentBinRoot)
       await writeFakeRemoteItCommands(harness.roots.fakeRemoteItRoot)
+      if (fakeAgentOnLaunch) {
+        await harness.prepareFakeAgentSettings()
+        harness.fakeAgentEnabled = true
+      }
       await harness.launch()
       return harness
     } catch (error) {
@@ -702,10 +708,24 @@ class ElectronAppHarness implements ElectronApp {
       await bridge.api.settings.setAgentFramework({ id: 'opencode' })
     }, FAKE_PROVIDER_NAME)
 
+    // A dedicated fake fixture already has its binary and environment at first launch.
+    // Provider selection above still exercises the production IPC and persistence.
+    if (this.fakeAgentEnabled) return this.page
     this.fakeAgentEnabled = true
     await this.close()
+    await this.prepareFakeAgentSettings()
+    await this.launch()
+    return this.page
+  }
+
+  private async prepareFakeAgentSettings(): Promise<void> {
     const settingsPath = join(this.roots.storageRoot, 'settings.json')
-    const settings = JSON.parse(await readFile(settingsPath, 'utf8')) as Record<string, unknown>
+    const settings = JSON.parse(
+      await readFile(settingsPath, 'utf8').catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return JSON.stringify({ version: 2, providers: [] })
+        throw error
+      })
+    ) as Record<string, unknown>
     settings.opencodePath = join(
       this.roots.fakeAgentBinRoot,
       process.platform === 'win32' ? 'opencode.cmd' : 'opencode'
@@ -733,8 +753,6 @@ class ElectronAppHarness implements ElectronApp {
       settings.sessionDetailsModel = { mode: 'disabled' }
     }
     await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
-    await this.launch()
-    return this.page
   }
 
   async createTestDirectory(name: string): Promise<string> {
@@ -1111,6 +1129,13 @@ class ElectronAppHarness implements ElectronApp {
         .evaluate(({ app }) => app.getPath('logs'))
         .catch(() => undefined)
     }
+    if (this.mainLogDirectory) {
+      // Electron canonicalizes macOS /var to /private/var; compare real directories.
+      const logPath = relative(await realpath(this.testRoot), await realpath(this.mainLogDirectory))
+      if (isAbsolute(logPath) || logPath === '..' || logPath.startsWith(`..${sep}`)) {
+        throw new Error('Electron E2E log directory escaped the isolated fixture.')
+      }
+    }
   }
 
   private get runningApplication(): ElectronApplication {
@@ -1193,10 +1218,15 @@ class ElectronAppHarness implements ElectronApp {
   }
 }
 
-const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
+const test = base.extend<{
+  app: ElectronApp
+  windowMode: E2eWindowMode
+  fakeAgentOnLaunch: boolean
+}>({
   windowMode: ['hidden', { option: true }],
+  fakeAgentOnLaunch: [false, { option: true }],
   // Playwright fixture callbacks require an object pattern even when no base fixture is needed.
-  app: async ({ windowMode }, install, testInfo) => {
+  app: async ({ windowMode, fakeAgentOnLaunch }, install, testInfo) => {
     const attachFailureLog = async (app: ElectronApp, name = 'main-process-log'): Promise<void> => {
       // Attach bytes directly so concurrent jobs/tests cannot overwrite a shared evidence file.
       const path = await app.captureMainLog(
@@ -1207,8 +1237,10 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
         contentType: 'text/plain'
       })
     }
-    const app = await ElectronAppHarness.create(windowMode, (app) =>
-      attachFailureLog(app, 'startup-main-process-log')
+    const app = await ElectronAppHarness.create(
+      windowMode,
+      (app) => attachFailureLog(app, 'startup-main-process-log'),
+      fakeAgentOnLaunch
     )
 
     let bodyError: unknown

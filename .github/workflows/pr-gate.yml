@@ -451,10 +451,14 @@ jobs:
         # The real migration tests verify ACLs and extended attributes before committing a move.
         run: |
           sudo apt-get update
-          sudo apt-get install --yes acl attr lsof python3
+          sudo apt-get install --yes acl attr python3
       - name: Test complete suite shard
         id: unit_macos_shard
         continue-on-error: true
+        env:
+          # Only the bundled read-only /proc inspector may use the runner's passwordless sudo.
+          # Vitest, migrations, SQLite and filesystem writes remain the ordinary runner user.
+          OPEN_SCIENCE_MIGRATION_PRIVILEGED_INSPECTION: '1'
         # The static lane owns the i18n catalog guard. Real Linux and macOS sandbox behavior runs
         # in platform jobs with the required native dependencies, so do not duplicate those files.
         run: >-

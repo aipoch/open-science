@@ -135,6 +135,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // backend imports remain behind the lock.
   // Complete filesystem and reference migration before Chromium, logging or backend writers open.
   const migratedBrandPaths = prepareBrandPathMigration(app)
+  if (migratedBrandPaths.logs) app.setAppLogsPath(migratedBrandPaths.logs)
   if (!app.commandLine.hasSwitch('user-data-dir')) {
     app.setPath(
       'userData',
