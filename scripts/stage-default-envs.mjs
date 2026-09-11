@@ -54,7 +54,7 @@ export const VERSIONS = {
 export const floorPackages = (language, version) =>
   language === 'python'
     ? [`python=${version}`, 'matplotlib-base', 'nomkl']
-    : [`r-base=${version}`, 'r-jsonlite']
+    : [`r-base=${version}`, 'r-jsonlite', 'r-biocmanager', 'r-ggplot2']
 
 // packId = `<language>-<version>` (mirrors bundle-manifest.ts::packId). Keys the lock filename,
 // the CDN object and the manifest.packs map.

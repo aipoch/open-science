@@ -167,7 +167,7 @@ export const DEFAULT_R_SPEC: EnvSpec = {
   name: DEFAULT_R_ENV,
   language: 'r',
   version: DEFAULT_MANAGED_VERSION.r,
-  packages: [`r-base=${DEFAULT_MANAGED_VERSION.r}`, 'r-jsonlite']
+  packages: [`r-base=${DEFAULT_MANAGED_VERSION.r}`, 'r-jsonlite', 'r-biocmanager', 'r-ggplot2']
 }
 
 // Named-env base floor (design D2/OQ2): the minimal exec-loop-protocol requirement, distinct from the
@@ -175,7 +175,7 @@ export const DEFAULT_R_SPEC: EnvSpec = {
 // implements the R loop's line-based JSON framing. Deliberately lean — convenience packages (numpy,
 // pandas, …) are left to a follow-up manage_packages call.
 export const BASE_PYTHON_PACKAGES: string[] = ['python=3.12', 'matplotlib-base', 'nomkl']
-export const BASE_R_PACKAGES: string[] = ['r-base', 'r-jsonlite']
+export const BASE_R_PACKAGES: string[] = ['r-base', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2']
 
 // Injected dependencies so the orchestration unit-tests without network or real subprocesses
 // (mirrors globalenv.rs::provision_with).
