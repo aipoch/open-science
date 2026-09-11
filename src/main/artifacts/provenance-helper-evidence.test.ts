@@ -9,6 +9,7 @@ import {
   parseArtifactExecutionSnapshot
 } from './provenance-execution-evidence'
 import { projectPublicArtifactExecutionSnapshot } from './provenance-read-model'
+import { artifactReproducibilityRecipeMatchesSnapshot } from './artifact-reproducibility-recipe'
 
 const digest = (source: string): string => createHash('sha256').update(source).digest('hex')
 
@@ -50,7 +51,10 @@ const run = (
   workingFiles: []
 })
 
-const snapshot = (runs: NotebookRunRecord[]): PersistedArtifactExecutionSnapshot =>
+const snapshot = (
+  runs: NotebookRunRecord[],
+  provenanceGraph?: PersistedArtifactExecutionSnapshot['provenanceGraph']
+): PersistedArtifactExecutionSnapshot =>
   buildBoundedExecutionSnapshot(
     {
       schemaVersion: 2,
@@ -60,12 +64,110 @@ const snapshot = (runs: NotebookRunRecord[]): PersistedArtifactExecutionSnapshot
       terminalPromptMessageId: 'prompt-1',
       producerRunId: runs.at(-1)!.runId,
       producerRunIndex: runs.length - 1,
-      createdAt: '2026-08-26T00:00:00.000Z'
+      createdAt: '2026-08-26T00:00:00.000Z',
+      ...(provenanceGraph ? { provenanceGraph } : {})
     },
     runs.map((value, runIndex) => ({ run: value, runIndex }))
   )
 
 describe('Artifact helper execution evidence', () => {
+  it.each([false, true])(
+    'reseals the recipe after successive helper trims (already incomplete: %s)',
+    (incomplete) => {
+      // The budget removes z, then the producer's b; a remains within the 4 MiB limit.
+      const source = `# ${'x'.repeat(2300 * 1024)}`
+      const earlier = run('earlier', 'pass', [
+        helper('helper-a', source),
+        helper('helper-z', source)
+      ])
+      if (incomplete)
+        earlier.helperEvidenceStatus = { state: 'incomplete', reasons: ['source-missing'] }
+      const producer = run('producer', 'helper_b()', [helper('helper-b', source)])
+      // Publication preserves a file checkpoint after the producer, whose helper barriers
+      // must reflect the final helper set rather than the first incomplete snapshot.
+      const graph: NonNullable<PersistedArtifactExecutionSnapshot['provenanceGraph']> = {
+        schemaVersion: 1,
+        targetEntityId: 'artifact-version:version-1',
+        completeness: 'complete',
+        reasonCodes: [],
+        activities: [
+          {
+            activityId: 'producer',
+            kind: 'notebook-run',
+            sequence: 1,
+            runIndex: 1,
+            inclusion: 'target-closure',
+            evidenceState: 'available'
+          },
+          {
+            activityId: 'publication',
+            kind: 'artifact-publication',
+            sequence: 2,
+            parentActivityId: 'producer',
+            inclusion: 'target-closure',
+            evidenceState: 'available'
+          }
+        ],
+        entities: [
+          {
+            entityId: 'file-generation:result',
+            kind: 'file-generation',
+            generationId: 'result',
+            relativePath: 'result.csv',
+            pathPortability: 'relative',
+            checksum: 'a'.repeat(64),
+            sizeBytes: 10,
+            contentStorageKey: `execution-file-evidence/blobs/sha256-${'a'.repeat(64)}`
+          },
+          {
+            entityId: 'artifact-version:version-1',
+            kind: 'artifact-version',
+            versionId: 'version-1',
+            filename: 'result.csv',
+            checksum: 'a'.repeat(64),
+            sizeBytes: 10
+          }
+        ],
+        edges: [
+          {
+            kind: 'generated',
+            activityId: 'producer',
+            entityId: 'file-generation:result',
+            authority: 'authoritative',
+            evidenceSource: 'runtime-observation'
+          },
+          {
+            kind: 'used',
+            activityId: 'publication',
+            entityId: 'file-generation:result',
+            authority: 'authoritative',
+            evidenceSource: 'artifact-publication'
+          },
+          {
+            kind: 'generated',
+            activityId: 'publication',
+            entityId: 'artifact-version:version-1',
+            authority: 'authoritative',
+            evidenceSource: 'artifact-publication'
+          }
+        ]
+      }
+      const value = snapshot([earlier, producer], graph)
+      expect(value.runs.map(({ runId }) => runId)).toEqual(['producer'])
+      expect(value.helperModules?.map(({ helperId }) => helperId)).toEqual(['helper-a'])
+      expect(Buffer.byteLength(JSON.stringify(value))).toBeLessThanOrEqual(4 * 1024 * 1024)
+      expect(value.helperEvidenceStatus?.state).toBe('incomplete')
+      expect(value.reproducibilityRecipe).toBeDefined()
+      expect(
+        artifactReproducibilityRecipeMatchesSnapshot(value.reproducibilityRecipe!, {
+          ...value,
+          provenanceGraph: graph
+        })
+      ).toBe(true)
+      expect(() => parseArtifactExecutionSnapshot(JSON.stringify(value))).not.toThrow()
+    }
+  )
+
   it.each(['r', 'python'] as const)(
     'preserves bounded per-run %s random state in immutable snapshot round trips',
     (language) => {
