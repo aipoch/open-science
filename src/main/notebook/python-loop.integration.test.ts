@@ -383,7 +383,7 @@ w.save(sys.argv[1])`,
       label: 'set Counter regions',
       cells: [
         vennCounterCells[0],
-        'import pandas as pd\ndf=pd.read_excel("inputs/set-membership-111111111111.xlsx",sheet_name="5组")\n' +
+        'import pandas as pd\ndf=pd.read_excel("inputs/set-membership-111111111111.xlsx",sheet_name="5 groups")\n' +
           vennCounterCells[1] +
           '\nimport json\nprint("REGIONS:"+json.dumps(dict(reg),sort_keys=True))'
       ],
@@ -403,7 +403,7 @@ w.save(sys.argv[1])`,
             pyBin!,
             [
               '-c',
-              'import pandas as pd\npd.DataFrame({"A":[" a ",None,"b"],"B":["b","c",None],"C":["a","d",None],"D":["d"," e ",None],"E":["e","f","g"]}).to_excel("inputs/set-membership-111111111111.xlsx",sheet_name="5组",index=False)'
+              'import pandas as pd\npd.DataFrame({"A":[" a ",None,"b"],"B":["b","c",None],"C":["a","d",None],"D":["d"," e ",None],"E":["e","f","g"]}).to_excel("inputs/set-membership-111111111111.xlsx",sheet_name="5 groups",index=False)'
             ],
             { cwd: dataRoot, timeout: 20000 }
           )
@@ -1230,7 +1230,7 @@ w.save(sys.argv[1])`,
     const { child, send, inspect } = startLoop(pyBin as string, {})
     try {
       await send(
-        "x = 41; label = '活跃变量'; _private = 'hidden'; sys = 1; json = 'user json'; " +
+        "x = 41; label = 'active value'; _private = 'hidden'; sys = 1; json = 'user json'; " +
           "items = list(range(10000)); blob = b'x' * 2000000; " +
           "Explosive = type('Explosive', (), {'__repr__': lambda self: (_ for _ in ()).throw(RuntimeError('no repr'))}); explosive = Explosive(); mixed = [explosive]; globals()[0] = 'non-string key'"
       )
@@ -1286,7 +1286,7 @@ w.save(sys.argv[1])`,
     const { child, send, inspect } = startLoop(pyBin as string, {})
     try {
       await send(
-        "globals()['x' * 2_000_000] = 1; globals().update({f'变量{i}': '汉' * 1000 for i in range(500)})"
+        "globals()['x' * 2_000_000] = 1; globals().update({f'value_€{i}': '€' * 1000 for i in range(500)})"
       )
       const response = await inspect()
 

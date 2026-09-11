@@ -105,9 +105,10 @@ describe('runtime certification workflow', () => {
       'sysfonts',
       'systemfonts',
       'tidyr',
+      'venn',
       'VennDiagram'
     ]) {
-      expect(create.run).toContain(`r-${name.toLowerCase()}`)
+      expect(create.run?.split(/\s+/)).toContain(`r-${name.toLowerCase()}`)
       expect(verify.run).toContain(`"${name}"`)
     }
     expect(verify.run).toContain('loadNamespace(package)')

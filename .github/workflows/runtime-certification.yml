@@ -69,7 +69,7 @@ jobs:
             --channel conda-forge r-base=4.4 r-jsonlite r-ggplot2 r-renv r-mass \
             r-circlize r-dplyr r-ggrepel r-ggvenndiagram r-magrittr r-openxlsx \
             r-patchwork r-ragg r-rcolorbrewer r-readxl r-scales r-showtext \
-            r-sysfonts r-systemfonts r-tidyr r-venndiagram
+            r-sysfonts r-systemfonts r-tidyr r-venn r-venndiagram
 
           echo "OPEN_SCIENCE_TEST_PY_ENV=$python_prefix/bin/python" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_PYTHON=$python_prefix/bin/python" >> "$GITHUB_ENV"
@@ -109,7 +109,7 @@ jobs:
           "$OPEN_SCIENCE_TEST_PY_ENV" -c \
             'import matplotlib, numpy, pandas, openpyxl, pycirclize; print("python=" + __import__("sys").version.split()[0] + " matplotlib=" + matplotlib.__version__ + " numpy=" + numpy.__version__ + " pandas=" + pandas.__version__)'
           "$OPEN_SCIENCE_TEST_R_ENV/bin/Rscript" -e \
-            'packages <- c("jsonlite", "ggplot2", "renv", "MASS", "circlize", "dplyr", "ggrepel", "ggVennDiagram", "magrittr", "openxlsx", "patchwork", "ragg", "RColorBrewer", "readxl", "scales", "showtext", "sysfonts", "systemfonts", "tidyr", "VennDiagram"); for (package in packages) { loadNamespace(package); cat(package, "=", as.character(packageVersion(package)), "\n", sep="") }'
+            'packages <- c("jsonlite", "ggplot2", "renv", "MASS", "circlize", "dplyr", "ggrepel", "ggVennDiagram", "magrittr", "openxlsx", "patchwork", "ragg", "RColorBrewer", "readxl", "scales", "showtext", "sysfonts", "systemfonts", "tidyr", "venn", "VennDiagram"); for (package in packages) { loadNamespace(package); cat(package, "=", as.character(packageVersion(package)), "\n", sep="") }'
 
       - name: Test real source runtime chain
         env:
