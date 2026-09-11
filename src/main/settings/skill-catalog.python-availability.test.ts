@@ -11,6 +11,15 @@ vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()
   return {
     ...actual,
+    execFile: ((
+      command: string,
+      args: readonly string[],
+      options: unknown,
+      callback: (error: Error) => void
+    ) =>
+      callback(
+        Object.assign(new Error(`spawn ${command} ENOENT`), { code: 'ENOENT' })
+      )) as typeof actual.execFile,
     spawn: (command: string, args: readonly string[], options: SpawnOptions) =>
       actual.spawn(command, args, {
         ...options,
@@ -34,7 +43,6 @@ import { SkillCatalogModule } from './skill-catalog'
 const roots: string[] = []
 
 afterEach(async () => {
-  vi.unstubAllEnvs()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
@@ -85,7 +93,6 @@ it.each(['zip', 'github'] as const)(
       })
     ).toString('base64')
 
-    vi.stubEnv('PATH', '')
     await expect(
       source === 'zip'
         ? catalog.importSkillZip({ dataBase64 })
@@ -115,7 +122,6 @@ it('imports the same text-only Skill without Python when no bundled helper exist
     })
   ).toString('base64')
 
-  vi.stubEnv('PATH', '')
   await expect(catalog.importSkillZip({ dataBase64 })).resolves.toMatchObject({
     id: 'imported-text-only'
   })

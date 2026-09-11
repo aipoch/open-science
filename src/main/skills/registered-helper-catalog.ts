@@ -256,9 +256,9 @@ const preparePackage = async (entry: RegisteredSkillPackage): Promise<PreparedHe
       entry.packageRoot,
       descriptor.implementation
     )
-    await validateNotebookHelperExports(descriptor.id, source, descriptor.exports, {
-      trustedSource: entry.origin === 'builtin'
-    })
+    if (entry.origin !== 'builtin') {
+      await validateNotebookHelperExports(descriptor.id, source, descriptor.exports)
+    }
     loaded.push({ descriptor, bytes, digest: sourceDigest(bytes) })
   }
   const generation = generationDigest(skillId, entry.origin, loaded)
