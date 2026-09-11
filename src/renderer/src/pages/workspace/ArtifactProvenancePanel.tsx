@@ -124,10 +124,10 @@ type ArtifactProvenancePanelProps = {
 
 const tabs: Array<{ id: ProvenanceTab; label: string }> = [
   { id: 'code', label: 'Code' },
-  { id: 'reproducibility', label: 'Reproducibility' },
   { id: 'execution', label: 'Execution Log' },
   { id: 'messages', label: 'Messages' },
   { id: 'environment', label: 'Environment' },
+  { id: 'reproducibility', label: 'Reproducibility' },
   { id: 'review', label: 'Review' }
 ]
 const sourcesTab = { id: 'sources', label: 'Literature' } as const

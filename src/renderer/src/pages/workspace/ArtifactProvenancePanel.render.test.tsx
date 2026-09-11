@@ -532,7 +532,14 @@ afterEach(() => {
 describe('ArtifactProvenancePanel', () => {
   it('moves provenance tab focus with ArrowRight', async () => {
     const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
-    expect(tabs.length).toBeGreaterThan(1)
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'Code',
+      'Execution Log',
+      'Messages',
+      'Environment',
+      'Reproducibility',
+      'Review'
+    ])
     act(() => tabs[0].focus())
     await act(async () => {
       tabs[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
