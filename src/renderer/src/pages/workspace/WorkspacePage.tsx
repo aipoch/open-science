@@ -49,7 +49,6 @@ import {
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 import { revealNotebookWhenProjectActive } from './notebook-preview-availability'
 import { invalidateSessionNotebookCache } from './session-notebook-data'
-import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import {
   appendArtifactMention,
@@ -150,10 +149,6 @@ const WorkspacePage = ({
   const goHome = useNavigationStore((state) => state.goHome)
   const openProjectLiterature = useNavigationStore((state) => state.openProjectLiterature)
   const openSettings = useSettingsStore((state) => state.openSettings)
-  const activeProviderId = useSettingsStore((state) => state.activeProviderId)
-  const activeProviderType = useSettingsStore(
-    (state) => state.providers.find((provider) => provider.id === activeProviderId)?.type
-  )
   const defaultPermissionProfile = useSettingsStore((state) => state.defaultPermissionProfile)
   const settingsSkills = useSettingsStore((state) => state.skills)
   const catalogSkills = useMemo(
@@ -532,10 +527,7 @@ const WorkspacePage = ({
   const awaitsHistoryReplay = sessionAwaitsHistoryReplay(activeSession)
   const sideChatDisabledReason = awaitsHistoryReplay
     ? t('Resolve the current Session operation first.')
-    : (sideChat.unavailableReason ??
-      (activeProviderType !== undefined && isCodexSubscriptionProvider(activeProviderType)
-        ? 'Side chat is unavailable for Codex subscription because strict tool isolation cannot be enforced.'
-        : undefined))
+    : sideChat.unavailableReason
   const canArchiveSession = sessionController.lifecycle.canArchive
   const visiblePermissionRequests = useMemo(
     () =>
