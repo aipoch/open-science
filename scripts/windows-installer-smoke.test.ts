@@ -85,7 +85,7 @@ describe('Windows installer smoke plan', () => {
 
   it('parses an optional positive released migration count', () => {
     expect(parseArguments(['--installer-dir', 'dist'])).toMatchObject({
-      artifactRpcContract: 'reservation',
+      artifactRpcContract: 'save',
       expectedMigrationCount: undefined,
       retainInstallation: false
     })
@@ -199,6 +199,14 @@ describe('Windows installer smoke plan', () => {
       parseArguments(['--installer-dir', 'dist', '--artifact-rpc-contract', 'legacy'])
         .artifactRpcContract
     ).toBe('legacy')
+    expect(
+      parseArguments(['--installer-dir', 'dist', '--artifact-rpc-contract', 'reservation'])
+        .artifactRpcContract
+    ).toBe('reservation')
+    expect(
+      parseArguments(['--installer-dir', 'dist', '--artifact-rpc-contract', 'save'])
+        .artifactRpcContract
+    ).toBe('save')
     for (const value of [undefined, 'automatic']) {
       expect(() =>
         parseArguments([
@@ -207,7 +215,7 @@ describe('Windows installer smoke plan', () => {
           '--artifact-rpc-contract',
           ...(value === undefined ? [] : [value])
         ])
-      ).toThrow(/Artifact RPC contract must be legacy or reservation/)
+      ).toThrow(/Artifact RPC contract must be legacy, reservation, or save/)
     }
   })
 
@@ -232,7 +240,8 @@ describe('Windows installer smoke plan', () => {
           fileBytes
         }
       },
-      workspace
+      workspace,
+      'reservation'
     )
     expect(reservation).toMatchObject({
       id: 'installer-smoke-reservation',
@@ -251,7 +260,8 @@ describe('Windows installer smoke plan', () => {
           resourceChecksum: checksum
         }
       },
-      workspace
+      workspace,
+      'reservation'
     )
     expect(version).toMatchObject({
       versionId: 'installer-smoke-version',
@@ -264,7 +274,8 @@ describe('Windows installer smoke plan', () => {
           method: 'artifactReleaseWrite',
           params: { ...artifactScope, reservationId: reservation.id }
         },
-        workspace
+        workspace,
+        'reservation'
       )
     ).toEqual({ released: true })
     expect(() =>
@@ -279,7 +290,8 @@ describe('Windows installer smoke plan', () => {
             resourceChecksum: checksum
           }
         },
-        workspace
+        workspace,
+        'reservation'
       )
     ).toThrow(/reservation metadata/)
     expect(() =>
@@ -294,9 +306,85 @@ describe('Windows installer smoke plan', () => {
             fileBytes
           }
         },
-        workspace
+        workspace,
+        'reservation'
       )
     ).toThrow(/write scope/)
+  })
+
+  it('models the packaged Artifact save RPC contract', () => {
+    const workspace = 'C:\\smoke\\workspace'
+    const fileBytes = Buffer.byteLength('windows-rpc-smoke\n')
+    const checksum = createHash('sha256').update('windows-rpc-smoke\n').digest('hex')
+    const writeOperationId = `artifact-write-${'a'.repeat(64)}`
+    const saveRequest = {
+      method: 'artifactSaveVersion',
+      params: {
+        projectId: 'installer-smoke-project',
+        appSessionId: 'installer-smoke-session',
+        artifactStorageSessionId: 'installer-smoke-session',
+        artifactRunId: 'installer-smoke-artifact-run',
+        writeOperationId,
+        rootFrameId: 'installer-smoke-root-frame',
+        agentFrameId: 'installer-smoke-agent-frame',
+        messageBranchId: 'installer-smoke-branch',
+        runtimeSegmentId: 'installer-smoke-runtime',
+        promptMessageId: 'installer-smoke-prompt',
+        filename: 'windows-rpc-smoke.txt',
+        contentType: 'text/plain',
+        producerRunId: 'installer-smoke-shell-run',
+        source: {
+          kind: 'inline',
+          content: Buffer.from('windows-rpc-smoke\n').toString('base64'),
+          encoding: 'base64'
+        }
+      }
+    }
+
+    expect(packagedArtifactSmokeRpcResult(saveRequest, workspace)).toMatchObject({
+      versionId: 'installer-smoke-version',
+      path: join(workspace, 'windows-rpc-smoke.txt'),
+      size: fileBytes,
+      checksum
+    })
+    expect(packagedArtifactSmokeRpcResult(saveRequest, workspace, 'save')).toMatchObject({
+      versionId: 'installer-smoke-version'
+    })
+    expect(() => packagedArtifactSmokeRpcResult(saveRequest, workspace, 'reservation')).toThrow(
+      /save RPC contract/
+    )
+    expect(() => packagedArtifactSmokeRpcResult(saveRequest, workspace, 'legacy')).toThrow(
+      /save RPC contract/
+    )
+    expect(() =>
+      packagedArtifactSmokeRpcResult(
+        {
+          method: 'artifactReserveWrite',
+          params: {
+            projectId: 'installer-smoke-project',
+            appSessionId: 'installer-smoke-session',
+            artifactStorageSessionId: 'installer-smoke-session',
+            artifactRunId: 'installer-smoke-artifact-run',
+            writeOperationId,
+            filename: 'windows-rpc-smoke.txt',
+            fileBytes
+          }
+        },
+        workspace
+      )
+    ).toThrow(/must not reserve/)
+    expect(() =>
+      packagedArtifactSmokeRpcResult(
+        {
+          ...saveRequest,
+          params: {
+            ...saveRequest.params,
+            filename: 'wrong.txt'
+          }
+        },
+        workspace
+      )
+    ).toThrow(/save request/)
   })
 
   it('supports the released legacy Artifact contract without weakening reservation enforcement', () => {
