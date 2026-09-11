@@ -57,7 +57,6 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
     dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_ERROR ||
     dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
   const isForceableGateError =
-    isBackgroundProcessError ||
     dialogStatus?.error ===
       'Research work is still running. Stop it before restarting to update.' ||
     dialogStatus?.error ===
