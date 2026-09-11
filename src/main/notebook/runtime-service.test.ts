@@ -6338,11 +6338,12 @@ describe('notebook runtime service', () => {
     let maxConcurrent = 0
     const releases: Array<() => void> = []
     const executedCodes: string[] = []
+    const repository = new NotebookRunRepository(root)
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
-      repository: new NotebookRunRepository(root),
+      repository,
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
           executedCodes.push(request.code)
@@ -6387,20 +6388,32 @@ describe('notebook runtime service', () => {
     // Wait until the first run has actually entered the executor and is holding the single slot.
     await vi.waitFor(() => expect(releases).toHaveLength(1))
 
-    const second = submit("print('b')")
-    // Give the second run a chance to (wrongly) reach the executor while the first is in flight.
-    await new Promise((resolve) => setTimeout(resolve, 20))
-
-    // With serialization the second run is still queued, so only the first has entered the executor.
-    expect(releases).toHaveLength(1)
-    const queuedState = await service.state({
-      projectId: 'default-project',
-      sessionId: 'session-1',
-      workspaceCwd: '/workspace'
+    // Exercise slow durable admission instead of assuming it completes within a fixed sleep.
+    const appendRun = repository.appendOrGetRun.bind(repository)
+    vi.spyOn(repository, 'appendOrGetRun').mockImplementationOnce(async (input) => {
+      await new Promise((resolve) => setTimeout(resolve, 1250))
+      return appendRun(input)
     })
-    expect(queuedState.runs).toEqual(
-      expect.arrayContaining([expect.objectContaining({ script: "print('b')", status: 'queued' })])
+
+    const second = submit("print('b')")
+    // Observe durable admission before asserting that the second run cannot enter the executor.
+    const queuedState = await vi.waitFor(
+      async () => {
+        const state = await service.state({
+          projectId: 'default-project',
+          sessionId: 'session-1',
+          workspaceCwd: '/workspace'
+        })
+        expect(state.runs).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ script: "print('b')", status: 'queued' })
+          ])
+        )
+        return state
+      },
+      { timeout: 5000 }
     )
+    expect(releases).toHaveLength(1)
     const queuedCell = queuedState.cells.find((cell) => cell.code === "print('b')")
     expect(queuedCell).toBeDefined()
     await expect(
