@@ -91,7 +91,7 @@ jobs:
         # tests still fail at that bound. The 50-minute job timeout covers checkout, npm ci, and a
         # slow serial suite without treating a still-progressing shard as a hang. GitHub annotations
         # keep the failing test visible if the job is later cancelled.
-        run: npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github
+        run: npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions
 
       - name: Test recent Windows regressions
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}

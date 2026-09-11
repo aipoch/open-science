@@ -118,7 +118,7 @@ describe('post-merge Windows validation', () => {
       shard: "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3]') }}"
     })
     expect(findStep(job, 'Test complete suite shard').run).toBe(
-      'npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github'
+      'npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions'
     )
     expect(findStep(job, 'Test complete suite shard').if).toBe(
       "${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}"

@@ -63,7 +63,7 @@ describe('release and scheduled workflow topology', () => {
     expect(job.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
     expect(test.run).toContain('--shard=${{ matrix.shard }}/3')
     expect(test.run).toContain('--maxWorkers=1')
-    expect(test.run).toContain('--reporter=github')
+    expect(test.run).toContain('--reporter=github-actions')
     expect(windows.on).not.toHaveProperty('push')
     expect(schedule).toEqual([{ cron: '47 * * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
