@@ -29,6 +29,7 @@ import { protectManagedRuntimeWrites } from './managed-runtime-guard'
 import {
   buildManagedRuntimeProcessEnvironment,
   buildNotebookKernelEnvironment,
+  normalizeRProcessLocale,
   environmentPathRoots
 } from './process-environment'
 import {
@@ -1280,7 +1281,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
         })
       )
     }
-    return env
+    return kind === 'r' ? normalizeRProcessLocale(env, this.platform) : env
   }
 
   // Frames one request onto the loop's stdin and returns a promise settled by the matching response

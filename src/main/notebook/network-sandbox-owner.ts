@@ -34,6 +34,7 @@ import { startDiagnosticOperation } from '../diagnostics/operation'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import {
   buildNotebookKernelEnvironment,
+  normalizeRProcessLocale,
   environmentPathRoots,
   notebookTrustBundleEnvironment
 } from './process-environment'
@@ -790,7 +791,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       throw new Error('Enable protected mode before verifying R access.')
     const prefix = windowsCondaPrefixForR(executable, this.platform)
     const env = {
-      ...buildNotebookKernelEnvironment(this.platform),
+      ...normalizeRProcessLocale(buildNotebookKernelEnvironment(this.platform), this.platform),
       ...(prefix ? { PATH: condaActivatedPath(prefix, process.env.PATH, this.platform) } : {})
     }
     const cwd = await mkdtemp(join(tmpdir(), 'open-science-r-access-'))
