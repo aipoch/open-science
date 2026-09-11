@@ -722,6 +722,7 @@ describe('Settings backend ownership architecture', () => {
       'codexAuthMode',
       'codexAutoUseHttps',
       'codexTransport',
+      'configRevision',
       'contextWindow',
       'disconnectedAt',
       'expiresAt',

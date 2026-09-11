@@ -1612,44 +1612,50 @@ describe('production delegated-work composition', () => {
   it('requires non-emoji names and persists caller-chosen unique names across production reopen', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-naming-'))
     const harness = await createCompositionHarness(root, 'codex')
-    const task = `Trace sources\n${'full prompt detail '.repeat(20)}`
+    const compositions = [harness.composition]
+    try {
+      const task = `Trace sources\n${'full prompt detail '.repeat(20)}`
 
-    await expect(
-      harness.composition.host.delegate(harness.caller, { task } as never, { wait: false })
-    ).rejects.toMatchObject({ code: 'admission_rejection' })
-    await expect(
-      harness.composition.host.delegate(
-        { ...harness.caller, toolInvocationId: 'call-codex-emoji' },
-        { task, name: 'Trace sources 🧪' },
+      await expect(
+        harness.composition.host.delegate(harness.caller, { task } as never, { wait: false })
+      ).rejects.toMatchObject({ code: 'admission_rejection' })
+      await expect(
+        harness.composition.host.delegate(
+          { ...harness.caller, toolInvocationId: 'call-codex-emoji' },
+          { task, name: 'Trace sources 🧪' },
+          { wait: false }
+        )
+      ).rejects.toMatchObject({ code: 'admission_rejection' })
+      expect(harness.execution.reservationCounts()).toEqual([])
+      const first = await harness.composition.host.delegate(
+        { ...harness.caller, toolInvocationId: 'call-codex-named' },
+        { task, name: 'Source audit' },
         { wait: false }
       )
-    ).rejects.toMatchObject({ code: 'admission_rejection' })
-    expect(harness.execution.reservationCounts()).toEqual([])
-    const first = await harness.composition.host.delegate(
-      { ...harness.caller, toolInvocationId: 'call-codex-named' },
-      { task, name: 'Source audit' },
-      { wait: false }
-    )
-    const second = await harness
-      .reopen()
-      .host.delegate(
+      const reopened = harness.reopen()
+      compositions.push(reopened)
+      const second = await reopened.host.delegate(
         { ...harness.caller, toolInvocationId: 'call-codex-reopened' },
         { task, name: 'Source audit 2' },
         { wait: false }
       )
 
-    expect(first).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit' }] })
-    expect(second).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit 2' }] })
-    await expect(harness.reopen().host.children(harness.caller)).resolves.toMatchObject([
-      { name: 'Source audit' },
-      { name: 'Source audit 2' }
-    ])
-    expect(
-      harness
-        .durable()
-        .conversationGraph?.frames.filter(({ kind }) => kind === 'delegate')
-        .map(({ delegateName }) => delegateName)
-    ).toEqual(['Source audit', 'Source audit 2'])
+      expect(first).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit' }] })
+      expect(second).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit 2' }] })
+      await expect(harness.reopen().host.children(harness.caller)).resolves.toMatchObject([
+        { name: 'Source audit' },
+        { name: 'Source audit 2' }
+      ])
+      expect(
+        harness
+          .durable()
+          .conversationGraph?.frames.filter(({ kind }) => kind === 'delegate')
+          .map(({ delegateName }) => delegateName)
+      ).toEqual(['Source audit', 'Source audit 2'])
+    } finally {
+      // Both owners can still be materializing the wait:false children. Drain them before rm.
+      for (const composition of compositions) await composition.root.shutdown()
+    }
   })
 
   it('records the admitted cross-provider model on every child Runtime Segment', async () => {

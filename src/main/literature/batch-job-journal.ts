@@ -183,6 +183,7 @@ export class LiteratureBatchJobJournal {
     delete row.metadata
     delete row.candidates
     delete row.message
+    delete row.failures
     delete row.notices
     this.hydrated.delete(row)
   }
@@ -204,12 +205,19 @@ export class LiteratureBatchJobJournal {
     }
     return { id, status, checked, candidateId, payload: digest }
   }
-  async save(job: LiteratureJob, payloadChanged = true, resetReview = false): Promise<void> {
+  async save(
+    job: LiteratureJob,
+    payloadChanged = true,
+    resetReview: boolean | ReadonlySet<string> = false
+  ): Promise<void> {
     const previous = this.records.get(job.id)
     const rows: Control[] = []
     for (let index = 0; index < job.rows.length; index++) {
       let row = job.rows[index]
-      const reset = resetReview && row.status !== 'done'
+      const reset =
+        typeof resetReview === 'boolean'
+          ? resetReview && row.status !== 'done'
+          : resetReview.has(row.id)
       if (reset) {
         // Retry keeps the item snapshot but discards the previous review. Read and rewrite
         // one immutable payload at a time; unchanged completed rows keep their digest.
@@ -220,7 +228,8 @@ export class LiteratureBatchJobJournal {
           metadata: undefined,
           candidates: undefined,
           message: undefined,
-          notices: undefined
+          notices: undefined,
+          failures: undefined
         }
       }
       rows.push(await this.control(job.id, row, previous?.rows[index], reset || payloadChanged))

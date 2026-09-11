@@ -130,6 +130,85 @@ describe('ProviderAccountsModule', () => {
     }
   })
 
+  it('rejects stale human edits while preserving credentials and allowing background catalog changes', async () => {
+    const draft = {
+      id: 'cas-provider',
+      type: 'custom' as const,
+      name: 'Original',
+      baseUrl: 'https://old.example',
+      model: 'test',
+      key: 'secret'
+    }
+    await module.upsertProvider(draft)
+    const original = (await repository.getSettings()).providers[0]
+    await module.upsertProvider({
+      ...draft,
+      key: undefined,
+      baseUrl: 'https://new.example',
+      requireExisting: true,
+      expectedConfigRevision: original.configRevision
+    })
+    await expect(
+      module.upsertProvider({
+        ...draft,
+        key: undefined,
+        name: 'Stale edit',
+        requireExisting: true,
+        expectedConfigRevision: original.configRevision
+      })
+    ).rejects.toThrow('Provider configuration changed')
+    const latest = (await repository.getSettings()).providers[0]
+    expect(latest).toMatchObject({
+      baseUrl: 'https://new.example',
+      keyRef: original.keyRef,
+      configRevision: 2
+    })
+    await repository.updateProviderModelCatalogIfTargetMatches(latest, ['fresh-model'])
+    await module.upsertProvider({
+      ...draft,
+      key: undefined,
+      baseUrl: latest.baseUrl,
+      name: 'Reapplied',
+      requireExisting: true,
+      expectedConfigRevision: latest.configRevision
+    })
+    expect((await repository.getSettings()).providers[0]).toMatchObject({
+      name: 'Reapplied',
+      fetchedModels: ['fresh-model'],
+      configRevision: 3,
+      keyRef: original.keyRef
+    })
+    await repository.deleteProvider(draft.id)
+    await expect(module.upsertProvider({ ...draft, expectedConfigRevision: 3 })).rejects.toThrow(
+      'Provider configuration changed'
+    )
+  })
+
+  it('accepts the zero revision of a legacy provider and rejects a second old form', async () => {
+    await repository.upsertProvider({
+      id: 'legacy',
+      type: 'custom',
+      name: 'Legacy',
+      baseUrl: 'https://example.com',
+      model: 'test',
+      keyRef: 'plain:secret'
+    })
+    await module.upsertProvider({
+      id: 'legacy',
+      type: 'custom',
+      name: 'First',
+      expectedConfigRevision: 0
+    })
+    await expect(
+      module.upsertProvider({
+        id: 'legacy',
+        type: 'custom',
+        name: 'Second',
+        expectedConfigRevision: 0
+      })
+    ).rejects.toThrow('Provider configuration changed')
+  })
+
   it('owns custom provider persistence, projection, selection, and deletion', async () => {
     await module.upsertProvider({
       type: 'custom',

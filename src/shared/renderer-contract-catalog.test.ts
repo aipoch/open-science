@@ -262,7 +262,7 @@ describe('renderer contract catalog', () => {
     const compute = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('compute.')
     )
-    expect(compute).toHaveLength(38)
+    expect(compute).toHaveLength(39)
     expect(
       compute
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
@@ -478,7 +478,8 @@ describe('renderer contract catalog', () => {
       'tags.setAssignment',
       'tags.snapshot',
       'tags.update',
-      'uploads.finalizeSession'
+      'uploads.finalizeSession',
+      'uploads.recoverDraft'
     ])
     expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).toEqual([
       'acp:discard-unavailable-plan',
@@ -529,7 +530,8 @@ describe('renderer contract catalog', () => {
       'tags:set-assignment',
       'tags:snapshot',
       'tags:update',
-      'uploads:finalize-session'
+      'uploads:finalize-session',
+      'uploads:recover-draft'
     ])
   })
 })

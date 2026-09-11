@@ -182,8 +182,12 @@ class UserSkillRepository {
     return this.agentHomeSkills.listAgentHomeSkills(homeSkillsDir, source)
   }
 
-  async previewAgentHomeSkill(root: string): Promise<ParsedSkillPreview> {
-    return this.agentHomeSkills.previewAgentHomeSkill(root)
+  async previewAgentHomeSkill(
+    root: string,
+    skill?: AgentHomeSkillRef,
+    aliases: readonly AgentHomeSkillRef[] = []
+  ): Promise<ParsedSkillPreview> {
+    return this.agentHomeSkills.previewAgentHomeSkill(root, skill, aliases)
   }
 
   async importAgentHomeSkill(

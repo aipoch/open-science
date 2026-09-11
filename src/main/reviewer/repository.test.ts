@@ -85,6 +85,151 @@ const checks = (): NewCheck[] => [
 const WINDOWS_SQLITE_TEST_TIMEOUT_MS = 120_000
 
 describe('review repository (integration)', { timeout: WINDOWS_SQLITE_TEST_TIMEOUT_MS }, () => {
+  it('advances every Review projection write at a fixed clock and after clock rollback', async () => {
+    const repository = await createRepository()
+    const review = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'monotonic',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(review.updatedAt)
+    try {
+      let version = review.updatedAt
+      const advances = async (): Promise<void> => {
+        const [current] = await repository.getReviewsForSession('monotonic')
+        expect(current.updatedAt).toBeGreaterThan(version)
+        version = current.updatedAt
+      }
+      await repository.addChecks(review.id, checks())
+      await advances()
+      const [stored] = await repository.getReviewsForSession('monotonic')
+      const findingId = stored.checks[0]!.id
+      await repository.updateFindingResolution(review.id, findingId, 'resolved')
+      await advances()
+      clock.mockReturnValue(review.updatedAt - 100_000)
+      await repository.incrementReflagCount(review.id, findingId)
+      await advances()
+      await repository.updateFindingResolutions(review.id, 'open')
+      await advances()
+      await repository.appendFindingDisposition({
+        eventId: 'monotonic-event',
+        sourceFindingId: findingId,
+        trigger: 'aborted',
+        outcome: 'unaddressed'
+      })
+      await advances()
+      await repository.commitFindingDisposition({
+        reviewId: review.id,
+        sourceFindingId: findingId,
+        trigger: 'aborted',
+        outcome: 'unaddressed'
+      })
+      await advances()
+      await repository.updateReview(review.id, {
+        reviewerLog: [{ kind: 'message', text: 'updated' }]
+      })
+      await advances()
+      await repository.recoverInterruptedReviews()
+      await advances()
+      const assessment = await repository.createReview({
+        projectId: 'project-1',
+        sessionId: 'submission-clock',
+        turnMessageId: 'a2',
+        scope: scope('a2')
+      })
+      const submitted = await repository.commitScopedSubmission({
+        mode: 'initial',
+        reviewId: assessment.id,
+        checks: [],
+        expectedSourceFindingIds: []
+      })
+      expect(submitted.updatedAt).toBeGreaterThan(assessment.updatedAt)
+      const interrupted = await repository.createReview({
+        projectId: 'project-1',
+        sessionId: 'interrupted-clock',
+        turnMessageId: 'a3',
+        scope: scope('a3')
+      })
+      await repository.recoverInterruptedReviews()
+      expect(
+        (await repository.getReviewsForSession('interrupted-clock'))[0].updatedAt
+      ).toBeGreaterThan(interrupted.updatedAt)
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('isolates structurally damaged Review JSON and rejects writes through its invalid scope', async () => {
+    const repository = await createRepository()
+    const input = {
+      projectId: 'project-1',
+      sessionId: 'damaged',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    }
+    const good = await repository.createReview(input)
+    const badScope = await repository.createReview(input)
+    const badLog = await repository.createReview(input)
+    await client!.review.update({
+      where: { id: badScope.id },
+      data: { scope: '{}', lifecycle: 'complete', outcome: 'pass' }
+    })
+    await client!.review.update({
+      where: { id: badLog.id },
+      data: { reviewerLog: '[{"kind":"message","text":7}]' }
+    })
+    const loaded = await repository.getReviewsForSession('damaged')
+    expect(loaded).toHaveLength(3)
+    for (const id of [badScope.id, badLog.id]) {
+      expect(loaded.find((review) => review.id === id)).toMatchObject({
+        lifecycle: 'error',
+        outcome: null,
+        verificationUnavailable: true,
+        errorMessage: 'Stored Review data is invalid.'
+      })
+    }
+    expect(loaded.find((review) => review.id === badScope.id)?.scope.artifactVersionIds).toEqual([])
+    expect(loaded.find((review) => review.id === good.id)?.lifecycle).toBe('running')
+    await expect(repository.addChecks(badScope.id, checks())).rejects.toThrow(
+      'Stored Review scope is invalid.'
+    )
+    expect(await client!.finding.count({ where: { reviewId: badScope.id } })).toBe(0)
+  })
+
+  it('advances a tracked assessment when its embedded source Check changes', async () => {
+    const repository = await createRepository()
+    const input = {
+      projectId: 'project-1',
+      sessionId: 'tracked-clock',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    }
+    const source = await repository.createReview(input)
+    await repository.addChecks(source.id, checks())
+    const finding = (await repository.getReviewsForSession('tracked-clock'))[0].checks[0]!
+    const assessment = await repository.createReview(input)
+    await repository.appendFindingDisposition({
+      eventId: 'tracked-clock-event',
+      sourceFindingId: finding.id,
+      causeReviewId: assessment.id,
+      trigger: 'review_submission',
+      outcome: 'still_open'
+    })
+    const before = (await repository.getReviewsForSession('tracked-clock')).find(
+      (row) => row.id === assessment.id
+    )!
+    await repository.updateFindingResolution(source.id, finding.id, 'resolved')
+    const after = (await repository.getReviewsForSession('tracked-clock')).find(
+      (row) => row.id === assessment.id
+    )!
+    expect(after.updatedAt).toBeGreaterThan(before.updatedAt)
+    expect(after.submittedChecks?.[0]).toMatchObject({
+      kind: 'tracked',
+      sourceCheck: { resolution: 'resolved' }
+    })
+  })
+
   it('round-trips a review with its unified checks by session', async () => {
     const repository = await createRepository()
 

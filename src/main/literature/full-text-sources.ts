@@ -1,3 +1,4 @@
+import { LiteratureProviderError } from './provider-error'
 import { z } from 'zod'
 import {
   normalizeLiteratureIdentifierValue,
@@ -26,7 +27,7 @@ export const readFullTextProvider = async (
   }
   if (!response.ok) {
     await response.body?.cancel()
-    throw new Error('Full-text provider request failed.')
+    throw new LiteratureProviderError(response.status)
   }
   if (!response.body) throw new Error('Full-text provider returned an empty response.')
   const reader = response.body.getReader()

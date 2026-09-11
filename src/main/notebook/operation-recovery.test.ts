@@ -123,7 +123,7 @@ describe('reconcileInterruptedOperations', () => {
     await expect(reconcileInterruptedOperations(journal, deps)).resolves.toEqual([])
 
     expect(deps.blockUnknownChildTarget).toHaveBeenCalledWith(committed)
-    expect(deps.onRetained).toHaveBeenCalledWith(committed)
+    expect(deps.onRetained).toHaveBeenCalledWith(committed, 'recovery-failed')
     expect(await journal.pending()).toEqual([committed])
   })
 
@@ -173,7 +173,7 @@ describe('reconcileInterruptedOperations', () => {
     expect(deps.blockUnknownChildTarget).toHaveBeenCalledWith(ambiguous)
     expect(deps.markRepairRequired).not.toHaveBeenCalled()
     expect(deps.publishArchives).not.toHaveBeenCalled()
-    expect(deps.onRetained).toHaveBeenCalledWith(ambiguous)
+    expect(deps.onRetained).toHaveBeenCalledWith(ambiguous, 'archive-unconfirmed')
     expect(await journal.pending()).toEqual([ambiguous])
   })
 
@@ -192,7 +192,7 @@ describe('reconcileInterruptedOperations', () => {
 
     expect(deps.markRepairRequired).toHaveBeenCalledWith(ambiguous)
     expect(deps.blockUnknownChildTarget).toHaveBeenCalledWith(ambiguous)
-    expect(deps.onRetained).toHaveBeenCalledWith(ambiguous)
+    expect(deps.onRetained).toHaveBeenCalledWith(ambiguous, 'archive-unconfirmed')
     expect(await journal.pending()).toEqual([ambiguous])
   })
 

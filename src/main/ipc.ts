@@ -4369,7 +4369,7 @@ const createApplicationModules = async (
     if (notebookService.isDefaultEnvRecoveryBlocked(language)) {
       throw new Error(
         `The ${language} runtime is recovering from an interrupted operation whose process could not be ` +
-          'confirmed stopped. Restart the app to re-check and recover it before setting it up again.'
+          'confirmed stopped. Use Recheck in Settings → Runtimes. Restarting the app does not prove that the worker stopped.'
       )
     }
   }
@@ -4379,6 +4379,7 @@ const createApplicationModules = async (
     root: provisioningRoot,
     projectProgress: broadcastNotebookEnvProgress,
     waitForRecovery,
+    recoveryStatus: () => notebookService.recoveryStatus(),
     assertProvisionAllowed,
     onRepairStarting: (language, target) => notebookService.prepareRuntimeRepair(language, target),
     revokeRuntimeAccess: async (language) => {

@@ -140,6 +140,7 @@ type ElectronDataContentApplicationCommandAdapter = InvocationOwner<{
 type ManagedPreviewApplicationCommandOwner = ManagedPreviewOwnerRegistry
 
 type UploadApplicationCommandOwner = InvocationOwner<{
+  recoverDraft: (request: { receipt: string }) => Promise<Uploads.UploadedAttachment | null>
   claimLocalFile: (request: Uploads.UploadTransferRequest) => void
   stageLocalPath: (
     request: Uploads.StageLocalPathUploadRequest
@@ -405,6 +406,11 @@ const dataContentApplicationCommands = Object.freeze({
     Uploads.uploadApplicationCommandContracts.finalizeSession
   ),
   uploadFinishTransfer: uploadCommand('uploads:finish-transfer', 'finishTransfer'),
+  uploadRecoverDraft: uploadCommand(
+    'uploads:recover-draft',
+    'recoverDraft',
+    Uploads.uploadApplicationCommandContracts.recoverDraft
+  ),
   uploadReadPreview: uploadCommand('uploads:read-preview', 'readPreview'),
   uploadStageLocalFile: electronCommand('uploads:stage-local-file', 'stageLocalFileWithProgress'),
   uploadStageLocalPath: uploadCommand('uploads:stage-local-path', 'stageLocalPath'),
@@ -490,6 +496,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.uploadFinalizeSession,
     dataContentApplicationCommands.uploadFinishTransfer,
     dataContentApplicationCommands.uploadReadPreview,
+    dataContentApplicationCommands.uploadRecoverDraft,
     dataContentApplicationCommands.uploadStageLocalFile,
     dataContentApplicationCommands.uploadStageLocalPath,
     dataContentApplicationCommands.uploadTransferStatus
@@ -913,6 +920,7 @@ const registerDataContentApplicationCommands = (
       'uploads:delete': (invocation) => dependencies.uploads.deleteUpload(invocation),
       'uploads:finalize-session': (invocation) => dependencies.uploads.finalizeSession(invocation),
       'uploads:finish-transfer': (invocation) => dependencies.uploads.finishTransfer(invocation),
+      'uploads:recover-draft': (invocation) => dependencies.uploads.recoverDraft(invocation),
       'uploads:read-preview': (invocation) => dependencies.uploads.readPreview(invocation),
       'uploads:stage-local-file': (invocation) => {
         assertElectronCaller(invocation, dataContentApplicationCommands.uploadStageLocalFile.name)

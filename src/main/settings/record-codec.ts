@@ -160,6 +160,12 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (type === 'official' && !vendorId) return undefined
 
   const provider: StoredProvider = { id, type, name }
+  if (
+    typeof value.configRevision === 'number' &&
+    Number.isSafeInteger(value.configRevision) &&
+    value.configRevision >= 0
+  )
+    provider.configRevision = value.configRevision
   const baseUrl = asString(value.baseUrl)
   const model = asString(value.model)
   const positiveWholeNumber = (candidate: unknown): number | undefined => {

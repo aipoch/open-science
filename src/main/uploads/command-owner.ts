@@ -1,4 +1,5 @@
-import { stat } from 'node:fs/promises'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { open, stat } from 'node:fs/promises'
 
 import type { ApplicationCallerLease, ApplicationInvocation } from '../application-command-router'
 import { acquireDataRootWriter, withDataRootWrite } from '../storage/migration-state'
@@ -71,6 +72,9 @@ type UploadCommandOwnerOptions = Readonly<{
 }>
 
 type UploadCommandOwner = Readonly<{
+  recoverDraft(
+    invocation: ApplicationInvocation<readonly [{ receipt: string }]>
+  ): Promise<UploadedAttachment | null>
   releaseCaller(lease: ApplicationCallerLease): void
   stageLocalFile(
     invocation: ApplicationInvocation<readonly [StageLocalUploadRequest]>,
@@ -109,6 +113,35 @@ const createUploadCommandOwner = (
   repository: UploadRepository,
   options: UploadCommandOwnerOptions = {}
 ): UploadCommandOwner => {
+  // Receipts expire on host restart. No renderer path or metadata is trusted during recovery.
+  const draftSecret = randomBytes(32)
+  const signDraft = (
+    body: string,
+    caller: ApplicationInvocation<readonly unknown[]>['callerContext']
+  ): Buffer =>
+    createHmac('sha256', draftSecret)
+      .update(caller.lifecycleClientId)
+      .update('\0')
+      .update(body)
+      .digest()
+  const certifyDraft = async (
+    attachment: UploadedAttachment,
+    caller: ApplicationInvocation<readonly unknown[]>['callerContext']
+  ): Promise<UploadedAttachment> => {
+    if (caller.surface !== 'web' || !attachment) return attachment
+    const info = await stat(await repository.resolveManagedUploadPath({ path: attachment.path }))
+    const body = Buffer.from(
+      JSON.stringify({
+        attachment,
+        identity: [info.dev, info.ino, info.size, info.mtimeMs],
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000
+      })
+    ).toString('base64url')
+    return {
+      ...attachment,
+      draftReceipt: `${body}.${signDraft(body, caller).toString('base64url')}`
+    }
+  }
   const callers = new WeakMap<ApplicationCallerLease, UploadCaller>()
   const chunkWriters = new Map<string, ChunkWriter>()
   const localWriters = new Map<string, LocalWriter>()
@@ -369,7 +402,7 @@ const createUploadCommandOwner = (
       getOwnedChunkWriter(callerLease, request.transferId)
       return repository.getTransferStatus(request)
     },
-    finishTransfer: async ({ callerLease, args: [request] }) => {
+    finishTransfer: async ({ callerLease, callerContext, args: [request] }) => {
       const writer = getOwnedChunkWriter(callerLease, request.transferId)
       if (!writer) return withDataRootWrite(() => repository.finishTransfer(request))
 
@@ -390,7 +423,7 @@ const createUploadCommandOwner = (
 
       try {
         await Promise.allSettled([...writer.inFlight])
-        return await repository.finishTransfer(request)
+        return await certifyDraft(await repository.finishTransfer(request), callerContext)
       } catch (error) {
         await repository.abortTransfer(request).catch(() => undefined)
         throw error
@@ -409,6 +442,34 @@ const createUploadCommandOwner = (
       }
 
       await abortChunkWriter(request.transferId, writer)
+    },
+    recoverDraft: async ({ callerContext, args: [{ receipt }] }) => {
+      if (!callerContext.isAuthorizationCurrent()) return null
+      const [body, signature, extra] = receipt.split('.')
+      if (!body || !signature || extra) return null
+      const supplied = Buffer.from(signature, 'base64url')
+      const expected = signDraft(body, callerContext)
+      if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return null
+      try {
+        const saved = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'))
+        if (saved.expiresAt < Date.now()) return null
+        const path = await repository.resolveManagedUploadPath({ path: saved.attachment.path })
+        const file = await open(path, 'r')
+        try {
+          const info = await file.stat()
+          if (
+            JSON.stringify([info.dev, info.ino, info.size, info.mtimeMs]) !==
+            JSON.stringify(saved.identity)
+          )
+            return null
+          if (!callerContext.isAuthorizationCurrent()) return null
+          return { ...saved.attachment, path, draftReceipt: receipt }
+        } finally {
+          await file.close()
+        }
+      } catch {
+        return null
+      }
     },
     deleteUpload: ({ args: [request] }) =>
       withDataRootWrite(() => repository.deleteUpload(request)),

@@ -297,6 +297,8 @@ export type ProviderValidationFailure = {
 
 // Renderer-facing provider view: masked and stripped of every secret field.
 export type ProviderView = {
+  // Human configuration revision; legacy records start at zero.
+  configRevision?: number
   id: string
   type: ProviderType
   codexAuthMode?: CodexSubscriptionAuthMode
@@ -729,6 +731,7 @@ export type UpsertProviderRequest = ProviderDraft & {
   // Edit flows set this so a stale draft cannot recreate a provider that was removed after the
   // renderer loaded it. It affects command semantics only and is never persisted.
   requireExisting?: boolean
+  expectedConfigRevision?: number
   // Explicitly refreshes an existing imported Codex subscription from the user's CLI profile.
   // Ordinary edits remain app-owned and never cross that external profile boundary.
   reimportCodexAuthentication?: boolean
@@ -1257,7 +1260,17 @@ export type PreviewSkillZipRequest = {
 // Read-only SKILL.md content shown before import. Every source adapter returns this renderer-safe
 // shape: sourceLabel is a display path/URL (never an absolute host path), metadata contains parsed
 // frontmatter fields other than name/description, and files contains relative names only.
+export type SkillReplacementPreview = {
+  targetId: string
+  sourceLabel?: string
+  added: string[]
+  modified: string[]
+  removed: string[]
+  comparisonUnavailable?: boolean
+}
+
 export type SkillImportPreviewContent = {
+  replacement?: SkillReplacementPreview
   name: string
   description: string
   sourceLabel: string
@@ -1296,6 +1309,7 @@ export type ImportSkillZipBatchResult = {
 // exactly one existing imported skill of different content — the id of that skill, offered as a
 // replace target.
 export type SkillBundlePreview = {
+  replacement?: SkillReplacementPreview
   subPath: string
   name: string
   description: string

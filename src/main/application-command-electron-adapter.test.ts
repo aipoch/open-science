@@ -67,7 +67,8 @@ const validatedChannels = [
   'tags:set-assignment',
   'tags:snapshot',
   'tags:update',
-  'uploads:finalize-session'
+  'uploads:finalize-session',
+  'uploads:recover-draft'
 ] as const
 
 const eventWithLease = (): IpcMainInvokeEvent => {

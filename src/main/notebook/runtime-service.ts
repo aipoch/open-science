@@ -2144,6 +2144,10 @@ class NotebookRuntimeService {
   // once recovery has settled, and when recovery was never kicked off (e.g. tests). Public so the
   // startup env gate and UI provision/repair handlers can share the SAME barrier (they touch prefixes
   // too, not just materialize/install).
+  recoveryStatus(): import('../../shared/notebook-env').NotebookRecoveryStatus {
+    return this.recoveryCoordinator.status()
+  }
+
   async ensureRecovered(): Promise<void> {
     if (this.runLifecycleRecovery) await this.recoverInterruptedOperations()
     await this.kernelProcessLifecycle.ensureReady()
@@ -2158,7 +2162,8 @@ class NotebookRuntimeService {
       throw new Error(
         `RUNTIME_RECOVERY_BLOCKED: a previous operation on "${prefix}" was interrupted and its worker ` +
           'process could not be confirmed stopped, so writing this environment now could corrupt it. ' +
-          'Restart the app to re-check and recover it, then try again.'
+          'Use Recheck in Settings → Runtimes. If the block remains, wait for the old worker to exit. ' +
+          'Restarting the app does not prove that the worker stopped.'
       )
     }
   }

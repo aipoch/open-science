@@ -57,6 +57,7 @@ export const WEB_INVOKE_CHANNELS = {
   'compute.jobsList': 'compute:jobs:list',
   'compute.jobsMarkConsumed': 'compute:jobs:mark-consumed',
   'compute.jobsPendingNotification': 'compute:jobs:pending-notification',
+  'compute.jobsRetryHarvest': 'compute:jobs:retry-harvest',
   'compute.jobsSetRemoteCleanup': 'compute:jobs:set-remote-cleanup',
   'compute.jobsTransitionAnalysis': 'compute:jobs:transition-analysis',
   'compute.list': 'compute:list',
@@ -366,6 +367,7 @@ export const WEB_INVOKE_CHANNELS = {
   'uploads.finishTransfer': 'uploads:finish-transfer',
   'uploads.getTransferStatus': 'uploads:transfer-status',
   'uploads.readPreview': 'uploads:read-preview',
+  'uploads.recoverDraft': 'uploads:recover-draft',
   'uploads.stageLocalFile': 'uploads:stage-local-file',
   'uploads.stageLocalPath': 'uploads:stage-local-path',
   'window.close': 'window:close'

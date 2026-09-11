@@ -54,13 +54,36 @@ SDK requests have a 30-second default deadline that remains active while the res
 consumed. Override the client default with `requestTimeoutMs`, or pass `{ signal, timeoutMs }` as the
 final options argument to an individual request method. `downloadArtifact` keeps the deadline active
 while its returned `Response` body is streaming. `waitForRun` applies its overall `timeoutMs` and
-caller signal to every in-flight polling request as well as the delay between polls.
+caller signal to every in-flight polling request as well as the delay between polls. Each poll is
+bounded by the smaller of the client's `requestTimeoutMs` and the remaining total wait budget.
+A request timeout fails the wait immediately; it does not silently retry. Without a total
+`timeoutMs`, waiting has no overall deadline. `pollIntervalMs` defaults to 250 and must be a finite
+positive number.
+
+Aborting or timing out a wait stops only the local observation. The Run may continue on the host;
+call `getRun(run.id)` to check it, or explicitly call `cancelRun(run.id)` to stop it. With
+`returnOnAttention: true`, a returned Run may still have `status: 'running'` and need a permission
+or plan decision before it can finish.
+
+```js
+const waitController = new AbortController()
+const result = await client.waitForRun(run.id, {
+  timeoutMs: 120_000, // Total wait budget; each poll still has the client request deadline.
+  pollIntervalMs: 500,
+  returnOnAttention: true,
+  signal: waitController.signal // Aborts observation; does not call cancelRun.
+})
+console.log(result.status, result.attention)
+```
 
 For retry-safe project creation and Run starts, pass the same `idempotencyKey` in the final options
 argument on every attempt. The daemon replays the first response for up to 24 hours while it remains
 running; reusing a key with a different request body fails with `idempotency_conflict`. If the
 bounded replay registry is full, a new unique key fails with `idempotency_unavailable` rather than
-evicting an existing guarantee.
+evicting an existing guarantee. A lost response after submission does not prove that the Run was
+not started. Retry with the original key and identical request while that daemon is still running,
+or query the known Run ID. The replay registry is process-local: a daemon restart loses it, so
+reusing a key after restart is not a durable exactly-once guarantee.
 
 The `project` request field and the `listSessions(projectId)` argument both require a Project ID.
 Project display names are not accepted as routing identifiers.

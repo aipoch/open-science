@@ -142,6 +142,16 @@ class ProviderAccountsModule {
     ) {
       throw new Error('Provider no longer exists.')
     }
+    if (request.expectedConfigRevision !== undefined) {
+      const source = settings.providers.find(({ id }) => id === request.id)
+      if (
+        !Number.isSafeInteger(request.expectedConfigRevision) ||
+        request.expectedConfigRevision < 0 ||
+        !source ||
+        (source.configRevision ?? 0) !== request.expectedConfigRevision
+      )
+        throw new Error('Provider configuration changed. Your draft has not been saved.')
+    }
     const subscriptionIdentity = isCodexSubscriptionProvider(request.type)
       ? codexSubscriptionProviderIdentity()
       : request.type === 'claude-isolated'
@@ -280,14 +290,18 @@ class ProviderAccountsModule {
         provider.type === 'claude-shared' ? CLAUDE_ISOLATED_PROVIDER_ID : CLAUDE_SHARED_PROVIDER_ID
       const collapsedCardWasActive =
         settings.activeProviderId === provider.id || settings.activeProviderId === outgoingId
-      await this.repository.upsertProvider(provider, editId)
+      await this.repository.upsertProvider(provider, editId, {
+        expectedConfigRevision: request.expectedConfigRevision
+      })
       if (collapsedCardWasActive) {
         await this.repository.setActiveProvider(provider.id, this.resolveActiveModel(provider))
       }
       return
     }
 
-    await this.repository.upsertProvider(provider, editId)
+    await this.repository.upsertProvider(provider, editId, {
+      expectedConfigRevision: request.expectedConfigRevision
+    })
   }
 
   async deleteProvider(

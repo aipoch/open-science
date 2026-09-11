@@ -388,6 +388,10 @@ describe('Literature full-text discovery and attachment', () => {
     const result = await finder.run({ mode: 'search', itemId: item.id })
     expect(result).toEqual({
       mode: 'search',
+      failures: expect.arrayContaining([
+        expect.objectContaining({ code: 'network', source: 'europe-pmc', retryable: true }),
+        expect.objectContaining({ code: 'network', source: 'pmc', retryable: true })
+      ]),
       notices: expect.arrayContaining([
         'europe-pmc-unavailable',
         'pmc-unavailable',
@@ -845,4 +849,25 @@ it('returns the committed transfer even while the refreshed item cannot be read'
   })
   expect(options.catalog.attachContent).toHaveBeenCalledTimes(1)
   expect(options.download).toHaveBeenCalledTimes(1)
+})
+
+it('keeps authentication and rate-limit diagnostics separate from provider responses', async () => {
+  const { finder, options, item } = setup()
+  vi.mocked(options.openAlexKey).mockResolvedValue('private-api-key')
+  vi.mocked(options.fetch!).mockImplementation(
+    async (input) =>
+      new Response('secret provider body', {
+        status: new URL(String(input)).hostname === 'api.openalex.org' ? 401 : 429
+      })
+  )
+  const result = await finder.run({ mode: 'search', itemId: item.id })
+  expect(result).toMatchObject({
+    mode: 'search',
+    candidates: [],
+    failures: expect.arrayContaining([
+      { code: 'authentication', phase: 'search', source: 'openalex', retryable: false },
+      { code: 'rate-limit', phase: 'search', source: 'europe-pmc', retryable: true }
+    ])
+  })
+  expect(JSON.stringify(result)).not.toMatch(/private-api-key|secret provider body/)
 })

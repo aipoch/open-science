@@ -1471,6 +1471,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         json(response, 200, {
           ...(auth.ok ? options.bootstrap : remoteWebBootstrap(options.bootstrap)),
           webCallerLocation: auth.ok ? 'local' : 'remote',
+          draftScope: createHash('sha256')
+            .update(options.token)
+            .update('\0')
+            .update(clientPrincipalId)
+            .digest('hex'),
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
           rpcCapabilities: auth.ok ? WEB_RPC_CAPABILITIES : [],
           rpcChannels,

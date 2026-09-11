@@ -116,10 +116,10 @@ describe('planCliLauncher', () => {
   it('single-quotes POSIX paths so shell metacharacters cannot expand or break out', () => {
     // A path with a space, $, backtick, backslash, and a single quote: none may be interpreted, and
     // the embedded quote must be escaped via the '\'' idiom.
-    const nasty = "/opt/a b/$(x)`y`\\z/o'brien"
+    const nasty = "/opt/科学 café a b/$(x)`y`\\z/o'brien"
     const plan = planCliLauncher(posixEnv({ appExecPath: nasty, packaged: true }))
     // The whole path sits inside single quotes; the embedded ' is closed-escaped-reopened as '\''.
-    expect(plan.shim).toContain("OPEN_SCIENCE_APP_PATH='/opt/a b/$(x)`y`\\z/o'\\''brien'")
+    expect(plan.shim).toContain("OPEN_SCIENCE_APP_PATH='/opt/科学 café a b/$(x)`y`\\z/o'\\''brien'")
   })
 
   it('mounts the stable AppImage without passing Node flags through AppRun', () => {

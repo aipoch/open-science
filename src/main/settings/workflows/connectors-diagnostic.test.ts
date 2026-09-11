@@ -149,6 +149,59 @@ it('bounds a stalled stdio server by the diagnostic timeout', async () => {
   const { workflow } = makeWorkflow(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
   await expect(workflow.testCustomServer({ id: 'fixture' })).resolves.toEqual({
     success: false,
-    message: 'MCP connection timed out.'
+    message: 'MCP connection timed out.',
+    stage: 'handshake',
+    code: 'timeout'
   })
 }, 15_000)
+
+it('distinguishes a missing executable without exposing its path', async () => {
+  const { workflow } = makeWorkflow('/private/missing/m07-secret-command', [])
+  const result = await workflow.testCustomServer({ id: 'fixture' })
+  expect(result).toMatchObject({ success: false, stage: 'startup', code: 'startup_failed' })
+  expect(JSON.stringify(result)).not.toContain('m07-secret-command')
+})
+
+it('reports malformed initialization separately from tool discovery', async () => {
+  const { workflow } = makeWorkflow(process.execPath, [
+    '-e',
+    serverScript.replace("protocolVersion: '2024-11-05'", "protocolVersion: 'invalid'")
+  ])
+  expect(await workflow.testCustomServer({ id: 'fixture' })).toMatchObject({
+    success: false,
+    stage: 'handshake',
+    code: 'handshake_failed'
+  })
+})
+
+it('reports malformed tool catalogs after a successful handshake', async () => {
+  const { workflow } = makeWorkflow(process.execPath, [
+    '-e',
+    serverScript.replace(
+      "tools: [{ name: 'example', inputSchema: { type: 'object' } }]",
+      "tools: 'not-an-array'"
+    )
+  ])
+  expect(await workflow.testCustomServer({ id: 'fixture' })).toMatchObject({
+    success: false,
+    stage: 'discovery',
+    code: 'discovery_failed'
+  })
+})
+
+it('accepts an empty tool catalog without claiming tool execution', async () => {
+  const { workflow } = makeWorkflow(process.execPath, [
+    '-e',
+    serverScript.replace(
+      "tools: [{ name: 'example', inputSchema: { type: 'object' } }]",
+      'tools: []'
+    )
+  ])
+  expect(await workflow.testCustomServer({ id: 'fixture' })).toMatchObject({
+    success: true,
+    toolCount: 0,
+    stage: 'discovery',
+    code: 'ok',
+    message: 'MCP connection and tool discovery succeeded. Business tools were not executed.'
+  })
+})

@@ -99,6 +99,31 @@ describe('BackgroundResultDeliveryRepository', () => {
     })
   })
 
+  it('rejects stale worker completion after a new claim takes over the same result', async () => {
+    const pending = await repository.enqueue(localRun('run-stale-worker'))
+    await repository.claimPending('session-1', {
+      token: 'old',
+      expiresAt: 2000,
+      limit: 1,
+      now: 1000
+    })
+    await repository.prepareContinuation([pending!.id], 'old', 'continuation')
+    await repository.beginDispatch([pending!.id], 'old', 'continuation')
+    await repository.claimPending('session-1', {
+      token: 'new',
+      expiresAt: 4000,
+      limit: 1,
+      now: 2001
+    })
+    expect(await repository.markConsumed([pending!.id], 'old', 'continuation')).toBe(0)
+    expect(await repository.releaseClaim([pending!.id], 'old')).toBe(0)
+    expect(await repository.find(pending!.id)).toMatchObject({
+      state: 'claimed',
+      claimToken: 'new'
+    })
+    expect(await repository.markConsumed([pending!.id], 'new', 'continuation')).toBe(1)
+  })
+
   it('claims every member of a recovered continuation even when a newer item is interleaved', async () => {
     await repository.enqueue(localRun('run-batch-1'))
     const interleaved = localRun('run-interleaved')

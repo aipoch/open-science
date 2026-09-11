@@ -1,3 +1,4 @@
+import { LiteratureProviderError } from './provider-error'
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 
@@ -42,7 +43,13 @@ const crossrefMessageSchema = z
     language: z.string().optional(),
     author: z
       .array(
-        z.object({ given: z.string().optional(), family: z.string().optional() }).passthrough()
+        z
+          .object({
+            given: z.string().optional(),
+            family: z.string().optional(),
+            name: z.string().optional()
+          })
+          .passthrough()
       )
       .optional(),
     issued: dateSchema.optional(),
@@ -70,7 +77,9 @@ const pubmedSummarySchema = z
     lang: z.array(z.string()).optional(),
     issn: z.string().optional(),
     publishername: z.string().optional(),
-    authors: z.array(z.object({ name: z.string() }).passthrough()).optional(),
+    authors: z
+      .array(z.object({ name: z.string(), authtype: z.string().optional() }).passthrough())
+      .optional(),
     articleids: z
       .array(z.object({ idtype: z.string(), value: z.string() }).passthrough())
       .optional()
@@ -157,7 +166,8 @@ const creatorText = (item: LiteratureItemInput): string =>
 const mergeCrossrefMetadata = (
   current: LiteratureItemInput,
   message: z.infer<typeof crossrefMessageSchema>,
-  overwriteFields: ReadonlySet<LiteratureMetadataField> = new Set()
+  overwriteFields: ReadonlySet<LiteratureMetadataField> = new Set(),
+  originalDate?: string
 ): {
   item: LiteratureItemInput
   filled: LiteratureMetadataValue[]
@@ -223,8 +233,11 @@ const mergeCrossrefMetadata = (
     item.issuedYear = existingDateYear
     filled.push({ field: 'publicationDate', value: item.issuedText })
   }
-  const incomingDate = formatDate(parts)
-  if (incomingYear !== undefined && publicationYear(incomingDate) !== undefined) {
+  const incomingDate = originalDate ?? formatDate(parts)
+  if (
+    incomingYear !== undefined &&
+    (originalDate !== undefined || publicationYear(incomingDate) !== undefined)
+  ) {
     const existing = item.issuedText || String(item.issuedYear ?? '')
     const differs =
       (item.issuedYear !== undefined && item.issuedYear !== incomingYear) ||
@@ -246,17 +259,27 @@ const mergeCrossrefMetadata = (
   }
 
   const incomingCreators =
-    message.author?.flatMap(({ family, given }) =>
-      family?.trim() || given?.trim()
+    message.author?.flatMap<LiteratureItemInput['creators'][number]>(({ family, given, name }) =>
+      name?.trim()
         ? [
             {
-              nameMode: 'person' as const,
-              givenName: given?.trim() ?? '',
-              familyName: family?.trim() ?? '',
-              creatorType: 'author'
+              nameMode: 'organization',
+              literalName: name.trim(),
+              creatorType: 'author',
+              givenName: '',
+              familyName: ''
             }
           ]
-        : []
+        : family?.trim() || given?.trim()
+          ? [
+              {
+                nameMode: 'person' as const,
+                givenName: given?.trim() ?? '',
+                familyName: family?.trim() ?? '',
+                creatorType: 'author'
+              }
+            ]
+          : []
     ) ?? []
   if (incomingCreators.length > 0) {
     const incomingText = creatorText({ ...item, creators: incomingCreators })
@@ -351,10 +374,18 @@ const mergePubmedMetadata = (
       page: summary.pages,
       ISSN: summary.issn ? [summary.issn] : undefined,
       language: summary.lang?.[0],
-      author: summary.authors?.map(({ name }) => ({ family: name })),
+      author: summary.authors?.map(({ name, authtype }) =>
+        authtype === 'CollectiveAuthor' ? { name } : { family: name }
+      ),
       issued: parts ? { 'date-parts': [[...parts]] } : undefined
     },
-    overwriteFields
+    overwriteFields,
+    summary.pubdate &&
+      !/^\d{4}(?:\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:\s+\d{1,2})?)?$/iu.test(
+        summary.pubdate.trim()
+      )
+      ? summary.pubdate.trim()
+      : undefined
   )
   addIdentifier(merged.item, 'pmid', summary.uid)
   for (const identifier of summary.articleids ?? []) {
@@ -413,9 +444,8 @@ class LiteratureMetadataEnricher {
       signal: AbortSignal.timeout(15_000)
     })
     if (!response.ok) {
-      throw new Error(
-        `${identifier.scheme === 'doi' ? 'Crossref' : 'PubMed'} metadata request failed with HTTP ${response.status}.`
-      )
+      await response.body?.cancel()
+      throw new LiteratureProviderError(response.status)
     }
     const maxBytes =
       identifier.scheme === 'doi' ? CROSSREF_MAX_RESPONSE_BYTES : PUBMED_MAX_RESPONSE_BYTES

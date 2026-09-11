@@ -63,6 +63,7 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
     approvalRespond: vi.fn(() => undefined),
     approvalReplay: vi.fn(() => null),
     approvalReplayPending: vi.fn(() => undefined),
+    jobsRetryHarvest: vi.fn(async () => undefined),
     jobsList: vi.fn(async () => []),
     jobsSetRemoteCleanup: vi.fn(async () => undefined),
     jobsPendingNotification: vi.fn(async () => []),
@@ -96,14 +97,14 @@ const invocation = <Args extends readonly unknown[]>(
 }
 
 describe('Compute application commands', () => {
-  it('defines exactly the 35 public Compute commands without session-internal handlers', () => {
+  it('defines exactly the 36 public Compute commands without session-internal handlers', () => {
     const publicComputeChannels = RENDERER_CONTRACT_GROUPS.find(
       (group) => group.capability === 'compute'
     )
       ?.contracts.filter((contract) => contract.kind === 'method')
       .map((contract) => contract.channel)
 
-    expect(publicComputeChannels).toHaveLength(35)
+    expect(publicComputeChannels).toHaveLength(36)
     expect(computeApplicationCommandGroup.commands.map(({ name }) => name)).toEqual(
       publicComputeChannels
     )
@@ -112,6 +113,23 @@ describe('Compute application commands', () => {
         name.startsWith('compute:session:')
       )
     ).toBe(false)
+  })
+
+  it('routes collection retry through its existing compute owner', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerComputeApplicationCommands(router.registrar, dependencies)
+    const request = {
+      jobId: 'job',
+      projectId: 'project',
+      sessionId: 'session',
+      providerId: 'ssh:cluster'
+    }
+    await router.dispatcher.invoke(
+      computeApplicationCommands.jobsRetryHarvest,
+      invocation([request])
+    )
+    expect(dependencies.compute.jobsRetryHarvest).toHaveBeenCalledExactlyOnceWith(request)
   })
 
   it('delegates every canonical argument tuple to its existing owner', async () => {

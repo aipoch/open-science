@@ -296,10 +296,11 @@ class AcpPromptPreparationOwner {
         input.request.contextReset || input.request.historyPreamble
           ? this.options.notebook?.peekHandoffContext?.(input.request.sessionId)
           : undefined
-      const memoryEnabled = this.options.isMemoryEnabledForSession
-        ? this.options.isMemoryEnabledForSession(input.request.sessionId)
-        : input.request.memoryEnabled !== false
-      const recalledMemory = !memoryEnabled
+      const memoryEnabled = (): boolean =>
+        this.options.isMemoryEnabledForSession
+          ? this.options.isMemoryEnabledForSession(input.request.sessionId)
+          : input.request.memoryEnabled !== false
+      const recalledMemory = !memoryEnabled()
         ? undefined
         : await this.options.memory
             ?.recallForPrompt(input.request.text, { projectId: input.projectId })
@@ -316,7 +317,7 @@ class AcpPromptPreparationOwner {
         input.request.historyPreamble,
         notebookHandoff ? notebookHandoffPrompt(notebookHandoff) : undefined,
         promptPrefix,
-        recalledMemory,
+        memoryEnabled() ? recalledMemory : undefined,
         buildSessionReferencePrompt(input.request.referencedSessions),
         buildLiteratureReferencePrompt(input.request.parts),
         skillPreparation.text
