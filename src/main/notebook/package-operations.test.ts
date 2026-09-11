@@ -151,6 +151,48 @@ const harness = (
 }
 
 describe('NotebookPackageOperations', () => {
+  it.each(['python', 'r'] as const)(
+    'returns satisfied %s packages without mirror lookup or restart',
+    async (language) => {
+      const active = session(
+        'satisfied',
+        binding(language, '/managed/interpreter', 'managed', 'analysis')
+      )
+      const { owner, options } = harness(active)
+      const name = language === 'python' ? 'numpy' : 'ggplot2'
+      vi.mocked(options.environmentStateTracker.inspectPackages).mockResolvedValue({
+        inventory: { source: 'full-scan', validation: 'full-scan' },
+        packages: [
+          {
+            requested: name,
+            name,
+            status: 'installed',
+            version: '2.0',
+            versionStatus: 'known',
+            libraryScope: 'environment'
+          }
+        ]
+      })
+      const result = await owner.manage({
+        language,
+        packages: [name],
+        projectId: 'project',
+        sessionId: 'satisfied'
+      })
+      expect(result).toMatchObject({
+        ok: true,
+        needsRestart: false,
+        environmentName: 'analysis',
+        target: { runtimeSource: 'managed' },
+        packageChanges: [{ name, change: 'unchanged', afterVersion: '2.0' }]
+      })
+      expect(options.resolvePackageMirror).not.toHaveBeenCalled()
+      expect(options.installPackages).not.toHaveBeenCalled()
+      expect(options.environmentOperations.recommendRestart).not.toHaveBeenCalled()
+      expect(options.notifyChanged).not.toHaveBeenCalled()
+    }
+  )
+
   it.each(['install', 'uninstall'] as const)(
     'E06 does not recommend restart after an unstructured R %s preflight failure',
     async (operation) => {
