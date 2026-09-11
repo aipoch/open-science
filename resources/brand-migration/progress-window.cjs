@@ -42,6 +42,7 @@ process.on('message', (message) => {
       ...message.event,
       completed: message.event.completed,
       total: message.event.total,
+      overall: message.event.overall,
       updatedAt: Date.now()
     }
     broadcast()
@@ -71,7 +72,7 @@ app
   .then(async () => {
     window = new BrowserWindow({
       width: 720,
-      height: 640,
+      height: 720,
       minWidth: 460,
       minHeight: 460,
       show: false,

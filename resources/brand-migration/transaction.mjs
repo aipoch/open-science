@@ -20,7 +20,15 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { assertNoLinuxOpenFiles } from './linux-occupancy.mjs'
 import { acquireKernelGuard } from './lock-guard.mjs'
 import { assertUnpublished, restartPreparing } from './preparing-restart.mjs'
-import { reportProgress, withMigrationProgress } from './progress.mjs'
+import {
+  reportProgress,
+  withMigrationProgress,
+  countMigrationEntries,
+  manifestWork,
+  planMigrationWork,
+  migrationWork,
+  finishMigrationWork
+} from './progress.mjs'
 import { metadataDigest, metadataFormat, repairDarwinMetadata } from './metadata.mjs'
 import {
   changedReferenceFiles,
@@ -63,16 +71,20 @@ export async function syncTree(root, entries) {
     if (entry.type === 'directory') await syncDirectory(join(root, entry.path))
 }
 const missing = (error) => error.code === 'ENOENT'
-async function digest(file) {
+async function digest(file, onBytes) {
   const hash = createHash('sha256')
-  for await (const chunk of createReadStream(file)) hash.update(chunk)
+  for await (const chunk of createReadStream(file)) {
+    hash.update(chunk)
+    await onBytes(chunk.length)
+  }
   return hash.digest('hex')
 }
 
 // Never follow nested symlinks. Their targets, directory layout, mode, timestamp and every file's
 // bytes are inventoried; special nodes are refused because they cannot be safely snapshotted.
 export async function inventory(root, phase = 'scanning', format) {
-  await reportProgress({ phase, path: root, completed: 0 }, true)
+  let processedBytes = 0
+  await reportProgress({ phase, path: root, completed: 0, processedBytes }, true)
   const entries = []
   const hardlinks = new Map()
   async function visit(path) {
@@ -98,16 +110,19 @@ export async function inventory(root, phase = 'scanning', format) {
         type: 'file',
         hardlink: first,
         size: s.size,
-        sha256: await digest(full)
+        sha256: await digest(full, async (bytes) => {
+          processedBytes += bytes
+          await reportProgress({ phase, path: root, completed: entries.length, processedBytes })
+        })
       })
     } else throw new Error(`Unsupported special file blocks migration: ${full}`)
-    await reportProgress({ phase, path: root, completed: entries.length })
+    await reportProgress({ phase, path: root, completed: entries.length, processedBytes })
   }
   await visit('')
   await reportProgress({ phase: 'metadata', path: root })
   entries[0].metadata = metadataDigest(root, format)
   await reportProgress(
-    { phase, path: root, completed: entries.length, total: entries.length },
+    { phase, path: root, completed: entries.length, total: entries.length, processedBytes },
     true
   )
   return entries
@@ -597,8 +612,7 @@ async function buildJournal(plan) {
           (other.from !== r.from || j < i)
       )
   )
-  const participants = []
-  const volumeBytes = new Map()
+  const selected = []
   for (const r of roots) {
     await assertPlainAncestors(r.from)
     await assertPlainAncestors(r.to)
@@ -608,12 +622,29 @@ async function buildJournal(plan) {
       ? await changedReferenceFiles(r.from, activeMaps, plan.platform)
       : undefined
     if (files && !files.length) continue
+    selected.push({
+      ...r,
+      files,
+      work: await countMigrationEntries(r.from, files),
+      targetWork: r.targetHandling ? await countMigrationEntries(r.to) : undefined
+    })
+  }
+  await planMigrationWork(selected)
+  const participants = []
+  const volumeBytes = new Map()
+  for (const r of selected) {
+    const { files } = r
     await access(dirname(r.from), constants.W_OK | constants.X_OK)
     await mkdir(dirname(r.to), { recursive: true })
     await access(dirname(r.to), constants.W_OK | constants.X_OK)
-    const original = files
-      ? await bundleInventory(r.from, files, inventory)
-      : await inventory(r.from)
+    const original = await migrationWork(r, 'original', () =>
+      files ? bundleInventory(r.from, files, inventory) : inventory(r.from)
+    )
+    const counted = manifestWork(original)
+    if (counted.entries !== r.work.entries || counted.bytes !== r.work.bytes)
+      throw new Error(
+        `Integrity mismatch: migration workload changed after counting: ${r.from}; stop writers and retry`
+      )
     await inspectDocuments(r.from, original, plan)
     const bytes = original.reduce((sum, e) => sum + (e.size ?? 0), 0)
     const disk = await statfs(dirname(r.to))
@@ -623,7 +654,15 @@ async function buildJournal(plan) {
     if (disk.bavail * disk.bsize < required) throw new Error(`Insufficient disk space at ${r.to}`)
     let previousTarget
     if (r.targetHandling) {
-      const targetOriginal = await inventory(r.to)
+      const targetOriginal = await migrationWork(r, 'target-original', () => inventory(r.to))
+      const countedTarget = manifestWork(targetOriginal)
+      if (
+        countedTarget.entries !== r.targetWork.entries ||
+        countedTarget.bytes !== r.targetWork.bytes
+      )
+        throw new Error(
+          `Integrity mismatch: migration workload changed after counting: ${r.to}; stop writers and retry`
+        )
       if (r.targetHandling === 'empty' && targetOriginal.length !== 1)
         throw new Error(`Integrity mismatch or new writes at ${r.to}`)
       const backup = `${r.to}.brand-existing-${id}`
@@ -681,52 +720,56 @@ async function publish(journal, save, progress, checkWriters) {
   journal.status = 'publishing'
   await save()
   for (const p of journal.participants) {
-    if (p.files) {
-      await publishBundle(p, save, progress, inventory, syncDirectory)
-      await verify(p.to, p.published, p)
-      await progress({ phase: 'root-published', path: p.to })
-      continue
-    }
-    // A saved publishing intent makes either side of each rename recoverable after process death.
-    if (p.previousTarget) {
-      const target = p.previousTarget
-      if (!(await inspect(target.backup))) {
-        if ((await inspect(p.backup)) || !(await inspect(p.stage)))
-          throw new Error(`Existing-target backup is missing: ${target.backup}`)
-        await verify(p.to, target.original)
-        await rename(p.to, target.backup)
-        await syncDirectory(dirname(p.to))
-        await progress({ phase: 'target-backed-up', path: p.to })
+    await migrationWork(p, 'publication', async () => {
+      if (p.files) {
+        await publishBundle(p, save, progress, inventory, syncDirectory)
+        return
       }
-      await verify(target.backup, target.original)
-    }
-    if (!(await inspect(p.backup))) {
-      await verify(p.from, p.original)
-      await rename(p.from, p.backup)
-      await syncDirectory(dirname(p.from))
-      await progress({ phase: 'source-backed-up', path: p.from })
-    }
-    if (await inspect(p.stage)) {
-      if (await inspect(p.to)) throw new Error(`Publication conflict: ${p.to}`)
-      await rename(p.stage, p.to)
-      await syncDirectory(dirname(p.to))
-    }
-    await verify(p.to, p.published)
+      // A saved publishing intent makes either side of each rename recoverable after process death.
+      if (p.previousTarget) {
+        const target = p.previousTarget
+        if (!(await inspect(target.backup))) {
+          if ((await inspect(p.backup)) || !(await inspect(p.stage)))
+            throw new Error(`Existing-target backup is missing: ${target.backup}`)
+          await verify(p.to, target.original)
+          await rename(p.to, target.backup)
+          await syncDirectory(dirname(p.to))
+          await progress({ phase: 'target-backed-up', path: p.to })
+        }
+        await verify(target.backup, target.original)
+      }
+      if (!(await inspect(p.backup))) {
+        await verify(p.from, p.original)
+        await rename(p.from, p.backup)
+        await syncDirectory(dirname(p.from))
+        await progress({ phase: 'source-backed-up', path: p.from })
+      }
+      if (await inspect(p.stage)) {
+        if (await inspect(p.to)) throw new Error(`Publication conflict: ${p.to}`)
+        await rename(p.stage, p.to)
+        await syncDirectory(dirname(p.to))
+      }
+    })
+    await migrationWork(p, 'published-root', () => verify(p.to, p.published, p))
     await save()
     await progress({ phase: 'root-published', path: p.to })
   }
   checkWriters()
   for (const p of journal.participants) {
-    await verify(p.to, p.published, p)
-    await verify(p.backup, p.original, p)
-    if (p.previousTarget) await verify(p.previousTarget.backup, p.previousTarget.original)
+    await migrationWork(p, 'final-check', async () => {
+      await verify(p.to, p.published, p)
+      await verify(p.backup, p.original, p)
+      if (p.previousTarget) await verify(p.previousTarget.backup, p.previousTarget.original)
+    })
   }
   await ensureAliases(journal)
   await progress({ phase: 'before-commit' })
   for (const p of journal.participants) {
-    await verify(p.to, p.published, p)
-    await verify(p.backup, p.original, p)
-    if (p.previousTarget) await verify(p.previousTarget.backup, p.previousTarget.original)
+    await migrationWork(p, 'commit-check', async () => {
+      await verify(p.to, p.published, p)
+      await verify(p.backup, p.original, p)
+      if (p.previousTarget) await verify(p.previousTarget.backup, p.previousTarget.original)
+    })
   }
   checkWriters()
   journal.status = 'committed'
@@ -738,19 +781,31 @@ async function prepare(journal, save, progress, copy) {
   // A later participant's drift must not destroy an earlier participant's recovery evidence.
   // Repeat each local check below as well, because copying can take time after this preflight.
   for (const p of journal.participants) {
-    await verify(p.from, p.original, p)
-    if (p.previousTarget) await verify(p.to, p.previousTarget.original)
+    await migrationWork(p, 'preflight', async () => {
+      await verify(p.from, p.original, p)
+      if (p.previousTarget) await verify(p.to, p.previousTarget.original)
+    })
   }
   for (const p of journal.participants) {
     // Do not destroy a prior staged snapshot when the originals no longer verify.
-    await verify(p.from, p.original, p)
-    if (p.previousTarget) await verify(p.to, p.previousTarget.original)
+    await migrationWork(p, 'stage-source', async () => {
+      await verify(p.from, p.original, p)
+      if (p.previousTarget) await verify(p.to, p.previousTarget.original)
+    })
     if (await inspect(p.stage)) await rm(p.stage, { recursive: true })
     await progress({ phase: 'copying', path: p.from })
-    if (p.files) await copyBundle(p, copy, verify, syncDirectory)
+    if (p.files)
+      await migrationWork(p, 'copy', () =>
+        copyBundle(
+          p,
+          copy,
+          (...args) => migrationWork(p, 'stage-verify', () => verify(...args)),
+          syncDirectory
+        )
+      )
     else {
-      await copy(p.from, p.stage)
-      await verify(p.stage, p.original)
+      await migrationWork(p, 'copy', () => copy(p.from, p.stage))
+      await migrationWork(p, 'stage-verify', () => verify(p.stage, p.original))
     }
     await progress({ phase: 'copied', path: p.stage })
     // Rename only explicitly mapped nested roots, not similarly named descendants.
@@ -763,40 +818,49 @@ async function prepare(journal, save, progress, copy) {
       await rename(old, next)
       await symlink(m.to, old, process.platform === 'win32' ? 'junction' : 'dir')
     }
-    const entries = await inventory(p.stage)
+    const entries = await migrationWork(p, 'stage-inventory', () => inventory(p.stage))
     await progress({ phase: 'references', path: p.to })
-    await rewriteDocuments(p.stage, entries, journal.mappings, journal.platform)
-    // Nested data roots have their own notebook/run.json paths relative to that root.
-    for (const m of journal.mappings.filter((m) => m.to !== p.to && inside(p.to, m.to))) {
-      const nested = join(p.stage, relative(p.to, m.to))
-      if (await inspect(nested))
-        await rewriteDocuments(nested, await inventory(nested), journal.mappings, journal.platform)
-    }
-    const db = join(p.stage, relative(p.to, journal.configRoot), 'open-science.db')
-    if (inside(p.to, journal.configRoot) && (await inspect(db))) {
-      for (const sidecar of [db, `${db}-wal`, `${db}-shm`]) {
-        const stat = await inspect(sidecar)
-        if (stat && (!stat.isFile() || stat.nlink !== 1))
-          throw new Error(`Database must be a single-link regular file: ${sidecar}`)
+    await migrationWork(p, 'references', async () => {
+      await rewriteDocuments(p.stage, entries, journal.mappings, journal.platform)
+      // Nested data roots have their own notebook/run.json paths relative to that root.
+      for (const m of journal.mappings.filter((m) => m.to !== p.to && inside(p.to, m.to))) {
+        const nested = join(p.stage, relative(p.to, m.to))
+        if (await inspect(nested))
+          await rewriteDocuments(
+            nested,
+            await inventory(nested),
+            journal.mappings,
+            journal.platform
+          )
       }
-      const report = rewriteDatabase(db, journal.mappings, journal.platform, (event) =>
-        progress(event)
-      )
-      journal.database = report
-      journal.transitions.push(...report.transitions)
-    }
-    p.published = p.files
-      ? await bundleInventory(p.stage, p.files, inventory)
-      : await inventory(p.stage)
+      const db = join(p.stage, relative(p.to, journal.configRoot), 'open-science.db')
+      if (inside(p.to, journal.configRoot) && (await inspect(db))) {
+        for (const sidecar of [db, `${db}-wal`, `${db}-shm`]) {
+          const stat = await inspect(sidecar)
+          if (stat && (!stat.isFile() || stat.nlink !== 1))
+            throw new Error(`Database must be a single-link regular file: ${sidecar}`)
+        }
+        const report = rewriteDatabase(db, journal.mappings, journal.platform, (event) =>
+          progress(event)
+        )
+        journal.database = report
+        journal.transitions.push(...report.transitions)
+      }
+    })
+    p.published = await migrationWork(p, 'published-inventory', () =>
+      p.files ? bundleInventory(p.stage, p.files, inventory) : inventory(p.stage)
+    )
     await progress({ phase: 'syncing', path: p.to })
-    await syncTree(p.stage, p.published)
+    await migrationWork(p, 'sync', () => syncTree(p.stage, p.published))
     await progress({ phase: 'references-prepared', path: p.stage })
     await save()
   }
   // Detect source writes during a long cross-filesystem copy before touching any original root.
   for (const p of journal.participants) {
-    await verify(p.from, p.original, p)
-    if (p.previousTarget) await verify(p.to, p.previousTarget.original)
+    await migrationWork(p, 'prepared-source', async () => {
+      await verify(p.from, p.original, p)
+      if (p.previousTarget) await verify(p.to, p.previousTarget.original)
+    })
   }
   journal.status = 'prepared'
   await save()
@@ -949,6 +1013,10 @@ export async function runMigration(options, deps = {}) {
   return withMigrationProgress(deps.onProgress ?? (() => {}), async () => {
     await reportProgress({ phase: 'checking' })
     const result = await migrate(options, deps)
+    if (result.status === 'committed') {
+      await planMigrationWork([], 'committed', true)
+      finishMigrationWork()
+    }
     await reportProgress({ phase: 'completed' })
     return result
   })
@@ -1245,6 +1313,7 @@ async function migrate(options, deps) {
     }
     if (journal.status === 'rolling-back')
       throw new Error('Interrupted rollback; resume with --rollback')
+    await planMigrationWork(journal.participants, journal.status, true)
     if (journal.status === 'preparing')
       await prepare(journal, save, progress, deps.copyTree ?? copyTree)
     const checkWriters = () => {

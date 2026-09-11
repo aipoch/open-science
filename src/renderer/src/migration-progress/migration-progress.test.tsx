@@ -27,15 +27,62 @@ afterEach(async () => {
   await i18next.changeLanguage('en')
 })
 
-it('shows real scan counts without inventing a total or percentage', async () => {
+it('shows an indeterminate bar until the whole migration workload is counted', async () => {
   render(<MigrationProgress bridge={bridge} />)
   act(() =>
     publish({ ...initial, phase: 'scanning', path: '/fixture/workspaces', completed: 2816 })
   )
   expect(screen.getByText('Scanning local files…')).toBeTruthy()
   expect(screen.getByText('Items checked: 2816')).toBeTruthy()
-  expect(screen.queryByRole('progressbar')).toBeNull()
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBeNull()
   expect(screen.getByText('/fixture/workspaces')).toBeTruthy()
+})
+it('shows whole-operation progress independently of the current directory count', async () => {
+  render(<MigrationProgress bridge={bridge} />)
+  act(() =>
+    publish({
+      ...initial,
+      phase: 'verifying',
+      completed: 5,
+      total: 5,
+      overall: { completed: 620, total: 1000, entries: 48640, bytes: 900000 }
+    })
+  )
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('62')
+  expect(screen.getByText('62%')).toBeTruthy()
+  act(() =>
+    publish({
+      ...initial,
+      phase: 'before-commit',
+      overall: { completed: 999.9, total: 1000, entries: 48640, bytes: 900000 }
+    })
+  )
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('99')
+  act(() =>
+    publish({
+      ...initial,
+      phase: 'before-commit',
+      overall: { completed: 1000, total: 1000, entries: 48640, bytes: 900000 }
+    })
+  )
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('99')
+  act(() =>
+    publish({
+      ...initial,
+      phase: 'completed',
+      overall: { completed: 1000, total: 1000, entries: 48640, bytes: 900000 }
+    })
+  )
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('100')
+  expect(screen.getByText('100%')).toBeTruthy()
+})
+it('keeps the key reminder visible with long paths and after migration finishes', async () => {
+  render(<MigrationProgress bridge={bridge} />)
+  const warning =
+    'Configuration migration invalidates encrypted keys. Add your model keys again after migration finishes.'
+  expect(screen.getByText(warning)).toBeTruthy()
+  act(() => publish({ ...initial, phase: 'completed' }))
+  expect(screen.getByText(warning)).toBeTruthy()
 })
 it('retains an error that arrives before the initial state response', async () => {
   let resolve!: (state: MigrationProgressState) => void

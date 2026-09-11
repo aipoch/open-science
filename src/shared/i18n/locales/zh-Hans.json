@@ -104,6 +104,11 @@
     "Import Environment lock": "导入环境锁文件"
   },
   "renderer": {
+    "Counting files and folders…": "正在统计文件和文件夹…",
+    "Preparing migration…": "正在准备迁移…",
+    "Overall migration progress": "迁移总进度",
+    "Add model keys again after migration": "迁移后需重新添加模型密钥",
+    "Configuration migration invalidates encrypted keys. Add your model keys again after migration finishes.": "由于配置迁移，加密存储的密钥将失效。请在迁移完成后重新添加模型密钥。",
     "The source message is no longer available.": "源消息已不可用。",
     "This Notebook exceeds the 10 MB preview limit.": "此 Notebook 超过 10 MB 预览限制。",
     "Recent searches": "最近搜索",

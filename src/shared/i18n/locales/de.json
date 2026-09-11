@@ -105,6 +105,11 @@
     "Import Environment lock": "Umgebungssperre importieren"
   },
   "renderer": {
+    "Counting files and folders…": "Dateien und Ordner werden gezählt…",
+    "Preparing migration…": "Migration wird vorbereitet…",
+    "Overall migration progress": "Gesamtfortschritt der Migration",
+    "Add model keys again after migration": "Modell-API-Schlüssel nach der Migration erneut hinzufügen",
+    "Configuration migration invalidates encrypted keys. Add your model keys again after migration finishes.": "Durch die Migration der Konfiguration werden verschlüsselt gespeicherte Schlüssel ungültig. Fügen Sie Ihre Modell-API-Schlüssel nach Abschluss der Migration erneut hinzu.",
     "The source message is no longer available.": "Die ursprüngliche Nachricht ist nicht mehr verfügbar.",
     "This Notebook exceeds the 10 MB preview limit.": "Dieses Notebook überschreitet die Vorschaugrenze von 10 MB.",
     "Recent searches": "Letzte Suchen",

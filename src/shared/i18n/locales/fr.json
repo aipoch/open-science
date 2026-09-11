@@ -106,6 +106,11 @@
     "Import Environment lock": "Importer le verrou d’environnement"
   },
   "renderer": {
+    "Counting files and folders…": "Comptage des fichiers et des dossiers…",
+    "Preparing migration…": "Préparation de la migration…",
+    "Overall migration progress": "Progression globale de la migration",
+    "Add model keys again after migration": "Ajouter à nouveau les clés API des modèles après la migration",
+    "Configuration migration invalidates encrypted keys. Add your model keys again after migration finishes.": "La migration de la configuration invalide les clés stockées sous forme chiffrée. Ajoutez à nouveau les clés API de vos modèles une fois la migration terminée.",
     "The source message is no longer available.": "Le message d’origine n’est plus disponible.",
     "This Notebook exceeds the 10 MB preview limit.": "Ce Notebook dépasse la limite de prévisualisation de 10 Mo.",
     "Recent searches": "Recherches récentes",

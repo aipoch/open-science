@@ -118,7 +118,61 @@ test('shows an isolated progress window and retains a failure without opening th
       })
     })
     await expect(page.getByText('已检查条目：2816')).toBeVisible()
-    await page.screenshot({ path: info.outputPath('migration-progress.png') })
+    const heading = page.getByRole('heading', { name: '正在升级本地数据' })
+    const headingTop = (await heading.boundingBox())!.y
+    const barTop = (await page.getByRole('progressbar').boundingBox())!.y
+    const logoTop = (await page.getByTestId('open-science-logo-loader').boundingBox())!.y
+    const footer = page.getByText('请保持 Open-Science 开启，直到完成。')
+    const footerTop = (await footer.boundingBox())!.y
+    const longPath = '/fixture/' + 'a-long-directory-name/'.repeat(16) + 'settings.json'
+    await application.evaluate((_, path) => {
+      ;(process as NodeJS.EventEmitter).emit('message', {
+        type: 'progress',
+        event: {
+          phase: 'verifying',
+          path,
+          completed: 5,
+          total: 5,
+          overall: { completed: 620, total: 1000, entries: 48640, bytes: 900000 }
+        }
+      })
+    }, longPath)
+    await expect(page.getByText(longPath, { exact: true })).toBeVisible()
+    expect((await heading.boundingBox())!.y).toBeCloseTo(headingTop, 1)
+    expect((await page.getByRole('progressbar').boundingBox())!.y).toBeCloseTo(barTop, 1)
+    expect((await page.getByTestId('open-science-logo-loader').boundingBox())!.y).toBeCloseTo(
+      logoTop,
+      1
+    )
+    expect((await footer.boundingBox())!.y).toBeGreaterThan(footerTop)
+    await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '62')
+    await expect(page.getByText('62%', { exact: true })).toBeVisible()
+    await expect(
+      page.getByText('由于配置迁移，加密存储的密钥将失效。请在迁移完成后重新添加模型密钥。')
+    ).toBeVisible()
+    await page.screenshot({ path: info.outputPath('migration-progress.png'), fullPage: true })
+    await page.clock.install()
+    await page.clock.fastForward(11000)
+    await expect(page.getByText('正在等待当前操作报告进度…')).toBeVisible()
+    expect((await heading.boundingBox())!.y).toBeCloseTo(headingTop, 1)
+    expect((await page.getByRole('progressbar').boundingBox())!.y).toBeCloseTo(barTop, 1)
+    await page.clock.resume()
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await expect(page.locator('html')).toHaveClass(/dark/)
+    await page.screenshot({ path: info.outputPath('migration-progress-dark.png'), fullPage: true })
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setContentSize(460, 460)
+    )
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(460)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(460)
+    await footer.scrollIntoViewIfNeeded()
+    await expect(footer).toBeInViewport()
+    await page.screenshot({
+      path: info.outputPath('migration-progress-narrow.png'),
+      fullPage: true
+    })
+    await page.clock.resume()
+
     // Closing during an active transaction must not silently discard the only visible progress.
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close())
     await expect(page.getByRole('heading', { name: '正在升级本地数据' })).toBeVisible()
@@ -193,6 +247,16 @@ test('actual startup CLI paints progress before migrating a disposable historica
     expect(stderr.indexOf('[brand-migration-ui] ready')).toBeGreaterThanOrEqual(0)
     expect(stderr.indexOf('[brand-migration-ui] ready')).toBeLessThan(stderr.indexOf('scanning'))
     expect(stderr).toContain('completed')
+    const progress = stderr
+      .split('\n')
+      .filter((line) => line.startsWith('[brand-migration] '))
+      .map((line) => JSON.parse(line.slice('[brand-migration] '.length)))
+      .filter((event) => event.overall)
+    expect(progress[0].overall.completed).toBe(0)
+    expect(new Set(progress.map((event) => event.overall.total)).size).toBe(1)
+    for (const event of progress.filter((event) => event.phase !== 'completed'))
+      expect(event.overall.completed).toBeLessThan(event.overall.total)
+    expect(progress.at(-1).overall.completed).toBe(progress.at(-1).overall.total)
     expect(JSON.parse(stdout).status).toBe('committed')
     expect(await readFile(join(fixture, 'Open-Science-DEV', 'history.txt'), 'utf8')).toBe(
       'historical-research'

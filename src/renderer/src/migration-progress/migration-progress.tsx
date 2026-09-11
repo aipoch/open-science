@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { TriangleAlert } from 'lucide-react'
+import './migration-progress.css'
 import { useTranslation } from 'react-i18next'
 import { ErrorNotice } from '@/components/error-notice'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
@@ -60,6 +62,10 @@ export const MigrationProgress = ({
 
   const phase = (() => {
     switch (state.phase) {
+      case 'counting':
+        return t('Counting files and folders…')
+      case 'counted':
+        return t('Preparing migration…')
       case 'scanning':
         return t('Scanning local files…')
       case 'copying':
@@ -117,45 +123,84 @@ export const MigrationProgress = ({
         />
       </main>
     )
+  const overall = state.overall
+  const percentage =
+    overall &&
+    Number.isFinite(overall.completed) &&
+    Number.isFinite(overall.total) &&
+    overall.total > 0 &&
+    overall.completed >= 0 &&
+    overall.completed <= overall.total
+      ? Math.min(
+          state.phase === 'completed' ? 100 : 99,
+          Math.floor((overall.completed / overall.total) * 100)
+        )
+      : undefined
   return (
-    <main
-      role="status"
-      className="flex min-h-svh items-center justify-center bg-background px-8 py-6 text-foreground"
-    >
-      <section className="flex w-full max-w-lg flex-col items-center gap-6 text-center">
-        <OpenScienceLogoLoader />
-        <div className="flex w-full flex-col items-center gap-3">
-          <h1 className="text-lg font-medium">{t('Upgrading local data')}</h1>
-          <p aria-live="polite" className="text-sm text-muted-foreground">
-            {phase}
-          </p>
-          {state.path ? (
-            <p className="w-full break-all text-xs text-muted-foreground">{state.path}</p>
-          ) : null}
-          {state.completed !== undefined ? (
-            <p className="text-sm tabular-nums">
-              {state.total === undefined
-                ? t('Items checked: {{completed}}', { completed: state.completed })
-                : t('Items checked: {{completed}} / {{total}}', {
-                    completed: state.completed,
-                    total: state.total
-                  })}
-            </p>
-          ) : null}
-          <p className="text-xs tabular-nums text-muted-foreground">
-            {t('Elapsed: {{time}}', {
-              time: `${Math.floor(Math.max(0, now - state.startedAt) / 60000)}:${String(Math.floor(Math.max(0, now - state.startedAt) / 1000) % 60).padStart(2, '0')}`
-            })}
-          </p>
-          {now - state.updatedAt >= 10000 ? (
-            <p className="text-xs text-muted-foreground">
-              {t('Waiting for the current operation to report progress…')}
-            </p>
-          ) : null}
-          <p className="text-sm text-muted-foreground">
-            {t('Keep Open-Science open while this finishes.')}
-          </p>
+    <main className="migration-progress-page min-h-svh bg-background px-6 py-9 text-foreground">
+      <section className="mx-auto flex w-full max-w-[484px] flex-col items-center text-center">
+        <div className="migration-progress-logo" aria-hidden="true">
+          <OpenScienceLogoLoader />
         </div>
+        <h1 className="mt-4 text-xl font-medium">{t('Upgrading local data')}</h1>
+        <div className="mt-7 w-full">
+          <div className="flex min-h-6 items-start justify-between gap-4 text-sm">
+            <p role="status" className="text-left text-muted-foreground">
+              {phase}
+            </p>
+            {percentage !== undefined ? (
+              <span className="shrink-0 tabular-nums">{`${percentage}%`}</span>
+            ) : null}
+          </div>
+          <div
+            role="progressbar"
+            aria-label={t('Overall migration progress')}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percentage}
+            className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted"
+          >
+            <div
+              className={`h-full rounded-full bg-status-success-accent-foreground dark:bg-status-success-dark-foreground ${percentage === undefined ? 'migration-progress-indeterminate' : ''}`}
+              style={percentage === undefined ? undefined : { width: `${percentage}%` }}
+            />
+          </div>
+          <div className="mt-3 flex min-h-5 items-start justify-between gap-4 text-xs tabular-nums text-muted-foreground">
+            <p className="text-left">
+              {state.completed !== undefined
+                ? state.total === undefined
+                  ? t('Items checked: {{completed}}', { completed: state.completed })
+                  : t('Items checked: {{completed}} / {{total}}', {
+                      completed: state.completed,
+                      total: state.total
+                    })
+                : null}
+            </p>
+            <p className="shrink-0">
+              {t('Elapsed: {{time}}', {
+                time: `${Math.floor(Math.max(0, now - state.startedAt) / 60000)}:${String(Math.floor(Math.max(0, now - state.startedAt) / 1000) % 60).padStart(2, '0')}`
+              })}
+            </p>
+          </div>
+        </div>
+        <ErrorNotice
+          className="migration-progress-key-notice mt-6 border-status-warning-foreground/20 bg-status-warning-surface dark:border-status-warning-dark-foreground/20 dark:bg-status-warning-dark-surface"
+          icon={TriangleAlert}
+          tone="amber"
+          title={t('Add model keys again after migration')}
+          description={t(
+            'Configuration migration invalidates encrypted keys. Add your model keys again after migration finishes.'
+          )}
+        />
+        <div className="mt-5 flex w-full flex-col gap-3 text-left text-xs leading-5 text-muted-foreground">
+          {state.path ? <p className="[overflow-wrap:anywhere]">{state.path}</p> : null}
+          {now - state.updatedAt >= 10000 ? (
+            <p role="status">{t('Waiting for the current operation to report progress…')}</p>
+          ) : null}
+        </div>
+        <p className="mt-6 text-xs leading-5 text-muted-foreground">
+          {t('Keep Open-Science open while this finishes.')}
+        </p>
       </section>
     </main>
   )

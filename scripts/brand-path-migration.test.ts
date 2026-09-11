@@ -2661,6 +2661,144 @@ it('replans and acquires the guard if a legacy root appears while the lease is a
 })
 
 describe('visible migration progress', () => {
+  it('counts every participating root before copying and reports one monotonic overall budget', async () => {
+    const f = await fixture()
+    await symlink(f.old, join(f.old, 'loop'))
+    const settingsBytes = Buffer.byteLength(await readFile(join(f.config, 'settings.json'), 'utf8'))
+    const { runMigration, copyTree } = await import('../resources/brand-migration/transaction.mjs')
+    type Event = {
+      phase: string
+      overall?: { completed: number; total: number; entries: number; bytes: number }
+    }
+    const events: Event[] = []
+    const result = await runMigration(
+      { home: f.home, appData: join(f.home, 'appData'), mode: 'dev', execute: true },
+      {
+        onProgress: (event: Event) => events.push(event),
+        copyTree: async (from, to) => {
+          // Three data entries plus one symlink, and the stationary settings bundle's two entries.
+          expect(events.find((e) => e.overall)?.overall).toMatchObject({
+            completed: 0,
+            entries: 6,
+            bytes: settingsBytes + 9
+          })
+          await copyTree(from, to)
+        }
+      }
+    )
+    expect(result.status).toBe('committed')
+    const measured = events.filter((e) => e.overall)
+    expect(measured.length).toBeGreaterThan(5)
+    expect(new Set(measured.map((e) => e.overall!.total)).size).toBe(1)
+    const values = measured.map((e) => e.overall!.completed)
+    expect(values).toEqual([...values].sort((a, b) => a - b))
+    expect(
+      measured
+        .filter((e) => e.phase !== 'completed')
+        .every((e) => e.overall!.completed < e.overall!.total)
+    ).toBe(true)
+    expect(measured.at(-1)!.overall!.completed).toBe(measured.at(-1)!.overall!.total)
+    expect(await readFile(join(f.next, 'uploads', 'paper.txt'), 'utf8')).toBe('research\n')
+  })
+
+  it('never reports 100 percent before a failed commit and starts a fresh budget when resumed', async () => {
+    const f = await fixture()
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    const options = { home: f.home, appData: join(f.home, 'appData'), mode: 'dev' }
+    const events: Array<{ phase: string; overall?: { completed: number; total: number } }> = []
+    await expect(
+      runMigration(
+        { ...options, execute: true },
+        {
+          onProgress: (event) => {
+            events.push(event)
+            if (event.phase === 'before-commit') throw new Error('interrupted before commit')
+          }
+        }
+      )
+    ).rejects.toThrow('interrupted before commit')
+    expect(events.find((e) => e.overall)).toBeDefined()
+    expect(events.every((e) => !e.overall || e.overall.completed < e.overall.total)).toBe(true)
+    const resumed: typeof events = []
+    await runMigration({ ...options, resume: true }, { onProgress: (event) => resumed.push(event) })
+    expect(resumed.find((e) => e.overall)?.overall?.completed).toBe(0)
+    expect(resumed.at(-1)?.phase).toBe('completed')
+    expect(resumed.at(-1)?.overall?.completed).toBe(resumed.at(-1)?.overall?.total)
+  })
+
+  it('blocks changed census totals before copying and preserves the original tree', async () => {
+    const f = await fixture()
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    let copied = false
+    await expect(
+      runMigration(
+        { home: f.home, appData: join(f.home, 'appData'), mode: 'dev', execute: true },
+        {
+          onProgress: async (event) => {
+            if (event.phase === 'counted') await writeFile(join(f.old, 'late.txt'), 'new data')
+            if (event.phase === 'copying') copied = true
+          }
+        }
+      )
+    ).rejects.toThrow(/workload changed after counting/)
+    expect(copied).toBe(false)
+    expect(await readFile(join(f.old, 'late.txt'), 'utf8')).toBe('new data')
+    expect(await readFile(join(f.old, 'uploads', 'paper.txt'), 'utf8')).toBe('research\n')
+    await expect(lstat(f.next)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('reports bytes during a real large-file hash before the file is complete', async () => {
+    const f = await fixture()
+    const file = join(f.old, 'large.bin')
+    const bytes = Buffer.alloc(1024 * 1024, 37)
+    await writeFile(file, bytes)
+    const { inventory } = await import('../resources/brand-migration/transaction.mjs')
+    const { withMigrationProgress } = await import('../resources/brand-migration/progress.mjs')
+    const observed: number[] = []
+    let tick = 0
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => (tick += 251))
+    try {
+      await withMigrationProgress(
+        (event) => {
+          if (event.processedBytes !== undefined) observed.push(event.processedBytes)
+        },
+        () => inventory(file)
+      )
+    } finally {
+      clock.mockRestore()
+    }
+    expect(observed.some((size) => size > 0 && size < bytes.length)).toBe(true)
+    expect(observed.at(-1)).toBe(bytes.length)
+    expect(observed).toEqual([...observed].sort((a, b) => a - b))
+    expect(await readFile(file)).toEqual(bytes)
+  })
+
+  it('uses a terminal budget for an empty initialization, without adding progress fields to the receipt', async () => {
+    const f = await fixture()
+    await rm(f.old, { recursive: true })
+    await rm(f.config, { recursive: true })
+    const { runMigration } = await import('../resources/brand-migration/transaction.mjs')
+    const options = { home: f.home, appData: join(f.home, 'appData'), mode: 'dev' }
+    const events: Array<{ phase: string; overall?: { completed: number; total: number } }> = []
+    await runMigration(options, { onProgress: (event) => events.push(event) })
+    expect(events.every((event) => !event.overall)).toBe(true)
+    events.length = 0
+    const result = await runMigration(
+      { ...options, execute: true },
+      {
+        onProgress: (event) => events.push(event)
+      }
+    )
+    expect(result.status).toBe('committed')
+    expect(events.at(-1)).toMatchObject({ phase: 'completed', overall: { completed: 1, total: 1 } })
+    expect(result).not.toHaveProperty('overall')
+    const journal = JSON.parse(
+      await readFile(join(`${f.config}.brand-migration`, 'journal.json'), 'utf8')
+    )
+    expect(journal.version).toBe(2)
+    expect(journal).not.toHaveProperty('overall')
+  })
+
   it('reports scanning and copying before a root has finished copying', async () => {
     const f = await fixture()
     const { runMigration, copyTree } = await import('../resources/brand-migration/transaction.mjs')

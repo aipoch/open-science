@@ -107,6 +107,11 @@
     "Import Environment lock": "Импортировать блокировку окружения"
   },
   "renderer": {
+    "Counting files and folders…": "Подсчёт файлов и папок…",
+    "Preparing migration…": "Подготовка миграции…",
+    "Overall migration progress": "Общий ход миграции",
+    "Add model keys again after migration": "Повторно добавьте API-ключи моделей после миграции",
+    "Configuration migration invalidates encrypted keys. Add your model keys again after migration finishes.": "При переносе настроек зашифрованные ключи станут недействительными. После завершения миграции повторно добавьте API-ключи моделей.",
     "The source message is no longer available.": "Исходное сообщение больше недоступно.",
     "This Notebook exceeds the 10 MB preview limit.": "Этот Notebook превышает ограничение предпросмотра в 10 МБ.",
     "Recent searches": "Недавние поиски",

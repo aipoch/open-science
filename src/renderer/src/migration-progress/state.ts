@@ -4,6 +4,7 @@ export type MigrationProgressState = {
   path?: string
   completed?: number
   total?: number
+  overall?: { completed: number; total: number; entries: number; bytes: number }
   startedAt: number
   updatedAt: number
   error?: string

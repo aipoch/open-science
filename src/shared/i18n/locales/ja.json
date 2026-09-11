@@ -104,6 +104,11 @@
     "Import Environment lock": "環境ロックをインポート"
   },
   "renderer": {
+    "Counting files and folders…": "ファイルとフォルダーを集計しています…",
+    "Preparing migration…": "移行を準備しています…",
+    "Overall migration progress": "移行全体の進捗",
+    "Add model keys again after migration": "移行後にモデルのAPIキーを再登録してください",
+    "Configuration migration invalidates encrypted keys. Add your model keys again after migration finishes.": "設定の移行により、暗号化して保存されたキーが無効になります。移行完了後にモデルのAPIキーを再登録してください。",
     "The source message is no longer available.": "元のメッセージは利用できなくなりました。",
     "This Notebook exceeds the 10 MB preview limit.": "この Notebook はプレビューの上限 10 MB を超えています。",
     "Recent searches": "最近の検索",

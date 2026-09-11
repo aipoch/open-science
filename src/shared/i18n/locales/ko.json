@@ -104,6 +104,11 @@
     "Import Environment lock": "환경 잠금 가져오기"
   },
   "renderer": {
+    "Counting files and folders…": "파일과 폴더를 집계하는 중…",
+    "Preparing migration…": "마이그레이션 준비 중…",
+    "Overall migration progress": "전체 마이그레이션 진행률",
+    "Add model keys again after migration": "마이그레이션 후 모델 API 키를 다시 추가하세요",
+    "Configuration migration invalidates encrypted keys. Add your model keys again after migration finishes.": "설정 마이그레이션으로 암호화하여 저장된 키가 무효화됩니다. 마이그레이션이 완료되면 모델 API 키를 다시 추가하세요.",
     "The source message is no longer available.": "원본 메시지를 더 이상 사용할 수 없습니다.",
     "This Notebook exceeds the 10 MB preview limit.": "이 Notebook은 10 MB 미리보기 제한을 초과합니다.",
     "Recent searches": "최근 검색",

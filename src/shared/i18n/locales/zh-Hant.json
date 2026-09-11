@@ -104,6 +104,11 @@
     "Import Environment lock": "匯入環境鎖定檔"
   },
   "renderer": {
+    "Counting files and folders…": "正在統計檔案和資料夾…",
+    "Preparing migration…": "正在準備遷移…",
+    "Overall migration progress": "遷移總進度",
+    "Add model keys again after migration": "遷移後需重新新增模型金鑰",
+    "Configuration migration invalidates encrypted keys. Add your model keys again after migration finishes.": "由於設定遷移，加密儲存的金鑰將失效。請在遷移完成後重新新增模型金鑰。",
     "The source message is no longer available.": "來源訊息已無法使用。",
     "This Notebook exceeds the 10 MB preview limit.": "此 Notebook 超過 10 MB 預覽限制。",
     "Recent searches": "最近搜尋",

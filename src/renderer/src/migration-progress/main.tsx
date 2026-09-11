@@ -6,8 +6,12 @@ import { MigrationProgress } from './migration-progress'
 
 // Initialize only translations and the isolated progress surface, never the normal app bootstrap.
 initI18n(resolveLocaleFromTags(navigator.languages))
-if (matchMedia('(prefers-color-scheme: dark)').matches)
-  document.documentElement.classList.add('dark')
+const theme = matchMedia('(prefers-color-scheme: dark)')
+const applyTheme = (): void => {
+  document.documentElement.classList.toggle('dark', theme.matches)
+}
+applyTheme()
+theme.addEventListener('change', applyTheme)
 createRoot(document.getElementById('root')!).render(
   <MigrationProgress bridge={window.migrationProgress} />
 )
