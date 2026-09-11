@@ -2841,14 +2841,7 @@ describe('production delegated-work composition', () => {
     })
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
-      artifactProvenance: {
-        createVersion: (request, signal) => provenance.createVersion(request, signal),
-        replayVersion: (request) => provenance.replayVersion(request),
-        reserveWrite: (request) => provenance.reserveWrite(request),
-        releaseWriteReservation: (request) => provenance.releaseWriteReservation(request),
-        releaseRunWriteReservations: (request) => provenance.releaseRunWriteReservations(request),
-        releaseAllWriteReservations: () => provenance.releaseAllWriteReservations()
-      }
+      artifactProvenance: provenance
     })
     const connection = await server.ensureStarted()
     const turns = new ArtifactTurnOwner({

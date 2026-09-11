@@ -445,7 +445,10 @@ type AcpRuntimeArtifactOptions = {
     Partial<
       Pick<
         import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
-        'recordLiteraturePdfRead' | 'recordLiteratureAbstractRead' | 'recordLiteratureSearch'
+        | 'recordLiteraturePdfRead'
+        | 'recordLiteratureAbstractRead'
+        | 'recordLiteratureSearch'
+        | 'withSessionMutation'
       >
     >
   managedFileVersions?: Pick<

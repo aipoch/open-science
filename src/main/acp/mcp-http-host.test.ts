@@ -1,7 +1,6 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
+import { rm } from 'node:fs/promises'
 import { createServer, request as httpRequest, type Server } from 'node:http'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -12,12 +11,15 @@ import { literatureItemInputSchema } from '../../shared/literature'
 import { ArtifactRepository } from '../artifacts/repository'
 
 describe('AgentMcpHttpHost', () => {
+  let saveFixture: Awaited<ReturnType<typeof createArtifactSaveFixture>> | undefined
   let host: AgentMcpHttpHost | undefined
   let rpcServer: Server | undefined
   let root: string | undefined
 
   afterEach(async () => {
     await host?.close()
+    await saveFixture?.dispose()
+    saveFixture = undefined
     host = undefined
     if (rpcServer) {
       rpcServer.closeAllConnections()
@@ -34,25 +36,22 @@ describe('AgentMcpHttpHost', () => {
   })
 
   it('serves the artifact MCP tools over http and writes a file for the active run', async () => {
-    root = await mkdtemp(join(tmpdir(), 'mcp-http-host-'))
+    saveFixture = await createArtifactSaveFixture()
+    root = saveFixture.storageRoot
     const projectId = 'default-project'
     const artifactSessionId = 'artifact-session-1'
     const runId = 'artifact-run-1'
     // The artifact tool reads the active run id from this main-process-owned handoff file.
-    const currentRunFile = join(root, 'current-run.json')
-    await writeFile(currentRunFile, JSON.stringify({ runId }), 'utf8')
+    const environment = await saveFixture.environment(
+      { allowedImportRoots: [root], workspaceCwd: root },
+      { projectId }
+    )
 
     host = new AgentMcpHttpHost()
     const { endpoint, token } = await host.ensureStarted()
     expect(endpoint).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
 
-    host.registerArtifact(artifactSessionId, {
-      storageRoot: root,
-      projectId,
-      sessionId: artifactSessionId,
-      currentRunFile,
-      allowedImportRoots: [root]
-    })
+    host.registerArtifact(artifactSessionId, environment)
 
     const client = new Client({ name: 'test-client', version: '0.0.0' })
     const transport = new StreamableHTTPClientTransport(
@@ -85,22 +84,19 @@ describe('AgentMcpHttpHost', () => {
   })
 
   it('accepts a JSON-stringified artifact source from an MCP model call', async () => {
-    root = await mkdtemp(join(tmpdir(), 'mcp-http-host-'))
+    saveFixture = await createArtifactSaveFixture()
+    root = saveFixture.storageRoot
     const projectId = 'default-project'
     const artifactSessionId = 'artifact-session-1'
     const runId = 'artifact-run-1'
-    const currentRunFile = join(root, 'current-run.json')
-    await writeFile(currentRunFile, JSON.stringify({ runId }), 'utf8')
+    const environment = await saveFixture.environment(
+      { allowedImportRoots: [root], workspaceCwd: root },
+      { projectId }
+    )
 
     host = new AgentMcpHttpHost()
     const { token } = await host.ensureStarted()
-    host.registerArtifact(artifactSessionId, {
-      storageRoot: root,
-      projectId,
-      sessionId: artifactSessionId,
-      currentRunFile,
-      allowedImportRoots: [root]
-    })
+    host.registerArtifact(artifactSessionId, environment)
 
     const client = new Client({ name: 'test-client', version: '0.0.0' })
     const transport = new StreamableHTTPClientTransport(

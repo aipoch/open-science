@@ -2975,6 +2975,8 @@ const createApplicationModules = async (
         return runtime.requestUserInput(request)
       },
       artifactProvenance: {
+        saveVersion: (request, sourceScope, signal, onMetadataBytes) =>
+          artifactProvenanceRepository.saveVersion(request, sourceScope, signal, onMetadataBytes),
         reserveWrite: (request) => artifactProvenanceRepository.reserveWrite(request),
         releaseWriteReservation: (request) =>
           artifactProvenanceRepository.releaseWriteReservation(request),

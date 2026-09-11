@@ -64,6 +64,8 @@ const canonicalize = (value: unknown): unknown => {
 }
 
 const PUBLIC_METHODS = [
+  'saveVersion',
+  'withSessionMutation',
   'writeAppGeneratedVersion',
   'createVersion',
   'reserveWrite',
