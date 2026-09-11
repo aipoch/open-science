@@ -8,14 +8,19 @@ describe('Notebook network proxy environment', () => {
 
   it('forces every destination through the policy gateway', () => {
     const env = proxyEnvironment(4100, credentials)
+    // macOS seatbelt `(remote ip ...)` accepts only `localhost` or `*`. A 127.0.0.1 proxy URL is
+    // denied with EPERM, which curl reports as connection refused.
+    const gatewayHost = process.platform === 'darwin' ? 'localhost' : '127.0.0.1'
+    const http = `http://command%20id:random%2Fsecret@${gatewayHost}:4100`
 
     expect(env).toMatchObject({
       NO_PROXY: '',
       no_proxy: '',
-      HTTP_PROXY: 'http://command%20id:random%2Fsecret@127.0.0.1:4100',
-      HTTPS_PROXY: 'http://command%20id:random%2Fsecret@127.0.0.1:4100',
-      ALL_PROXY: 'http://command%20id:random%2Fsecret@127.0.0.1:4100',
-      FTP_PROXY: 'socks5h://command%20id:random%2Fsecret@127.0.0.1:4100',
+      HTTP_PROXY: http,
+      HTTPS_PROXY: http,
+      ALL_PROXY: http,
+      FTP_PROXY: `socks5h://command%20id:random%2Fsecret@${gatewayHost}:4100`,
+      CLOUDSDK_PROXY_ADDRESS: gatewayHost,
       CLOUDSDK_PROXY_USERNAME: 'command id',
       CLOUDSDK_PROXY_PASSWORD: 'random/secret'
     })

@@ -1,7 +1,9 @@
 import type { GatewayCredentials } from '../gateway/command-gateway.js'
 
 const proxyEnvironment = (port: number, credentials: GatewayCredentials): NodeJS.ProcessEnv => {
-  const gatewayHost = '127.0.0.1'
+  // macOS seatbelt `(remote ip ...)` accepts only `localhost` or `*`. A 127.0.0.1 proxy URL is a
+  // different remote address and is denied with EPERM; curl reports that as connection refused.
+  const gatewayHost = process.platform === 'darwin' ? 'localhost' : '127.0.0.1'
   const authority = `${encodeURIComponent(credentials.username)}:${encodeURIComponent(credentials.password)}@${gatewayHost}:${port}`
   const http = `http://${authority}`
   const socks = `socks5h://${authority}`
