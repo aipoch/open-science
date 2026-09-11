@@ -24,7 +24,7 @@ concurrency:
 jobs:
   source:
     name: Source runtime chain (Linux)
-    continue-on-error: ${{ inputs.allow_failure }}
+    continue-on-error: ${{ inputs.allow_failure == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

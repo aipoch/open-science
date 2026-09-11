@@ -52,7 +52,8 @@ describe('runtime certification workflow', () => {
       'cancel-in-progress': true
     })
     expect(source).toMatchObject({
-      'continue-on-error': '${{ inputs.allow_failure }}',
+      // workflow_dispatch has no allow_failure input; an explicit comparison must yield false.
+      'continue-on-error': '${{ inputs.allow_failure == true }}',
       'runs-on': 'ubuntu-latest',
       'timeout-minutes': 20
     })
