@@ -396,10 +396,15 @@ the window uses a nonpersistent session partition. The formal application remain
 until migration and the progress helper have finished, so displaying progress does not open the
 profile being moved. Packaged startup routes the helper before normal application initialization.
 
-The window displays the current phase, root, actual inventory count and elapsed time. Inventory
-counts belong to the current scan, not a global completion percentage. Native copying and metadata
-inspection do not provide reliable fine-grained totals: those phases remain indeterminate. After
-10 seconds without an update, the window explicitly says it is waiting for the current operation.
+The window displays the current phase, root, actual inventory count, elapsed time and overall
+percentage. A census counts all participating roots before fixing the total workload; only that
+initial phase is indeterminate. The percentage covers copying, repeated verification, reference
+updates and commit, reaching 100% only on committed success. Native copying and metadata inspection
+can hold the percentage steady until they return. Inventory counts still belong to the current scan.
+After 10 seconds without an update, the window says it is waiting for the current operation.
+The title and progress area stay anchored while long paths and waiting text expand downward. An
+amber notice reminds users to re-add model keys after configuration migration. See
+[Local data migration progress](migration-progress.md) for counting, resume and layout details.
 A separate helper heartbeat keeps elapsed time and console diagnostics visible even when the
 worker is inside a synchronous native copy. Scanning, copying, verification, reference updates,
 durable writes and publication still use the same migration implementation and journal.
