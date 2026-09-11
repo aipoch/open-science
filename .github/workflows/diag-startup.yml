@@ -26,8 +26,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Stage notebook runtime resources
+        shell: bash
+        run: |
+          export MICROMAMBA_VERSION=$(node -p "require('./scripts/micromamba-versions.json').version")
+          primary_path="resources/bin/win/x64/micromamba.exe"
+          node scripts/fetch-micromamba.mjs win-64 "$primary_path"
+          compatibility_path="resources/bin/win/x64/micromamba-compat.exe"
+          node scripts/fetch-micromamba.mjs win-64 "$compatibility_path" compatibility
+          "$primary_path" --version
+          "$compatibility_path" --version
+
+      - name: Build Windows sandbox native host
+        run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
+
       - name: Build Windows installer
-        run: npx electron-vite build && npx electron-builder --win
+        run: npx electron-vite build && npx electron-builder --win --x64
 
       - name: Run the real Windows installer smoke
         run: node scripts/windows-installer-smoke.mjs --installer-dir dist
