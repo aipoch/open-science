@@ -631,6 +631,72 @@ type CodexAuthenticationSnapshot = Readonly<{
 export type CodexStoredAuthInspection =
   { state: 'present' } | { state: 'missing' } | { state: 'invalid' } | { state: 'unreadable' }
 
+const isJsonObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim() !== ''
+
+const isRfc3339 = (value: unknown): value is string =>
+  isNonEmptyString(value) &&
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+  !Number.isNaN(Date.parse(value))
+
+const isJwt = (value: unknown): value is string => {
+  if (!isNonEmptyString(value)) return false
+  const parts = value.split('.')
+  if (parts.length !== 3 || parts.some((part) => part === '')) return false
+  try {
+    return isJsonObject(JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')))
+  } catch {
+    return false
+  }
+}
+
+const hasCodexCredentialMaterial = (value: unknown): boolean => {
+  if (!isJsonObject(value)) return false
+  const auth = value
+  const inferredMode =
+    typeof auth.personal_access_token === 'string'
+      ? 'personalAccessToken'
+      : isJsonObject(auth.bedrock_api_key)
+        ? 'bedrockApiKey'
+        : typeof auth.OPENAI_API_KEY === 'string'
+          ? 'apikey'
+          : 'chatgpt'
+  const mode = auth.auth_mode ?? inferredMode
+
+  if (mode === 'apikey') return isNonEmptyString(auth.OPENAI_API_KEY)
+  if (mode === 'personalAccessToken') return isNonEmptyString(auth.personal_access_token)
+  if (mode === 'agentIdentity') {
+    if (isJwt(auth.agent_identity)) return true
+    return (
+      isJsonObject(auth.agent_identity) &&
+      isNonEmptyString(auth.agent_identity.agent_runtime_id) &&
+      isNonEmptyString(auth.agent_identity.agent_private_key) &&
+      isNonEmptyString(auth.agent_identity.account_id) &&
+      isNonEmptyString(auth.agent_identity.chatgpt_user_id) &&
+      isNonEmptyString(auth.agent_identity.plan_type) &&
+      typeof auth.agent_identity.chatgpt_account_is_fedramp === 'boolean'
+    )
+  }
+  if (mode === 'bedrockApiKey') {
+    return (
+      isJsonObject(auth.bedrock_api_key) &&
+      isNonEmptyString(auth.bedrock_api_key.api_key) &&
+      isNonEmptyString(auth.bedrock_api_key.region)
+    )
+  }
+  if (mode !== 'chatgpt' && mode !== 'chatgptAuthTokens') return false
+  return (
+    isJsonObject(auth.tokens) &&
+    isJwt(auth.tokens.id_token) &&
+    isNonEmptyString(auth.tokens.access_token) &&
+    isNonEmptyString(auth.tokens.refresh_token) &&
+    isRfc3339(auth.last_refresh)
+  )
+}
+
 export const inspectAppOwnedCodexAuthentication = async (
   storageRoot: string
 ): Promise<CodexStoredAuthInspection> => {
@@ -640,9 +706,7 @@ export const inspectAppOwnedCodexAuthentication = async (
       'utf8'
     )
     const parsed = JSON.parse(content) as unknown
-    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-      ? { state: 'present' }
-      : { state: 'invalid' }
+    return hasCodexCredentialMaterial(parsed) ? { state: 'present' } : { state: 'invalid' }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { state: 'missing' }
     if (error instanceof SyntaxError) return { state: 'invalid' }

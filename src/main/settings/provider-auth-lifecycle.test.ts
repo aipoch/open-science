@@ -147,7 +147,15 @@ describe('ProviderAuthLifecycleOwner', () => {
   }
 
   const storeAppCodexAuth = async (
-    content = '{"tokens":{"access_token":"secret"}}'
+    content = JSON.stringify({
+      auth_mode: 'chatgpt',
+      tokens: {
+        id_token: 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0In0.signature',
+        access_token: 'access',
+        refresh_token: 'refresh'
+      },
+      last_refresh: '2026-09-11T00:00:00Z'
+    })
   ): Promise<void> => {
     const home = join(dir, 'codex-subscription')
     await mkdir(home, { recursive: true })

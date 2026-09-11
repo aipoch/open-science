@@ -2509,6 +2509,15 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(await readFile(adapterPath, 'utf8')).toBe(MANAGED_CODEX_ADAPTER_FIXTURE)
     expect(await readFile(authPath, 'utf8')).toBe(authContent)
     expect(await readFile(configPath, 'utf8')).toBe('model = "account-default"\n')
+
+    await writeFile(authPath, '{}')
+    await expect(service.getPreflight()).resolves.toMatchObject({
+      activeProviderReady: false,
+      providerReadiness: { status: 'not_ready', reason: 'credential_invalid' }
+    })
+    expect(await readFile(authPath, 'utf8')).toBe('{}')
+    expect(await readFile(adapterPath, 'utf8')).toBe(MANAGED_CODEX_ADAPTER_FIXTURE)
+    expect(await readFile(configPath, 'utf8')).toBe('model = "account-default"\n')
   })
 
   it('detects Codex and exposes readiness for its selected adapter', async () => {

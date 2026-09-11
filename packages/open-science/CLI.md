@@ -90,8 +90,13 @@ open-science doctor --json
 The command prints one JSON object. `ready` requires both the selected Agent runtime and active
 provider to be ready. A check is `missing` when its resource is absent and `not_ready` when it is
 configured but unusable; provider failures may include a stable `reason`, such as
-`credential_invalid`. `checks.skills.enabled` contains the sorted IDs of enabled, available Skills;
-Skills do not block overall readiness. `next` contains stable action codes such as
+`credential_invalid`.
+
+Codex credential inspection checks supported material in the app-owned `auth.json` without launching
+Codex or validating expiry/revocation remotely; historical provider validation remains a separate gate.
+
+`checks.skills.enabled` contains the sorted IDs of enabled, available Skills; Skills do not block
+overall readiness. `next` contains stable action codes such as
 `runtime_missing` and `provider_not_ready`, never commands that may not exist. A completed inspection
 exits with code `0` even when `ready` is false; connection and command failures keep the existing
 nonzero CLI error codes.
