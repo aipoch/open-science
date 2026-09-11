@@ -6,6 +6,7 @@ import type {
   SkillImportPreviewContent,
   SkillReplacementPreview
 } from '../../../../shared/settings'
+import { ErrorNotice } from '@/components/error-notice'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { Button } from '@/components/ui/button'
 import {
@@ -140,12 +141,11 @@ const SkillImportCandidatePreview = ({
                 {t('Loading preview…')}
               </div>
             ) : error ? (
-              <div
-                className="rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-sm text-danger-000"
+              <ErrorNotice
                 role="alert"
-              >
-                {error}
-              </div>
+                tone="red"
+                description={error}
+              />
             ) : content ? (
               <>
                 {content.replacement ? (

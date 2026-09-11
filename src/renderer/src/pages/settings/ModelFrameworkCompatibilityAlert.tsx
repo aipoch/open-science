@@ -1,5 +1,5 @@
-import { AlertTriangle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { ErrorNotice } from '@/components/error-notice'
 
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
@@ -49,27 +49,14 @@ const ModelFrameworkCompatibilityAlert = (): React.JSX.Element | null => {
       )
 
   return (
-    <div
+    <ErrorNotice
       role="alert"
-      className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400"
-    >
-      <AlertTriangle className="mt-px size-4 shrink-0" aria-hidden="true" />
-      <div className="space-y-0.5">
-        <p className="font-medium">
-          {modelUnsupportedByBridge
-            ? t('Model not supported over the Codex bridge')
-            : t("Main model isn't compatible with {{framework}}", { framework: frameworkName })}
-        </p>
-        <p className="text-amber-700/90 dark:text-amber-400/80">
-          {reason}{' '}
-          {!modelUnsupportedByBridge
-            ? t(
-                "Pick a compatible model below, or switch the agent framework above — otherwise conversations on this framework won't start."
-              )
-            : null}
-        </p>
-      </div>
-    </div>
+      tone="amber"
+      title={modelUnsupportedByBridge
+        ? t('Model not supported over the Codex bridge')
+        : t("Main model isn't compatible with {{framework}}", { framework: frameworkName })}
+      description={`${reason} ${!modelUnsupportedByBridge ? t("Pick a compatible model below, or switch the agent framework above — otherwise conversations on this framework won't start.") : ''}`.trim()}
+    />
   )
 }
 

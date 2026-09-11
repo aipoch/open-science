@@ -1,8 +1,9 @@
-import { AlertTriangle, LoaderCircle, RefreshCw, X } from 'lucide-react'
+import { LoaderCircle } from 'lucide-react'
 import { Component, Suspense, type ErrorInfo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { ErrorNotice } from '@/components/error-notice'
 
 type ErrorBoundaryProps = {
   children: ReactNode
@@ -49,24 +50,15 @@ const SettingsPanelLoadingBoundary = ({
     <SettingsPanelErrorBoundary
       key={panelKey}
       fallback={
-        <div className={centeredClassName} role="alert">
-          <AlertTriangle className="size-5 text-destructive" aria-hidden="true" />
-          <div>
-            <p className="font-medium text-foreground">{t("Settings panel couldn't be loaded.")}</p>
-            <p className="mt-1 text-xs">
-              {t('Reload Open Science to try loading this panel again.')}
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={onClose}>
-              <X aria-hidden="true" />
-              {t('Close')}
-            </Button>
-            <Button type="button" onClick={onReload}>
-              <RefreshCw aria-hidden="true" />
-              {t('Reload', { context: 'window', ns: 'common' })}
-            </Button>
-          </div>
+        <div className={centeredClassName}>
+          <ErrorNotice
+            role="alert"
+            tone="red"
+            title={t("Settings panel couldn't be loaded.")}
+            description={t('Reload Open Science to try loading this panel again.')}
+            secondaryButton={{ label: t('Close'), onClick: onClose }}
+            primaryButton={{ label: t('Reload', { context: 'window', ns: 'common' }), onClick: onReload }}
+          />
         </div>
       }
     >
