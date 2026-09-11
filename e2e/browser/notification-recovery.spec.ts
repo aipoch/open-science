@@ -94,6 +94,7 @@ test('exposes notification errors and named recovery controls to the accessibili
   await page.getByRole('button', { name: 'Messages, 1 unread' }).click()
   const results = await page.evaluate(async () => {
     const axe = (window as unknown as { axe: typeof import('axe-core') }).axe
+    await Promise.all(document.getAnimations().map((animation) => animation.finished))
     return axe.run(document.querySelector('[role="dialog"]')!, {
       runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa'] }
     })

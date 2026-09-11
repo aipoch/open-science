@@ -159,7 +159,7 @@ const NotificationRow = ({
       <span className="min-w-0 flex-1">
         <span
           className={cn(
-            'flex min-w-0 items-center gap-1.5 text-text-300',
+            'flex min-w-0 items-center gap-1.5 text-text-100',
             isMobile ? 'text-xs' : 'text-[10px]'
           )}
         >
@@ -546,7 +546,7 @@ const NotificationBellContent = ({
                       <div className={cn('font-semibold', isMobile ? 'text-base' : 'text-sm')}>
                         {t('Messages')}
                       </div>
-                      <div className={cn('text-text-300', isMobile ? 'text-xs' : 'text-[11px]')}>
+                      <div className={cn('text-text-100', isMobile ? 'text-xs' : 'text-[11px]')}>
                         {unreadCount > 0
                           ? t('{{count}} unread', { count: unreadCount })
                           : t('All caught up')}
@@ -587,7 +587,7 @@ const NotificationBellContent = ({
                     />
                   ) : null}
                   {items.length === 0 ? (
-                    <div className="px-3 py-10 text-center text-sm text-text-300">
+                    <div className="px-3 py-10 text-center text-sm text-text-100">
                       {status === 'error'
                         ? null
                         : status === 'idle' || status === 'loading'
@@ -600,7 +600,7 @@ const NotificationBellContent = ({
                         <div
                           id={`${panelId}-${group.key}`}
                           className={cn(
-                            'sticky z-10 bg-bg-000 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-300',
+                            'sticky z-10 bg-bg-000 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-100',
                             isMobile ? '-mx-2 -top-2 px-[18px]' : '-mx-1.5 -top-1.5 px-4'
                           )}
                         >

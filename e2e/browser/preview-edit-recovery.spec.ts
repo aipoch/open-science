@@ -23,7 +23,10 @@ test('conflict keeps native editor undo and offers complete draft copy', async (
   await expect(editor).toHaveValue('# Current\nRetained draft')
   await page.getByRole('button', { name: 'Copy draft', exact: true }).click()
   await expect
-    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    // Windows exposes native clipboard line endings as CRLF.
+    .poll(async () =>
+      (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, '\n')
+    )
     .toBe('# Current\nRetained draft')
   await page.getByRole('button', { name: 'View latest version', exact: true }).click()
   const confirmation = page.getByTestId('discard-preview-changes-confirmation')
