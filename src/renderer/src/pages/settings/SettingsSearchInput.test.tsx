@@ -91,6 +91,72 @@ describe('SettingsSearchInput', () => {
     )
   })
 
+  it('lets a higher-priority field win over a later-mounted panel search in the same dialog', () => {
+    ;(window as unknown as { api: unknown }).api = { platform: 'darwin' }
+    act(() => {
+      root.render(
+        <div role="dialog">
+          <SettingsSearchInput
+            aria-label="Search settings"
+            shortcutPriority={1}
+            value=""
+            onChange={() => undefined}
+          />
+          <SettingsSearchInput aria-label="Search skills" value="" onChange={() => undefined} />
+        </div>
+      )
+    })
+
+    pressSearchShortcut({ metaKey: true })
+
+    expect(document.activeElement).toBe(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Search settings"]')
+    )
+  })
+
+  it('keeps last-mounted-wins for same-priority fields in the same dialog', () => {
+    ;(window as unknown as { api: unknown }).api = { platform: 'darwin' }
+    act(() => {
+      root.render(
+        <div role="dialog">
+          <SettingsSearchInput aria-label="First search" value="" onChange={() => undefined} />
+          <SettingsSearchInput aria-label="Second search" value="" onChange={() => undefined} />
+        </div>
+      )
+    })
+
+    pressSearchShortcut({ metaKey: true })
+
+    expect(document.activeElement).toBe(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Second search"]')
+    )
+  })
+
+  it('keeps a nested dialog search ahead of a higher-priority field in the dialog below', () => {
+    ;(window as unknown as { api: unknown }).api = { platform: 'darwin' }
+    act(() => {
+      root.render(
+        <div role="dialog" aria-label="Settings">
+          <SettingsSearchInput
+            aria-label="Search settings"
+            shortcutPriority={1}
+            value=""
+            onChange={() => undefined}
+          />
+          <div role="dialog" aria-label="Bulk manage">
+            <SettingsSearchInput aria-label="Filter selected" value="" onChange={() => undefined} />
+          </div>
+        </div>
+      )
+    })
+
+    pressSearchShortcut({ metaKey: true })
+
+    expect(document.activeElement).toBe(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Filter selected"]')
+    )
+  })
+
   it.each([
     ['closing', { 'data-state': 'closed' }],
     ['hidden', { hidden: true }]
@@ -108,5 +174,63 @@ describe('SettingsSearchInput', () => {
 
     expect(event.defaultPrevented).toBe(false)
     expect(document.activeElement).toBe(document.body)
+  })
+
+  it('hides the native cancel affordance and shows no clear button while empty', () => {
+    act(() => {
+      root.render(
+        <div role="dialog">
+          <SettingsSearchInput aria-label="Search skills" value="" onChange={() => undefined} />
+        </div>
+      )
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')
+    expect(input?.className).toContain('[&::-webkit-search-cancel-button]:hidden')
+    expect(document.body.querySelector('[aria-label="Clear search"]')).toBeNull()
+    expect(document.body.textContent).toContain('K')
+  })
+
+  it('replaces the shortcut hint with a clear button once the field has text', () => {
+    act(() => {
+      root.render(
+        <div role="dialog">
+          <SettingsSearchInput
+            aria-label="Search skills"
+            value="theme"
+            onChange={() => undefined}
+          />
+        </div>
+      )
+    })
+
+    expect(document.body.querySelector('[aria-label="Clear search"]')).not.toBeNull()
+    expect(document.body.textContent).not.toContain('⌘K')
+  })
+
+  it('clears through a real input event and keeps focus in the field', () => {
+    const changes: string[] = []
+    act(() => {
+      root.render(
+        <div role="dialog">
+          <SettingsSearchInput
+            aria-label="Search skills"
+            defaultValue="theme"
+            onChange={(event) => changes.push(event.target.value)}
+          />
+        </div>
+      )
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')
+    const clear = document.body.querySelector<HTMLButtonElement>('[aria-label="Clear search"]')
+    expect(input?.value).toBe('theme')
+
+    act(() => clear?.click())
+
+    expect(changes).toEqual([''])
+    expect(input?.value).toBe('')
+    expect(document.activeElement).toBe(input)
+    expect(document.body.querySelector('[aria-label="Clear search"]')).toBeNull()
   })
 })

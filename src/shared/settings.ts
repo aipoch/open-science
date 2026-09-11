@@ -1116,6 +1116,26 @@ export type EnvironmentCheckResult = {
 export type SkillSource = 'featured' | 'imported' | 'personal'
 export type SkillActivationPolicy = 'always-on' | 'user-controlled'
 
+// Stable machine codes for failed Settings writes. The renderer display layer translates by code,
+// so no English message text ever crosses the store boundary or gets string-compared to decide a
+// translation. Codes are single hyphenated tokens with no spaces: concurrent failures are joined
+// with spaces in the visible error string and split back apart by the display layer.
+export type SettingsWriteErrorCode =
+  | 'active-provider'
+  | 'agent-framework'
+  | 'reasoning-effort'
+  | 'reviewer-model'
+  | 'session-details-model'
+  | 'subagent-model'
+  | 'vision-model'
+  | 'notifications'
+  | 'notification-content'
+  | 'conversation-skill-import'
+  | 'close-preference'
+  | 'default-permission-profile'
+  | 'app-icon'
+  | 'project-files-filter'
+
 // Renderer-safe view of one bundled skill (no file contents).
 export type SkillView = {
   id: string

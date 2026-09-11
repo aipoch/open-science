@@ -996,7 +996,7 @@ describe('SettingsPage layout', () => {
 
   it('shows and dismisses a settings write failure above the scrolling content', async () => {
     useSettingsStore.setState({
-      settingsWriteError: 'Could not save notification preference. Try again.'
+      settingsWriteError: 'notifications'
     })
 
     act(() => {
@@ -1005,16 +1005,14 @@ describe('SettingsPage layout', () => {
 
     const alert = document.body.querySelector<HTMLElement>('[data-slot="settings-write-error"]')
     const scroll = document.body.querySelector<HTMLElement>('[data-slot="settings-content-scroll"]')
-    expect(alert?.getAttribute('role')).toBe('alert')
+    expect(alert?.querySelector('[role="alert"]')).not.toBeNull()
+    expect(alert?.textContent).toContain('Settings could not be saved')
     expect(alert?.textContent).toContain('Could not save notification preference. Try again.')
-    expect(alert?.className).toContain('border-danger-000/30')
-    expect(alert?.className).toContain('bg-danger-000/10')
-    expect(alert?.className).toContain('text-danger-000')
     expect(alert?.nextElementSibling).toBe(scroll)
 
-    const dismiss = alert?.querySelector<HTMLButtonElement>('[aria-label="Dismiss settings error"]')
-    await act(async () => dismiss?.focus())
-    expect(document.body.textContent).toContain('Close')
+    const dismiss = Array.from(alert?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Dismiss'
+    )
 
     act(() => {
       dismiss?.click()
@@ -1022,6 +1020,44 @@ describe('SettingsPage layout', () => {
 
     expect(useSettingsStore.getState().settingsWriteError).toBeUndefined()
     expect(document.body.querySelector('[data-slot="settings-write-error"]')).toBeNull()
+  })
+
+  it('keeps the dialog open when Escape closes the global search results', async () => {
+    const onClose = vi.fn()
+    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+
+    const search = document.body.querySelector<HTMLInputElement>(
+      '[data-slot="settings-global-search"] input'
+    )
+    expect(search).not.toBeNull()
+
+    await act(async () => {
+      search?.focus()
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+        search,
+        'proxy'
+      )
+      search?.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
+
+    // First Escape closes only the results list; the dialog stays open.
+    await act(async () => {
+      search?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    expect(document.body.querySelector('[role="listbox"]')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[data-slot="settings-surface"]')).not.toBeNull()
+
+    // Second Escape, with the list closed, falls through to the dialog's normal close path.
+    await act(async () => {
+      document.body.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    expect(onClose).toHaveBeenCalled()
   })
 
   it('mounts the sidebar + content with grouped nav items and a close control', () => {
@@ -1055,9 +1091,10 @@ describe('SettingsPage layout', () => {
     expect(dialog?.getAttribute('data-slot')).toBe('settings-surface')
     expect(dialog?.className).toContain('overscroll-contain')
 
-    // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Memory, Compute, Network)
-    // and Workspace (Model, Agent, Tags, Permissions, Credentials, Runtimes, Storage, Remote,
-    // Usage, General, Archived). Feedback remains a separate fixed footer action.
+    // Left navigation grouped as Intelligence (Model, Agent, Skills, Specialists, Memory),
+    // Connections (Connectors, Network, Remote, Credentials), Workspace (Tags, Permissions,
+    // Runtimes, Storage, Compute, Usage, Archived) and System (General). Feedback remains a
+    // separate fixed footer action.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
@@ -1070,28 +1107,30 @@ describe('SettingsPage layout', () => {
     expect(navScroll?.className).toContain('overflow-y-auto')
     expect(navFooter?.className).toContain('border-t')
     expect(nav?.parentElement?.nextElementSibling?.className).toContain('bg-card')
-    expect(nav?.textContent).toContain('Capabilities')
+    expect(nav?.textContent).toContain('Intelligence')
+    expect(nav?.textContent).toContain('Connections')
     expect(nav?.textContent).toContain('Workspace')
+    expect(nav?.textContent).toContain('System')
     expect(nav?.textContent).not.toContain('Remote access')
     const navItems = navScroll?.querySelectorAll('li') ?? []
     expect(navItems).toHaveLength(17)
-    expect(navItems[0]?.textContent).toContain('Skills')
-    expect(navItems[1]?.textContent).toContain('Connectors')
-    expect(navItems[2]?.textContent).toContain('Specialists')
-    expect(navItems[3]?.textContent).toContain('Memory')
-    expect(navItems[4]?.textContent).toContain('Compute')
-    expect(navItems[5]?.textContent).toContain('Network')
-    expect(navItems[6]?.textContent).toContain('Model')
-    expect(navItems[7]?.textContent).toContain('Agent')
-    expect(navItems[8]?.textContent).toContain('Tags')
-    expect(navItems[9]?.textContent).toContain('Permissions')
-    expect(navItems[10]?.textContent).toContain('Credentials')
+    expect(navItems[0]?.textContent).toContain('Model')
+    expect(navItems[1]?.textContent).toContain('Agent')
+    expect(navItems[2]?.textContent).toContain('Skills')
+    expect(navItems[3]?.textContent).toContain('Specialists')
+    expect(navItems[4]?.textContent).toContain('Memory')
+    expect(navItems[5]?.textContent).toContain('Connectors')
+    expect(navItems[6]?.textContent).toContain('Network')
+    expect(navItems[7]?.textContent?.trim()).toBe('Remote')
+    expect(navItems[8]?.textContent).toContain('Credentials')
+    expect(navItems[9]?.textContent).toContain('Tags')
+    expect(navItems[10]?.textContent).toContain('Permissions')
     expect(navItems[11]?.textContent).toContain('Runtimes')
     expect(navItems[12]?.textContent).toContain('Storage')
-    expect(navItems[13]?.textContent?.trim()).toBe('Remote')
+    expect(navItems[13]?.textContent).toContain('Compute')
     expect(navItems[14]?.textContent).toContain('Usage')
-    expect(navItems[15]?.textContent).toContain('General')
-    expect(navItems[16]?.textContent).toContain('Archived')
+    expect(navItems[15]?.textContent).toContain('Archived')
+    expect(navItems[16]?.textContent).toContain('General')
     expect(navFooter?.textContent).toContain('Feedback')
     const modelNavButton = navButton('Model')
     const agentNavButton = navButton('Agent')

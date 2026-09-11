@@ -274,7 +274,7 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
         model: model || undefined
       })
     } catch (error) {
-      write.fail('Could not switch active provider or model. Try again.')
+      write.fail('active-provider')
       console.error('Failed to set active provider', error)
       throw error
     }
@@ -291,7 +291,7 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     try {
       snapshot = await getCommands().setAgentFramework({ id })
     } catch (error) {
-      write.fail('Could not switch agent framework. Try again.')
+      write.fail('agent-framework')
       console.error('Failed to switch agent framework', error)
       throw error
     }
