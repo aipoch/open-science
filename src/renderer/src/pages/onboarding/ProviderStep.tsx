@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { ErrorNotice } from '@/components/error-notice'
 import { CardContent, CardDescription, CardFooter, CardHeader } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import type {
@@ -428,11 +429,13 @@ const ProviderStep = ({
       <CardContent className="flex-1 px-6 py-5">
         <section aria-label={t('Configure model')}>
           {!encryptionAvailable ? (
-            <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-              {t(
+            <ErrorNotice
+              className="mb-4"
+              tone="amber"
+              description={t(
                 'Secure key storage is unavailable. API keys cannot be saved until the system keychain is unlocked or authorized.'
               )}
-            </p>
+            />
           ) : null}
           <ProviderForm
             value={formValue}
