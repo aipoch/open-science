@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -1570,6 +1570,49 @@ describe('R startup authorization admission', () => {
       persistAlwaysAllow: vi.fn(),
       requestDecision: vi.fn()
     })
+
+  it.skipIf(process.platform !== 'win32')(
+    'waits for a transient Windows directory lock after probe cleanup',
+    async () => {
+      const owner = createOwner()
+      let lockClosed: Promise<void> | undefined
+      backend.wrap.mockImplementationOnce(async (command: { cwd: string }) => ({
+        argv: [process.execPath, '-e', 'console.log("OPEN_SCIENCE_R_ACCESS_OK")'],
+        env: process.env,
+        annotateStderr: (stderr: string) => stderr,
+        resetNetworkConnections: backend.resetNetworkConnections,
+        confirmProcessTreeTermination: async () => true,
+        cleanup: async () => {
+          fixtureDirectories.push(command.cwd)
+          // Model a separate Windows process briefly retaining a current-directory handle even
+          // after the contained probe has exited. Its release must not turn verification into EBUSY.
+          const holder = spawn(
+            process.execPath,
+            ['-e', 'console.log("ready"); setTimeout(() => {}, 300)'],
+            {
+              cwd: command.cwd,
+              windowsHide: true,
+              stdio: ['ignore', 'pipe', 'ignore']
+            }
+          )
+          lockClosed = new Promise<void>((resolve) => holder.once('close', () => resolve()))
+          await new Promise<void>((resolve, reject) => {
+            holder.once('error', reject)
+            holder.stdout!.once('data', () => resolve())
+          })
+          return { processesTerminated: true, networkClosed: true, temporaryResourcesRemoved: true }
+        }
+      }))
+      try {
+        await expect(owner.setWindowsRuntimeAccess(request.executable, true)).resolves.toEqual({
+          cancelled: false
+        })
+      } finally {
+        await lockClosed
+        await owner.dispose()
+      }
+    }
+  )
 
   it('does not report verified R access when sandbox cleanup remains incomplete', async () => {
     const owner = createOwner()
