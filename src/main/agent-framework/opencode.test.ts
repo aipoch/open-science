@@ -162,6 +162,23 @@ describe('opencodeFramework.prepareModelConfig', () => {
     })
   })
 
+  it('disables OpenCode native todo tools in app-managed Sessions', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+
+    const authoritativeConfig = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    expect(authoritativeConfig.tools).toEqual({
+      todoread: false,
+      todowrite: false
+    })
+    expect(authoritativeConfig.permission).toMatchObject({
+      todoread: 'deny',
+      todowrite: 'deny'
+    })
+  })
+
   it('redirects opencode home to an app-owned dir so the user ~/.opencode cannot inject config', () => {
     const config = opencodeFramework.prepareModelConfig(
       { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
@@ -647,6 +664,27 @@ describe('opencodeFramework.prepareModelConfig', () => {
 })
 
 describe('buildOpencodeConfig', () => {
+  it('keeps native todo tools disabled while preserving unrelated tool configuration', () => {
+    const config = JSON.parse(
+      buildOpencodeConfig(
+        { type: 'custom', baseUrl: 'https://gw/v1', model: 'm' },
+        {
+          tools: {
+            custom_tool: true,
+            todoread: true,
+            todowrite: true
+          }
+        }
+      )
+    )
+
+    expect(config.tools).toEqual({
+      custom_tool: true,
+      todoread: false,
+      todowrite: false
+    })
+  })
+
   it('registers the model under provider.models and selects it', () => {
     const config = JSON.parse(
       buildOpencodeConfig({

@@ -12648,6 +12648,43 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().permissionGrants[session.sessionId]).toEqual([])
   })
 
+  it('rejects OpenCode native Todo even when the Session uses Full access', async () => {
+    const process = new FakeAgentProcess()
+    const permissionRequests: AcpPermissionRequest[] = []
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'opencode-todo-session',
+      toolCallId: 'opencode-todo-call',
+      toolTitle: 'todowrite',
+      toolKind: 'other',
+      toolRawInput: { todos: [{ content: 'shadow plan', status: 'pending' }] },
+      permissionOptions: [
+        { optionId: 'once', kind: 'allow_once', name: 'Allow once' },
+        { optionId: 'always', kind: 'allow_always', name: 'Always allow' },
+        { optionId: 'reject', kind: 'reject_once', name: 'Reject' }
+      ],
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
+      callbacks: {
+        onPermissionRequest: (request) => permissionRequests.push(request)
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'full' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'write a native todo' })
+
+    expect(permissionRequests).toEqual([])
+    expect(permissionResponse).toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(runtime.getSnapshot().permissionGrants[session.sessionId]).toEqual([])
+  })
+
   it('does not trust an isolated OpenCode permission title as native Skill identity', async () => {
     const process = new FakeAgentProcess()
     const permissionRequests: AcpPermissionRequest[] = []
