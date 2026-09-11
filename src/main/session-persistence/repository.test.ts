@@ -94,6 +94,25 @@ afterEach(async () => {
 })
 
 describe('session persistence repository (per-session files)', () => {
+  it('lists provider references across persisted sessions', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    await repository.saveSession(
+      createSession({
+        agentConfiguration: { providerId: 'provider-a', model: 'model-a', reasoningEffort: 'high' }
+      })
+    )
+    await repository.saveSession(
+      createSession({
+        id: 'session-2',
+        agentConfiguration: { providerId: 'provider-b', model: 'model-b', reasoningEffort: 'high' }
+      })
+    )
+
+    await expect(repository.listProviderReferences('provider-a')).resolves.toEqual([
+      { projectId: 'project-a', sessionId: 'session-1' }
+    ])
+  })
+
   it('resolves recovery folders inside the managed Session tree', async () => {
     const root = await createStorageRoot()
     const repository = new SessionRepository(root)

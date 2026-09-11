@@ -641,6 +641,18 @@ class SessionRepository {
     return this.operationScheduler.runGlobal(() => this.projection!.list())
   }
 
+  async listProviderReferences(providerId: string): Promise<readonly { projectId: string; sessionId: string }[]> {
+    const scan = await this.loadAllWithDiagnostics()
+    if (!scan.isComplete) throw new Error('Session reference scan is incomplete.')
+    const references: { projectId: string; sessionId: string }[] = []
+    for (const session of scan.result.sessions) {
+      if (session.agentConfiguration?.providerId === providerId) {
+        references.push({ projectId: session.projectId, sessionId: session.id })
+      }
+    }
+    return references
+  }
+
   private async hasOversizedProjectedSession(
     summaries: readonly SessionSummary[]
   ): Promise<boolean> {
