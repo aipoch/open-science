@@ -179,6 +179,10 @@ export class OpenScienceClient {
     )
   }
 
+  doctor(options) {
+    return this.request('/api/v1/doctor', { ...options, method: 'GET' })
+  }
+
   listConnectors(options) {
     return this.request(`/api/v1/connectors`, { ...options, method: 'GET' })
   }

@@ -34,6 +34,7 @@ Commands:
   status      Show backend status
   url         Print the authenticated web URL
   update      Check, download, and apply an application update
+  doctor --json  Inspect headless readiness
   codex login [--force]
   connector list | show <id> | enable <id> | disable <id>
   connector add | update <id>      Read configuration JSON from stdin
@@ -146,6 +147,7 @@ const VALUE_OPTIONS = {
 }
 
 const TASK_COMMANDS = new Set([
+  'doctor',
   'project',
   'run',
   'session',
@@ -168,6 +170,7 @@ const GROUP_COMMANDS = new Set([
 // Project create, update, and session-defaults intentionally remain unbounded because their
 // positional Project names may contain multiple unquoted words.
 const POSITIONAL_LIMITS = new Map([
+  ['doctor', 0],
   ['connector list', 0],
   ['connector show', 1],
   ['connector enable', 1],
@@ -378,6 +381,9 @@ export const parseCliArgs = (argv) => {
   }
   if (options.json && options.jsonl) {
     throw new CliUsageError('Use only one of --json or --jsonl.')
+  }
+  if (command === 'doctor' && !options.json) {
+    throw new CliUsageError('doctor requires --json.')
   }
   if (options.json && (command === 'start' || command === 'url')) {
     throw new CliUsageError(`--json is not supported for ${command}.`)
@@ -1438,6 +1444,11 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   const deps = { ...TASK_DEPS, ...dependencies }
   const { command, subcommand, positionals = [], options } = parsed
   const client = await deps.connect({ configRoot: options.configRoot })
+
+  if (command === 'doctor') {
+    deps.log(JSON.stringify(await client.doctor()))
+    return
+  }
 
   if (command === 'connector' || command === 'credential') {
     const id = positionals[0]

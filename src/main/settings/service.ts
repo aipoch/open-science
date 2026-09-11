@@ -32,7 +32,7 @@ import type {
   InstallCodeBuddyRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
-  Preflight,
+  ReadinessPreflight,
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
   ResolveSkillDocumentRequest,
@@ -1112,7 +1112,7 @@ class SettingsService {
     return this.skills.importAgentHomeSkills(request)
   }
   // Computes the startup gates from a fresh or immediate startup-chain runtime probe.
-  async getPreflight(): Promise<Preflight> {
+  async getPreflight(): Promise<ReadinessPreflight> {
     return this.runtimeManager.getPreflight(this.providers)
   }
 

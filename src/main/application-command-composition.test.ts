@@ -308,6 +308,8 @@ describe('application command composition', () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.task.commandNames()).toEqual([
+      'settings:get-preflight',
+      'settings:list-skills',
       'settings:list-connectors',
       'settings:get-connector-detail',
       'settings:set-connector-enabled',
@@ -607,6 +609,33 @@ it('routes Task Connector reads to the existing Settings owner without adding We
   expect(listConnectors).toHaveBeenCalledOnce()
   expect(composition.localWeb.commandNames()).not.toContain('settings:test-custom-server')
   expect(composition.remoteWeb.commandNames()).not.toContain('settings:test-custom-server')
+  composition.dispose()
+})
+
+it('routes Task doctor prerequisites to the existing Settings owners', async () => {
+  const preflight = {
+    claudeReady: false,
+    opencodeReady: false,
+    codebuddyReady: false,
+    codexReady: true,
+    agentFrameworkId: 'codex',
+    agentReady: true,
+    activeProviderReady: true
+  }
+  const skills = [{ id: 'literature-review' }]
+  const getPreflight = vi.fn(async () => preflight)
+  const listSkills = vi.fn(async () => skills)
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    settingsCore: { service: { getPreflight, listSkills } } as never
+  })
+
+  await expect(composition.task.invoke('settings:get-preflight', invocation())).resolves.toEqual(
+    preflight
+  )
+  await expect(composition.task.invoke('settings:list-skills', invocation())).resolves.toEqual(
+    skills
+  )
   composition.dispose()
 })
 

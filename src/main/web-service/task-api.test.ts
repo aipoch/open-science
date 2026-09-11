@@ -237,6 +237,103 @@ const createComputePreferenceHarness = (
 }
 
 describe('HeadlessTaskApi adapter', () => {
+  it('projects read-only readiness checks and stable next-action codes', async () => {
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'settings:get-preflight') {
+        return {
+          claudeReady: true,
+          opencodeReady: true,
+          codebuddyReady: true,
+          codexReady: false,
+          agentFrameworkId: 'codex',
+          agentReady: false,
+          activeProviderReady: false,
+          runtimeReadiness: { status: 'missing' },
+          providerReadiness: { status: 'missing' }
+        }
+      }
+      if (channel === 'settings:list-skills') {
+        return [
+          {
+            id: 'writing',
+            name: 'writing',
+            displayName: 'Writing',
+            description: 'Write reports.',
+            source: 'featured',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            enabled: true
+          },
+          {
+            id: 'literature-review',
+            name: 'literature-review',
+            displayName: 'Literature Review',
+            description: 'Review literature.',
+            source: 'featured',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            enabled: true,
+            available: true
+          },
+          {
+            id: 'unavailable',
+            name: 'unavailable',
+            displayName: 'Unavailable',
+            description: 'Unavailable skill.',
+            source: 'personal',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            enabled: true,
+            available: false,
+            availability: 'identity-conflict'
+          }
+        ]
+      }
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+
+    await expect(api.doctor()).resolves.toEqual({
+      ready: false,
+      checks: {
+        daemon: { status: 'ready' },
+        runtime: { status: 'missing', framework: 'codex' },
+        provider: { status: 'missing' },
+        skills: { status: 'ready', enabled: ['literature-review', 'writing'] }
+      },
+      next: [{ code: 'runtime_missing' }, { code: 'provider_missing' }]
+    })
+  })
+
+  it('distinguishes configured but unusable runtime and provider state', async () => {
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'settings:get-preflight') {
+        return {
+          claudeReady: false,
+          opencodeReady: false,
+          codebuddyReady: false,
+          codexReady: false,
+          agentFrameworkId: 'codex',
+          agentReady: false,
+          activeProviderReady: false,
+          runtimeReadiness: { status: 'not_ready' },
+          providerReadiness: { status: 'not_ready', reason: 'credential_invalid' }
+        }
+      }
+      if (channel === 'settings:list-skills') return []
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+
+    await expect(api.doctor()).resolves.toEqual({
+      ready: false,
+      checks: {
+        daemon: { status: 'ready' },
+        runtime: { status: 'not_ready', framework: 'codex' },
+        provider: { status: 'not_ready', reason: 'credential_invalid' },
+        skills: { status: 'ready', enabled: [] }
+      },
+      next: [{ code: 'runtime_not_ready' }, { code: 'provider_not_ready' }]
+    })
+  })
+
   it('routes Project Session defaults through the Task-only persistence command', async () => {
     const invoke = vi.fn(
       async (channel: string, _callerContext: CallerContext, args: unknown[]) => {

@@ -159,6 +159,8 @@ const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
 ])
 
 const TASK_COMMAND_NAMES = Object.freeze([
+  'settings:get-preflight',
+  'settings:list-skills',
   'settings:list-connectors',
   'settings:get-connector-detail',
   'settings:set-connector-enabled',

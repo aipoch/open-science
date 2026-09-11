@@ -17,6 +17,7 @@ import {
   CodexAuthController,
   ensureCodexAuthHome,
   importCodexAuthentication,
+  inspectAppOwnedCodexAuthentication,
   openCodexAuthSession,
   resolveEffectiveCodexSubscriptionTransport,
   type CodexAuthControllerPort,
@@ -524,7 +525,11 @@ class ProviderAuthLifecycleOwner {
   }
 
   async isProviderKeyUsable(provider: StoredProvider): Promise<boolean> {
-    if (isCodexSubscriptionProvider(provider.type)) return true
+    if (isCodexSubscriptionProvider(provider.type)) {
+      return (
+        (await inspectAppOwnedCodexAuthentication(this.options.storageRoot)).state === 'present'
+      )
+    }
     if (provider.type === 'claude-shared') {
       if (provider.disconnectedAt !== undefined) return false
       return this.getClaudeSharedAuthStatus()

@@ -168,6 +168,7 @@ type WebServerOptions = {
         | 'updateCredential'
         | 'getAgentRouting'
         | 'updateAgentRouting'
+        | 'doctor'
       >
     >
   waitUntilTasksReady?: () => Promise<void>
@@ -988,6 +989,13 @@ const handleTaskApiRequest = async (
   tasks.runWithCallerContext(callerContext, async () => {
     try {
       await waitUntilTasksReady?.()
+      if (url.pathname === '/api/v1/doctor' && request.method === 'GET' && tasks.doctor) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const data = await tasks.doctor()
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data })
+        return true
+      }
       const connectorMatch = url.pathname.match(
         /^\/api\/v1\/connectors(?:\/([^/]+)(?:\/(enabled|test))?)?$/
       )
