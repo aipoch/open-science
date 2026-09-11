@@ -17,7 +17,7 @@ import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
-import { createGzip, createGunzip } from 'node:zlib'
+import { createGzip } from 'node:zlib'
 
 const archiveName = 'setup.tar.gz'
 const manifestName = 'setup.json'
@@ -128,9 +128,12 @@ export async function restoreSnapshot(cwd, directory, env = process.env) {
     }
     throw new Error(`E2E setup restore requires an absent ${path}`)
   }
-  const { child, completed } = tarProcess(['-xf', '-'], cwd, env)
+  // GNU tar can exit successfully at the end marker before a pipe writer has sent the trailing
+  // padding. Let tar own decompression so successful extraction cannot race Node's stdin pipeline.
+  const { child, completed } = tarProcess(['-xzf', archive], cwd, env)
+  child.stdin.end()
   child.stdout.resume()
-  await Promise.all([completed, pipeline(createReadStream(archive), createGunzip(), child.stdin)])
+  await completed
   const links = localPackageLinks(
     JSON.parse(await readFile(join(cwd, 'package-lock.json'), 'utf8'))
   )

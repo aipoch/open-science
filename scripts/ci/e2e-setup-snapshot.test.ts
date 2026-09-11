@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   chmod,
   lstat,
@@ -13,6 +14,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
+import { gunzipSync, gzipSync } from 'node:zlib'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -76,6 +78,24 @@ async function fixture(): Promise<{ producer: string; consumer: string; archive:
 }
 
 describe('same-run E2E setup snapshots', () => {
+  it('accepts a valid archive when tar finishes before consuming its trailing padding', async () => {
+    const { producer, consumer, archive } = await fixture()
+    await packSnapshot(producer, archive, environment)
+    const archivePath = join(archive, 'setup.tar.gz')
+    // Tar ends at zero records. A reader may exit successfully without consuming every padded byte.
+    // Make the padding exceed pipe buffers so the producer cannot finish writing before tar exits.
+    const padded = gzipSync(
+      Buffer.concat([gunzipSync(await readFile(archivePath)), Buffer.alloc(4 * 1024 * 1024)])
+    )
+    await writeFile(archivePath, padded)
+    const manifestPath = join(archive, 'setup.json')
+    const metadata = JSON.parse(await readFile(manifestPath, 'utf8'))
+    metadata.sha256 = createHash('sha256').update(padded).digest('hex')
+    await writeFile(manifestPath, JSON.stringify(metadata))
+    await restoreSnapshot(consumer, archive, environment)
+    expect(await readFile(join(consumer, 'out/main/index.js'), 'utf8')).toBe('current build')
+  })
+
   it('moves generated files and executable modes, rebasing local links to the consumer', async () => {
     const { producer, consumer, archive } = await fixture()
     expect(await packSnapshot(producer, archive, environment)).toBeGreaterThan(0)
