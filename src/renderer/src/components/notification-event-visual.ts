@@ -63,18 +63,18 @@ export const notificationEventToneClasses: Record<
 > = {
   success: {
     tile: 'bg-success-000/10 text-success-000',
-    chip: 'border-success-000/25 bg-success-000/10 text-success-000'
+    chip: 'border-success-000/25 bg-success-000/10 text-text-100'
   },
   danger: {
     tile: 'bg-danger-000/10 text-danger-000',
-    chip: 'border-danger-000/25 bg-danger-000/10 text-danger-000'
+    chip: 'border-danger-000/25 bg-danger-000/10 text-text-100'
   },
   waiting: {
     tile: 'bg-session-waiting/10 text-session-waiting',
-    chip: 'border-session-waiting/25 bg-session-waiting/10 text-session-waiting'
+    chip: 'border-session-waiting/25 bg-session-waiting/10 text-text-100'
   },
   neutral: {
     tile: 'bg-bg-300 text-text-300',
-    chip: 'border-border-200/70 bg-bg-100 text-text-300'
+    chip: 'border-border-200/70 bg-bg-100 text-text-100'
   }
 }
