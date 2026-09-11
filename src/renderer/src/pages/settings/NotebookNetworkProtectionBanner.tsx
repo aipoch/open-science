@@ -91,7 +91,7 @@ const NotebookNetworkProtectionBanner = ({
           Icon: ShieldCheck,
           title: t('Network protection on'),
           description: t(
-            'Notebook sessions and package downloads can access only approved domains.'
+            'Notebook allows approved domains and restricted public HTTPS reads. GET and HEAD still send URLs; approved domains allow sending data.'
           ),
           tone: 'neutral'
         }

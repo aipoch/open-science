@@ -13,7 +13,8 @@ import type { NotebookSandboxCleanupReason, NotebookSandboxProcessOutcome } from
 
 const backend = vi.hoisted(() => ({
   request: undefined as
-    ((request: { host: string; port?: number }) => Promise<boolean>) | undefined,
+    | ((request: { host: string; port?: number; purpose?: 'probe' | 'block' }) => Promise<boolean>)
+    | undefined,
   initialize: vi.fn().mockResolvedValue(undefined),
   cleanup: vi.fn().mockResolvedValue({
     processesTerminated: true,
@@ -21,6 +22,7 @@ const backend = vi.hoisted(() => ({
     temporaryResourcesRemoved: true
   }),
   resetNetworkConnections: vi.fn(),
+  setExecutionActive: vi.fn(),
   wrap: vi.fn(),
   updatePolicy: vi.fn(),
   updateConfiguration: vi.fn(),
@@ -108,6 +110,7 @@ beforeEach(() => {
       onNetworkAccessRequest: (request: {
         host: string
         port?: number
+        purpose?: 'probe' | 'block'
         signal: AbortSignal
       }) => Promise<boolean>
     }) => {
@@ -121,6 +124,8 @@ beforeEach(() => {
           env: process.env,
           annotateStderr: (stderr: string) => stderr,
           resetNetworkConnections: backend.resetNetworkConnections,
+
+          setExecutionActive: backend.setExecutionActive,
           confirmProcessTreeTermination: async () => true,
           cleanup: (
             _reason: NotebookSandboxCleanupReason,
@@ -128,9 +133,10 @@ beforeEach(() => {
           ) => backend.cleanup(outcome)
         }
       const controller = new AbortController()
-      backend.request = ({ host, port }) =>
+      backend.request = ({ host, port, purpose }) =>
         command.onNetworkAccessRequest({
           host,
+          purpose,
           ...(port === undefined ? {} : { port }),
           signal: controller.signal
         })
@@ -142,6 +148,7 @@ beforeEach(() => {
           : {}),
         annotateStderr: (stderr: string) => stderr,
         resetNetworkConnections: backend.resetNetworkConnections,
+        setExecutionActive: backend.setExecutionActive,
         cleanup: async (
           _reason: NotebookSandboxCleanupReason,
           processOutcome: NotebookSandboxProcessOutcome
@@ -213,6 +220,7 @@ describe('NotebookNetworkSandboxOwner', () => {
       env: command.env,
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
+      setExecutionActive: backend.setExecutionActive,
       confirmProcessTreeTermination: async () => true,
       cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
         backend.cleanup(outcome)
@@ -478,7 +486,13 @@ describe('NotebookNetworkSandboxOwner', () => {
     const endInstaller = installer.beginExecution?.()
     await expect(installerRequest({ host: 'packages.example.org', port: 443 })).resolves.toBe(true)
     await expect(installerRequest({ host: 'redirect.example.org', port: 443 })).resolves.toBe(false)
+    await expect(
+      installerRequest({ host: 'packages.example.org', port: 443, purpose: 'probe' })
+    ).resolves.toBe(true)
     endInstaller?.()
+    await expect(
+      installerRequest({ host: 'packages.example.org', port: 443, purpose: 'probe' })
+    ).resolves.toBe(false)
     const endNotebook = notebook.beginExecution?.()
     await expect(notebookRequest({ host: 'packages.example.org', port: 443 })).resolves.toBe(false)
     endNotebook?.()
@@ -538,6 +552,21 @@ describe('NotebookNetworkSandboxOwner', () => {
     expect(backend.initialize).toHaveBeenCalledOnce()
 
     const blockedExecution = wrapped.beginExecution?.()
+    expect(backend.setExecutionActive).toHaveBeenLastCalledWith(true)
+    await expect(
+      backend.request?.({ host: 'auto.example.org', port: 443, purpose: 'probe' })
+    ).resolves.toBe(false)
+    requestDecision.mockResolvedValueOnce('deny')
+    await expect(
+      owner.requestNetworkAccess({
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        hostname: 'auto.example.org',
+        reason: 'No actual block occurred.'
+      })
+    ).resolves.toMatchObject({ status: 'denied' })
+    expect(requestDecision).toHaveBeenCalledWith(expect.objectContaining({ allowOnce: false }))
+    requestDecision.mockClear()
     await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
     blockedExecution?.()
     expect(backend.resetNetworkConnections).toHaveBeenCalledTimes(2)
@@ -1129,6 +1158,8 @@ describe('NotebookNetworkSandboxOwner', () => {
       env: {},
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
+
+      setExecutionActive: backend.setExecutionActive,
       cleanup: async () => {
         cleanupTargets.push(command.target.kind)
         return {
@@ -1402,6 +1433,153 @@ describe('NotebookNetworkSandboxOwner', () => {
   })
 })
 
+describe('explicit network approval without a preceding failure', () => {
+  it('offers a card without command context instead of treating it as a user denial', async () => {
+    const requestDecision = vi.fn().mockResolvedValue('alwaysAllow')
+    const settings = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['data.example.org'] }
+    const persistAlwaysAllow = vi.fn().mockResolvedValue(settings)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow,
+      requestDecision
+    })
+    await expect(
+      owner.requestNetworkAccess({
+        sessionId: 's',
+        projectId: 'p',
+        hostname: 'data.example.org',
+        reason: 'Explicit user approval'
+      })
+    ).resolves.toMatchObject({ status: 'alwaysAllowed' })
+    expect(requestDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ allowOnce: false, hostname: 'data.example.org' })
+    )
+    expect(persistAlwaysAllow).toHaveBeenCalledWith('data.example.org')
+    await owner.dispose()
+  })
+
+  it('binds a proactive one-time approval to only the supplied command and session', async () => {
+    const requestDecision = vi.fn().mockResolvedValue('allowOnce')
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision,
+      platform: 'linux'
+    })
+    await expect(
+      owner.requestNetworkAccess({
+        sessionId: 's',
+        projectId: 'p',
+        hostname: 'data.example.org',
+        reason: 'Upload synthetic data',
+        runtime: 'bash',
+        command: 'curl --data marker https://data.example.org'
+      })
+    ).resolves.toMatchObject({ status: 'allowedOnce' })
+    expect(requestDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ allowOnce: true, runtime: 'bash' })
+    )
+    for (const [sessionId, commandText, expected] of [
+      ['other', 'curl --data marker https://data.example.org', false],
+      ['s', 'different command', false],
+      ['s', 'curl --data marker https://data.example.org', true],
+      ['s', 'curl --data marker https://data.example.org', false]
+    ] as const) {
+      const wrapped = await owner.wrap({
+        executable: '/bin/sh',
+        args: ['-c', commandText],
+        env: {},
+        cwd: '/workspace',
+        commandText,
+        sessionId,
+        projectId: 'p',
+        runtime: 'bash',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: ['/workspace'],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      const end = wrapped.beginExecution?.()
+      await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(
+        expected
+      )
+      end?.()
+      await wrapped.cleanup('exit', { processesTerminated: true })
+    }
+    await owner.dispose()
+  })
+
+  it('cannot turn an invalid once selection without command context into a grant', async () => {
+    const persistAlwaysAllow = vi.fn()
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow,
+      requestDecision: vi.fn().mockResolvedValue('allowOnce')
+    })
+    await expect(
+      owner.requestNetworkAccess({
+        sessionId: 's',
+        projectId: 'p',
+        hostname: 'data.example.org',
+        reason: 'Explicit approval'
+      })
+    ).resolves.toMatchObject({ status: 'unavailable' })
+    expect(persistAlwaysAllow).not.toHaveBeenCalled()
+    await owner.dispose()
+  })
+  it.each(['python', 'r', 'repl'] as const)(
+    'does not offer proactive once for caller-supplied %s source code',
+    async (runtime) => {
+      const requestDecision = vi.fn().mockResolvedValue('deny')
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision
+      })
+      await expect(
+        owner.requestNetworkAccess({
+          sessionId: 's',
+          projectId: 'p',
+          hostname: 'data.example.org',
+          reason: 'Explicit approval',
+          runtime,
+          command: 'source code is not a kernel command'
+        })
+      ).resolves.toMatchObject({ status: 'denied' })
+      expect(requestDecision).toHaveBeenCalledWith(
+        expect.objectContaining({ allowOnce: false, runtime })
+      )
+      await owner.dispose()
+    }
+  )
+
+  it('rejects an invalid once selection for unrecognized Kernel command context', async () => {
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn().mockResolvedValue('allowOnce')
+    })
+    await expect(
+      owner.requestNetworkAccess({
+        sessionId: 's',
+        projectId: 'p',
+        hostname: 'data.example.org',
+        reason: 'Explicit approval',
+        runtime: 'python',
+        command: 'print(1)'
+      })
+    ).resolves.toMatchObject({ status: 'unavailable' })
+    await owner.dispose()
+  })
+})
+
 it('does not automatically grant durable permissions to an agent-created R environment', async () => {
   const root = await mkdtemp(join(tmpdir(), 'os-r-named-access-'))
   fixtureDirectories.push(root)
@@ -1466,6 +1644,8 @@ it('authorizes missing R access before the original Notebook cell is dispatched'
       env: command.env,
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
+
+      setExecutionActive: backend.setExecutionActive,
       confirmProcessTreeTermination: async () => true,
       cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
         backend.cleanup(outcome)
@@ -1621,6 +1801,8 @@ describe('R startup authorization admission', () => {
       env: process.env,
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
+
+      setExecutionActive: backend.setExecutionActive,
       confirmProcessTreeTermination: async () => true,
       cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
         backend.cleanup(outcome)
@@ -1647,6 +1829,8 @@ describe('R startup authorization admission', () => {
       confirmProcessTreeTermination: confirm,
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
+
+      setExecutionActive: backend.setExecutionActive,
       cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
         backend.cleanup(outcome)
     })
@@ -1678,6 +1862,8 @@ describe('R startup authorization admission', () => {
       confirmProcessTreeTermination: confirm,
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
+
+      setExecutionActive: backend.setExecutionActive,
       cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
         backend.cleanup(outcome)
     })
@@ -1706,6 +1892,8 @@ describe('R startup authorization admission', () => {
       confirmProcessTreeTermination: confirm,
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
+
+      setExecutionActive: backend.setExecutionActive,
       cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
         backend.cleanup(outcome)
     })
@@ -1887,6 +2075,8 @@ describe('R startup authorization admission', () => {
       env: process.env,
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
+
+      setExecutionActive: backend.setExecutionActive,
       confirmProcessTreeTermination: async () => true,
       cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
         backend.cleanup(outcome)
@@ -1911,6 +2101,8 @@ describe('R startup authorization admission', () => {
       env: process.env,
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
+
+      setExecutionActive: backend.setExecutionActive,
       confirmProcessTreeTermination: async () => true,
       cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
         backend.cleanup(outcome)
@@ -1963,6 +2155,8 @@ describe('R startup authorization admission', () => {
       env: process.env,
       annotateStderr: (stderr: string) => stderr,
       resetNetworkConnections: backend.resetNetworkConnections,
+
+      setExecutionActive: backend.setExecutionActive,
       confirmProcessTreeTermination: async () => true,
       cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
         backend.cleanup(outcome)

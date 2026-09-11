@@ -83,4 +83,83 @@ describe('Notebook destination policy', () => {
       expect(lookup).not.toHaveBeenCalled()
     }
   )
+  it('distinguishes explicit approval from an unknown public destination', async () => {
+    const policy = new DestinationPolicy({
+      allowedDomains: ['*.example.com'],
+      askDomains: ['restricted.example.com'],
+      deniedDomains: []
+    })
+    await expect(policy.inspect('restricted.example.com', 443)).resolves.toMatchObject({
+      kind: 'ask',
+      source: 'explicit'
+    })
+    await expect(policy.inspect('unknown.example', 443)).resolves.toEqual({
+      kind: 'ask',
+      source: 'unknown',
+      host: 'unknown.example',
+      address: '93.184.216.34'
+    })
+  })
+
+  it('lets exact approvals override ask rules but never hard denies', async () => {
+    const policy = new DestinationPolicy({
+      allowedDomains: ['approved.example', 'blocked.example'],
+      askDomains: ['approved.example'],
+      deniedDomains: ['blocked.example']
+    })
+    await expect(policy.inspect('APPROVED.EXAMPLE.', 443)).resolves.toMatchObject({ kind: 'allow' })
+    await expect(policy.inspect('blocked.example', 443)).resolves.toMatchObject({
+      kind: 'deny',
+      configurable: false
+    })
+  })
+
+  it('does not let broad or mismatched-port approvals override explicit ask', async () => {
+    const policy = new DestinationPolicy({
+      allowedDomains: ['*', '*.example.com', 'data.example.com:8443'],
+      askDomains: ['*.example.com'],
+      deniedDomains: []
+    })
+    await expect(policy.inspect('data.example.com', 443)).resolves.toMatchObject({
+      kind: 'ask',
+      source: 'explicit'
+    })
+    await expect(policy.inspect('data.example.com', 8443)).resolves.toMatchObject({ kind: 'allow' })
+  })
+
+  it('normalizes public IP variants without mistaking them for DNS names', async () => {
+    const policy = new DestinationPolicy({ allowedDomains: [], deniedDomains: [] })
+    for (const host of ['8.8.8.8', '0x08080808', '134744072']) {
+      await expect(policy.inspect(host, 443)).resolves.toMatchObject({
+        kind: 'ask',
+        host: '8.8.8.8'
+      })
+    }
+    expect(lookup).not.toHaveBeenCalled()
+  })
+
+  it('fails closed for DNS failure even with exact target permission', async () => {
+    lookup.mockRejectedValue(new Error('lookup failed'))
+    const policy = new DestinationPolicy({ allowedDomains: ['example.com'], deniedDomains: [] })
+    await expect(policy.inspect('example.com', 443)).resolves.toMatchObject({
+      kind: 'deny',
+      configurable: false
+    })
+  })
+
+  it('checks every answer again on the next inspection', async () => {
+    const policy = new DestinationPolicy({ allowedDomains: ['example.com'], deniedDomains: [] })
+    await expect(policy.inspect('example.com', 443)).resolves.toMatchObject({
+      kind: 'allow',
+      address: '93.184.216.34'
+    })
+    lookup.mockResolvedValue([
+      { address: '93.184.216.34', family: 4 },
+      { address: '2002:7f00:1::', family: 6 }
+    ])
+    await expect(policy.inspect('example.com', 443)).resolves.toMatchObject({
+      kind: 'deny',
+      configurable: false
+    })
+  })
 })

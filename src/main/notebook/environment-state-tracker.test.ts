@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, win32, posix } from 'node:path'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -53,6 +53,167 @@ const readBinding = async (
 }
 
 describe('EnvironmentStateTracker', () => {
+  it.each(['python', 'r'] as const)(
+    'cancels a running fresh %s metadata subprocess',
+    async (language) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'cancel-package-inspection-'))
+      const ready = join(dataRoot, 'ready')
+      const tracker = new EnvironmentStateTracker({ dataRoot })
+      const controller = new AbortController()
+      const pending = tracker.inspectPackages(
+        {
+          ...target,
+          language,
+          runtimeSource: 'managed',
+          condaPrefix: dataRoot,
+          command: process.execPath,
+          args: [
+            '-e',
+            `require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready'); setInterval(() => {}, 1000)`,
+            '--'
+          ]
+        },
+        ['numpy'],
+        { fresh: true, signal: controller.signal }
+      )
+      const rejection = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+      try {
+        await vi.waitFor(async () => expect(await readFile(ready, 'utf8')).toBe('ready'))
+      } finally {
+        controller.abort()
+      }
+      await rejection
+      expect(await readdir(dataRoot)).toEqual(['ready'])
+    }
+  )
+
+  it.each(['win32', 'darwin', 'linux'] as const)(
+    'isolates fresh managed Python/R metadata from host libraries on %s',
+    async (platform) => {
+      const path = platform === 'win32' ? win32 : posix
+      const root = platform === 'win32' ? 'C:\\runtime-test' : '/runtime-test'
+      const condaPrefix = path.join(root, 'envs', 'analysis')
+      vi.stubEnv('PYTHONPATH', '/host-only-python')
+      vi.stubEnv('PYTHONNOUSERSITE', '0')
+      vi.stubEnv('R_LIBS', '/host-only-r')
+      vi.stubEnv('R_LIBS_USER', '/host-user-r')
+      vi.stubEnv('R_LIBS_SITE', '/host-site-r')
+      try {
+        const execute = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+        const tracker = new EnvironmentStateTracker({ dataRoot: root, platform, execFile: execute })
+        for (const language of ['python', 'r'] as const) {
+          await tracker.inspectPackages(
+            { ...target, language, runtimeSource: 'managed', condaPrefix },
+            ['numpy'],
+            { fresh: true }
+          )
+          const [, args, options] = execute.mock.calls.at(-1)!
+          expect(options.env.HOME).toBe(path.join(join(root, 'runtime'), 'home'))
+          if (language === 'python') {
+            expect(options.env.PYTHONPATH).toBeUndefined()
+            expect(options.env.PYTHONNOUSERSITE).toBe('1')
+            expect(args).toContain('-I')
+          } else {
+            expect(options.env.R_LIBS).toBeUndefined()
+            expect(options.env.R_LIBS_SITE).toBeUndefined()
+            expect(options.env.R_LIBS_USER).toBe(
+              join(condaPrefix, platform === 'win32' ? 'Lib' : 'lib', 'R', 'library')
+            )
+          }
+        }
+      } finally {
+        vi.unstubAllEnvs()
+      }
+    }
+  )
+  it.each(['python', 'r'] as const)(
+    'fresh %s inspection bypasses cache and does not publish state',
+    async (language) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'fresh-package-inspection-'))
+      const name = language === 'python' ? 'scikit-learn' : 'R.utils'
+      const requested = language === 'python' ? 'scikit_learn' : name
+      const inspectInstalled = vi.fn().mockResolvedValue({
+        packages: [
+          {
+            name,
+            ecosystem: language,
+            version: '1.0',
+            versionStatus: 'known',
+            evidenceSources: []
+          }
+        ]
+      })
+      const captureFingerprint = vi.fn()
+      const resolveMicromamba = vi.fn()
+      const tracker = new EnvironmentStateTracker({
+        dataRoot,
+        inspectInstalled,
+        captureFingerprint,
+        resolveMicromamba
+      })
+      const capture = { ...target, language, runtimeSource: 'managed' as const }
+      expect(
+        (await tracker.inspectPackages(capture, [requested], { fresh: true })).packages[0]
+      ).toMatchObject({ status: 'installed', version: '1.0' })
+      inspectInstalled.mockResolvedValue({ packages: [] })
+      expect(
+        (await tracker.inspectPackages(capture, [requested], { fresh: true })).packages[0].status
+      ).toBe('missing')
+      expect(inspectInstalled).toHaveBeenCalledTimes(2)
+      expect(captureFingerprint).not.toHaveBeenCalled()
+      expect(resolveMicromamba).not.toHaveBeenCalled()
+      expect(await readdir(dataRoot)).toEqual([])
+    }
+  )
+
+  it('does not certify conflicting Python distribution versions', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'ambiguous-python-inspection-'))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: async () => ({
+        packages: ['1.0', '2.0'].map((version) => ({
+          name: 'numpy',
+          version,
+          versionStatus: 'known' as const,
+          ecosystem: 'python' as const,
+          evidenceSources: []
+        }))
+      })
+    })
+    expect(
+      (await tracker.inspectPackages(target, ['numpy==2.0'], { fresh: true })).packages[0].status
+    ).toBe('unknown')
+  })
+
+  it('uses exact R names and the first library rank during fresh inspection', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'ranked-r-inspection-'))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: async () => ({
+        packages: [2, 1].map((libraryRank) => ({
+          name: 'R.utils',
+          version: `${libraryRank}.0`,
+          libraryRank,
+          versionStatus: 'known' as const,
+          ecosystem: 'r' as const,
+          evidenceSources: []
+        }))
+      })
+    })
+    const result = await tracker.inspectPackages(
+      { ...target, language: 'r' },
+      ['R.utils', 'r.utils', 'R-utils'],
+      { fresh: true }
+    )
+    expect(result.packages[0]).toMatchObject({
+      status: 'installed',
+      version: '1.0',
+      libraryRank: 1
+    })
+    expect(result.packages[1].status).toBe('missing')
+    expect(result.packages[2].status).toBe('missing')
+  })
+
   it.each([
     { language: 'r', requested: 'org.Hs.eg.db', names: ['org.Hs.eg.db'], matched: true },
     { language: 'r', requested: 'org.hs.eg.db', names: ['org.Hs.eg.db'], matched: false },

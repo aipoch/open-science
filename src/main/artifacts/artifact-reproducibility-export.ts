@@ -87,7 +87,9 @@ type ArtifactReproducibilityReceiptExporterDependencies = {
   readOutputStorage?: (
     request: ArtifactReproducibilityReceiptScope
   ) => Promise<ArtifactReproducibilityOutputStorage>
-  downloadsDirectory: string
+  // Resolved lazily: Electron's 'downloads' path can be unavailable in isolated profiles, and
+  // wiring-time resolution once broke packaged startup (only save dialogs actually need it).
+  downloadsDirectory: () => string
   readReceipt: (
     request: ArtifactReproducibilityReceiptScope,
     receiptChecksum: string
@@ -799,7 +801,7 @@ const createArtifactReproducibilityReceiptExporter = (
         const selected = await dependencies.showSaveDialog(owner, {
           title: (dependencies.translate ?? englishNativeTranslator)('Save file'),
           defaultPath: join(
-            dependencies.downloadsDirectory,
+            dependencies.downloadsDirectory(),
             outputFilename(selectedOutput.relativePath)
           ),
           filters: []
@@ -823,7 +825,7 @@ const createArtifactReproducibilityReceiptExporter = (
       const selected = await dependencies.showSaveDialog(owner, {
         title: translate('Save file'),
         defaultPath: join(
-          dependencies.downloadsDirectory,
+          dependencies.downloadsDirectory(),
           verificationArchiveName(request.suggestedName, validated.completedAt)
         ),
         filters: [{ name: translate('ZIP archive'), extensions: ['zip'] }]
@@ -891,7 +893,7 @@ const createArtifactReproducibilityReceiptExporter = (
       const selected = await dependencies.showSaveDialog(owner, {
         title: translate('Save file'),
         defaultPath: join(
-          dependencies.downloadsDirectory,
+          dependencies.downloadsDirectory(),
           environmentLockArchiveName(request.lockChecksum)
         ),
         filters: [{ name: translate('ZIP archive'), extensions: ['zip'] }]

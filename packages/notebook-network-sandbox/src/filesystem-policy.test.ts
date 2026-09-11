@@ -141,6 +141,46 @@ describe('Notebook filesystem policy', () => {
     expect(log.attach('command', 'ordinary process failure')).toBe('ordinary process failure')
   })
 
+  it('does not mislabel non-filesystem permission errors as folder grants', () => {
+    const log = new ViolationLog()
+    for (const error of ['socket: Operation not permitted', 'Permission denied (publickey).']) {
+      expect(log.attach('command', error)).toBe(error)
+    }
+    const result = log.attach('command', 'bash: /data/output.csv: Read-only file system')
+    expect(result).toContain('native permissions, read-only mounts, or the sandbox')
+    expect(result).toContain('writable project path')
+    expect(result).toContain('request_network_access cannot grant filesystem access')
+  })
+
+  it('includes approval recovery in stderr even when curl discards the proxy body', () => {
+    const log = new ViolationLog()
+    log.record('command', 'deny network-outbound trialsearch.who.int:443 (not approved)')
+    const result = log.attach('command', 'curl: (56) CONNECT tunnel failed, response 403')
+    expect(result).toContain('request_network_access tool')
+    expect(result).toContain('exact hostname (without scheme or port), reason, and runtime')
+    expect(result).toContain('exact failed command')
+    expect(result).toContain('This opens a user approval card')
+    expect(result).toContain('If denied, stop')
+    expect(result).not.toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+    expect(log.attach('command', '')).toBe('')
+  })
+
+  it('separates policy failures from missing approvals in tool-visible stderr', () => {
+    for (const reason of [
+      'host did not resolve',
+      'destination resolves to a non-public network address',
+      'host is blocked by policy'
+    ]) {
+      const log = new ViolationLog()
+      log.record('command', `deny network-outbound example.org:443 (${reason})`)
+      const result = log.attach('command', 'curl: (56) CONNECT tunnel failed, response 403')
+      expect(result).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+      expect(result).toContain(reason)
+      expect(result).toContain('cannot be unlocked by request_network_access')
+      expect(result).not.toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
+    }
+  })
+
   it('distinguishes Linux-hidden paths from ordinary missing files', () => {
     const privateRoot = mkdtempSync(join(tmpdir(), 'open-science-hidden-'))
     const workspace = join(privateRoot, 'workspace')

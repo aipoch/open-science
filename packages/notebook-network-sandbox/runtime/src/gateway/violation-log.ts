@@ -1,3 +1,5 @@
+import { NETWORK_APPROVAL_REQUIRED, NETWORK_POLICY_BLOCKED } from './recovery-context.js'
+
 const MAX_EVENTS_PER_COMMAND = 32
 
 const clean = (value: string): string =>
@@ -54,15 +56,23 @@ class ViolationLog {
         (line) => line.startsWith('deny network-outbound ') && line.endsWith('(not approved)')
       )
     ) {
-      lines.unshift(
-        'OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED: This domain is not in Settings > Network > Allowed domains.'
-      )
+      lines.unshift(NETWORK_APPROVAL_REQUIRED)
     }
-    if (permissionDenied || hiddenMissingPath) {
-      const path = permissionDenied ? deniedPath(stderr) : hiddenMissingPath
+    if (
+      lines.some(
+        (line) => line.startsWith('deny network-outbound ') && !line.endsWith('(not approved)')
+      )
+    ) {
+      lines.unshift(NETWORK_POLICY_BLOCKED)
+    }
+    const path = (permissionDenied ? deniedPath(stderr) : undefined) ?? hiddenMissingPath
+    if (path) {
       lines.push(
         `OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED${path ? `: ${path}` : ''} ` +
-          '(grant the folder in the Files view and retry)'
+          'Filesystem access failed; native permissions, read-only mounts, or the sandbox may be responsible. ' +
+          'Check the path and required read/write access. Use a writable project path for output. ' +
+          'If access outside the project is needed, ask the user to grant that specific folder and access mode in the Files view; retry only after access changes. ' +
+          'request_network_access cannot grant filesystem access. Do not use sudo or disable the sandbox.'
       )
     }
     if (lines.length === 0) return stderr

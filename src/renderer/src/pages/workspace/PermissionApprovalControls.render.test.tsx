@@ -290,7 +290,7 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('Network access')
     expect(html).toContain('Notebook code requested access to data.example.org:443.')
     expect(html).toContain(
-      'Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.'
+      'Allow once applies to the next execution of the same command in this session and runtime. It allows multiple connections to this domain during that execution.'
     )
     expect(html).toContain('Reason: Download the dataset requested in this conversation.')
     expect(html).toContain('Details')
@@ -311,7 +311,7 @@ describe('PermissionApprovalControls', () => {
       const html = renderToStaticMarkup(
         <PermissionApprovalControls requests={[request]} onRespond={() => undefined} />
       )
-      expect(html.includes('even if the code changes')).toBe(
+      expect(html.includes('same command in this session and runtime')).toBe(
         runtime !== undefined && runtime !== 'bash'
       )
     }

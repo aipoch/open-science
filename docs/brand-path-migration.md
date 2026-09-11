@@ -229,7 +229,10 @@ identifiers. Renaming OS resource IDs or keys would create a different security/
 Legacy installation/Remote.It names remain read-side discovery candidates. These are individually
 reviewed technical contracts; they do not justify creating research data in old default directories.
 
-Certificate subjects and third-party names (including Open Science Framework) remain exact. Original
+Certificate subjects and third-party names (including Open Science Framework) remain exact. This
+includes the incoming local inspection CA subject `CN=Open Science process inspection CA`; its
+certificate identity is not a display label. The public-read HTTP product token is `Open-Science/1.0`:
+a hyphen is valid in that product name and does not change header field names or approval policy. Original
 screenshots and historical benchmark entries must not be edited to fabricate a different historical
 product label; current application renders and newly generated baselines use the normalized brand.
 

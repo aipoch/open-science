@@ -18,14 +18,15 @@ import {
   type NotebookPackageSource,
   type NotebookPackageInstallerAttempt
 } from '../../shared/notebook'
-import { condaActivatedPath } from './runtime-paths'
+import { condaActivatedPath, runtimeRoot } from './runtime-paths'
+import { buildManagedRuntimeProcessEnvironment } from './process-environment'
 import { runtimeChildProcessErrorFields, type RuntimeDiagnosticLogger } from './runtime-diagnostics'
 import { EnvironmentLockCaptureOwner, type EnvironmentLockWorkspace } from './environment-lock'
 
 type EnvironmentExecFile = (
   command: string,
   args: string[],
-  options: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv }
+  options: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv; signal?: AbortSignal }
 ) => Promise<{ stdout: string; stderr?: string }>
 
 const execFileAsync = promisify(execFile) as EnvironmentExecFile
@@ -867,18 +868,33 @@ const parseInventory = (
 const inspectInstalledDefault = async (
   target: EnvironmentCaptureTarget,
   platform: NodeJS.Platform = process.platform,
-  execute: EnvironmentExecFile = execFileAsync
+  execute: EnvironmentExecFile = execFileAsync,
+  managedRoot?: string,
+  signal?: AbortSignal
 ): Promise<InstalledEnvironmentInventory> => {
+  if (managedRoot && !target.condaPrefix)
+    throw new Error('Managed package inspection requires its prefix.')
   const args = [
     ...(target.args ?? []),
     ...(target.language === 'python'
-      ? ['-c', PYTHON_INVENTORY_SCRIPT]
+      ? [...(managedRoot ? ['-I'] : []), '-c', PYTHON_INVENTORY_SCRIPT]
       : ['--vanilla', '--slave', '-e', R_INVENTORY_SCRIPT])
   ]
   const { stdout } = await execute(target.command, args, {
+    ...(signal ? { signal } : {}),
     timeout: INSPECTION_TIMEOUT_MS,
     maxBuffer: 16 * 1024 * 1024,
-    env: environmentCaptureProcessEnv(target, process.env, platform)
+    env: environmentCaptureProcessEnv(
+      target,
+      managedRoot
+        ? buildManagedRuntimeProcessEnvironment(managedRoot, {
+            language: target.language,
+            prefix: target.condaPrefix,
+            platform
+          })
+        : process.env,
+      platform
+    )
   })
   return parseInventory(target.language, stdout)
 }
@@ -909,7 +925,9 @@ const captureFingerprintDefault = async (
 
 class EnvironmentStateTracker {
   private readonly inspectInstalled: (
-    target: EnvironmentCaptureTarget
+    target: EnvironmentCaptureTarget,
+    fresh?: boolean,
+    signal?: AbortSignal
   ) => Promise<InstalledEnvironmentInventory>
   private readonly captureFingerprint: (
     target: EnvironmentCaptureTarget
@@ -929,7 +947,14 @@ class EnvironmentStateTracker {
     this.execute = execute
     this.inspectInstalled =
       options.inspectInstalled ??
-      ((target) => inspectInstalledDefault(target, this.platform, execute))
+      ((target, fresh, signal) =>
+        inspectInstalledDefault(
+          target,
+          this.platform,
+          execute,
+          fresh && target.runtimeSource === 'managed' ? runtimeRoot(options.dataRoot) : undefined,
+          signal
+        ))
     this.captureFingerprint =
       options.captureFingerprint ??
       ((target) => captureFingerprintDefault(target, this.platform, execute))
@@ -942,8 +967,32 @@ class EnvironmentStateTracker {
 
   async inspectPackages(
     target: EnvironmentCaptureTarget,
-    requestedPackages: string[]
+    requestedPackages: string[],
+    options?: { fresh?: boolean; signal?: AbortSignal }
   ): Promise<PackageInspectionResult> {
+    if (options?.fresh) {
+      // Installation preflight needs current evidence, without publishing a mutation or lock.
+      return this.serializeTarget(target, async () => {
+        options.signal?.throwIfAborted()
+        const inventory = await this.inspectInstalled(target, true, options.signal)
+        const packages = sortPackages(inventory.packages)
+        const lookup = requestedPackageIndex(target.language, packages)
+        return {
+          inventory: { source: 'full-scan', validation: 'full-scan' },
+          packages: requestedPackages.map((requested) => {
+            const inspected = inspectRequestedPackage(target, requested, packages, lookup)
+            const candidates = lookup(requested)
+            // Multiple Python distributions with different versions cannot prove satisfaction.
+            if (
+              target.language === 'python' &&
+              candidates.some((pkg) => pkg.version !== inspected.version)
+            )
+              return { ...inspected, status: 'unknown' as const }
+            return inspected
+          })
+        }
+      })
+    }
     const prepared = await this.prepareRun(target)
     return this.serializeTarget(target, async () => {
       const cache = await this.readBinding(target)

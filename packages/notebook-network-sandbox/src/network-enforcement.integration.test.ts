@@ -1,13 +1,16 @@
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { createServer } from 'node:http'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { createServer, request as httpRequest } from 'node:http'
+import { mkdtemp, rm, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
 import { NotebookNetworkSandbox } from './index.js'
+import * as localCa from '../runtime/src/gateway/local-ca.js'
+import { CommandGateway } from '../runtime/src/gateway/command-gateway.js'
+import { DestinationPolicy } from '../runtime/src/gateway/address-policy.js'
 import type { NotebookSandboxedProcess } from './types.js'
 
 const run = (
@@ -31,6 +34,193 @@ const run = (
 const platformSupported = process.platform === 'darwin' || process.platform === 'linux'
 
 describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => {
+  it('keeps ordinary target approval available when local CA initialization fails', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-ca-failure-'))
+    const sandbox = new NotebookNetworkSandbox({
+      policy: { allowedDomains: [], deniedDomains: [] },
+      resources: { root: resolve(import.meta.dirname, '../vendor') }
+    })
+    const caFailure = vi
+      .spyOn(localCa, 'createLocalCertificateAuthority')
+      .mockRejectedValue(new Error('fixture failure'))
+    const policy = vi.spyOn(DestinationPolicy.prototype, 'inspect').mockResolvedValue({
+      kind: 'ask',
+      host: 'example.test',
+      address: '93.184.216.34',
+      source: 'unknown'
+    })
+    const approval = vi.fn(async () => false)
+    const gatewayOpened = vi.spyOn(CommandGateway, 'open')
+    let wrapped: NotebookSandboxedProcess | undefined
+    try {
+      await sandbox.initialize()
+      wrapped = await sandbox.wrap({
+        command: '/usr/bin/true',
+        cwd: directory,
+        onNetworkAccessRequest: approval
+      })
+      expect(wrapped.env.SSL_CERT_FILE).toBeUndefined()
+      wrapped.setExecutionActive(true)
+      const proxy = new URL(wrapped.env.HTTPS_PROXY!)
+      // This request runs on the host; Linux's advertised proxy port belongs to its namespace.
+      proxy.port = String((await gatewayOpened.mock.results[0]!.value).port)
+      await new Promise<void>((resolveResponse, reject) => {
+        const request = httpRequest({
+          hostname: proxy.hostname,
+          port: proxy.port,
+          method: 'CONNECT',
+          path: 'example.test:443',
+          headers: {
+            'Proxy-Authorization': `Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString('base64')}`
+          }
+        })
+        request.on('error', reject)
+        request.on('connect', (response, socket) => {
+          expect(response.statusCode).toBe(403)
+          socket.destroy()
+          resolveResponse()
+        })
+        request.end()
+      })
+      expect(approval).toHaveBeenCalledWith(
+        expect.objectContaining({ purpose: 'block', host: 'example.test' })
+      )
+      expect(wrapped.annotateStderr('')).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
+    } finally {
+      gatewayOpened.mockRestore()
+      caFailure.mockRestore()
+      policy.mockRestore()
+      try {
+        if (wrapped) {
+          expect(await wrapped.cleanup('spawn-failed', { processesTerminated: true })).toEqual({
+            processesTerminated: true,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
+        }
+      } finally {
+        try {
+          await sandbox.dispose()
+        } finally {
+          await rm(directory, { recursive: true, force: true })
+        }
+      }
+    }
+  })
+
+  it('discards DNS results from an ended execution before recording approval', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-dns-window-'))
+    const sandbox = new NotebookNetworkSandbox({
+      policy: { allowedDomains: [], deniedDomains: [] },
+      resources: { root: resolve(import.meta.dirname, '../vendor') }
+    })
+    const approval = vi.fn(async () => false)
+    let release!: (value: Awaited<ReturnType<DestinationPolicy['inspect']>>) => void
+    let inspected!: () => void
+    const started = new Promise<void>((resolveStarted) => {
+      inspected = resolveStarted
+    })
+    const policy = vi.spyOn(DestinationPolicy.prototype, 'inspect').mockImplementation(() => {
+      inspected()
+      return new Promise((resolveDecision) => {
+        release = resolveDecision
+      })
+    })
+    const gatewayOpened = vi.spyOn(CommandGateway, 'open')
+    let wrapped: NotebookSandboxedProcess | undefined
+    try {
+      await sandbox.initialize()
+      wrapped = await sandbox.wrap({
+        command: '/usr/bin/true',
+        cwd: directory,
+        onNetworkAccessRequest: approval
+      })
+      wrapped.setExecutionActive(true)
+      const proxy = new URL(wrapped.env.HTTPS_PROXY!)
+      // This request runs on the host; Linux's advertised proxy port belongs to its namespace.
+      proxy.port = String((await gatewayOpened.mock.results[0]!.value).port)
+      const request = httpRequest({
+        hostname: proxy.hostname,
+        port: proxy.port,
+        method: 'CONNECT',
+        path: 'example.test:443',
+        headers: {
+          'Proxy-Authorization': `Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString('base64')}`
+        }
+      })
+      request.on('error', () => {})
+      request.on('connect', (_response, socket) => socket.destroy())
+      request.end()
+      await started
+      wrapped.setExecutionActive(false)
+      wrapped.setExecutionActive(true)
+      release({ kind: 'ask', host: 'example.test', address: '93.184.216.34', source: 'unknown' })
+      await new Promise((resolveTurn) => setTimeout(resolveTurn, 20))
+      expect(approval).not.toHaveBeenCalled()
+      expect(wrapped.annotateStderr('')).not.toContain('not approved')
+      request.destroy()
+    } finally {
+      gatewayOpened.mockRestore()
+      policy.mockRestore()
+      try {
+        if (wrapped) {
+          expect(await wrapped.cleanup('spawn-failed', { processesTerminated: true })).toEqual({
+            processesTerminated: true,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
+        }
+      } finally {
+        try {
+          await sandbox.dispose()
+        } finally {
+          await rm(directory, { recursive: true, force: true })
+        }
+      }
+    }
+  })
+
+  it('injects a read-only certificate-only bundle into a real process and removes it on cleanup', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-ca-launch-'))
+    const sandbox = new NotebookNetworkSandbox({
+      policy: { allowedDomains: [], deniedDomains: [] },
+      resources: { root: resolve(import.meta.dirname, '../vendor') }
+    })
+    let bundlePath: string | undefined
+    try {
+      await sandbox.initialize()
+      const wrapped = await sandbox.wrap({
+        command:
+          '/bin/cat "$SSL_CERT_FILE"; if /bin/chmod u+w "$SSL_CERT_FILE" 2>/dev/null; then echo MUTATED; fi; if /bin/rm "$SSL_CERT_FILE" 2>/dev/null; then echo REMOVED; fi',
+        cwd: directory,
+        env: { PATH: '/usr/bin:/bin' },
+        filesystem: {
+          readOnlyRoots: ['/usr/bin', '/bin'],
+          readWriteRoots: [directory],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        },
+        onNetworkAccessRequest: async () => false
+      })
+      bundlePath = wrapped.env.SSL_CERT_FILE
+      expect(bundlePath).toBeTruthy()
+      wrapped.setExecutionActive(true)
+      const result = await run(wrapped, directory)
+      wrapped.setExecutionActive(false)
+      expect(result.stdout).toContain('BEGIN CERTIFICATE')
+      expect(result.stdout).not.toContain('PRIVATE KEY')
+      expect(result.stdout).not.toContain('MUTATED')
+      expect(result.stdout).not.toContain('REMOVED')
+      expect(await readFile(bundlePath!, 'utf8')).toBe(result.stdout)
+      expect((await stat(bundlePath!)).mode & 0o222).toBe(0)
+      await wrapped.cleanup('exit', { processesTerminated: true })
+    } finally {
+      await sandbox.dispose()
+      await rm(directory, { recursive: true, force: true })
+    }
+    await expect(stat(bundlePath!)).rejects.toThrow()
+  })
+
   it('launches the Electron-as-Node process used by POSIX REPL kernels', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'open-science-repl-launch-'))
     const electronPath = createRequire(import.meta.url)('electron') as string

@@ -700,7 +700,15 @@ const createApplicationModules = async (
         if (!service) throw new Error('Settings are not ready.')
         return service.allowNotebookNetworkDomain(hostname)
       },
-      requestDecision: async ({ sessionId, hostname, port, runtime, reason, signal }) => {
+      requestDecision: async ({
+        sessionId,
+        hostname,
+        port,
+        runtime,
+        reason,
+        allowOnce,
+        signal
+      }) => {
         if (headless && !permissionApprovalPresence.isAvailable()) return 'unavailable'
         const coordinator = runtimeRef.current
         if (!coordinator || signal.aborted) return 'deny'
@@ -717,7 +725,16 @@ const createApplicationModules = async (
               }
             },
             options: [
-              { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
+              ...(allowOnce
+                ? [
+                    {
+                      optionId: 'allow-once',
+                      name: 'Allow once',
+                      kind: 'allow_once' as const,
+                      scope: 'once' as const
+                    }
+                  ]
+                : []),
               {
                 optionId: 'always-allow',
                 name: 'Global',
@@ -4493,7 +4510,7 @@ const createApplicationModules = async (
         withDataRootWrite(() =>
           getArtifactReproducibilityOutputStorage(artifactProvenanceRepository, request)
         ),
-      downloadsDirectory: app.getPath('downloads'),
+      downloadsDirectory: () => app.getPath('downloads'),
       readOutput: (request, checksum, entityId) =>
         withDataRootWrite(() =>
           getArtifactReproducibilityOutput(
