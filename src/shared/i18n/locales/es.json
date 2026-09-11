@@ -106,8 +106,6 @@
     "Import Environment lock": "Importar bloqueo de entorno"
   },
   "renderer": {
-    "This provider is referenced by saved conversations and cannot be deleted.": "Este proveedor está referenciado en conversaciones guardadas y no se puede eliminar.",
-    "Could not check saved conversations. Resolve session storage errors and try again.": "No se pudieron comprobar las conversaciones guardadas. Resuelva los errores de almacenamiento de las sesiones y vuelva a intentarlo.",
     "The source message is no longer available.": "El mensaje de origen ya no está disponible.",
     "This Notebook exceeds the 10 MB preview limit.": "Este Notebook supera el límite de vista previa de 10 MB.",
     "Recent searches": "Búsquedas recientes",

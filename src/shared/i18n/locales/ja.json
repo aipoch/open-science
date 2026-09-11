@@ -104,8 +104,6 @@
     "Import Environment lock": "環境ロックをインポート"
   },
   "renderer": {
-    "This provider is referenced by saved conversations and cannot be deleted.": "このプロバイダーは保存済みの会話で参照されているため、削除できません。",
-    "Could not check saved conversations. Resolve session storage errors and try again.": "保存済みの会話を確認できませんでした。セッションのストレージエラーを解決してから、もう一度お試しください。",
     "The source message is no longer available.": "元のメッセージは利用できなくなりました。",
     "This Notebook exceeds the 10 MB preview limit.": "この Notebook はプレビューの上限 10 MB を超えています。",
     "Recent searches": "最近の検索",

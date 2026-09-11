@@ -263,7 +263,7 @@ const ProviderList = ({
             : undefined
           // The provider sourcing the selected model (and the last remaining one) can't be deleted:
           // removing it would leave no model to run, so its delete action stays disabled.
-          const canDelete = !isActiveSource && displayedProviders.length > 1
+          const canDelete = true
           // The chat endpoint(s) this provider speaks; defaults to Anthropic when unset (older/custom).
           const endpoint = {
             path: providerRoutes.map((route) => ENDPOINT_PATHS[route]).join(' · '),

@@ -3893,8 +3893,6 @@ const createApplicationModules = async (
   // persisted defaults only and never flow through this effects port to mutate existing Sessions.
   const settingsWorkflows = createSettingsWorkflows(settingsService, {
     runtime: {
-      withProviderRemoval: (providerIds, remove) =>
-        sessionPersistenceCoordinator.withProviderRemoval(providerIds, remove),
       requestProviderReconnect: (providerIds, includeDefault = true) => {
         void runtime.requestProviderReconnect(providerIds, includeDefault)
         if (includeDefault) void sideChatRuntime.requestProviderReconnect()

@@ -42,10 +42,6 @@ type RuntimeSettingsWorkflowStore = Pick<
 >
 
 type RuntimeSettingsWorkflowEffects = {
-  withProviderRemoval: <Result>(
-    providerIds: readonly string[],
-    remove: () => Promise<Result>
-  ) => Promise<Result>
   requestProviderReconnect: (providerIds?: readonly string[], includeDefault?: boolean) => void
   requestAgentFrameworkSwitch: (frameworkId?: AgentFrameworkId) => void
 }
@@ -127,9 +123,7 @@ class RuntimeSettingsWorkflows {
     scenarioModelHandling?: ProviderDeletionScenarioModelHandling
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['deleteProvider']>>> {
     const before = await this.settings.getSettingsView()
-    const snapshot = await this.effects.withProviderRemoval(affectedProviderIds(id), () =>
-      this.settings.deleteProvider(id, scenarioModelHandling)
-    )
+    const snapshot = await this.settings.deleteProvider(id, scenarioModelHandling)
     this.effects.requestProviderReconnect(
       affectedProviderIds(id),
       before.activeProviderId !== snapshot.activeProviderId

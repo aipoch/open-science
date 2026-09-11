@@ -1,4 +1,3 @@
-import { sessionReferencesProvider } from '../../shared/session-agent-configuration'
 import { assertLiteratureAttachmentsUnreferenced } from './literature-attachment-removal'
 import { ProjectFilesReconciliationError } from '../project-files/repository'
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
@@ -547,28 +546,6 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         quarantinedIsIncomplete: true
       })
       assertLiteratureAttachmentsUnreferenced(scan, [attachmentId])
-      return remove()
-    })
-  }
-
-  withProviderRemoval<Result>(
-    providerIds: readonly string[],
-    remove: () => Promise<Result>
-  ): Promise<Result> {
-    // ponytail: full read-only scan at deletion time; add an index only if deletion becomes slow.
-    return this.operationScheduler.runGlobal(async () => {
-      const scan = await this.repository.loadAllWithDiagnostics({
-        mode: 'read-only',
-        quarantinedIsIncomplete: true
-      })
-      if (!scan.isComplete) {
-        throw new Error(
-          'Could not check saved conversations. Resolve session storage errors and try again.'
-        )
-      }
-      if (scan.result.sessions.some((session) => sessionReferencesProvider(session, providerIds))) {
-        throw new Error('This provider is referenced by saved conversations and cannot be deleted.')
-      }
       return remove()
     })
   }

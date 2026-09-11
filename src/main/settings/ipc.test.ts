@@ -358,8 +358,7 @@ const registerTestSettingsIpcHandlers = ({
     workflows: createSettingsWorkflows(service, {
       runtime: {
         requestProviderReconnect: onActiveProviderChanged ?? (() => undefined),
-        requestAgentFrameworkSwitch: onAgentFrameworkChanged ?? (() => undefined),
-        withProviderRemoval: async (_ids, remove) => remove()
+        requestAgentFrameworkSwitch: onAgentFrameworkChanged ?? (() => undefined)
       },
       localShell: {
         requestShellRuntimeRefresh: async () => onShellRuntimeRefresh?.()

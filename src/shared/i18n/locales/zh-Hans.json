@@ -104,8 +104,6 @@
     "Import Environment lock": "导入环境锁文件"
   },
   "renderer": {
-    "This provider is referenced by saved conversations and cannot be deleted.": "此提供商被已保存的会话引用，无法删除。",
-    "Could not check saved conversations. Resolve session storage errors and try again.": "无法检查已保存的会话。请解决会话存储错误后重试。",
     "The source message is no longer available.": "源消息已不可用。",
     "This Notebook exceeds the 10 MB preview limit.": "此 Notebook 超过 10 MB 预览限制。",
     "Recent searches": "最近搜索",

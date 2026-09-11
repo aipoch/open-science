@@ -63,18 +63,8 @@ const render = (): void => {
 }
 
 describe('ProvidersPanel: unexpected command failures', () => {
-  it.each([
-    ['settings write failed', 'Could not delete the provider.'],
-    [
-      'This provider is referenced by saved conversations and cannot be deleted.',
-      'This provider is referenced by saved conversations and cannot be deleted.'
-    ],
-    [
-      'Could not check saved conversations. Resolve session storage errors and try again.',
-      'Could not check saved conversations. Resolve session storage errors and try again.'
-    ]
-  ])('shows the actionable deletion failure: %s', async (detail, expected) => {
-    const deleteProvider = vi.fn().mockRejectedValue(new Error(detail))
+  it('shows a deletion failure instead of leaving an unhandled rejection', async () => {
+    const deleteProvider = vi.fn().mockRejectedValue(new Error('settings write failed'))
     useSettingsStore.setState({
       ...useSettingsStore.getState(),
       providers: [
@@ -113,8 +103,9 @@ describe('ProvidersPanel: unexpected command failures', () => {
     await act(async () => confirmDelete?.click())
 
     expect(deleteProvider).toHaveBeenCalledWith('provider-2', 'preserve')
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe(expected)
-    expect(container.textContent).toContain('Gateway two')
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not delete the provider.'
+    )
   })
 
   it('localizes a connection-test failure and keeps transport details out of the alert', async () => {

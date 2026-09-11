@@ -107,8 +107,6 @@
     "Import Environment lock": "Импортировать блокировку окружения"
   },
   "renderer": {
-    "This provider is referenced by saved conversations and cannot be deleted.": "Этот поставщик используется в сохранённых диалогах и не может быть удалён.",
-    "Could not check saved conversations. Resolve session storage errors and try again.": "Не удалось проверить сохранённые диалоги. Устраните ошибки хранилища сеансов и повторите попытку.",
     "The source message is no longer available.": "Исходное сообщение больше недоступно.",
     "This Notebook exceeds the 10 MB preview limit.": "Этот Notebook превышает ограничение предпросмотра в 10 МБ.",
     "Recent searches": "Недавние поиски",

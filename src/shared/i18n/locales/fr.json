@@ -106,8 +106,6 @@
     "Import Environment lock": "Importer le verrou d’environnement"
   },
   "renderer": {
-    "This provider is referenced by saved conversations and cannot be deleted.": "Ce fournisseur est référencé par des conversations enregistrées et ne peut pas être supprimé.",
-    "Could not check saved conversations. Resolve session storage errors and try again.": "Impossible de vérifier les conversations enregistrées. Corrigez les erreurs de stockage des sessions, puis réessayez.",
     "The source message is no longer available.": "Le message d’origine n’est plus disponible.",
     "This Notebook exceeds the 10 MB preview limit.": "Ce Notebook dépasse la limite de prévisualisation de 10 Mo.",
     "Recent searches": "Recherches récentes",
