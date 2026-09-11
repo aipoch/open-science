@@ -8,12 +8,18 @@ export async function validateJournal(journal, plan, file) {
   if (!stat?.isFile() || stat.nlink !== 1)
     throw new Error('Migration journal must be a single-link regular file')
   if (
-    ![1, 2].includes(journal.version) ||
+    ![1, 2, 3].includes(journal.version) ||
     journal.home !== plan.home ||
     journal.configRoot !== plan.configRoot ||
-    !['preparing', 'prepared', 'publishing', 'committed', 'rolling-back', 'rolled-back'].includes(
-      journal.status
-    ) ||
+    ![
+      'preparing',
+      'prepared',
+      'publishing',
+      'committed',
+      'rolling-back',
+      'rolled-back',
+      'restarting'
+    ].includes(journal.status) ||
     !Array.isArray(journal.mappings) ||
     !Array.isArray(journal.participants)
   )
@@ -22,6 +28,34 @@ export async function validateJournal(journal, plan, file) {
     return
   if (!/^[a-f0-9-]{36}$/.test(journal.id ?? '') || journal.platform !== plan.platform)
     throw new Error('Migration journal identity mismatch')
+  if (
+    journal.restartOf !== undefined &&
+    (journal.version !== 3 ||
+      !/^[a-f0-9-]{36}$/.test(journal.restartOf) ||
+      journal.restartOf === journal.id)
+  )
+    throw new Error('Invalid restart generation identity')
+  if (journal.status === 'restarting') {
+    const restart = journal.restart
+    if (
+      journal.version !== 3 ||
+      ![1, 2, 3].includes(restart?.previousVersion) ||
+      restart?.next?.version !== 3 ||
+      restart.next.status !== 'preparing' ||
+      restart.next.restartOf !== journal.id ||
+      restart.next.restart ||
+      restart.next.id === journal.id
+    )
+      throw new Error('Invalid restart intent')
+    await validateJournal(restart.next, plan, file)
+    const shape = (j) =>
+      JSON.stringify({
+        mappings: j.mappings.map(({ from, to, state }) => ({ from, to, state })),
+        participants: j.participants.map(({ from, to, files }) => ({ from, to, files }))
+      })
+    if (shape(journal) !== shape(restart.next))
+      throw new Error('Restart intent changed transaction roots')
+  } else if (journal.restart !== undefined) throw new Error('Unexpected restart intent')
   const protectedPhase = journal.protectedMigration
   if (
     protectedPhase &&

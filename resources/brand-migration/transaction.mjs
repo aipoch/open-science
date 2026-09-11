@@ -18,6 +18,7 @@ import { constants } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { acquireKernelGuard } from './lock-guard.mjs'
+import { restartPreparing } from './preparing-restart.mjs'
 import { reportProgress, withMigrationProgress } from './progress.mjs'
 import { metadataDigest } from './metadata.mjs'
 import {
@@ -121,8 +122,23 @@ export async function verify(root, expected, participant) {
   const actual = participant?.files
     ? await bundleInventory(root, participant.files, (path) => inventory(path, 'verifying'))
     : await inventory(root, 'verifying')
-  if (signature(actual) !== signature(expected))
-    throw new Error(`Integrity mismatch or new writes at ${root}`)
+  if (signature(actual) !== signature(expected)) {
+    const before = new Map(expected.map((entry) => [entry.path, entry]))
+    const after = new Map(actual.map((entry) => [entry.path, entry]))
+    const changed = [...new Set([...before.keys(), ...after.keys()])].filter(
+      (path) =>
+        !before.has(path) ||
+        !after.has(path) ||
+        signature([before.get(path)]) !== signature([after.get(path)])
+    )
+    throw new Error(
+      `Integrity mismatch or new writes at ${root}; changed: ${changed
+        .slice(0, 8)
+        .map((p) => p || '<root metadata>')
+        .join(', ')}. ` +
+        'Keep the journal and both trees. For an unpublished preparing transaction with only appended logs, inspect --restart-preparing; other changes require reconciliation.'
+    )
+  }
 }
 export async function durableJson(file, value) {
   const temporary = `${file}.${randomUUID()}.tmp`
@@ -504,6 +520,10 @@ export async function planMigration(options) {
     await validateJournal(journal, plan, journalPath)
     return { ...plan, journal, status: journal.status, blockers: [] }
   }
+  return planRoots(plan)
+}
+
+async function planRoots(plan) {
   const mappings = []
   const blockers = []
   for (const map of plan.mappings) {
@@ -706,10 +726,17 @@ async function publish(journal, save, progress, checkWriters) {
 }
 
 async function prepare(journal, save, progress, copy) {
+  // A later participant's drift must not destroy an earlier participant's recovery evidence.
+  // Repeat each local check below as well, because copying can take time after this preflight.
   for (const p of journal.participants) {
-    if (await inspect(p.stage)) await rm(p.stage, { recursive: true })
     await verify(p.from, p.original, p)
     if (p.previousTarget) await verify(p.to, p.previousTarget.original)
+  }
+  for (const p of journal.participants) {
+    // Do not destroy a prior staged snapshot when the originals no longer verify.
+    await verify(p.from, p.original, p)
+    if (p.previousTarget) await verify(p.to, p.previousTarget.original)
+    if (await inspect(p.stage)) await rm(p.stage, { recursive: true })
     await progress({ phase: 'copying', path: p.from })
     if (p.files) await copyBundle(p, copy, verify, syncDirectory)
     else {
@@ -892,7 +919,13 @@ async function assertCoveredRoots(plan, journal) {
 }
 
 function requiresKernelGuard(plan, options) {
-  if (options.rollback || options.retireAliases || options.resume || options.restartAfterRollback)
+  if (
+    options.rollback ||
+    options.retireAliases ||
+    options.resume ||
+    options.restartAfterRollback ||
+    options.restartPreparing
+  )
     return true
   if (plan.journal)
     return (
@@ -914,11 +947,28 @@ export async function runMigration(options, deps = {}) {
 
 async function migrate(options, deps) {
   const progress = reportProgress
+  if (
+    options.restartPreparing &&
+    (options.startupOwner ||
+      options.execute ||
+      options.resume ||
+      options.rollback ||
+      options.retireAliases ||
+      options.auditAliases ||
+      options.dryRun)
+  )
+    throw new Error('--restart-preparing is a standalone offline write action')
   const plan = await planMigration(options)
   if (plan.journal?.status === 'committed' && !options.rollback)
     await assertCoveredRoots(plan, plan.journal)
   if (options.auditAliases) return auditAliases(plan.journal, inventory)
-  if (!options.execute && !options.rollback && !options.resume && !options.retireAliases)
+  if (
+    !options.execute &&
+    !options.rollback &&
+    !options.resume &&
+    !options.retireAliases &&
+    !options.restartPreparing
+  )
     return plan
   if (options.startupOwner && plan.journal?.status === 'committed') {
     const owner = await readJson(join(plan.stateDir, 'lock')).catch((e) => {
@@ -985,6 +1035,40 @@ async function migrate(options, deps) {
       journal = { ...journal, version: 2, id, platform: journal.platform ?? plan.platform }
       await durableJson(journalFile, journal)
     }
+    if (journal?.status === 'restarting' && !options.resume && !options.restartPreparing)
+      throw new Error(
+        'Interrupted snapshot restart; use --resume or --restart-preparing after stopping all writers'
+      )
+    if ((options.restartPreparing && !journal?.restartOf) || journal?.status === 'restarting') {
+      if (!journal) throw new Error('No preparing migration journal exists')
+      const checkWriters = () => {
+        assertHeld()
+        ;(deps.assertNoProcesses ?? assertNoProcesses)([
+          current.configRoot,
+          ...journal.participants.flatMap((p) =>
+            [p.from, p.to, p.stage, p.backup, p.previousTarget?.backup].filter(Boolean)
+          )
+        ])
+      }
+      journal = await restartPreparing(journal, current, {
+        inventory,
+        verify,
+        write: durableJson,
+        progress,
+        checkWriters,
+        build: async () => {
+          const next = await planRoots(await discover(options))
+          if (next.blockers.length) throw new Error(next.blockers.join('\n'))
+          return buildJournal(next)
+        }
+      })
+      current = await planMigration(options)
+    }
+    if (
+      options.restartPreparing &&
+      !['preparing', 'prepared', 'publishing', 'committed'].includes(journal?.status)
+    )
+      throw new Error('Snapshot restart is unavailable in this phase; use --resume or --rollback')
     if (journal?.status === 'rolled-back' && options.rollback) return journal
     if (journal?.protectedMigration?.status === 'publishing') {
       ;(deps.assertNoProcesses ?? assertNoProcesses)(
@@ -1092,7 +1176,7 @@ async function migrate(options, deps) {
     }
     const save = () => {
       assertHeld()
-      journal.version = 2
+      journal.version = Math.max(journal.version, 2)
       journal.id ??= randomUUID()
       journal.platform ??= plan.platform
       return durableJson(journalFile, journal)

@@ -352,3 +352,74 @@ procedures above; it does not execute a reset, rollback or deletion. An unexpect
 also leaves an error surface. Successful completion closes the helper and allows the formal app to
 continue. Temporary UI files are removed on a normal helper exit; forced OS termination can leave
 an isolated `open-science-migration-ui-*` temporary directory, containing UI caches only.
+
+## Restarting a preparing snapshot after logs were appended
+
+An integrity failure names the changed entries, not just their root. A count such as `5 / 5` is
+an inventory count; it does not mean publication or migration succeeded. The CLI stops heartbeat
+messages as soon as migration fails, even while the isolated error window remains open.
+
+If the journal is still `preparing`, an earlier attempt may have inventoried the originals before
+an old or new application instance appended to its logs. Stopping that instance does not repair the
+saved snapshot: normal startup, `--resume` and `--rollback` still compare against the saved bytes.
+Do not truncate the logs, delete the journal, change its hashes, or point startup at an empty profile.
+
+After stopping all application, interpreter and terminal writers, the standalone **offline** action
+below can supersede an unpublished preparing snapshot. These examples use a disposable fixture;
+select the same home, mode, overrides and state directory as the original transaction:
+
+```sh
+# Read-only discovery of the current transaction.
+node scripts/migrate-brand-paths.mjs --home /absolute/fixture --app-data /absolute/fixture/appData --mode dev
+# Explicitly accept only proven appends in existing application .log files and execute a new generation.
+node scripts/migrate-brand-paths.mjs --home /absolute/fixture --app-data /absolute/fixture/appData --mode dev --restart-preparing --recover-lock
+# Finish a restart interrupted after its durable intent, or continue preparing its accepted generation.
+node scripts/migrate-brand-paths.mjs --home /absolute/fixture --app-data /absolute/fixture/appData --mode dev --resume --recover-lock
+# Roll back the newly committed generation using its normal verified backups.
+node scripts/migrate-brand-paths.mjs --home /absolute/fixture --app-data /absolute/fixture/appData --mode dev --rollback --recover-lock
+```
+
+`--restart-preparing` is a standalone writing action, incompatible with `--dry-run`, other actions
+or an application startup owner. Automatic startup never selects it. Eligibility is deliberately
+narrow:
+
+- The whole transaction must still be `preparing`. No publication, protected-path or launcher
+  transaction, backup, restoration intent or parked rollback generation may exist. Sources and
+  existing targets must remain plain original directories; unexpected destinations block recovery.
+- Existing `.log` files in discovered application log roots may have additional bytes only when
+  their original prefix hashes still match. Both the old and the independently existing new log
+  trees are checked and preserved separately. The file list, permissions, ownership, links and
+  extended metadata must remain unchanged. Rotation, deletion, truncation, replacement of the
+  original prefix, new files and changes to non-log content require separate reconciliation.
+- Every data/profile/reference participant, including actual SQLite bytes, must still match the
+  original manifest. No record IDs, relationships or historical text are refreshed through a
+  blanket replacement. The rediscovered roots and reference participants must match the old plan.
+- Real occupancy is checked under the migration's OS guard. Both the originals and the accepted
+  replacement snapshot are rechecked before intent/publication of the new receipt. Writers must
+  stay stopped; this does not create a mandatory filesystem-wide write lock.
+
+Before installing a replacement receipt, the original receipt is durably copied to
+`<stateDir>/journal-<old-id>.superseded.json`. **All old staging directories remain at the paths in
+that receipt**, untouched by the new transaction. A new UUID gives the replacement different stage,
+source-backup and existing-target-backup names. No journal is deleted to bypass verification. A failed
+ordinary resume now checks original and existing-target integrity before removing any old staging.
+
+Restart uses **journal version 3**: an intermediate `restarting` receipt durably identifies the
+accepted replacement, then atomically installs its `preparing` receipt with `restartOf`. Versions
+1 and 2 remain readable; ordinary migrations continue using version 2. Previous executables that
+only understand versions 1/2 reject version 3 rather than guessing how to resume it. Keep the updated
+script for all recovery of a restarted generation. The database schema version does not change.
+
+An interruption before intent leaves the original receipt and any completed archive intact; repeat
+`--restart-preparing`. After intent, ordinary startup stops with a recovery instruction; either
+`--resume` or `--restart-preparing` validates the archive and completes installation. After replacement,
+repeating the action resumes the same accepted generation (and returns the existing result if it has
+committed), rather than creating another generation. The archived receipt must exactly match the
+intent; tampering, missing archives and unsafe paths block recovery. If files change again after an
+intent was saved, recovery stops: it never silently refreshes the accepted snapshot.
+
+Rollback of the new generation restores both log trees with their accepted appended bytes and
+retains the newer parked tree and every earlier archive/stage. A `prepared`, partially published,
+committed or rolling-back original transaction cannot use this shortcut. Its existing resume/rollback
+and conflict-reconciliation requirements still apply. No backup or superseded generation is pruned
+by this command.
