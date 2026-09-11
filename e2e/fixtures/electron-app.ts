@@ -396,6 +396,13 @@ class ElectronAppHarness implements ElectronApp {
     )
     try {
       await mkdir(harness.roots.storageRoot, { recursive: true })
+      // All specs start with English copy, including onboarding without a fake agent.
+      // Initialize only the new isolated profile; later locale changes survive relaunch.
+      await writeFile(
+        join(harness.roots.storageRoot, 'settings.json'),
+        JSON.stringify({ version: 2, providers: [], localePreference: 'en' }),
+        'utf8'
+      )
       await writeFile(harness.roots.fakeRemoteItState, JSON.stringify({ services: [] }), 'utf8')
       await writeFakeAgentLauncher(harness.roots.fakeAgentBinRoot)
       await writeFakeRemoteItCommands(harness.roots.fakeRemoteItRoot)
