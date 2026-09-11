@@ -1,0 +1,46 @@
+[
+  {
+    "commit": "81d2bb78",
+    "sha256": "6306bf6bd406eb6ecb55ea050c0f1954008fe4e8b77d01c684f33d5dd3d37063",
+    "edits": [
+      [11735, 0, "(()=>{for(let $ of a)$&&$.dataset.scrollAnchor===\"true\"&&z.current.add($)})(),"]
+    ]
+  },
+  {
+    "commit": "cc73bb73",
+    "sha256": "6cef30c198329500dd3dc0ff24762cf2335a5f363ab00de33e8e5af4231be756",
+    "edits": [
+      [
+        12046,
+        0,
+        "followBottomOnResize=g.useCallback(()=>u.current!==\"following-bottom\"||!l.current?false:(Ee(),true),[Ee]),"
+      ],
+      [13316, 0, "followBottomOnResize,"],
+      [13624, 0, "e,followBottomOnResiz"],
+      [15637, 0, "followBottomOnResize:T,"],
+      [16051, 0, "if(T())return;"],
+      [16195, 0, ",T"],
+      [16424, 0, "followBottomOnResize:T,"],
+      [16880, 0, "if(T())return;"],
+      [17023, 0, "T,"]
+    ]
+  },
+  {
+    "commit": "3c6b201e",
+    "sha256": "4c620c8214a19ea267e9b465e61382699dbb5273ea8d4470fb1be40153db3a97",
+    "edits": [
+      [465, 0, "Math.min("],
+      [466, 0, ",n.scrollHeight)"]
+    ]
+  },
+  {
+    "commit": "2d0f34d1",
+    "sha256": "2bf6d13e12fb7f161bd74ddd0c7848a5224ef84dbe3c04acf430bb7d0fb669fc",
+    "edits": [
+      [11398, 1, "G"],
+      [11403, 1, "z.current"],
+      [11745, 0, "me()||"],
+      [11864, 0, ",me"]
+    ]
+  }
+]
