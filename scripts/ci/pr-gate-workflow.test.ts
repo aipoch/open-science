@@ -6,6 +6,8 @@ import { join } from 'node:path'
 import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
+import { evaluatePrGate } from './evaluate-pr-gate.mjs'
+
 type Step = {
   'continue-on-error'?: boolean
   env?: Record<string, string>
@@ -514,8 +516,74 @@ describe('PR Gate workflow', () => {
     })
   })
 
-  it('shares dependency installation and Electron builds inside platform bundles', () => {
-    for (const bundle of ['static', 'unit_shard', 'windows_core', 'macos_e2e']) {
+  it.each(['macos', 'windows'])(
+    'prepares %s E2E once and restores its exact artifact in every consumer',
+    (platform) => {
+      const bundle = `${platform}_e2e`
+      const producerId = `${bundle}_setup`
+      const producer = workflow.jobs[producerId]
+      const consumer = workflow.jobs[bundle]
+      expect(producer.needs).toBe('preflight')
+      expect(producer.if).toBe(consumer.if)
+      expect(producer.strategy).toBeUndefined()
+      expect(producer['runs-on']).toBe(consumer['runs-on'])
+      expect(consumer.needs).toEqual(['preflight', producerId])
+      // Without an always()/!cancelled() override, a failed producer skips its consumers.
+      expect(consumer.if).not.toMatch(/always\(|cancelled\(/)
+      expect(producer.outputs).toEqual({
+        artifact_id: '${{ steps.upload.outputs.artifact-id }}',
+        node_version: '${{ steps.node.outputs.node-version }}'
+      })
+      expect(producer.steps?.filter(({ run }) => run === 'npm run build:e2e')).toHaveLength(1)
+      expect(producer.steps?.filter(({ run }) => run === 'npm run build:web')).toHaveLength(
+        platform === 'macos' ? 1 : 0
+      )
+      const upload = producer.steps?.find(({ id }) => id === 'upload')
+      expect(upload?.['continue-on-error']).not.toBe(true)
+      expect(upload?.with).toMatchObject({
+        name: `e2e-setup-${platform}-\${{ github.run_id }}-\${{ github.run_attempt }}`,
+        'retention-days': 1,
+        'compression-level': 0,
+        'if-no-files-found': 'error'
+      })
+      expect(upload?.with).not.toHaveProperty('overwrite')
+      const node = consumer.steps?.find(({ name }) => name === 'Setup Node')
+      expect(node?.with).toEqual({
+        'node-version': `\${{ needs.${producerId}.outputs.node_version }}`,
+        'package-manager-cache': false
+      })
+      const download = consumer.steps?.find(({ name }) => name === 'Download E2E setup')
+      expect(download?.with).toEqual({
+        'artifact-ids': `\${{ needs.${producerId}.outputs.artifact_id }}`,
+        path: '${{ runner.temp }}/e2e-setup/',
+        'merge-multiple': true
+      })
+      const restore = consumer.steps?.find(({ id }) => id === 'setup')
+      expect(restore?.run).toContain('e2e-setup-snapshot.mjs restore')
+      expect(restore?.['continue-on-error']).not.toBe(true)
+      expect(
+        consumer.steps?.some(({ run }) => /npm-ci\.mjs|npm ci|npm run build:/.test(run ?? ''))
+      ).toBe(false)
+      // The trusted evaluator already rejects a selected bundle skipped by a failed/cancelled setup.
+      const lane = `e2e_functional_${platform}`
+      const result = evaluatePrGate(
+        {
+          schemaVersion: 1,
+          mode: 'selective',
+          lanes: ['policy', lane],
+          bundles: ['policy', bundle],
+          roots: ['manual:e2e'],
+          reasonChains: []
+        },
+        { preflight: 'success', policy: 'success', [bundle]: 'skipped' },
+        { executionMode: 'bundles' }
+      )
+      expect(result.ok).toBe(false)
+    }
+  )
+
+  it('preserves test commands while moving matrix setup into platform producers', () => {
+    for (const bundle of ['static', 'unit_shard', 'windows_core', 'macos_e2e_setup']) {
       expect(
         workflow.jobs[bundle].steps?.filter(({ run }) => run === 'node scripts/ci/npm-ci.mjs'),
         `${bundle} must install dependencies exactly once`
@@ -527,7 +595,7 @@ describe('PR Gate workflow', () => {
       )
     ).toHaveLength(2)
     expect(
-      workflow.jobs.windows_e2e.steps?.filter(({ name }) => name === 'Install dependencies')
+      workflow.jobs.windows_e2e_setup.steps?.filter(({ name }) => name === 'Install dependencies')
     ).toEqual([
       expect.objectContaining({
         run: 'node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false'
@@ -535,7 +603,7 @@ describe('PR Gate workflow', () => {
     ])
 
     const macosRuns = workflow.jobs.macos_e2e.steps?.map(({ run }) => run).filter(Boolean)
-    expect(macosRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
+    expect(macosRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(0)
     expect(macosRuns).toEqual(
       expect.arrayContaining([
         'npm run test:e2e:journey -- --fail-on-flaky-tests --global-timeout=600000',
@@ -546,7 +614,7 @@ describe('PR Gate workflow', () => {
     )
 
     const windowsRuns = workflow.jobs.windows_e2e.steps?.map(({ run }) => run).filter(Boolean)
-    expect(windowsRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
+    expect(windowsRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(0)
     expect(windowsRuns).toEqual(
       expect.arrayContaining([
         'npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --fail-on-flaky-tests --global-timeout=600000',
