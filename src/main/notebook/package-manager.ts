@@ -70,16 +70,14 @@ import { toErrorMessage } from '../error-message'
 import { buildManagedRuntimeProcessEnvironment } from './process-environment'
 import { withPipInstallEvidence } from './pip-install-evidence'
 
+const terminatedPackageProcessErrors = new WeakSet<object>()
+
 export const packageProcessTreeTerminated = (error: unknown): boolean =>
-  Boolean(
-    error &&
-    typeof error === 'object' &&
-    (error as { processesTerminated?: boolean }).processesTerminated === true
-  )
+  Boolean(error && typeof error === 'object' && terminatedPackageProcessErrors.has(error))
 
 const markPackageProcessTreeTerminated = <T>(error: T): T => {
   if (error && typeof error === 'object') {
-    Object.assign(error, { processesTerminated: true as const })
+    terminatedPackageProcessErrors.add(error)
   }
   return error
 }

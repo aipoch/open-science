@@ -315,20 +315,22 @@ describe('sandboxedPackageSpawn', () => {
       storageRoot: process.cwd()
     })
     const cancellation = new AbortController()
+    const reason = Object.freeze(new DOMException('Package operation cancelled.', 'AbortError'))
     await expect(
       spawn(
         process.execPath,
         ['-e', 'setTimeout(() => {}, 30_000)'],
         process.env,
         () => {
-          cancellation.abort(new DOMException('Package operation cancelled.', 'AbortError'))
+          cancellation.abort(reason)
         },
         undefined,
         false,
         undefined,
         { signal: cancellation.signal }
       )
-    ).rejects.toMatchObject({ name: 'AbortError', processesTerminated: true })
+    ).rejects.toBe(reason)
+    expect(Object.hasOwn(reason, 'processesTerminated')).toBe(false)
     expect(confirmTermination).not.toHaveBeenCalled()
     expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
       processesTerminated: true,
