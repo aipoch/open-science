@@ -33,6 +33,7 @@ import {
 import { assertProcessTreeSupport, terminateProcessTree } from '../process-tree'
 import { buildNotebookKernelEnvironment, PIP_TRANSPORT_ENV_KEYS } from './process-environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
+import { kernelExecutableReadRoot } from './kernel-executable-read-root'
 
 type PackageProcessSandboxOptions = Readonly<{
   processSandbox: NotebookProcessSandbox
@@ -131,16 +132,21 @@ const packageEnvironment = (
 }
 
 const externalEnvironmentRoot = (
-  interpreter: PackageProcessSandboxOptions['interpreter']
+  interpreter: PackageProcessSandboxOptions['interpreter'],
+  language: InstallRequest['language'],
+  platform: NodeJS.Platform
 ): string | undefined => {
   if (!interpreter) return undefined
-  if (interpreter.condaPrefix && isAbsolute(interpreter.condaPrefix)) return interpreter.condaPrefix
-  if (!isAbsolute(interpreter.command)) return undefined
+  const absolute = platform === 'win32' ? win32.isAbsolute : isAbsolute
+  if (interpreter.condaPrefix && absolute(interpreter.condaPrefix)) return interpreter.condaPrefix
+  if (!absolute(interpreter.command)) return undefined
+  if (language === 'r' && platform === 'win32')
+    return kernelExecutableReadRoot(interpreter.command, 'r', platform)
   return dirname(dirname(interpreter.command))
 }
 
-const absolutePath = (value: string | undefined): string[] =>
-  value && isAbsolute(value) ? [value] : []
+const absolutePath = (value: string | undefined, platform = process.platform): string[] =>
+  value && (platform === 'win32' ? win32.isAbsolute(value) : isAbsolute(value)) ? [value] : []
 
 const inside = (root: string, candidate: string, platform: NodeJS.Platform): boolean => {
   const path = platform === 'win32' ? win32 : { resolve, sep }
@@ -293,13 +299,18 @@ export const sandboxedPackageSpawn =
           ...absolutePath(dirname(command)),
           ...absolutePath(request.workspaceCwd),
           ...(options.interpreter?.library
-            ? absolutePath(externalEnvironmentRoot(options.interpreter))
+            ? absolutePath(
+                externalEnvironmentRoot(options.interpreter, request.language, platform),
+                platform
+              )
             : [])
         ],
         readWriteRoots: [
           runtimeRoot,
           ...absolutePath(
-            options.interpreter?.library ?? externalEnvironmentRoot(options.interpreter)
+            options.interpreter?.library ??
+              externalEnvironmentRoot(options.interpreter, request.language, platform),
+            platform
           ),
           ...packageWriteRoots(projectedEnv, platform)
         ],

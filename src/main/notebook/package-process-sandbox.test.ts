@@ -16,26 +16,39 @@ afterEach(() => {
 })
 
 describe('sandboxedPackageSpawn', () => {
-  it('grants R library writes without granting writes to the interpreter installation', async () => {
-    const root = join(tmpdir(), 'external-runtime-scope')
-    const command = join(root, 'bin', 'Rscript')
-    const library = join(tmpdir(), 'personal-r-library')
-    const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async () => {
-      throw new Error('scope captured')
-    })
-    const spawn = sandboxedPackageSpawn({
-      processSandbox: { wrap },
-      request: { language: 'r', packages: ['glue'] },
-      runtimeRoot: join(tmpdir(), 'app-runtime'),
-      storageRoot: join(tmpdir(), 'app-storage'),
-      interpreter: { command, library }
-    })
-    await expect(spawn(command, [])).rejects.toThrow('scope captured')
-    const filesystem = wrap.mock.calls[0]![0].filesystem!
-    expect(filesystem.readWriteRoots).toContain(library)
-    expect(filesystem.readWriteRoots).not.toContain(root)
-    expect(filesystem.readOnlyRoots).toContain(root)
-  })
+  it.each(
+    process.platform === 'win32'
+      ? [
+          ['bin', 'Rscript.exe'],
+          ['bin', 'x64', 'Rscript.exe']
+        ]
+      : [['bin', 'Rscript']]
+  )(
+    'grants library writes and R home reads for %s/%s without interpreter writes',
+    async (...parts) => {
+      const root = mkdtempSync(join(tmpdir(), 'external-runtime-scope-'))
+      temporaryDirectories.push(root)
+      mkdirSync(join(root, 'etc'))
+      mkdirSync(join(root, 'library'))
+      const command = join(root, ...parts)
+      const library = join(tmpdir(), 'personal-r-library')
+      const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async () => {
+        throw new Error('scope captured')
+      })
+      const spawn = sandboxedPackageSpawn({
+        processSandbox: { wrap },
+        request: { language: 'r', packages: ['glue'] },
+        runtimeRoot: join(tmpdir(), 'app-runtime'),
+        storageRoot: join(tmpdir(), 'app-storage'),
+        interpreter: { command, library }
+      })
+      await expect(spawn(command, [])).rejects.toThrow('scope captured')
+      const filesystem = wrap.mock.calls[0]![0].filesystem!
+      expect(filesystem.readWriteRoots).toContain(library)
+      expect(filesystem.readWriteRoots).not.toContain(root)
+      expect(filesystem.readOnlyRoots).toContain(root)
+    }
+  )
   it('does not prepare or launch an installer for an already-cancelled request', async () => {
     const processSandbox: NotebookProcessSandbox = { wrap: vi.fn() }
     const spawn = sandboxedPackageSpawn({

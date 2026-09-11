@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync } from 'node:fs'
 import { readFile, rm, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, join, posix, win32 } from 'node:path'
+import { delimiter, join } from 'node:path'
+import { kernelExecutableReadRoot } from './kernel-executable-read-root'
 import { createInterface, type Interface } from 'node:readline'
 import { Transform, type TransformCallback } from 'node:stream'
 
@@ -125,31 +126,6 @@ const R_INTERRUPT_PROBE_CODE = 'base::Sys.sleep(0.05)'
 
 const presentPaths = (values: readonly string[]): string[] =>
   values.filter((value) => value.length > 0)
-
-const kernelExecutableReadRoot = (
-  executable: string,
-  kind: KernelProcessKind,
-  platform: NodeJS.Platform
-): string => {
-  const platformPath = platform === 'win32' ? win32 : posix
-  if (kind === 'repl' && platform === 'darwin' && executable.includes('/Contents/MacOS/')) {
-    return platformPath.resolve(platformPath.dirname(executable), '../..')
-  }
-  if (kind === 'r' && platform === 'win32' && /^Rscript\.exe$/i.test(win32.basename(executable))) {
-    const directory = win32.dirname(executable)
-    const bin =
-      win32.basename(directory).toLowerCase() === 'x64' ? win32.dirname(directory) : directory
-    const home = win32.dirname(bin)
-    if (
-      win32.basename(bin).toLowerCase() === 'bin' &&
-      existsSync(win32.join(home, 'etc')) &&
-      existsSync(win32.join(home, 'library'))
-    ) {
-      return home
-    }
-  }
-  return platformPath.dirname(executable)
-}
 
 // Real scheduler: unref'd so a pending idle timer alone never keeps the process alive.
 const defaultScheduleIdleTimer: ScheduleIdleTimer = (fn, ms) => {
