@@ -2,7 +2,6 @@ import { LoaderCircle } from 'lucide-react'
 import { Component, Suspense, type ErrorInfo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 
 type ErrorBoundaryProps = {
