@@ -213,7 +213,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                     <ExternalTextLink href={APP.update.downloadPage} className="mt-1 text-xs">
                       {t('Download manually')}
                     </ExternalTextLink>
-                    {isBackgroundProcessError && isReady ? (
+                    {dialogStatus.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR && isReady ? (
                       <button
                         type="button"
                         onClick={forceUpdate}
