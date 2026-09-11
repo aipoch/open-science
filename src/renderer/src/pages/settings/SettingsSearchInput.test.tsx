@@ -109,4 +109,62 @@ describe('SettingsSearchInput', () => {
     expect(event.defaultPrevented).toBe(false)
     expect(document.activeElement).toBe(document.body)
   })
+
+  it('hides the native cancel affordance and shows no clear button while empty', () => {
+    act(() => {
+      root.render(
+        <div role="dialog">
+          <SettingsSearchInput aria-label="Search skills" value="" onChange={() => undefined} />
+        </div>
+      )
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')
+    expect(input?.className).toContain('[&::-webkit-search-cancel-button]:hidden')
+    expect(document.body.querySelector('[aria-label="Clear search"]')).toBeNull()
+    expect(document.body.textContent).toContain('K')
+  })
+
+  it('replaces the shortcut hint with a clear button once the field has text', () => {
+    act(() => {
+      root.render(
+        <div role="dialog">
+          <SettingsSearchInput
+            aria-label="Search skills"
+            value="theme"
+            onChange={() => undefined}
+          />
+        </div>
+      )
+    })
+
+    expect(document.body.querySelector('[aria-label="Clear search"]')).not.toBeNull()
+    expect(document.body.textContent).not.toContain('⌘K')
+  })
+
+  it('clears through a real input event and keeps focus in the field', () => {
+    const changes: string[] = []
+    act(() => {
+      root.render(
+        <div role="dialog">
+          <SettingsSearchInput
+            aria-label="Search skills"
+            defaultValue="theme"
+            onChange={(event) => changes.push(event.target.value)}
+          />
+        </div>
+      )
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')
+    const clear = document.body.querySelector<HTMLButtonElement>('[aria-label="Clear search"]')
+    expect(input?.value).toBe('theme')
+
+    act(() => clear?.click())
+
+    expect(changes).toEqual([''])
+    expect(input?.value).toBe('')
+    expect(document.activeElement).toBe(input)
+    expect(document.body.querySelector('[aria-label="Clear search"]')).toBeNull()
+  })
 })
