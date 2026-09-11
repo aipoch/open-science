@@ -1190,7 +1190,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               event.preventDefault()
               return
             }
-            // Global search: the input's own Escape closes the results list first; keep that
+            // Global search: the combobox's own Escape closes the results list first; keep that
             // keypress from also dismissing the whole dialog (Radix listens in capture phase).
             if (
               event.target instanceof HTMLElement &&

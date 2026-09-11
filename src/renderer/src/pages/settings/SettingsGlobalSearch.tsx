@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
@@ -164,9 +164,12 @@ type SettingsGlobalSearchProps = {
 // Briefly rings the first content block of the freshly navigated panel so the jump target is
 // visible. Polls until the target panel has actually rendered (lazy panels load async), so the
 // highlight never lands on the previous panel. Purely visual: inline styles over the existing
-// --primary token, no persistence.
-const highlightNavigatedPanel = (panel: SettingsPanelId): void => {
+// --primary token, no persistence. Returns a cancel function that stops polling and strips any
+// active ring — callers run it on unmount and before starting another highlight.
+const highlightNavigatedPanel = (panel: SettingsPanelId): (() => void) => {
   const startedAt = Date.now()
+  const timers: number[] = []
+  let highlighted: HTMLElement | null = null
   const attempt = (): void => {
     const root = document.querySelector(
       `[data-slot="settings-content-scroll"][data-settings-active-panel="${panel}"]`
@@ -179,20 +182,34 @@ const highlightNavigatedPanel = (panel: SettingsPanelId): void => {
         ? root.querySelector<HTMLElement>(':scope > div > :first-child')
         : null)
     if (target) {
+      highlighted = target
       target.scrollIntoView({ block: 'nearest' })
       target.style.transition = 'box-shadow 200ms ease-out'
       target.style.borderRadius = '8px'
       target.style.boxShadow = '0 0 0 2px var(--primary)'
-      window.setTimeout(() => {
-        target.style.boxShadow = ''
-        target.style.borderRadius = ''
-        target.style.transition = ''
-      }, 1600)
+      timers.push(
+        window.setTimeout(() => {
+          target.style.boxShadow = ''
+          target.style.borderRadius = ''
+          target.style.transition = ''
+          if (highlighted === target) highlighted = null
+        }, 1600)
+      )
       return
     }
-    if (Date.now() - startedAt < 3000) window.setTimeout(attempt, 150)
+    if (Date.now() - startedAt < 3000) timers.push(window.setTimeout(attempt, 150))
   }
   attempt()
+
+  return () => {
+    for (const timer of timers) window.clearTimeout(timer)
+    if (highlighted?.isConnected) {
+      highlighted.style.boxShadow = ''
+      highlighted.style.borderRadius = ''
+      highlighted.style.transition = ''
+    }
+    highlighted = null
+  }
 }
 
 // Settings-wide search box for the dialog header. Searches the cross-panel index and deep-links
@@ -207,6 +224,16 @@ const SettingsGlobalSearch = ({
   const [activeIndex, setActiveIndex] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const listId = useId()
+  const cancelHighlightRef = useRef<(() => void) | null>(null)
+
+  // Stop highlight polling and strip any ring when the dialog (and this field) unmounts.
+  useEffect(
+    () => () => {
+      cancelHighlightRef.current?.()
+      cancelHighlightRef.current = null
+    },
+    []
+  )
 
   const panelLabel = (panel: SettingsPanelId): string => {
     const entry = panels.find((candidate) => candidate.id === panel)
@@ -230,7 +257,8 @@ const SettingsGlobalSearch = ({
     setIsOpen(false)
     setActiveIndex(0)
     onNavigate(entry.panel)
-    highlightNavigatedPanel(entry.panel)
+    cancelHighlightRef.current?.()
+    cancelHighlightRef.current = highlightNavigatedPanel(entry.panel)
   }
 
   return (
@@ -240,9 +268,18 @@ const SettingsGlobalSearch = ({
       onBlur={(event) => {
         if (!containerRef.current?.contains(event.relatedTarget as Node | null)) setIsOpen(false)
       }}
+      onKeyDown={(event) => {
+        // Container-level fallback: Escape closes the results list wherever focus sits inside the
+        // combobox, and never reaches the dialog's own Escape handling while the list is open.
+        if (event.key !== 'Escape' || !isOpen) return
+        event.stopPropagation()
+        setIsOpen(false)
+        containerRef.current?.querySelector('input')?.blur()
+      }}
     >
       <SettingsSearchInput
         value={query}
+        shortcutPriority={1}
         onChange={(event) => {
           setQuery(event.target.value)
           setIsOpen(true)
@@ -250,15 +287,7 @@ const SettingsGlobalSearch = ({
         }}
         onFocus={() => setIsOpen(true)}
         onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            if (isOpen) {
-              // Swallow the first Escape so it closes only the results list, not the dialog.
-              event.stopPropagation()
-              setIsOpen(false)
-              event.currentTarget.blur()
-            }
-            return
-          }
+          if (event.key === 'Escape') return
           if (!isOpen || results.length === 0) return
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
             event.preventDefault()
@@ -303,6 +332,8 @@ const SettingsGlobalSearch = ({
                 type="button"
                 role="option"
                 aria-selected={index === activeIndex}
+                // Combobox pattern: focus stays on the input; options are mouse/aria-only targets.
+                tabIndex={-1}
                 onMouseDown={(event) => event.preventDefault()}
                 onMouseEnter={() => setActiveIndex(index)}
                 onClick={() => selectEntry(entry)}
