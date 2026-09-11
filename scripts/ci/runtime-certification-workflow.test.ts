@@ -52,7 +52,8 @@ describe('runtime certification workflow', () => {
       'cancel-in-progress': true
     })
     expect(source).toMatchObject({
-      'continue-on-error': '${{ inputs.allow_failure }}',
+      // workflow_dispatch has no allow_failure input; an explicit comparison must yield false.
+      'continue-on-error': '${{ inputs.allow_failure == true }}',
       'runs-on': 'ubuntu-latest',
       'timeout-minutes': 20
     })
@@ -79,8 +80,38 @@ describe('runtime certification workflow', () => {
     expect(step(source, 'Prepare local restoration archives').run).toContain(
       'OPEN_SCIENCE_TEST_CONDA_ARCHIVES='
     )
-    expect(verify.run).toContain('library(jsonlite)')
-    expect(verify.run).toContain('library(ggplot2)')
+    for (const name of ['matplotlib', 'numpy', 'pandas', 'openpyxl', 'pycirclize']) {
+      expect(create.run).toContain(name === 'matplotlib' ? 'matplotlib-base' : name)
+      expect(verify.run).toContain(name)
+    }
+    // The real replay fixtures need workbook, plotting, and data-transformation packages too.
+    for (const name of [
+      'jsonlite',
+      'ggplot2',
+      'renv',
+      'MASS',
+      'circlize',
+      'dplyr',
+      'ggrepel',
+      'ggVennDiagram',
+      'magrittr',
+      'openxlsx',
+      'patchwork',
+      'ragg',
+      'RColorBrewer',
+      'readxl',
+      'scales',
+      'showtext',
+      'sysfonts',
+      'systemfonts',
+      'tidyr',
+      'venn',
+      'VennDiagram'
+    ]) {
+      expect(create.run?.split(/\s+/)).toContain(`r-${name.toLowerCase()}`)
+      expect(verify.run).toContain(`"${name}"`)
+    }
+    expect(verify.run).toContain('loadNamespace(package)')
   })
 
   it('activates the explicit real runtime suites without package or publication side effects', () => {
