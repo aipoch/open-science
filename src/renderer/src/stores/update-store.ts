@@ -13,7 +13,7 @@ type UpdateStore = {
   closeDialog: () => void
   download: () => Promise<void>
   cancel: () => Promise<void>
-  apply: () => Promise<void>
+  apply: (options?: { force?: boolean }) => Promise<void>
 }
 
 let cleanupUpdateSubscriptions: (() => void) | undefined
