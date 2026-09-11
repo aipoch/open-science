@@ -1286,7 +1286,7 @@ w.save(sys.argv[1])`,
     const { child, send, inspect } = startLoop(pyBin as string, {})
     try {
       await send(
-        "globals()['x' * 2_000_000] = 1; globals().update({f'value_€{i}': '€' * 1000 for i in range(500)})"
+        "globals()['x' * 2_000_000] = 1; globals().update({f'€€{i}': '€' * 1000 for i in range(500)})"
       )
       const response = await inspect()
 
