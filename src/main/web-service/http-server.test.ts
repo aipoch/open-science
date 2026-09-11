@@ -2995,6 +2995,61 @@ describe('startWebHttpServer', () => {
     }
   )
 
+  it('rejects a delayed doctor result after remote authorization is revoked', async () => {
+    let current = true
+    let markDoctorStarted!: () => void
+    const doctorStarted = new Promise<void>((resolve) => {
+      markDoctorStarted = resolve
+    })
+    let finishDoctor!: () => void
+    const doctorPending = new Promise<void>((resolve) => {
+      finishDoctor = resolve
+    })
+    const doctor = vi.fn(async () => {
+      markDoctorStarted()
+      await doctorPending
+      return { ready: true, checks: {}, next: [], private: 'private-result-marker' }
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      tasks: {
+        runWithCallerContext: (_context: CallerContext, operation: () => unknown) => operation(),
+        subscribeProgress: () => () => undefined,
+        doctor
+      } as never,
+      externalAccess: {
+        authorizeHttp: async () => ({
+          kind: 'authorized' as const,
+          principalId: 'paired-browser',
+          isCurrent: () => current
+        }),
+        authorizeWebSocket: async () => undefined
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const responsePromise = fetch(`http://127.0.0.1:${server.port}/api/v1/doctor`)
+    await doctorStarted
+    current = false
+    finishDoctor()
+
+    const response = await responsePromise
+    expect(response.status).toBe(401)
+    expect(await response.text()).not.toContain('private-result-marker')
+    expect(doctor).toHaveBeenCalledOnce()
+  })
+
   it('keeps host-management RPC local while preserving the local Web client', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
