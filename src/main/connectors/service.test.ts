@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { ConnectorService } from './service'
 import { ParserEngine } from './engine'
+import { CredentialRequestBroker } from './credential-request-broker'
 import { McpClientManager, McpToolCallError } from './mcp-client-manager'
 import type { SpecialistView } from '../../shared/specialist'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
@@ -12,6 +13,49 @@ const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 
 describe('ConnectorService', () => {
+  it('returns credential errors for all declined queued calls without aborting the session', async () => {
+    let sequence = 0
+    const broadcast = vi.fn()
+    const broker = new CredentialRequestBroker({
+      generateId: () => `credential-${++sequence}`,
+      broadcast
+    })
+    const fetchImpl = vi.fn()
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
+      resolveApiKey: () => undefined,
+      requestCredential: (info, signal) => broker.request(info, signal)
+    })
+    const controller = new AbortController()
+    const calls = ['CRISPR', 'genomics'].map((query) =>
+      svc
+        .call(
+          'literature',
+          'openalex_search_works',
+          { query, max_records: 1 },
+          { ...internal, sessionId: 'session-1' },
+          controller.signal
+        )
+        .catch((error: unknown) => error)
+    )
+    try {
+      await vi.waitFor(() => expect(broadcast).toHaveBeenCalledTimes(2))
+      broker.respond('credential-1', false)
+      expect(broker.getPending('credential-2')).toBeNull()
+      for (const error of await Promise.all(calls)) {
+        expect(error).toBeInstanceOf(Error)
+        expect((error as Error).message).toContain('credential_required')
+        expect((error as Error).message).toContain('Do not retry until the user adds it')
+      }
+      expect(fetchImpl).not.toHaveBeenCalled()
+      expect(controller.signal.aborted).toBe(false)
+    } finally {
+      broker.cancelAll()
+      await Promise.all(calls)
+    }
+  })
+
   it('parks an OpenAlex call for credential recovery and resumes the exact call after save', async () => {
     let connectors = {
       enabledIds: [] as string[],

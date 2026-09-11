@@ -203,7 +203,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
       })
       const allowed = await run(allowedProcess, cwd)
       await allowedProcess.cleanup('exit', { processesTerminated: true })
-      expect(allowed).toMatchObject({ code: 0, stdout: 'sandbox-ok' })
+      expect(allowed, allowed.stderr).toMatchObject({ code: 0, stdout: 'sandbox-ok' })
 
       sandbox.updatePolicy({ allowedDomains: [], deniedDomains: [] })
       const deniedProcess = await sandbox.wrap({

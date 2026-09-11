@@ -39,6 +39,23 @@ npm install
 `npm install` runs a `postinstall` step that generates the Prisma client and
 installs native Electron app dependencies.
 
+An existing `node_modules` directory can retain an older patch even when the
+dependency version has not changed. Before applying patches, `npm install`
+automatically restores known historical `@shadcn/react@0.3.0` scroller files to
+their original content so the current patch can apply. Recovery is limited to
+the exact version and checksums of previously committed patches; it does not
+overwrite unknown manual edits or download dependencies from a lifecycle script.
+
+If installation still reports a `patch-package` failure, review any manual edits
+inside `node_modules`, then run `npm ci` from the repository root. It recreates
+`node_modules` from `package-lock.json` and applies the current patches without
+updating the lockfile. Any manual edits inside `node_modules` will be removed.
+
+Patch failures stop installation before Prisma generation and native dependency
+setup. Do not bypass them with `--ignore-scripts` or regenerate a patch from a
+partially patched installation. See the upstream
+[patch-package guidance](https://github.com/ds300/patch-package#applying-patches).
+
 ### Run in development
 
 ```bash

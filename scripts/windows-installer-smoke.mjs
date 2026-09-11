@@ -1567,7 +1567,6 @@ const main = async () => {
         OPEN_SCIENCE_E2E_WSL2_USER: options.wslCertificationProfile.user
       }
     : profileEnvironment
-  const wslCommandTemporaryRoot = join(env.APPDATA, 'Open-Science', 'notebook-command-temp')
   const upgradeProfileGuard = createUpgradeProfileGuard(Boolean(previousInstaller))
   const sqliteVersions = []
   const onSqliteVersion = (sqliteVersion) => sqliteVersions.push(sqliteVersion)
@@ -1596,7 +1595,7 @@ const main = async () => {
           cycle.phase === 'restart' && options.wslCertificationProfile
             ? currentConfigRoot
               ? await createWslCommandTempEvidence({
-                  ownerRoot: wslCommandTemporaryRoot,
+                  ownerRoot: join(currentConfigRoot, 'notebook-command-temp'),
                   profile: options.wslCertificationProfile,
                   malformed: false
                 })
@@ -1638,7 +1637,7 @@ const main = async () => {
             throw new Error('Packaged WSL2 restart left exact command-temp evidence behind.')
           }
           const malformedEvidence = await createWslCommandTempEvidence({
-            ownerRoot: wslCommandTemporaryRoot,
+            ownerRoot: join(configRoot, 'notebook-command-temp'),
             profile: options.wslCertificationProfile,
             malformed: true
           })

@@ -3,6 +3,76 @@ import { describe, expect, it, vi } from 'vitest'
 import { CredentialRequestBroker } from './credential-request-broker'
 
 describe('CredentialRequestBroker', () => {
+  it.each(['session-1', undefined])(
+    'does not replay another credential prompt after Not now in %s',
+    async (sessionId) => {
+      let sequence = 0
+      const replay = vi.fn()
+      const broker = new CredentialRequestBroker({
+        generateId: () => `credential-${++sequence}`,
+        broadcast: vi.fn(),
+        replay
+      })
+      const info = {
+        credentialId: 'openalex' as const,
+        connector: 'literature',
+        method: 'openalex_search_works',
+        sessionId
+      }
+      const first = broker.request(info)
+      const second = broker.request({ ...info, method: 'openalex_get_work' })
+      try {
+        broker.respond('credential-1', false)
+        await expect(first).resolves.toBe(false)
+        broker.replayPending()
+        expect(replay).not.toHaveBeenCalled()
+        await expect(second).resolves.toBe(false)
+      } finally {
+        broker.cancelAll()
+      }
+    }
+  )
+
+  it('keeps other sessions waiting and allows a later request after declining a group', async () => {
+    let sequence = 0
+    const onSettled = vi.fn()
+    const broker = new CredentialRequestBroker({
+      generateId: () => `credential-${++sequence}`,
+      broadcast: vi.fn(),
+      onSettled
+    })
+    const info = {
+      credentialId: 'openalex' as const,
+      connector: 'literature',
+      method: 'openalex_search_works'
+    }
+    const controller = new AbortController()
+    const calls = [
+      broker.request({ ...info, sessionId: 'session-1' }, controller.signal),
+      broker.request({ ...info, sessionId: 'session-1' }, controller.signal),
+      broker.request({ ...info, sessionId: 'session-2' }),
+      broker.request(info)
+    ]
+    try {
+      broker.respond('credential-1', false)
+      expect(onSettled.mock.calls).toEqual([
+        ['credential-1', false],
+        ['credential-2', false]
+      ])
+      expect(controller.signal.aborted).toBe(false)
+      expect(broker.getPending('credential-3')).not.toBeNull()
+      expect(broker.getPending('credential-4')).not.toBeNull()
+      calls.push(broker.request({ ...info, sessionId: 'session-1' }))
+      expect(broker.getPending('credential-5')).not.toBeNull()
+      controller.abort()
+      broker.respond('credential-1', false)
+      expect(onSettled).toHaveBeenCalledTimes(2)
+    } finally {
+      broker.cancelAll()
+      await Promise.all(calls)
+    }
+  })
+
   it('broadcasts public metadata and resumes the parked caller after configuration', async () => {
     const broadcast = vi.fn()
     const onSettled = vi.fn()

@@ -36,6 +36,14 @@ application data-directory name. Other selected paths and their brand-looking an
 literal. `--map` is the explicit operator mechanism for another confirmed application-owned root.
 All paths must be absolute. `.open-science` and `.open-science-project` are not renamed again.
 
+Notebook command-lease evidence uses `<config-root>/notebook-command-temp`. Older versions placed
+it under the Electron profile. Profile migration preserves those older receipts and directories,
+including their original backup; the current command reconciler scans the configuration root and
+does not claim to have cleaned the older profile location. Retain legacy evidence until its
+installation/lease owner and stopped native or WSL process have been verified through the existing
+command recovery procedure. Do not delete or fold those receipts into a new lease, or connect to a
+WSL/VM environment without the required authorization.
+
 ## Transaction and startup
 
 The shared implementation is `resources/brand-migration/`. Both the standalone CLI and

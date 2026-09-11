@@ -258,9 +258,15 @@ gate('repl kernel host.compute', () => {
 
     expect(result.status).toBe('completed')
     expect(result.stdout).toContain('"job_id":"job-1"')
-    expect(result.stdout).toMatch(
-      /"nextAction":"Save the exact job_id\..*attachJob\(job_id\)\.result\(\) once for a non-blocking peek\..*Only result_final:true is final; otherwise continue other work without polling or scanning history\..*later Turn\."/
-    )
+    const receipt = JSON.parse(result.stdout)
+    expect(receipt.nextAction).toContain('Save the exact job_id.')
+    expect(receipt.nextAction).toContain('attachJob(job_id).status() or .result()')
+    expect(receipt.nextAction).toContain('non-blocking snapshot and never scans Job history')
+    expect(receipt.nextAction).toContain('Only result_final:true is final')
+    expect(receipt.nextAction).toContain('follow_up_delivery:"suppressed"')
+    expect(receipt.nextAction).toContain('"committed"')
+    expect(receipt.nextAction).toContain('A .status() snapshot does not consume the full result.')
+    expect(receipt.nextAction).toContain('An unread final result is delivered in a later Turn.')
     expect(stub.received().map((request) => request.params)).toEqual([
       { op: 'list_compute', session_id: 'session-7' },
       {

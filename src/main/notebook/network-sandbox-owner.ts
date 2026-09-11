@@ -34,6 +34,7 @@ import { startDiagnosticOperation } from '../diagnostics/operation'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import {
   buildNotebookKernelEnvironment,
+  normalizeRProcessLocale,
   environmentPathRoots,
   notebookTrustBundleEnvironment
 } from './process-environment'
@@ -790,7 +791,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       throw new Error('Enable protected mode before verifying R access.')
     const prefix = windowsCondaPrefixForR(executable, this.platform)
     const env = {
-      ...buildNotebookKernelEnvironment(this.platform),
+      ...normalizeRProcessLocale(buildNotebookKernelEnvironment(this.platform), this.platform),
       ...(prefix ? { PATH: condaActivatedPath(prefix, process.env.PATH, this.platform) } : {})
     }
     const cwd = await mkdtemp(join(tmpdir(), 'open-science-r-access-'))
@@ -846,7 +847,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         const { stdout } = await promisify(execFile)(invocation.executable, [...invocation.args], {
           cwd,
           env: invocation.env,
-          timeout: 20_000,
+          // This bounds the native host, including ACL preparation and rollback, rather
+          // than only R execution. Live kernels can make directory propagation exceed 20s.
+          timeout: 60_000,
           windowsHide: true,
           maxBuffer: 1024 * 1024
         })
@@ -895,7 +898,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         cause: verificationError
       })
     }
-    await rm(cwd, { recursive: true, force: true })
+    // Windows can retain directory handles briefly after the probe's process tree has exited.
+    // Retry only after termination and sandbox cleanup are confirmed; persistent locks still fail.
+    await rm(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     if (verificationError !== undefined) throw verificationError
     return verified
   }
