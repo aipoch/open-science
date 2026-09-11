@@ -44,8 +44,8 @@ import { localizeProviderResourceMessage } from './validation-message'
 
 type ProviderListProps = {
   providers: ProviderView[]
-  // Provider that sources the currently selected model. Not shown as an "active provider"; used only
-  // to keep the in-use provider from being deleted (which would leave no selectable model).
+  // Provider that sources the currently selected model. Not shown as an "active provider"; retained
+  // for the row projection and validation status.
   activeProviderId: string | undefined
   activeModel?: string
   agentFrameworkId?: AgentFrameworkId
@@ -261,9 +261,9 @@ const ProviderList = ({
           const codexSubscriptionType = isCodexSubscription
             ? resolveCodexSubscriptionType(provider)
             : undefined
-          // The provider sourcing the selected model (and the last remaining one) can't be deleted:
-          // removing it would leave no model to run, so its delete action stays disabled.
-          const canDelete = !isActiveSource && displayedProviders.length > 1
+          // Keep one provider so new sessions still have a selectable model. Existing sessions keep
+          // their own model configuration, so the currently selected provider may be deleted.
+          const canDelete = displayedProviders.length > 1
           // The chat endpoint(s) this provider speaks; defaults to Anthropic when unset (older/custom).
           const endpoint = {
             path: providerRoutes.map((route) => ENDPOINT_PATHS[route]).join(' · '),
