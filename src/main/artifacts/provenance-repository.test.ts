@@ -1489,83 +1489,107 @@ describe('artifact provenance repository', () => {
     ).rejects.toThrow(/At most 100 Artifact Version ids/)
   })
 
-  it('returns the original Version for an exact write-operation retry without rereading changed pending bytes', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-idempotency-'))
-    const client = createProjectDbClient(storageRoot)
-    disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
+  it.each([false, true])(
+    'returns the original Version for an exact write-operation retry (response projection failed: %s)',
+    async (failProjection) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-idempotency-'))
+      const client = createProjectDbClient(storageRoot)
+      disconnect = () => client.$disconnect()
+      await migrateApplicationDatabase(client)
 
-    const compatibilityRepository = new ArtifactRepository(storageRoot)
-    const repository = new ArtifactProvenanceRepository({
-      storageRoot,
-      getClient: () => Promise.resolve(client),
-      compatibilityRepository
-    })
-    const request = {
-      projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactStorageSessionId: 'artifact-session-1',
-      artifactRunId: 'artifact-run-1',
-      writeOperationId: 'write-1',
-      writeRequestChecksum: 'a'.repeat(64),
-      rootFrameId: 'root-frame-1',
-      agentFrameId: 'agent-frame-1',
-      messageBranchId: 'branch-1',
-      runtimeSegmentId: 'runtime-segment-1',
-      promptMessageId: 'prompt-1',
-      filename: 'sin.png',
-      contentType: 'image/png'
-    } as const
-
-    await compatibilityRepository.writePendingFile({
-      projectId: request.projectId,
-      sessionId: request.artifactStorageSessionId,
-      runId: request.artifactRunId,
-      filename: request.filename,
-      source: createPngInlineSource('original bytes')
-    })
-    const first = await repository.createVersion(request)
-    await expect(
-      repository.replayVersion({
-        projectId: request.projectId,
-        appSessionId: request.appSessionId,
-        artifactStorageSessionId: request.artifactStorageSessionId,
-        artifactRunId: request.artifactRunId,
-        writeOperationId: request.writeOperationId,
-        filename: request.filename,
-        contentType: request.contentType
+      const compatibilityRepository = new ArtifactRepository(storageRoot)
+      const repository = new ArtifactProvenanceRepository({
+        storageRoot,
+        getClient: () => Promise.resolve(client),
+        compatibilityRepository
       })
-    ).resolves.toMatchObject({ versionId: first.versionId })
-    await expect(
-      repository.replayVersion({
+      const request = {
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        writeOperationId: 'write-1',
+        writeRequestChecksum: 'a'.repeat(64),
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-segment-1',
+        promptMessageId: 'prompt-1',
+        filename: 'sin.png',
+        contentType: 'image/png'
+      } as const
+
+      await compatibilityRepository.writePendingFile({
         projectId: request.projectId,
-        appSessionId: request.appSessionId,
-        artifactStorageSessionId: request.artifactStorageSessionId,
-        artifactRunId: request.artifactRunId,
-        writeOperationId: request.writeOperationId,
+        sessionId: request.artifactStorageSessionId,
+        runId: request.artifactRunId,
         filename: request.filename,
-        contentType: 'application/pdf'
+        source: createPngInlineSource('original bytes')
       })
-    ).rejects.toThrow(/write operation.*different request/i)
+      if (failProjection) {
+        // Fail only response projection, after the actual SQLite commit, to distinguish receipt
+        // failure from rollback. The next call is the same app-owned write identity.
+        const projection = vi
+          .spyOn(
+            repository as unknown as { toArtifactVersionFile: () => Promise<never> },
+            'toArtifactVersionFile'
+          )
+          .mockRejectedValueOnce(new Error('response projection failed'))
+        try {
+          await expect(repository.createVersion(request)).rejects.toThrow(
+            /response projection failed.*committed as pending.*not yet a finalized Artifact/
+          )
+          const committed = await client.artifactVersion.findUniqueOrThrow({
+            where: { writeOperationId: request.writeOperationId }
+          })
+          expect(committed.state).toBe('pending')
+        } finally {
+          projection.mockRestore()
+        }
+      }
+      const first = await repository.createVersion(request)
+      await expect(
+        repository.replayVersion({
+          projectId: request.projectId,
+          appSessionId: request.appSessionId,
+          artifactStorageSessionId: request.artifactStorageSessionId,
+          artifactRunId: request.artifactRunId,
+          writeOperationId: request.writeOperationId,
+          filename: request.filename,
+          contentType: request.contentType
+        })
+      ).resolves.toMatchObject({ versionId: first.versionId })
+      await expect(
+        repository.replayVersion({
+          projectId: request.projectId,
+          appSessionId: request.appSessionId,
+          artifactStorageSessionId: request.artifactStorageSessionId,
+          artifactRunId: request.artifactRunId,
+          writeOperationId: request.writeOperationId,
+          filename: request.filename,
+          contentType: 'application/pdf'
+        })
+      ).rejects.toThrow(/write operation.*different request/i)
 
-    await compatibilityRepository.writePendingFile({
-      projectId: request.projectId,
-      sessionId: request.artifactStorageSessionId,
-      runId: request.artifactRunId,
-      filename: request.filename,
-      source: createPngInlineSource('changed after delivery')
-    })
-    const retry = await repository.createVersion(request)
+      await compatibilityRepository.writePendingFile({
+        projectId: request.projectId,
+        sessionId: request.artifactStorageSessionId,
+        runId: request.artifactRunId,
+        filename: request.filename,
+        source: createPngInlineSource('changed after delivery')
+      })
+      const retry = await repository.createVersion(request)
 
-    expect(retry.versionId).toBe(first.versionId)
-    expect(retry.versionNumber).toBe(1)
-    expect(await readFile(retry.path)).toEqual(createPngBytes('original bytes'))
-    expect(await client.artifactVersion.count()).toBe(1)
-    await expect(
-      repository.createVersion({ ...request, writeRequestChecksum: 'b'.repeat(64) })
-    ).rejects.toThrow(/write operation.*different request/i)
-    expect(await client.artifactVersion.count()).toBe(1)
-  })
+      expect(retry.versionId).toBe(first.versionId)
+      expect(retry.versionNumber).toBe(1)
+      expect(await readFile(retry.path)).toEqual(createPngBytes('original bytes'))
+      expect(await client.artifactVersion.count()).toBe(1)
+      await expect(
+        repository.createVersion({ ...request, writeRequestChecksum: 'b'.repeat(64) })
+      ).rejects.toThrow(/write operation.*different request/i)
+      expect(await client.artifactVersion.count()).toBe(1)
+    }
+  )
 
   it('keeps a Version in staging when a durable file barrier fails', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-durable-file-'))
@@ -1634,7 +1658,9 @@ describe('artifact provenance repository', () => {
           resourceSizeBytes: content.byteLength,
           resourceChecksum: createHash('sha256').update(content).digest('hex')
         })
-      ).rejects.toThrow('simulated durable file failure')
+      ).rejects.toThrow(
+        /Artifact Version .*simulated durable file failure.*staging record and recovery copy were saved.*did not confirm a readable Version/
+      )
       expect(release).toHaveBeenCalledOnce()
     } finally {
       release.mockRestore()

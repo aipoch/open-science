@@ -1263,8 +1263,10 @@ class NotebookRuntimeService {
                       ? ((error as { code: string }).code ?? 'BACKGROUND_RUN_ADMISSION_FAILED')
                       : 'BACKGROUND_RUN_ADMISSION_FAILED',
                   stage: 'pre-admission',
-                  retryable: true,
-                  hint: 'Query by submissionIdentity before deciding whether to submit again.',
+                  retryable: Boolean(request.executionInvocationId),
+                  hint: request.executionInvocationId
+                    ? 'Query background_run with this submissionIdentity before deciding whether to submit again.'
+                    : 'No Run lookup identity is available, so this result cannot confirm whether a Run was accepted. Do not resubmit the same work; application-side recovery is required.',
                   ...(request.executionInvocationId
                     ? { submissionIdentity: request.executionInvocationId }
                     : {})
@@ -1573,8 +1575,10 @@ class NotebookRuntimeService {
                     ? ((error as { code: string }).code ?? 'BACKGROUND_RUN_ADMISSION_FAILED')
                     : 'BACKGROUND_RUN_ADMISSION_FAILED',
                 stage: 'pre-admission',
-                retryable: true,
-                hint: 'Query by submissionIdentity before deciding whether to submit again.',
+                retryable: Boolean(request.executionInvocationId),
+                hint: request.executionInvocationId
+                  ? 'Query background_run with this submissionIdentity before deciding whether to submit again.'
+                  : 'No Run lookup identity is available, so this result cannot confirm whether a Run was accepted. Do not resubmit the same work; application-side recovery is required.',
                 ...(request.executionInvocationId
                   ? { submissionIdentity: request.executionInvocationId }
                   : {})
@@ -1690,8 +1694,10 @@ class NotebookRuntimeService {
                       ? ((error as { code: string }).code ?? 'BACKGROUND_RUN_ADMISSION_FAILED')
                       : 'BACKGROUND_RUN_ADMISSION_FAILED',
                   stage: 'pre-admission',
-                  retryable: true,
-                  hint: 'Query by submissionIdentity before deciding whether to submit again.',
+                  retryable: Boolean(backgroundRequest.executionInvocationId),
+                  hint: backgroundRequest.executionInvocationId
+                    ? 'Query background_run with this submissionIdentity before deciding whether to submit again.'
+                    : 'No Run lookup identity is available, so this result cannot confirm whether a Run was accepted. Do not resubmit the same work; application-side recovery is required.',
                   ...(backgroundRequest.executionInvocationId
                     ? { submissionIdentity: backgroundRequest.executionInvocationId }
                     : {})
@@ -1737,7 +1743,12 @@ class NotebookRuntimeService {
     signal?: AbortSignal
   ): Promise<RequestNotebookNetworkAccessResult> {
     if (!this.options.processSandbox?.requestNetworkAccess) {
-      return { hostname: request.hostname, status: 'unavailable' }
+      return {
+        hostname: request.hostname,
+        status: 'unavailable',
+        message:
+          'Network access approval is unavailable for the current Notebook runtime. No user decision was requested and no access was granted.'
+      }
     }
     return this.options.processSandbox.requestNetworkAccess({
       sessionId: request.sessionId,

@@ -767,6 +767,9 @@ const createLiteratureLibraryMcpServer = (
       async ({ ref, candidate, pdfUrl }, { signal }) =>
         withDataRootWrite(async () => {
           signal.throwIfAborted()
+          if (Boolean(ref) === Boolean(candidate)) {
+            throw new Error('ACQUIRE_PDF_INPUT_REQUIRED: Pass exactly one of ref or candidate.')
+          }
           const candidates = await resolveSaveCandidates(
             { refs: ref ? [ref] : undefined, candidates: candidate ? [candidate] : undefined },
             handler,

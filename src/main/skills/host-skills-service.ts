@@ -140,7 +140,8 @@ class HostSkillsCallError extends Error {
   constructor(operation: string, cause: unknown) {
     const message = cause instanceof Error ? cause.message : String(cause)
     super(
-      `host.skills.${operation}: ${message.replace(/(['"])(?:[A-Za-z]:\\|\/)[^'"]+\1/g, '<path>')}`
+      `host.skills.${operation}: ${message.replace(/(['"])(?:[A-Za-z]:\\|\/)[^'"]+\1/g, '<path>')}`,
+      { cause }
     )
     this.name = 'HostSkillsCallError'
   }
@@ -484,8 +485,26 @@ export class HostSkillsService {
     if (!validation.valid) throw new Error(validation.errors[0]?.message ?? 'Skill is invalid')
 
     const id = await this.options.catalog.publishPersonalDirectory(name, draft, overwrite)
-    await rm(draft, { recursive: true, force: true })
-    await this.options.onPublishedSkillsChanged?.()
+    try {
+      await rm(draft, { recursive: true, force: true })
+    } catch (error) {
+      throw new Error(
+        `Skill "${id}" was published, but draft cleanup failed and catalog refresh was not attempted. ` +
+          `The draft "draft-${name}" may remain. Use host.skills.read(${JSON.stringify(id)}) ` +
+          'to inspect the published Skill before any further mutation; do not republish to retry cleanup.',
+        { cause: error }
+      )
+    }
+    try {
+      await this.options.onPublishedSkillsChanged?.()
+    } catch (error) {
+      throw new Error(
+        `Skill "${id}" was published and its draft removed, but catalog refresh failed. ` +
+          `Use host.skills.read(${JSON.stringify(id)}) to inspect the published Skill; ` +
+          'do not republish to retry refresh. Availability in agent contexts has not been confirmed.',
+        { cause: error }
+      )
+    }
     return { status: 'published', id, name, origin: 'personal' }
   }
 
@@ -539,7 +558,16 @@ export class HostSkillsService {
     )
     if (!approved) return { status: 'declined', operation: 'delete' }
     await this.options.catalog.deletePublished(published.id)
-    await this.options.onPublishedSkillsChanged?.()
+    try {
+      await this.options.onPublishedSkillsChanged?.()
+    } catch (error) {
+      throw new Error(
+        `Skill "${published.id}" was deleted, but catalog refresh failed. ` +
+          'Use host.skills.list() to inspect the catalog; do not repeat deletion to retry refresh. ' +
+          'Removal from agent contexts has not been confirmed.',
+        { cause: error }
+      )
+    }
     return { status: 'deleted', operation: 'delete', name: publicName }
   }
 }

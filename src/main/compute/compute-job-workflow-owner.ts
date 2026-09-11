@@ -81,7 +81,7 @@ export const createComputeArtifactResolver = (
 const assertBareName = (name: string, label: string): void => {
   if (!name || name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
     throw new Error(
-      `dst_filename must be a bare filename with no path separators (got "${name}" for ${label})`
+      `dstFilename must be a bare filename with no path separators (got "${name}" for ${label})`
     )
   }
 }
@@ -108,7 +108,7 @@ export const resolveInputs = async (
   const reserveDestination = (dstFilename: string): void => {
     assertSafeInputDestination(dstFilename)
     if (destinations.has(dstFilename)) {
-      throw new Error(`dst_filename must be unique within a Compute Job (got "${dstFilename}")`)
+      throw new Error(`dstFilename must be unique within a Compute Job (got "${dstFilename}")`)
     }
     destinations.add(dstFilename)
   }
@@ -117,18 +117,16 @@ export const resolveInputs = async (
     if ('remote_path' in raw) {
       const remotePath = raw.remote_path
       if (!remotePath.startsWith('/')) {
-        throw new Error(`remote_path must be an absolute path (got "${remotePath}")`)
+        throw new Error(`remotePath must be an absolute path (got "${remotePath}")`)
       }
       if (GLOB_CHARS.test(remotePath)) {
-        throw new Error(`remote_path must not contain glob characters (got "${remotePath}")`)
+        throw new Error(`remotePath must not contain glob characters (got "${remotePath}")`)
       }
       if (SHELL_UNSAFE_CHARS.test(remotePath)) {
-        throw new Error(
-          `remote_path must not contain shell-unsafe characters (got "${remotePath}")`
-        )
+        throw new Error(`remotePath must not contain shell-unsafe characters (got "${remotePath}")`)
       }
       const dstFilename = raw.dst_filename ?? basename(remotePath)
-      assertBareName(dstFilename, `remote_path "${remotePath}"`)
+      assertBareName(dstFilename, `remotePath "${remotePath}"`)
       reserveDestination(dstFilename)
       entries.push({
         kind: 'symlink',
@@ -262,33 +260,33 @@ export class ComputeJobWorkflowOwner {
     if (rawTimeout !== undefined) {
       if (!Number.isFinite(rawTimeout)) {
         const error = new Error(
-          `timeout_seconds must be a finite number (got ${rawTimeout}).`
+          `timeoutSeconds must be a finite number (got ${rawTimeout}).`
         ) as Error & { computeCallError: ComputeCallError }
         error.computeCallError = {
           error_code: 'timeout',
-          message: 'timeout_seconds must be a finite number.',
+          message: 'timeoutSeconds must be a finite number. The Compute Job was not submitted.',
           retry_after_user_action: false
         }
         throw error
       }
       if (!Number.isInteger(rawTimeout) || rawTimeout <= 0) {
         const error = new Error(
-          `timeout_seconds must be a positive integer (got ${rawTimeout}).`
+          `timeoutSeconds must be a positive integer (got ${rawTimeout}).`
         ) as Error & { computeCallError: ComputeCallError }
         error.computeCallError = {
           error_code: 'timeout',
-          message: 'timeout_seconds must be a positive integer.',
+          message: 'timeoutSeconds must be a positive integer. The Compute Job was not submitted.',
           retry_after_user_action: false
         }
         throw error
       }
       if (rawTimeout > JOB_MAX_TIMEOUT_SECONDS) {
         const error = new Error(
-          `timeout_seconds ${rawTimeout} exceeds the 7-day maximum. Use a scheduler driver for multi-day jobs.`
+          `timeoutSeconds ${rawTimeout} exceeds the 7-day maximum. The Compute Job was not submitted.`
         ) as Error & { computeCallError: ComputeCallError }
         error.computeCallError = {
           error_code: 'timeout',
-          message: `timeout_seconds exceeds the 7-day (${JOB_MAX_TIMEOUT_SECONDS}s) maximum.`,
+          message: `timeoutSeconds exceeds the 7-day (${JOB_MAX_TIMEOUT_SECONDS}s) maximum. The Compute Job was not submitted.`,
           retry_after_user_action: false
         }
         throw error

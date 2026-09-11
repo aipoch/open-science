@@ -1,3 +1,5 @@
+import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
+import { McpToolCallError } from './mcp-client-manager'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
 import { hasEmbeddedConnectorCredentials } from '../settings/connector-template'
@@ -9,13 +11,22 @@ import { hasAmbiguousCustomMcpCredentialNames } from './custom-mcp-windows-crede
 
 export type CustomMcpFailureAvailability = 'unavailable' | 'unauthenticated'
 
-export const classifyCustomMcpFailure = (error: unknown): CustomMcpFailureAvailability =>
-  error instanceof Error &&
-  /(?:401|403|unauthoriz|authenticat|forbidden|invalid_token|(?:log(?:ged)?|sign(?:ed)?)[\s_-]?in)/i.test(
-    error.message
+export const classifyCustomMcpFailure = (error: unknown): CustomMcpFailureAvailability => {
+  if (error instanceof UnauthorizedError) return 'unauthenticated'
+  if (!(error instanceof Error)) return 'unavailable'
+  const status =
+    (error as Error & { status?: number; code?: number }).status ??
+    (error as Error & { code?: number }).code
+  if (status === 401 || /^401 Unauthorized\b/i.test(error.message)) return 'unauthenticated'
+  if (
+    error instanceof McpToolCallError &&
+    /(?:not (?:logged|signed) in|sign[ -]?in (?:is )?required|authentication (?:is )?required|invalid_token)/i.test(
+      error.message
+    )
   )
-    ? 'unauthenticated'
-    : 'unavailable'
+    return 'unauthenticated'
+  return 'unavailable'
+}
 
 // Pure mapping/filtering helpers used to wire custom MCP servers into app bootstrap (ipc.ts).
 // Split out from ipc.ts so they can be unit-tested without pulling in ipc.ts's Electron-touching

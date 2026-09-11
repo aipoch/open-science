@@ -353,8 +353,8 @@ class NotebookPackageAdmissionOwner {
     return refusal(
       `RUNTIME_BINDING_UNAVAILABLE: the bound ${language} runtime is ${binding.status}` +
         (binding.reason ? ` (${binding.reason})` : '') +
-        '. Switch to another runtime (list_notebook_runtimes → notebook_switch_runtime) before ' +
-        'installing packages.',
+        '. Call list_notebook_runtimes then notebook_switch_runtime with the language and an exact ' +
+        'runtimeId from the listing before installing packages. Switching clears the previous Kernel memory.',
       receipt
     )
   }

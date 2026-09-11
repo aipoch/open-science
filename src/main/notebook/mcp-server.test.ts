@@ -393,6 +393,54 @@ describe('notebook MCP server config', () => {
     expect(tool?.description).toContain('Execute or retry only when the result is allowed')
   })
 
+  it.each(['aborted', 'user-decision', 'approval-surface-unavailable'])(
+    'preserves network decision information in the agent result: %s',
+    async (decisionSource) => {
+      const result = {
+        hostname: 'data.example.org',
+        status: decisionSource === 'approval-surface-unavailable' ? 'unavailable' : 'denied',
+        decisionSource,
+        message: 'Decision-specific recovery information.'
+      }
+      const server = createNotebookMcpServer({
+        endpoint: 'http://127.0.0.1:4567',
+        token: 'secret-token',
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace'
+      })
+      const client = new ModelContextProtocolClient({
+        name: 'network-result-test',
+        version: '1.0.0'
+      })
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = vi.fn(
+        async () =>
+          new Response(JSON.stringify({ result }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          })
+      ) as typeof fetch
+      try {
+        await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+        const delivered = await client.callTool({
+          name: 'request_network_access',
+          arguments: {
+            hostname: 'data.example.org',
+            reason: 'Download the dataset.',
+            runtime: 'python'
+          }
+        })
+        expect(delivered.content).toEqual([{ type: 'text', text: JSON.stringify(result, null, 2) }])
+      } finally {
+        globalThis.fetch = originalFetch
+        await client.close()
+        await server.close()
+      }
+    }
+  )
+
   it('exposes bounded memory discovery, search, and append-only agent tools', () => {
     const tools = Object.fromEntries(NOTEBOOK_RPC_TOOLS.map((tool) => [tool.name, tool]))
 
@@ -2090,6 +2138,51 @@ describe('compactManagePackagesResult', () => {
     expect(JSON.stringify(compact)).not.toContain('r-dplyr')
   })
 
+  it.each([
+    'ERROR: No matching distribution found for unavailable-package',
+    'ERROR: Permission denied: /runtime/site-packages'
+  ])('preserves the installer diagnosis on failure: %s', (diagnosis) => {
+    const result = compactManagePackagesResult({
+      ok: false,
+      needsRestart: false,
+      error: 'pip install failed.',
+      log: diagnosis,
+      attempts: [{ groupOrdinal: 0, installer: 'pip', status: 'failed', mutationRisk: 'possible' }]
+    })
+    expect(result).toMatchObject({
+      diagnostics: diagnosis,
+      attempts: [{ groupOrdinal: 0, installer: 'pip', status: 'failed', mutationRisk: 'possible' }]
+    })
+  })
+
+  it('bounds and redacts failure output while retaining the final installer diagnosis', () => {
+    const result = compactManagePackagesResult({
+      ok: false,
+      needsRestart: false,
+      fallbackUsed: true,
+      error: 'conda and pip install both failed.',
+      log:
+        'https://user:credential@example.org/simple?token=private ' +
+        'x'.repeat(20000) +
+        '\nERROR: No matching distribution found for unavailable-package',
+      attempts: [
+        {
+          groupOrdinal: 0,
+          installer: 'conda',
+          status: 'failed',
+          mutationRisk: 'none',
+          reason: 'package-not-found'
+        },
+        { groupOrdinal: 1, installer: 'pip', status: 'failed', mutationRisk: 'possible' }
+      ]
+    }) as Record<string, unknown>
+    expect(result.attempts).toHaveLength(2)
+    expect(result.diagnostics).toContain('No matching distribution found')
+    expect(result.diagnostics).toContain('omitted')
+    expect(JSON.stringify(result)).not.toMatch(/credential|private/)
+    expect(JSON.stringify(result, null, 2).length).toBeLessThan(NOTEBOOK_MCP_CONTROL_RESULT_LIMIT)
+  })
+
   it('retains a concise failure reason and passes through non-object results', () => {
     expect(
       compactManagePackagesResult({
@@ -2119,7 +2212,8 @@ describe('compactManagePackagesResult', () => {
         label: 'default-python',
         prefix: '/runtime/envs/default-python'
       },
-      error: 'Package installation could not be verified: dplyr.'
+      error: 'Package installation could not be verified: dplyr.',
+      diagnostics: 'very verbose diagnostics'
     })
     expect(compactManagePackagesResult(null)).toBeNull()
     expect(compactManagePackagesResult('x')).toBe('x')
@@ -2565,6 +2659,19 @@ describe('compactNotebookExecutionResult', () => {
     expect(JSON.stringify(compact)).not.toContain('repl_loop.js')
     expect((summary.text as { traceback: string }).traceback).toBe(traceback)
     expect(raw.outputs[0].traceback).toBe(traceback)
+  })
+
+  it.each([
+    'Error: host.viewImage rejected: BACKGROUND_HOST_METHOD_UNSAFE. Run host.viewImage in foreground repl_execute.',
+    'Error: Compute host unavailable\n{"error_code":"HOST_OFFLINE","message":"Compute host unavailable","retry_after_user_action":true}',
+    'StructuredOutputError: structured output exceeds max bytes 64000; shorten the result.'
+  ])('preserves actionable Host error context after stack removal: %s', (message) => {
+    const traceback = `${message}\n    at async <repl>:3:20`
+    const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')!
+    const compact = replTool.mapResult!({ ...runSummary({ traceback }), status: 'failed' }, {})
+    const serialized = serializeNotebookToolResult(compact, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+    expect(JSON.parse(serialized).traceback).toBe(message)
+    expect(serialized).not.toContain('<repl>')
   })
 
   it('keeps connector guidance while omitting host MCP stack frames from the agent-facing error', () => {

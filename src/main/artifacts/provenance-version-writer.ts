@@ -375,6 +375,7 @@ class ArtifactProvenanceVersionWriter {
     const stagingContentPath = join(stagingDirectory, 'content')
 
     let stagingRowPersisted = false
+    let versionCommitted = false
     try {
       await mkdir(stagingDirectory, { recursive: true })
       const pendingStat = await stat(pendingFile.path)
@@ -644,14 +645,22 @@ class ArtifactProvenanceVersionWriter {
           })
         )
       })
-      return this.options.projectVersionFile(finalized, projectId, appSessionId)
+      versionCommitted = true
+      return await this.options.projectVersionFile(finalized, projectId, appSessionId)
     } catch (error) {
       // Once SQLite owns the staging row, its copied bytes are recovery state for an idempotent
       // transport retry. Removing them here would force a retry to reread a mutable pending source.
       if (!stagingRowPersisted) {
         await rm(stagingDirectory, { recursive: true, force: true })
+        throw error
       }
-      throw error
+      throw new Error(
+        `Artifact Version ${versionId}: ${error instanceof Error ? error.message : String(error)}. ` +
+          (versionCommitted
+            ? 'The Version was committed as pending before the response failed. It is not yet a finalized Artifact available through Host discovery; do not assume the write was rolled back or repeat it to recover this response.'
+            : 'A staging record and recovery copy were saved, but this write did not confirm a readable Version. Do not treat it as a completed Artifact or edit provenance metadata.'),
+        { cause: error }
+      )
     }
   }
 

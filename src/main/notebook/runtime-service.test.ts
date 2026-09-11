@@ -213,6 +213,24 @@ const lifecycleCallbackHarness = (
 }
 
 describe('notebook runtime service', () => {
+  it('explains missing network approval capability without claiming a user denial', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+    await expect(
+      service.requestNetworkAccess({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        hostname: 'data.example.org',
+        reason: 'Download data.'
+      })
+    ).resolves.toEqual({
+      hostname: 'data.example.org',
+      status: 'unavailable',
+      message:
+        'Network access approval is unavailable for the current Notebook runtime. No user decision was requested and no access was granted.'
+    })
+  })
+
   it('deletes generated prompt input copies with their Session and Project input caches', async () => {
     const root = await createStorageRoot()
     const { service } = lifecycleCallbackHarness(root)
@@ -6804,48 +6822,69 @@ describe('notebook runtime service', () => {
     ])
   })
 
-  it('does not persist a Run when background execution is cancelled before durable admission', async () => {
-    const root = await createStorageRoot()
-    const repository = new NotebookRunRepository(root)
-    const admissionReached = createDeferred<void>()
-    const releaseAdmission = createDeferred<void>()
-    const appendOrGetRun = repository.appendOrGetRun.bind(repository)
-    vi.spyOn(repository, 'appendOrGetRun').mockImplementation(async (request) => {
-      admissionReached.resolve()
-      await releaseAdmission.promise
-      return appendOrGetRun(request)
-    })
-    const service = new NotebookRuntimeService({
-      configRoot: root,
-      dataRoot: root,
-      projectId: 'default-project',
-      repository,
-      backgroundExecutionEnabled: true
-    })
-    const cancellation = new AbortController()
-    const submission = service.executeBackground(
-      {
-        sessionId: 'session-background-aborted',
-        workspaceCwd: root,
-        code: 'must_not_run()',
-        background: true,
-        executionInvocationId: 'submission-aborted'
-      },
-      cancellation.signal
+  it.each(
+    (['executeBackground', 'executeControlBackground', 'executeShellBackground'] as const).flatMap(
+      (method) => ['submission-aborted', undefined].map((identity) => [method, identity] as const)
     )
-    await admissionReached.promise
-    cancellation.abort(new Error('MCP disconnected before admission'))
-    releaseAdmission.resolve()
+  )(
+    'keeps %s admission recovery usable with identity %s',
+    async (method, executionInvocationId) => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const admissionReached = createDeferred<void>()
+      const releaseAdmission = createDeferred<void>()
+      const appendOrGetRun = repository.appendOrGetRun.bind(repository)
+      vi.spyOn(repository, 'appendOrGetRun').mockImplementation(async (request) => {
+        admissionReached.resolve()
+        await releaseAdmission.promise
+        if (method === 'executeShellBackground') throw new Error('Admission storage unavailable')
+        return appendOrGetRun(request)
+      })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository,
+        backgroundExecutionEnabled: true
+      })
+      const cancellation = new AbortController()
+      const submission = service[method](
+        {
+          sessionId: 'session-background-aborted',
+          workspaceCwd: root,
+          code: 'must_not_run()',
+          command: 'must_not_run',
+          background: true,
+          executionInvocationId
+        },
+        cancellation.signal
+      )
+      await admissionReached.promise
+      cancellation.abort(new Error('MCP disconnected before admission'))
+      releaseAdmission.resolve()
 
-    await expect(submission).rejects.toMatchObject({
-      detail: { code: 'BACKGROUND_RUN_ADMISSION_FAILED', stage: 'pre-admission' }
-    })
-    const document = await repository.findAnyExisting(
-      'default-project',
-      'session-background-aborted'
-    )
-    expect(document?.runs).toEqual([])
-  })
+      await expect(submission).rejects.toMatchObject({
+        message: expect.stringContaining(
+          method === 'executeShellBackground'
+            ? 'Admission storage unavailable'
+            : 'MCP disconnected before admission'
+        ),
+        detail: {
+          code: 'BACKGROUND_RUN_ADMISSION_FAILED',
+          stage: 'pre-admission',
+          retryable: Boolean(executionInvocationId),
+          hint: executionInvocationId
+            ? expect.stringContaining('Query background_run with this submissionIdentity')
+            : expect.stringContaining('No Run lookup identity is available')
+        }
+      })
+      const document = await repository.findAnyExisting(
+        'default-project',
+        'session-background-aborted'
+      )
+      expect(document?.runs).toEqual([])
+    }
+  )
 
   it('queries a provisional root Frame by its persisted owner and acknowledges a terminal result', async () => {
     const root = await createStorageRoot()
@@ -11256,6 +11295,16 @@ describe('notebook runtime service', () => {
                   condaEnv: 'my-analysis',
                   version: '3.12',
                   runnable: true
+                },
+                {
+                  language: 'python',
+                  provenance: 'agent-created',
+                  envId: pythonBin(envPrefix(getRuntimeRoot(root), 'replacement')),
+                  interpreterPath: pythonBin(envPrefix(getRuntimeRoot(root), 'replacement')),
+                  label: 'replacement',
+                  condaEnv: 'replacement',
+                  version: '3.12',
+                  runnable: true
                 }
               ]
             : [],
@@ -11297,12 +11346,26 @@ describe('notebook runtime service', () => {
 
       await expect(
         service.manageEnvironments({ action: 'remove', name: 'my-analysis' })
-      ).rejects.toThrow(/in use by a running kernel/)
+      ).rejects.toThrow(/live python Kernel \(status: idle\)/)
       expect(removed).toEqual([])
 
       // A different env with no live proc is removable.
       await service.manageEnvironments({ action: 'remove', name: 'other-env' })
       expect(removed).toEqual(['other-env'])
+
+      // Follow the public recovery guidance: discover, switch, then remove the old target.
+      const listed = await service.listRuntimes({ sessionId: 's', workspaceCwd: root })
+      const replacement = listed.runtimes.find((runtime) => runtime.label === 'replacement')!
+      await service.switchRuntime({
+        sessionId: 's',
+        workspaceCwd: root,
+        language: 'python',
+        runtimeId: replacement.runtimeId
+      })
+      await expect(
+        service.manageEnvironments({ action: 'remove', name: 'my-analysis' })
+      ).resolves.toEqual({ removed: { name: 'my-analysis' } })
+      expect(removed).toEqual(['other-env', 'my-analysis'])
     })
 
     it('rejects hostile / reserved environment names before touching the manager (security)', async () => {
@@ -13021,7 +13084,7 @@ describe('v4 runtime bindings & agent tools', () => {
     await expect(
       service.manageEnvironments({ action: 'remove', name: 'analysis' })
     ).rejects.toThrow(
-      'Session "session-1" has an active Runtime Binding to it. Switch that Session to another Runtime Environment first.'
+      'Session "session-1" has an active Runtime Binding to it. In that Session, use list_notebook_runtimes then notebook_switch_runtime'
     )
     expect(removed).toEqual([])
 

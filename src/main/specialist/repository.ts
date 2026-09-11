@@ -1,3 +1,4 @@
+import { AgentsSafeError, agentsPublicError } from '../agents/agents-error'
 import { join } from 'node:path'
 
 import { createLogger } from '../logger'
@@ -25,19 +26,19 @@ const SPECIALISTS_FILE = 'specialists.json'
 
 const log = createLogger('specialist.repository')
 
-export class SpecialistIdConflictError extends Error {
+export class SpecialistIdConflictError extends AgentsSafeError {
   constructor(readonly specialistId: string) {
     super(`Specialist with id ${specialistId} already exists.`)
     this.name = 'SpecialistIdConflictError'
   }
 }
 
-export class SpecialistDocumentDegradedError extends Error {
+export class SpecialistDocumentDegradedError extends AgentsSafeError {
   readonly code = 'SPECIALIST_DOCUMENT_DEGRADED' as const
 
   constructor(readonly integrity: Extract<SpecialistDocumentIntegrity, { status: 'degraded' }>) {
     super(
-      'Specialist data contains records that cannot be safely rewritten. Repair the file first.'
+      'Specialist data contains records that cannot be safely rewritten. Stop mutations and ask the user to repair the Specialist data first.'
     )
     this.name = 'SpecialistDocumentDegradedError'
   }
@@ -416,7 +417,7 @@ export class SpecialistRepository {
         throw new SpecialistIdConflictError(specialist.id)
       }
       if (doc.specialists.some((s) => s.name === specialist.name)) {
-        throw new Error(`Specialist with name "${specialist.name}" already exists.`)
+        throw agentsPublicError(`Specialist with name "${specialist.name}" already exists.`)
       }
       return { ...doc, specialists: [...doc.specialists, specialist] }
     })
@@ -430,15 +431,15 @@ export class SpecialistRepository {
   ): Promise<StoredSpecialists> {
     return this.mutate((doc) => {
       const index = doc.specialists.findIndex((s) => s.id === id)
-      if (index < 0) throw new Error(`Specialist ${id} not found.`)
+      if (index < 0) throw agentsPublicError(`Specialist ${id} not found.`)
       const current = doc.specialists[index]
       if (current.revision !== expectedRevision) {
-        throw new Error(
-          `Revision conflict: expected ${expectedRevision}, found ${current.revision}.`
+        throw agentsPublicError(
+          `Revision conflict: expected ${expectedRevision}, found ${current.revision}. Read the current Specialist with host.agents.get({ name }) before deciding whether to apply the update again.`
         )
       }
       if (patch.name !== undefined && patch.name !== current.name) {
-        throw new Error('Specialist name is immutable.')
+        throw agentsPublicError('Specialist name is immutable.')
       }
       const updated: StoredSpecialist = {
         ...current,
@@ -457,9 +458,9 @@ export class SpecialistRepository {
   async setEnabled(id: string, enabled: boolean): Promise<StoredSpecialists> {
     return this.mutate((doc) => {
       const index = doc.specialists.findIndex((s) => s.id === id)
-      if (index < 0) throw new Error(`Specialist ${id} not found.`)
+      if (index < 0) throw agentsPublicError(`Specialist ${id} not found.`)
       if (enabled && doc.specialists[index].setupPending) {
-        throw new Error('Complete Specialist setup before enabling it.')
+        throw agentsPublicError('Complete Specialist setup before enabling it.')
       }
       const specialists = [...doc.specialists]
       specialists[index] = {
@@ -475,10 +476,10 @@ export class SpecialistRepository {
   async delete(id: string, expectedRevision?: number): Promise<StoredSpecialists> {
     return this.mutate((doc) => {
       const current = doc.specialists.find((s) => s.id === id)
-      if (!current) throw new Error(`Specialist ${id} not found.`)
+      if (!current) throw agentsPublicError(`Specialist ${id} not found.`)
       if (expectedRevision !== undefined && current.revision !== expectedRevision) {
-        throw new Error(
-          `Revision conflict: expected ${expectedRevision}, found ${current.revision}.`
+        throw agentsPublicError(
+          `Revision conflict: expected ${expectedRevision}, found ${current.revision}. Read the current Specialist with host.agents.get({ name }) before deciding whether to apply the update again.`
         )
       }
       return { ...doc, specialists: doc.specialists.filter((s) => s.id !== id) }
@@ -509,7 +510,7 @@ export class SpecialistRepository {
     const run = this.saveQueue.then(async () => {
       const current = await this.readWritableDocument()
       if (JSON.stringify(current) !== JSON.stringify(expected)) {
-        throw new Error('Specialist document changed during package transaction.')
+        throw agentsPublicError('Specialist document changed during package transaction.')
       }
       await this.write(replacement)
     })

@@ -242,11 +242,20 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
     if (recoveryErrors.length > 0) {
       throw new AggregateError(
         [error, ...recoveryErrors],
-        `Artifact pending-file rollback or reservation release failed: ${recoveryErrors
-          .map((recoveryError) =>
-            recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
-          )
-          .join('; ')}`
+        `Artifact write failed: ${error instanceof Error ? error.message : String(error)}. ` +
+          `Artifact pending-file rollback or reservation release failed: ${recoveryErrors
+            .map((recoveryError) =>
+              recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
+            )
+            .join('; ')}. ` +
+          (versionRoutingPublished
+            ? 'Version routing was already published; this failure does not establish that the Artifact Version was rolled back. '
+            : 'Version routing publication was not confirmed; rollback or reservation cleanup is incomplete. ') +
+          (preserveFileBackup ? `Original file backup retained at ${backupPath}. ` : '') +
+          (preserveMetadataBackup
+            ? `Original metadata backup retained at ${metadataBackupPath}. `
+            : '') +
+          'Do not edit provenance metadata to recover this write.'
       )
     }
     throw error

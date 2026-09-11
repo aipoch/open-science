@@ -1296,7 +1296,9 @@ describe('computeCall RPC', () => {
 
     expect(conflict.status).toBe(409)
     await expect(conflict.json()).resolves.toEqual({
-      error: 'invocation_id was already used with a different submit_job request.'
+      error: expect.stringContaining(
+        'Compute submission identity conflicts with a different request.'
+      )
     })
     expect(submitJob).toHaveBeenCalledTimes(1)
   })

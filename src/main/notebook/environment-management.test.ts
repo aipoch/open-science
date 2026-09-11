@@ -355,12 +355,32 @@ describe('NotebookEnvironmentManagementOwner', () => {
       /reserved environment name/
     )
     await expect(owner.manage({ action: 'remove', name: 'analysis' })).rejects.toThrow(
-      /in use by a running kernel/
+      /live python Kernel \(status: idle\) in Session "session-1"/
     )
 
     expect(options.ensureRecovered).not.toHaveBeenCalled()
     expect(configured.removeEnvironment).not.toHaveBeenCalled()
   })
+
+  it.each(['idle', 'running'] as const)(
+    'reports the actual %s Kernel state and allows removal after termination',
+    async (status) => {
+      const statuses: Array<[string, NotebookKernelMetadata['lastKnownStatus']]> = [
+        ['python:analysis', status]
+      ]
+      const { owner, manager: configured } = harness({
+        sessions: () => [session('session-owner', statuses)]
+      })
+      await expect(owner.manage({ action: 'remove', name: 'analysis' })).rejects.toThrow(
+        `(status: ${status}) in Session "session-owner"`
+      )
+      expect(configured?.removeEnvironment).not.toHaveBeenCalled()
+      statuses[0] = ['python:analysis', 'terminated']
+      await expect(owner.manage({ action: 'remove', name: 'analysis' })).resolves.toEqual({
+        removed: { name: 'analysis' }
+      })
+    }
+  )
 
   it('refuses an agent-created environment selected by an active dormant Session', async () => {
     const configured = manager()
@@ -372,7 +392,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
     })
 
     await expect(owner.manage({ action: 'remove', name: 'analysis' })).rejects.toThrow(
-      'Environment "analysis" cannot be removed because Session "session-42" has an active Runtime Binding to it. Switch that Session to another Runtime Environment first.'
+      'Environment "analysis" cannot be removed because Session "session-42" has an active Runtime Binding to it.'
     )
 
     expect(options.ensureRecovered).not.toHaveBeenCalled()
@@ -406,7 +426,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
     })
 
     await expect(owner.manage({ action: 'remove', name: 'analysis' })).rejects.toThrow(
-      'Environment "analysis" cannot be removed because Session "session-revoking" has a revoking Runtime Binding to it. Switch that Session to another Runtime Environment first.'
+      'Environment "analysis" cannot be removed because Session "session-revoking" has a revoking Runtime Binding to it.'
     )
 
     expect(options.ensureRecovered).not.toHaveBeenCalled()

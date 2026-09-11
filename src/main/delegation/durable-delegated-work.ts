@@ -680,6 +680,29 @@ const createDurableDelegatedWork = (
       }
     }
     if (failures.length > 0) {
+      if (!forceTerminalOnFailure) {
+        const attempts = settled.map((result, index) => ({
+          frameId: children[index].frameId,
+          attemptId: currentAttempt(children[index]).id,
+          ...(result.status === 'fulfilled'
+            ? { stopOutcome: result.value.status }
+            : {
+                stopOutcome: 'unconfirmed',
+                reason:
+                  result.reason instanceof DurableDelegatedWorkError
+                    ? result.reason.message
+                    : 'Stopping this Attempt failed; its terminal state was not confirmed.'
+              })
+        }))
+        throw new DurableDelegatedWorkError(
+          'execution_failure',
+          'One or more Subagent Attempts could not be stopped. ' +
+            JSON.stringify({
+              attempts,
+              hint: 'Use host.collect with these {frameId, attemptId} handles to observe the same Attempts before deciding what to do next.'
+            })
+        )
+      }
       throw new AggregateError(failures, 'One or more Subagent Attempts could not be stopped.')
     }
     return settled.map((result) => (result as PromiseFulfilledResult<StopOutcome>).value)

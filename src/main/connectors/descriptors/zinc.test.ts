@@ -283,7 +283,9 @@ describe('zinc / zinc_search_by_id', () => {
     vi.stubGlobal('fetch', fetchImpl)
 
     const promise = byId.run!(ctx, { zinc_ids: ['ZINC000000000012'], timeout_s: 5 })
-    const assertion = expect(promise).rejects.toThrow(/ZTASK-STUCK/)
+    const assertion = expect(promise).rejects.toThrow(
+      /ZTASK-STUCK.*may still be running.*cannot resume polling.*creates a new task/
+    )
     await vi.runAllTimersAsync()
     await assertion
   })

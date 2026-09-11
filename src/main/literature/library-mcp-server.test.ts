@@ -86,6 +86,9 @@ describe('Literature Library MCP server', () => {
       arguments: { ref: '10.1234/example', candidate: discovery }
     })
     expect(rejected.isError).toBe(true)
+    expect(JSON.stringify(rejected.content)).toContain('Pass exactly one of ref or candidate')
+    const missing = await client.callTool({ name: 'acquire_pdf', arguments: {} })
+    expect(JSON.stringify(missing.content)).toContain('Pass exactly one of ref or candidate')
     expect(acquirePdf).toHaveBeenCalledTimes(1)
     await client.close()
     await server.close()
