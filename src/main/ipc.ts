@@ -4510,7 +4510,7 @@ const createApplicationModules = async (
         withDataRootWrite(() =>
           getArtifactReproducibilityOutputStorage(artifactProvenanceRepository, request)
         ),
-      downloadsDirectory: app.getPath('downloads'),
+      downloadsDirectory: () => app.getPath('downloads'),
       readOutput: (request, checksum, entityId) =>
         withDataRootWrite(() =>
           getArtifactReproducibilityOutput(
