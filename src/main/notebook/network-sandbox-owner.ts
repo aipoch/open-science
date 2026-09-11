@@ -65,6 +65,7 @@ type NotebookNetworkDecisionRequest = Readonly<{
   port?: number
   runtime?: NotebookSandboxInvocation['runtime']
   reason?: string
+  allowOnce: boolean
   signal: AbortSignal
 }>
 
@@ -487,6 +488,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         if (executionActive) throw new Error('Notebook sandbox execution is already active.')
         wrapped.resetNetworkConnections()
         executionActive = true
+        wrapped.setExecutionActive(true)
         const grantKey = commandGrantKey(
           invocation.sessionId,
           invocation.runtime,
@@ -500,6 +502,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ended = true
           activeExecutionGrants = new Set()
           executionActive = false
+          wrapped.setExecutionActive(false)
           wrapped.resetNetworkConnections()
         }
       },
@@ -528,33 +531,23 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const destinationKey = blockedDestinationKey(request.sessionId, normalized.hostname)
     const blockedCommands = this.blockedDestinationCommands.get(destinationKey)
     const blockedRuntimes = blockedCommands ? new Set(blockedCommands.keys()) : undefined
-    const runtime = request.runtime
-      ? blockedRuntimes?.has(request.runtime)
-        ? request.runtime
-        : undefined
-      : blockedRuntimes?.size === 1
-        ? [...blockedRuntimes][0]
-        : undefined
-    if (!blockedRuntimes || !runtime) {
-      return this.networkAccessResult(normalized.hostname, 'denied', request.runtime, {
-        decisionSource: 'no-matching-block'
-      })
-    }
-    const commands = blockedCommands!.get(runtime)
+    // Failure records may fill in omitted context, but are not admission tickets.
+    // Only bash accepts a caller-supplied execution command. Kernel grants use
+    // their recorded process invocation, not caller-supplied Notebook source code.
+    const runtime =
+      request.runtime ?? (blockedRuntimes?.size === 1 ? [...blockedRuntimes][0] : undefined)
+    const commands = runtime ? blockedCommands?.get(runtime) : undefined
     const commandText =
-      request.command && commands?.has(request.command)
-        ? request.command
-        : commands?.size === 1
-          ? [...commands][0]
-          : undefined
-    if (!commands || !commandText) {
-      return this.networkAccessResult(normalized.hostname, 'denied', runtime, {
-        decisionSource: 'no-matching-command'
-      })
-    }
-    commands.delete(commandText)
-    if (commands.size === 0) blockedCommands!.delete(runtime)
-    if (blockedCommands!.size === 0) this.blockedDestinationCommands.delete(destinationKey)
+      runtime === 'bash'
+        ? (request.command ?? (commands?.size === 1 ? [...commands][0] : undefined))
+        : request.command
+          ? commands?.has(request.command)
+            ? request.command
+            : undefined
+          : commands?.size === 1
+            ? [...commands][0]
+            : undefined
+    const allowOnce = Boolean(runtime && commandText)
 
     const controller = request.signal ? undefined : new AbortController()
     const signal = request.signal ?? controller!.signal
@@ -569,6 +562,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       hostname: normalized.hostname,
       runtime,
       reason: request.reason,
+      allowOnce,
       signal
     })
     if (decision === 'unavailable') {
@@ -582,6 +576,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       })
     }
     if (decision === 'allowOnce') {
+      // An invalid selection must never turn missing context into a broad grant.
+      if (!runtime || !commandText) {
+        return this.networkAccessResult(normalized.hostname, 'unavailable', runtime, {
+          decisionSource: 'missing-command-context'
+        })
+      }
+      commands?.delete(commandText)
+      if (commands?.size === 0) blockedCommands?.delete(runtime)
+      if (blockedCommands?.size === 0) this.blockedDestinationCommands.delete(destinationKey)
       const grantKey = commandGrantKey(request.sessionId, runtime, commandText)
       const grants = this.nextExecutionGrants.get(grantKey) ?? new Set<string>()
       grants.add(normalized.hostname)
@@ -1140,13 +1143,14 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     executionActive: boolean,
     commandGrants: ReadonlySet<string>,
     allowedNetworkHosts: ReadonlySet<string>,
-    request: { host: string; signal: AbortSignal }
+    request: { host: string; signal: AbortSignal; purpose?: 'probe' | 'block' }
   ): Promise<boolean> {
     if (request.signal.aborted) return Promise.resolve(false)
     const normalized = validateCustomAllowedDomain(request.host)
     if (!normalized.ok || !executionActive) return Promise.resolve(false)
     if (allowedNetworkHosts.has(normalized.hostname)) return Promise.resolve(true)
     if (commandGrants.has(normalized.hostname)) return Promise.resolve(true)
+    if (request.purpose === 'probe') return Promise.resolve(false)
     const key = blockedDestinationKey(sessionId, normalized.hostname)
     const runtimes = this.blockedDestinationCommands.get(key) ?? new Map()
     const commands = runtimes.get(runtime) ?? new Set<string>()

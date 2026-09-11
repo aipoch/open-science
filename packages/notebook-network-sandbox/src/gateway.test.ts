@@ -1,3 +1,4 @@
+import { buildSync } from 'esbuild'
 import { randomUUID } from 'node:crypto'
 import { createServer, connect, type Socket } from 'node:net'
 import { createServer as createHttpServer, request } from 'node:http'
@@ -29,8 +30,17 @@ const runResetTunnelChild = (
   resetPoint: 'before-routing' | 'client' | 'destination'
 ): Promise<ChildResult> =>
   new Promise((resolve, reject) => {
-    const gatewayModuleUrl = new URL('../runtime/src/gateway/command-gateway.ts', import.meta.url)
-      .href
+    const gatewayModuleUrl = `data:text/javascript;base64,${Buffer.from(
+      buildSync({
+        entryPoints: [
+          new URL('../runtime/src/gateway/command-gateway.ts', import.meta.url).pathname
+        ],
+        bundle: true,
+        platform: 'node',
+        format: 'esm',
+        write: false
+      }).outputFiles[0]!.text
+    ).toString('base64')}`
     const script = `
       import { once } from 'node:events'
       import { connect, createServer } from 'node:net'

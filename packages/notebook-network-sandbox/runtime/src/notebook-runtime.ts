@@ -1,7 +1,15 @@
+import { NETWORK_APPROVAL_REQUIRED, NETWORK_POLICY_BLOCKED } from './gateway/recovery-context.js'
 import { constants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
+
+import {
+  createLocalCertificateAuthority,
+  createClientTrustBundle,
+  clientTrustEnvironment,
+  type LocalCertificateAuthority
+} from './gateway/local-ca.js'
 
 import { DestinationPolicy } from './gateway/address-policy.js'
 import {
@@ -51,6 +59,7 @@ type NetworkAskCallback = (request: {
   host: string
   port: number
   commandId?: string
+  purpose?: 'probe' | 'block'
 }) => Promise<boolean>
 
 type NotebookSandboxTarget =
@@ -99,6 +108,10 @@ type RuntimeContext = {
   gateway?: CommandGateway
   releasePlatform?: (reason: SandboxCleanupReason) => Promise<boolean | void | SandboxCleanupResult>
   platformOwnsProcesses?: boolean
+  executionActive: boolean
+  epoch: number
+  certificateAuthority?: LocalCertificateAuthority
+  trustBundle?: Awaited<ReturnType<typeof createClientTrustBundle>>
 }
 
 let runtimeConfig: NetworkRuntimeConfig | undefined
@@ -114,7 +127,11 @@ const parentSettings = (config: NetworkRuntimeConfig): ParentProxySettings | und
   return {
     ...config.parentProxy,
     ...(config.trustedCaCertificates?.length
-      ? { trustedCaCertificates: config.trustedCaCertificates }
+      ? {
+          get trustedCaCertificates() {
+            return runtimeConfig?.trustedCaCertificates
+          }
+        }
       : {})
   }
 }
@@ -127,35 +144,50 @@ const buildPolicy = (config: NetworkRuntimeConfig): DestinationPolicy =>
     ...(config.deniedDomainReasons ? { deniedDomainReasons: config.deniedDomainReasons } : {})
   })
 
-const decide = async (commandId: string, host: string, port: number): Promise<GatewayDecision> => {
+const decide = async (
+  commandId: string,
+  host: string,
+  port: number,
+  purpose: 'probe' | 'block' = 'block'
+): Promise<GatewayDecision> => {
+  const context = commandContexts.get(commandId)
+  const epoch = context?.epoch
+  const current = (): boolean =>
+    commandContexts.get(commandId) === context && context?.epoch === epoch
+  const expired: GatewayDecision = {
+    allowed: false,
+    message:
+      'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED: Execution context expired. Start a new Notebook execution if still needed; domain approval cannot revive a stale connection.'
+  }
   const policy = destinationPolicy
   if (!policy) {
     violations.record(commandId, `deny network-outbound ${host}:${port} (policy unavailable)`)
-    return { allowed: false, message: 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED' }
+    return { allowed: false, message: NETWORK_POLICY_BLOCKED }
   }
   const verdict = await policy.inspect(host, port)
+  if (!current()) return expired
   if (verdict.kind === 'allow') return { allowed: true, address: verdict.address }
   if (verdict.kind === 'deny') {
     violations.record(commandId, `deny network-outbound ${host}:${port} (${verdict.reason})`)
     return {
       allowed: false,
-      message: verdict.configurable
-        ? 'OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED: This domain is not in Settings > Network > Allowed domains.'
-        : 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED: This destination is blocked by the Notebook network policy.'
+      message: verdict.configurable ? NETWORK_APPROVAL_REQUIRED : NETWORK_POLICY_BLOCKED
     }
   }
   let allowed = false
   try {
-    allowed = (await approval?.({ host: verdict.host, port, commandId })) === true
+    allowed = (await approval?.({ host: verdict.host, port, commandId, purpose })) === true
   } catch {
     allowed = false
   }
+  if (!current()) return expired
   if (allowed) return { allowed: true, address: verdict.address }
+  if (purpose === 'probe')
+    return { allowed: false, source: verdict.source, address: verdict.address }
   violations.record(commandId, `deny network-outbound ${verdict.host}:${port} (not approved)`)
   return {
     allowed: false,
-    message:
-      'OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED: This domain is not in Settings > Network > Allowed domains.'
+    message: NETWORK_APPROVAL_REQUIRED
   }
 }
 
@@ -247,7 +279,9 @@ const wrap = async (
             filesystem,
             gateway,
             releasePlatform,
-            platformOwnsProcesses: true
+            platformOwnsProcesses: true,
+            executionActive: false,
+            epoch: 0
           })
         },
         ...(request.signal ? { signal: request.signal } : {})
@@ -256,7 +290,9 @@ const wrap = async (
         filesystem,
         gateway,
         releasePlatform: launch.release,
-        platformOwnsProcesses: true
+        platformOwnsProcesses: true,
+        executionActive: false,
+        epoch: 0
       })
       return { argv: launch.argv, env: launch.env, beginSpawn: launch.beginSpawn }
     } catch (error) {
@@ -276,24 +312,77 @@ const wrap = async (
       throw error
     }
   }
-  const windowsGatewayPort = windowsProtectedGatewayPort
-  const gateway = await CommandGateway.open({
-    decide: (host, port) => decide(request.commandId, host, port),
-    credentials,
-    ...(request.localRpcSocketPath ? { localRpcSocketPath: request.localRpcSocketPath } : {}),
-    parentProxy: parentSettings(config),
-    ...(windowsGatewayPort ? { sharedPort: windowsGatewayPort } : {})
-  })
-  const context: RuntimeContext = { filesystem, gateway }
+  let certificateAuthority: LocalCertificateAuthority | undefined
+  let trustBundle: Awaited<ReturnType<typeof createClientTrustBundle>> | undefined
+  try {
+    certificateAuthority = await createLocalCertificateAuthority()
+    trustBundle = await createClientTrustBundle(
+      config.trustedCaCertificates,
+      certificateAuthority.certificatePem
+    )
+  } catch {
+    certificateAuthority?.dispose()
+    certificateAuthority = undefined
+    // Missing inspection material preserves the existing target-approval path.
+  }
+  const env = { ...request.env, ...(trustBundle ? clientTrustEnvironment(trustBundle.path) : {}) }
+  let gateway: CommandGateway | undefined
+  const context: RuntimeContext = {
+    filesystem,
+    executionActive: false,
+    epoch: 0,
+    certificateAuthority,
+    trustBundle
+  }
   commandContexts.set(request.commandId, context)
   try {
+    const filesystem = normalizeFilesystemLayout({
+      ...request.filesystem,
+      readOnlyRoots: [
+        ...request.filesystem.readOnlyRoots,
+        ...(trustBundle ? [trustBundle.path] : [])
+      ],
+      deniedWriteRoots: [
+        ...request.filesystem.deniedWriteRoots,
+        ...(trustBundle ? [trustBundle.path] : [])
+      ],
+      ...((process.platform === 'darwin' || process.platform === 'linux') &&
+      !request.filesystem.privateRoot
+        ? { privateRoot: homedir() }
+        : {})
+    })
+    const credentials = {
+      username: `notebook-${request.commandId}`,
+      password: randomBytes(32).toString('base64url')
+    }
+    const windowsGatewayPort = windowsProtectedGatewayPort
+    gateway = await CommandGateway.open({
+      decide: (host, port, purpose) => decide(request.commandId, host, port, purpose),
+      ...(certificateAuthority
+        ? {
+            inspection: {
+              certificate: certificateAuthority.getSecureContext,
+              isExecutionActive: () => context?.executionActive === true,
+              get trustedCaCertificates() {
+                return runtimeConfig?.trustedCaCertificates
+              }
+            }
+          }
+        : {}),
+      credentials,
+      ...(request.localRpcSocketPath ? { localRpcSocketPath: request.localRpcSocketPath } : {}),
+      parentProxy: parentSettings(config),
+      ...(windowsGatewayPort ? { sharedPort: windowsGatewayPort } : {})
+    })
+    context.filesystem = filesystem
+    context.gateway = gateway
     if (process.platform === 'darwin') {
       return macosLaunch({
         command: request.command,
         shell: typeof request.shell === 'string' ? request.shell : '/bin/bash',
         gatewayPort: gateway.port,
         gatewayCredentials: credentials,
-        env: request.env,
+        env,
         ...(request.localRpcSocketPath ? { localRpcSocketPath: request.localRpcSocketPath } : {}),
         ...(request.inheritedFileDescriptorCount
           ? { inheritedFileDescriptorCount: request.inheritedFileDescriptorCount }
@@ -311,7 +400,7 @@ const wrap = async (
         cwd: request.cwd,
         gatewayPort: gateway.port,
         gatewayCredentials: credentials,
-        env: request.env,
+        env,
         ...(request.localRpcSocketPath ? { localRpcSocketPath: request.localRpcSocketPath } : {}),
         ...(request.inheritedFileDescriptorCount
           ? { inheritedFileDescriptorCount: request.inheritedFileDescriptorCount }
@@ -328,7 +417,7 @@ const wrap = async (
         ...(request.shell ? { shell: request.shell } : {}),
         gatewayPort: gateway.port,
         gatewayCredentials: credentials,
-        env: request.env,
+        env,
         ...(request.localRpcSocketPath ? { localRpcSocketPath: request.localRpcSocketPath } : {})
       }
       // Standard mode has no AppContainer, but opted-in short-lived workers still need reliable
@@ -352,8 +441,17 @@ const wrap = async (
     }
     throw new Error(`Notebook process sandbox does not support ${process.platform}.`)
   } catch (error) {
-    commandContexts.delete(request.commandId)
-    await gateway.close()
+    const cleanup = await cleanupAfterCommand(request.commandId, 'spawn-failed', {
+      processesTerminated: true
+    })
+    if (!cleanupComplete(cleanup)) {
+      throw new Error(
+        'SHELL_CLEANUP_INCOMPLETE: Notebook preparation cleanup could not be verified.',
+        {
+          cause: error
+        }
+      )
+    }
     throw error
   }
 }
@@ -363,9 +461,13 @@ const closeContext = async (
   reason: SandboxCleanupReason,
   processOutcome: SandboxProcessOutcome
 ): Promise<SandboxCleanupResult> => {
-  const [network, temporaryResources] = await Promise.allSettled([
+  context.executionActive = false
+  context.epoch += 1
+  context.certificateAuthority?.dispose()
+  const [network, temporaryResources, trustBundle] = await Promise.allSettled([
     context.gateway?.close(),
-    context.releasePlatform?.(reason)
+    context.releasePlatform?.(reason),
+    context.trustBundle?.cleanup()
   ])
   const platformResult =
     temporaryResources.status === 'fulfilled' ? temporaryResources.value : false
@@ -382,7 +484,8 @@ const closeContext = async (
       ? platformCleanup.processesTerminated
       : platformCleanup.processesTerminated && processOutcome.processesTerminated,
     networkClosed: network.status === 'fulfilled' && platformCleanup.networkClosed,
-    temporaryResourcesRemoved: platformCleanup.temporaryResourcesRemoved
+    temporaryResourcesRemoved:
+      platformCleanup.temporaryResourcesRemoved && trustBundle.status === 'fulfilled'
   }
 }
 
@@ -413,7 +516,10 @@ const cleanupAfterCommand = async (
 }
 
 const resetCommandConnections = (commandId: string): void => {
-  commandContexts.get(commandId)?.gateway?.resetConnections()
+  const context = commandContexts.get(commandId)
+  if (!context) return
+  context.epoch += 1
+  context.gateway?.resetConnections()
 }
 
 const updateConfig = (config: NetworkRuntimeConfig): void => {
@@ -422,6 +528,7 @@ const updateConfig = (config: NetworkRuntimeConfig): void => {
   destinationPolicy = buildPolicy(config)
   const nextParent = parentSettings(config)
   for (const context of commandContexts.values()) {
+    context.epoch += 1
     context.gateway?.updateParentProxy(nextParent)
     context.gateway?.resetConnections()
   }
@@ -524,6 +631,13 @@ const NotebookNetworkRuntime = {
       const filesystem = commandContexts.get(commandId)?.filesystem
       return filesystem ? hiddenByFilesystemLayout(filesystem, path) : false
     }),
+  setCommandExecutionActive: (commandId: string, active: boolean): void => {
+    const context = commandContexts.get(commandId)
+    if (!context) return
+    context.epoch += 1
+    context.executionActive = active
+    context.gateway?.resetConnections()
+  },
   resetCommandConnections,
   cleanupAfterCommand,
   refreshWindowsProtection,

@@ -186,7 +186,7 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
               {status.kind === 'setupRequired' && status.platform === 'win32' ? (
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   {t(
-                    'Securely route Notebook Python, R, REPL, Bash, and package downloads through your approved domains. Until set up, Notebook continues using standard execution.'
+                    'Route Notebook Python, R, REPL, Bash, and package downloads through network protection with approved domains and restricted public HTTPS reads. Until set up, Notebook continues using standard execution.'
                   )}
                 </p>
               ) : null}
