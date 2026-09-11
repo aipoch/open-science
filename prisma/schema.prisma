@@ -973,7 +973,7 @@ model ComputeJob {
   // The job status is NOT changed — this field surfaces the transient error to the UI.
   // Cleared on the next successful poll. retry_after_user_action is always true for this field.
   lastPollError            String?
-  // harvestError: latest collection error, including retryable failures; harvestedAt marks completion.
+  // harvestError: summary of a harvest_failed outcome; non-null means harvest completed with errors.
   harvestError             String?
   // leftOnRemote: JSON [{uri, size_mb, reason}] — files left on the remote side after harvest.
   leftOnRemote             String?
