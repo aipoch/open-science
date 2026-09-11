@@ -409,25 +409,88 @@ const artifactNodeFromEl = (el: HTMLElement): ComposerArtifactNode | null => {
   }
 }
 
+const CONTENTEDITABLE_BLOCK_TAGS = new Set([
+  'ADDRESS',
+  'BLOCKQUOTE',
+  'DIV',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+  'LI',
+  'P',
+  'PRE'
+])
+
 // Read a contenteditable root into a doc, mapping chip spans to skill/artifact nodes and collapsing
-// runs of adjacent text into a single text node.
-export const domToDoc = (root: HTMLElement): ComposerDoc => {
+// runs of adjacent text into a single text node. Browsers may represent line breaks as nested divs
+// instead of text containing `\n` (including when Playwright fills a contenteditable), so unknown
+// elements are traversed and block boundaries are restored as newlines.
+const readDom = (
+  root: HTMLElement,
+  selection?: { container: Node; offset: number }
+): { doc: ComposerDoc; caret?: ComposerCaretPosition } => {
   const nodes: ComposerNode[] = []
-  for (const child of Array.from(root.childNodes)) {
+  let caret: ComposerCaretPosition | undefined
+  const appendText = (text: string): void => {
+    if (text === '') return
+    const last = nodes[nodes.length - 1]
+    if (last && last.type === 'text') last.text += text
+    else nodes.push({ type: 'text', text })
+  }
+  const captureCaret = (): void => {
+    if (caret) return
+    const last = nodes.at(-1)
+    caret =
+      last?.type === 'text'
+        ? { nodeIndex: nodes.length - 1, offset: last.text.length }
+        : { nodeIndex: nodes.length, offset: 0 }
+  }
+  const visitChildren = (parent: Node): void => {
+    let previousWasBlock = false
+    const children = Array.from(parent.childNodes)
+    for (let index = 0; index < children.length; index += 1) {
+      const child = children[index]
+      if (selection?.container === parent && selection.offset === index) captureCaret()
+      const isSoleBlockPlaceholder =
+        child.nodeType === Node.ELEMENT_NODE &&
+        (child as HTMLElement).tagName === 'BR' &&
+        parent.nodeType === Node.ELEMENT_NODE &&
+        CONTENTEDITABLE_BLOCK_TAGS.has((parent as HTMLElement).tagName) &&
+        parent.childNodes.length === 1
+      if (isSoleBlockPlaceholder) continue
+      const isBlock =
+        child.nodeType === Node.ELEMENT_NODE &&
+        CONTENTEDITABLE_BLOCK_TAGS.has((child as HTMLElement).tagName)
+      if ((isBlock || previousWasBlock) && (nodes.length > 0 || previousWasBlock)) appendText('\n')
+      visit(child)
+      previousWasBlock = isBlock
+    }
+    if (selection?.container === parent && selection.offset === children.length) captureCaret()
+  }
+  const visit = (child: Node): void => {
     if (child.nodeType === Node.TEXT_NODE) {
       const rawText = child.textContent ?? ''
       const text = isPastedTextCaretHost(child)
         ? rawText.replace(PASTED_TEXT_CARET_MARKER, '')
         : rawText
-      if (text === '') continue
-      const last = nodes[nodes.length - 1]
-      // Merge into a preceding text node so adjacent text collapses.
-      if (last && last.type === 'text') last.text += text
-      else nodes.push({ type: 'text', text })
-      continue
+      if (selection?.container === child) {
+        appendText(text.slice(0, selection.offset))
+        captureCaret()
+        appendText(text.slice(selection.offset))
+      } else {
+        appendText(text)
+      }
+      return
     }
     if (child.nodeType === Node.ELEMENT_NODE) {
       const el = child as HTMLElement
+      if (el.tagName === 'BR') {
+        appendText('\n')
+        return
+      }
       const mentionType = el.getAttribute('data-mention-type')
       if (mentionType === SKILL_MENTION_TYPE) {
         const id = el.getAttribute('data-skill-id')
@@ -436,36 +499,53 @@ export const domToDoc = (root: HTMLElement): ComposerDoc => {
           const label = el.textContent ?? ''
           nodes.push({ type: 'skill', id, name: label.replace(/^\//, '') })
         }
-        continue
+        return
       }
       if (mentionType === ARTIFACT_MENTION_TYPE) {
         const node = artifactNodeFromEl(el)
         if (node) nodes.push(node)
-        continue
+        return
       }
       if (mentionType === LITERATURE_MENTION_TYPE) {
         const node = literatureByChip.get(el)
         if (node) nodes.push(node)
-        continue
+        return
       }
       if (mentionType === LITERATURE_SCOPE_MENTION_TYPE) {
         const node = literatureScopeByChip.get(el)
         if (node) nodes.push(node)
-        continue
+        return
       }
       if (mentionType === SESSION_MENTION_TYPE) {
         const sessionId = el.getAttribute('data-session-id')
         const title = el.getAttribute('data-session-title')
         if (sessionId && title) nodes.push({ type: 'session', sessionId, title })
-        continue
+        return
       }
       if (el.getAttribute('data-composer-node-type') === PASTED_TEXT_NODE_TYPE) {
         const node = pastedTextByAnchor.get(el)
         if (node) nodes.push({ ...node })
+        return
       }
+      visitChildren(el)
     }
   }
-  return nodes.length === 0 ? emptyDoc : { nodes }
+  visitChildren(root)
+  return { doc: nodes.length === 0 ? emptyDoc : { nodes }, caret }
+}
+
+export const domToDoc = (root: HTMLElement): ComposerDoc => readDom(root).doc
+
+export const domToDocWithCaret = (
+  root: HTMLElement,
+  container: Node,
+  offset: number
+): { doc: ComposerDoc; caret: ComposerCaretPosition } => {
+  const result = readDom(root, { container, offset })
+  return {
+    doc: result.doc,
+    caret: result.caret ?? { nodeIndex: result.doc.nodes.length, offset: 0 }
+  }
 }
 
 // Shared chip base styling; a capped width with truncation keeps a long name from stretching the

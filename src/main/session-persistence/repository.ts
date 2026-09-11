@@ -1,3 +1,4 @@
+import { decodeSessionComputePolicy, type SessionComputePolicy } from './compute-policy'
 import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
 import { Buffer } from 'node:buffer'
@@ -783,37 +784,82 @@ class SessionRepository {
   ): Promise<void> {
     const sessionId = assertSafeSegment(sessionIdValue)
     const expectedProjectId = assertSafeSegment(expectedProjectIdValue)
-    const fileName = `${sessionId}.json`
-    const projectDirectories = await this.listDirectoryNames(this.sessionsDir)
-    let belongsToAnotherProject = false
-    let isComplete = projectDirectories.isComplete
+    const ownership = await this.readSessionIdentityOwners(sessionId)
+    if (!ownership.isComplete)
+      throw new Error('Cannot save a Session while its global identity ownership is unreadable.')
+    if (ownership.projectIds.some((projectId) => projectId !== expectedProjectId))
+      throw new Error('Cannot save a Session id that is already owned by another Project.')
+  }
 
-    for (const projectIdValue of projectDirectories.names) {
+  private async readSessionIdentityOwners(
+    sessionId: string
+  ): Promise<{ projectIds: string[]; isComplete: boolean }> {
+    const fileName = `${sessionId}.json`
+    const directories = await this.listDirectoryNames(this.sessionsDir)
+    let isComplete = directories.isComplete
+    const projectIds: string[] = []
+    for (const candidate of directories.names) {
       let projectId: string
       try {
-        projectId = assertSafeSegment(projectIdValue)
+        projectId = assertSafeSegment(candidate)
       } catch {
         isComplete = false
         continue
       }
-      const sessionFiles = await this.listSessionFileNames(join(this.sessionsDir, projectId), {
+      const files = await this.listSessionFileNames(join(this.sessionsDir, projectId), {
         missingIsIncomplete: true
       })
-      isComplete &&= sessionFiles.isComplete
-      if (
-        projectId !== expectedProjectId &&
-        (sessionFiles.names.includes(fileName) ||
-          sessionFiles.quarantinedPrimaryFileNames.includes(fileName))
-      ) {
-        belongsToAnotherProject = true
-      }
+      isComplete &&= files.isComplete
+      if (files.names.includes(fileName) || files.quarantinedPrimaryFileNames.includes(fileName))
+        projectIds.push(projectId)
     }
+    return { projectIds, isComplete }
+  }
 
-    if (!isComplete) {
-      throw new Error('Cannot save a Session while its global identity ownership is unreadable.')
-    }
-    if (belongsToAnotherProject) {
-      throw new Error('Cannot save a Session id that is already owned by another Project.')
+  // Policy reads never hydrate, quarantine, repair, or mutate Session/projection state.
+  async loadComputePolicy(
+    projectIdValue: string | undefined,
+    sessionIdValue: string
+  ): Promise<SessionComputePolicy> {
+    try {
+      const sessionId = assertSafeSegment(sessionIdValue)
+      const ownership = await this.readSessionIdentityOwners(sessionId)
+      if (!ownership.isComplete) return { status: 'blocked', reason: 'unavailable' }
+      const projectId =
+        projectIdValue === undefined ? ownership.projectIds[0] : assertSafeSegment(projectIdValue)
+      if (!projectId) return { status: 'blocked', reason: 'missing' }
+      if (ownership.projectIds.some((owner) => owner !== projectId))
+        return { status: 'blocked', reason: 'identity-conflict' }
+      const deletion = await this.getProjectSessionDeletionState(projectId)
+      if (deletion !== 'live' && deletion !== 'absent')
+        return { status: 'blocked', reason: 'deleted' }
+      if ((await this.inspectActiveProjectBoundary(projectId)) !== 'valid')
+        return { status: 'blocked', reason: 'unavailable' }
+      const path = this.sessionFilePath(projectId, sessionId)
+      const boundary = await this.inspectFileBoundary(path)
+      if (boundary !== 'valid')
+        return { status: 'blocked', reason: boundary === 'missing' ? 'missing' : 'unavailable' }
+      const before = await lstat(path)
+      const contents = await this.dependencies.readSessionFileWithinLimit(
+        path,
+        this.dependencies.maxSessionBytes
+      )
+      const after = await lstat(path)
+      if (
+        !after.isFile() ||
+        after.isSymbolicLink() ||
+        before.dev !== after.dev ||
+        before.ino !== after.ino ||
+        before.size !== after.size ||
+        before.mtimeMs !== after.mtimeMs ||
+        before.ctimeMs !== after.ctimeMs
+      ) {
+        return { status: 'blocked', reason: 'unavailable' }
+      }
+      // Project identity follows the owning directory, just as the full Session decoder does.
+      return decodeSessionComputePolicy(JSON.parse(contents), sessionId)
+    } catch {
+      return { status: 'blocked', reason: 'unavailable' }
     }
   }
 

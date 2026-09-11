@@ -190,8 +190,10 @@ const jsonValuesEqual = (left: unknown, right: unknown): boolean => {
   if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
   const leftRecord = left as Record<string, unknown>
   const rightRecord = right as Record<string, unknown>
-  const leftKeys = Object.keys(leftRecord)
-  const rightKeys = Object.keys(rightRecord)
+  // Disk JSON omits undefined object properties; renderer projections may retain them.
+  // Compare the persisted values so a missing optional field cannot create a false conflict.
+  const leftKeys = Object.keys(leftRecord).filter((key) => leftRecord[key] !== undefined)
+  const rightKeys = Object.keys(rightRecord).filter((key) => rightRecord[key] !== undefined)
   return (
     leftKeys.length === rightKeys.length &&
     leftKeys.every(

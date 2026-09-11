@@ -31,7 +31,8 @@ import {
   capabilityFromLegacyCategory,
   categoryFromTrustedToolName,
   commandPrefixPermissionCategory,
-  containsSecretBearingMaterial
+  containsSecretBearingMaterial,
+  notebookPermissionRuntimeQualifier
 } from '../permission-grants/capability'
 import { projectPermissionGrantSnapshot } from '../permission-grants/catalog'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
@@ -483,25 +484,36 @@ const resolveNotebookRuntime = (tool: string, rawInput: unknown): string | undef
   return tool === 'notebook_execute' ? 'python' : undefined
 }
 
+const resolveNotebookPermissionRuntime = (
+  tool: string,
+  rawInput: unknown,
+  shellRuntime?: string
+): string | undefined =>
+  tool === 'bash_execute'
+    ? notebookPermissionRuntimeQualifier(shellRuntime ?? 'bash')
+    : resolveNotebookRuntime(tool, rawInput)
+
 const resolveNotebookPermissionContext = (
   name: string | null | undefined,
   rawInput: unknown,
-  mcpServerNames: readonly string[]
+  mcpServerNames: readonly string[],
+  shellRuntime?: string
 ): { runtime?: string } | undefined => {
   const identity = resolveMcpToolIdentity(name, mcpServerNames)
   if (!identity) return undefined
 
-  return resolveNotebookPermissionContextForIdentity(identity, rawInput)
+  return resolveNotebookPermissionContextForIdentity(identity, rawInput, shellRuntime)
 }
 
 const resolveNotebookPermissionContextForIdentity = (
   identity: string,
-  rawInput: unknown
+  rawInput: unknown,
+  shellRuntime?: string
 ): { runtime?: string } | undefined => {
   const tool = resolveNotebookExecutionTool(identity)
   if (!tool) return undefined
 
-  return { runtime: resolveNotebookRuntime(tool, rawInput) }
+  return { runtime: resolveNotebookPermissionRuntime(tool, rawInput, shellRuntime) }
 }
 
 const isMcpPermission = (
@@ -563,7 +575,8 @@ const projectPermissionOptions = (
 const resolveCategoryKey = (
   params: RequestPermissionRequest,
   mcpServerNames: readonly string[] = [],
-  allowLegacyReportedMcp = false
+  allowLegacyReportedMcp = false,
+  shellRuntime?: string
 ): string | undefined => {
   const { toolCall } = params
   const providerToolName = extractProviderToolName(toolCall)
@@ -583,12 +596,23 @@ const resolveCategoryKey = (
 
     const notebookContext =
       (trustedIdentity
-        ? resolveNotebookPermissionContextForIdentity(trustedIdentity, toolCall.rawInput)
-        : resolveNotebookPermissionContext(providerToolName, toolCall.rawInput, mcpServerNames)) ??
+        ? resolveNotebookPermissionContextForIdentity(
+            trustedIdentity,
+            toolCall.rawInput,
+            shellRuntime
+          )
+        : resolveNotebookPermissionContext(
+            providerToolName,
+            toolCall.rawInput,
+            mcpServerNames,
+            shellRuntime
+          )) ??
       (allowLegacyReportedMcp
         ? (() => {
             const tool = resolveNotebookExecutionTool(identity)
-            return tool ? { runtime: resolveNotebookRuntime(tool, toolCall.rawInput) } : undefined
+            return tool
+              ? { runtime: resolveNotebookPermissionRuntime(tool, toolCall.rawInput, shellRuntime) }
+              : undefined
           })()
         : undefined)
     if (notebookContext) {
@@ -652,7 +676,7 @@ const describeGrant = (categoryKey: string): AcpPermissionGrant => {
           ? 'R'
           : runtime === 'javascript'
             ? 'JavaScript'
-            : runtime === 'bash'
+            : runtime === 'bash' || runtime === 'wsl2-bash' || runtime?.startsWith('wsl2-bash@')
               ? 'Bash'
               : undefined
     const [server, tool] = identity.split('/')
@@ -737,7 +761,10 @@ const projectRegistrySessionGrants = (
 class AcpPermissionBroker {
   private pendingRequests = new Map<string, PendingPermission>()
   private readonly respondingRequests = new Map<string, PendingPermission>()
-  private readonly restoredAllowOnceBySession = new Map<string, string>()
+  private readonly restoredAllowOnceBySession = new Map<
+    string,
+    Readonly<{ fingerprint: string; categoryKey?: string }>
+  >()
   private readonly durableRequestQueues = new Map<string, string[]>()
   private readonly activeDurableRequestBySession = new Map<string, string>()
   private cancellationGeneration = 0
@@ -947,7 +974,12 @@ class AcpPermissionBroker {
       codexGroup?.categoryKey ??
       (codexGroupMatch?.kind === 'unsafe'
         ? undefined
-        : resolveCategoryKey(params, mcpServerNames, !this.permissionGrantRegistry))
+        : resolveCategoryKey(
+            params,
+            mcpServerNames,
+            !this.permissionGrantRegistry,
+            policyContext?.notebookShellRuntimeQualifier ?? policyContext?.notebookShellRuntime
+          ))
     const capability = categoryKey ? capabilityFromLegacyCategory(categoryKey) : undefined
     const mcpIdentity = isMcp
       ? (resolveTrustedMcpToolIdentity(params, mcpServerNames) ??
@@ -1034,9 +1066,16 @@ class AcpPermissionBroker {
         }
       : undefined
 
+    const restoredAllowOnce = this.restoredAllowOnceBySession.get(request.sessionId)
+    const legacyCategoryCanMatch =
+      restoredAllowOnce?.categoryKey === undefined &&
+      /^mcp:open-science-notebook\/(?:notebook_execute|repl_execute):(?:python|r|javascript)$/.test(
+        categoryKey ?? ''
+      )
     if (
       durableCandidate &&
-      this.restoredAllowOnceBySession.get(request.sessionId) === durableCandidate.fingerprint
+      restoredAllowOnce?.fingerprint === durableCandidate.fingerprint &&
+      (restoredAllowOnce.categoryKey === categoryKey || legacyCategoryCanMatch)
     ) {
       this.restoredAllowOnceBySession.delete(request.sessionId)
       return Promise.resolve({
@@ -1474,7 +1513,10 @@ class AcpPermissionBroker {
     }
 
     if (option.scope === 'once' || option.kind.toLowerCase() === ALLOW_ONCE_OPTION_KIND) {
-      this.restoredAllowOnceBySession.set(permission.request.sessionId, permission.fingerprint)
+      this.restoredAllowOnceBySession.set(permission.request.sessionId, {
+        fingerprint: permission.fingerprint,
+        ...(permission.categoryKey ? { categoryKey: permission.categoryKey } : {})
+      })
       return
     }
 

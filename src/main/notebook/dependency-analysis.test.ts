@@ -9,8 +9,10 @@ import type { NotebookRunRecord } from '../../shared/notebook'
 import {
   NotebookDependencyAnalyzer,
   projectNotebookDependencies,
+  type AnalyzeNotebookScripts,
   unavailableNotebookDependencyProjection
 } from './dependency-analysis'
+import { NotebookDependencyProjector } from './dependency-projection'
 
 const temporaryRoots: string[] = []
 const unusedPython = { command: 'unused-python' }
@@ -46,6 +48,43 @@ const run = (
 })
 
 describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
+  it('produces the same projection when runs are appended incrementally', () => {
+    const analyzedRuns = [
+      {
+        run: run('run-1', 'prepare-data', 'x = 1', 1),
+        facts: {
+          state: 'available' as const,
+          definedNames: ['x'],
+          usedNames: [],
+          mutatedNames: []
+        }
+      },
+      {
+        run: run('run-2', 'make-result', 'y = x + 1', 2),
+        facts: {
+          state: 'available' as const,
+          definedNames: ['y'],
+          usedNames: ['x'],
+          mutatedNames: []
+        }
+      },
+      {
+        run: run('run-3', 'replace-data', 'x = 2', 3),
+        facts: {
+          state: 'available' as const,
+          definedNames: ['x'],
+          usedNames: [],
+          mutatedNames: []
+        }
+      }
+    ]
+    const projector = new NotebookDependencyProjector()
+
+    for (const analyzedRun of analyzedRuns) projector.append(analyzedRun)
+
+    expect(projector.projection()).toEqual(projectNotebookDependencies(analyzedRuns))
+  })
+
   it('keeps a result clear when it only reads a variable after its first definition', () => {
     const projection = projectNotebookDependencies([
       {
@@ -67,6 +106,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
 
     expect(projection.stalenessByRunId['run-0']).toEqual({ state: 'clear' })
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId).toEqual({ 'run-0': [], 'run-1': ['run-0'] })
   })
 
   it('marks an earlier dependent run stale when a new cell redefines its input', () => {
@@ -1083,7 +1123,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     ])
   })
 
-  it('persists analysis facts in a rebuildable sidecar', async () => {
+  it('persists facts and accepts a v1 sidecar without projection snapshots', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-dependencies-'))
     temporaryRoots.push(storageRoot)
     const runs = [
@@ -1119,19 +1159,23 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       interpreter: { command: 'python' }
     })
     expect(first.stalenessByRunId['run-2']?.state).toBe('stale')
-    await expect(
-      readFile(
-        join(
-          storageRoot,
-          'notebooks',
-          'default-project',
-          'session-1',
-          'cache',
-          'dependency-analysis.json'
-        ),
-        'utf8'
-      ).then((contents) => JSON.parse(contents) as unknown)
-    ).resolves.toMatchObject({ version: 1, analyzerVersion: 1 })
+    const sidecarPath = join(
+      storageRoot,
+      'notebooks',
+      'default-project',
+      'session-1',
+      'cache',
+      'dependency-analysis.json'
+    )
+    const sidecar = JSON.parse(await readFile(sidecarPath, 'utf8')) as Record<string, unknown>
+    expect(sidecar).toMatchObject({
+      version: 1,
+      analyzerVersion: 1,
+      analyzerRevision: expect.any(String)
+    })
+    delete sidecar.analyzerRevision
+    delete sidecar.projectionSnapshots
+    await writeFile(sidecarPath, JSON.stringify(sidecar))
 
     const restored = new NotebookDependencyAnalyzer({
       storageRoot,
@@ -1143,6 +1187,865 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     await expect(
       restored.project({ projectId: 'default-project', sessionId: 'session-1' })
     ).resolves.toEqual(first)
+  })
+
+  it('does not let a blocked session delay dependency projection for another session', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-projection-queue-'))
+    temporaryRoots.push(storageRoot)
+    let releaseFirstSession!: () => void
+    const firstSessionGate = new Promise<void>((resolve) => {
+      releaseFirstSession = resolve
+    })
+    let markFirstSessionStarted!: () => void
+    const firstSessionStarted = new Promise<void>((resolve) => {
+      markFirstSessionStarted = resolve
+    })
+    let firstSessionReleased = false
+    let secondSessionStartedWhileFirstWasBlocked = false
+    const repository = {
+      readSessionRuns: vi.fn(async (_projectId: string, sessionId: string) => {
+        if (sessionId === 'session-1') {
+          markFirstSessionStarted()
+          await firstSessionGate
+        } else {
+          secondSessionStartedWhileFirstWasBlocked = !firstSessionReleased
+        }
+        return []
+      })
+    }
+    const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+
+    const first = analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+    await firstSessionStarted
+    const second = analyzer.project({ projectId: 'default-project', sessionId: 'session-2' })
+    await Promise.resolve()
+    await Promise.resolve()
+    firstSessionReleased = true
+    releaseFirstSession()
+    await Promise.all([first, second])
+
+    expect(secondSessionStartedWhileFirstWasBlocked).toBe(true)
+  })
+
+  it('keeps dependency operations for the same session serialized', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-single-session-queue-'))
+    temporaryRoots.push(storageRoot)
+    let releaseFirstOperation!: () => void
+    const firstOperationGate = new Promise<void>((resolve) => {
+      releaseFirstOperation = resolve
+    })
+    let markFirstOperationStarted!: () => void
+    const firstOperationStarted = new Promise<void>((resolve) => {
+      markFirstOperationStarted = resolve
+    })
+    let callCount = 0
+    let secondOperationStartedWhileFirstWasBlocked = false
+    const repository = {
+      readSessionRuns: vi.fn(async () => {
+        callCount += 1
+        if (callCount === 1) {
+          markFirstOperationStarted()
+          await firstOperationGate
+        } else {
+          secondOperationStartedWhileFirstWasBlocked = true
+        }
+        return []
+      })
+    }
+    const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+
+    const first = analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+    await firstOperationStarted
+    const second = analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(secondOperationStartedWhileFirstWasBlocked).toBe(false)
+    releaseFirstOperation()
+    await Promise.all([first, second])
+
+    expect(callCount).toBe(2)
+  })
+
+  it('only appends a newly completed run to an unchanged session projection', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-incremental-projection-'))
+    temporaryRoots.push(storageRoot)
+    const runs = [run('run-1', 'prepare-data', 'x = 1', 1)]
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => runs) }
+    })
+    const append = vi.spyOn(NotebookDependencyProjector.prototype, 'append')
+
+    try {
+      await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+      runs.push(run('run-2', 'make-result', 'y = x + 1', 2))
+      await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+
+      expect(append).toHaveBeenCalledTimes(2)
+    } finally {
+      append.mockRestore()
+    }
+  })
+
+  it('keeps a long epoch incremental and restores its finalized snapshot without replay', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-long-epoch-projection-'))
+    temporaryRoots.push(storageRoot)
+    const runs = Array.from({ length: 256 }, (_, index) =>
+      run(`run-${index + 1}`, `cell-${index + 1}`, `value_${index + 1} = ${index + 1}`, index + 1)
+    )
+    const analyze = vi.fn<AnalyzeNotebookScripts>(async (...args) =>
+      args[2].map(() => ({
+        state: 'available' as const,
+        definedNames: [],
+        usedNames: [],
+        mutatedNames: []
+      }))
+    )
+    const repository = { readSessionRuns: vi.fn(async () => runs) }
+    const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository, analyze })
+    const append = vi.spyOn(NotebookDependencyProjector.prototype, 'append')
+
+    try {
+      await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+      runs.push(run('run-257', 'cell-257', 'value_257 = 257', 257))
+      await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+      await analyzer.finalizeEpochs({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        kernelEpochIds: ['epoch-1']
+      })
+      await new NotebookDependencyAnalyzer({ storageRoot, repository, analyze }).project({
+        projectId: 'default-project',
+        sessionId: 'session-1'
+      })
+
+      expect(analyze.mock.calls.map(([, , sources]) => sources.length)).toEqual([256, 1])
+      expect(append).toHaveBeenCalledTimes(257)
+    } finally {
+      append.mockRestore()
+    }
+  })
+
+  it('rebuilds only the affected kernel epoch when a historical run changes', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-epoch-projection-'))
+    temporaryRoots.push(storageRoot)
+    const runs = [
+      run('run-1', 'prepare-data', 'x = 1', 1),
+      run('run-2', 'make-result', 'y = x + 1', 2)
+    ]
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => runs) }
+    })
+    const append = vi.spyOn(NotebookDependencyProjector.prototype, 'append')
+
+    try {
+      await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+      runs.push({
+        ...run('run-3', 'new-epoch', 'z = 1', 3),
+        kernelEpochId: 'epoch-2'
+      })
+      await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+      runs[0] = run('run-1', 'prepare-data', 'q = 2', 1)
+      await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+
+      expect(append).toHaveBeenCalledTimes(5)
+    } finally {
+      append.mockRestore()
+    }
+  })
+
+  it('persists an explicitly retired kernel epoch projection for restart reuse', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-epoch-snapshot-'))
+    temporaryRoots.push(storageRoot)
+    const runs = [
+      run('run-1', 'prepare-data', 'x = 1', 1),
+      run('run-2', 'make-result', 'y = x + 1', 2)
+    ]
+    const repository = { readSessionRuns: vi.fn(async () => runs) }
+    const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+    await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1'
+    })
+    const sidecarPath = join(
+      storageRoot,
+      'notebooks',
+      'default-project',
+      'session-1',
+      'cache',
+      'dependency-analysis.json'
+    )
+    const initialSidecar = JSON.parse(await readFile(sidecarPath, 'utf8')) as {
+      version: number
+      projectionSnapshots: Record<string, unknown>
+    }
+    expect(Object.keys(initialSidecar.projectionSnapshots)).toHaveLength(0)
+
+    await analyzer.finalizeEpochs({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      kernelEpochIds: ['epoch-1']
+    })
+    const finalizedSidecar = JSON.parse(await readFile(sidecarPath, 'utf8')) as {
+      version: number
+      projectionSnapshots: Record<string, unknown>
+    }
+    expect(finalizedSidecar.version).toBe(1)
+    expect(Object.keys(finalizedSidecar.projectionSnapshots)).toHaveLength(1)
+
+    const append = vi.spyOn(NotebookDependencyProjector.prototype, 'append')
+    try {
+      await new NotebookDependencyAnalyzer({ storageRoot, repository }).project({
+        projectId: 'default-project',
+        sessionId: 'session-1'
+      })
+      expect(append).not.toHaveBeenCalled()
+      const restoredSidecar = JSON.parse(await readFile(sidecarPath, 'utf8')) as {
+        projectionSnapshots: Record<string, unknown>
+      }
+      expect(Object.keys(restoredSidecar.projectionSnapshots)).toHaveLength(1)
+    } finally {
+      append.mockRestore()
+    }
+  })
+
+  it.each([
+    ['Python', 'python' as const, 'default-python', "output_path = 'figures/python.png'"],
+    ['R', 'r' as const, 'default-r', "output_path <- 'figures/r.png'"]
+  ])(
+    'projects a persisted static path from a prior %s run',
+    async (_name, language, environment, script) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), `open-science-${language}-file-context-`))
+      temporaryRoots.push(storageRoot)
+      const analyzedRun = {
+        ...run('run-1', 'define-output', script, 1),
+        kernelKind: language,
+        environment
+      }
+      const runs: NotebookRunRecord[] = [analyzedRun]
+      const analyzer = new NotebookDependencyAnalyzer({
+        storageRoot,
+        repository: { readSessionRuns: vi.fn(async () => runs) }
+      })
+
+      await analyzer.project({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        completedRun: analyzedRun,
+        interpreter: language === 'r' ? unusedR : unusedPython
+      })
+      runs.push({
+        ...run('current-run', 'save-output', '', 2),
+        kernelKind: language,
+        environment,
+        status: 'running'
+      })
+
+      await expect(
+        analyzer.sourceFileAccessContext({
+          projectId: 'default-project',
+          sessionId: 'session-1',
+          currentRunId: 'current-run',
+          language,
+          environment,
+          kernelEpochId: 'epoch-1'
+        })
+      ).resolves.toMatchObject({
+        staticStrings: [
+          {
+            name: 'output_path',
+            value: language === 'r' ? 'figures/r.png' : 'figures/python.png'
+          }
+        ]
+      })
+    }
+  )
+
+  it('projects non-file kernel bindings transiently without persisting them in file context', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-kernel-binding-context-'))
+    temporaryRoots.push(storageRoot)
+    const analyzedRun = run(
+      'run-1',
+      'prepare-values',
+      'import numpy as np\nx = np.linspace(0, 1, 10)',
+      1
+    )
+    const runs: NotebookRunRecord[] = [analyzedRun]
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => runs) }
+    })
+    await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+    runs.push({ ...run('current-run', 'plot-values', '', 2), status: 'running' })
+
+    await expect(
+      analyzer.sourceFileAccessContext({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        currentRunId: 'current-run',
+        language: 'python',
+        environment: 'default-python',
+        kernelEpochId: 'epoch-1'
+      })
+    ).resolves.toMatchObject({ resolvedKernelNames: expect.arrayContaining(['np', 'x']) })
+    await expect(
+      readFile(
+        join(
+          storageRoot,
+          'notebooks',
+          'default-project',
+          'session-1',
+          'cache',
+          'dependency-analysis.json'
+        ),
+        'utf8'
+      )
+    ).resolves.not.toContain('resolvedKernelNames')
+  })
+
+  it.each([
+    [
+      'Python',
+      'python' as const,
+      'default-python',
+      "names = ['sin', 'cos']",
+      [
+        'import matplotlib.pyplot as plt',
+        'for name in names:',
+        "    plt.savefig(f'figures/{name}.png')"
+      ].join('\n')
+    ],
+    [
+      'R',
+      'r' as const,
+      'default-r',
+      "names <- c('sin', 'cos')",
+      [
+        "paths <- glue::glue('figures/{names}.png')",
+        'for (path in paths) ggplot2::ggsave(filename = path)'
+      ].join('\n')
+    ]
+  ])(
+    'uses a prior static collection when analyzing a later %s run',
+    async (_name, language, environment, defineScript, useScript) => {
+      const storageRoot = await mkdtemp(
+        join(tmpdir(), `open-science-${language}-collection-chain-`)
+      )
+      temporaryRoots.push(storageRoot)
+      const runs: NotebookRunRecord[] = [
+        {
+          ...run('run-1', 'define-collection', defineScript, 1),
+          kernelKind: language,
+          environment
+        },
+        {
+          ...run('run-2', 'use-collection', useScript, 2),
+          kernelKind: language,
+          environment
+        }
+      ]
+      await new NotebookDependencyAnalyzer({
+        storageRoot,
+        repository: { readSessionRuns: vi.fn(async () => runs) }
+      }).project({ projectId: 'default-project', sessionId: 'session-1' })
+
+      const sidecar = JSON.parse(
+        await readFile(
+          join(
+            storageRoot,
+            'notebooks',
+            'default-project',
+            'session-1',
+            'cache',
+            'dependency-analysis.json'
+          ),
+          'utf8'
+        )
+      ) as { runs: Record<string, { facts: { state: string; usedNames: string[] } }> }
+      expect(sidecar.runs['run-2']?.facts).toMatchObject({
+        state: 'available',
+        usedNames: expect.arrayContaining(['names'])
+      })
+    }
+  )
+
+  it.each([
+    [
+      'Python sequence',
+      'python' as const,
+      'default-python',
+      "names = ['sin', 'cos']",
+      unusedPython,
+      { name: 'names', values: ['sin', 'cos'] }
+    ],
+    [
+      'R sequence',
+      'r' as const,
+      'default-r',
+      "names <- c('sin', 'cos')",
+      unusedR,
+      { name: 'names', values: ['sin', 'cos'] }
+    ],
+    [
+      'Python mapping',
+      'python' as const,
+      'default-python',
+      "outputs = {'sin': 'figures/sin.png', 'cos': 'figures/cos.png'}",
+      unusedPython,
+      {
+        name: 'outputs',
+        values: ['figures/sin.png', 'figures/cos.png'],
+        entries: [
+          { key: 'sin', value: 'figures/sin.png' },
+          { key: 'cos', value: 'figures/cos.png' }
+        ]
+      }
+    ],
+    [
+      'R named collection',
+      'r' as const,
+      'default-r',
+      "outputs <- list(sin = 'figures/sin.png', cos = 'figures/cos.png')",
+      unusedR,
+      {
+        name: 'outputs',
+        values: ['figures/sin.png', 'figures/cos.png'],
+        entries: [
+          { key: 'sin', value: 'figures/sin.png' },
+          { key: 'cos', value: 'figures/cos.png' }
+        ]
+      }
+    ]
+  ])(
+    'projects a persisted static collection from a prior %s run',
+    async (_name, language, environment, script, interpreter, expectedCollection) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), `open-science-${language}-collection-`))
+      temporaryRoots.push(storageRoot)
+      const analyzedRun = {
+        ...run('run-1', 'define-collection', script, 1),
+        kernelKind: language,
+        environment
+      }
+      const runs: NotebookRunRecord[] = [analyzedRun]
+      const analyzer = new NotebookDependencyAnalyzer({
+        storageRoot,
+        repository: { readSessionRuns: vi.fn(async () => runs) }
+      })
+
+      await analyzer.project({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        completedRun: analyzedRun,
+        interpreter
+      })
+      runs.push({
+        ...run('current-run', 'use-collection', '', 2),
+        kernelKind: language,
+        environment,
+        status: 'running'
+      })
+
+      await expect(
+        analyzer.sourceFileAccessContext({
+          projectId: 'default-project',
+          sessionId: 'session-1',
+          currentRunId: 'current-run',
+          language,
+          environment,
+          kernelEpochId: 'epoch-1'
+        })
+      ).resolves.toMatchObject({
+        staticStrings: [],
+        staticCollections: [expectedCollection],
+        localFileWrappers: []
+      })
+    }
+  )
+
+  it.each([
+    [
+      'Python',
+      'python' as const,
+      'default-python',
+      "output_dir = 'figures'",
+      "output_path = os.path.join(output_dir, 'chart.png')",
+      unusedPython
+    ],
+    [
+      'R',
+      'r' as const,
+      'default-r',
+      "output_dir <- 'figures'",
+      "output_path <- file.path(output_dir, 'chart.png')",
+      unusedR
+    ]
+  ])(
+    'restores a persisted %s path binding when a later run derives another path',
+    async (_name, language, environment, rootScript, derivedScript, interpreter) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), `open-science-${language}-path-chain-`))
+      temporaryRoots.push(storageRoot)
+      const rootRun = {
+        ...run('run-1', 'define-output-root', rootScript, 1),
+        kernelKind: language,
+        environment
+      }
+      const runs: NotebookRunRecord[] = [rootRun]
+      const repository = { readSessionRuns: vi.fn(async () => runs) }
+      await new NotebookDependencyAnalyzer({ storageRoot, repository }).project({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        completedRun: rootRun,
+        interpreter
+      })
+
+      const derivedRun = {
+        ...run('run-2', 'derive-output-path', derivedScript, 2),
+        kernelKind: language,
+        environment
+      }
+      runs.push(derivedRun)
+      const restored = new NotebookDependencyAnalyzer({ storageRoot, repository })
+      await restored.project({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        completedRun: derivedRun,
+        interpreter
+      })
+      runs.push({
+        ...run('current-run', 'save-output', '', 3),
+        kernelKind: language,
+        environment,
+        status: 'running'
+      })
+
+      await expect(
+        restored.sourceFileAccessContext({
+          projectId: 'default-project',
+          sessionId: 'session-1',
+          currentRunId: 'current-run',
+          language,
+          environment,
+          kernelEpochId: 'epoch-1'
+        })
+      ).resolves.toMatchObject({
+        staticStrings: expect.arrayContaining([{ name: 'output_path', value: 'figures/chart.png' }])
+      })
+
+      await expect(
+        readFile(
+          join(
+            storageRoot,
+            'notebooks',
+            'default-project',
+            'session-1',
+            'cache',
+            'dependency-analysis.json'
+          ),
+          'utf8'
+        ).then((contents) => JSON.parse(contents) as unknown)
+      ).resolves.toMatchObject({
+        runs: {
+          'run-2': {
+            fileContext: {
+              staticStrings: [{ name: 'output_path', value: 'figures/chart.png' }]
+            }
+          }
+        }
+      })
+    }
+  )
+
+  it('derives a multi-run path chain while rebuilding a missing sidecar', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-path-chain-rebuild-'))
+    temporaryRoots.push(storageRoot)
+    const runs: NotebookRunRecord[] = [
+      run('run-1', 'define-output-root', "output_dir = 'figures'", 1),
+      run('run-2', 'derive-output-path', "output_path = os.path.join(output_dir, 'chart.png')", 2)
+    ]
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => runs) }
+    })
+
+    await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+    runs.push({ ...run('current-run', 'save-output', '', 3), status: 'running' })
+
+    await expect(
+      analyzer.sourceFileAccessContext({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        currentRunId: 'current-run',
+        language: 'python',
+        environment: 'default-python',
+        kernelEpochId: 'epoch-1'
+      })
+    ).resolves.toMatchObject({
+      staticStrings: expect.arrayContaining([{ name: 'output_path', value: 'figures/chart.png' }])
+    })
+  })
+
+  it('refreshes stale prior analysis before resolving context for a new run', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-stale-path-context-'))
+    temporaryRoots.push(storageRoot)
+    const rootRun = run('run-1', 'define-output', "output_path = 'figures/chart.png'", 1)
+    const runs: NotebookRunRecord[] = [rootRun]
+    const repository = { readSessionRuns: vi.fn(async () => runs) }
+    await new NotebookDependencyAnalyzer({ storageRoot, repository }).project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun: rootRun,
+      interpreter: unusedPython
+    })
+    const sidecarPath = join(
+      storageRoot,
+      'notebooks',
+      'default-project',
+      'session-1',
+      'cache',
+      'dependency-analysis.json'
+    )
+    const staleSidecar = JSON.parse(await readFile(sidecarPath, 'utf8')) as {
+      runs: Record<string, { checksum: string }>
+    }
+    staleSidecar.runs['run-1']!.checksum = 'stale-revision-checksum'
+    await writeFile(sidecarPath, JSON.stringify(staleSidecar))
+    runs.push({
+      ...run('current-run', 'save-output', 'plt.savefig(output_path)', 2),
+      status: 'running'
+    })
+    repository.readSessionRuns.mockClear()
+
+    await expect(
+      new NotebookDependencyAnalyzer({ storageRoot, repository }).sourceFileAccessContext({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        currentRunId: 'current-run',
+        language: 'python',
+        environment: 'default-python',
+        kernelEpochId: 'epoch-1'
+      })
+    ).resolves.toMatchObject({
+      staticStrings: [{ name: 'output_path', value: 'figures/chart.png' }]
+    })
+
+    const refreshedSidecar = JSON.parse(await readFile(sidecarPath, 'utf8')) as {
+      runs: Record<string, { checksum: string }>
+    }
+    expect(repository.readSessionRuns).toHaveBeenCalledTimes(1)
+    expect(refreshedSidecar.runs['run-1']?.checksum).not.toBe('stale-revision-checksum')
+    expect(refreshedSidecar.runs['current-run']).toBeUndefined()
+  })
+
+  it('projects a persisted strict wrapper and invalidates it after its dependency is rebound', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-wrapper-context-'))
+    temporaryRoots.push(storageRoot)
+    const runs: NotebookRunRecord[] = []
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => runs) }
+    })
+    const wrapperRun = run(
+      'run-1',
+      'define-wrapper',
+      ['import matplotlib.pyplot as plt', 'def save_plot(path):', '    plt.savefig(path)'].join(
+        '\n'
+      ),
+      1
+    )
+    runs.push(wrapperRun)
+    await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun: wrapperRun,
+      interpreter: unusedPython
+    })
+
+    await expect(
+      analyzer.sourceFileAccessContext({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        currentRunId: 'current-run',
+        language: 'python',
+        environment: 'default-python',
+        kernelEpochId: 'epoch-1'
+      })
+    ).resolves.toMatchObject({
+      localFileWrappers: [
+        expect.objectContaining({
+          name: 'save_plot',
+          kind: 'write',
+          dependencyNames: ['plt']
+        })
+      ]
+    })
+
+    const rebindRun = run('run-2', 'rebind-wrapper-dependency', 'plt = object()', 2)
+    runs.push(rebindRun)
+    await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun: rebindRun,
+      interpreter: unusedPython
+    })
+
+    await expect(
+      analyzer.sourceFileAccessContext({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        currentRunId: 'current-run',
+        language: 'python',
+        environment: 'default-python',
+        kernelEpochId: 'epoch-1'
+      })
+    ).resolves.toMatchObject({ localFileWrappers: [] })
+  })
+
+  it('does not project context across a kernel epoch boundary', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-file-context-epoch-'))
+    temporaryRoots.push(storageRoot)
+    const analyzedRun = run('run-1', 'define-output', "output_path = 'result.png'", 1)
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [analyzedRun]) }
+    })
+    await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun: analyzedRun,
+      interpreter: unusedPython
+    })
+
+    await expect(
+      analyzer.sourceFileAccessContext({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        currentRunId: 'current-run',
+        language: 'python',
+        environment: 'default-python',
+        kernelEpochId: 'epoch-2'
+      })
+    ).resolves.toEqual({ staticStrings: [], staticCollections: [], localFileWrappers: [] })
+  })
+
+  it('reads a legacy v1 file context without static collections', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-legacy-file-context-'))
+    temporaryRoots.push(storageRoot)
+    const analyzedRun = run('run-1', 'define-output', "output_path = 'result.png'", 1)
+    const runs: NotebookRunRecord[] = [analyzedRun]
+    const repository = { readSessionRuns: vi.fn(async () => runs) }
+    const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+    await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+    const sidecarPath = join(
+      storageRoot,
+      'notebooks',
+      'default-project',
+      'session-1',
+      'cache',
+      'dependency-analysis.json'
+    )
+    const sidecar = JSON.parse(await readFile(sidecarPath, 'utf8')) as {
+      runs: Record<string, { fileContext: { staticCollections?: unknown } }>
+    }
+    delete sidecar.runs['run-1']!.fileContext.staticCollections
+    await writeFile(sidecarPath, JSON.stringify(sidecar))
+    runs.push({ ...run('current-run', 'use-output', '', 2), status: 'running' })
+
+    await expect(
+      new NotebookDependencyAnalyzer({ storageRoot, repository }).sourceFileAccessContext({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        currentRunId: 'current-run',
+        language: 'python',
+        environment: 'default-python',
+        kernelEpochId: 'epoch-1'
+      })
+    ).resolves.toEqual({
+      staticStrings: [{ name: 'output_path', value: 'result.png' }],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonBindings: [{ kind: 'object', name: 'output_path', qualifiedName: 'python.string' }]
+    })
+  })
+
+  it('rebuilds persisted file context when the cache is malformed', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-corrupt-file-context-'))
+    temporaryRoots.push(storageRoot)
+    const analyzedRun = run('run-1', 'define-output', "output_path = 'result.png'", 1)
+    const repository = { readSessionRuns: vi.fn(async () => [analyzedRun]) }
+    const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+    await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun: analyzedRun,
+      interpreter: unusedPython
+    })
+    const sidecarPath = join(
+      storageRoot,
+      'notebooks',
+      'default-project',
+      'session-1',
+      'cache',
+      'dependency-analysis.json'
+    )
+    const sidecar = JSON.parse(await readFile(sidecarPath, 'utf8')) as {
+      runs: Record<string, { fileContext: { staticStrings: Array<{ value: unknown }> } }>
+    }
+    sidecar.runs['run-1']!.fileContext.staticStrings[0]!.value = 42
+    await writeFile(sidecarPath, JSON.stringify(sidecar))
+
+    await expect(
+      new NotebookDependencyAnalyzer({ storageRoot, repository }).sourceFileAccessContext({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        currentRunId: 'current-run',
+        language: 'python',
+        environment: 'default-python',
+        kernelEpochId: 'epoch-1'
+      })
+    ).resolves.toEqual({
+      staticStrings: [{ name: 'output_path', value: 'result.png' }],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonBindings: [{ kind: 'object', name: 'output_path', qualifiedName: 'python.string' }]
+    })
+  })
+
+  it('rebuilds a persisted static collection when the cache is malformed', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-corrupt-collection-context-'))
+    temporaryRoots.push(storageRoot)
+    const analyzedRun = run('run-1', 'define-names', "names = ['sin', 'cos']", 1)
+    const runs: NotebookRunRecord[] = [analyzedRun]
+    const repository = { readSessionRuns: vi.fn(async () => runs) }
+    const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+    await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+    const sidecarPath = join(
+      storageRoot,
+      'notebooks',
+      'default-project',
+      'session-1',
+      'cache',
+      'dependency-analysis.json'
+    )
+    const sidecar = JSON.parse(await readFile(sidecarPath, 'utf8')) as {
+      runs: Record<string, { fileContext: { staticCollections: Array<{ values: unknown[] }> } }>
+    }
+    sidecar.runs['run-1']!.fileContext.staticCollections[0]!.values[0] = 42
+    await writeFile(sidecarPath, JSON.stringify(sidecar))
+    runs.push({ ...run('current-run', 'use-names', '', 2), status: 'running' })
+
+    await expect(
+      new NotebookDependencyAnalyzer({ storageRoot, repository }).sourceFileAccessContext({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        currentRunId: 'current-run',
+        language: 'python',
+        environment: 'default-python',
+        kernelEpochId: 'epoch-1'
+      })
+    ).resolves.toMatchObject({
+      staticCollections: [{ name: 'names', values: ['sin', 'cos'] }]
+    })
   })
 
   it('retries a cached transient analyzer failure on the next projection', async () => {
@@ -1424,6 +2327,40 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
 
     expect(analyze).toHaveBeenCalledOnce()
   })
+
+  it.each(['aliases', 'possiblyMutatedNames', 'safeCallNames', 'safeCallArgumentNames'])(
+    'rejects oversized live %s facts instead of silently discarding them',
+    async (field) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-oversized-facts-'))
+      temporaryRoots.push(storageRoot)
+      const analyzedRun = run('run-1', 'prepare', 'result = 1', 1)
+      const analyzer = new NotebookDependencyAnalyzer({
+        storageRoot,
+        repository: { readSessionRuns: async () => [analyzedRun] },
+        analyze: async () => [
+          {
+            state: 'available',
+            definedNames: ['result'],
+            usedNames: [],
+            mutatedNames: [],
+            [field]: Array.from({ length: 513 }, (_, index) =>
+              field === 'aliases'
+                ? { target: `target-${index}`, source: 'source', kind: 'reference' }
+                : `name-${index}`
+            )
+          }
+        ]
+      })
+      const projection = await analyzer.project({
+        projectId: 'default-project',
+        sessionId: 'session-1'
+      })
+      expect(projection.stalenessByRunId['run-1']).toEqual({
+        state: 'unknown',
+        reasons: ['invalid-parser-result']
+      })
+    }
+  )
 
   it('rebuilds a matching current sidecar when available aliases are malformed', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-corrupt-aliases-'))
@@ -2886,13 +3823,37 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     }
   )
 
-  it('keeps Python loop-body assignments conservative even for a static range', async () => {
+  it('classifies Python loop-body assignments over a static non-empty range', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-static-loop-write-'))
     temporaryRoots.push(storageRoot)
     const completedRun = run(
       'run-1',
       'static-loop-write',
       'for value in range(3):\n    result = value',
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('keeps conditionally defined Python loop values conservative', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-static-loop-if-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'static-loop-if',
+      'for value in range(3):\n    if enabled:\n        result = value\nprint(result)',
       1
     )
     const analyzer = new NotebookDependencyAnalyzer({
@@ -2983,6 +3944,749 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     })
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('classifies styling of Matplotlib pie labels without marking it unknown', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-pie-labels-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'pie-label-styling',
+      [
+        'import matplotlib.pyplot as plt',
+        'fig, ax = plt.subplots()',
+        'wedges, texts, autotexts = ax.pie([1], autopct="%1.1f%%")',
+        'for text in autotexts:',
+        '    text.set_color("white")',
+        '    text.set_fontweight("bold")',
+        'plt.savefig("group_pie.png")'
+      ].join('\n'),
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-1']).toEqual([])
+  })
+
+  it('classifies an in-memory CSV aggregation loop without marking it unknown', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-stringio-loop-'))
+    temporaryRoots.push(storageRoot)
+    const failedRun = {
+      ...run(
+        'run-0',
+        'missing-pandas',
+        "import pandas as pd\nframe = pd.read_csv('missing.csv')",
+        1
+      ),
+      status: 'failed' as const
+    }
+    const completedRun = run(
+      'run-1',
+      'in-memory-csv',
+      [
+        'import csv',
+        'from io import StringIO',
+        "csv_data = 'group\\nCtrl\\nIRI'",
+        'reader = csv.DictReader(StringIO(csv_data))',
+        "groups = [row['group'] for row in reader]",
+        'labels = []',
+        'counts = []',
+        "for group in ['Ctrl', 'IRI']:",
+        '    count = groups.count(group)',
+        '    if count > 0:',
+        '        labels.append(group)',
+        '        counts.append(count)',
+        'result = list(zip(labels, counts))'
+      ].join('\n'),
+      2
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [failedRun, completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-1']).toEqual([])
+  })
+
+  it('classifies a standalone CSV chart after an import-only failure', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-csv-chart-'))
+    temporaryRoots.push(storageRoot)
+    const failedRun = {
+      ...run(
+        'run-0',
+        'missing-pandas',
+        [
+          'import pandas as pd',
+          'import matplotlib.pyplot as plt',
+          "df = pd.read_csv('inputs/groups.csv')"
+        ].join('\n'),
+        1
+      ),
+      status: 'failed' as const
+    }
+    const completedRun = run(
+      'run-1',
+      'stdlib-chart',
+      [
+        'import csv',
+        'import matplotlib.pyplot as plt',
+        'from collections import Counter',
+        'groups = []',
+        "with open('inputs/groups.csv', 'r') as f:",
+        '    reader = csv.DictReader(f)',
+        '    for row in reader:',
+        "        groups.append(row['group'])",
+        'counts = Counter(groups)',
+        'labels = list(counts.keys())',
+        'values = list(counts.values())',
+        'total = sum(values)',
+        'for label, count in counts.items():',
+        '    pct = count / total * 100',
+        '    print(label, count, pct)',
+        'fig, ax = plt.subplots(figsize=(8, 8))',
+        "colors = ['#4A90E2', '#E94B3C']",
+        'explode = (0.02, 0.02)',
+        'def autopct_func(pct):',
+        "    return f'{pct:.1f}%'",
+        'wedges, texts, autotexts = ax.pie(',
+        '    values,',
+        '    labels=labels,',
+        '    colors=colors,',
+        '    explode=explode,',
+        '    autopct=autopct_func,',
+        '    startangle=90,',
+        '    pctdistance=0.7,',
+        "    textprops={'fontsize': 14, 'fontweight': 'bold'}",
+        ')',
+        'for autotext in autotexts:',
+        "    autotext.set_color('white')",
+        '    autotext.set_fontsize(16)',
+        "    autotext.set_fontweight('bold')",
+        "ax.set_title('Sample Distribution by Group (SYNTHETIC_GROUPS)')",
+        "legend_labels = [f'{label}: {count} samples' for label, count in zip(labels, values)]",
+        "ax.legend(wedges, legend_labels, loc='center left')",
+        'plt.tight_layout()',
+        "plt.savefig('group_pie_chart.png', dpi=150, bbox_inches='tight')",
+        'plt.show()'
+      ].join('\n'),
+      2
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [failedRun, completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-1']).toEqual([])
+  })
+
+  it('keeps local CSV aggregation independent after a failed run', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-local-aggregation-'))
+    temporaryRoots.push(storageRoot)
+    const unrelatedRun = run('run-0', 'unrelated-chart', 'prior_plot = [1, 2, 3]', 1)
+    const failedRun = {
+      ...run(
+        'run-1',
+        'missing-pandas',
+        [
+          'import pandas as pd',
+          'import matplotlib.pyplot as plt',
+          'csv_path = "inputs/groups.csv"',
+          'df = pd.read_csv(csv_path)',
+          'counts = df["group"].value_counts()',
+          'fig, ax = plt.subplots()',
+          'wedges, texts, autotexts = ax.pie(counts.values)',
+          'for t in texts:',
+          '    t.set_fontsize(12)',
+          'fig.savefig("group_pie.png")'
+        ].join('\n'),
+        2
+      ),
+      status: 'failed' as const
+    }
+    const completedRun = run(
+      'run-2',
+      'stdlib-chart',
+      [
+        'import csv',
+        'import collections',
+        'import matplotlib.pyplot as plt',
+        'csv_path = "inputs/groups.csv"',
+        'counts = collections.Counter()',
+        'total = 0',
+        'with open(csv_path, newline="") as f:',
+        '    reader = csv.DictReader(f)',
+        '    for row in reader:',
+        '        counts[row["group"]] += 1',
+        '        total += 1',
+        'labels = list(counts.keys())',
+        'values = [counts[key] for key in labels]',
+        'fig, ax = plt.subplots()',
+        'wedges, texts, autotexts = ax.pie(values, labels=labels)',
+        'for t in texts:',
+        '    t.set_fontsize(12)',
+        'for t in autotexts:',
+        '    t.set_color("white")',
+        '    t.set_fontweight("bold")',
+        'ax.set_title(f"Group composition (n={total})")',
+        'fig.savefig("group_pie.png")'
+      ].join('\n'),
+      3
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [unrelatedRun, failedRun, completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-2']).toEqual([])
+  })
+
+  it('classifies a local scalar aggregation written with a regular assignment', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-local-scalar-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'local-scalar',
+      [
+        'import csv',
+        'import matplotlib.pyplot as plt',
+        'total = 0',
+        'with open("inputs/groups.csv", newline="") as handle:',
+        '    rows = csv.DictReader(handle)',
+        '    for row in rows:',
+        '        total = total + 1',
+        'fig, ax = plt.subplots()',
+        'ax.bar(["rows"], [total])',
+        'fig.savefig("row_count.png")'
+      ].join('\n'),
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-1']).toEqual([])
+  })
+
+  it('classifies a local indexed aggregation written with a regular assignment', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-local-indexed-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'local-indexed',
+      [
+        'import csv',
+        'import matplotlib.pyplot as plt',
+        'counts = [0]',
+        'with open("inputs/groups.csv", newline="") as handle:',
+        '    rows = csv.DictReader(handle)',
+        '    for row in rows:',
+        '        counts[0] = counts[0] + 1',
+        'fig, ax = plt.subplots()',
+        'ax.bar(["rows"], counts)',
+        'fig.savefig("row_count.png")'
+      ].join('\n'),
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-1']).toEqual([])
+  })
+
+  it('classifies a conditional local indexed aggregation', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-conditional-aggregate-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'conditional-aggregate',
+      [
+        'import csv',
+        'import matplotlib.pyplot as plt',
+        'counts = {"Ctrl": 0, "IRI": 0}',
+        'with open("inputs/groups.csv", newline="") as handle:',
+        '    rows = csv.DictReader(handle)',
+        '    for row in rows:',
+        '        if row["group"] in counts:',
+        '            counts[row["group"]] += 1',
+        'fig, ax = plt.subplots()',
+        'ax.pie(list(counts.values()), labels=list(counts.keys()))',
+        'fig.savefig("groups.png")'
+      ].join('\n'),
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-1']).toEqual([])
+  })
+
+  it('keeps a conditional loop mutation through an alias conservative', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-conditional-alias-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'conditional-alias',
+      [
+        'rows = source_rows',
+        'counts = shared_counts',
+        'for row in rows:',
+        '    if row["group"] in counts:',
+        '        counts[row["group"]] += 1',
+        'print(counts)'
+      ].join('\n'),
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['control-flow'])
+    })
+  })
+
+  it('classifies pure inline Python map and filter callbacks', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-pure-callback-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'pure-callback',
+      [
+        'import matplotlib.pyplot as plt',
+        'values = [-2, -1, 0, 1, 2]',
+        'positive = list(filter(lambda value: value > 0, values))',
+        'scaled = list(map(lambda value: value * 2, positive))',
+        'fig, ax = plt.subplots()',
+        'ax.plot(scaled)',
+        'fig.savefig("scaled.png")'
+      ].join('\n'),
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('classifies pure Python key and pandas keyword callbacks', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-key-callback-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'key-callback',
+      [
+        'import pandas as pd',
+        'pairs = [("a", 2), ("b", 1)]',
+        'ordered = sorted(pairs, key=lambda item: item[1])',
+        'frame = pd.DataFrame({"value": [2, 1]})',
+        'assigned = frame.assign(scaled=lambda current: current["value"] * 2)',
+        'ranked = assigned.sort_values("scaled", key=lambda series: series)',
+        'print(ordered, ranked.head())'
+      ].join('\n'),
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('classifies pure positional pandas apply and map callbacks', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-pandas-positional-callback-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'pandas-positional-callback',
+      [
+        'import pandas as pd',
+        'frame = pd.DataFrame({"left": [1, 2], "right": [3, 4]})',
+        'row_totals = frame.apply(lambda row: row["left"] + row["right"], axis=1)',
+        'series = pd.Series([1, 2])',
+        'scaled = series.apply(lambda value: value * 2)',
+        'labels = scaled.map(lambda value: value + 1)',
+        'print(row_totals, labels)'
+      ].join('\n'),
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('uses only the statically selected Python branch', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-static-branch-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'static-branch',
+      [
+        'values = [1, 2, 3]',
+        'if True:',
+        '    selected = values',
+        'else:',
+        '    selected = unavailable_branch_value',
+        'label = "ready" if False else "done"',
+        'print(selected, label)'
+      ].join('\n'),
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('resolves a pandas callback with a captured value', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-pandas-captured-callback-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'pandas-captured-callback',
+      [
+        'import pandas as pd',
+        'series = pd.Series([1, 2])',
+        'factor = 2',
+        'scaled = series.apply(lambda value: value * factor)'
+      ].join('\n'),
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-1']).toEqual([])
+  })
+
+  it('keeps a mutating inline Python callback conservative', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-mutating-callback-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'mutating-callback',
+      'values = [1, 2]\nitems = []\nlist(map(lambda value: items.append(value), values))',
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['lambda-scope'])
+    })
+  })
+
+  it('keeps a Python callback with a captured value conservative', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-captured-callback-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'captured-callback',
+      'values = [1, 2]\nfactor = 3\nscaled = list(map(lambda value: value * factor, values))',
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['lambda-scope'])
+    })
+  })
+
+  it('classifies nested deterministic plotting loops', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-nested-loop-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'nested-loop',
+      [
+        'import matplotlib.pyplot as plt',
+        'fig, axes = plt.subplots(2, 2)',
+        'for row_index in range(2):',
+        '    for column_index in range(2):',
+        '        axes[row_index][column_index].grid(True)',
+        'fig.savefig("panels.png")'
+      ].join('\n'),
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('keeps an unknown-length loop conservative when a conditional value escapes the loop', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-loop-escape-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'loop-escape',
+      [
+        'from collections import Counter',
+        'counts = Counter()',
+        'for label, count in counts.items():',
+        '    pct = count * 100',
+        'print(pct)'
+      ].join('\n'),
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['control-flow'])
+    })
+  })
+
+  it('does not treat a lambda parameter as an escaping loop binding', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-loop-lambda-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'loop-lambda',
+      [
+        'from collections import Counter',
+        'counts = Counter()',
+        'for label, count in counts.items():',
+        '    pct = count * 100',
+        '    print(label, pct)',
+        "format_pct = lambda pct: f'{pct:.1f}%'",
+        'print(format_pct(50))'
+      ].join('\n'),
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('keeps a conditionally assigned loop value uncertain for a later run', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-loop-later-use-'))
+    temporaryRoots.push(storageRoot)
+    const loopRun = run(
+      'run-1',
+      'loop-local',
+      [
+        'from collections import Counter',
+        'counts = Counter()',
+        'for label, count in counts.items():',
+        '    pct = count * 100',
+        '    print(label, pct)'
+      ].join('\n'),
+      1
+    )
+    const consumerRun = run('run-2', 'later-consumer', 'print(pct)', 2)
+    const runs = [loopRun, consumerRun]
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => runs) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun: consumerRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['control-flow'])
+    })
+  })
+
+  it('keeps a mutating lambda conservative', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-mutating-lambda-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = run(
+      'run-1',
+      'mutating-lambda',
+      'items = []\nappend_item = lambda value: items.append(value)\nappend_item(1)',
+      1
+    )
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedPython
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['lambda-scope'])
+    })
   })
 
   it('propagates pandas return types so read-only Series calls do not invalidate consumers', async () => {
@@ -3131,7 +4835,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     })
     expect(projection?.stalenessByRunId['run-5']).toMatchObject({
       state: 'unknown',
-      reasons: expect.arrayContaining(['opaque-call'])
+      reasons: expect.arrayContaining(['dynamic-namespace'])
     })
   })
 
@@ -4624,7 +6328,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
-  it('keeps R loop-body assignments conservative even for a static sequence', async () => {
+  it('classifies R loop-body assignments over a static nonempty sequence as clear', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-static-loop-write-'))
     temporaryRoots.push(storageRoot)
     const completedRun = {
@@ -4644,7 +6348,699 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       interpreter: unusedR
     })
 
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('keeps an isolated R reporting loop from making an independent plot unknown', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-reporting-loop-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-reporting-loop',
+        [
+          'counts <- read.csv("inputs/groups.csv")',
+          'for (column in counts) {',
+          '  pct <- length(column)',
+          '  print(pct)',
+          '}',
+          'png("summary.png")',
+          'plot(1:3)',
+          'dev.off()'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('classifies an R local scalar aggregation over input rows', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-local-scalar-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-local-scalar',
+        [
+          'rows <- read.csv("inputs/groups.csv")',
+          'total <- 0',
+          'for (group in rows$group) {',
+          '  total <- total + 1',
+          '}',
+          'png("row_count.png")',
+          'barplot(total)',
+          'dev.off()'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-1']).toEqual([])
+  })
+
+  it('classifies an R local indexed aggregation over input rows', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-local-indexed-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-local-indexed',
+        [
+          'rows <- read.csv("inputs/groups.csv")',
+          'counts <- c(Ctrl = 0, IRI = 0)',
+          'for (group in rows$group) {',
+          '  counts[[group]] <- counts[[group]] + 1',
+          '}',
+          'png("groups.png")',
+          'pie(counts)',
+          'dev.off()'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-1']).toEqual([])
+  })
+
+  it('classifies an R conditional local indexed aggregation over input rows', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-conditional-aggregate-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-conditional-aggregate',
+        [
+          'rows <- read.csv("inputs/groups.csv")',
+          'counts <- c(Ctrl = 0, IRI = 0)',
+          'for (group in rows$group) {',
+          '  if (group %in% names(counts)) {',
+          '    counts[[group]] <- counts[[group]] + 1',
+          '  }',
+          '}',
+          'png("groups.png")',
+          'pie(counts)',
+          'dev.off()'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-1']).toEqual([])
+  })
+
+  it('keeps an R conditional loop mutation through an alias conservative', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-conditional-alias-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-conditional-alias',
+        [
+          'rows <- source_rows',
+          'counts <- shared_counts',
+          'for (group in rows$group) {',
+          '  if (group %in% names(counts)) {',
+          '    counts[[group]] <- counts[[group]] + 1',
+          '  }',
+          '}',
+          'print(counts)'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
     expect(projection.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['control-flow'])
+    })
+  })
+
+  it('classifies pure inline R apply callbacks', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-pure-callback-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-pure-callback',
+        [
+          'values <- c(1, 2, 3)',
+          'listed <- lapply(values, function(value) value * 2)',
+          'simplified <- sapply(values, function(value) value + 1)',
+          'scaled <- vapply(values, function(value) value * 3, numeric(1))',
+          'png("scaled.png")',
+          'plot(scaled)',
+          'dev.off()'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('classifies a named R apply callback that reads a member', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-member-callback-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-member-callback',
+        [
+          'rows <- list(list(value = 1), list(value = 2))',
+          'scaled <- lapply(X = rows, FUN = function(row) row$value * 2)',
+          'png("rows.png")',
+          'plot(c(1, 2))',
+          'dev.off()'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('classifies pure inline base R functional callbacks', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-functional-callback-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-functional-callback',
+        [
+          'values <- c(1, 2, 3)',
+          'mapped <- Map(f = function(value) value * 2, values)',
+          'filtered <- Filter(f = function(value) value > 1, x = values)',
+          'reduced <- Reduce(function(left, right) left + right, values)',
+          'combined <- mapply(function(left, right) left + right, values, values)',
+          'png("functional.png")',
+          'plot(combined)',
+          'dev.off()'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('classifies pure purrr map callbacks and formula shorthand', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-purrr-callback-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'purrr-callback',
+        [
+          'values <- c(1, 2, 3)',
+          'library(purrr)',
+          'labels <- map_chr(values, ~ as.character(.x))',
+          'mapped <- purrr::map_dbl(values, ~ .x * 2)',
+          'paired <- purrr::map2_dbl(values, values, ~ .x + .y)',
+          'listed <- purrr::pmap(list(values, values), ~ ..1 + ..2)',
+          'png("purrr.png")',
+          'plot(paired)',
+          'dev.off()'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('resolves a purrr formula that captures an outer value', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-purrr-captured-formula-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'purrr-captured-formula',
+        'values <- c(1, 2, 3)\nfactor <- 2\nscaled <- purrr::map_dbl(values, ~ .x * factor)',
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-1']).toEqual([])
+  })
+
+  it('uses only the statically selected R branch', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-static-branch-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-static-branch',
+        [
+          'values <- c(1, 2, 3)',
+          'if (TRUE) {',
+          '  selected <- values',
+          '} else {',
+          '  selected <- unavailable_branch_value',
+          '}',
+          'print(selected)'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('keeps a mutating inline R apply callback conservative', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-mutating-callback-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-mutating-callback',
+        [
+          'values <- c(1, 2, 3)',
+          'items <- list()',
+          'lapply(values, function(value) { items[[length(items) + 1]] <<- value })'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['function-scope'])
+    })
+  })
+
+  it('resolves an R apply callback with a captured value', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-captured-callback-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-captured-callback',
+        'values <- c(1, 2, 3)\nfactor <- 3\nscaled <- lapply(values, function(value) value * factor)',
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-1']).toEqual([])
+  })
+
+  it('classifies nested deterministic R plotting loops', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-nested-loop-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-nested-loop',
+        [
+          'png("panels.png")',
+          'par(mfrow = c(2, 2))',
+          'for (row_index in seq_len(2)) {',
+          '  for (column_index in seq_len(2)) {',
+          '    plot(1:3)',
+          '  }',
+          '}',
+          'dev.off()'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('classifies an R seq_along loop over a known nonempty collection', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-seq-along-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-seq-along',
+        [
+          'values <- c(1, 2, 3)',
+          'for (index in seq_along(values)) {',
+          '  print(values[[index]])',
+          '}',
+          'png("values.png")',
+          'plot(values)',
+          'dev.off()'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('keeps a possibly empty R seq_len definition conservative', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-empty-seq-len-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-empty-seq-len',
+        ['for (index in seq_len(0)) result <- index', 'print(result)'].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['control-flow'])
+    })
+  })
+
+  it('keeps repeated R reporting loop targets local to each loop', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-repeated-loop-target-'))
+    temporaryRoots.push(storageRoot)
+    const completedRun = {
+      ...run(
+        'run-1',
+        'r-repeated-loop-target',
+        [
+          'labels <- c("Ctrl", "IRI")',
+          'values <- c(33, 33)',
+          'for (item in labels) print(item)',
+          'for (item in values) print(item)',
+          'png("groups.png")',
+          'pie(values, labels = labels)',
+          'dev.off()'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('keeps an independent R chart clear after an import-only failure', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-failed-import-'))
+    temporaryRoots.push(storageRoot)
+    const failedRun = {
+      ...run(
+        'run-0',
+        'missing-package',
+        [
+          'library(packageThatDoesNotExist)',
+          'rows <- read.csv("inputs/groups.csv")',
+          'total <- nrow(rows)'
+        ].join('\n'),
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r',
+      status: 'failed' as const
+    }
+    const completedRun = {
+      ...run(
+        'run-1',
+        'base-r-chart',
+        [
+          'values <- c(33, 33)',
+          'labels <- c("Ctrl", "IRI")',
+          'png("groups.png")',
+          'pie(values, labels = labels)',
+          'dev.off()'
+        ].join('\n'),
+        2
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => [failedRun, completedRun]) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-1']).toEqual([])
+  })
+
+  it('keeps an R loop binding uncertain when a later run reads it', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-loop-later-use-'))
+    temporaryRoots.push(storageRoot)
+    const loopRun = {
+      ...run(
+        'run-1',
+        'r-loop-local',
+        'counts <- read.csv("inputs/groups.csv")\nfor (column in counts) pct <- length(column)',
+        1
+      ),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const consumerRun = {
+      ...run('run-2', 'r-later-consumer', 'print(pct)', 2),
+      kernelKind: 'r' as const,
+      environment: 'default-r'
+    }
+    const runs = [loopRun, consumerRun]
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => runs) }
+    })
+
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      completedRun: consumerRun,
+      interpreter: unusedR
+    })
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({
       state: 'unknown',
       reasons: expect.arrayContaining(['control-flow'])
     })
@@ -6343,4 +8739,28 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       reasons: ['dynamic-assignment']
     })
   })
+})
+
+it.each([
+  { version: 2, analyzerVersion: 1 },
+  { version: 1, analyzerVersion: 2 }
+])('does not overwrite a future analysis cache: %j', async (versions) => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'analysis-future-cache-'))
+  temporaryRoots.push(storageRoot)
+  const cacheRoot = join(storageRoot, 'notebooks', 'p', 's', 'cache')
+  await mkdir(cacheRoot, { recursive: true })
+  const path = join(cacheRoot, 'dependency-analysis.json')
+  const original = JSON.stringify({ ...versions, futureEvidence: { preserve: true } })
+  await writeFile(path, original)
+  const runs = [run('run-1', 'cell', 'x=1', 1)]
+  const before = JSON.stringify(runs)
+  const analyzer = new NotebookDependencyAnalyzer({
+    storageRoot,
+    repository: { readSessionRuns: async () => runs }
+  })
+  expect(
+    (await analyzer.project({ projectId: 'p', sessionId: 's' })).stalenessByRunId['run-1']
+  ).toEqual({ state: 'clear' })
+  expect(await readFile(path, 'utf8')).toBe(original)
+  expect(JSON.stringify(runs)).toBe(before)
 })

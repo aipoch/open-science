@@ -868,22 +868,28 @@ describe('ComputeJobDeletionOwner', () => {
     expect(harness.runner.run).not.toHaveBeenCalled()
   })
 
-  it('keeps unreadable owner authority fail-closed until it becomes live', async () => {
+  it('retains unreadable owners without treating them as deleted', async () => {
     const harness = createHarness([job()])
     const unknownOwner = vi.fn(async () => 'unknown' as const)
 
     await harness.owner.restoreOrphanJobDeletionBarriers(unknownOwner)
     await harness.owner.reconcileOrphanJobs(unknownOwner)
 
-    expect(harness.lifecycle.beginOwnerDeletion).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      sessionId: 'session-1'
-    })
-    expect(harness.lifecycle.abortOwnerDeletion).not.toHaveBeenCalled()
+    expect(harness.lifecycle.beginOwnerDeletion).not.toHaveBeenCalled()
+    expect(harness.queueManager.pauseOwner).not.toHaveBeenCalled()
     expect(harness.jobRepository.findByOwner).not.toHaveBeenCalled()
+    expect(harness.lifecycle.deleteOwnerRows).not.toHaveBeenCalled()
+    expect(harness.runner.run).not.toHaveBeenCalled()
+  })
+
+  it('keeps a confirmed orphan barrier through unreadability and releases it when live', async () => {
+    const harness = createHarness([job()])
+    await harness.owner.restoreOrphanJobDeletionBarriers(async () => false)
+    await harness.owner.reconcileOrphanJobs(async () => 'unknown')
+    expect(harness.lifecycle.abortOwnerDeletion).not.toHaveBeenCalled()
+    expect(harness.queueManager.resumeOwner).not.toHaveBeenCalled()
 
     await harness.owner.reconcileOrphanJobs(async () => true)
-
     expect(harness.lifecycle.abortOwnerDeletion).toHaveBeenCalledWith({
       projectId: 'project-1',
       sessionId: 'session-1'

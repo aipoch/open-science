@@ -1,14 +1,31 @@
 import * as filesystem from 'node:fs/promises'
 import * as runtimePaths from './runtime-paths'
 import { existsSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import { createHash } from 'node:crypto'
 import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { operationJournalPath, RuntimeOperationJournal } from './operation-journal'
+import {
+  operationJournalPath,
+  readOperationChild,
+  recordOperationChildSync,
+  recordSpawnIntentSync,
+  RuntimeOperationJournal
+} from './operation-journal'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
-import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, pythonBin, rBin } from './runtime-paths'
+import {
+  DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
+  envPrefix,
+  importedEnvironmentLockMarkerPath,
+  pythonBin,
+  rBin
+} from './runtime-paths'
+import { retainMicromambaWorkingCache } from './windows-micromamba-working-cache'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -48,6 +65,45 @@ const beginInterruptedMaterialize = async (
 }
 
 describe('NotebookRecoveryCoordinator', () => {
+  it('recovers a committed install with ordinary links inside extracted Conda packages', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const cache = join(runtimeRoot, 'pkgs')
+    const downloads = join(cache, 'https', 'conda.example', 'osx-arm64')
+    const extracted = join(downloads, 'r-example-1.0-0')
+    await mkdir(join(extracted, 'info'), { recursive: true })
+    await writeFile(join(extracted, 'info', 'index.json'), '{}')
+    await symlink('libR.dylib', join(extracted, 'libR.so'))
+    const file = 'r-example-1.0-0.conda'
+    await writeFile(join(downloads, file), 'verified archive')
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    const targetPath = join(runtimeRoot, 'envs', 'default-r')
+    await journal.begin({
+      operationId: 'committed-r-install',
+      kind: 'install',
+      runtimeId: 'managed:r:default-r',
+      targetPath,
+      phase: 'install-r',
+      startedAt: 100,
+      archivePublications: [
+        {
+          workingRoot: cache,
+          authorizations: [
+            {
+              file,
+              algorithm: 'sha256',
+              digest: createHash('sha256').update('verified archive').digest('hex')
+            }
+          ]
+        }
+      ]
+    })
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
+    await coordinator.recover()
+    expect(coordinator.isPrefixBlocked(targetPath)).toBe(false)
+    expect(coordinator.isRuntimeIdBlocked('managed:r:default-r')).toBe(false)
+    expect(await journal.pending()).toEqual([])
+    expect(existsSync(join(cache, file))).toBe(true)
+  })
   it('finalizes a leftover working cache only after recovery has no blocked writer', async () => {
     const runtimeRoot = await createRuntimeRoot()
     const finalizeWorkingCache = vi.fn().mockResolvedValue(true)
@@ -334,6 +390,55 @@ describe('NotebookRecoveryCoordinator', () => {
     expect(finalizeWorkingCache).not.toHaveBeenCalled()
   })
 
+  it('releases an interrupted named create when its target environment is absent', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const targetPath = join(runtimeRoot, 'envs', 'pandas-env')
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'missing-named-create',
+      kind: 'materialize',
+      runtimeId: 'pandas-env',
+      phase: 'create-python',
+      startedAt: 100,
+      targetPath,
+      archivePublicationPending: true
+    })
+    const exitedChild = spawn(process.execPath, ['-e', 'process.exit(0)'])
+    await once(exitedChild, 'exit')
+    recordOperationChildSync(runtimeRoot, 'missing-named-create', {
+      childPid: exitedChild.pid!,
+      childStartedAt: 100
+    })
+    const finalizeWorkingCache = vi.fn().mockResolvedValue(true)
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot, undefined, {
+      finalizeWorkingCache
+    })
+
+    expect(existsSync(targetPath)).toBe(false)
+
+    await coordinator.recover()
+
+    expect(coordinator.snapshot()).toMatchObject({
+      blockedPrefixes: [],
+      blockedRuntimeIds: []
+    })
+    expect(await journal.pending()).toEqual([])
+    expect(readOperationChild(runtimeRoot, 'missing-named-create')).toBeUndefined()
+    expect(finalizeWorkingCache).toHaveBeenCalledWith(runtimeRoot, {
+      mode: 'current-candidates'
+    })
+    const release = await retainMicromambaWorkingCache(
+      runtimeRoot,
+      {
+        platform: 'win32',
+        canonicalize: (path) => win32.normalize(path),
+        cleanup: () => true
+      },
+      'later-install'
+    )
+    await expect(release({ completedOperationId: 'later-install' })).resolves.toBe(true)
+  })
+
   it('owns blocked and live-unconfirmed recovery state in one snapshot', async () => {
     const coordinator = new NotebookRecoveryCoordinator(await createRuntimeRoot())
 
@@ -380,6 +485,67 @@ describe('NotebookRecoveryCoordinator', () => {
     expect({ prefixExists: existsSync(prefix), pending: await journal.pending() }).toEqual({
       prefixExists: false,
       pending: []
+    })
+  })
+
+  describe.skipIf(process.platform === 'win32')('interrupted lock import completion', () => {
+    it.each([
+      ['python', 'missing'],
+      ['r', 'missing'],
+      ['python', 'complete'],
+      ['r', 'complete'],
+      ['python', 'corrupt'],
+      ['r', 'corrupt'],
+      ['python', 'unknown-worker'],
+      ['r', 'unknown-worker'],
+      ['python', 'archive-pending'],
+      ['r', 'archive-pending'],
+      ['python', 'no-journal'],
+      ['r', 'no-journal']
+    ] as const)('recovers %s import with %s evidence', async (language, evidence) => {
+      const runtimeRoot = await createRuntimeRoot()
+      const checksum = 'a'.repeat(64)
+      const name = `repro-${checksum.slice(0, 12)}`
+      const prefix = envPrefix(runtimeRoot, name)
+      const bin = language === 'python' ? pythonBin(prefix) : rBin(prefix)
+      await mkdir(join(prefix, 'conda-meta'), { recursive: true })
+      await mkdir(dirname(bin), { recursive: true })
+      // Interpreter health alone cannot establish whether pip/renv restoration completed.
+      const rProbe = [
+        'OPEN_SCIENCE_R_HOME',
+        'OPEN_SCIENCE_R_BASE_LIBRARY',
+        'OPEN_SCIENCE_R_LIBRARY'
+      ]
+        .map((key) => `${key}=${prefix}`)
+        .join('\n')
+      await writeFile(
+        bin,
+        `#!${process.execPath}\nconsole.log(${JSON.stringify(language === 'r' ? rProbe : '')})\n`
+      )
+      await chmod(bin, 0o755)
+      if (evidence === 'complete' || evidence === 'corrupt') {
+        await writeFile(
+          importedEnvironmentLockMarkerPath(prefix),
+          evidence === 'complete' ? `${checksum}\n` : 'invalid'
+        )
+      }
+      const journal =
+        evidence === 'no-journal'
+          ? RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+          : await beginInterruptedMaterialize(runtimeRoot, 'interrupted-import', prefix, {
+              runtimeId: name,
+              phase: `import-${language}`
+            })
+      if (evidence === 'unknown-worker') recordSpawnIntentSync(runtimeRoot, 'interrupted-import')
+      if (evidence === 'archive-pending')
+        await journal.update('interrupted-import', { archivePublicationPending: true })
+      const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
+      await coordinator.recover()
+      const blocked =
+        evidence === 'unknown-worker' || evidence === 'archive-pending' || evidence === 'corrupt'
+      expect(existsSync(prefix)).toBe(evidence !== 'missing')
+      expect(coordinator.isPrefixBlocked(prefix)).toBe(blocked)
+      expect(await journal.pending()).toHaveLength(blocked ? 1 : 0)
     })
   })
 

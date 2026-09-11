@@ -23,6 +23,8 @@ struct LaunchSpec {
     read_write_roots: Vec<String>,
     denied_read_roots: Vec<String>,
     denied_write_roots: Vec<String>,
+    termination_proof_path: Option<String>,
+    termination_proof_token: Option<String>,
 }
 
 fn decode_launch_spec(encoded: &str) -> Result<LaunchSpec> {
@@ -150,41 +152,50 @@ fn plan_writable_acl_grants(spec: &LaunchSpec) -> Result<BTreeMap<String, AclGra
 mod windows_host {
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs::{self, OpenOptions};
-    use std::io::Write;
+    use std::io::{Read, Write};
     use std::mem::{size_of, zeroed};
     use std::net::TcpListener;
-    use std::os::windows::io::AsRawHandle;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::time::{Duration, Instant};
 
     use anyhow::{Context, Result, bail};
     use serde::{Deserialize, Serialize};
     use windows::Win32::Foundation::{
-        CloseHandle, HANDLE, HLOCAL, LocalFree, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        CloseHandle, ERROR_PIPE_CONNECTED, GENERIC_READ, GENERIC_WRITE, HANDLE,
+        HANDLE_FLAG_INHERIT, HLOCAL, LocalFree, SetHandleInformation, WAIT_ABANDONED,
+        WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows::Win32::NetworkManagement::WindowsFirewall::{
         NetworkIsolationGetAppContainerConfig, NetworkIsolationSetAppContainerConfig,
     };
     use windows::Win32::Security::Authorization::{
         ConvertSecurityDescriptorToStringSecurityDescriptorW, ConvertSidToStringSidW,
-        ConvertStringSecurityDescriptorToSecurityDescriptorW, GetNamedSecurityInfoW,
-        SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, ConvertStringSidToSidW,
+        GetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW,
     };
     use windows::Win32::Security::Isolation::{
         CreateAppContainerProfile, DeleteAppContainerProfile,
         DeriveAppContainerSidFromAppContainerName, GetAppContainerFolderPath,
     };
     use windows::Win32::Security::{
-        ACE_HEADER, ACL, ACL_REVISION_DS, ACL_SIZE_INFORMATION, AclSizeInformation, AddAce,
-        DACL_SECURITY_INFORMATION, DeriveCapabilitySidsFromName, EqualSid, FreeSid, GetAce,
-        GetAclInformation, GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
-        GetTokenInformation, INHERITED_ACE, InitializeAcl, InitializeSecurityDescriptor,
-        OBJECT_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
-        PSID, SE_DACL_AUTO_INHERIT_REQ, SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED,
-        SECURITY_CAPABILITIES, SECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR_CONTROL,
-        SID_AND_ATTRIBUTES, SetFileSecurityW, SetSecurityDescriptorControl,
-        SetSecurityDescriptorDacl, TOKEN_APPCONTAINER_INFORMATION, TOKEN_GROUPS, TOKEN_QUERY,
-        TokenAppContainerSid, TokenCapabilities, UNPROTECTED_DACL_SECURITY_INFORMATION,
+        ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION_DS, ACL_SIZE_INFORMATION,
+        AclSizeInformation, AddAccessAllowedAceEx, AddAce, DACL_SECURITY_INFORMATION,
+        DeriveCapabilitySidsFromName, EqualSid, FreeSid, GetAce, GetAclInformation, GetLengthSid,
+        GetSecurityDescriptorControl, GetSecurityDescriptorDacl, GetTokenInformation,
+        INHERITED_ACE, InitializeAcl, InitializeSecurityDescriptor, OBJECT_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SE_DACL_AUTO_INHERIT_REQ,
+        SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES,
+        SECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR_CONTROL, SID_AND_ATTRIBUTES, SetFileSecurityW,
+        SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_APPCONTAINER_INFORMATION,
+        TOKEN_GROUPS, TOKEN_QUERY, TOKEN_USER, TokenAppContainerSid, TokenCapabilities, TokenUser,
+        UNPROTECTED_DACL_SECURITY_INFORMATION,
+    };
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_SHARE_MODE,
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW, OPEN_EXISTING,
+        PIPE_ACCESS_DUPLEX,
     };
     use windows::Win32::System::Com::{CoCreateGuid, CoTaskMemFree};
     use windows::Win32::System::Diagnostics::ToolHelp::{
@@ -193,10 +204,15 @@ mod windows_host {
     };
     use windows::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-        SetInformationJobObject,
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+        QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
     };
     use windows::Win32::System::Memory::{GetProcessHeap, HEAP_FLAGS, HeapFree};
+    use windows::Win32::System::Pipes::{
+        ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, PIPE_NOWAIT,
+        PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PeekNamedPipe,
+    };
     use windows::Win32::System::SystemServices::{SE_GROUP_ENABLED, SECURITY_DESCRIPTOR_REVISION};
     use windows::Win32::System::Threading::{
         CREATE_SUSPENDED, CreateMutexW, CreateProcessW, DeleteProcThreadAttributeList,
@@ -204,7 +220,7 @@ mod windows_host {
         InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcess,
         OpenProcessToken, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, PROCESS_ACCESS_RIGHTS,
         PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, ReleaseMutex,
-        ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
+        ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
         UpdateProcThreadAttribute, WaitForSingleObject,
     };
     use windows::core::{BOOL, PCWSTR, PWSTR};
@@ -217,6 +233,7 @@ mod windows_host {
     const PROFILE_PREFIX: &str = "Aipoch.OpenScience.Notebook";
     const PROCESS_SYNCHRONIZE: PROCESS_ACCESS_RIGHTS = PROCESS_ACCESS_RIGHTS(0x0010_0000);
     const RECEIPT_SCHEMA: u32 = 5;
+    const VERIFIED_JOURNAL_SCHEMA: u32 = 6;
     const ACL_LEASE_SCHEMA: u32 = 2;
     const ACL_STATE_SCHEMA: u32 = 1;
     const OPERATION_MUTEX: &str = "Local\\Aipoch.OpenScience.Notebook.Resources";
@@ -235,6 +252,16 @@ mod windows_host {
         wfp_filter_keys: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         runtime_directory_access: Vec<RuntimeDirectoryAccess>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pending_runtime_access: Option<PendingRuntimeAccess>,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+    #[serde(rename_all = "camelCase")]
+    struct PendingRuntimeAccess {
+        executable: String,
+        // Identifies only the verification process's existing ACL lease; not a pipe credential.
+        lease_id: String,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -349,6 +376,18 @@ mod windows_host {
         }
     }
 
+    fn runtime_access_guard(installation_id: &str) -> Result<OperationLock> {
+        let name = wide(&format!("{OPERATION_MUTEX}.RAccess.{installation_id}"));
+        let handle = unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) }
+            .context("open R authorization lifetime guard")?;
+        let acquired = unsafe { WaitForSingleObject(handle, 0) };
+        if acquired == WAIT_OBJECT_0 || acquired == WAIT_ABANDONED {
+            return Ok(OperationLock(handle));
+        }
+        unsafe { CloseHandle(handle) }.ok();
+        bail!("R authorization is still active; wait before changing protected-mode resources");
+    }
+
     fn wide(value: &str) -> Vec<u16> {
         value.encode_utf16().chain(std::iter::once(0)).collect()
     }
@@ -398,7 +437,7 @@ mod windows_host {
         let expected_name = format!("{PROFILE_PREFIX}.{}", record.ownership_token);
         let expected_sid = sid_text(profile_sid(&record.profile_name)?.0)?;
         let descriptor = wfp_descriptor(record);
-        if ![4, RECEIPT_SCHEMA].contains(&record.schema_version)
+        if ![4, RECEIPT_SCHEMA, VERIFIED_JOURNAL_SCHEMA].contains(&record.schema_version)
             || record.installation_id != installation_id
             || record.profile_name != expected_name
             || record.profile_sid != expected_sid
@@ -409,6 +448,18 @@ mod windows_host {
             bail!("AppContainer ownership record does not match this installation");
         }
         validate_runtime_directory_access(record)?;
+        match &record.pending_runtime_access {
+            Some(pending)
+                if record.schema_version == VERIFIED_JOURNAL_SCHEMA
+                    && record.state == OwnershipState::Creating
+                    && valid_lease_id(&pending.lease_id)
+                    && record
+                        .runtime_directory_access
+                        .iter()
+                        .any(|entry| entry.executable == pending.executable) => {}
+            None if record.schema_version != VERIFIED_JOURNAL_SCHEMA => {}
+            _ => bail!("Invalid pending R verification journal; preserving resources"),
+        }
         if record.schema_version == 4 && !record.runtime_directory_access.is_empty() {
             bail!("Legacy ownership cannot contain runtime directory grants");
         }
@@ -482,15 +533,14 @@ mod windows_host {
                 .with_context(|| format!("remove stale receipt {}", temporary.display()))?;
         }
         write_new_record(&temporary, record)?;
-        if receipt.exists() {
-            fs::remove_file(&receipt).with_context(|| {
-                format!(
-                    "replace AppContainer ownership receipt {}",
-                    receipt.display()
-                )
-            })?;
+        unsafe {
+            MoveFileExW(
+                PCWSTR(wide(&temporary.to_string_lossy()).as_ptr()),
+                PCWSTR(wide(&receipt.to_string_lossy()).as_ptr()),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
         }
-        fs::rename(&temporary, &receipt).context("commit AppContainer ownership receipt")
+        .context("commit AppContainer ownership receipt")
     }
 
     fn replace_journal(ownership_root: &Path, record: &OwnershipRecord) -> Result<()> {
@@ -779,6 +829,7 @@ mod windows_host {
     }
 
     pub fn prepare_setup(installation_id: &str, requested_root: &str) -> Result<()> {
+        let _transaction = runtime_access_guard(installation_id)?;
         let _lock = OperationLock::acquire(installation_id)?;
         let ownership_root = ownership_directory(installation_id, requested_root)?;
         recover_acl_leases(installation_id, &ownership_root, false)?;
@@ -805,6 +856,7 @@ mod windows_host {
                     .map(|_| new_resource_key())
                     .collect::<Result<Vec<_>>>()?,
                 runtime_directory_access: Vec::new(),
+                pending_runtime_access: None,
             };
             write_new_record(&journal_path(&ownership_root), &creating)?;
             record = Some(creating);
@@ -827,7 +879,9 @@ mod windows_host {
         requested_root: &str,
         executable: &str,
         remove: bool,
+        verified: bool,
     ) -> Result<()> {
+        let _transaction = runtime_access_guard(installation_id)?;
         let _lock = OperationLock::acquire(installation_id)?;
         let root = ownership_directory(installation_id, requested_root)?;
         if journal_path(&root).exists() {
@@ -898,6 +952,21 @@ mod windows_host {
             RECEIPT_SCHEMA
         };
         record.state = OwnershipState::Creating;
+        if verified {
+            if remove {
+                bail!("Removal cannot prepare R verification");
+            }
+            record.schema_version = VERIFIED_JOURNAL_SCHEMA;
+            record.pending_runtime_access = Some(PendingRuntimeAccess {
+                executable: record
+                    .runtime_directory_access
+                    .last()
+                    .context("R access is missing")?
+                    .executable
+                    .clone(),
+                lease_id: new_lease_id()?,
+            });
+        }
         replace_journal(&root, &record)
     }
 
@@ -976,6 +1045,7 @@ mod windows_host {
     }
 
     pub fn cancel_setup(installation_id: &str, requested_root: &str) -> Result<()> {
+        let _transaction = runtime_access_guard(installation_id)?;
         let _lock = OperationLock::acquire(installation_id)?;
         let ownership_root = ownership_directory(installation_id, requested_root)?;
         let Some(journal) = read_record(&journal_path(&ownership_root))? else {
@@ -1012,12 +1082,421 @@ mod windows_host {
                     .context("delete cancelled AppContainer profile")?;
             }
         }
+        refresh_owned_runtime_acl_snapshots(installation_id, &ownership_root)?;
         fs::remove_file(journal_path(&ownership_root))
             .context("cancel AppContainer setup repair")?;
         Ok(())
     }
 
+    fn rollback_verified_runtime_access(
+        installation_id: &str,
+        root: &Path,
+        record: &OwnershipRecord,
+        previous: Option<&OwnershipRecord>,
+    ) -> Result<()> {
+        let pending = record
+            .pending_runtime_access
+            .as_ref()
+            .context("Missing R verification journal")?;
+        if read_acl_state(installation_id, root)?.is_some_and(|state| {
+            state.leases.iter().any(|lease| {
+                lease.lease_id == pending.lease_id && process_is_running(lease.owner_process_id)
+            })
+        }) {
+            bail!("Stop the owned R verification process before repairing its permissions");
+        }
+        recover_acl_leases(installation_id, root, false)?;
+        rollback_runtime_directories(record, previous)?;
+        refresh_owned_runtime_acl_snapshots(installation_id, root)?;
+        fs::remove_file(journal_path(root)).context("remove rolled-back R verification journal")
+    }
+
+    fn verification_pipe_name(ticket: &str) -> Result<String> {
+        if ticket.len() != 64 || !ticket.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            bail!("Invalid R verification pipe identity");
+        }
+        Ok(format!(r"\\.\pipe\LOCAL\OpenScience.RAccess.{ticket}"))
+    }
+
+    fn process_user_sid(process: HANDLE) -> Result<String> {
+        let mut token = HANDLE::default();
+        unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) }
+            .context("open verifier token")?;
+        let token = Handle(token);
+        let mut bytes = 0;
+        let _ = unsafe { GetTokenInformation(token.0, TokenUser, None, 0, &mut bytes) };
+        if bytes < size_of::<TOKEN_USER>() as u32 {
+            bail!("Invalid verifier token size");
+        }
+        let mut storage = vec![0usize; (bytes as usize).div_ceil(size_of::<usize>())];
+        unsafe {
+            GetTokenInformation(
+                token.0,
+                TokenUser,
+                Some(storage.as_mut_ptr().cast()),
+                (storage.len() * size_of::<usize>()) as u32,
+                &mut bytes,
+            )
+        }
+        .context("read verifier user")?;
+        sid_text(unsafe { &*storage.as_ptr().cast::<TOKEN_USER>() }.User.Sid)
+    }
+
+    fn create_verification_pipe(ticket: &str, verifier: HANDLE) -> Result<fs::File> {
+        let name = wide(&verification_pipe_name(ticket)?);
+        // Do not inherit the default pipe ACL (which includes Everyone). The intended user can
+        // connect even when UAC was answered with a different administrator account.
+        let sddl = wide(&format!(
+            "D:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;{})",
+            process_user_sid(verifier)?
+        ));
+        let mut descriptor = PSECURITY_DESCRIPTOR::default();
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                PCWSTR(sddl.as_ptr()),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                None,
+            )
+        }
+        .context("create verifier pipe security")?;
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor.0,
+            bInheritHandle: false.into(),
+        };
+        let pipe = unsafe {
+            CreateNamedPipeW(
+                PCWSTR(name.as_ptr()),
+                PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                1,
+                256,
+                256,
+                0,
+                Some(&attributes),
+            )
+        };
+        unsafe { LocalFree(Some(HLOCAL(descriptor.0))) };
+        if pipe.is_invalid() {
+            return Err(windows::core::Error::from_thread().into());
+        }
+        Ok(unsafe { fs::File::from_raw_handle(pipe.0) })
+    }
+
+    fn pipe_handle(pipe: &fs::File) -> HANDLE {
+        HANDLE(pipe.as_raw_handle())
+    }
+
+    fn read_verification_message(
+        pipe: &mut fs::File,
+        mut alive: impl FnMut() -> bool,
+    ) -> Result<String> {
+        let started = Instant::now();
+        let mut message = Vec::new();
+        loop {
+            if !alive() || started.elapsed() > Duration::from_secs(45) {
+                bail!("R verification peer exited or timed out");
+            }
+            let mut available = 0;
+            unsafe { PeekNamedPipe(pipe_handle(pipe), None, 0, None, Some(&mut available), None) }
+                .context("read R verification connection")?;
+            if available > 0 {
+                let mut byte = [0];
+                pipe.read_exact(&mut byte)
+                    .context("read R verification result")?;
+                if byte[0] == b'\n' {
+                    return String::from_utf8(message).context("invalid verification response");
+                }
+                message.push(byte[0]);
+                if message.len() > 16 {
+                    bail!("Oversized R verification response");
+                }
+            } else {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
+
+    fn process_alive(process: HANDLE) -> bool {
+        unsafe { WaitForSingleObject(process, 0) == WAIT_TIMEOUT }
+    }
+
+    pub fn authorize_runtime_access(
+        installation_id: &str,
+        requested_root: &str,
+        ticket: &str,
+        verifier_pid: u32,
+        owner_pid: u32,
+    ) -> Result<()> {
+        let _transaction = runtime_access_guard(installation_id)?;
+        let verifier = Handle(
+            unsafe {
+                OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE,
+                    false,
+                    verifier_pid,
+                )
+            }
+            .context("open exact R verifier process")?,
+        );
+        let owner = Handle(
+            unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, owner_pid) }
+                .context("open R authorization owner")?,
+        );
+        let mut pipe = create_verification_pipe(ticket, verifier.0)?;
+        let started = Instant::now();
+        loop {
+            let connected = unsafe { ConnectNamedPipe(pipe_handle(&pipe), None) };
+            if connected.is_ok()
+                || connected
+                    .as_ref()
+                    .is_err_and(|e| e.code() == ERROR_PIPE_CONNECTED.to_hresult())
+            {
+                break;
+            }
+            if !process_alive(verifier.0)
+                || !process_alive(owner.0)
+                || started.elapsed() > Duration::from_secs(15)
+            {
+                bail!("R verifier did not connect");
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let mut actual_pid = 0;
+        unsafe { GetNamedPipeClientProcessId(pipe_handle(&pipe), &mut actual_pid) }
+            .context("identify R verifier")?;
+        if actual_pid != verifier_pid {
+            bail!("Unexpected R verification client");
+        }
+        let lock = OperationLock::acquire(installation_id)?;
+        let root = ownership_directory(installation_id, requested_root)?;
+        let record =
+            ownership_record(installation_id, &root)?.context("Missing R access journal")?;
+        record
+            .pending_runtime_access
+            .as_ref()
+            .context("R access was not prepared for verification")?;
+        let previous =
+            read_record(&receipt_path(&root))?.context("Missing previous owned receipt")?;
+        validate_record(&previous, installation_id)?;
+        let applied = reconcile_runtime_directories(&record, Some(&previous));
+        drop(lock);
+        let verified = applied.and_then(|()| {
+            pipe.write_all(b"ready\n").context("notify R verifier")?;
+            if read_verification_message(&mut pipe, || {
+                process_alive(owner.0) && process_alive(verifier.0)
+            })? != "commit"
+            {
+                bail!("R protocol verification failed; new access was rolled back");
+            }
+            Ok(())
+        });
+        complete_runtime_verification(
+            installation_id,
+            &root,
+            record,
+            &previous,
+            verified,
+            verifier.0,
+            owner.0,
+        )?;
+        pipe.write_all(b"committed\n")
+            .context("acknowledge verified R access")?;
+        Ok(())
+    }
+
+    fn complete_runtime_verification(
+        installation_id: &str,
+        root: &Path,
+        record: OwnershipRecord,
+        previous: &OwnershipRecord,
+        verified: Result<()>,
+        verifier: HANDLE,
+        owner: HANDLE,
+    ) -> Result<()> {
+        let pending = record
+            .pending_runtime_access
+            .as_ref()
+            .context("Missing R verification journal")?;
+        let _lock = OperationLock::acquire(installation_id)?;
+        let current =
+            ownership_record(installation_id, &root)?.context("R access journal disappeared")?;
+        if current.pending_runtime_access.as_ref() != Some(pending) {
+            bail!("R access transaction changed; preserving ownership records");
+        }
+        let verified = verified.and_then(|()| {
+            if !process_alive(owner) || !process_alive(verifier) {
+                bail!("R verification was cancelled before authorization committed");
+            }
+            if read_acl_state(installation_id, root)?.is_some_and(|state| {
+                state
+                    .leases
+                    .iter()
+                    .any(|lease| lease.lease_id == pending.lease_id)
+            }) {
+                bail!("R verifier has not released its filesystem lease");
+            }
+            Ok(())
+        });
+        if let Err(error) = verified {
+            // Stop the exact authenticated verifier (and its Job) before recovering its lease.
+            if process_alive(verifier) {
+                unsafe { TerminateProcess(verifier, 1) }.context("stop failed R verifier")?;
+                unsafe { WaitForSingleObject(verifier, INFINITE) };
+            }
+            return match rollback_verified_runtime_access(
+                installation_id,
+                &root,
+                &record,
+                Some(&previous),
+            ) {
+                Ok(()) => Err(error),
+                Err(rollback) => {
+                    Err(error.context(format!("R access rollback also failed: {rollback:#}")))
+                }
+            };
+        }
+        let mut owned = record;
+        owned.pending_runtime_access = None;
+        owned.schema_version = RECEIPT_SCHEMA;
+        owned.state = OwnershipState::Owned;
+        refresh_owned_runtime_acl_snapshots(installation_id, root)?;
+        commit_receipt(&root, &owned)?;
+        fs::remove_file(journal_path(&root)).context("finish verified R access")?;
+        Ok(())
+    }
+
+    const R_VERIFICATION_SCRIPT: &str = "stopifnot(requireNamespace(\"jsonlite\", quietly=TRUE)); normalizePath(.libPaths(), mustWork=TRUE); cat(\"OPEN_SCIENCE_R_ACCESS_OK\")";
+
+    fn run_completed_r_probe(run: impl FnOnce(std::io::PipeWriter) -> Result<u32>) -> Result<u32> {
+        let (mut reader, writer) = std::io::pipe().context("create R verification output pipe")?;
+        let output = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+            let mut tail = Vec::new();
+            let mut buffer = [0; 4096];
+            loop {
+                let count = reader.read(&mut buffer)?;
+                if count == 0 {
+                    return Ok(tail);
+                }
+                tail.extend_from_slice(&buffer[..count]);
+                if tail.len() > 1024 * 1024 {
+                    tail.drain(..tail.len() - 1024 * 1024);
+                }
+            }
+        });
+        let result = run(writer);
+        let stdout = output
+            .join()
+            .map_err(|_| anyhow::anyhow!("R output reader failed"))??;
+        if matches!(result, Ok(0))
+            && !stdout
+                .windows(b"OPEN_SCIENCE_R_ACCESS_OK".len())
+                .any(|window| window == b"OPEN_SCIENCE_R_ACCESS_OK")
+        {
+            bail!("R protocol verification exited without its completion marker");
+        }
+        result
+    }
+
+    fn validate_runtime_verification(
+        pending: &PendingRuntimeAccess,
+        spec: &LaunchSpec,
+    ) -> Result<()> {
+        let executable =
+            fs::canonicalize(&spec.executable).context("resolve R verification executable")?;
+        let executable = executable.to_string_lossy();
+        let executable = executable.strip_prefix(r"\\?\").unwrap_or(&executable);
+        if !paths_equal(&pending.executable, Path::new(executable))
+            || spec.verbatim_arguments
+            || spec.arguments != ["--vanilla", "-e", R_VERIFICATION_SCRIPT]
+        {
+            bail!(
+                "Only the fixed selected R protocol verification is admitted during authorization"
+            );
+        }
+        Ok(())
+    }
+
+    pub fn verify_runtime_access(
+        installation_id: &str,
+        requested_root: &str,
+        ticket: &str,
+        owner_pid: u32,
+        spec: LaunchSpec,
+    ) -> Result<u32> {
+        let name = wide(&verification_pipe_name(ticket)?);
+        let owner = Handle(
+            unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, owner_pid) }
+                .context("open R verification owner")?,
+        );
+        let mut pipe = loop {
+            // UAC waits for a person, not a protocol deadline. Cancellation terminates this
+            // verifier; a closed initiating app must also end the wait without leaving an orphan.
+            if !process_alive(owner.0) {
+                bail!("R authorization owner exited");
+            }
+            if let Ok(handle) = unsafe {
+                CreateFileW(
+                    PCWSTR(name.as_ptr()),
+                    GENERIC_READ.0 | GENERIC_WRITE.0,
+                    FILE_SHARE_MODE(0),
+                    None,
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    None,
+                )
+            } {
+                break unsafe { fs::File::from_raw_handle(handle.0) };
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        if read_verification_message(&mut pipe, || process_alive(owner.0))? != "ready" {
+            bail!("Invalid R authorization readiness");
+        }
+        let result = (|| -> Result<u32> {
+            let lock = OperationLock::acquire(installation_id)?;
+            let root = ownership_directory(installation_id, requested_root)?;
+            recover_acl_leases(installation_id, &root, false)?;
+            let record = ownership_record(installation_id, &root)?
+                .context("Missing R verification journal")?;
+            let pending = record
+                .pending_runtime_access
+                .as_ref()
+                .context("R access is not awaiting verification")?;
+            validate_runtime_verification(pending, &spec)?;
+            let capability_name = command_capability_name(installation_id, &pending.lease_id);
+            let mut capability = CommandCapability::new(capability_name)?;
+            let sid = profile_sid(&record.profile_name)?;
+            let mut lease = AclLease::acquire(
+                installation_id,
+                &root,
+                pending.lease_id.clone(),
+                &capability,
+                &spec,
+            )?;
+            let result = run_completed_r_probe(|writer| {
+                let stdout = HANDLE(writer.as_raw_handle());
+                unsafe { SetHandleInformation(stdout, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT) }
+                    .context("inherit R verification output")?;
+                launch_child(&spec, sid.0, &mut capability, lock, 20_000, Some(stdout))
+            });
+            lease.release()?;
+            result
+        })();
+        let passed = matches!(result, Ok(0));
+        pipe.write_all(if passed { b"commit\n" } else { b"rollback\n" })
+            .context("return R verification result")?;
+        if passed {
+            if read_verification_message(&mut pipe, || process_alive(owner.0))? != "committed" {
+                bail!("R authorization was not committed");
+            }
+        }
+        result
+    }
+
     pub fn setup_network(installation_id: &str, requested_root: &str) -> Result<()> {
+        let _transaction = runtime_access_guard(installation_id)?;
         let _lock = OperationLock::acquire(installation_id)?;
         let ownership_root = ownership_directory(installation_id, requested_root)?;
         let record = ownership_record(installation_id, &ownership_root)?
@@ -1025,6 +1504,18 @@ mod windows_host {
         let previous = read_record(&receipt_path(&ownership_root))?;
         if let Some(previous) = &previous {
             validate_record(previous, installation_id)?;
+        }
+        // A crashed verifier must never be promoted by the generic protected-mode repair path.
+        if record.pending_runtime_access.is_some() {
+            let previous = previous
+                .as_ref()
+                .context("Previous R ownership receipt is missing; preserving journal")?;
+            return rollback_verified_runtime_access(
+                installation_id,
+                &ownership_root,
+                &record,
+                Some(previous),
+            );
         }
         let sid = profile_sid(&record.profile_name)?;
         if !profile_exists(sid.0)? {
@@ -1049,6 +1540,7 @@ mod windows_host {
             wfp::install(&wfp_descriptor(&record), sid.0)?;
             add_loopback(sid.0)?;
             reconcile_runtime_directories(&record, previous.as_ref())?;
+            refresh_owned_runtime_acl_snapshots(installation_id, &ownership_root)?;
             let mut owned = record.clone();
             owned.state = OwnershipState::Owned;
             commit_receipt(&ownership_root, &owned)?;
@@ -1057,6 +1549,7 @@ mod windows_host {
         if let Err(error) = install_result {
             let rollback = (|| -> Result<()> {
                 rollback_runtime_directories(&record, previous.as_ref())?;
+                refresh_owned_runtime_acl_snapshots(installation_id, &ownership_root)?;
                 if !loopback_was_present {
                     remove_loopback(sid.0)?;
                 }
@@ -1085,6 +1578,7 @@ mod windows_host {
     }
 
     pub fn finish_setup(installation_id: &str, requested_root: &str) -> Result<()> {
+        let _transaction = runtime_access_guard(installation_id)?;
         let _lock = OperationLock::acquire(installation_id)?;
         let ownership_root = ownership_directory(installation_id, requested_root)?;
         let record = read_record(&receipt_path(&ownership_root))?
@@ -1102,6 +1596,9 @@ mod windows_host {
             let creating =
                 read_record(&journal)?.context("AppContainer setup journal is missing")?;
             validate_record(&creating, installation_id)?;
+            if creating.pending_runtime_access.is_some() {
+                bail!("R access verification has not committed; preserving pending journal");
+            }
             if creating.ownership_token != record.ownership_token {
                 bail!("AppContainer ownership records disagree; preserving resources");
             }
@@ -1111,6 +1608,7 @@ mod windows_host {
     }
 
     pub fn prepare_remove(installation_id: &str, requested_root: &str) -> Result<()> {
+        let _transaction = runtime_access_guard(installation_id)?;
         let _lock = OperationLock::acquire(installation_id)?;
         let ownership_root = ownership_directory(installation_id, requested_root)?;
         let Some(record) = ownership_record(installation_id, &ownership_root)? else {
@@ -1124,6 +1622,7 @@ mod windows_host {
     }
 
     pub fn remove_network(installation_id: &str, requested_root: &str) -> Result<()> {
+        let _transaction = runtime_access_guard(installation_id)?;
         let _lock = OperationLock::acquire(installation_id)?;
         let ownership_root = ownership_directory(installation_id, requested_root)?;
         let Some(record) = ownership_record(installation_id, &ownership_root)? else {
@@ -1176,6 +1675,7 @@ mod windows_host {
     }
 
     pub fn finish_remove(installation_id: &str, requested_root: &str) -> Result<()> {
+        let _transaction = runtime_access_guard(installation_id)?;
         let _lock = OperationLock::acquire(installation_id)?;
         let ownership_root = ownership_directory(installation_id, requested_root)?;
         let Some(_record) = ownership_record(installation_id, &ownership_root)? else {
@@ -1637,7 +2137,9 @@ mod windows_host {
             SECURITY_DESCRIPTOR_CONTROL(SE_DACL_AUTO_INHERITED.0 | SE_DACL_AUTO_INHERIT_REQ.0);
         let mut auto_inherit_bits = 0u16;
         if snapshot.dacl_auto_inherited {
-            auto_inherit_bits |= SE_DACL_AUTO_INHERITED.0;
+            // SetFileSecurityW consumes the request bit to retain AUTO_INHERITED, including
+            // on protected DACLs where /inheritancelevel:e would change the protection policy.
+            auto_inherit_bits |= SE_DACL_AUTO_INHERITED.0 | SE_DACL_AUTO_INHERIT_REQ.0;
         }
         if snapshot.dacl_auto_inherit_requested {
             auto_inherit_bits |= SE_DACL_AUTO_INHERIT_REQ.0;
@@ -1777,7 +2279,173 @@ mod windows_host {
         )
     }
 
-    fn rebuild_acl_state(state: &AclState) -> Result<()> {
+    fn refresh_owned_runtime_acl_snapshots(installation_id: &str, root: &Path) -> Result<()> {
+        if let Some(mut state) = read_acl_state(installation_id, root)? {
+            refresh_runtime_acl_snapshots(&mut state, root)?;
+        }
+        Ok(())
+    }
+
+    fn refresh_runtime_acl_snapshots(state: &mut AclState, root: &Path) -> Result<()> {
+        let Some(record) = ownership_record(&state.installation_id, root)? else {
+            return Ok(());
+        };
+        let mut directories = runtime_directories(&record);
+        if let Some(previous) = read_record(&receipt_path(root))? {
+            validate_record(&previous, &state.installation_id)?;
+            if previous.ownership_token != record.ownership_token
+                || previous.profile_sid != record.profile_sid
+            {
+                bail!("Runtime ACL ownership records disagree; preserving snapshots");
+            }
+            directories.extend(runtime_directories(&previous));
+        }
+        let mut changed = false;
+        for snapshot in &mut state.snapshots {
+            if !Path::new(&snapshot.path).exists() {
+                continue;
+            }
+            // Runtime receipts use canonical paths, while command snapshots retain the caller's
+            // spelling (including short names, junctions, and extended-length prefixes).
+            let canonical = fs::canonicalize(&snapshot.path)
+                .with_context(|| format!("resolve runtime ACL snapshot {}", snapshot.path))?;
+            let canonical = canonical.to_string_lossy();
+            let canonical = canonical.strip_prefix(r"\\?\").unwrap_or(&canonical);
+            if !directories
+                .iter()
+                .any(|path| paths_equal(path, Path::new(canonical)))
+            {
+                continue;
+            }
+            // A command baseline predates a later runtime grant or revocation. Preserve only
+            // the exact owned permanent ACE currently installed, never another command's ACEs.
+            let granted = super::directory_access::is_granted(&snapshot.path, &record.profile_sid)?;
+            let updated = runtime_snapshot_dacl(snapshot, &record.profile_sid, granted)?;
+            if updated != snapshot.dacl_sddl {
+                snapshot.dacl_sddl = updated;
+                changed = true;
+            }
+        }
+        if changed {
+            write_acl_state(root, state)?;
+        }
+        Ok(())
+    }
+
+    fn runtime_snapshot_dacl(
+        snapshot: &AclSnapshot,
+        identity: &str,
+        granted: bool,
+    ) -> Result<String> {
+        const LIST_DIRECTORY: u32 = 0x0012_0089;
+        let mut descriptor = PSECURITY_DESCRIPTOR::default();
+        let encoded = wide(&snapshot.dacl_sddl);
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                PCWSTR(encoded.as_ptr()),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                None,
+            )
+        }?;
+        let _descriptor = LocalAllocation(descriptor.0);
+        let mut present = BOOL::default();
+        let mut defaulted = BOOL::default();
+        let mut source = std::ptr::null_mut();
+        unsafe {
+            GetSecurityDescriptorDacl(descriptor, &mut present, &mut source, &mut defaulted)
+        }?;
+        if !present.as_bool() || source.is_null() {
+            bail!("Runtime ACL snapshot has no concrete DACL");
+        }
+        let mut sid = PSID::default();
+        let identity = wide(identity);
+        unsafe { ConvertStringSidToSidW(PCWSTR(identity.as_ptr()), &mut sid) }?;
+        let _sid = LocalAllocation(sid.0);
+        let mut info = ACL_SIZE_INFORMATION::default();
+        unsafe {
+            GetAclInformation(
+                source,
+                (&mut info as *mut ACL_SIZE_INFORMATION).cast(),
+                size_of::<ACL_SIZE_INFORMATION>() as u32,
+                AclSizeInformation,
+            )
+        }?;
+        let bytes = info.AclBytesInUse as usize
+            + size_of::<ACCESS_ALLOWED_ACE>()
+            + unsafe { GetLengthSid(sid) } as usize;
+        let mut storage = vec![0usize; bytes.div_ceil(size_of::<usize>())];
+        let target = storage.as_mut_ptr().cast::<ACL>();
+        unsafe {
+            InitializeAcl(
+                target,
+                (storage.len() * size_of::<usize>()) as u32,
+                ACL_REVISION_DS,
+            )
+        }?;
+        let mut found = false;
+        let mut inserted = !granted;
+        for index in 0..info.AceCount {
+            let mut ace = std::ptr::null_mut();
+            unsafe { GetAce(source, index, &mut ace) }?;
+            let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+            if header.AceType <= 1 && header.AceSize as usize >= size_of::<ACCESS_ALLOWED_ACE>() {
+                let entry = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+                if unsafe { EqualSid(sid, PSID((&entry.SidStart as *const u32).cast_mut().cast())) }
+                    .is_ok()
+                {
+                    if found
+                        || header.AceType != 0
+                        || header.AceFlags != 0
+                        || entry.Mask != LIST_DIRECTORY
+                    {
+                        bail!(
+                            "Unowned runtime permissions in ACL snapshot; preserving {}",
+                            snapshot.path
+                        );
+                    }
+                    found = true;
+                    continue;
+                }
+            }
+            if !inserted && header.AceFlags & INHERITED_ACE.0 as u8 != 0 {
+                unsafe {
+                    AddAccessAllowedAceEx(
+                        target,
+                        ACL_REVISION_DS,
+                        Default::default(),
+                        LIST_DIRECTORY,
+                        sid,
+                    )
+                }?;
+                inserted = true;
+            }
+            unsafe {
+                AddAce(
+                    target,
+                    ACL_REVISION_DS,
+                    u32::MAX,
+                    ace,
+                    header.AceSize as u32,
+                )
+            }?;
+        }
+        if !inserted {
+            unsafe {
+                AddAccessAllowedAceEx(
+                    target,
+                    ACL_REVISION_DS,
+                    Default::default(),
+                    LIST_DIRECTORY,
+                    sid,
+                )
+            }?;
+        }
+        serialize_dacl(target, &snapshot.path)
+    }
+
+    fn rebuild_acl_state(state: &mut AclState, ownership_root: &Path) -> Result<()> {
+        refresh_runtime_acl_snapshots(state, ownership_root)?;
         let mut snapshots = state.snapshots.iter().collect::<Vec<_>>();
         snapshots.sort_by_key(|snapshot| Path::new(&snapshot.path).components().count());
         let mut leases = state.leases.iter().collect::<Vec<_>>();
@@ -1843,7 +2511,7 @@ mod windows_host {
         };
         state.leases.retain(|lease| lease.lease_id != lease_id);
         write_acl_state(ownership_root, &state)?;
-        rebuild_acl_state(&state)?;
+        rebuild_acl_state(&mut state, ownership_root)?;
         remove_acl_receipt(&acl_directory(ownership_root).join(format!("{lease_id}.json")))?;
         prune_acl_snapshots(&mut state);
         write_acl_state(ownership_root, &state)
@@ -1896,7 +2564,7 @@ mod windows_host {
         }
         state.leases = retained;
         write_acl_state(ownership_root, &state)?;
-        rebuild_acl_state(&state)?;
+        rebuild_acl_state(&mut state, ownership_root)?;
         for (lease_id, (path, _)) in receipts {
             if !state.leases.iter().any(|lease| lease.lease_id == lease_id) {
                 remove_acl_receipt(&path)?;
@@ -1962,14 +2630,14 @@ mod windows_host {
                 .leases
                 .sort_by(|left, right| left.lease_id.cmp(&right.lease_id));
             write_acl_state(ownership_root, &state)?;
-            if let Err(error) =
-                write_acl_record(&path, &record).and_then(|()| rebuild_acl_state(&state))
+            if let Err(error) = write_acl_record(&path, &record)
+                .and_then(|()| rebuild_acl_state(&mut state, ownership_root))
             {
                 state
                     .leases
                     .retain(|lease| lease.lease_id != record.lease_id);
                 let rollback = write_acl_state(ownership_root, &state)
-                    .and_then(|()| rebuild_acl_state(&state))
+                    .and_then(|()| rebuild_acl_state(&mut state, ownership_root))
                     .and_then(|()| remove_acl_receipt(&path))
                     .and_then(|()| {
                         prune_acl_snapshots(&mut state);
@@ -2079,11 +2747,91 @@ mod windows_host {
         }
     }
 
+    fn run_suspended_process_in_job(
+        spec: &LaunchSpec,
+        process: &Handle,
+        thread: &Handle,
+        terminate: &mut TerminateOnDrop,
+        operation_lock: Option<OperationLock>,
+        timeout: u32,
+    ) -> Result<u32> {
+        let job = Handle(
+            unsafe { CreateJobObjectW(None, PCWSTR::null()) }.context("create process job")?,
+        );
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        unsafe {
+            SetInformationJobObject(
+                job.0,
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        }
+        .context("configure process job")?;
+        unsafe { AssignProcessToJobObject(job.0, process.0) }.context("assign process job")?;
+        if unsafe { ResumeThread(thread.0) } == u32::MAX {
+            bail!("resume supervised process");
+        }
+        terminate.armed = false;
+        drop(operation_lock);
+        let process_wait = unsafe { WaitForSingleObject(process.0, timeout) };
+        if process_wait == WAIT_TIMEOUT {
+            unsafe { TerminateJobObject(job.0, 1) }.context("stop timed-out R verification")?;
+            unsafe { WaitForSingleObject(process.0, INFINITE) };
+        }
+        if process_wait != WAIT_OBJECT_0 && process_wait != WAIT_TIMEOUT {
+            bail!("wait for supervised process returned {process_wait:?}");
+        }
+        let mut exit_code = 1u32;
+        unsafe { GetExitCodeProcess(process.0, &mut exit_code) }
+            .context("read process exit code")?;
+        // A successful supervisor exit is an explicit termination proof for cleanup callers. Do
+        // not rely only on KILL_ON_JOB_CLOSE: terminate the remaining helpers and wait until the
+        // Job reports zero active processes before returning.
+        unsafe { TerminateJobObject(job.0, 1) }.context("terminate process job")?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            unsafe {
+                QueryInformationJobObject(
+                    Some(job.0),
+                    JobObjectBasicAccountingInformation,
+                    (&mut accounting as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                    None,
+                )
+            }
+            .context("query process job accounting")?;
+            if accounting.ActiveProcesses == 0 {
+                break;
+            }
+            if Instant::now() >= deadline {
+                bail!("timed out waiting for process job termination");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        match (&spec.termination_proof_path, &spec.termination_proof_token) {
+            (Some(path), Some(token)) => {
+                fs::write(path, token).context("write process tree termination proof")?;
+            }
+            (None, None) => {}
+            _ => bail!("incomplete process tree termination proof specification"),
+        }
+        drop(job);
+        if process_wait == WAIT_TIMEOUT {
+            bail!("R verification timed out");
+        }
+        Ok(exit_code)
+    }
+
     fn launch_child(
         spec: &LaunchSpec,
         app_container_sid: PSID,
         capability: &mut CommandCapability,
         operation_lock: OperationLock,
+        timeout: u32,
+        stdout: Option<HANDLE>,
     ) -> Result<u32> {
         let capabilities = SECURITY_CAPABILITIES {
             AppContainerSid: app_container_sid,
@@ -2096,7 +2844,8 @@ mod windows_host {
         startup.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
         startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
         startup.StartupInfo.hStdInput = HANDLE(std::io::stdin().as_raw_handle());
-        startup.StartupInfo.hStdOutput = HANDLE(std::io::stdout().as_raw_handle());
+        startup.StartupInfo.hStdOutput =
+            stdout.unwrap_or(HANDLE(std::io::stdout().as_raw_handle()));
         startup.StartupInfo.hStdError = HANDLE(std::io::stderr().as_raw_handle());
         startup.lpAttributeList = attributes.pointer();
 
@@ -2138,31 +2887,50 @@ mod windows_host {
             }
         }
 
-        let job = Handle(
-            unsafe { CreateJobObjectW(None, PCWSTR::null()) }.context("create process job")?,
-        );
-        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        run_suspended_process_in_job(
+            spec,
+            &process,
+            &thread,
+            &mut terminate,
+            Some(operation_lock),
+            timeout,
+        )
+    }
+
+    pub fn supervise(spec: LaunchSpec) -> Result<u32> {
+        let mut startup = STARTUPINFOW {
+            cb: size_of::<STARTUPINFOW>() as u32,
+            dwFlags: STARTF_USESTDHANDLES,
+            hStdInput: HANDLE(std::io::stdin().as_raw_handle()),
+            hStdOutput: HANDLE(std::io::stdout().as_raw_handle()),
+            hStdError: HANDLE(std::io::stderr().as_raw_handle()),
+            ..Default::default()
+        };
+        let mut mutable_command = wide(&command_line(&spec));
+        let current_directory = wide(&spec.cwd);
+        let mut process_info: PROCESS_INFORMATION = unsafe { zeroed() };
         unsafe {
-            SetInformationJobObject(
-                job.0,
-                JobObjectExtendedLimitInformation,
-                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            CreateProcessW(
+                PCWSTR::null(),
+                Some(PWSTR(mutable_command.as_mut_ptr())),
+                None,
+                None,
+                true,
+                CREATE_SUSPENDED,
+                None,
+                PCWSTR(current_directory.as_ptr()),
+                &mut startup,
+                &mut process_info,
             )
         }
-        .context("configure process job")?;
-        unsafe { AssignProcessToJobObject(job.0, process.0) }.context("assign process job")?;
-        if unsafe { ResumeThread(thread.0) } == u32::MAX {
-            bail!("resume AppContainer process");
-        }
-        terminate.armed = false;
-        drop(operation_lock);
-        unsafe { WaitForSingleObject(process.0, INFINITE) };
-        let mut exit_code = 1u32;
-        unsafe { GetExitCodeProcess(process.0, &mut exit_code) }
-            .context("read process exit code")?;
-        Ok(exit_code)
+        .context("create supervised process")?;
+        let process = Handle(process_info.hProcess);
+        let thread = Handle(process_info.hThread);
+        let mut terminate = TerminateOnDrop {
+            process: process.0,
+            armed: true,
+        };
+        run_suspended_process_in_job(&spec, &process, &thread, &mut terminate, None, INFINITE)
     }
 
     pub fn launch(installation_id: &str, requested_root: &str, spec: LaunchSpec) -> Result<u32> {
@@ -2189,7 +2957,14 @@ mod windows_host {
             &capability,
             &spec,
         )?;
-        let result = launch_child(&spec, sid.0, &mut capability, operation_lock);
+        let result = launch_child(
+            &spec,
+            sid.0,
+            &mut capability,
+            operation_lock,
+            INFINITE,
+            None,
+        );
         let release = lease.release();
         match (result, release) {
             (Ok(code), Ok(())) => Ok(code),
@@ -2214,6 +2989,71 @@ mod windows_host {
                     .unwrap()
                     .as_nanos()
             ))
+        }
+
+        #[test]
+        fn directory_listing_can_authorize_and_revoke_an_in_use_directory() {
+            use std::os::windows::fs::OpenOptionsExt;
+
+            for protected in [false, true] {
+                let root = unique_test_root("directory-listing-in-use");
+                let child = root.join("child");
+                fs::create_dir_all(&child).unwrap();
+                let path = root.to_string_lossy();
+                let child_path = child.to_string_lossy();
+                if protected {
+                    run_icacls(
+                        &path,
+                        &["/inheritancelevel:d", "/Q"],
+                        "protect test directory",
+                    )
+                    .unwrap();
+                }
+                let original = capture_acl_snapshot(&path).unwrap();
+                // A legacy child's control flags make accidental inheritance propagation observable,
+                // even when reapplying the parent's existing ACEs would otherwise look unchanged.
+                let mut child_legacy = capture_acl_snapshot(&child_path).unwrap();
+                child_legacy.dacl_auto_inherited = false;
+                child_legacy.dacl_auto_inherit_requested = false;
+                restore_acl_snapshot(&child_legacy).unwrap();
+                let child_original = capture_acl_snapshot(&child_path).unwrap();
+                let capability = CommandCapability::new(format!(
+                    "open-science.test.{}",
+                    new_resource_key().unwrap()
+                ))
+                .unwrap();
+                let identity = sid_text(capability.sid()).unwrap();
+                // Match an ancestor held as a process working directory: reading and writing are
+                // shared, but deletion is not. ACL updates must not request deletion access.
+                let held = fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(0x1 | 0x2)
+                    .custom_flags(0x0200_0000) // FILE_FLAG_BACKUP_SEMANTICS
+                    .open(&root)
+                    .unwrap();
+                let result = (|| -> Result<()> {
+                    super::super::directory_access::update(&path, &identity, true, false)?;
+                    assert!(super::super::directory_access::is_granted(
+                        &path, &identity
+                    )?);
+                    let granted = capture_acl_snapshot(&path)?;
+                    assert_eq!(granted.dacl_protected, original.dacl_protected);
+                    assert_eq!(granted.dacl_auto_inherited, original.dacl_auto_inherited);
+                    assert_eq!(
+                        granted.dacl_auto_inherit_requested,
+                        original.dacl_auto_inherit_requested
+                    );
+                    assert_eq!(capture_acl_snapshot(&child_path)?, child_original);
+                    super::super::directory_access::update(&path, &identity, false, true)?;
+                    assert_eq!(capture_acl_snapshot(&path)?, original);
+                    assert_eq!(capture_acl_snapshot(&child_path)?, child_original);
+                    Ok(())
+                })();
+                drop(held);
+                restore_acl_snapshot(&original).unwrap();
+                fs::remove_dir_all(&root).unwrap();
+                result.unwrap();
+            }
         }
 
         #[test]
@@ -2392,7 +3232,7 @@ mod windows_host {
 
         #[test]
         fn prepare_setup_does_not_create_profile_before_elevation() {
-            let installation_id = "fedcba9876543210fedcba98";
+            let installation_id = "fedcba9876543210fedcba96";
             let parent = unique_test_root("prepare-setup");
             let root = parent.join(installation_id);
             let path = root.to_string_lossy().into_owned();
@@ -2409,7 +3249,7 @@ mod windows_host {
 
         #[test]
         fn selected_r_access_upgrades_legacy_journal_and_cancellation_preserves_receipt() {
-            let installation_id = "fedcba9876543210fedcba98";
+            let installation_id = "fedcba9876543210fedcba97";
             let parent = unique_test_root("legacy-runtime-access");
             let root = parent.join(installation_id);
             let request_root = root.to_string_lossy();
@@ -2429,6 +3269,7 @@ mod windows_host {
                 installation_id,
                 &request_root,
                 &executable.to_string_lossy(),
+                false,
                 false,
             )
             .unwrap();
@@ -2482,6 +3323,778 @@ mod windows_host {
             );
             assert!(!journal_path(&root).exists());
             fs::remove_dir_all(&parent).unwrap();
+        }
+
+        #[test]
+        fn runtime_access_survives_command_recovery_and_stays_revoked_after_rollback() {
+            for live_owner in [false, true] {
+                for protected in [false, true] {
+                    for interrupted in [false, true] {
+                        let installation_id = "cccc1212cccc1212cccc1212";
+                        let parent = unique_test_root("runtime-overlapping-snapshot");
+                        let root = parent.join(installation_id);
+                        prepare_setup(installation_id, &root.to_string_lossy()).unwrap();
+                        let mut previous = read_record(&journal_path(&root)).unwrap().unwrap();
+                        previous.state = OwnershipState::Owned;
+                        write_new_record(&receipt_path(&root), &previous).unwrap();
+                        fs::remove_file(journal_path(&root)).unwrap();
+                        let home = parent.join("R");
+                        for directory in ["bin", "etc", "library"] {
+                            fs::create_dir_all(home.join(directory)).unwrap();
+                        }
+                        let executable = home.join("bin/Rscript.exe");
+                        fs::write(&executable, b"never executed").unwrap();
+                        prepare_runtime_access(
+                            installation_id,
+                            &root.to_string_lossy(),
+                            &executable.to_string_lossy(),
+                            false,
+                            true,
+                        )
+                        .unwrap();
+                        let record = read_record(&journal_path(&root)).unwrap().unwrap();
+                        run_icacls(
+                            &parent.to_string_lossy(),
+                            &["/deny", "*S-1-5-2:R", "/Q"],
+                            "add unrelated network deny to fixture",
+                        )
+                        .unwrap();
+                        run_icacls(
+                            &parent.to_string_lossy(),
+                            &["/grant:r", "*S-1-5-7:R", "/Q"],
+                            "add unrelated anonymous allow to fixture",
+                        )
+                        .unwrap();
+                        if protected {
+                            run_icacls(
+                                &parent.to_string_lossy(),
+                                &["/inheritancelevel:d", "/Q"],
+                                "protect fixture ACL",
+                            )
+                            .unwrap();
+                        }
+                        let mut snapshot = capture_acl_snapshot(&parent.to_string_lossy()).unwrap();
+                        let original = snapshot.clone();
+                        // The same directory can enter a command lease under another Windows spelling.
+                        snapshot.path = format!(r"\\?\{}", snapshot.path);
+                        let lease_id = new_lease_id().unwrap();
+                        let capability_name = command_capability_name(installation_id, &lease_id);
+                        let capability = CommandCapability::new(capability_name.clone()).unwrap();
+                        let lease = AclLeaseRecord {
+                            schema_version: ACL_LEASE_SCHEMA,
+                            installation_id: installation_id.into(),
+                            lease_id: lease_id.clone(),
+                            owner_process_id: if live_owner {
+                                unsafe { GetCurrentProcessId() }
+                            } else {
+                                u32::MAX
+                            },
+                            capability_name,
+                            capability_sid: sid_text(capability.sid()).unwrap(),
+                            grants: vec![AclLeaseGrant {
+                                path: snapshot.path.clone(),
+                                access: AclGrant::ModifyTree,
+                                protected_boundary: false,
+                            }],
+                        };
+                        write_acl_record(
+                            &acl_directory(&root).join(format!("{lease_id}.json")),
+                            &lease,
+                        )
+                        .unwrap();
+                        write_acl_state(
+                            &root,
+                            &AclState {
+                                schema_version: ACL_STATE_SCHEMA,
+                                installation_id: installation_id.into(),
+                                snapshots: vec![snapshot],
+                                leases: vec![lease],
+                            },
+                        )
+                        .unwrap();
+                        // Reproduce the real ordering: the elevated helper grants this ancestor, then the
+                        // unprivileged verifier recovers the old command snapshot before its probe.
+                        super::super::directory_access::update(
+                            &parent.to_string_lossy(),
+                            &record.profile_sid,
+                            true,
+                            false,
+                        )
+                        .unwrap();
+                        recover_acl_leases(installation_id, &root, false).unwrap();
+                        let preserved = super::super::directory_access::is_granted(
+                            &parent.to_string_lossy(),
+                            &record.profile_sid,
+                        )
+                        .unwrap();
+                        let retained =
+                            read_acl_state(installation_id, &root)
+                                .unwrap()
+                                .is_some_and(|state| {
+                                    state.leases.iter().any(|lease| lease.lease_id == lease_id)
+                                });
+                        if interrupted {
+                            // Simulate process loss after removing the physical grant but before
+                            // rollback could refresh the live baseline and remove its journal.
+                            rollback_runtime_directories(&record, Some(&previous)).unwrap();
+                            cancel_setup(installation_id, &root.to_string_lossy()).unwrap();
+                        } else {
+                            rollback_verified_runtime_access(
+                                installation_id,
+                                &root,
+                                &record,
+                                Some(&previous),
+                            )
+                            .unwrap();
+                        }
+                        // The journal is gone; another live command rebuild must not resurrect the grant.
+                        recover_acl_leases(installation_id, &root, false).unwrap();
+                        let resurrected = super::super::directory_access::is_granted(
+                            &parent.to_string_lossy(),
+                            &record.profile_sid,
+                        )
+                        .unwrap();
+                        super::super::directory_access::update(
+                            &parent.to_string_lossy(),
+                            &record.profile_sid,
+                            false,
+                            true,
+                        )
+                        .unwrap();
+                        release_acl_lease_locked(installation_id, &root, &lease_id).unwrap();
+                        let restored = capture_acl_snapshot(&parent.to_string_lossy()).unwrap();
+                        fs::remove_dir_all(&parent).unwrap();
+                        assert_eq!(retained, live_owner);
+                        assert_eq!(restored, original);
+                        assert!(
+                            preserved,
+                            "recovering an old command snapshot removed the new runtime directory grant"
+                        );
+                        assert!(
+                            !resurrected,
+                            "a live command snapshot resurrected the rolled-back runtime grant"
+                        );
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn runtime_snapshot_reconciliation_rejects_unowned_baseline_aces() {
+            let installation_id = "dddd1212dddd1212dddd1212";
+            let parent = unique_test_root("runtime-unowned-snapshot");
+            let root = parent.join(installation_id);
+            prepare_setup(installation_id, &root.to_string_lossy()).unwrap();
+            let mut previous = read_record(&journal_path(&root)).unwrap().unwrap();
+            previous.state = OwnershipState::Owned;
+            write_new_record(&receipt_path(&root), &previous).unwrap();
+            fs::remove_file(journal_path(&root)).unwrap();
+            let home = parent.join("R");
+            for directory in ["bin", "etc", "library"] {
+                fs::create_dir_all(home.join(directory)).unwrap();
+            }
+            let executable = home.join("bin/Rscript.exe");
+            fs::write(&executable, b"never executed").unwrap();
+            prepare_runtime_access(
+                installation_id,
+                &root.to_string_lossy(),
+                &executable.to_string_lossy(),
+                false,
+                true,
+            )
+            .unwrap();
+            let original = capture_acl_snapshot(&parent.to_string_lossy()).unwrap();
+            for aces in [
+                format!("(A;;FA;;;{})", previous.profile_sid),
+                format!("(D;;0x120089;;;{})", previous.profile_sid),
+                format!("(A;ID;0x120089;;;{})", previous.profile_sid),
+                format!(
+                    "(A;;0x120089;;;{0})(A;;0x120089;;;{0})",
+                    previous.profile_sid
+                ),
+            ] {
+                let mut snapshot = original.clone();
+                snapshot.path = format!(r"\\?\{}", snapshot.path);
+                snapshot.dacl_sddl.push_str(&aces);
+                write_acl_state(
+                    &root,
+                    &AclState {
+                        schema_version: ACL_STATE_SCHEMA,
+                        installation_id: installation_id.into(),
+                        snapshots: vec![snapshot],
+                        leases: vec![],
+                    },
+                )
+                .unwrap();
+                let error =
+                    refresh_owned_runtime_acl_snapshots(installation_id, &root).unwrap_err();
+                assert!(format!("{error:#}").contains("Unowned runtime permissions"));
+                assert_eq!(
+                    capture_acl_snapshot(&parent.to_string_lossy()).unwrap(),
+                    original
+                );
+            }
+            fs::remove_dir_all(&parent).unwrap();
+        }
+
+        #[test]
+        fn r_verification_recovers_dead_command_leases_before_acquiring_its_lease() {
+            let installation_id = "abab1212abab1212abab1212";
+            let parent = unique_test_root("verification-stale-lease");
+            let root = parent.join(installation_id);
+            prepare_setup(installation_id, &root.to_string_lossy()).unwrap();
+            let mut previous = read_record(&journal_path(&root)).unwrap().unwrap();
+            previous.state = OwnershipState::Owned;
+            write_new_record(&receipt_path(&root), &previous).unwrap();
+            fs::remove_file(journal_path(&root)).unwrap();
+            let receipt_before = fs::read(receipt_path(&root)).unwrap();
+            let home = parent.join("R");
+            for directory in ["bin", "etc", "library"] {
+                fs::create_dir_all(home.join(directory)).unwrap();
+            }
+            let executable = home.join("bin/Rscript.exe");
+            fs::write(&executable, b"invalid executable; never runs user code").unwrap();
+            prepare_runtime_access(
+                installation_id,
+                &root.to_string_lossy(),
+                &executable.to_string_lossy(),
+                false,
+                true,
+            )
+            .unwrap();
+            let missing = parent.join("old-kernel-figures");
+            fs::create_dir(&missing).unwrap();
+            let snapshot = capture_acl_snapshot(&missing.to_string_lossy()).unwrap();
+            fs::remove_dir(&missing).unwrap();
+            let lease_id = new_lease_id().unwrap();
+            let capability_name = command_capability_name(installation_id, &lease_id);
+            let capability = CommandCapability::new(capability_name.clone()).unwrap();
+            // Windows process IDs are aligned; this nonzero identity cannot name a live process.
+            let stale = AclLeaseRecord {
+                schema_version: ACL_LEASE_SCHEMA,
+                installation_id: installation_id.into(),
+                lease_id: lease_id.clone(),
+                owner_process_id: u32::MAX,
+                capability_name,
+                capability_sid: sid_text(capability.sid()).unwrap(),
+                grants: vec![AclLeaseGrant {
+                    path: missing.to_string_lossy().into_owned(),
+                    access: AclGrant::ModifyTree,
+                    protected_boundary: false,
+                }],
+            };
+            write_acl_record(
+                &acl_directory(&root).join(format!("{lease_id}.json")),
+                &stale,
+            )
+            .unwrap();
+            write_acl_state(
+                &root,
+                &AclState {
+                    schema_version: ACL_STATE_SCHEMA,
+                    installation_id: installation_id.into(),
+                    snapshots: vec![snapshot],
+                    leases: vec![stale],
+                },
+            )
+            .unwrap();
+            let ticket =
+                format!("{}{}", new_lease_id().unwrap(), new_lease_id().unwrap()).replace('-', "");
+            let verifier = Handle(
+                unsafe {
+                    OpenProcess(
+                        PROCESS_QUERY_LIMITED_INFORMATION,
+                        false,
+                        GetCurrentProcessId(),
+                    )
+                }
+                .unwrap(),
+            );
+            let mut pipe = create_verification_pipe(&ticket, verifier.0).unwrap();
+            let server = std::thread::spawn(move || {
+                let started = Instant::now();
+                while unsafe { ConnectNamedPipe(pipe_handle(&pipe), None) }
+                    .is_err_and(|e| e.code() != ERROR_PIPE_CONNECTED.to_hresult())
+                {
+                    assert!(started.elapsed() < Duration::from_secs(10));
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                pipe.write_all(b"ready\n").unwrap();
+                assert_eq!(
+                    read_verification_message(&mut pipe, || true).unwrap(),
+                    "rollback"
+                );
+            });
+            let result = verify_runtime_access(
+                installation_id,
+                &root.to_string_lossy(),
+                &ticket,
+                unsafe { GetCurrentProcessId() },
+                LaunchSpec {
+                    executable: executable.to_string_lossy().into_owned(),
+                    arguments: vec![
+                        "--vanilla".into(),
+                        "-e".into(),
+                        R_VERIFICATION_SCRIPT.into(),
+                    ],
+                    verbatim_arguments: false,
+                    cwd: parent.to_string_lossy().into_owned(),
+                    read_only_roots: vec![],
+                    read_write_roots: vec![],
+                    denied_read_roots: vec![],
+                    denied_write_roots: vec![],
+                    termination_proof_path: None,
+                    termination_proof_token: None,
+                },
+            );
+            server.join().unwrap();
+            let error = format!("{:#}", result.unwrap_err());
+            let stale_remains = acl_directory(&root)
+                .join(format!("{lease_id}.json"))
+                .exists();
+            assert_eq!(fs::read(receipt_path(&root)).unwrap(), receipt_before);
+            recover_acl_leases(installation_id, &root, false).unwrap();
+            fs::remove_dir_all(&parent).unwrap();
+            assert!(
+                !stale_remains,
+                "verification must recover the dead lease before applying ACLs: {error}"
+            );
+            assert!(
+                error.contains("create AppContainer process"),
+                "must reach the controlled invalid executable: {error}"
+            );
+        }
+
+        #[test]
+        fn verified_journal_blocks_launch_and_repairs_by_rolling_back_not_committing() {
+            let installation_id = "aabbccddeeff001122334455";
+            let parent = unique_test_root("verified-r-recovery");
+            let root = parent.join(installation_id);
+            let request_root = root.to_string_lossy();
+            prepare_setup(installation_id, &request_root).unwrap();
+            let mut previous = read_record(&journal_path(&root)).unwrap().unwrap();
+            previous.state = OwnershipState::Owned;
+            write_new_record(&receipt_path(&root), &previous).unwrap();
+            fs::remove_file(journal_path(&root)).unwrap();
+            let receipt_before = fs::read(receipt_path(&root)).unwrap();
+            let home = parent.join("R");
+            for directory in ["bin", "etc", "library"] {
+                fs::create_dir_all(home.join(directory)).unwrap();
+            }
+            let executable = home.join("bin/Rscript.exe");
+            fs::write(&executable, b"never executed").unwrap();
+            prepare_runtime_access(
+                installation_id,
+                &request_root,
+                &executable.to_string_lossy(),
+                false,
+                true,
+            )
+            .unwrap();
+            let pending = read_record(&journal_path(&root)).unwrap().unwrap();
+            assert_eq!(pending.schema_version, 6);
+            assert!(pending.pending_runtime_access.is_some());
+            validate_record(&pending, installation_id).unwrap();
+            let mut invalid_completed = pending.clone();
+            invalid_completed.state = OwnershipState::Owned;
+            assert!(validate_record(&invalid_completed, installation_id).is_err());
+            let spec = LaunchSpec {
+                executable: executable.to_string_lossy().into_owned(),
+                arguments: vec![
+                    "--vanilla".into(),
+                    "-e".into(),
+                    R_VERIFICATION_SCRIPT.into(),
+                ],
+                verbatim_arguments: false,
+                cwd: parent.to_string_lossy().into_owned(),
+                read_only_roots: vec![],
+                read_write_roots: vec![],
+                denied_read_roots: vec![],
+                denied_write_roots: vec![],
+                termination_proof_path: None,
+                termination_proof_token: None,
+            };
+            validate_runtime_verification(pending.pending_runtime_access.as_ref().unwrap(), &spec)
+                .unwrap();
+            assert!(
+                format!(
+                    "{:#}",
+                    launch(installation_id, &request_root, spec).unwrap_err()
+                )
+                .contains("setup is incomplete")
+            );
+            // The elevated helper is live before its verification lease exists. Recovery must
+            // not mistake that interval for an abandoned transaction.
+            let transaction_name = wide(&format!("{OPERATION_MUTEX}.RAccess.{installation_id}"));
+            let transaction = Handle(
+                unsafe { CreateMutexW(None, true, PCWSTR(transaction_name.as_ptr())) }.unwrap(),
+            );
+            let repair_root = request_root.to_string();
+            let concurrent_repair =
+                std::thread::spawn(move || setup_network(installation_id, &repair_root))
+                    .join()
+                    .unwrap();
+            unsafe { ReleaseMutex(transaction.0) }.unwrap();
+            drop(transaction);
+            assert!(
+                concurrent_repair.is_err(),
+                "repair must not roll back a live transaction before its lease starts"
+            );
+            assert!(journal_path(&root).exists());
+            // Model a helper crash after only this owned fixture ancestor was changed. No OS or
+            // user runtime path is granted by this test, and repair must keep the old receipt.
+            let ancestor = parent.to_string_lossy();
+            let original_acl = capture_acl_snapshot(&ancestor).unwrap();
+            super::super::directory_access::update(&ancestor, &pending.profile_sid, true, false)
+                .unwrap();
+            assert!(cancel_setup(installation_id, &request_root).is_err());
+            setup_network(installation_id, &request_root).unwrap();
+            assert!(!journal_path(&root).exists());
+            assert_eq!(fs::read(receipt_path(&root)).unwrap(), receipt_before);
+            assert_eq!(capture_acl_snapshot(&ancestor).unwrap(), original_acl);
+            fs::remove_dir_all(&parent).unwrap();
+        }
+
+        #[test]
+        fn cancellation_while_waiting_for_commit_lock_preserves_previous_receipt() {
+            use std::os::windows::process::CommandExt;
+            let installation_id = "abcdabcdabcdabcdabcdabcd";
+            let parent = unique_test_root("verification-cancel-at-commit");
+            let root = parent.join(installation_id);
+            prepare_setup(installation_id, &root.to_string_lossy()).unwrap();
+            let mut previous = read_record(&journal_path(&root)).unwrap().unwrap();
+            previous.state = OwnershipState::Owned;
+            write_new_record(&receipt_path(&root), &previous).unwrap();
+            fs::remove_file(journal_path(&root)).unwrap();
+            let original = fs::read(receipt_path(&root)).unwrap();
+            let home = parent.join("R");
+            for directory in ["bin", "etc", "library"] {
+                fs::create_dir_all(home.join(directory)).unwrap();
+            }
+            let executable = home.join("bin/Rscript.exe");
+            fs::write(&executable, b"never executed").unwrap();
+            prepare_runtime_access(
+                installation_id,
+                &root.to_string_lossy(),
+                &executable.to_string_lossy(),
+                false,
+                true,
+            )
+            .unwrap();
+            let pending = read_record(&journal_path(&root)).unwrap().unwrap();
+            let mut verifier = Command::new("powershell.exe")
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Start-Sleep -Seconds 30",
+                ])
+                .creation_flags(0x08000000)
+                .spawn()
+                .unwrap();
+            let verifier_handle = verifier.as_raw_handle() as usize;
+            let owner = Handle(
+                unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, GetCurrentProcessId()) }.unwrap(),
+            );
+            let owner_handle = owner.0.0 as usize;
+            let held_lock = OperationLock::acquire(installation_id).unwrap();
+            let finish_root = root.clone();
+            let (started, waiting) = std::sync::mpsc::channel();
+            let completion = std::thread::spawn(move || {
+                started.send(()).unwrap();
+                complete_runtime_verification(
+                    installation_id,
+                    &finish_root,
+                    pending,
+                    &previous,
+                    Ok(()),
+                    HANDLE(verifier_handle as *mut _),
+                    HANDLE(owner_handle as *mut _),
+                )
+            });
+            waiting.recv().unwrap();
+            verifier.kill().unwrap();
+            verifier.wait().unwrap();
+            drop(held_lock);
+            let result = completion.join().unwrap();
+            let receipt_after = fs::read(receipt_path(&root)).unwrap();
+            fs::remove_dir_all(&parent).unwrap();
+            assert!(
+                result.is_err(),
+                "a verifier cancelled before commit must not leave a successful authorization"
+            );
+            assert_eq!(receipt_after, original);
+        }
+
+        #[test]
+        fn verified_journal_requires_a_valid_owned_verifier_lease_identity() {
+            let installation_id = "123412341234123412341234";
+            let parent = unique_test_root("verification-schema");
+            let root = parent.join(installation_id);
+            prepare_setup(installation_id, &root.to_string_lossy()).unwrap();
+            let mut record = read_record(&journal_path(&root)).unwrap().unwrap();
+            record.schema_version = 6;
+            assert!(validate_record(&record, installation_id).is_err());
+            record.pending_runtime_access = Some(PendingRuntimeAccess {
+                executable: "unowned.exe".into(),
+                lease_id: "../other".into(),
+            });
+            assert!(validate_record(&record, installation_id).is_err());
+            record.schema_version = 4;
+            assert!(validate_record(&record, installation_id).is_err());
+            fs::remove_dir_all(&parent).unwrap();
+        }
+
+        #[test]
+        fn waiting_for_uac_ends_when_the_initiating_process_exits() {
+            use std::os::windows::process::CommandExt;
+            let mut owner = Command::new("powershell.exe")
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Start-Sleep -Seconds 30",
+                ])
+                .creation_flags(0x08000000)
+                .spawn()
+                .unwrap();
+            let owner_pid = owner.id();
+            let stop = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(1));
+                owner.kill().unwrap();
+                owner.wait().unwrap();
+            });
+            let started = Instant::now();
+            let ticket =
+                format!("{}{}", new_lease_id().unwrap(), new_lease_id().unwrap()).replace('-', "");
+            let result = verify_runtime_access(
+                "unused",
+                "unused",
+                &ticket,
+                owner_pid,
+                LaunchSpec {
+                    executable: "never-launched".into(),
+                    arguments: vec![],
+                    verbatim_arguments: false,
+                    cwd: "unused".into(),
+                    read_only_roots: vec![],
+                    read_write_roots: vec![],
+                    denied_read_roots: vec![],
+                    denied_write_roots: vec![],
+                    termination_proof_path: None,
+                    termination_proof_token: None,
+                },
+            );
+            stop.join().unwrap();
+            assert!(format!("{:#}", result.unwrap_err()).contains("R authorization owner exited"));
+            assert!(started.elapsed() < Duration::from_secs(10));
+        }
+
+        #[test]
+        fn timed_out_probe_proves_job_termination_before_returning_failure() {
+            let root = unique_test_root("r-timeout-proof");
+            fs::create_dir_all(&root).unwrap();
+            let proof = root.join("terminated.proof");
+            let spec = LaunchSpec {
+                executable: std::env::var("ComSpec").unwrap(),
+                arguments: vec!["/d".into(), "/c".into(), "ping -n 30 127.0.0.1 >NUL".into()],
+                verbatim_arguments: false,
+                cwd: root.to_string_lossy().into_owned(),
+                read_only_roots: vec![],
+                read_write_roots: vec![],
+                denied_read_roots: vec![],
+                denied_write_roots: vec![],
+                termination_proof_path: Some(proof.to_string_lossy().into_owned()),
+                termination_proof_token: Some("owned-timeout-proof".into()),
+            };
+            let startup = STARTUPINFOW {
+                cb: size_of::<STARTUPINFOW>() as u32,
+                ..Default::default()
+            };
+            let mut command = wide(&command_line(&spec));
+            let cwd = wide(&spec.cwd);
+            let mut info = PROCESS_INFORMATION::default();
+            unsafe {
+                CreateProcessW(
+                    PCWSTR::null(),
+                    Some(PWSTR(command.as_mut_ptr())),
+                    None,
+                    None,
+                    false,
+                    CREATE_SUSPENDED,
+                    None,
+                    PCWSTR(cwd.as_ptr()),
+                    &startup,
+                    &mut info,
+                )
+            }
+            .unwrap();
+            let process = Handle(info.hProcess);
+            let thread = Handle(info.hThread);
+            let mut terminate = TerminateOnDrop {
+                process: process.0,
+                armed: true,
+            };
+            let started = Instant::now();
+            let result =
+                run_suspended_process_in_job(&spec, &process, &thread, &mut terminate, None, 100);
+            let proof_value = fs::read_to_string(&proof).ok();
+            fs::remove_dir_all(&root).unwrap();
+            assert!(format!("{:#}", result.unwrap_err()).contains("R verification timed out"));
+            assert!(started.elapsed() < Duration::from_secs(5));
+            assert_eq!(proof_value.as_deref(), Some("owned-timeout-proof"));
+        }
+
+        #[test]
+        fn zero_exit_without_completed_r_probe_is_rejected() {
+            use std::os::windows::process::CommandExt;
+            let result = run_completed_r_probe(|writer| {
+                let status = Command::new("cmd.exe")
+                    .args(["/d", "/c", "exit 0"])
+                    .stdout(writer)
+                    .creation_flags(0x08000000)
+                    .status()?;
+                Ok(status.code().unwrap() as u32)
+            });
+            assert!(
+                result.is_err(),
+                "exit 0 without the completion marker must not authorize R"
+            );
+        }
+
+        #[test]
+        fn completed_r_probe_requires_success_and_drains_output() {
+            use std::os::windows::process::CommandExt;
+            for (script, expected) in [
+                (
+                    "[Console]::Write(('x' * 1100000)); [Console]::Write('OPEN_SCIENCE_R_ACCESS_OK'); exit 0",
+                    0,
+                ),
+                ("[Console]::Write('OPEN_SCIENCE_R_ACCESS_OK'); exit 7", 7),
+            ] {
+                let result = run_completed_r_probe(|writer| {
+                    let status = Command::new("powershell.exe")
+                        .args([
+                            "-NoLogo",
+                            "-NoProfile",
+                            "-NonInteractive",
+                            "-Command",
+                            script,
+                        ])
+                        .stdout(writer)
+                        .creation_flags(0x08000000)
+                        .status()?;
+                    Ok(status.code().unwrap() as u32)
+                });
+                assert_eq!(result.unwrap(), expected);
+            }
+        }
+
+        #[test]
+        fn foreign_verification_client_is_rejected_before_permission_changes() {
+            use std::os::windows::process::CommandExt;
+            let installation_id = "987698769876987698769876";
+            let parent = unique_test_root("foreign-verifier");
+            let root = parent.join(installation_id);
+            prepare_setup(installation_id, &root.to_string_lossy()).unwrap();
+            let journal_before = fs::read(journal_path(&root)).unwrap();
+            let mut previous = read_record(&journal_path(&root)).unwrap().unwrap();
+            previous.state = OwnershipState::Owned;
+            write_new_record(&receipt_path(&root), &previous).unwrap();
+            let receipt_before = fs::read(receipt_path(&root)).unwrap();
+            let acl_before = capture_acl_snapshot(&parent.to_string_lossy()).unwrap();
+            let ticket =
+                format!("{}{}", new_lease_id().unwrap(), new_lease_id().unwrap()).replace('-', "");
+            let server_ticket = ticket.clone();
+            let server_root = root.clone();
+            let expected_pid = unsafe { GetCurrentProcessId() };
+            let server = std::thread::spawn(move || {
+                authorize_runtime_access(
+                    installation_id,
+                    &server_root.to_string_lossy(),
+                    &server_ticket,
+                    expected_pid,
+                    expected_pid,
+                )
+            });
+            let script = format!(
+                "$p = [System.IO.Pipes.NamedPipeClientStream]::new('.', 'LOCAL\\OpenScience.RAccess.{ticket}', [System.IO.Pipes.PipeDirection]::InOut); $p.Connect(10000); $null = $p.ReadByte(); $p.Dispose()"
+            );
+            let foreign = Command::new("powershell.exe")
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    &script,
+                ])
+                .creation_flags(0x08000000)
+                .status()
+                .unwrap();
+            let error = format!("{:#}", server.join().unwrap().unwrap_err());
+            assert!(foreign.success());
+            assert!(
+                error.contains("Unexpected R verification client"),
+                "{error}"
+            );
+            assert_eq!(fs::read(journal_path(&root)).unwrap(), journal_before);
+            assert_eq!(fs::read(receipt_path(&root)).unwrap(), receipt_before);
+            assert_eq!(
+                capture_acl_snapshot(&parent.to_string_lossy()).unwrap(),
+                acl_before
+            );
+            fs::remove_dir_all(&parent).unwrap();
+        }
+
+        #[test]
+        fn verification_pipe_has_one_server_and_bounds_control_messages() {
+            let ticket =
+                format!("{}{}", new_lease_id().unwrap(), new_lease_id().unwrap()).replace('-', "");
+            let verifier = Handle(
+                unsafe {
+                    OpenProcess(
+                        PROCESS_QUERY_LIMITED_INFORMATION,
+                        false,
+                        GetCurrentProcessId(),
+                    )
+                }
+                .unwrap(),
+            );
+            let mut server = create_verification_pipe(&ticket, verifier.0).unwrap();
+            assert!(create_verification_pipe(&ticket, verifier.0).is_err());
+            let name = wide(&verification_pipe_name(&ticket).unwrap());
+            let client = unsafe {
+                CreateFileW(
+                    PCWSTR(name.as_ptr()),
+                    GENERIC_READ.0 | GENERIC_WRITE.0,
+                    FILE_SHARE_MODE(0),
+                    None,
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    None,
+                )
+            }
+            .unwrap();
+            let mut client = unsafe { fs::File::from_raw_handle(client.0) };
+            let mut client_pid = 0;
+            unsafe { GetNamedPipeClientProcessId(pipe_handle(&server), &mut client_pid) }.unwrap();
+            assert_eq!(client_pid, unsafe { GetCurrentProcessId() });
+            client.write_all(b"rollback\n").unwrap();
+            assert_eq!(
+                read_verification_message(&mut server, || true).unwrap(),
+                "rollback"
+            );
+            client.write_all(b"arbitrary-elevated-command\n").unwrap();
+            assert!(
+                format!(
+                    "{:#}",
+                    read_verification_message(&mut server, || true).unwrap_err()
+                )
+                .contains("Oversized")
+            );
+            assert!(verification_pipe_name("../../other").is_err());
         }
 
         #[test]
@@ -2674,6 +4287,7 @@ fn run() -> Result<i32> {
         }
         Some(
             command @ ("prepare-runtime-access"
+            | "prepare-verified-runtime-access"
             | "prepare-remove-runtime-access"
             | "runtime-access-status"),
         ) => {
@@ -2695,6 +4309,7 @@ fn run() -> Result<i32> {
                     &ownership_root,
                     &executable,
                     command == "prepare-remove-runtime-access",
+                    command == "prepare-verified-runtime-access",
                 )?;
             }
             Ok(0)
@@ -2753,6 +4368,41 @@ fn run() -> Result<i32> {
             windows_host::finish_remove(&installation_id, &ownership_root)?;
             Ok(0)
         }
+        Some("authorize-runtime-access") => {
+            let installation_id = args.next().context("missing installation identity")?;
+            let ownership_root = args.next().context("missing ownership root")?;
+            let ticket = args.next().context("missing verification connection")?;
+            let verifier = args.next().context("missing verifier process")?.parse()?;
+            let owner = args.next().context("missing owner process")?.parse()?;
+            if args.next().is_some() {
+                bail!("unexpected verified authorization argument");
+            }
+            windows_host::authorize_runtime_access(
+                &installation_id,
+                &ownership_root,
+                &ticket,
+                verifier,
+                owner,
+            )?;
+            Ok(0)
+        }
+        Some("verify-runtime-access") => {
+            let installation_id = args.next().context("missing installation identity")?;
+            let ownership_root = args.next().context("missing ownership root")?;
+            let ticket = args.next().context("missing verification connection")?;
+            let owner = args.next().context("missing verification owner")?.parse()?;
+            let encoded = args.next().context("missing verification specification")?;
+            if args.next().is_some() {
+                bail!("unexpected runtime verification argument");
+            }
+            Ok(windows_host::verify_runtime_access(
+                &installation_id,
+                &ownership_root,
+                &ticket,
+                owner,
+                decode_launch_spec(&encoded)?,
+            )? as i32)
+        }
         Some("launch") => {
             let installation_id = args.next().context("missing installation identity")?;
             let ownership_root = args.next().context("missing ownership root")?;
@@ -2766,8 +4416,15 @@ fn run() -> Result<i32> {
                 decode_launch_spec(&encoded)?,
             )? as i32)
         }
+        Some("supervise") => {
+            let encoded = args.next().context("missing launch specification")?;
+            if args.next().is_some() {
+                bail!("unexpected supervise argument");
+            }
+            Ok(windows_host::supervise(decode_launch_spec(&encoded)?)? as i32)
+        }
         _ => bail!(
-            "usage: notebook-appcontainer-host <status|prepare-setup|cancel-setup|setup|finish-setup|prepare-remove|remove|finish-remove INSTALLATION_ID OWNERSHIP_ROOT|launch INSTALLATION_ID OWNERSHIP_ROOT SPEC>"
+            "usage: notebook-appcontainer-host <status|prepare-setup|cancel-setup|setup|finish-setup|prepare-remove|remove|finish-remove INSTALLATION_ID OWNERSHIP_ROOT|launch INSTALLATION_ID OWNERSHIP_ROOT SPEC|supervise SPEC>"
         ),
     }
 }
@@ -2802,6 +4459,8 @@ mod tests {
             read_write_roots: Vec::new(),
             denied_read_roots: Vec::new(),
             denied_write_roots: Vec::new(),
+            termination_proof_path: None,
+            termination_proof_token: None,
         };
         assert_eq!(
             command_line(&spec),
@@ -2825,6 +4484,8 @@ mod tests {
             read_write_roots: Vec::new(),
             denied_read_roots: Vec::new(),
             denied_write_roots: Vec::new(),
+            termination_proof_path: None,
+            termination_proof_token: None,
         };
         assert_eq!(
             command_line(&spec),
@@ -2888,6 +4549,8 @@ mod tests {
             read_write_roots: vec![workspace.to_string_lossy().into_owned()],
             denied_read_roots: Vec::new(),
             denied_write_roots: vec![git.to_string_lossy().into_owned()],
+            termination_proof_path: None,
+            termination_proof_token: None,
         };
 
         let grants = plan_writable_acl_grants(&spec).unwrap();

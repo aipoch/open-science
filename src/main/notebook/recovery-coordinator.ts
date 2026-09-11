@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { lstat, realpath, rm } from 'node:fs/promises'
+import { lstat, readFile, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
@@ -20,7 +20,14 @@ import {
 import { defaultOperationChildLiveness, reconcileInterruptedOperations } from './operation-recovery'
 import { buildManagedRuntimeProcessEnvironment } from './process-environment'
 import { verifyExecutable } from './provisioner-runtime'
-import { addRepairRequired, DEFAULT_PY_ENV, DEFAULT_R_ENV, pythonBin, rBin } from './runtime-paths'
+import {
+  addRepairRequired,
+  DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
+  importedEnvironmentLockMarkerPath,
+  pythonBin,
+  rBin
+} from './runtime-paths'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 
 const log = createLogger('notebook:recovery')
@@ -251,6 +258,32 @@ export class NotebookRecoveryCoordinator {
         ) {
           rejectUnsafe('Interrupted environment target escapes the managed runtime root.')
         }
+        if (record.phase === 'import-python' || record.phase === 'import-r') {
+          // This exact journal target belongs to an interrupted import. A runnable Conda
+          // interpreter does not prove that its native packages finished restoring. Only the
+          // marker written after restoration and verification permits retaining that import.
+          // Child liveness and archive-publication barriers are checked before this callback.
+          const markerPath = importedEnvironmentLockMarkerPath(canonicalPrefix)
+          const marker = await lstat(markerPath).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return undefined
+            return rejectUnsafe('Interrupted import completion marker could not be read.')
+          })
+          if (!marker) {
+            await rm(canonicalPrefix, { recursive: true, force: true }).catch(() =>
+              rejectUnsafe('Interrupted import could not be removed for retry.')
+            )
+            return
+          }
+          if (!marker.isFile() || marker.isSymbolicLink() || marker.size > 65) {
+            rejectUnsafe('Interrupted import completion marker is invalid.')
+          }
+          const checksum = await readFile(markerPath, 'utf8').catch(() =>
+            rejectUnsafe('Interrupted import completion marker could not be read.')
+          )
+          if (!/^[a-f0-9]{64}\n?$/u.test(checksum)) {
+            rejectUnsafe('Interrupted import completion marker is invalid.')
+          }
+        }
         const language =
           record.phase.endsWith('-r') ||
           (record.phase === 'restore' && record.runtimeId === DEFAULT_R_ENV)
@@ -302,6 +335,22 @@ export class NotebookRecoveryCoordinator {
       blockUnknownChildTarget: async (record) => {
         if (record.kind === 'install') nextStartupBlockedRuntimeIds.add(record.runtimeId)
         if (record.targetPath) nextStartupBlockedPrefixes.add(record.targetPath)
+      },
+      canDiscardPendingArchivePublication: async (record) => {
+        if (
+          record.kind !== 'materialize' ||
+          !/^create-(python|r)$/.test(record.phase) ||
+          !record.targetPath ||
+          !isDirectChild(join(this.runtimeRoot, 'envs'), record.targetPath)
+        ) {
+          return false
+        }
+        try {
+          await lstat(record.targetPath)
+          return false
+        } catch (error) {
+          return (error as NodeJS.ErrnoException).code === 'ENOENT'
+        }
       },
       publishArchives: async (record) => {
         const publish = this.deps.publishWorkingCacheArchives ?? publishRecoveredMicromambaArchives

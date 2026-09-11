@@ -84,6 +84,23 @@ import { startDiagnosticOperation } from '../diagnostics/operation'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookNetworkSettings, NotebookNetworkStatus } from '../../shared/notebook-network'
+import type {
+  InstallMissingWslDependenciesRequest,
+  InstallWslDistroRequest,
+  OpenWslTerminalRequest,
+  SelectWslProfileRequest,
+  SwitchToPowerShellResult,
+  LocalShellRuntimePreference,
+  UseWsl2BashResult,
+  WslSelection,
+  WslPlatformInstallResult,
+  WslSetupSnapshot,
+  WslSetupStatus,
+  WslSetupConversationBootstrap,
+  WslSupportHandoff
+} from '../../shared/wsl-setup'
+import type { Wsl2BashPreviewStatus } from '../../shared/wsl-setup'
+import { wsl2BashPreviewStatus } from '../wsl/wsl2-preview-gate'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
@@ -107,6 +124,7 @@ import { isEncryptionAvailable, isCredentialStorageAvailable } from './crypto'
 import { getCredentialStore } from './credential-store-mode'
 import { getUserClaudeConfigDir } from './provider-env'
 import { SettingsRepository } from './repository'
+import type { LocalShellRuntimeMutation } from './local-shell-runtime-mutation'
 import { SettingsPreferencesModule, type SetDataRootOptions } from './preferences'
 import { buildSettingsSnapshot } from './settings-view'
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
@@ -119,6 +137,7 @@ import type {
 import { DeviceCredentialStore, type ResolvedOAuthDeviceCredential } from './device-credentials'
 import { ProviderAccountsModule } from './provider-accounts'
 import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-manager'
+import { SettingsInstallCoordinator } from './settings-install-coordinator'
 import {
   AgentBackendResolver,
   type AgentBackendResolutionContext,
@@ -158,6 +177,7 @@ export type UninstallResult = {
 export type SettingsServiceOptions = {
   repository?: SettingsRepository
   configRoot?: string
+  installCoordinator?: SettingsInstallCoordinator
   // Packaged main entry reused as the isolated stdio Skill runtime MCP child.
   skillRuntimeMcpEntryPath?: string
   log?: Logger
@@ -210,6 +230,21 @@ export type SettingsServiceOptions = {
   getNotebookNetworkStatus?: () => Promise<NotebookNetworkStatus>
   installNotebookNetwork?: () => Promise<{ cancelled: boolean }>
   removeNotebookNetwork?: () => Promise<{ cancelled: boolean }>
+  wslSetup?: {
+    getStatus?(): WslSetupStatus
+    reconcileInterruptedOperation?(): Promise<WslSetupStatus>
+    probe(): Promise<WslSetupSnapshot>
+    installPlatform(): Promise<WslPlatformInstallResult>
+    installMissingDependencies(expectedRevision: number): Promise<WslSetupSnapshot>
+    select(request: SelectWslProfileRequest): Promise<WslSetupSnapshot>
+    installRecommendedDistro(distro?: string): Promise<WslSetupSnapshot>
+    openTerminal(request: OpenWslTerminalRequest): Promise<WslSetupSnapshot>
+    createSupportHandoff(): Promise<WslSupportHandoff>
+    requireLatestReadySelection(): Promise<WslSelection>
+  }
+  wslSetupSessions?: { mintLocalToken(): string }
+  ensureDefaultWslSetupWorkspace?: () => Promise<void>
+  wsl2PreviewStatus?: () => Wsl2BashPreviewStatus
   // Encrypted-token controller for claude-isolated; default-constructed against this.configRoot
   // when omitted. Storage is delegated to the host's SettingsRepository + encrypt/tryDecryptKey
   // pipeline, mirroring how CodexAuthController delegates to openCodexAuthSession.
@@ -230,6 +265,7 @@ class SettingsService {
   private readonly connectors: ConnectorSettingsModule
   private readonly providers: ProviderAccountsModule
   private readonly runtimeManager: AgentRuntimeManager
+  private readonly installCoordinator: SettingsInstallCoordinator
   private readonly backendResolver: AgentBackendResolver
   private readonly scenarioModels: ScenarioModelOwner
   private readonly configRoot: string
@@ -239,6 +275,10 @@ class SettingsService {
   private readonly getNotebookNetworkStatusImpl: () => Promise<NotebookNetworkStatus>
   private readonly installNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
   private readonly removeNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
+  private readonly wslSetup?: SettingsServiceOptions['wslSetup']
+  private readonly wslSetupSessions?: SettingsServiceOptions['wslSetupSessions']
+  private readonly ensureDefaultWslSetupWorkspace?: SettingsServiceOptions['ensureDefaultWslSetupWorkspace']
+  private readonly wsl2PreviewStatus: () => Wsl2BashPreviewStatus
   private readonly userClaudeDir: string
   private readonly log: Logger
   private customServerAuthenticator?: (serverId: string) => Promise<void>
@@ -250,15 +290,15 @@ class SettingsService {
   private skillDeletionGuard?: (skillId: string) => Promise<void>
 
   hasActiveInstall(): boolean {
-    return this.runtimeManager.hasActiveInstall()
+    return this.installCoordinator.getActiveId() !== undefined
   }
 
   getActiveInstallId(): string | undefined {
-    return this.runtimeManager.getActiveInstallId()
+    return this.installCoordinator.getActiveId()
   }
 
   holdInstallAdmission(): () => void {
-    return this.runtimeManager.holdInstallAdmission()
+    return this.installCoordinator.holdAdmission()
   }
 
   async dispose(): Promise<void> {
@@ -273,6 +313,7 @@ class SettingsService {
 
   constructor(options: SettingsServiceOptions = {}) {
     this.configRoot = options.configRoot ?? resolveConfigRoot()
+    this.installCoordinator = options.installCoordinator ?? new SettingsInstallCoordinator()
     this.repository = options.repository ?? new SettingsRepository(this.configRoot)
     this.networkProxy = new NetworkProxySettingsOwner({
       repository: this.repository,
@@ -301,6 +342,10 @@ class SettingsService {
       (async () => {
         throw new Error('Notebook network sandbox removal is unavailable.')
       })
+    this.wslSetup = options.wslSetup
+    this.wslSetupSessions = options.wslSetupSessions
+    this.ensureDefaultWslSetupWorkspace = options.ensureDefaultWslSetupWorkspace
+    this.wsl2PreviewStatus = options.wsl2PreviewStatus ?? wsl2BashPreviewStatus
     this.log = options.log ?? createLogger('settings')
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
@@ -329,6 +374,7 @@ class SettingsService {
       userClaudeDir: this.userClaudeDir,
       skills: this.skills,
       connectors: this.connectors,
+      installCoordinator: this.installCoordinator,
       allocateSettingsIdSequence,
       detectDeps: options.detectDeps,
       opencodeDetectDeps: options.opencodeDetectDeps,
@@ -485,6 +531,141 @@ class SettingsService {
   async removeNotebookNetwork(): Promise<NotebookNetworkStatus> {
     await this.removeNotebookNetworkImpl()
     return this.getNotebookNetworkStatusImpl()
+  }
+
+  probeWslSetup(): Promise<WslSetupSnapshot> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    return this.wslSetup.probe()
+  }
+
+  async getWslSetupStatus(): Promise<WslSetupStatus> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    let status: WslSetupStatus
+    if (this.wslSetup.reconcileInterruptedOperation) {
+      status = await this.wslSetup.reconcileInterruptedOperation()
+    } else if (this.wslSetup.getStatus) {
+      status = this.wslSetup.getStatus()
+    } else {
+      throw new Error('WSL setup status is unavailable.')
+    }
+    if (!status.snapshot) return status
+
+    // Readiness is intentionally cached until the user checks again, but Shell activation is a
+    // separate persisted setting and can change without another WSL probe. Project the current
+    // activation into the cached readiness snapshot so reopening Settings never revives the prior
+    // runtime label.
+    const settings = await this.repository.getSettings()
+    const readiness = { ...status.snapshot }
+    delete readiness.activeRuntime
+    delete readiness.activatedSelection
+    const snapshot = Object.freeze({
+      ...readiness,
+      ...(settings.localShellRuntime ? { activeRuntime: settings.localShellRuntime } : {}),
+      ...(settings.activatedWslSelection
+        ? { activatedSelection: Object.freeze({ ...settings.activatedWslSelection }) }
+        : {})
+    })
+    return Object.freeze({ ...status, snapshot })
+  }
+
+  installWslPlatform(): Promise<WslPlatformInstallResult> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    return this.wslSetup.installPlatform()
+  }
+
+  installMissingWslDependencies(
+    request: InstallMissingWslDependenciesRequest
+  ): Promise<WslSetupSnapshot> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    return this.wslSetup.installMissingDependencies(request.expectedRevision)
+  }
+
+  selectWslProfile(request: SelectWslProfileRequest): Promise<WslSetupSnapshot> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    return this.wslSetup.select(request)
+  }
+
+  installRecommendedWslDistro(request: InstallWslDistroRequest): Promise<WslSetupSnapshot> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    return this.wslSetup.installRecommendedDistro(request.distro)
+  }
+
+  openWslTerminal(request: OpenWslTerminalRequest): Promise<WslSetupSnapshot> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    return this.wslSetup.openTerminal(request)
+  }
+
+  async createWslSupportHandoff(): Promise<WslSetupConversationBootstrap> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    if (!this.wslSetupSessions) throw new Error('WSL setup Session capability is unavailable.')
+    await this.ensureDefaultWslSetupWorkspace?.()
+    await this.wslSetup.probe()
+    const handoff = await this.wslSetup.createSupportHandoff()
+    return Object.freeze({
+      handoff,
+      setupSessionToken: this.wslSetupSessions.mintLocalToken()
+    })
+  }
+
+  async switchLocalShellToPowerShell(): Promise<{
+    result: SwitchToPowerShellResult
+    mutation: LocalShellRuntimeMutation
+  }> {
+    const write = await this.repository.setLocalShellRuntime('powershell')
+    return Object.freeze({
+      result: Object.freeze({
+        runtimeBinding: Object.freeze({ kind: 'powershell', version: '5.1' }),
+        appliesTo: 'subsequent-executions',
+        wslProfilePreserved:
+          write.settings.wslSelection !== undefined ||
+          write.settings.activatedWslSelection !== undefined
+      }),
+      mutation: write.mutation
+    })
+  }
+
+  async useWsl2Bash(): Promise<{
+    result: UseWsl2BashResult
+    mutation: LocalShellRuntimeMutation
+  }> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    const selection = await this.wslSetup.requireLatestReadySelection()
+    const write = await this.repository.setLocalShellRuntime('wsl2-bash', selection)
+    return Object.freeze({
+      result: Object.freeze({
+        runtime: 'wsl2-bash',
+        selection: Object.freeze({ ...selection }),
+        appliesTo: 'subsequent-executions'
+      }),
+      mutation: write.mutation
+    })
+  }
+
+  getWsl2BashPreviewStatus(): Wsl2BashPreviewStatus {
+    return this.wsl2PreviewStatus()
+  }
+
+  private requireWsl2Preview(): void {
+    if (!this.wsl2PreviewStatus().available) {
+      throw new Error('Notebook WSL2 Bash Preview is unavailable.')
+    }
+  }
+
+  async getLocalShellRuntimePreference(): Promise<LocalShellRuntimePreference | undefined> {
+    return (await this.repository.getSettings()).localShellRuntime
+  }
+
+  restoreLocalShellRuntimePreference(mutation: LocalShellRuntimeMutation): Promise<boolean> {
+    return this.repository.restoreLocalShellRuntime(mutation)
   }
 
   private async migrateLegacyKeyRefs(settings: StoredSettings): Promise<StoredSettings> {

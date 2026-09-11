@@ -54,7 +54,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         onNetworkAccessRequest: async () => false
       })
       const result = await run(wrapped, directory)
-      wrapped.cleanup()
+      await wrapped.cleanup('exit', { processesTerminated: true })
       expect(result).toMatchObject({ code: 0, stdout: 'repl-ok' })
     } finally {
       await sandbox.dispose()
@@ -110,7 +110,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
             descriptor.end('fd-ok')
           }
         )
-        wrapped.cleanup()
+        await wrapped.cleanup('exit', { processesTerminated: true })
         expect(result).toMatchObject({ code: 0, stderr: '', stdout: 'fd-ok' })
       } finally {
         await sandbox.dispose()
@@ -150,7 +150,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         onNetworkAccessRequest: async () => false
       })
       const result = await run(wrapped, cwd)
-      wrapped.cleanup()
+      await wrapped.cleanup('exit', { processesTerminated: true })
       expect(result).toMatchObject({ code: 0, stdout: 'rpc-ok' })
 
       const blocked = await sandbox.wrap({
@@ -161,7 +161,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         onNetworkAccessRequest: async () => true
       })
       const blockedResult = await run(blocked, cwd)
-      blocked.cleanup()
+      await blocked.cleanup('exit', { processesTerminated: true })
       expect(blockedResult.code).not.toBe(0)
     } finally {
       await sandbox.dispose()
@@ -202,7 +202,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         onNetworkAccessRequest: async () => false
       })
       const allowed = await run(allowedProcess, cwd)
-      allowedProcess.cleanup()
+      await allowedProcess.cleanup('exit', { processesTerminated: true })
       expect(allowed).toMatchObject({ code: 0, stdout: 'sandbox-ok' })
 
       sandbox.updatePolicy({ allowedDomains: [], deniedDomains: [] })
@@ -217,7 +217,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
       const annotatedDeniedStderr = deniedProcess.annotateStderr(denied.stderr)
       expect(annotatedDeniedStderr).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
       expect(annotatedDeniedStderr).toContain('deny network-outbound example.com:80')
-      deniedProcess.cleanup()
+      await deniedProcess.cleanup('exit', { processesTerminated: true })
 
       sandbox.updatePolicy({
         allowedDomains: [],
@@ -237,7 +237,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         'destination is explicitly blocked'
       )
       expect(hardDeniedDecision).not.toHaveBeenCalled()
-      hardDeniedProcess.cleanup()
+      await hardDeniedProcess.cleanup('exit', { processesTerminated: true })
 
       const privateDecision = vi.fn(async () => true)
       const privateProcess = await sandbox.wrap({
@@ -252,7 +252,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         'destination resolves to a non-public network address'
       )
       expect(privateDecision).not.toHaveBeenCalled()
-      privateProcess.cleanup()
+      await privateProcess.cleanup('exit', { processesTerminated: true })
     } finally {
       await sandbox.dispose()
       await new Promise<void>((resolveClose, reject) =>
@@ -301,8 +301,8 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
       ])
 
       const [firstResult, secondResult] = await Promise.all([run(first, cwd), run(second, cwd)])
-      first.cleanup()
-      second.cleanup()
+      await first.cleanup('exit', { processesTerminated: true })
+      await second.cleanup('exit', { processesTerminated: true })
 
       expect(firstResult).toMatchObject({ code: 0, stdout: 'approved' })
       expect(secondResult).toMatchObject({ code: 0, stdout: 'approved' })
@@ -345,7 +345,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         onNetworkAccessRequest: async () => true
       })
       const result = await run(wrapped, cwd)
-      wrapped.cleanup()
+      await wrapped.cleanup('exit', { processesTerminated: true })
       expect(result.code).not.toBe(0)
     } finally {
       await sandbox.dispose()

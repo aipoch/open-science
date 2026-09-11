@@ -1,0 +1,1007 @@
+import {
+  CheckCircle2,
+  CircleHelp,
+  CircleX,
+  Download,
+  LoaderCircle,
+  MessagesSquare,
+  RefreshCw,
+  SquareTerminal
+} from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+
+import { Button } from '@/components/ui/button'
+import { ErrorNotice } from '@/components/error-notice'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
+import { Input } from '@/components/ui/input'
+import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
+import { startWslSetupConversation } from '@/lib/wsl-support-handoff'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { useProjectStore } from '@/stores/project-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
+import {
+  RECOMMENDED_WSL_DISTRO,
+  WSL_INSTALL_DISTROS,
+  type SwitchToPowerShellResult,
+  type UseWsl2BashResult,
+  type Wsl2BashPreviewStatus,
+  type WslReadiness,
+  type WslInstallDistroName,
+  type WslSetupOperation,
+  type WslSetupSnapshot
+} from '../../../../shared/wsl-setup'
+import { SettingsField, SettingsSection } from './SettingsLayout'
+import { useWslSetupStatus } from './useWslSetupStatus'
+
+const statusCopy = (snapshot: WslSetupSnapshot, t: (key: string) => string): string => {
+  switch (snapshot.state) {
+    case 'checking':
+      return t('Checking WSL2 readiness…')
+    case 'not-installed':
+      return t('WSL2 is not installed. Install it in Windows, then check again.')
+    case 'restart-required':
+      return t('Windows must restart before WSL2 setup can continue.')
+    case 'distro-required':
+      return t('Install or select a WSL2 distribution to continue.')
+    case 'first-launch-required':
+      return t('Open the distribution once and finish creating its Linux user.')
+    case 'dependency-required':
+      return t('The selected distribution needs the missing Linux dependencies shown below.')
+    case 'ready':
+      return t('This profile is ready for sandboxed WSL2 Bash.')
+    case 'failed':
+      return t('This WSL2 profile needs attention.')
+  }
+}
+
+const recoveryCopy = (
+  snapshot: WslSetupSnapshot,
+  t: (key: string) => string
+): string | undefined => {
+  switch (snapshot.errorCode) {
+    case 'wsl1_unsupported':
+      return t('Convert the distribution to WSL2 in Windows, then check again.')
+    case 'wsl_root_user':
+    case 'wsl_user_mismatch':
+    case 'wsl_user_not_found':
+      return t('Choose an exact non-root Linux user, then save and check again.')
+    case 'wsl_home_missing':
+      return t('Choose a non-root Linux user with an existing home directory, then check again.')
+    case 'wsl_distro_install_failed':
+      return t('The distribution installation failed. Check Windows setup, then try again.')
+    case 'wsl_distro_install_unconfirmed':
+      return t(
+        'Windows did not confirm the distribution installation. Check again before retrying.'
+      )
+    case 'wsl_terminal_open_failed':
+      return t('The distribution terminal could not be opened. Check again, then retry.')
+    case 'wsl_bwrap_missing':
+    case 'wsl_bash_missing':
+    case 'wsl_python3_missing':
+      return snapshot.canInstallMissingDependencies
+        ? t('Install the missing Linux dependencies to continue.')
+        : t(
+            'Automatic installation is unavailable for this distribution. Use its package manager or set up in conversation.'
+          )
+    case 'wsl_dependency_install_failed':
+      return t(
+        'Open-Science could not install the missing Linux dependencies. Check the distribution’s package manager, then try again.'
+      )
+    case 'wsl_dependency_install_unconfirmed':
+      return t(
+        'Open-Science could not confirm that the missing Linux dependencies were installed. Check again before retrying.'
+      )
+    case 'wsl_dependency_install_not_allowed':
+      return t(
+        'The selected WSL2 profile changed or is no longer eligible for dependency installation. Check again before retrying.'
+      )
+    case 'wsl_dependency_install_not_supported':
+      return t(
+        'Automatic installation is unavailable for this distribution. Use its package manager or set up in conversation.'
+      )
+    case 'wsl_install_interrupted':
+      return t(
+        'The previous installation was interrupted or could not be confirmed. Complete WSL setup in Windows, then check again.'
+      )
+    case 'wsl_install_journal_unavailable':
+      return t(
+        'Open-Science could not safely record the installation. No new installation command was started.'
+      )
+    case 'wsl_network_mode_unsupported':
+      return t('Set WSL networkingMode to mirrored, shut down WSL, then check again.')
+    case 'wsl_workspace_path_unsupported':
+    case 'wsl_workspace_unreachable':
+    case 'wsl_workspace_not_local':
+    case 'wsl_workspace_not_ntfs':
+    case 'wsl_workspace_volume_unavailable':
+      return t('Move the Open-Science data folder to a local NTFS drive, then check again.')
+    default:
+      return t('Check again, or solve this setup issue in a conversation.')
+  }
+}
+
+const errorTone = (errorCode: string | undefined): 'amber' | 'red' => {
+  switch (errorCode) {
+    case 'wsl_install_interrupted':
+    case 'wsl_install_journal_unavailable':
+    case 'wsl_distro_install_failed':
+    case 'wsl_distro_install_unconfirmed':
+    case 'wsl_workspace_path_unsupported':
+    case 'wsl_workspace_unreachable':
+    case 'wsl_workspace_not_local':
+    case 'wsl_workspace_not_ntfs':
+    case 'wsl_workspace_volume_unavailable':
+      return 'red'
+    default:
+      return 'amber'
+  }
+}
+
+const operationCopy = (
+  operation: WslSetupOperation,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string => {
+  if (operation.state !== 'running') return t('Checking WSL2 readiness…')
+  if (operation.phase === 'verifying') return t('Verifying the current WSL2 setup…')
+  if (operation.kind === 'install-runtime-dependencies') {
+    return t('Installing Linux dependencies…')
+  }
+  if (operation.kind === 'install-platform') {
+    return t('Installing the WSL2 platform in Windows…')
+  }
+  return t('Installing {{distro}}…', { distro: RECOMMENDED_WSL_DISTRO })
+}
+
+type InstallFailure = 'uac-cancelled' | 'spawn-failed' | 'unknown'
+type Translate = (key: string) => string
+
+const installFailure = (errorCode: string | undefined): InstallFailure | undefined => {
+  switch (errorCode) {
+    case 'wsl_install_uac_cancelled':
+      return 'uac-cancelled'
+    case 'wsl_install_spawn_failed':
+      return 'spawn-failed'
+    case 'wsl_install_unknown':
+    case 'wsl_install_conflict':
+      return 'unknown'
+    default:
+      return undefined
+  }
+}
+
+const installFailureTitle = (failure: InstallFailure, t: Translate): string => {
+  switch (failure) {
+    case 'uac-cancelled':
+      return t('WSL2 installation was cancelled in Windows.')
+    case 'spawn-failed':
+      return t('Open-Science could not start the WSL2 installer.')
+    case 'unknown':
+      return t('Windows did not confirm the WSL2 installation result.')
+  }
+}
+
+const installFailureDescription = (failure: InstallFailure, t: Translate): string => {
+  if (failure === 'unknown') {
+    return t(
+      'Check again to read the current Windows state. Installation will not run again automatically.'
+    )
+  }
+  return t('No installation command will run again unless you choose to retry it.')
+}
+
+const operationErrorReference = (snapshot: WslSetupSnapshot): string | undefined =>
+  snapshot.errorCode ? `${snapshot.errorCode} · ${snapshot.operationReference}` : undefined
+
+const dependencyInstallLabel = (errorCode: string, t: Translate): string => {
+  if (
+    errorCode === 'wsl_dependency_install_failed' ||
+    errorCode === 'wsl_dependency_install_unconfirmed'
+  ) {
+    return t('Try installation again')
+  }
+  return t('Install missing dependencies')
+}
+
+const firstInitializationDistro = (
+  snapshot: WslSetupSnapshot,
+  selectedInstallDistro: WslInstallDistroName
+): string | undefined => {
+  if (snapshot.state === 'first-launch-required') return snapshot.selection?.distro
+  if (
+    snapshot.state === 'distro-required' &&
+    snapshot.distros.some((item) => item.name === selectedInstallDistro && item.version === 2)
+  ) {
+    return selectedInstallDistro
+  }
+  return undefined
+}
+
+const INSTALLABLE_DEPENDENCY_ERRORS = new Set([
+  'wsl_bash_missing',
+  'wsl_bwrap_missing',
+  'wsl_python3_missing',
+  'wsl_dependency_install_failed',
+  'wsl_dependency_install_unconfirmed'
+])
+
+const canInstallMissingDependencies = (snapshot: WslSetupSnapshot): boolean =>
+  snapshot.state === 'dependency-required' &&
+  snapshot.canInstallMissingDependencies === true &&
+  INSTALLABLE_DEPENDENCY_ERRORS.has(snapshot.errorCode ?? '')
+
+const StatusIndicator = ({
+  busy,
+  state
+}: {
+  busy: boolean
+  state: WslSetupSnapshot['state']
+}): React.JSX.Element => {
+  if (busy) {
+    return (
+      <LoaderCircle
+        className="size-4 animate-spin text-status-info-foreground"
+        aria-hidden="true"
+      />
+    )
+  }
+  if (state === 'ready') {
+    return <CheckCircle2 className="size-4 text-status-success-foreground" aria-hidden="true" />
+  }
+  return <CircleX className="size-4 text-status-failure-foreground" aria-hidden="true" />
+}
+
+const ReadinessIndicator = ({ value }: { value: boolean | undefined }): React.JSX.Element => {
+  if (value === true) {
+    return <CheckCircle2 className="size-4 text-status-success-foreground" aria-hidden="true" />
+  }
+  if (value === false) {
+    return <CircleX className="size-4 text-status-failure-foreground" aria-hidden="true" />
+  }
+  return <CircleHelp className="size-4 text-muted-foreground" aria-hidden="true" />
+}
+
+type WslLocalShellSectionProps = {
+  previewAvailable?: boolean
+  developmentPreview?: boolean
+  previewUnavailableReason?: Wsl2BashPreviewStatus['reason']
+}
+
+export const WslLocalShellSection = ({
+  previewAvailable = true,
+  developmentPreview = false,
+  previewUnavailableReason
+}: WslLocalShellSectionProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const [snapshot, setSnapshot] = useState<WslSetupSnapshot>({
+    state: 'checking',
+    distros: [],
+    operationReference: '--------'
+  })
+  const [distro, setDistro] = useState('')
+  const [installDistro, setInstallDistro] = useState<WslInstallDistroName>(RECOMMENDED_WSL_DISTRO)
+  const [user, setUser] = useState('')
+  const [actionBusy, setBusy] = useState(false)
+  const [hasSnapshot, setHasSnapshot] = useState(false)
+  const [confirmDependencyInstall, setConfirmDependencyInstall] = useState(false)
+  const [conversationError, setConversationError] = useState(false)
+  const [shellSwitchResult, setShellSwitchResult] = useState<
+    | { runtime: 'powershell'; result: SwitchToPowerShellResult }
+    | { runtime: 'wsl2-bash'; result: UseWsl2BashResult }
+  >()
+  const [shellSwitchFailed, setShellSwitchFailed] = useState<'powershell' | 'wsl2-bash'>()
+  const setupStatus = useWslSetupStatus(previewAvailable)
+  const installBusy = setupStatus?.operation.state === 'running'
+  const busy = actionBusy || installBusy || (previewAvailable && setupStatus === undefined)
+  const statusHydrated = useRef(false)
+  const initialProbeRequest = useRef<Promise<WslSetupSnapshot> | undefined>(undefined)
+  const projects = useProjectStore((state) => state.projects)
+  const chatProjectId = useMemo(
+    () => resolveCustomizeProjectId(projects.filter((project) => project.archivedAt === undefined)),
+    [projects]
+  )
+  const checks: ReadonlyArray<[keyof WslReadiness, string]> = [
+    ['wsl2', t('WSL2 distribution')],
+    ['home', t('Linux home directory')],
+    ['bash', t('Bash')],
+    ['bwrap', t('bubblewrap')],
+    ['python3', t('Python 3')],
+    ['mirroredNetworking', t('Mirrored networking')],
+    ['namespaces', t('Linux namespaces')],
+    ['localWorkspace', t('Local Windows workspace')]
+  ]
+
+  const apply = useCallback((next: WslSetupSnapshot): void => {
+    setHasSnapshot(true)
+    setSnapshot(next)
+    setDistro(next.selection?.distro ?? next.distros.find((item) => item.version === 2)?.name ?? '')
+    setUser(next.selection?.user ?? '')
+  }, [])
+
+  const probe = useCallback(
+    async (
+      isActive: () => boolean = () => true,
+      request?: Promise<WslSetupSnapshot>
+    ): Promise<void> => {
+      if (isActive()) {
+        setBusy(true)
+        setSnapshot((current) => ({ ...current, state: 'checking' }))
+      }
+      try {
+        const next = await (request ?? window.api.settings.probeWslSetup())
+        if (isActive()) {
+          apply(next)
+        }
+      } catch {
+        if (isActive()) {
+          setSnapshot({
+            state: 'failed',
+            distros: [],
+            errorCode: 'wsl_probe_failed',
+            operationReference: '--------'
+          })
+        }
+      } finally {
+        if (isActive()) setBusy(false)
+      }
+    },
+    [apply]
+  )
+
+  useEffect(() => {
+    if (!previewAvailable || !setupStatus || setupStatus.snapshot) return undefined
+    let active = true
+    initialProbeRequest.current ??= window.api.settings.probeWslSetup()
+    void probe(() => active, initialProbeRequest.current)
+    return () => {
+      active = false
+    }
+  }, [previewAvailable, probe, setupStatus])
+
+  useEffect(() => {
+    if (!previewAvailable || !setupStatus) return undefined
+    let active = true
+    queueMicrotask(() => {
+      if (!active) return
+      const firstStatus = !statusHydrated.current
+      statusHydrated.current = true
+      if (setupStatus.snapshot) {
+        setHasSnapshot(true)
+        setSnapshot(setupStatus.snapshot)
+        if (firstStatus) {
+          setDistro(
+            setupStatus.snapshot.selection?.distro ??
+              setupStatus.snapshot.distros.find((item) => item.version === 2)?.name ??
+              ''
+          )
+          setUser(setupStatus.snapshot.selection?.user ?? '')
+        }
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [previewAvailable, setupStatus])
+
+  const saveAndCheck = async (): Promise<void> => {
+    setBusy(true)
+    setShellSwitchResult(undefined)
+    setShellSwitchFailed(undefined)
+    try {
+      apply(await window.api.settings.selectWslProfile({ distro, user }))
+    } catch {
+      setSnapshot((current) => ({ ...current, state: 'failed', errorCode: 'wsl_probe_failed' }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const installWslPlatform = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      const result = await window.api.settings.installWslPlatform()
+      apply(result.snapshot)
+    } catch {
+      setSnapshot((current) => ({
+        ...current,
+        state: 'not-installed',
+        errorCode: 'wsl_install_spawn_failed'
+      }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const installRecommended = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      apply(await window.api.settings.installRecommendedWslDistro({ distro: installDistro }))
+    } catch {
+      setSnapshot((current) => ({
+        ...current,
+        state: 'failed',
+        errorCode: 'wsl_distro_install_failed'
+      }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const currentInstallFailure = installFailure(snapshot.errorCode)
+
+  const openTerminal = async (requestedDistro?: string): Promise<void> => {
+    const selectedDistro = requestedDistro ?? snapshot.selection?.distro ?? distro
+    if (!selectedDistro) return
+    setBusy(true)
+    try {
+      apply(await window.api.settings.openWslTerminal({ distro: selectedDistro }))
+    } catch {
+      setSnapshot((current) => ({
+        ...current,
+        state: 'failed',
+        errorCode: 'wsl_terminal_open_failed'
+      }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const initializationDistro = firstInitializationDistro(snapshot, installDistro)
+  const installDistroLabel =
+    WSL_INSTALL_DISTROS.find((candidate) => candidate.name === installDistro)?.label ??
+    installDistro
+
+  const installMissingDependencies = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      const matchingStatus =
+        setupStatus?.snapshot?.operationReference === snapshot.operationReference
+          ? setupStatus
+          : await window.api.settings.getWslSetupStatus()
+      if (matchingStatus.snapshot?.operationReference !== snapshot.operationReference) {
+        if (matchingStatus.snapshot) apply(matchingStatus.snapshot)
+        return
+      }
+      apply(
+        await window.api.settings.installMissingWslDependencies({
+          expectedRevision: matchingStatus.revision
+        })
+      )
+    } catch {
+      setSnapshot((current) => ({
+        ...current,
+        state: 'dependency-required',
+        errorCode: 'wsl_dependency_install_unconfirmed'
+      }))
+    } finally {
+      setConfirmDependencyInstall(false)
+      setBusy(false)
+    }
+  }
+
+  const startSupportConversation = async (): Promise<void> => {
+    if (!chatProjectId) return
+    setBusy(true)
+    setConversationError(false)
+    try {
+      const opened = await startWslSetupConversation(chatProjectId, t)
+      if (opened) useSettingsStore.getState().closeSettings()
+    } catch {
+      setConversationError(true)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const createProjectForSetup = (): void => {
+    useSettingsStore.getState().closeSettings()
+    useNavigationStore.getState().requestWslSetupProjectCreation()
+  }
+
+  const switchToPowerShell = async (): Promise<void> => {
+    setBusy(true)
+    setShellSwitchFailed(undefined)
+    try {
+      const result = await window.api.settings.switchLocalShellToPowerShell()
+      setShellSwitchResult({
+        runtime: 'powershell',
+        result
+      })
+      setSnapshot((current) => ({ ...current, activeRuntime: 'powershell' }))
+    } catch {
+      setShellSwitchResult(undefined)
+      setShellSwitchFailed('powershell')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const activateWsl2Bash = async (): Promise<void> => {
+    setBusy(true)
+    setShellSwitchFailed(undefined)
+    try {
+      const result = await window.api.settings.useWsl2Bash()
+      setShellSwitchResult({
+        runtime: 'wsl2-bash',
+        result
+      })
+      setSnapshot((current) => ({
+        ...current,
+        activeRuntime: 'wsl2-bash',
+        activatedSelection: result.selection
+      }))
+    } catch {
+      setShellSwitchResult(undefined)
+      setShellSwitchFailed('wsl2-bash')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const retryShellSwitch = (): void => {
+    if (shellSwitchFailed === 'wsl2-bash') {
+      void activateWsl2Bash()
+      return
+    }
+    void switchToPowerShell()
+  }
+
+  if (!previewAvailable) {
+    return (
+      <SettingsSection separated title={t('Local Shell')}>
+        <div className="flex justify-center rounded-lg border border-border bg-card p-4">
+          {shellSwitchResult?.runtime === 'powershell' ? (
+            <div
+              className="rounded-md border border-status-success-accent/30 bg-status-success-surface p-3 text-sm text-status-success-foreground dark:bg-status-success-dark-surface dark:text-status-success-dark-foreground"
+              role="status"
+            >
+              {t('Future Shell commands will use PowerShell.')}
+            </div>
+          ) : (
+            <ErrorNotice
+              icon={CircleX}
+              tone={
+                shellSwitchFailed || previewUnavailableReason === 'assets-unavailable'
+                  ? 'red'
+                  : 'amber'
+              }
+              title={
+                shellSwitchFailed
+                  ? t('Open-Science could not finish changing the Shell runtime.')
+                  : t('WSL2 Bash Preview is unavailable.')
+              }
+              description={
+                shellSwitchFailed
+                  ? t(
+                      'Restart Open-Science before running another Shell command, then try the switch again.'
+                    )
+                  : t('Switch to PowerShell to continue with Shell commands.')
+              }
+              primaryButton={{
+                label: shellSwitchFailed ? t('Try switching again') : t('Switch to PowerShell'),
+                onClick: () => void switchToPowerShell(),
+                disabled: busy,
+                loading: busy
+              }}
+            />
+          )}
+        </div>
+      </SettingsSection>
+    )
+  }
+
+  const awaitingManualCheck =
+    !busy && setupStatus !== undefined && !hasSnapshot && snapshot.state === 'checking'
+  const supportAvailable =
+    !awaitingManualCheck && !busy && snapshot.state !== 'checking' && snapshot.state !== 'ready'
+  const isErrorSurface =
+    awaitingManualCheck ||
+    (!busy &&
+      (currentInstallFailure !== undefined ||
+        snapshot.state === 'not-installed' ||
+        snapshot.state === 'failed' ||
+        snapshot.errorCode !== undefined))
+  const candidateIsActive =
+    snapshot.activeRuntime === 'wsl2-bash' &&
+    snapshot.selection !== undefined &&
+    snapshot.activatedSelection?.distro === snapshot.selection.distro &&
+    snapshot.activatedSelection.user === snapshot.selection.user
+  const dependencyInstallAvailable = canInstallMissingDependencies(snapshot)
+  const powerShellSwitchButton = (
+    <Button type="button" variant="outline" onClick={() => void switchToPowerShell()}>
+      <SquareTerminal aria-hidden="true" />
+      {t('Switch to PowerShell')}
+    </Button>
+  )
+
+  let statusSurface: React.JSX.Element
+  if (awaitingManualCheck) {
+    statusSurface = (
+      <div className="flex justify-center">
+        <ErrorNotice
+          role="status"
+          icon={RefreshCw}
+          tone="teal"
+          title={t('WSL2 status has not been checked yet.')}
+          description={t(
+            'Run a check when you want to refresh the available distributions and setup status.'
+          )}
+        />
+      </div>
+    )
+  } else if (currentInstallFailure && !busy) {
+    statusSurface = (
+      <div className="flex justify-center">
+        <ErrorNotice
+          role="alert"
+          icon={CircleX}
+          tone={currentInstallFailure === 'spawn-failed' ? 'red' : 'amber'}
+          title={installFailureTitle(currentInstallFailure, t)}
+          description={installFailureDescription(currentInstallFailure, t)}
+          errorCode={`${snapshot.errorCode ?? 'wsl_install_unknown'} · ${snapshot.operationReference}`}
+          diagnosticsLabel={t('Diagnostics')}
+          secondaryButton={{ label: t('Check again'), onClick: () => void probe() }}
+          primaryButton={{
+            label: t('Try installation again'),
+            onClick: () => void installWslPlatform()
+          }}
+        />
+      </div>
+    )
+  } else if (snapshot.state === 'not-installed' && !busy) {
+    statusSurface = (
+      <div className="flex justify-center">
+        <ErrorNotice
+          role="alert"
+          icon={CircleX}
+          tone="amber"
+          title={statusCopy(snapshot, t)}
+          description={t(
+            'Windows will ask for administrator approval. Open-Science installs only the WSL2 platform, without a distribution.'
+          )}
+          errorCode={operationErrorReference(snapshot)}
+          diagnosticsLabel={t('Diagnostics')}
+          secondaryButton={{ label: t('Check again'), onClick: () => void probe() }}
+          primaryButton={{ label: t('Install WSL2'), onClick: () => void installWslPlatform() }}
+        />
+      </div>
+    )
+  } else if (snapshot.state === 'failed' && !busy) {
+    statusSurface = (
+      <div className="flex justify-center">
+        <ErrorNotice
+          role="alert"
+          icon={CircleX}
+          tone={errorTone(snapshot.errorCode)}
+          title={statusCopy(snapshot, t)}
+          description={recoveryCopy(snapshot, t)}
+          errorCode={operationErrorReference(snapshot)}
+          diagnosticsLabel={t('Diagnostics')}
+          primaryButton={{ label: t('Check again'), onClick: () => void probe() }}
+        />
+      </div>
+    )
+  } else if (snapshot.errorCode && !busy) {
+    statusSurface = (
+      <div className="flex justify-center">
+        <ErrorNotice
+          role="alert"
+          icon={CircleX}
+          tone={errorTone(snapshot.errorCode)}
+          title={statusCopy(snapshot, t)}
+          description={recoveryCopy(snapshot, t)}
+          errorCode={operationErrorReference(snapshot)}
+          diagnosticsLabel={t('Diagnostics')}
+          primaryButton={
+            dependencyInstallAvailable
+              ? {
+                  label: dependencyInstallLabel(snapshot.errorCode, t),
+                  onClick: () => setConfirmDependencyInstall(true)
+                }
+              : undefined
+          }
+        />
+      </div>
+    )
+  } else {
+    statusSurface = (
+      <div className="flex items-center gap-2 text-sm font-medium">
+        <StatusIndicator busy={busy} state={snapshot.state} />
+        <span role="status">
+          {installBusy && setupStatus
+            ? operationCopy(setupStatus.operation, t)
+            : statusCopy(snapshot, t)}
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <SettingsSection
+      separated
+      title={
+        developmentPreview
+          ? t('Local Shell · WSL2 Bash Development Preview')
+          : t('Local Shell · WSL2 Bash Preview')
+      }
+      description={t(
+        'Choose the exact WSL2 distribution and non-root Linux user Open-Science should verify. Selection alone never enables WSL2 Bash.'
+      )}
+      action={
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void probe()}
+          disabled={busy}
+        >
+          <RefreshCw className={busy ? 'animate-spin' : ''} aria-hidden="true" />
+          {hasSnapshot ? t('Check again') : t('Check now')}
+        </Button>
+      }
+    >
+      <div
+        className={isErrorSurface ? '' : 'rounded-lg border border-border bg-card p-4'}
+        data-testid="wsl-local-shell"
+      >
+        {statusSurface}
+
+        {!busy &&
+        setupStatus?.operation.state === 'finished' &&
+        setupStatus.operation.kind === 'install-platform' &&
+        setupStatus.operation.outcome === 'completed' ? (
+          <p className="mt-3 text-sm text-status-success-foreground" role="status">
+            {t(
+              'The WSL2 platform installation completed. Continue with the next setup step below.'
+            )}
+          </p>
+        ) : null}
+
+        {!busy &&
+        setupStatus?.operation.state === 'finished' &&
+        setupStatus.operation.kind === 'install-platform' &&
+        setupStatus.operation.outcome === 'restart-required' ? (
+          <p className="mt-3 text-sm text-status-warning-foreground" role="status">
+            {t('Restart Windows before continuing. Returning here will start a fresh check.')}
+          </p>
+        ) : null}
+
+        {!busy && snapshot.state === 'distro-required' && snapshot.distros.length === 0 ? (
+          <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+            <SettingsField label={t('WSL2 distribution')}>
+              <Select
+                value={installDistro}
+                onValueChange={(value) => setInstallDistro(value as WslInstallDistroName)}
+              >
+                <SelectTrigger aria-label={t('WSL2 distribution')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {WSL_INSTALL_DISTROS.map((candidate) => (
+                    <SelectItem key={candidate.name} value={candidate.name}>
+                      {candidate.name === RECOMMENDED_WSL_DISTRO
+                        ? t('{{distro}} (recommended)', { distro: candidate.label })
+                        : candidate.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingsField>
+            <Button type="button" onClick={() => void installRecommended()}>
+              <Download aria-hidden="true" />
+              {t('Install {{distro}}', { distro: installDistroLabel })}
+            </Button>
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              {t('Installation starts only after you choose this action.')}
+            </p>
+          </div>
+        ) : null}
+
+        {!busy && initializationDistro ? (
+          <div className="mt-4">
+            <Button type="button" onClick={() => void openTerminal(initializationDistro)}>
+              <SquareTerminal aria-hidden="true" />
+              {t('Open distribution terminal')}
+            </Button>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {t(
+                'Finish the distribution’s username and password prompts in the terminal. Open-Science never enters credentials for you.'
+              )}
+            </p>
+          </div>
+        ) : null}
+
+        {snapshot.distros.length > 0 ? (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <SettingsField label={t('WSL2 distribution')}>
+              <Select value={distro} onValueChange={setDistro} disabled={busy}>
+                <SelectTrigger aria-label={t('WSL2 distribution')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {snapshot.distros.map((item) => (
+                    <SelectItem key={item.name} value={item.name} disabled={item.version !== 2}>
+                      {item.name} {item.version === 1 ? t('(WSL1 — unsupported)') : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingsField>
+            <SettingsField label={t('Linux user')}>
+              <Input
+                value={user}
+                onChange={(event) => setUser(event.target.value)}
+                placeholder={t('Exact non-root user')}
+                disabled={busy}
+              />
+            </SettingsField>
+            <div className="sm:col-span-2">
+              <Button
+                type="button"
+                onClick={() => void saveAndCheck()}
+                disabled={busy || !distro.trim() || !user.trim()}
+              >
+                {t('Save and check')}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {snapshot.readiness ? (
+          <ul className="mt-4 grid gap-2 text-sm sm:grid-cols-2" aria-label={t('Readiness checks')}>
+            {checks.map(([key, label]) => (
+              <li key={key} className="flex items-center gap-2">
+                <ReadinessIndicator value={snapshot.readiness?.[key]} />
+                {label}
+                {snapshot.readiness?.[key] === undefined ? (
+                  <span className="text-xs text-muted-foreground">{t('Not checked')}</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {!awaitingManualCheck &&
+        !busy &&
+        snapshot.state !== 'ready' &&
+        shellSwitchResult?.runtime !== 'powershell' ? (
+          <div className="mt-4 flex flex-col items-start gap-2">
+            <p className="text-xs text-muted-foreground">
+              {t(
+                'You can keep using PowerShell while WSL2 is unavailable; these setup choices are preserved.'
+              )}
+            </p>
+            {powerShellSwitchButton}
+          </div>
+        ) : null}
+
+        {!busy && snapshot.state === 'ready' ? (
+          <div className="mt-4 flex flex-col items-start gap-2">
+            <p className="text-xs text-muted-foreground" role="status">
+              {candidateIsActive
+                ? t('This ready profile is active for future Shell commands.')
+                : t('This ready profile is only a candidate until you choose Use WSL2 Bash.')}
+            </p>
+            {candidateIsActive ? (
+              powerShellSwitchButton
+            ) : (
+              <Button type="button" onClick={() => void activateWsl2Bash()}>
+                <SquareTerminal aria-hidden="true" />
+                {t('Use WSL2 Bash')}
+              </Button>
+            )}
+          </div>
+        ) : null}
+
+        {!busy && shellSwitchResult ? (
+          <div
+            className="mt-4 rounded-md border border-status-success-accent/30 bg-status-success-surface p-3 text-sm text-status-success-foreground dark:bg-status-success-dark-surface dark:text-status-success-dark-foreground"
+            role="status"
+          >
+            <p>
+              {shellSwitchResult.runtime === 'powershell'
+                ? t('Future Shell commands will use PowerShell.')
+                : t('Future Shell commands will use WSL2 Bash.')}
+            </p>
+            <p className="mt-1 text-xs">
+              {t('Running and failed commands were not rerun or moved to another Shell.')}
+            </p>
+            {shellSwitchResult.runtime === 'powershell' &&
+            shellSwitchResult.result.wslProfilePreserved ? (
+              <p className="mt-1 text-xs">
+                {t('Your saved WSL2 profile is still available when you are ready to switch back.')}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {!busy && shellSwitchFailed ? (
+          <div className="mt-4 flex justify-center">
+            <ErrorNotice
+              role="alert"
+              icon={CircleX}
+              tone="red"
+              title={t('Open-Science could not finish changing the Shell runtime.')}
+              description={t(
+                'Restart Open-Science before running another Shell command, then try the switch again.'
+              )}
+              diagnosticsLabel={t('Diagnostics')}
+              primaryButton={{
+                label: t('Try switching again'),
+                onClick: retryShellSwitch
+              }}
+            />
+          </div>
+        ) : null}
+
+        {supportAvailable ? (
+          <div className="mt-4 flex flex-col items-start gap-1.5">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void startSupportConversation()}
+              disabled={!chatProjectId}
+              data-testid="wsl-setup-conversation"
+            >
+              <MessagesSquare aria-hidden="true" />
+              {t('Set up in conversation')}
+            </Button>
+            {!chatProjectId ? (
+              <div className="flex flex-col items-start gap-1.5">
+                <p className="text-xs text-muted-foreground">
+                  {t('A project is required for the WSL2 setup conversation.')}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={createProjectForSetup}
+                  data-testid="wsl-setup-create-project"
+                >
+                  {t('Create project')}
+                </Button>
+              </div>
+            ) : null}
+            {conversationError ? (
+              <ErrorNotice
+                role="alert"
+                icon={CircleX}
+                tone="red"
+                title={t('Open-Science could not prepare the WSL2 setup conversation.')}
+                description={t('Check the WSL2 status again, then retry the conversation setup.')}
+                primaryButton={{
+                  label: t('Try again'),
+                  onClick: () => void startSupportConversation()
+                }}
+              />
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      <ConfirmActionDialog
+        open={confirmDependencyInstall}
+        title={t('Install missing Linux dependencies?')}
+        description={t(
+          'Open-Science will run a one-time root installation in {{distro}} for missing Linux packages only. It will not change sudoers, and {{user}} will remain the selected non-root user for everyday and future runs.',
+          {
+            distro: snapshot.selection?.distro ?? '',
+            user: snapshot.selection?.user ?? ''
+          }
+        )}
+        confirmLabel={t('Install missing dependencies')}
+        cancelLabel={t('Cancel')}
+        loading={actionBusy || installBusy}
+        loadingLabel={t('Installing Linux dependencies…')}
+        onConfirm={() => void installMissingDependencies()}
+        onCancel={() => setConfirmDependencyInstall(false)}
+      />
+    </SettingsSection>
+  )
+}

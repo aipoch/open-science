@@ -22,6 +22,7 @@ type NotebookApplicationDeps = Pick<
   | 'onBackgroundRunTerminal'
   | 'onBackgroundRunAdmitted'
   | 'onBackgroundRunObserved'
+  | 'dependencyAnalyzer'
 > &
   ProjectIdScope & {
     events: ApplicationEventPublisher

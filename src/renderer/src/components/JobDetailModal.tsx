@@ -1,3 +1,4 @@
+import { computeQueueBlockedLabel } from '@/lib/compute/queue-blocked-label'
 import { useCallback, useEffect, useState } from 'react'
 import { ArrowLeft, ExternalLink, ShieldAlert, TriangleAlert, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
@@ -250,7 +251,9 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
               ? t('Cancelled')
               : latestJob.cancellation_status === 'cancelling'
                 ? t('Cancelling')
-                : latestJob.status
+                : ((latestJob.status === 'queued'
+                    ? computeQueueBlockedLabel(latestJob.queue_blocked_reason, t)
+                    : undefined) ?? latestJob.status)
           }
         />
         <MetaRow label={t('Runtime', { context: 'duration' })} value={runtimeDisplay()} />

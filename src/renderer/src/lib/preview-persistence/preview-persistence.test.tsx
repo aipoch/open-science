@@ -273,6 +273,7 @@ describe('preview persistence projections', () => {
           artifactId: 'artifact-1',
           managedFileId: 'managed-file-1',
           selectedVersionId: 'artifact-version-2',
+          fileViewState: { provenanceOpen: true, provenanceTab: 'reproducibility' },
           versionNumber: 2,
           originSession: {
             state: 'deleted',
@@ -283,7 +284,9 @@ describe('preview persistence projections', () => {
       ]
     })
 
-    const restored = toRestoredSlice(toPersistedPreviewState(usePreviewWorkbenchStore.getState()))
+    const persisted = toPersistedPreviewState(usePreviewWorkbenchStore.getState())
+    expect(persisted.items[0]).not.toHaveProperty('fileViewState')
+    const restored = toRestoredSlice(persisted)
 
     expect(restored.items?.[0]).toMatchObject({
       size: 4096,

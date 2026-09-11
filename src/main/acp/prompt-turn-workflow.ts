@@ -33,6 +33,10 @@ import type { AcpSessionToolingAvailability } from './session-presentation-polic
 import type { SessionCapabilityPolicy } from './session-capability-owner'
 import type { AcpSessionRegistry } from './session-registry'
 import type { AcpTurnSkillOwner, TurnSkillHandle } from './turn-skill-owner'
+import {
+  NotebookWorkingFileObserver,
+  type NotebookWorkingFile
+} from './artifact-publication-continuation'
 
 const log = createLogger('acp-prompt-turn-workflow')
 
@@ -93,6 +97,11 @@ type AcpPromptTurnEnvironment = Readonly<{
       | undefined
   }>
   routeNotification: (notification: SessionNotification, sessionId: string) => void
+  requestArtifactPublicationContinuation?: (input: {
+    sessionId: string
+    provenanceContext?: AcpPromptRequest['provenanceContext']
+    files: readonly NotebookWorkingFile[]
+  }) => void
   diagnosticContext: () => Record<string, unknown>
   pushUserMessage: (input: {
     sessionId: string
@@ -122,6 +131,7 @@ type AcpPromptTurnArtifacts = Readonly<{
     onPublished: () => void
   ) => Promise<void>
   dispose: (artifact: ArtifactTurnHandle | undefined) => Promise<void>
+  publicationCount: (artifact: ArtifactTurnHandle | undefined) => number
 }>
 
 type AcpPromptTurnPlanWorkflow = Readonly<{
@@ -341,6 +351,7 @@ class AcpPromptTurnWorkflow {
     let userMessageEmitted = false
     let sideChatRelay: ReturnType<NonNullable<typeof env.sideChatRelays>['claim']>
     let sideChatRelaySettled = false
+    const notebookWorkingFiles = new NotebookWorkingFileObserver()
     const emitUserMessage = (): void => {
       if (
         (turn.mode.kind !== 'user' && turn.mode.kind !== 'application') ||
@@ -485,7 +496,12 @@ class AcpPromptTurnWorkflow {
           // the response, tools, stop metadata, and durable transcript all settle. Dropping these
           // notifications left Reviewer Corrections with only the [Auditor] prompt persisted, so the
           // fix loop could never observe the completed correction and refused its scoped re-review.
-          routeNotification: (notification) => env.routeNotification(notification, sessionId),
+          routeNotification: (notification) => {
+            this.safeCallback('Notebook working-file observation failed', () =>
+              notebookWorkingFiles.observe(notification)
+            )
+            env.routeNotification(notification, sessionId)
+          },
           reportBestEffortFailure: (stage, error) =>
             log.warn('provider prompt observation failed', {
               sessionId,
@@ -507,7 +523,7 @@ class AcpPromptTurnWorkflow {
       sideChatRelay.restore()
     }
     const model = env.backend().session.model
-    return finalizer.finalize(
+    const response = await finalizer.finalize(
       {
         sessionId,
         ...eventIdentity,
@@ -552,6 +568,23 @@ class AcpPromptTurnWorkflow {
       },
       outcome
     )
+    const unpublishedFiles = notebookWorkingFiles.snapshot()
+    if (
+      response.stopReason === 'end_turn' &&
+      turn.mode.kind !== 'app-continuation' &&
+      env.tooling().artifacts &&
+      artifacts.publicationCount(artifact) === 0 &&
+      unpublishedFiles.length > 0
+    ) {
+      this.safeCallback('artifact publication continuation callback failed', () =>
+        env.requestArtifactPublicationContinuation?.({
+          sessionId,
+          provenanceContext: request.provenanceContext,
+          files: unpublishedFiles
+        })
+      )
+    }
+    return response
   }
 
   private activeSession(sessionId: string): ActiveSession | undefined {

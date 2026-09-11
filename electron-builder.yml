@@ -39,6 +39,7 @@ files:
   # vendored source/native trees out of app.asar; the executable resources are copied explicitly per
   # platform below so path resolution and code signing remain deterministic.
   - '!node_modules/@aipoch/notebook-network-sandbox{,/**/*}'
+  - '!packages/notebook-network-sandbox{,/**/*}'
   # pdfjs-dist ships several redundant copies. The main process only loads `legacy/build` (text
   # extraction) and needs `cmaps`/`standard_fonts` for CJK/CID PDFs; the renderer bundles its own
   # copy via Vite. Drop the modern build, viewer, image decoders, TS types, and source maps
@@ -50,6 +51,7 @@ files:
   - '!node_modules/pdfjs-dist/**/*.map'
 asarUnpack:
   - resources/**
+  - node_modules/@aipoch/process-tree-native/build/Release/*.node
   - node_modules/@aipoch/safe-file-publisher-native/build/Release/*.node
   # sharp loads its platform N-API binding and libvips shared libraries by physical path.
   - node_modules/sharp/**
@@ -107,6 +109,8 @@ win:
       to: windows-notebook-sandbox-uninstall.ps1
     - from: packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe
       to: notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe
+    - from: packages/notebook-network-sandbox/vendor/wsl2/manifest.json
+      to: notebook-network-sandbox/wsl2/manifest.json
 nsis:
   artifactName: aipoch-${name}-${version}-win-${arch}-setup.${ext}
   shortcutName: ${productName}

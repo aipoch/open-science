@@ -15,13 +15,21 @@ import { AcpRuntimePublicationOwner } from './runtime-publication-owner'
 import type { RuntimeSnapshotProjection } from './runtime-snapshot-owner'
 import { AcpSessionEnvironmentPolicy } from './session-environment-policy'
 import { AcpSessionRegistry } from './session-registry'
-import { AcpSessionUpdateProjector } from './session-update-projector'
+import {
+  AcpSessionUpdateProjector,
+  type AcpToolFailureDiagnostic
+} from './session-update-projector'
 
 const log = createLogger('acp')
 
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRuntimeBaseOwners) => {
   const callbacks = options.callbacks ?? {}
+  let toolFailureObserver: ((failure: AcpToolFailureDiagnostic) => void) | undefined
+  const bindToolFailureObserver = (observer: (failure: AcpToolFailureDiagnostic) => void): void => {
+    if (toolFailureObserver) throw new Error('ACP tool failure observer is already bound.')
+    toolFailureObserver = observer
+  }
   const activeSessionIds = (): string[] =>
     sessionRegistry.entries(true).map(({ appSessionId }) => appSessionId)
   const promptInFlightSessionIds = (): string[] => {
@@ -180,6 +188,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       currentInteractionSequence: (sessionId) =>
         base.sessionInteractions.current(sessionId)?.sequence,
       mcpServerNamesFor: (sessionId) => base.sessionCapabilities.mcpServerNamesFor(sessionId),
+      shellRuntimeBindingFor: (sessionId) =>
+        base.sessionCapabilities.shellRuntimeBindingFor(sessionId),
       reviewerContextFor: (sessionId) => reviewerSessions.contextFor(sessionId),
       resolveReviewerPermission: (request) => reviewerSessions.resolvePermission(request),
       currentFramework: () => base.backendGeneration.current.framework,
@@ -309,13 +319,15 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       permissionContext.setProviderPermissionProfile(sessionId, profile),
     emitState: () => publication.emitState(),
     pushEvent: (event) => publication.pushEvent(event),
-    reportToolFailure: (effect) =>
+    reportToolFailure: (effect) => {
       log.warn('tool call failed', {
         tool: effect.tool,
         toolCallId: effect.toolCallId,
         sessionId: effect.sessionId,
         reason: effect.reason
       })
+      toolFailureObserver?.(effect)
+    }
   })
 
   return Object.freeze({
@@ -330,7 +342,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     permissionContext,
     clientInteractions,
     reviewerSessions,
-    sessionUpdateProjector
+    sessionUpdateProjector,
+    bindToolFailureObserver
   })
 }
 /* eslint-enable @typescript-eslint/explicit-function-return-type */

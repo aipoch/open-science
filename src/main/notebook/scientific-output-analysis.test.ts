@@ -7,6 +7,30 @@ const analyzeScientificOutputs = (
 ): ReturnType<typeof analyzeOutputs> => analyzeOutputs(relations, 'test-run')
 
 describe('scientific output analysis', () => {
+  it('does not let an unrelated JSON index claim every neighboring output as a model', () => {
+    const outputs = analyzeScientificOutputs([
+      { relation: 'created', relativePath: 'data/analysis.index.json' },
+      { relation: 'created', relativePath: 'data/counts.csv' },
+      { relation: 'created', relativePath: 'data/figure.png' }
+    ])
+    expect(outputs).toHaveLength(3)
+    expect(outputs.every((output) => output.storageShape === 'single-file')).toBe(true)
+  })
+
+  it('groups a model shard index only with matching weights, leaving unrelated outputs separate', () => {
+    const outputs = analyzeScientificOutputs([
+      { relation: 'created', relativePath: 'data/model/model.safetensors.index.json' },
+      { relation: 'created', relativePath: 'data/model/model-00001-of-00002.safetensors' },
+      { relation: 'created', relativePath: 'data/model/model-00002-of-00002.safetensors' },
+      { relation: 'created', relativePath: 'data/model/evaluation.csv' }
+    ])
+    expect(outputs).toHaveLength(2)
+    expect(outputs.find((output) => output.formatHint === 'sharded-model')?.members).toEqual([
+      'data/model/model-00001-of-00002.safetensors',
+      'data/model/model-00002-of-00002.safetensors',
+      'data/model/model.safetensors.index.json'
+    ])
+  })
   it.each([
     ['data/table.csv', 'text-data', ['format-validity-not-verified']],
     ['data/table.csv.gz', 'text-data', ['format-validity-not-verified']],
@@ -324,4 +348,43 @@ describe('scientific output analysis', () => {
     expect(first[0]?.members).toEqual(['data/result.csv'])
     expect(analyzeOutputs(relations, 'other-run')[0]?.outputId).not.toBe(first[0]?.outputId)
   })
+})
+
+it('keeps prefixed 10x samples and unrelated files separate in one directory', () => {
+  const samples = ['sample_A_', 'sample_a_']
+  const paths = samples.flatMap((prefix) =>
+    ['matrix.mtx.gz', 'barcodes.tsv.gz', 'features.tsv.gz'].map((name) => `data/${prefix}${name}`)
+  )
+  const groups = analyzeScientificOutputs(
+    [...paths, 'data/other_features.tsv.gz', 'data/notes.txt'].map((relativePath) => ({
+      relation: 'created',
+      relativePath
+    }))
+  ).filter((group) => group.formatHint === '10x-matrix')
+  expect(groups).toHaveLength(2)
+  for (const prefix of samples) {
+    expect(groups).toContainEqual(
+      expect.objectContaining({
+        members: paths.filter((path) => path.startsWith(`data/${prefix}`)).sort()
+      })
+    )
+  }
+})
+
+it('does not merge a 10x sample prefix with an identically named directory', () => {
+  const roots = ['data/sample_', 'data/sample_/']
+  const paths = roots.flatMap((root) =>
+    ['matrix.mtx.gz', 'barcodes.tsv.gz', 'features.tsv.gz'].map((name) => `${root}${name}`)
+  )
+  const groups = analyzeScientificOutputs(
+    paths.map((relativePath) => ({ relation: 'created', relativePath }))
+  ).filter((group) => group.formatHint === '10x-matrix')
+  expect(groups).toHaveLength(2)
+  expect(groups.map((group) => group.members)).toEqual(
+    expect.arrayContaining(
+      roots.map((root) =>
+        ['barcodes.tsv.gz', 'features.tsv.gz', 'matrix.mtx.gz'].map((name) => `${root}${name}`)
+      )
+    )
+  )
 })

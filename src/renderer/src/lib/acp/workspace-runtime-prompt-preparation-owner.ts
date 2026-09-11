@@ -300,6 +300,7 @@ const prepareExistingWorkspacePrompt = async (
             agentBackendId: reset?.backendId,
             providerSessionId: reset?.providerSessionId,
             providerContinuityToken: reset?.providerContinuityToken,
+            wslSetup: reset?.wslSetup,
             pendingHistoryReplay: currentSession?.pendingHistoryReplay ?? { kind: 'all' }
           },
           { preserveCompaction: Boolean(request.isCurrent && currentSession?.compacting) }
@@ -351,6 +352,7 @@ const prepareExistingWorkspacePrompt = async (
               agentBackendId: resumeResult.backendId,
               providerSessionId: resumeResult.providerSessionId,
               providerContinuityToken: resumeResult.providerContinuityToken,
+              wslSetup: resumeResult.wslSetup,
               ...(contextResetFromResume
                 ? {
                     pendingHistoryReplay:
@@ -378,6 +380,7 @@ const prepareExistingWorkspacePrompt = async (
             agentBackendId: reset?.backendId,
             providerSessionId: reset?.providerSessionId,
             providerContinuityToken: reset?.providerContinuityToken,
+            wslSetup: reset?.wslSetup,
             pendingHistoryReplay: currentSession?.pendingHistoryReplay ?? { kind: 'all' }
           },
           { preserveCompaction: Boolean(request.isCurrent && currentSession?.compacting) }

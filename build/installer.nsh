@@ -207,6 +207,18 @@ FunctionEnd
   StrCpy $perUserBrandedDataBackup ""
   StrCpy $dataProtectionFailed "0"
   StrCpy $dataRestoreFailed "0"
+  # The assisted install section elevates silent per-machine upgrades AFTER .onInit.
+  # Match that existing decision before any write probe or data move: the outer process
+  # must reach UAC, and only its elevated child may protect/replace the old installation.
+  ${if} ${Silent}
+  ${andIf} $hasPerMachineInstallation == "1"
+    ${ifNot} ${UAC_IsAdmin}
+      Goto openScienceCustomInit_done
+    ${endif}
+    # With both HKCU and HKLM registrations, initMultiUser initially chooses CurrentUser,
+    # but the silent install section later selects all-users. Preflight that final target.
+    !insertmacro setInstallModePerAllUsers
+  ${endif}
   ReadRegStr $perMachineInstallDirCache HKEY_LOCAL_MACHINE "${INSTALL_REGISTRY_KEY}" InstallLocation
   ReadRegStr $perUserInstallDirCache HKEY_CURRENT_USER "${INSTALL_REGISTRY_KEY}" InstallLocation
   Push $perMachineInstallDirCache
@@ -259,6 +271,7 @@ FunctionEnd
     Call ensureExistingUninstallerIsWritable
     !insertmacro protectMachineDataRootForSelectedMode
   ${endif}
+  openScienceCustomInit_done:
 !macroend
 
 # These callbacks cover cancellation or an installer failure before the post-uninstall hooks run.

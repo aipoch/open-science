@@ -7,6 +7,7 @@ import type {
 } from '../../shared/permission-profiles'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { CommandShellDialect } from '../agent-framework/types'
+import type { ShellRuntimeBinding } from '../../shared/notebook'
 import {
   ACTIVITY_GROUP_MCP_SERVER_NAME,
   isActivityGroupToolEvent
@@ -26,6 +27,8 @@ type PermissionPolicyContext = {
   permissionGrantSessionId?: string
   frameworkId?: AgentFrameworkId
   shellDialect?: CommandShellDialect
+  notebookShellRuntime?: ShellRuntimeBinding['kind']
+  notebookShellRuntimeQualifier?: string
   autoReviewStrategy?: PermissionAutoReviewStrategy
   cwd?: string
   // Canonical MCP server names, so framework-visible tools can resolve to stable policy identities.

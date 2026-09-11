@@ -24,6 +24,7 @@ import { readProcessStartToken } from './operation-recovery'
 import { isChildUnconfirmedError } from './provisioner-runtime'
 import type { NotebookRuntimeRepairOwner } from './runtime-repair'
 import type { MicromambaRunner } from './windows-micromamba-runner'
+import { discardImportedEnvironmentLock } from './imported-environment-lock'
 
 const REPAIR_QUARANTINE_FAILED = 'REPAIR_QUARANTINE_FAILED'
 const CACHE_ARCHIVE_EVIDENCE_INCOMPLETE = 'CACHE_ARCHIVE_EVIDENCE_INCOMPLETE'
@@ -54,7 +55,7 @@ type NotebookPackageMutationOwnerOptions = {
     request: NotebookPackageAdmittedTarget['request'],
     deps?: Partial<InstallDeps>
   ) => Promise<InstallResult>
-  packageSpawn?: (target: NotebookPackageAdmittedTarget) => InstallSpawn
+  packageSpawn?: (target: NotebookPackageAdmittedTarget, mirror: PackageMirror) => InstallSpawn
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   recheckRepair: (
     target: NotebookPackageAdmittedTarget
@@ -143,8 +144,11 @@ class NotebookPackageMutationOwner {
           let installerDurationMs = 0
           try {
             try {
+              if (journalTarget) discardImportedEnvironmentLock(runtimeRoot, journalTarget)
               installResult = await this.options.installPackages(request, {
-                ...(this.options.packageSpawn ? { spawn: this.options.packageSpawn(target) } : {}),
+                ...(this.options.packageSpawn
+                  ? { spawn: this.options.packageSpawn(target, mirror) }
+                  : {}),
                 micromambaRunner: this.options.micromambaRunner,
                 storageRoot: this.options.storageRoot,
                 condaChannel: mirror.condaChannel,

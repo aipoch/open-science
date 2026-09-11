@@ -1676,3 +1676,88 @@ describe('settings repository: unknown provider type on load (claude-default rem
     expect(settings.providers.find((p) => p.id === 'p-removed')).toBeUndefined()
   })
 })
+
+describe('settings repository: Local Shell runtime', () => {
+  it('switches the future runtime to PowerShell without deleting the saved WSL profile', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    const profile = { distro: 'Ubuntu-22.04', user: 'scientist' }
+    await repository.setWslSelection(profile)
+    await repository.setLocalShellRuntime('wsl2-bash', profile)
+
+    await repository.setLocalShellRuntime('powershell')
+
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'powershell',
+      wslSelection: { distro: 'Ubuntu-22.04', user: 'scientist' }
+    })
+  })
+
+  it('restores a failed Shell switch only while its exact mutation revision is still current', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    const profile = { distro: 'Ubuntu-22.04', user: 'scientist' }
+    await repository.setLocalShellRuntime('wsl2-bash', profile)
+    const failedWrite = await repository.setLocalShellRuntime('powershell')
+
+    await expect(repository.restoreLocalShellRuntime(failedWrite.mutation)).resolves.toBe(true)
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'wsl2-bash'
+    })
+
+    await expect(repository.restoreLocalShellRuntime(failedWrite.mutation)).resolves.toBe(false)
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'wsl2-bash'
+    })
+  })
+
+  it('does not roll back a newer same-value Shell mutation (ABA)', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    const profile = { distro: 'Ubuntu-22.04', user: 'scientist' }
+    await repository.setLocalShellRuntime('wsl2-bash', profile)
+    const older = await repository.setLocalShellRuntime('powershell')
+    await repository.setLocalShellRuntime('wsl2-bash', profile)
+    await repository.setLocalShellRuntime('powershell')
+
+    await expect(repository.restoreLocalShellRuntime(older.mutation)).resolves.toBe(false)
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'powershell'
+    })
+  })
+
+  it('activates a candidate atomically with WSL2 and rolls both fields back by revision', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.setWslSelection({ distro: 'Ubuntu-B', user: 'candidate' })
+    const activeA = { distro: 'Ubuntu-A', user: 'active' }
+    const activeB = { distro: 'Ubuntu-B', user: 'candidate' }
+    const first = await repository.setLocalShellRuntime('wsl2-bash', activeA)
+    expect(first.settings).toMatchObject({
+      localShellRuntime: 'wsl2-bash',
+      activatedWslSelection: activeA,
+      wslSelection: activeB
+    })
+
+    const failed = await repository.setLocalShellRuntime('wsl2-bash', activeB)
+    await expect(repository.restoreLocalShellRuntime(failed.mutation)).resolves.toBe(true)
+
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'wsl2-bash',
+      activatedWslSelection: activeA,
+      wslSelection: activeB
+    })
+  })
+
+  it('preserves candidate and activated WSL profiles when switching to PowerShell', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    const active = { distro: 'Ubuntu-A', user: 'active' }
+    const candidate = { distro: 'Ubuntu-B', user: 'candidate' }
+    await repository.setWslSelection(candidate)
+    await repository.setLocalShellRuntime('wsl2-bash', active)
+
+    await repository.setLocalShellRuntime('powershell')
+
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'powershell',
+      activatedWslSelection: active,
+      wslSelection: candidate
+    })
+  })
+})

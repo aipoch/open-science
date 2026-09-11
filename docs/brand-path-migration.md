@@ -214,7 +214,9 @@ fallback specifically for recovery; no new jobs are created through that fallbac
 
 `OpenScienceAPI`, component/type/function identifiers, `OPEN_SCIENCE_*`, `open_science`, HTTP/RPC
 member names, native AppContainer IDs/mutexes, signature key IDs, marketplace repository URLs and
-versioned ownership markers remain compatible. Hyphens cannot be inserted into ordinary JavaScript
+versioned ownership markers remain compatible. The Windows helper pipe `LOCAL\OpenScience.RAccess`
+is a wire contract shared with the shipped native helper; it is not a filesystem data root.
+Hyphens cannot be inserted into ordinary JavaScript
 identifiers. Renaming OS resource IDs or keys would create a different security/data identity.
 Legacy installation/Remote.It names remain read-side discovery candidates. These are individually
 reviewed technical contracts; they do not justify creating research data in old default directories.

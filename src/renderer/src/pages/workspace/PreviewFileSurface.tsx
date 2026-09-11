@@ -36,7 +36,7 @@ import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { errorDetail } from '@/lib/error-detail'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem, PreviewFileViewState } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
@@ -82,6 +82,7 @@ import type { PreviewDownloadVersionContext } from './previews/preview-runtime-c
 import type { PreviewInteractionPort } from './previews/preview-types'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
 import { ManagedVersionDiffError } from './ManagedVersionDiffError'
+import { PreviewProvenanceSplit } from './PreviewProvenanceSplit'
 import { ManagedVersionDiffContent } from './ManagedVersionDiffContent'
 import { PreviewActionMenuAdapterProvider } from './preview-actions/preview-action-adapter'
 import { usePreviewActions } from './preview-actions/preview-action-hooks'
@@ -760,11 +761,27 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     const canShowProvenance = Boolean(
       previewItem.source !== 'upload' && previewItem.artifactId && projectId
     )
+    const requestedProvenanceOpen =
+      storedItem?.fileViewState?.provenanceOpen ??
+      (provenanceTarget?.surfaceKey === surfaceKey ? true : undefined)
     const showProvenance =
       canShowProvenance &&
-      (provenanceTarget?.surfaceKey === surfaceKey ||
+      (requestedProvenanceOpen ??
         (widePreview && renderContent && mode === 'view' && dismissedProvenanceKey !== surfaceKey))
     const provenanceFocused = showProvenance && !widePreview
+    const updateFileView = (patch: PreviewFileViewState): void => {
+      if (storedItem) {
+        usePreviewWorkbenchStore.getState().setFileViewState(projectId, item.id, patch)
+      }
+      if (patch.provenanceOpen !== undefined) {
+        setProvenanceTarget(
+          patch.provenanceOpen
+            ? { surfaceKey, initialTab: patch.provenanceTab === 'sources' ? 'sources' : undefined }
+            : undefined
+        )
+        if (!patch.provenanceOpen) setDismissedProvenanceKey(surfaceKey)
+      }
+    }
     const lineageKey = `${projectId ?? ''}:${previewItem.sessionId}:${previewItem.artifactId ?? ''}`
     // Finalization increments the owning Session's filesRevision even when this already-open preview
     // remains on an older Version. Include it in the request identity so the version navigator learns
@@ -1237,7 +1254,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     }
     const openProvenance =
       previewItem.source !== 'upload' && previewItem.artifactId && projectId
-        ? (): void => setProvenanceTarget({ surfaceKey })
+        ? (): void => updateFileView({ provenanceOpen: true })
         : undefined
     const closePreview = (): void => {
       const close = (): void => {
@@ -1641,9 +1658,36 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   <VersionHistoryLoadButton history={lineageHistory} />
                 </>
               ) : null}
-              <div
-                data-testid="preview-file-content-region"
-                className="flex min-h-0 flex-1 overflow-hidden"
+              <PreviewProvenanceSplit
+                mode={showProvenance ? (widePreview ? 'split' : 'provenance') : 'content'}
+                provenance={
+                  showProvenance && projectId ? (
+                    <aside
+                      aria-label={t('Provenance')}
+                      data-testid="preview-provenance-pane"
+                      className="h-full min-h-0 min-w-0"
+                    >
+                      <ArtifactProvenancePanel
+                        item={resolvedPreviewItem}
+                        projectId={projectId}
+                        onClose={() => updateFileView({ provenanceOpen: false })}
+                        selectedTab={storedItem?.fileViewState?.provenanceTab}
+                        onTabChange={
+                          storedItem
+                            ? (provenanceTab) => updateFileView({ provenanceTab })
+                            : undefined
+                        }
+                        onVersionChange={selectProvenanceVersion}
+                        tooltipClassName={tooltipClassName}
+                        initialTab={
+                          provenanceTarget?.surfaceKey === surfaceKey
+                            ? provenanceTarget.initialTab
+                            : undefined
+                        }
+                      />
+                    </aside>
+                  ) : null
+                }
               >
                 <div
                   data-testid="preview-file-content-surface"
@@ -1750,29 +1794,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                     />
                   ) : null}
                 </div>
-                {showProvenance && projectId ? (
-                  <aside
-                    aria-label={t('Provenance')}
-                    data-testid="preview-provenance-pane"
-                    className={`h-full min-h-0 min-w-0 ${widePreview ? 'basis-[40%] shrink-0 border-l border-border-200' : 'flex-1'}`}
-                  >
-                    <ArtifactProvenancePanel
-                      item={resolvedPreviewItem}
-                      projectId={projectId}
-                      onClose={() => {
-                        setProvenanceTarget(undefined)
-                        setDismissedProvenanceKey(surfaceKey)
-                      }}
-                      onVersionChange={selectProvenanceVersion}
-                      initialTab={
-                        provenanceTarget?.surfaceKey === surfaceKey
-                          ? provenanceTarget.initialTab
-                          : undefined
-                      }
-                    />
-                  </aside>
-                ) : null}
-              </div>
+              </PreviewProvenanceSplit>
               {!showProvenance &&
               renderContent &&
               mode === 'view' &&
@@ -1785,7 +1807,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   data-testid="artifact-literature-entry"
                   className={`absolute right-3 z-40 gap-1.5 whitespace-nowrap border-border-300/50 bg-bg-000/90 shadow-sm backdrop-blur hover:bg-bg-100 active:bg-bg-200 ${resolvedPreviewItem.format === 'pdf' ? 'bottom-14' : 'bottom-3'}`}
                   aria-label={t('Literature')}
-                  onClick={() => setProvenanceTarget({ surfaceKey, initialTab: 'sources' })}
+                  onClick={() => updateFileView({ provenanceOpen: true, provenanceTab: 'sources' })}
                 >
                   <BookOpen className="size-3.5" aria-hidden="true" />
                   {t('Literature')}

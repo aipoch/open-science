@@ -853,6 +853,31 @@ describe('artifact IPC handlers', () => {
     expect(close).toHaveBeenCalledOnce()
   })
 
+  it('waits for a logical Artifact preview that is still being published', async () => {
+    const publicationPending = Object.assign(new Error('Managed file has no published version.'), {
+      code: 'VERSION_NOT_FOUND'
+    })
+    const openManagedFileVersion = vi
+      .fn()
+      .mockRejectedValueOnce(publicationPending)
+      .mockResolvedValue(createPreviewLease(Buffer.from('published preview')))
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
+      openManagedFileVersion
+    })
+    const request = {
+      path: '/replaceable/artifact.txt',
+      projectId: 'project-1',
+      fileId: 'artifact-1',
+      versionId: 'artifact-v1',
+      maxBytes: 1024
+    }
+
+    await expect(handlers.readPreview(request)).resolves.toMatchObject({
+      content: 'published preview'
+    })
+    expect(openManagedFileVersion).toHaveBeenCalledTimes(2)
+  })
+
   it('closes the logical Artifact lease when its post-read integrity check fails', async () => {
     const bytes = Buffer.from('changed artifact bytes')
     const close = vi.fn().mockResolvedValue(undefined)

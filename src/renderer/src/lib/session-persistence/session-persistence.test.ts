@@ -3300,6 +3300,122 @@ describe('renderer session persistence bridge', () => {
     })
   })
 
+  it('saves a generated file event already attached by Main after JSON readback', async () => {
+    const prompt = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'Create a chart',
+      status: 'complete' as const,
+      eventIds: [] as string[],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const partial = {
+      id: 'agent-message-1',
+      role: 'agent' as const,
+      content: 'Partial',
+      status: 'streaming' as const,
+      streamId: 'run-1',
+      responseToMessageId: prompt.id,
+      eventIds: ['event-1'],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        messages: [prompt, partial]
+      })
+    )
+    const authoritative = materializeSessionConversationGraph({
+      ...base,
+      revision: 9,
+      messages: [prompt, { ...partial, artifactIds: ['artifact-version-1'], updatedAt: 3 }],
+      artifacts: [
+        {
+          id: 'artifact-version-1',
+          kind: 'managed-file',
+          path: '/data/artifacts/chart.png',
+          fileUrl: 'file:///data/artifacts/chart.png',
+          size: 3,
+          name: 'chart.png',
+          createdAt: 3,
+          mtimeMs: 3
+        }
+      ],
+      updatedAt: base.updatedAt + 1
+    })
+    let durable: PersistedChatSession = JSON.parse(JSON.stringify(authoritative))
+    const main = new SessionPersistenceStateOwner({
+      repository: {
+        loadSessionWithDiagnostics: async () => ({ status: 'found', session: durable }),
+        saveSession: async (candidate) => {
+          durable = JSON.parse(
+            JSON.stringify({ ...candidate, revision: (durable.revision ?? 0) + 1 })
+          )
+          return durable
+        }
+      },
+      fileIndex: { syncSession: async () => [] },
+      assertMutable: () => undefined,
+      notifyFilesChanged: () => undefined,
+      notifyRuntimeContextSessionUpdated: () => undefined,
+      log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    })
+    const saveSession = vi.fn<SessionPersistenceApi['saveSession']>((session, options) =>
+      main.saveSession(session, options)
+    )
+    const api = createApi({
+      loadOne: vi.fn(async () => JSON.parse(JSON.stringify(durable))),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().attachRunArtifacts({
+      sessionId: base.id,
+      runId: 'run-1',
+      eventId: 'artifact-event-1',
+      promptMessageId: prompt.id,
+      artifacts: [
+        {
+          id: 'artifact-version-1',
+          projectId: 'project-a',
+          sessionId: base.id,
+          messageId: partial.id,
+          name: 'chart.png',
+          path: '/data/artifacts/chart.png',
+          fileUrl: 'file:///data/artifacts/chart.png',
+          size: 3,
+          createdAt: new Date(3).toISOString(),
+          mtimeMs: 3
+        }
+      ]
+    })
+
+    // Both owners describe the same file on disk; only absent versus undefined properties differ.
+    expect(
+      JSON.parse(
+        JSON.stringify(toPersistedSession(useSessionStore.getState().sessions[0]).artifacts)
+      )
+    ).toEqual(JSON.parse(JSON.stringify(authoritative.artifacts)))
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      artifacts: [expect.objectContaining(authoritative.artifacts![0])],
+      messages: [
+        expect.objectContaining({ id: prompt.id }),
+        expect.objectContaining({
+          id: partial.id,
+          content: 'Partial',
+          eventIds: ['event-1', 'artifact-event-1'],
+          artifactIds: ['artifact-version-1']
+        })
+      ]
+    })
+  })
+
   it('does not merge competing edits that select different Branch identities', async () => {
     const target = {
       id: 'prompt-1',

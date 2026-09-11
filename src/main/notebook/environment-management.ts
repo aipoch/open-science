@@ -1,4 +1,8 @@
-import type { NotebookKernelMetadata, NotebookLanguage } from '../../shared/notebook'
+import type {
+  NotebookEnvironmentLock,
+  NotebookKernelMetadata,
+  NotebookLanguage
+} from '../../shared/notebook'
 import type {
   EnvironmentInfo,
   ManageEnvironmentsRequest,
@@ -18,6 +22,13 @@ type NotebookEnvironmentManager = {
     request?: Extract<ManageEnvironmentsRequest, { action: 'create' }>,
     signal?: AbortSignal
   ) => Promise<EnvironmentInfo>
+  createNamedEnvironmentFromLock?: (
+    name: string,
+    language: NotebookLanguage,
+    lock: NotebookEnvironmentLock,
+    lockChecksum: string,
+    request?: { projectId?: string }
+  ) => Promise<{ environment: EnvironmentInfo; reused: boolean }>
   listEnvironments: (signal?: AbortSignal) => EnvironmentInfo[] | Promise<EnvironmentInfo[]>
   removeEnvironment: (name: string) => void
 }
@@ -140,6 +151,34 @@ class NotebookEnvironmentManagementOwner {
         )
       }
     }
+  }
+
+  async importLock(input: {
+    projectId?: string
+    language: NotebookLanguage
+    lock: NotebookEnvironmentLock
+    lockChecksum: string
+  }): Promise<{ environmentName: string; reused: boolean }> {
+    const manager = this.manager
+    if (!manager?.createNamedEnvironmentFromLock) {
+      throw new Error('Environment lock import is unavailable.')
+    }
+    if (input.language !== 'python' && input.language !== 'r') {
+      throw new Error('An imported environment requires Python or R.')
+    }
+    const name = assertSafeEnvName(`repro-${input.lockChecksum.slice(0, 12)}`)
+    await this.options.ensureRecovered()
+    this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
+    return this.options.environmentOperations.runMutation(name, async () => {
+      const result = await manager.createNamedEnvironmentFromLock!(
+        name,
+        input.language,
+        input.lock,
+        input.lockChecksum,
+        input.projectId ? { projectId: input.projectId } : undefined
+      )
+      return { environmentName: result.environment.name, reused: result.reused }
+    })
   }
 
   private isLive(name: string): boolean {

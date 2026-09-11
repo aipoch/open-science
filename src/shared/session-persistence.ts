@@ -936,6 +936,9 @@ export type SessionSummary = Readonly<{
   updatedAt: number
   presentedActivityAt?: number
   needsStartupRecovery: boolean
+  // Transient presentation hint projected from Main's durable WSL setup binding owner. It is not
+  // stored in Session JSON and never carries the one-time setup token.
+  wslSetup?: true
 }>
 
 export type SessionUsageProjection = Readonly<{
@@ -4676,10 +4679,11 @@ export const createSessionFile = (session: PersistedChatSession): PersistedSessi
 
 // Decodes one Session file without treating a valid future envelope as corrupt. Bare Sessions and
 // v1 envelopes are released historical formats; every other past or malformed version fails closed.
-export const decodeSessionFile = (
-  value: unknown,
-  options: SessionFileReadOptions = {}
-): SessionFileDecodeResult => {
+export const decodeSessionEnvelope = (
+  value: unknown
+):
+  | { status: 'ok'; session: Record<string, unknown> }
+  | { status: 'invalid' | 'unsupported-version' } => {
   if (!isRecord(value)) return { status: 'invalid' }
 
   const hasEnvelopeField = Object.hasOwn(value, 'version') || Object.hasOwn(value, 'session')
@@ -4693,7 +4697,19 @@ export const decodeSessionFile = (
     }
   }
 
-  const rawSession = hasEnvelopeField ? (value.session as Record<string, unknown>) : value
+  return {
+    status: 'ok',
+    session: hasEnvelopeField ? (value.session as Record<string, unknown>) : value
+  }
+}
+
+export const decodeSessionFile = (
+  value: unknown,
+  options: SessionFileReadOptions = {}
+): SessionFileDecodeResult => {
+  const envelope = decodeSessionEnvelope(value)
+  if (envelope.status !== 'ok') return envelope
+  const rawSession = envelope.session
 
   // A persisted Session needs one authoritative conversation representation. The compatibility
   // message list may be absent or malformed only when a canonical graph can replace it; otherwise

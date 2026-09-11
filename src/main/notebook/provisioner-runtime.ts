@@ -28,6 +28,11 @@ export type MicromambaErrorData = {
   stdoutTail?: string
 }
 
+export type MicromambaOutput = {
+  stream: 'stdout' | 'stderr'
+  text: string
+}
+
 const hasMicromambaErrorData = (error: unknown): error is { data: MicromambaErrorData } =>
   error instanceof Error &&
   typeof (error as { data?: unknown }).data === 'object' &&
@@ -67,6 +72,7 @@ export const killAndConfirmExit = (
 // Builds the subprocess environment. By default extra vars merge over the current process env; callers
 // that already built a sanitized managed-runtime environment set completeEnv to prevent re-inheritance.
 type VerifyExecutableOptions = {
+  signal?: AbortSignal
   prefix?: string
   env?: NodeJS.ProcessEnv
   platform?: NodeJS.Platform
@@ -161,22 +167,37 @@ export const verifyExecutable = async (
   options: VerifyExecutableOptions = {}
 ): Promise<void> => {
   try {
-    const isR = ['r', 'r.exe'].includes(basename(bin).toLowerCase())
-    const { stdout } = await execFileAsync(
-      bin,
-      isR ? ['--vanilla', '--slave', '-e', R_RUNTIME_PATH_PROBE] : ['--version'],
-      {
-        timeout: 15_000,
-        windowsHide: true,
-        env: executableEnv(options),
-        encoding: 'utf8'
+    options.signal?.throwIfAborted()
+    const isR = ['r', 'r.exe', 'rscript', 'rscript.exe'].includes(basename(bin).toLowerCase())
+    let stdout = ''
+    let oversized = false
+    await runMicromamba(
+      [bin, ...(isR ? ['--vanilla', '--slave', '-e', R_RUNTIME_PATH_PROBE] : ['--version'])],
+      executableEnv(options),
+      options.signal,
+      undefined,
+      undefined,
+      15_000,
+      (output) => {
+        if (output.stream !== 'stdout') return
+        oversized ||= stdout.length + output.text.length > 64 * 1024
+        stdout = (stdout + output.text).slice(0, 64 * 1024)
       }
     )
+    options.signal?.throwIfAborted()
+    if (oversized) throw new Error('Interpreter verification output exceeds its limit.')
     if (isR) {
       if (!options.prefix) throw new Error('an expected prefix is required to verify R')
       assertRRuntimePaths(stdout, options.prefix, options.platform)
     }
   } catch (error) {
+    if (isChildUnconfirmedError(error)) {
+      throw new Error(
+        `${CHILD_UNCONFIRMED}: interpreter verification process tree could not be confirmed stopped.`,
+        { cause: error }
+      )
+    }
+    options.signal?.throwIfAborted()
     throw new Error(`interpreter not executable: ${bin} (${(error as Error).message})`)
   }
 }
@@ -195,7 +216,10 @@ export const runMicromamba = (
   // re-arm the intent so a crash before its PID is recorded blocks rather than trusting a prior PID.
   // Throwing here fails closed: nothing is spawned.
   onBeforeSpawn?: () => void,
-  timeoutMs = 600_000
+  timeoutMs = 600_000,
+  // Best-effort observer for live installer output. A consumer failure must not strand or fail the
+  // package process; final diagnostics are still retained independently in the bounded tails below.
+  onOutput?: (output: MicromambaOutput) => void
 ): Promise<void> =>
   new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
@@ -233,11 +257,21 @@ export const runMicromamba = (
     const startedAt = Date.now()
     const appendTail = (current: string, chunk: unknown): string =>
       `${current}${String(chunk)}`.slice(-maxTail)
+    const publishOutput = (stream: MicromambaOutput['stream'], chunk: unknown): void => {
+      const text = String(chunk)
+      try {
+        onOutput?.({ stream, text })
+      } catch {
+        // Live output is observational. Do not let a renderer subscriber interrupt provisioning.
+      }
+    }
     child.stdout.on('data', (chunk) => {
       stdout = appendTail(stdout, chunk)
+      publishOutput('stdout', chunk)
     })
     child.stderr.on('data', (chunk) => {
       stderr = appendTail(stderr, chunk)
+      publishOutput('stderr', chunk)
     })
 
     const cleanup = (): void => {

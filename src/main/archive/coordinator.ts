@@ -40,7 +40,11 @@ class ArchiveCoordinator {
   constructor(
     private readonly projects: ProjectArchiveRepository,
     private readonly sessions: SessionArchivePersistence,
-    private readonly runtime: SessionRuntimeActivity
+    private readonly runtime: SessionRuntimeActivity,
+    private readonly backgroundWork?: {
+      cancelProject(projectId: string): Promise<void>
+      cancelSession(projectId: string, sessionId: string): Promise<void>
+    }
   ) {}
 
   private enqueue<Result>(projectId: string, operation: () => Promise<Result>): Promise<Result> {
@@ -79,7 +83,10 @@ class ArchiveCoordinator {
       if ((project.archiveRevision ?? 0) !== request.expectedArchiveRevision) {
         throw new Error('Project archive state changed elsewhere.')
       }
-      if (request.archived === (currentArchivedAt !== null)) return project
+      if (request.archived === (currentArchivedAt !== null)) {
+        if (request.archived) await this.backgroundWork?.cancelProject(request.id)
+        return project
+      }
 
       if (request.archived && (await this.runtime.isProjectBusy(request.id))) {
         throw new Error('Finish or stop active sessions before archiving this project.')
@@ -91,6 +98,8 @@ class ArchiveCoordinator {
         : []
       const next = await this.projects.updateArchive(request, Date.now())
       if (request.archived) {
+        // Admission shares this queue, so no check can start between archive and drain.
+        await this.backgroundWork?.cancelProject(request.id)
         // Read state is an attention projection, not archive authority. A transient badge/database
         // failure must not roll back the durable archive transition.
         await this.markReadSessions(sessionIds).catch(() => undefined)
@@ -105,7 +114,10 @@ class ArchiveCoordinator {
       const session = await this.sessions.updateArchive(request, () =>
         this.runtime.isSessionBusy(request.projectId, request.sessionId)
       )
-      if (request.archived) await this.markReadSessions([request.sessionId]).catch(() => undefined)
+      if (request.archived) {
+        await this.backgroundWork?.cancelSession(request.projectId, request.sessionId)
+        await this.markReadSessions([request.sessionId]).catch(() => undefined)
+      }
       return session
     })
   }

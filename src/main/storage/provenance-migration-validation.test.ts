@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { validateProvenanceMigrationState } from './provenance-migration-validation'
 import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { ArtifactReproducibilityReceiptStore } from '../artifacts/artifact-reproducibility-receipts'
 
 let root: string
 const sha256 = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex')
@@ -564,8 +565,120 @@ describe('validateProvenanceMigrationState', () => {
       })
     )
     await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
+    const receipt = await new ArtifactReproducibilityReceiptStore({
+      resolveVersionDirectory: async () => versionDirectory
+    }).append(
+      {
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: 'artifact-1',
+        versionId: 'version-1'
+      },
+      {
+        schemaVersion: 1,
+        receiptId: 'attempt-1',
+        startedAt: '2026-09-02T00:00:00.000Z',
+        completedAt: '2026-09-02T00:01:00.000Z',
+        outcome: 'matched',
+        artifactVersion: {
+          projectId: 'project-1',
+          appSessionId: 'session-1',
+          artifactId: 'artifact-1',
+          versionId: 'version-1',
+          targetChecksum: checksum
+        },
+        frontier: { frontierId: 'original-inputs', claimScope: 'end-to-end' },
+        recipe: { recipeId: 'a'.repeat(64), graphChecksum: 'b'.repeat(64) },
+        environmentLocks: [],
+        completedStepIds: ['notebook:run-1'],
+        comparisons: [
+          {
+            stepId: 'notebook:run-1',
+            entityId: 'file-1',
+            relativePath: 'result.txt',
+            expectedChecksum: checksum,
+            expectedSizeBytes: content.byteLength,
+            actualChecksum: checksum,
+            actualSizeBytes: content.byteLength,
+            status: 'matched'
+          }
+        ]
+      }
+    )
+    const receiptPath = join(
+      versionDirectory,
+      'reproducibility-checks',
+      `sha256-${receipt.receiptChecksum}.json`
+    )
+    const receiptContents = await readFile(receiptPath, 'utf8')
+    const logPath = join(
+      versionDirectory,
+      'reproducibility-checks',
+      'logs',
+      `sha256-${receipt.checkLog!.logChecksum}.json`
+    )
+    const logContents = await readFile(logPath, 'utf8')
+    await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
+    await writeFile(logPath, logContents.replace('"truncated":false', '"truncated":true'))
+    await expect(validateProvenanceMigrationState(root)).rejects.toThrow(
+      /reproducibility check log checksum mismatch/i
+    )
+    await writeFile(logPath, logContents)
+    await writeFile(
+      join(versionDirectory, 'reproducibility-checks', 'history-index.json'),
+      '{broken'
+    )
+    await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
+    await writeFile(
+      receiptPath,
+      receiptContents.replace('"outcome":"matched"', '"outcome":"different"')
+    )
+    await expect(validateProvenanceMigrationState(root)).rejects.toThrow(
+      /reproducibility receipt checksum mismatch/i
+    )
+    await writeFile(receiptPath, receiptContents)
     await writeFile(join(versionDirectory, 'content'), Buffer.from('artifact bytez'))
     await expect(validateProvenanceMigrationState(root)).rejects.toThrow(/content checksum/i)
+  })
+
+  it('refuses an Artifact execution snapshot with a malformed reproduction recipe', async () => {
+    const content = Buffer.from('artifact bytes')
+    const checksum = sha256(content)
+    const execution = JSON.stringify({
+      schemaVersion: 2,
+      reproducibilityRecipe: { schemaVersion: 1 }
+    })
+    const versionDirectory = join(
+      root,
+      'artifacts',
+      'project-1',
+      'session-1',
+      '.provenance',
+      'artifact-1',
+      'versions',
+      'version-1'
+    )
+    await mkdir(versionDirectory, { recursive: true })
+    await writeFile(join(versionDirectory, 'content'), content)
+    await writeFile(join(versionDirectory, 'execution.json'), execution)
+    await writeFile(
+      join(versionDirectory, 'evidence.json'),
+      JSON.stringify({
+        schema_version: 1,
+        project_id: 'project-1',
+        app_session_id: 'session-1',
+        artifact_id: 'artifact-1',
+        version_id: 'version-1',
+        size_bytes: content.byteLength,
+        checksum,
+        execution_status: { state: 'available' },
+        execution_snapshot_checksum: sha256(execution)
+      })
+    )
+
+    await expect(validateProvenanceMigrationState(root)).rejects.toThrow(
+      /reproducibility recipe is invalid/i
+    )
   })
 
   it('validates only Environment manifests referenced by retained Notebook runs', async () => {
@@ -597,6 +710,64 @@ describe('validateProvenanceMigrationState', () => {
     await writeFile(join(manifestDirectory, `${manifestChecksum}.json`), 'corrupt referenced entry')
     await expect(validateProvenanceMigrationState(root)).rejects.toThrow(
       /Notebook Environment manifest checksum mismatch/i
+    )
+  })
+
+  it('validates content-addressed Environment locks referenced by Notebook runs', async () => {
+    const manifest = JSON.stringify({ schemaVersion: 1, environmentName: 'default-python' })
+    const manifestChecksum = sha256(manifest)
+    const manifestDirectory = join(root, 'runtime', 'provenance', 'environment-manifests')
+    await mkdir(manifestDirectory, { recursive: true })
+    await writeFile(join(manifestDirectory, `${manifestChecksum}.json`), manifest)
+
+    const lock = JSON.stringify({
+      schemaVersion: 1,
+      format: 'environment-lock-bundle',
+      kernelKind: 'python',
+      environmentName: 'default-python',
+      components: [
+        {
+          ecosystem: 'conda',
+          format: 'conda-explicit-md5',
+          resolution: 'locked',
+          explicitLock:
+            '@EXPLICIT\nhttps://conda.example/linux-64/numpy.conda#0123456789abcdef0123456789abcdef\n',
+          packages: ['numpy']
+        }
+      ]
+    })
+    const lockChecksum = sha256(lock)
+    const lockDirectory = join(root, 'runtime', 'provenance', 'environment-locks')
+    await mkdir(lockDirectory, { recursive: true })
+    await writeFile(join(lockDirectory, `${lockChecksum}.json`), lock)
+
+    const notebookDirectory = join(root, 'notebooks', 'project-1', 'notebook-session-1')
+    await mkdir(notebookDirectory, { recursive: true })
+    await writeFile(
+      join(notebookDirectory, 'run.json'),
+      JSON.stringify({
+        version: 1,
+        projectId: 'project-1',
+        sessionId: 'notebook-session-1',
+        runs: [
+          {
+            runId: 'run-1',
+            environmentCapture: { state: 'available', manifestChecksum },
+            environmentManifestChecksum: manifestChecksum,
+            environmentLock: {
+              state: 'available',
+              format: 'environment-lock-bundle',
+              lockChecksum
+            }
+          }
+        ]
+      })
+    )
+
+    await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
+    await writeFile(join(lockDirectory, `${lockChecksum}.json`), `${lock}\n`)
+    await expect(validateProvenanceMigrationState(root)).rejects.toThrow(
+      /Environment lock checksum mismatch/i
     )
   })
 })

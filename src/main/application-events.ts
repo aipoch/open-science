@@ -39,6 +39,7 @@ import type { UpdateStatus } from '../shared/update'
 import type { LocalePreferenceSnapshot } from '../shared/locale'
 import type { TagsChangedEvent } from '../shared/tags'
 import type { MemoryChangedEvent } from '../shared/memory'
+import type { WslSetupStatus } from '../shared/wsl-setup'
 import type {
   SessionPersistenceFlushAbortedEvent,
   SessionPersistenceFlushRequest
@@ -94,6 +95,7 @@ export type ApplicationEventMap = {
   'settings:connector-runtime-changed': undefined
   'settings:install-log': ClaudeInstallEvent
   'settings:changed': SettingsSnapshot
+  'settings:wsl-setup-changed': WslSetupStatus
   'storage:migrate-progress': MigrationProgress
   'reviewer:updated': ReviewUpdateEvent
   'reviewer:suppress-next-auto-review': ReviewSuppressionEvent

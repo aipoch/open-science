@@ -1310,24 +1310,25 @@ describe('installAppLifecycle', () => {
     expect(app.exit).not.toHaveBeenCalled()
   })
 
-  it('before-quit with delegated work + blocked choice keeps the app alive without interruption', async () => {
-    const sessions: ActiveSessionInfo[] = [
-      { projectId: 'demo', sessionId: 's1', kind: 'delegated' }
-    ]
-    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'cancel')
-    const { app, shutdownBackends, quit } = setup({
-      detectActiveSessions: () => sessions,
-      confirmClose
-    })
+  it.each(['delegated', 'notebook'] as const)(
+    'before-quit with %s work + cancel keeps the app alive without interruption',
+    async (kind) => {
+      const sessions: ActiveSessionInfo[] = [{ projectId: 'demo', sessionId: 's1', kind }]
+      const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'cancel')
+      const { app, shutdownBackends, quit } = setup({
+        detectActiveSessions: () => sessions,
+        confirmClose
+      })
 
-    app.emit('before-quit')
-    await flush()
+      app.emit('before-quit')
+      await flush()
 
-    expect(confirmClose).toHaveBeenCalledWith('quit', sessions)
-    expect(quit).not.toHaveBeenCalled()
-    expect(shutdownBackends).not.toHaveBeenCalled()
-    expect(app.exit).not.toHaveBeenCalled()
-  })
+      expect(confirmClose).toHaveBeenCalledWith('quit', sessions)
+      expect(quit).not.toHaveBeenCalled()
+      expect(shutdownBackends).not.toHaveBeenCalled()
+      expect(app.exit).not.toHaveBeenCalled()
+    }
+  )
 
   const cancelSessions: ActiveSessionInfo[] = [
     { projectId: 'demo', sessionId: 's1', kind: 'agent' }

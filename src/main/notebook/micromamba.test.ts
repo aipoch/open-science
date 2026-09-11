@@ -41,6 +41,16 @@ describe('micromamba argv builders', () => {
     expect(argv.join(' ')).not.toContain('conda-forge')
   })
 
+  it('can create from an imported explicit lock with network access', () => {
+    const argv = createFromLockArgv('/mm', '/root', '/root/envs/repro-lock', '/tmp/lock', {
+      offline: false
+    })
+    expect(argv).not.toContain('--offline')
+    expect(argv).toEqual(
+      expect.arrayContaining(['--file', '/tmp/lock', '-p', '/root/envs/repro-lock'])
+    )
+  })
+
   it('createFromPackagesArgv is the online channel form with packages last', () => {
     const argv = createFromPackagesArgv(
       '/mm',
@@ -324,12 +334,13 @@ describe('micromambaSpawnEnv', () => {
     (platform) => {
       const root = platform === 'win32' ? 'D:\\Open-Science\\runtime' : '/runtime'
       const runtimePath = platform === 'win32' ? win32 : { join }
-      const cache = runtimePath.join(root, 'pkgs')
+      const cache = runtimePath.join(root, 'coordinated-pkgs')
       const home = runtimePath.join(root, 'home')
       const env = micromambaSpawnEnv(root, '/ca.pem', {
         platform,
         env: {
           HOME: '/host-home',
+          HTTPS_PROXY: 'http://proxy.test:8080',
           USERPROFILE: 'C:\\Users\\host-user',
           CONDA_PKGS_DIRS: '/existing',
           CONDA_ENVS_PATH: '/existing-envs',
@@ -343,6 +354,7 @@ describe('micromambaSpawnEnv', () => {
       })
 
       expect(env.HOME).toBe(home)
+      expect(env.HTTPS_PROXY).toBe('http://proxy.test:8080')
       expect(env.USERPROFILE).toBe(home)
       expect(env.MAMBA_ROOT_PREFIX).toBe(root)
       expect(env.CONDA_PKGS_DIRS).toBe(cache)

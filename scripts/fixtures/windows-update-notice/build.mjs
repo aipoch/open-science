@@ -10,15 +10,27 @@ const compiler = process.env.OPEN_SCIENCE_MAKENSIS
 if (!compiler) throw new Error('Set OPEN_SCIENCE_MAKENSIS to the cached makensis.exe.')
 const name = 'open-science-update-notice-test'
 const guid = '11f7eae6-e7e3-4c1c-931f-2a9b1df095ea'
-for (const [version, code, hook] of [
+const currentHook = await readFile('build/installer.nsh', 'utf8')
+const elevationProbe = await readFile(
+  'scripts/fixtures/windows-update-notice/elevation-probe.nsh',
+  'utf8'
+)
+const elevatedPreflightProbe = await readFile(
+  'scripts/fixtures/windows-update-notice/elevated-preflight-probe.nsh',
+  'utf8'
+)
+for (const [directory, version, code, hook] of [
   [
+    '0.25.1',
     '0.25.1',
     25,
     execFileSync('git', ['show', 'v0.25.1:build/installer.nsh'], { encoding: 'utf8' })
   ],
-  ['0.26.0', 26, await readFile('build/installer.nsh', 'utf8')]
+  ['0.26.0', '0.26.0', 26, currentHook],
+  ['elevation', '0.26.0', 26, elevationProbe + currentHook],
+  ['elevated-preflight', '0.26.0', 26, elevatedPreflightProbe + currentHook]
 ]) {
-  const projectDir = join(root, version)
+  const projectDir = join(root, directory)
   const packed = join(projectDir, 'packed')
   await mkdir(join(packed, 'resources'), { recursive: true })
   await writeFile(

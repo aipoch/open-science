@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
+import type { PackageMirror } from '../../shared/mirror'
 import { createRootNotebookLane } from './lane-identity'
 import { NotebookPackageOperations } from './package-operations'
 import { installPackages } from './package-manager'
@@ -407,6 +408,38 @@ describe('NotebookPackageOperations', () => {
     )
     expect(options.environmentOperations.recommendRestart).toHaveBeenCalledWith('r', 'default-r')
     expect(options.notifyChanged).toHaveBeenCalledWith(activeSession)
+  })
+
+  it('passes the current mirror to the installer sandbox without retaining replaced or cleared mirrors', async () => {
+    let configuredMirror: PackageMirror = { pypiIndex: 'https://packages.example.org/simple' }
+    const packageSpawn = vi.fn(() => vi.fn())
+    const { owner } = harness(session('session-1'), {
+      resolvePackageMirror: vi.fn(() => configuredMirror),
+      mirrorProbe: { candidates: [] },
+      packageSpawn
+    })
+
+    await owner.manage({ language: 'python', packages: ['numpy'], usePip: true })
+    configuredMirror = { pypiIndex: 'https://new-packages.example.org/simple' }
+    await owner.manage({ language: 'python', packages: ['pandas'], usePip: true })
+    configuredMirror = {}
+    await owner.manage({ language: 'python', packages: ['scipy'], usePip: true })
+
+    expect(packageSpawn).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ request: expect.objectContaining({ packages: ['numpy'] }) }),
+      { pypiIndex: 'https://packages.example.org/simple' }
+    )
+    expect(packageSpawn).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ request: expect.objectContaining({ packages: ['pandas'] }) }),
+      { pypiIndex: 'https://new-packages.example.org/simple' }
+    )
+    expect(packageSpawn).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ request: expect.objectContaining({ packages: ['scipy'] }) }),
+      {}
+    )
   })
 
   it('returns an explicit target receipt when the admitted installer throws', async () => {

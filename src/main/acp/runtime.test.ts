@@ -244,6 +244,7 @@ const startFakeAgent = (
       text: string
       prompt: ContentBlock[]
     }) => Promise<PromptResponse | void> | PromptResponse | void
+    updatesForPrompt?: (text: string) => SessionNotification['update'][]
     elicitationForPrompt?: (context: {
       sessionId: string
       text: string
@@ -470,6 +471,12 @@ const startFakeAgent = (
             title: tool.title,
             status: 'completed'
           }
+        })
+      }
+      for (const update of options.updatesForPrompt?.(text) ?? []) {
+        await ctx.client.notify(acp.methods.client.session.update, {
+          sessionId: ctx.params.sessionId,
+          update
         })
       }
       const usage = options.usageForPrompt?.(text)
@@ -12334,6 +12341,136 @@ describe('ACP runtime session management', () => {
     }
   })
 
+  it.each([
+    [
+      'Claude Code',
+      claudeCodeFramework,
+      'claude-anthropic',
+      'claude-code:provider-a',
+      'mcp__open-science-artifacts__write_artifact_file'
+    ],
+    [
+      'OpenCode',
+      opencodeFramework,
+      'opencode-openai',
+      'opencode:provider-a',
+      'open_science_artifacts_write_artifact_file'
+    ],
+    [
+      'Codex Responses',
+      codexFramework,
+      'codex-responses',
+      'codex:provider-a',
+      'mcp.open-science-artifacts.write_artifact_file'
+    ],
+    [
+      'Codex Bridge',
+      codexFramework,
+      'codex-bridge',
+      'codex:provider-a',
+      'mcp.open-science-artifacts.write_artifact_file'
+    ]
+  ] as const)(
+    'stops a %s prompt after the same MCP input validation failure repeats',
+    async (_name, framework, modelRoute, backendId, toolName) => {
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const process = new FakeAgentProcess()
+      const promptCanStop = createDeferred()
+      const cancelledSessions: string[] = []
+
+      acp
+        .agent({ name: 'repeated-invalid-tool-agent' })
+        .onRequest(acp.methods.agent.initialize, () => ({
+          protocolVersion: acp.PROTOCOL_VERSION,
+          agentCapabilities: {
+            loadSession: false,
+            sessionCapabilities: { close: {} }
+          },
+          authMethods: []
+        }))
+        .onRequest(acp.methods.agent.session.new, () => ({
+          sessionId: 'remote-session-1',
+          ...(framework.id === 'codex'
+            ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+            : {})
+        }))
+        .onRequest(acp.methods.agent.session.setMode, () => ({}))
+        .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+          for (const toolCallId of ['invalid-artifact-1', 'invalid-artifact-2']) {
+            await ctx.client.notify(acp.methods.client.session.update, {
+              sessionId: ctx.params.sessionId,
+              update: {
+                sessionUpdate: 'tool_call_update',
+                toolCallId,
+                title: toolName,
+                kind: 'other',
+                status: 'failed',
+                content: [
+                  {
+                    type: 'content',
+                    content: {
+                      type: 'text',
+                      text: 'MCP error -32602: Input validation error: Invalid arguments for tool write_artifact_file: expected string, received undefined at filename'
+                    }
+                  }
+                ],
+                rawInput: {},
+                _meta: { toolName }
+              }
+            })
+          }
+
+          await promptCanStop.promise
+          return { stopReason: 'cancelled' }
+        })
+        .onNotification(acp.methods.agent.session.cancel, (ctx) => {
+          cancelledSessions.push(ctx.params.sessionId)
+          promptCanStop.resolve()
+        })
+        .onRequest(acp.methods.agent.session.close, () => ({}))
+        .connect(
+          acp.ndJsonStream(
+            Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+            Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+          )
+        )
+
+      const root = await createTemporaryRoot()
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+        }),
+        artifacts: {
+          configRoot: root,
+          dataRoot: root,
+          projectId: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js',
+          repository: new ArtifactRepository(root)
+        }
+      })
+      const session = await runtime.createSession({ cwd: '/workspace' })
+
+      await expect(
+        runtime.sendPrompt({ sessionId: session.sessionId, text: 'save the generated file' })
+      ).resolves.toMatchObject({ stopReason: 'cancelled' })
+
+      expect(cancelledSessions).toEqual(['remote-session-1'])
+      expect(
+        runtime
+          .getSnapshot()
+          .events.filter((event) => event.kind === 'tool' && event.providerToolName === toolName)
+      ).toHaveLength(2)
+    }
+  )
+
   it('restores Codex MCP identity before prompting and remembers a session grant across call ids', async () => {
     const process = new FakeAgentProcess()
     const permissionRequests: Array<{
@@ -17559,6 +17696,99 @@ describe('ACP runtime session management', () => {
         outputTokens: 7
       }
     })
+  })
+
+  it('continues a completed Notebook turn when generated files were not saved as Artifacts', async () => {
+    const root = await createTemporaryRoot()
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['session-1'], {
+      updatesForPrompt: (text) =>
+        text === 'draw a pie chart'
+          ? [
+              {
+                sessionUpdate: 'tool_call',
+                toolCallId: 'notebook-tool-1',
+                title: 'mcp__open-science-notebook__notebook_execute',
+                status: 'pending',
+                _meta: {
+                  claudeCode: {
+                    toolName: 'mcp__open-science-notebook__notebook_execute'
+                  }
+                }
+              },
+              {
+                sessionUpdate: 'tool_call_update',
+                toolCallId: 'notebook-tool-1',
+                status: 'completed',
+                content: [
+                  {
+                    type: 'content',
+                    content: {
+                      type: 'text',
+                      text: JSON.stringify({
+                        runId: 'notebook-run-1',
+                        workingFiles: [
+                          {
+                            relativePath: 'data/pie_chart.png',
+                            kind: 'other',
+                            size: 59_152,
+                            createdByRunId: 'notebook-run-1'
+                          },
+                          {
+                            relativePath: '/tmp/not-an-artifact.png',
+                            kind: 'other',
+                            size: 1,
+                            createdByRunId: 'notebook-run-1'
+                          },
+                          {
+                            relativePath: '../not-an-artifact-either.png',
+                            kind: 'other',
+                            size: 1,
+                            createdByRunId: 'notebook-run-1'
+                          }
+                        ]
+                      })
+                    }
+                  }
+                ]
+              }
+            ]
+          : []
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js'
+      },
+      notebook: {
+        projectId: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'draw a pie chart',
+      provenanceContext: { promptMessageId: 'prompt-1' }
+    })
+
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(2))
+    expect(fakeAgent.prompts[1]).toEqual({
+      sessionId: session.sessionId,
+      text: expect.stringContaining('data/pie_chart.png')
+    })
+    expect(fakeAgent.prompts[1].text).toContain('notebook-run-1')
+    expect(fakeAgent.prompts[1].text).toContain('"filename": "pie_chart.png"')
+    expect(fakeAgent.prompts[1].text).toContain('"kind": "localPath"')
+    expect(fakeAgent.prompts[1].text).toContain('mcp__open-science-artifacts__write_artifact_file')
+    expect(fakeAgent.prompts[1].text).not.toContain('not-an-artifact')
   })
 
   it('retains handoff continuity across expected reconnect teardown', async () => {

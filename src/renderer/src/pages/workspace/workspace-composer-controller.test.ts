@@ -9,7 +9,7 @@ import {
   SessionSizeLimitError,
   type SessionPdfContext
 } from '../../../../shared/session-persistence'
-import type { CustomizePrefillIntent } from '@/stores/navigation-store'
+import type { CustomizePrefillIntent, WslSupportPrefillIntent } from '@/stores/navigation-store'
 import {
   createInitialPreviewWorkbenchState,
   createPendingPdfContext,
@@ -86,6 +86,7 @@ type ControllerHook = {
     session: Parameters<typeof useWorkspaceComposerController>[0]['activeSession']
   ) => void
   setCustomizePrefill: (prefill: CustomizePrefillIntent) => void
+  setWslPrefill: (prefill: WslSupportPrefillIntent) => void
   remount: () => void
   unmount: () => void
 }
@@ -111,6 +112,7 @@ const renderController = (
   let currentDraftKey = 'session-a'
   let selectedActiveSession = activeSession ?? undefined
   let pendingCustomizePrefill: CustomizePrefillIntent | undefined
+  let pendingWslSupportPrefill: WslSupportPrefillIntent | undefined
   const container = document.createElement('div')
   const root = createRoot(container)
   const result = {
@@ -122,7 +124,9 @@ const renderController = (
       newConversationDraftKey: 'new:project',
       activeProjectId: 'project',
       pendingCustomizePrefill,
+      pendingWslSupportPrefill,
       onCustomizePrefillApplied: vi.fn(),
+      onWslSupportPrefillApplied: vi.fn(),
       historyEntries,
       activeSession: selectedActiveSession,
       historyPolicy: {
@@ -165,7 +169,15 @@ const renderController = (
     },
     setCustomizePrefill: (prefill: CustomizePrefillIntent): void => {
       pendingCustomizePrefill = prefill
+      pendingWslSupportPrefill = undefined
       currentDraftKey = 'new:project'
+      render()
+    },
+    setWslPrefill: (prefill: WslSupportPrefillIntent): void => {
+      pendingWslSupportPrefill = prefill
+      pendingCustomizePrefill = undefined
+      currentDraftKey = 'new:project'
+      selectedActiveSession = undefined
       render()
     },
     remount: (): void => {
@@ -186,6 +198,58 @@ afterEach(() => {
 })
 
 describe('workspace composer controller', () => {
+  it('keeps setup authority outside the document and clears it with the draft', () => {
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    hook.setWslPrefill({
+      projectId: 'project',
+      doc: textDoc('visible diagnostics'),
+      setupSessionToken: 'secret-setup-token',
+      requestId: 1
+    })
+
+    expect(hook.result.current.view.isWslSetupDraft).toBe(true)
+    expect(JSON.stringify(hook.result.current.view.doc)).not.toContain('secret-setup-token')
+    expect(hook.result.current.lifecycle.captureSend().setupSessionToken).toBe('secret-setup-token')
+
+    const snapshot = hook.result.current.lifecycle.captureSend()
+    act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
+    expect(hook.result.current.view.isWslSetupDraft).toBe(false)
+    expect(hook.result.current.lifecycle.captureSend().setupSessionToken).toBeUndefined()
+  })
+
+  it('discards only the active unsent WSL2 setup draft', () => {
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    hook.setWslPrefill({
+      projectId: 'project',
+      doc: textDoc('visible diagnostics'),
+      setupSessionToken: 'secret-setup-token',
+      requestId: 1
+    })
+
+    act(() => expect(hook.result.current.actions.discardWslSetupDraft()).toBe(true))
+
+    expect(hook.result.current.view.isWslSetupDraft).toBe(false)
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
+    expect(hook.result.current.lifecycle.captureSend().setupSessionToken).toBeUndefined()
+
+    hook.selectDraft('session-other')
+    hook.selectDraft('new:project')
+    expect(hook.result.current.view.isWslSetupDraft).toBe(false)
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
+  })
+
+  it('does not discard an ordinary conversation draft through the WSL2 setup action', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() => hook.result.current.actions.changeDoc(textDoc('ordinary unsent message')))
+
+    act(() => expect(hook.result.current.actions.discardWslSetupDraft()).toBe(false))
+
+    expect(hook.result.current.view.doc).toEqual(textDoc('ordinary unsent message'))
+  })
+
   it('DF-01 retains both conversation drafts and annotations after route remount', () => {
     const hook = renderController()
     mounted.push(hook)

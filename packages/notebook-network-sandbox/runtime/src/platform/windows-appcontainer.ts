@@ -1,7 +1,9 @@
-import { spawn } from 'node:child_process'
-import { access } from 'node:fs/promises'
+import { spawn, type SpawnOptions } from 'node:child_process'
+import { randomBytes, randomUUID } from 'node:crypto'
+import { access, readFile, rm } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { createServer, type Server } from 'node:net'
+import { join } from 'node:path'
 
 import { proxyEnvironment } from './proxy-environment.js'
 import { normalizeFilesystemLayout, type FilesystemLayoutInput } from './filesystem-layout.js'
@@ -13,6 +15,12 @@ import {
 } from '../gateway/command-gateway.js'
 
 type WindowsShell = Readonly<{ kind: 'powershell' | 'cmd'; path: string }>
+
+type WindowsRuntimeVerification = Readonly<{
+  argv: readonly string[]
+  env: NodeJS.ProcessEnv
+  signal?: AbortSignal
+}>
 
 type WindowsLaunchRequest = Readonly<{
   command: string
@@ -75,6 +83,16 @@ type WindowsStandardLaunchRequest = Readonly<
   >
 >
 
+type WindowsSupervisedLaunchRequest = Readonly<
+  WindowsStandardLaunchRequest & Pick<WindowsLaunchRequest, 'cwd' | 'hostPath'>
+>
+
+type ProcessTreeTerminationProof = Readonly<{
+  path: string
+  token: string
+  confirm: () => Promise<boolean>
+}>
+
 type AppContainerStatus = Readonly<{
   profileExists: boolean
   loopbackAllowed: boolean
@@ -111,19 +129,37 @@ const closeServer = (server: Server | undefined): Promise<void> =>
 
 const runCapture = (
   program: string,
-  args: readonly string[]
+  args: readonly string[],
+  options: Pick<SpawnOptions, 'env' | 'signal' | 'timeout'> & { maxBuffer?: number } = {}
 ): Promise<{ code: number | null; stdout: string; stderr: string }> =>
   new Promise((resolve, reject) => {
+    const { maxBuffer = Infinity, ...spawnOptions } = options
     const child = spawn(program, [...args], {
+      ...spawnOptions,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
     })
     let stdout = ''
     let stderr = ''
-    child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk))
-    child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk))
+    let remaining = maxBuffer
+    let overflow = false
+    const capture = (chunk: string): string => {
+      if (overflow) return ''
+      remaining -= Buffer.byteLength(chunk)
+      if (remaining < 0) {
+        overflow = true
+        return ''
+      }
+      return chunk
+    }
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += capture(chunk)))
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += capture(chunk)))
     child.once('error', reject)
-    child.once('close', (code) => resolve({ code, stdout, stderr }))
+    // Keep draining until the native host closes so it can finish its process-tree cleanup proof.
+    child.once('close', (code) => {
+      if (overflow) reject(new Error('Windows AppContainer output exceeded its buffer limit.'))
+      else resolve({ code, stdout, stderr })
+    })
   })
 
 const readAppContainerStatus = async (
@@ -264,17 +300,36 @@ const checkWindowsAppContainer = async (
 
 const powershellString = (value: string): string => `'${value.replaceAll("'", "''")}'`
 
+// ProcessStartInfo.Arguments uses Windows argv quoting, without a cmd.exe parsing layer.
+const windowsProcessArgument = (value: string): string =>
+  `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`
+
 const windowsElevationScript = (
   hostPath: string,
   installationId: string,
   ownershipRoot: string,
-  command: 'setup' | 'remove'
+  command: 'setup' | 'remove' | 'authorize-runtime-access',
+  args: readonly string[] = []
 ): string =>
   [
+    '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)',
     'try {',
-    `$process = Start-Process -FilePath ${powershellString(hostPath)} -ArgumentList @('${command}', ${powershellString(installationId)}, ${powershellString(ownershipRoot)}) -Verb RunAs -Wait -PassThru`,
+    '$start = [System.Diagnostics.ProcessStartInfo]::new()',
+    `$start.FileName = ${powershellString(hostPath)}`,
+    `$start.Arguments = ${powershellString([command, installationId, ownershipRoot, ...args].map(windowsProcessArgument).join(' '))}`,
+    '$start.UseShellExecute = $true',
+    "$start.Verb = 'runas'",
+    '$start.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden',
+    // Windows PowerShell Start-Process discards Win32Exception.NativeErrorCode on launch failure.
+    '$process = [System.Diagnostics.Process]::Start($start)',
+    '$process.WaitForExit()',
     'exit $process.ExitCode',
-    '} catch { exit 1223 }'
+    '} catch {',
+    '$failure = $_.Exception',
+    'while ($null -ne $failure) { if ($failure -is [System.ComponentModel.Win32Exception] -and $failure.NativeErrorCode -eq 1223) { exit 1223 }; $failure = $failure.InnerException }',
+    '[Console]::Error.WriteLine($_.Exception.Message)',
+    'exit 1',
+    '}'
   ].join('; ')
 
 const runHostCommand = async (
@@ -293,9 +348,10 @@ const runElevatedHostCommand = async (
   hostPath: string,
   installationId: string,
   ownershipRoot: string,
-  command: 'setup' | 'remove'
+  command: 'setup' | 'remove' | 'authorize-runtime-access',
+  args: readonly string[] = []
 ): Promise<{ cancelled: boolean }> => {
-  const script = windowsElevationScript(hostPath, installationId, ownershipRoot, command)
+  const script = windowsElevationScript(hostPath, installationId, ownershipRoot, command, args)
   const encoded = Buffer.from(script, 'utf16le').toString('base64')
   const result = await runCapture('powershell.exe', [
     '-NoLogo',
@@ -309,10 +365,7 @@ const runElevatedHostCommand = async (
     stderr: error instanceof Error ? error.message : String(error)
   }))
   if (result.code === 0) return { cancelled: false }
-  if (
-    result.code === 1223 ||
-    /cancell?ed by the user|operation was canceled|1223/i.test(result.stderr)
-  ) {
+  if (result.code === 1223) {
     return { cancelled: true }
   }
   throw new Error(
@@ -347,13 +400,12 @@ const removeWindowsAppContainer = async (
   return elevated
 }
 
-const setWindowsRuntimeAccess = async (
+const getWindowsRuntimeAccess = async (
   hostPath: string,
   installationId: string,
   ownershipRoot: string,
-  executable: string,
-  authorized: boolean
-): Promise<{ cancelled: boolean }> => {
+  executable: string
+): Promise<{ authorized: boolean; registered: boolean }> => {
   const status = await runCapture(hostPath, [
     'runtime-access-status',
     installationId,
@@ -371,17 +423,153 @@ const setWindowsRuntimeAccess = async (
   ) {
     throw new Error('AppContainer host returned invalid runtime access status.')
   }
-  const access = current as { authorized: boolean; registered: boolean }
-  if ((authorized && access.authorized) || (!authorized && !access.registered))
+  return current as { authorized: boolean; registered: boolean }
+}
+
+const runVerifiedRuntimeAccess = async (
+  hostPath: string,
+  installationId: string,
+  ownershipRoot: string,
+  verification: WindowsRuntimeVerification
+): Promise<{ cancelled: boolean }> => {
+  const ticket = randomBytes(32).toString('hex')
+  const child = spawn(
+    hostPath,
+    [
+      'verify-runtime-access',
+      installationId,
+      ownershipRoot,
+      ticket,
+      String(process.pid),
+      verification.argv[4]!
+    ],
+    { env: verification.env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }
+  )
+  let stderr = ''
+  let exited = false
+  const completion = new Promise<{ code: number | null; error?: Error }>((resolve) => {
+    child.stdout.resume()
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+      stderr = (stderr + chunk).slice(-1024 * 1024)
+    })
+    child.once('error', (error) => {
+      exited = true
+      resolve({ code: null, error })
+    })
+    child.once('close', (code) => {
+      exited = true
+      resolve({ code })
+    })
+  })
+  const stop = (): void => {
+    if (!exited) child.kill()
+  }
+  verification.signal?.addEventListener('abort', stop, { once: true })
+  try {
+    if (!child.pid) {
+      const failure = await completion
+      throw failure.error ?? new Error('Could not start the R verification process.')
+    }
+    if (verification.signal?.aborted) return { cancelled: true }
+    let result: { cancelled: boolean }
+    try {
+      result = await runElevatedHostCommand(
+        hostPath,
+        installationId,
+        ownershipRoot,
+        'authorize-runtime-access',
+        [ticket, String(child.pid), String(process.pid)]
+      )
+    } catch (error) {
+      stop()
+      await completion
+      throw new Error(
+        [stderr.trim(), error instanceof Error ? error.message : String(error)]
+          .filter(Boolean)
+          .join('\n')
+      )
+    }
+    if (result.cancelled) return result
+    const verified = await completion
+    if (verified.error || verified.code !== 0)
+      throw verified.error ?? new Error(stderr.trim() || 'The contained R verification failed.')
+    return result
+  } finally {
+    verification.signal?.removeEventListener('abort', stop)
+    stop()
+    await completion
+  }
+}
+
+const setWindowsRuntimeAccess = async (
+  hostPath: string,
+  installationId: string,
+  ownershipRoot: string,
+  executable: string,
+  authorized: boolean,
+  verification?: WindowsRuntimeVerification
+): Promise<{ cancelled: boolean }> => {
+  const access = await getWindowsRuntimeAccess(hostPath, installationId, ownershipRoot, executable)
+  if (
+    verification &&
+    (!authorized ||
+      verification.argv.length !== 5 ||
+      verification.argv[0] !== hostPath ||
+      verification.argv[1] !== 'launch' ||
+      verification.argv[2] !== installationId ||
+      verification.argv[3] !== ownershipRoot)
+  )
+    throw new Error('R verification must use this installation’s contained launch.')
+  if (verification?.signal?.aborted) return { cancelled: true }
+  if ((authorized && access.authorized) || (!authorized && !access.registered)) {
+    if (verification) {
+      const result = await runCapture(hostPath, verification.argv.slice(1), {
+        env: verification.env,
+        signal: verification.signal,
+        timeout: 20_000,
+        maxBuffer: 1024 * 1024
+      })
+      if (result.code !== 0 || !result.stdout.includes('OPEN_SCIENCE_R_ACCESS_OK'))
+        throw new Error(result.stderr.trim() || 'The contained R verification failed.')
+    }
     return { cancelled: false }
+  }
   const prepared = await runCapture(hostPath, [
-    authorized ? 'prepare-runtime-access' : 'prepare-remove-runtime-access',
+    authorized
+      ? verification
+        ? 'prepare-verified-runtime-access'
+        : 'prepare-runtime-access'
+      : 'prepare-remove-runtime-access',
     installationId,
     ownershipRoot,
     executable
   ])
   if (prepared.code !== 0)
     throw new Error(prepared.stderr.trim() || 'Could not prepare R runtime access.')
+  if (verification) {
+    try {
+      const result = await runVerifiedRuntimeAccess(
+        hostPath,
+        installationId,
+        ownershipRoot,
+        verification
+      )
+      if (result.cancelled)
+        await runHostCommand(hostPath, installationId, ownershipRoot, 'cancel-setup')
+      return result
+    } catch (error) {
+      // Safe only after the helper/verifier have exited. Native cancellation refuses to discard
+      // a partially applied journal; failed rollback therefore remains repairable and visible.
+      try {
+        await runHostCommand(hostPath, installationId, ownershipRoot, 'cancel-setup')
+      } catch (cleanup) {
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}\nR access repair is required: ${cleanup instanceof Error ? cleanup.message : String(cleanup)}`
+        )
+      }
+      throw error
+    }
+  }
   const result = await runElevatedHostCommand(hostPath, installationId, ownershipRoot, 'setup')
   if (result.cancelled) {
     await runHostCommand(hostPath, installationId, ownershipRoot, 'cancel-setup')
@@ -391,9 +579,37 @@ const setWindowsRuntimeAccess = async (
   return result
 }
 
+const createProcessTreeTerminationProof = (
+  env: NodeJS.ProcessEnv,
+  cwd: string
+): ProcessTreeTerminationProof => {
+  const token = randomUUID()
+  const path = join(
+    env.TEMP ?? env.TMP ?? cwd,
+    `.open-science-process-tree-terminated-${token}.proof`
+  )
+  return {
+    path,
+    token,
+    confirm: async () => {
+      try {
+        return (await readFile(path, 'utf8')) === token
+      } catch {
+        return false
+      } finally {
+        await rm(path, { force: true }).catch(() => undefined)
+      }
+    }
+  }
+}
+
 const windowsLaunch = (
   request: WindowsLaunchRequest
-): { argv: string[]; env: NodeJS.ProcessEnv; windowsJobObject: true } => {
+): {
+  argv: string[]
+  env: NodeJS.ProcessEnv
+  confirmProcessTreeTermination: () => Promise<boolean>
+} => {
   const shell: WindowsShell =
     typeof request.shell === 'object'
       ? request.shell
@@ -410,6 +626,7 @@ const windowsLaunch = (
       : { executable: request.executable, args: [...(request.args ?? [])] }
     : { executable: shell.path, args: childArgs }
   const layout = normalizeFilesystemLayout(request.filesystem)
+  const proof = createProcessTreeTerminationProof(request.env, request.cwd)
   const specification = Buffer.from(
     JSON.stringify({
       executable: directInvocation.executable,
@@ -421,7 +638,9 @@ const windowsLaunch = (
       readOnlyRoots: layout.readOnlyRoots,
       readWriteRoots: layout.readWriteRoots,
       deniedReadRoots: layout.deniedReadRoots,
-      deniedWriteRoots: layout.deniedWriteRoots
+      deniedWriteRoots: layout.deniedWriteRoots,
+      terminationProofPath: proof.path,
+      terminationProofToken: proof.token
     }),
     'utf8'
   ).toString('base64url')
@@ -439,7 +658,6 @@ const windowsLaunch = (
     delete env.OPEN_SCIENCE_MCP_RPC_SOCKET_PATH
   }
   return {
-    windowsJobObject: true,
     argv: [
       request.hostPath,
       'launch',
@@ -447,7 +665,8 @@ const windowsLaunch = (
       request.ownershipRoot,
       specification
     ],
-    env
+    env,
+    confirmProcessTreeTermination: proof.confirm
   }
 }
 
@@ -481,16 +700,58 @@ const windowsStandardLaunch = (
   return { argv, env }
 }
 
+const windowsSupervisedLaunch = (
+  request: WindowsSupervisedLaunchRequest
+): {
+  argv: string[]
+  env: NodeJS.ProcessEnv
+  confirmProcessTreeTermination: () => Promise<boolean>
+} => {
+  // This path does not apply AppContainer capabilities or ACLs. It only asks the bundled host to
+  // contain an opted-in standard-mode worker and its helpers in a kill-on-close Job Object.
+  const direct = windowsStandardLaunch(request)
+  const [executable, ...args] = direct.argv
+  if (!executable) throw new Error('Windows supervisor received an empty command.')
+  const proof = createProcessTreeTerminationProof(direct.env, request.cwd)
+  const specification = Buffer.from(
+    JSON.stringify({
+      executable,
+      arguments: args,
+      cwd: request.cwd,
+      readOnlyRoots: [],
+      readWriteRoots: [],
+      deniedReadRoots: [],
+      deniedWriteRoots: [],
+      terminationProofPath: proof.path,
+      terminationProofToken: proof.token
+    }),
+    'utf8'
+  ).toString('base64url')
+  return {
+    argv: [request.hostPath, 'supervise', specification],
+    env: direct.env,
+    confirmProcessTreeTermination: proof.confirm
+  }
+}
+
 export {
   checkWindowsAppContainer,
   connectionProbeSpecification,
   installWindowsAppContainer,
   setWindowsRuntimeAccess,
+  getWindowsRuntimeAccess,
   removeWindowsAppContainer,
   readAppContainerStatus,
   loopbackPortAvailable,
   windowsElevationScript,
   windowsLaunch,
+  windowsSupervisedLaunch,
   windowsStandardLaunch
 }
-export type { AppContainerStatus, WindowsLaunchRequest, WindowsShell, WindowsStandardLaunchRequest }
+export type {
+  AppContainerStatus,
+  WindowsLaunchRequest,
+  WindowsShell,
+  WindowsStandardLaunchRequest,
+  WindowsRuntimeVerification
+}

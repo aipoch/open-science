@@ -47,6 +47,9 @@ const inputFilename = (filename: string, checksum: string, fullChecksum = false)
   return `${stem.slice(0, maxStemBytes)}${suffix}${extension}`
 }
 
+const notebookPromptInputPath = (filename: string, checksum: string): string =>
+  posix.join(INPUTS_DIR, inputFilename(filename, checksum))
+
 const resolveTrustedDirectory = async (
   storageRoot: string,
   target: string,
@@ -223,5 +226,6 @@ const materializeNotebookPromptInput = async (request: {
 export {
   deleteNotebookProjectPromptInputs,
   deleteNotebookSessionPromptInputs,
-  materializeNotebookPromptInput
+  materializeNotebookPromptInput,
+  notebookPromptInputPath
 }

@@ -346,6 +346,17 @@ describe('Compute service architecture', () => {
     expect(runtimeRegistration).toContain('disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS')
   })
 
+  it('resolves Compute policy without entering Session catalog hydration or coordinator locks', () => {
+    const source = readSource(computePaths.mainIpc)
+    const start = source.indexOf('const sessionLimitPersistence = {')
+    const write = source.indexOf('save: async', start)
+    const resolver = source.slice(start, write)
+    expect(resolver).toContain('sessionRepository.loadComputePolicy')
+    expect(resolver).not.toContain('loadAllSessions')
+    expect(resolver).not.toContain('sessionPersistenceCoordinator')
+    expect(resolver).not.toContain('canReconcileSessionAbsences')
+  })
+
   it('persists Session concurrency limits inside the data-root write boundary', () => {
     const source = readSource(computePaths.mainIpc)
     const persistenceStart = source.indexOf('const sessionLimitPersistence = {')

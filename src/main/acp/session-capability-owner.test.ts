@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import type { ShellRuntimeBinding } from '../../shared/notebook'
 import {
   claudeCodeFramework,
   codeBuddyFramework,
@@ -671,6 +672,228 @@ describe('ACP session capability owner', () => {
     owner.revokeSession('app-session')
     expect(release).toHaveBeenCalledOnce()
     expect(releaseSessionCapabilities).toHaveBeenCalledWith('app-session')
+  })
+
+  it('captures one immutable Shell binding for capability description, RPC and permission context', async () => {
+    const selected = {
+      kind: 'wsl2-bash' as const,
+      profileId: 'profile-1',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    }
+    const owner = createOwner({
+      artifacts: undefined,
+      skillImport: undefined,
+      notebook: {
+        projectId: 'project',
+        mcpEntryPath: '/app/main.js',
+        getShellRuntimeBinding: () => selected,
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:1',
+          token: 'notebook'
+        })
+      }
+    })
+
+    const provision = await owner.provision({
+      stableAppSessionId: 'provider-session',
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    })
+    selected.user = 'changed-after-provision'
+    expect(provision).not.toHaveProperty('shellRuntime')
+    expect(provision.shellRuntimeAgentContract?.sessionInstruction).toContain('WSL2 Bash')
+    expect(JSON.stringify(provision.shellRuntimeAgentContract)).not.toMatch(
+      /profile-1|Ubuntu-22\.04|researcher/
+    )
+    expect(Object.isFrozen(provision.shellRuntimeAgentContract)).toBe(true)
+    provision.commit('app-session')
+
+    const notebook = provision.mcpServers.find((server) => server.name === 'open_science_notebook')
+    expect(notebook && 'env' in notebook ? notebook.env : []).toContainEqual({
+      name: 'OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME',
+      value:
+        '{"kind":"wsl2-bash","profileId":"profile-1","distro":"Ubuntu-22.04","user":"researcher"}'
+    })
+    expect(owner.shellRuntimeBindingFor('app-session')).toEqual({
+      kind: 'wsl2-bash',
+      profileId: 'profile-1',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    })
+    expect(Object.isFrozen(owner.shellRuntimeBindingFor('app-session'))).toBe(true)
+  })
+
+  it('captures PowerShell only when the next Session capabilities are provisioned', async () => {
+    let selected: ShellRuntimeBinding = {
+      kind: 'wsl2-bash' as const,
+      profileId: 'profile-1',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    }
+    const owner = createOwner({
+      artifacts: undefined,
+      skillImport: undefined,
+      notebook: {
+        projectId: 'project',
+        mcpEntryPath: '/app/main.js',
+        getShellRuntimeBinding: () => selected,
+        getRpcConnection: async () => ({
+          endpoint: 'http://127.0.0.1:1',
+          token: 'notebook'
+        })
+      }
+    })
+    const request = {
+      stableAppSessionId: 'provider-session',
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    }
+
+    const current = await owner.provision(request)
+    current.commit('app-session')
+    selected = { kind: 'powershell', version: '5.1' }
+
+    expect(owner.shellRuntimeBindingFor('app-session')).toMatchObject({ kind: 'wsl2-bash' })
+
+    owner.revokeSession('app-session')
+    const refreshed = await owner.provision(request)
+    refreshed.commit('app-session')
+
+    expect(owner.shellRuntimeBindingFor('app-session')).toEqual({
+      kind: 'powershell',
+      version: '5.1'
+    })
+    expect(
+      refreshed.mcpServers.find((server) => server.name === 'open_science_notebook')
+    ).toMatchObject({
+      env: expect.arrayContaining([
+        {
+          name: 'OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME',
+          value: '{"kind":"powershell","version":"5.1"}'
+        }
+      ])
+    })
+  })
+
+  it('pins explicit and resumed WSL setup Sessions to PowerShell with setup tools only', async () => {
+    const boundSessionIds = new Set<string>()
+    const bind = vi.fn(async (_token: string, sessionId: string) => {
+      boundSessionIds.add(sessionId)
+    })
+    const setupSessions = {
+      authorizeToken: vi.fn((token: unknown) => token === 'local-setup-token'),
+      bind,
+      isBound: vi.fn(async (sessionId: string) => boundSessionIds.has(sessionId)),
+      forget: vi.fn(async (sessionId: string) => {
+        boundSessionIds.delete(sessionId)
+      })
+    }
+    const makeOwner = (): AcpSessionCapabilityOwner =>
+      createOwner({
+        artifacts: undefined,
+        skillImport: undefined,
+        wslSetupSessions: setupSessions,
+        notebook: {
+          projectId: 'project',
+          mcpEntryPath: '/app/main.js',
+          getShellRuntimeBinding: () => ({
+            kind: 'wsl2-bash',
+            profileId: 'global-profile',
+            distro: 'Ubuntu',
+            user: 'researcher'
+          }),
+          getRpcConnection: async () => ({
+            endpoint: 'http://127.0.0.1:1',
+            token: 'notebook'
+          })
+        }
+      })
+    const request = {
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    }
+
+    const owner = makeOwner()
+    const ordinary = await owner.provision(request)
+    const ordinaryNotebook = ordinary.mcpServers.find(
+      (server) => server.name === 'open_science_notebook'
+    )
+    expect(
+      ordinaryNotebook && 'env' in ordinaryNotebook ? ordinaryNotebook.env : []
+    ).not.toContainEqual({ name: 'OPEN_SCIENCE_WSL_SETUP_TOOLS', value: '1' })
+    ordinary.release({ ownsStableIdentity: true })
+
+    const setup = await owner.provision({ ...request, setupSessionToken: 'local-setup-token' })
+    const setupNotebook = setup.mcpServers.find((server) => server.name === 'open_science_notebook')
+    expect(setupNotebook && 'env' in setupNotebook ? setupNotebook.env : []).toEqual(
+      expect.arrayContaining([
+        { name: 'OPEN_SCIENCE_WSL_SETUP_TOOLS', value: '1' },
+        {
+          name: 'OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME',
+          value: '{"kind":"powershell","version":"5.1"}'
+        }
+      ])
+    )
+    await setup.prepareCommit?.('setup-session')
+    setup.commit('setup-session')
+    expect(bind).toHaveBeenCalledWith('local-setup-token', 'setup-session')
+    expect(owner.shellRuntimeBindingFor('setup-session')).toEqual({
+      kind: 'powershell',
+      version: '5.1'
+    })
+
+    const resumedOwner = makeOwner()
+    const resumed = await resumedOwner.provision({
+      ...request,
+      stableAppSessionId: 'setup-session'
+    })
+    const resumedNotebook = resumed.mcpServers.find(
+      (server) => server.name === 'open_science_notebook'
+    )
+    expect(resumedNotebook && 'env' in resumedNotebook ? resumedNotebook.env : []).toEqual(
+      expect.arrayContaining([
+        { name: 'OPEN_SCIENCE_WSL_SETUP_TOOLS', value: '1' },
+        {
+          name: 'OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME',
+          value: '{"kind":"powershell","version":"5.1"}'
+        }
+      ])
+    )
+  })
+
+  it('rejects an invalid setup Session token before allocating capabilities', async () => {
+    const owner = createOwner({
+      wslSetupSessions: {
+        authorizeToken: () => false,
+        bind: vi.fn(),
+        isBound: vi.fn(async () => false)
+      }
+    })
+
+    await expect(
+      owner.provision({
+        framework: opencodeFramework,
+        nativeMcpEnabled: true,
+        bridgeMcpAliasesEnabled: false,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        sessionCwd: '/workspace',
+        projectId: 'project',
+        setupSessionToken: 'expired-token'
+      })
+    ).rejects.toThrow('WSL_SETUP_SESSION_TOKEN_INVALID')
   })
 
   it('releases acquired local RPC leases when a later provision step fails', async () => {

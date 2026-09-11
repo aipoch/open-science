@@ -45,6 +45,16 @@ installs native Electron app dependencies.
 npm run dev
 ```
 
+On Windows x64, opt into the unpackaged WSL2 Bash development flow from PowerShell with:
+
+```powershell
+$env:OPEN_SCIENCE_DEV_WSL2_BASH_PREVIEW = '1'
+npm run dev
+```
+
+The switch is off by default and applies only to the development server. Packaged builds ignore it
+and continue to require the certified, version-matched WSL2 assets.
+
 ## Coding-agent navigation
 
 Run installation, development, and validation commands from the repository root:

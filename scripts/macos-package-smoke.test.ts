@@ -93,10 +93,21 @@ describe('macOS package smoke', () => {
     const executableDirectory = join(appBundle, 'Contents', 'MacOS')
     const resources = join(appBundle, 'Contents', 'Resources')
     const prismaClient = join(resources, 'node_modules', '.prisma', 'client')
+    const processTreeNative = join(
+      resources,
+      'app.asar.unpacked',
+      'node_modules',
+      '@aipoch',
+      'process-tree-native',
+      'build',
+      'Release',
+      'process_tree_native.node'
+    )
     await Promise.all([
       mkdir(executableDirectory, { recursive: true }),
       mkdir(resources, { recursive: true }),
-      mkdir(prismaClient, { recursive: true })
+      mkdir(prismaClient, { recursive: true }),
+      mkdir(join(processTreeNative, '..'), { recursive: true })
     ])
     await Promise.all([
       writeFile(join(executableDirectory, 'Open-Science'), ''),
@@ -104,12 +115,14 @@ describe('macOS package smoke', () => {
       writeFile(join(resources, 'micromamba'), ''),
       writeFile(join(resources, 'Assets.car'), ''),
       writeFile(join(resources, 'icon.icns'), ''),
-      writeFile(join(prismaClient, 'libquery_engine-darwin-arm64.dylib.node'), '')
+      writeFile(join(prismaClient, 'libquery_engine-darwin-arm64.dylib.node'), ''),
+      writeFile(processTreeNative, '')
     ])
 
     await expect(assertPackagedResources(appBundle)).resolves.toEqual({
       executable: join(executableDirectory, 'Open-Science'),
-      micromamba: join(resources, 'micromamba')
+      micromamba: join(resources, 'micromamba'),
+      processTreeNative
     })
 
     await rm(join(resources, 'Assets.car'))

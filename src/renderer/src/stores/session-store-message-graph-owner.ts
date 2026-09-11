@@ -543,7 +543,8 @@ export const createSessionMessageGraphOwner = <
     agentFrameworkId,
     agentBackendId,
     providerSessionId,
-    providerContinuityToken
+    providerContinuityToken,
+    wslSetup
   }) => {
     if (!pendingSessionId || !sessionId) return undefined
 
@@ -577,6 +578,7 @@ export const createSessionMessageGraphOwner = <
               agentBackendId: agentBackendId ?? session.agentBackendId,
               providerSessionId: providerSessionId ?? session.providerSessionId,
               providerContinuityToken: providerContinuityToken ?? session.providerContinuityToken,
+              wslSetup,
               updatedAt: now
             }
           : session

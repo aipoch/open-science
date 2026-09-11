@@ -6,6 +6,23 @@ import { rLibraryDir } from './runtime-paths'
 
 const COMMON_ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ'] as const
 
+// Package transport settings may cross the installer boundary; options that change its
+// destination or turn installation into a dry run must stay under the operation owner's control.
+export const PIP_TRANSPORT_ENV_KEYS = [
+  'PIP_INDEX_URL',
+  'PIP_EXTRA_INDEX_URL',
+  'PIP_NO_INDEX',
+  'PIP_FIND_LINKS',
+  'PIP_PROXY',
+  'PIP_CERT',
+  'PIP_CLIENT_CERT',
+  'PIP_TRUSTED_HOST',
+  'PIP_TIMEOUT',
+  'PIP_DEFAULT_TIMEOUT',
+  'PIP_RETRIES',
+  'PIP_CACHE_DIR'
+] as const
+
 const POSIX_ENV_ALLOWLIST = ['HOME', 'USER', 'LOGNAME', 'SHELL'] as const
 
 const WINDOWS_ENV_ALLOWLIST = [

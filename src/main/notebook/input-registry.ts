@@ -74,7 +74,8 @@ const versionKey = (input: NotebookRunInputFile): string =>
   `${input.sourceKind}\0${input.inputFileVersionId}`
 
 // One execution-scoped capability. It never resolves arbitrary paths: callers must name an exact
-// registered Version key, and only that live record is upgraded to resolver-accessed.
+// registered Version key. Resolver use upgrades the live record immediately; source/file evidence
+// is recorded separately when a completed Run confirms an exact staged-path read.
 class NotebookInputRunLease {
   private readonly inputsByVersion = new Map<string, NotebookRunInputFile>()
   private closed = false
@@ -103,6 +104,7 @@ class NotebookInputRunLease {
     }
     const path = await this.resolveContent(input)
     input.association = 'resolver-accessed'
+    input.accessEvidence = 'resolver'
     return path
   }
 

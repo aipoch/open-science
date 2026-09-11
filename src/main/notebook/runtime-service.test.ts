@@ -1569,6 +1569,90 @@ describe('notebook runtime service', () => {
     ])
   })
 
+  it('passes the same-epoch file-analysis context to the executor', async () => {
+    const root = await createStorageRoot()
+    const input: NotebookRunInputFile = {
+      inputFileVersionId: 'frozen-upload-version',
+      sourceKind: 'upload-version',
+      sourceFileId: 'upload',
+      sourceProjectId: 'default-project',
+      sourceSessionId: 'session-1',
+      filename: 'sample.csv',
+      sizeBytes: 10,
+      checksum: 'a'.repeat(64),
+      storageKey: 'upload-key',
+      association: 'turn-attached'
+    }
+    const sourceFileAccessContext = vi.fn(async () => {
+      input.inputFileVersionId = 'changed-after-admission'
+      return {
+        staticStrings: [{ name: 'output_path', value: 'figures/result.png' }],
+        staticCollections: [],
+        localFileWrappers: []
+      }
+    })
+    const execute = vi.fn(async (request: NotebookExecutionRequest) => ({
+      status: 'completed' as const,
+      stdout: '',
+      stderr: '',
+      traceback: '',
+      cwdAfter: request.cwd,
+      outputs: []
+    }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentStateTracker: verifiedPackageMutationTracker(),
+      dependencyAnalyzer: {
+        project: async () => ({ stalenessByRunId: {}, invalidatedByRunId: {} }),
+        sourceFileAccessContext
+      },
+      executorFactory: () => ({
+        execute,
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+
+    await service.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: 'plt.savefig(output_path)',
+      provenanceContext: {
+        rootFrameId: 'root',
+        agentFrameId: 'root',
+        messageBranchId: 'branch',
+        runtimeSegmentId: 'runtime',
+        promptMessageId: 'prompt'
+      },
+      registeredInputFiles: [input]
+    })
+
+    expect(sourceFileAccessContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        currentRunId: expect.any(String),
+        language: 'python',
+        environment: 'default-python',
+        kernelEpochId: expect.any(String)
+      })
+    )
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registeredInputFiles: [
+          expect.objectContaining({ inputFileVersionId: 'frozen-upload-version' })
+        ],
+        sourceFileAccessContext: {
+          staticStrings: [{ name: 'output_path', value: 'figures/result.png' }],
+          staticCollections: [],
+          localFileWrappers: []
+        }
+      })
+    )
+  })
+
   it('streams agent code into a locked cell and runs it through the shared executor', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
@@ -1743,10 +1827,18 @@ describe('notebook runtime service', () => {
       expect.objectContaining({
         language: 'python',
         environmentName: 'default-python',
-        runtimeSource: 'managed'
+        runtimeSource: 'managed',
+        condaPrefix: envPrefix(join(root, 'runtime'), 'default-python')
       }),
       { runtimeVersion: '3.13.2', packages: [] },
-      { fingerprint: 'stable', inventoryRefreshed: false, warnings: [] }
+      { fingerprint: 'stable', inventoryRefreshed: false, warnings: [] },
+      {
+        sessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
+        searchRoots: [
+          join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+          join(root, 'notebooks', 'default-project', 'session-1')
+        ]
+      }
     )
 
     const rawRunJson = await readFile(
@@ -3870,9 +3962,13 @@ describe('notebook runtime service', () => {
         const root = await createStorageRoot()
         const entered: string[] = []
         const releaseFirst = createDeferred<void>()
+        const firstStarted = createDeferred<void>()
         const execute = vi.fn<NotebookShellProcess['execute']>(async ({ command }) => {
           entered.push(command)
-          if (command === 'first') await releaseFirst.promise
+          if (command === 'first') {
+            firstStarted.resolve()
+            await releaseFirst.promise
+          }
           return { stdout: command, stderr: '', exitCode: 0 }
         })
         const service = new NotebookRuntimeService({
@@ -3898,20 +3994,19 @@ describe('notebook runtime service', () => {
         }
         const second = await service.executeShellBackground(secondRequest)
 
-        await vi.waitFor(async () => {
-          const state = await service.state(scope)
-          expect(state.runs.find((run) => run.runId === first.runId)).toMatchObject({
-            status: 'running',
-            executionMode: 'background',
-            shellConcurrency: { limit: 1, slot: 1 }
-          })
-          expect(state.runs.find((run) => run.runId === second.runId)).toMatchObject({
-            status: 'queued',
-            executionMode: 'background',
-            shellConcurrency: { limit: 1 }
-          })
+        await firstStarted.promise
+        const state = await service.state(scope)
+        expect(state.runs.find((run) => run.runId === first.runId)).toMatchObject({
+          status: 'running',
+          executionMode: 'background',
+          shellConcurrency: { limit: 1, slot: 1 }
         })
-        await vi.waitFor(() => expect(entered).toEqual(['first']))
+        expect(state.runs.find((run) => run.runId === second.runId)).toMatchObject({
+          status: 'queued',
+          executionMode: 'background',
+          shellConcurrency: { limit: 1 }
+        })
+        expect(entered).toEqual(['first'])
 
         const cancelled = await service.cancelBackgroundRun({
           ...secondRequest,
@@ -4069,6 +4164,7 @@ describe('notebook runtime service', () => {
 
     it('routes one admitted call through the shell process port and preserves its public result', async () => {
       const root = await createStorageRoot()
+      const info = vi.fn()
       const execute = vi.fn<NotebookShellProcess['execute']>().mockResolvedValue({
         stdout: 'partial output',
         stderr: 'command failed',
@@ -4081,7 +4177,14 @@ describe('notebook runtime service', () => {
         dataRoot: root,
         projectId: 'default-project',
         repository,
-        shellProcess: { execute }
+        logger: { info, warn: vi.fn(), error: vi.fn() },
+        shellProcess: { execute },
+        shellRuntimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        }
       })
 
       const result = await service.executeShell({
@@ -4095,6 +4198,7 @@ describe('notebook runtime service', () => {
         command: 'opaque command',
         runId: expect.any(String),
         cwd: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
+        executionReference: expect.any(String),
         handoffDir: join(root, 'notebooks', 'default-project', 'session-1', 'handoff'),
         notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
         inputRoot: getNotebookInputRoot(root, 'default-project', 'session-1'),
@@ -4104,7 +4208,13 @@ describe('notebook runtime service', () => {
         runtimeRoot: getRuntimeRoot(root),
         sessionId: 'session-1',
         timeoutMs: 321,
-        signal: expect.any(AbortSignal)
+        signal: expect.any(AbortSignal),
+        runtimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        }
       })
       expect(result).toEqual({
         stdout: 'partial output',
@@ -4115,8 +4225,195 @@ describe('notebook runtime service', () => {
       const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
       expect(state.runs[0]).toMatchObject({
         status: 'failed',
+        shellRuntime: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        },
         text: { stdout: 'partial output', stderr: 'command failed' }
       })
+      expect(info).toHaveBeenCalledWith(
+        'shell execution completed',
+        expect.objectContaining({
+          runtime: 'wsl2-bash',
+          profileReference: 'profile-1',
+          stage: 'execution',
+          status: 'failed',
+          exitCode: 9,
+          stdoutByteCount: 14,
+          stderrByteCount: 14,
+          outputByteCount: 28,
+          truncated: true
+        })
+      )
+      const diagnosticText = JSON.stringify(info.mock.calls)
+      expect(diagnosticText).not.toContain('opaque command')
+      expect(diagnosticText).not.toContain('partial output')
+      expect(diagnosticText).not.toContain('command failed')
+      expect(diagnosticText).not.toContain(root)
+      expect(diagnosticText).not.toContain('Ubuntu-22.04')
+      expect(diagnosticText).not.toContain('researcher')
+    })
+
+    it('rejects an idempotent Shell retry that changes its captured runtime', async () => {
+      const root = await createStorageRoot()
+      const execute = vi
+        .fn<NotebookShellProcess['execute']>()
+        .mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute }
+      })
+      const request = {
+        sessionId: 'runtime-retry',
+        workspaceCwd: root,
+        command: 'echo hello',
+        executionInvocationId: 'same-invocation'
+      }
+      await service.executeShell({
+        ...request,
+        shellRuntime: { kind: 'powershell', version: '5.1' }
+      })
+      await expect(
+        service.executeShell({
+          ...request,
+          shellRuntime: {
+            kind: 'wsl2-bash',
+            profileId: 'profile-1',
+            distro: 'Ubuntu',
+            user: 'researcher'
+          }
+        })
+      ).rejects.toThrow()
+      expect(execute).toHaveBeenCalledOnce()
+    })
+
+    it('preserves unavailable Shell results on durable retries', async () => {
+      const root = await createStorageRoot()
+      const unavailable = {
+        stdout: '',
+        stderr: 'unavailable',
+        exitCode: null,
+        runtimeStatus: 'unavailable' as const,
+        errorCode: 'shell-runtime-unavailable' as const,
+        recovery: { execution: 'not-started', retryAfter: 'runtime-ready' } as const
+      }
+      const execute = vi.fn<NotebookShellProcess['execute']>().mockResolvedValue(unavailable)
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute }
+      })
+      const request = {
+        sessionId: 'unavailable-retry',
+        workspaceCwd: root,
+        command: 'echo hello',
+        executionInvocationId: 'same-invocation'
+      }
+      expect(await service.executeShell(request)).toEqual(unavailable)
+      expect(await service.executeShell(request)).toEqual(unavailable)
+      expect(execute).toHaveBeenCalledOnce()
+    })
+
+    it('blocks unmanaged WSL Bash detachment on a Windows host', async () => {
+      const root = await createStorageRoot()
+      const execute = vi.fn<NotebookShellProcess['execute']>()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute },
+        platform: 'win32',
+        shellRuntimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu',
+          user: 'researcher'
+        }
+      })
+      await expect(
+        service.executeShell({
+          sessionId: 'wsl-detached',
+          workspaceCwd: root,
+          command: 'sleep 30 &'
+        })
+      ).rejects.toMatchObject({ detail: { code: 'UNMANAGED_SHELL_BACKGROUND_BLOCKED' } })
+      expect(execute).not.toHaveBeenCalled()
+    })
+
+    it('records a selected but unavailable WSL runtime as failed without falling back', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        platform: 'win32',
+        shellRuntimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        }
+      })
+
+      await expect(
+        service.executeShell({
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          command: 'Write-Output should-not-run'
+        })
+      ).resolves.toMatchObject({
+        exitCode: null,
+        runtimeStatus: 'unavailable',
+        errorCode: 'shell-runtime-unavailable'
+      })
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.runs[0]).toMatchObject({
+        status: 'failed',
+        shellRuntime: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        }
+      })
+    })
+
+    it('uses the captured WSL POSIX dialect for mutation detection on a Windows host', async () => {
+      const root = await createStorageRoot()
+      const execute = vi.fn<NotebookShellProcess['execute']>()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        platform: 'win32',
+        shellProcess: { execute },
+        shellRuntimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        }
+      })
+
+      const result = await service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'tool=python3; mode=-m; action=venv; "$tool" "$mode" "$action" analysis-env'
+      })
+
+      expect(result).toMatchObject({ exitCode: 1 })
+      expect(result.stderr).toMatch(/manage_packages/)
+      expect(execute).not.toHaveBeenCalled()
     })
 
     it('durably queues shell calls when the bounded project capacity is occupied', async () => {
@@ -4405,12 +4702,20 @@ describe('notebook runtime service', () => {
         runtimeSegmentId: 'runtime-child',
         promptMessageId: 'message-child'
       }
+      // A previously initialized child Frame can reach shell admission before a cold root Frame.
+      await service.state({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        provenanceContext: childContext
+      })
+
       const first = service.executeShell({
         sessionId: 'session-1',
         workspaceCwd: root,
         command: 'first',
         provenanceContext: rootContext
       })
+      await firstStarted.promise
       const queued = service.executeShell({
         sessionId: 'session-1',
         workspaceCwd: root,
@@ -4418,7 +4723,7 @@ describe('notebook runtime service', () => {
         provenanceContext: childContext
       })
 
-      await firstStarted.promise
+      const settledRuns = Promise.allSettled([first, queued])
       expect(entered).toEqual(['first'])
       const shutdown = service.shutdownSession('session-1')
       await shutdown
@@ -4429,7 +4734,7 @@ describe('notebook runtime service', () => {
         await vi.waitFor(() => expect(entered).toHaveLength(2))
         releases.get('must-not-start')?.()
       }
-      await Promise.allSettled([first, queued])
+      await settledRuns
 
       expect(activeWasCancelled).toBe(true)
       expect(entered).toEqual(['first'])
@@ -6735,6 +7040,11 @@ describe('notebook runtime service', () => {
       executionInvocationId: 'shared-submission',
       provenanceContext: provenance('frame-b')
     })
+    // Finish execution-time dependency capture before measuring the query/cancel reads.
+    await Promise.all([
+      service.waitForBackgroundRun(first.runId),
+      service.waitForBackgroundRun(second.runId)
+    ])
     readSessionRuns.mockClear()
 
     await expect(
@@ -7996,12 +8306,17 @@ describe('notebook runtime service', () => {
   it('idle-shutdown reports a terminated kernel status and notifies listeners', async () => {
     const root = await createStorageRoot()
     const changedSessions: string[] = []
+    const finalizeEpochs = vi.fn(async () => undefined)
     let lifecycle!: NotebookExecutorLifecycleCallbacks
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
       repository: new NotebookRunRepository(root),
+      dependencyAnalyzer: {
+        project: async () => ({ stalenessByRunId: {}, invalidatedByRunId: {} }),
+        finalizeEpochs
+      },
       callbacks: {
         onNotebookChanged: (event) => changedSessions.push(event.sessionId)
       },
@@ -8022,7 +8337,7 @@ describe('notebook runtime service', () => {
     })
 
     // Establishes the runtime session (and its persisted run.json) the idle-shutdown hook targets.
-    await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+    const run = await service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
 
     // Simulates NotebookKernelExecutor's onIdleShutdown firing after its idle window elapses.
     await lifecycle.onIdleShutdown('python', DEFAULT_PY_ENV)
@@ -8030,6 +8345,11 @@ describe('notebook runtime service', () => {
     const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(state.kernelStatus).toBe('terminated')
     expect(changedSessions).toContain('session-1')
+    expect(finalizeEpochs).toHaveBeenCalledWith({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      kernelEpochIds: [run.kernelEpochId]
+    })
   })
 
   it.each(['idle-shutdown', 'termination'] as const)(

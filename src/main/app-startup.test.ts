@@ -531,16 +531,22 @@ describe('waitForStartupShell', () => {
   } => {
     const windowEvents = new EventEmitter()
     const webContentsEvents = new EventEmitter()
-    const destroy = vi.fn()
+    let destroyed = false
+    const destroy = vi.fn(() => {
+      destroyed = true
+      windowEvents.emit('closed')
+    })
     return {
       destroy,
       emitWindow: (event) => windowEvents.emit(event),
       emitWebContents: (event, ...args) => webContentsEvents.emit(event, ...args),
       windowListenerCount: (event) => windowEvents.listenerCount(event),
       webContentsListenerCount: (event) => webContentsEvents.listenerCount(event),
-      window: Object.assign(windowEvents, {
-        destroy,
-        webContents: webContentsEvents
+      window: Object.defineProperty(Object.assign(windowEvents, { destroy }), 'webContents', {
+        get: () => {
+          if (destroyed) throw new Error('Object has been destroyed')
+          return webContentsEvents
+        }
       }) as unknown as Pick<BrowserWindow, 'destroy' | 'once' | 'removeListener' | 'webContents'>
     }
   }

@@ -19,6 +19,8 @@ import { getAgentFramework, type AgentFramework } from '../agent-framework'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
 import type { NotebookExecutionRpcMethod } from '../../shared/notebook'
+import type { ShellRuntimeBinding } from '../../shared/notebook'
+import { shellRuntimeDialect } from '../notebook/shell-runtime'
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
 import { createLogger } from '../logger'
 import {
@@ -117,6 +119,7 @@ type AcpPermissionContextOptions = {
       | undefined
     currentInteractionSequence: (sessionId: string) => number | undefined
     mcpServerNamesFor: (sessionId: string) => readonly string[]
+    shellRuntimeBindingFor?: (sessionId: string) => ShellRuntimeBinding | undefined
     reviewerContextFor: (providerSessionId: string) =>
       | {
           frameworkId: AgentFrameworkId
@@ -485,10 +488,22 @@ class AcpPermissionContext {
         appSessionId === normalizedParams.sessionId
           ? normalizedParams
           : { ...normalizedParams, sessionId: appSessionId }
+      const notebookShellRuntime =
+        executionMethod === 'executeShell'
+          ? routing.shellRuntimeBindingFor?.(appSessionId)
+          : undefined
       const response = await this.requestPermission(routedParams, {
         profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
         frameworkId,
-        shellDialect: permissionFramework.commandShellDialect,
+        shellDialect: notebookShellRuntime
+          ? shellRuntimeDialect(notebookShellRuntime)
+          : permissionFramework.commandShellDialect,
+        ...(notebookShellRuntime ? { notebookShellRuntime: notebookShellRuntime.kind } : {}),
+        ...(notebookShellRuntime?.kind === 'wsl2-bash'
+          ? {
+              notebookShellRuntimeQualifier: `${notebookShellRuntime.kind}@${notebookShellRuntime.profileId}`
+            }
+          : {}),
         autoReviewStrategy: profileState?.autoReviewStrategy,
         cwd: aggregateSnapshot?.cwd,
         mcpServerNames,

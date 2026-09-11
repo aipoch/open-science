@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
@@ -11,6 +12,12 @@ import {
 import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import { notebookHelperEvidenceKey } from '../notebook/helper-evidence'
+import { artifactProvenanceGraphValue } from './artifact-provenance-graph'
+import { sealArtifactReproducibilityRecipe } from './artifact-reproducibility-recipe'
+import type {
+  ArtifactProvenanceGraph,
+  PersistedArtifactExecutionSnapshot
+} from '../../shared/artifact-provenance'
 import type { ArtifactVersionReconstructionProvenance } from './provenance-read-model'
 import {
   ArtifactCodeReconstructionService,
@@ -947,3 +954,217 @@ describe('normalizeResponse', () => {
     )
   })
 })
+
+const withIndependentReplay = (
+  language: 'r' | 'python'
+): ArtifactVersionReconstructionProvenance => {
+  const value = provenance()
+  const execution = value.execution!
+  const [failed, producer] = execution.runs
+  failed!.kernelKind = producer!.kernelKind = language
+  failed!.kernelEpochId = producer!.kernelEpochId = 'epoch-1'
+  failed!.status = 'failed'
+  failed!.kernelDispatched = true
+  failed!.script = language === 'r' ? 'library(missing_package)' : 'import missing_package'
+  producer!.script = language === 'r' ? 'cat(42)' : 'print(42)'
+  producer!.environmentLock = {
+    state: 'available',
+    format: 'environment-lock-bundle',
+    lockChecksum: 'd'.repeat(64)
+  }
+  if ('kernel_kind' in value.evidence.producer) value.evidence.producer.kernel_kind = language
+  const graph: ArtifactProvenanceGraph = {
+    schemaVersion: 1,
+    targetEntityId: 'artifact-version:version-1',
+    completeness: 'complete',
+    reasonCodes: [],
+    activities: [
+      {
+        activityId: producer!.runId,
+        kind: 'notebook-run',
+        sequence: 2,
+        runIndex: 2,
+        inclusion: 'target-closure',
+        evidenceState: 'available'
+      },
+      {
+        activityId: 'publication',
+        kind: 'artifact-publication',
+        sequence: 3,
+        parentActivityId: producer!.runId,
+        inclusion: 'target-closure',
+        evidenceState: 'available'
+      }
+    ],
+    entities: [
+      {
+        entityId: 'file-generation:result',
+        kind: 'file-generation',
+        generationId: 'result',
+        relativePath: 'cos.png',
+        pathPortability: 'relative',
+        checksum: 'a'.repeat(64),
+        sizeBytes: 10,
+        contentStorageKey: `execution-file-evidence/blobs/sha256-${'a'.repeat(64)}`
+      },
+      {
+        entityId: 'artifact-version:version-1',
+        kind: 'artifact-version',
+        versionId: 'version-1',
+        filename: 'cos.png',
+        checksum: 'a'.repeat(64),
+        sizeBytes: 10
+      }
+    ],
+    edges: [
+      {
+        kind: 'generated',
+        activityId: producer!.runId,
+        entityId: 'file-generation:result',
+        authority: 'authoritative',
+        evidenceSource: 'runtime-observation'
+      },
+      {
+        kind: 'used',
+        activityId: 'publication',
+        entityId: 'file-generation:result',
+        authority: 'authoritative',
+        evidenceSource: 'artifact-publication'
+      },
+      {
+        kind: 'generated',
+        activityId: 'publication',
+        entityId: 'artifact-version:version-1',
+        authority: 'authoritative',
+        evidenceSource: 'artifact-publication'
+      }
+    ]
+  }
+  execution.provenanceGraph = graph
+  execution.reproducibilityRecipe = sealArtifactReproducibilityRecipe({
+    provenanceGraph: graph,
+    runs: execution.runs,
+    inputFiles: []
+  })
+  return value
+}
+
+it.each(['r', 'python'] as const)(
+  'reconstructs an independent %s run after failure from its sealed plan',
+  async (language) => {
+    const value = withIndependentReplay(language)
+    expect(artifactProvenanceGraphValue(value.execution!.provenanceGraph)).toBe(true)
+    expect(value.execution!.reproducibilityRecipe!.frontiers[0]!.reasonCodes).toEqual([])
+    const unrelated = {
+      ...value.execution!.runs[0]!,
+      runId: 'unrelated',
+      runIndex: 0,
+      status: 'completed' as const,
+      script: 'UNRELATED_SUCCESS_MUST_NOT_REPLAY'
+    }
+    value.execution!.runs.unshift(unrelated)
+    const harness = makeHarness(value)
+    await expect(harness.service.get(request)).resolves.toMatchObject({
+      state: 'ready',
+      origin: 'app-replay'
+    })
+    const result = await harness.service.generate(request)
+    expect(result).toMatchObject({
+      state: 'cached',
+      value: { origin: 'app-replay', sourceTruncated: false }
+    })
+    if (result.state !== 'cached') throw new Error('Expected reconstructed code')
+    expect(result.value.code).toContain(value.execution!.runs.at(-1)!.script)
+    expect(result.value.code).not.toContain('missing_package')
+    expect(result.value.code).not.toContain('UNRELATED_SUCCESS')
+    expect(harness.run).not.toHaveBeenCalled()
+    await expect(harness.service.get(request)).resolves.toEqual(result)
+    if (language === 'python')
+      expect((await execFileAsync('python3', ['-c', result.value.code])).stdout.trim()).toBe('42')
+  }
+)
+
+it.each([
+  'changed-source',
+  'changed-target',
+  'changed-graph',
+  'missing-run',
+  'failed-producer',
+  'required-failed-run',
+  'blocked-original'
+] as const)(
+  'keeps the failed-state guard when the sealed plan cannot prove replay: %s',
+  async (change) => {
+    const value = withIndependentReplay('r')
+    const execution = value.execution!
+    if (change === 'changed-source') execution.runs[1]!.script = 'cat(baseline)'
+    if (change === 'changed-target') value.evidence.checksum = 'b'.repeat(64)
+    if (change === 'changed-graph') execution.provenanceGraph!.completeness = 'conservative'
+    if (change === 'missing-run') execution.runs.pop()
+    if (change === 'failed-producer') execution.runs[1]!.status = 'failed'
+    if (change === 'required-failed-run') {
+      execution.provenanceGraph!.activities.unshift({
+        activityId: execution.runs[0]!.runId,
+        kind: 'notebook-run',
+        sequence: 1,
+        runIndex: execution.runs[0]!.runIndex,
+        inclusion: 'target-closure',
+        evidenceState: 'available'
+      })
+      execution.provenanceGraph!.edges.push({
+        kind: 'depends-on',
+        activityId: execution.runs[1]!.runId,
+        dependencyActivityId: execution.runs[0]!.runId,
+        authority: 'authoritative',
+        evidenceSource: 'dependency-analysis'
+      })
+    }
+    if (change === 'blocked-original') {
+      execution.runs[1]!.environmentLock = {
+        state: 'unavailable',
+        reason: 'environment-lock-capture-failed'
+      }
+    }
+    if (change === 'blocked-original' || change === 'required-failed-run') {
+      execution.reproducibilityRecipe = sealArtifactReproducibilityRecipe({
+        provenanceGraph: execution.provenanceGraph!,
+        runs: execution.runs,
+        inputFiles: []
+      })
+    }
+    const harness = makeHarness(value)
+    expect((await harness.service.get(request)).state).toBe('unavailable')
+    expect((await harness.service.generate(request)).state).toBe('unavailable')
+    expect(harness.run).not.toHaveBeenCalled()
+  }
+)
+
+it.skipIf(!process.env.REPRO_REAL_EXECUTION_SNAPSHOT)(
+  'reconstructs the reported immutable R snapshot without the failed dplyr run',
+  async () => {
+    const execution = JSON.parse(
+      await readFile(process.env.REPRO_REAL_EXECUTION_SNAPSHOT!, 'utf8')
+    ) as PersistedArtifactExecutionSnapshot
+    const value = provenance()
+    const producer = execution.runs.find((run) => run.runId === execution.producerRunId)!
+    value.execution = { ...execution, inputFiles: [] }
+    value.evidence.version_id = execution.reproducibilityRecipe!.targetVersionId
+    value.evidence.checksum = execution.reproducibilityRecipe!.targetChecksum
+    value.evidence.producer = {
+      state: 'available',
+      notebook_session_id: 'session-1',
+      producer_run_id: producer.runId,
+      run_index: producer.runIndex,
+      kernel_kind: producer.kernelKind,
+      association_method: 'agent-declared-and-session-validated'
+    }
+    const harness = makeHarness(value)
+    const result = await harness.service.generate(request)
+    expect(result.state).toBe('cached')
+    if (result.state !== 'cached') throw new Error('Expected reconstructed code')
+    expect(result.value.origin).toBe('app-replay')
+    expect(result.value.code).toContain(producer.script)
+    expect(result.value.code).not.toContain('library(dplyr)')
+    expect(harness.run).not.toHaveBeenCalled()
+  }
+)

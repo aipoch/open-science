@@ -829,6 +829,9 @@ export type AcpCreateSessionRequest = {
   // The first prompt will link a PDF before dispatch. Provision Literature with session/new so a
   // provider that has not produced its first resumable rollout does not need an immediate resume.
   literatureContext?: true
+  // Opaque, short-lived capability minted by the local WSL setup entry point. Main validates it
+  // before exposing setup tools and never forwards it to the model or persists it with the Session.
+  setupSessionToken?: string
   agentTarget?: AcpSessionAgentTarget
 }
 
@@ -842,6 +845,9 @@ export type AcpCreateSessionResponse = {
   cwd?: string
   frameworkId?: AgentFrameworkId
   backendId?: string
+  // Main-owned marker derived from the durable setup capability. Renderer uses it for setup UI;
+  // it grants no authority by itself.
+  wslSetup?: true
   // True when a resume could not reattach the agent's own session and a fresh one was adopted under the
   // same app id (framework switch, or a restart the agent could not resume). Agent-side context is gone,
   // so the caller may replay a transcript preamble into the next prompt to restore continuity.

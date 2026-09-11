@@ -88,7 +88,8 @@ const ensureWorkspaceSessionReady = async (
           agentFrameworkId: resumed.frameworkId,
           agentBackendId: resumed.backendId,
           providerSessionId: resumed.providerSessionId,
-          providerContinuityToken: resumed.providerContinuityToken
+          providerContinuityToken: resumed.providerContinuityToken,
+          wslSetup: resumed.wslSetup
         }
       : undefined
   )
@@ -224,7 +225,8 @@ const resumeInterruptedWorkspaceSession = async (
           agentFrameworkId: resumeResult.frameworkId,
           agentBackendId: resumeResult.backendId,
           providerSessionId: resumeResult.providerSessionId,
-          providerContinuityToken: resumeResult.providerContinuityToken
+          providerContinuityToken: resumeResult.providerContinuityToken,
+          wslSetup: resumeResult.wslSetup
         }
       : undefined
     if (promptMessageId) {

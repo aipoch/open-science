@@ -21,12 +21,36 @@ const item = (overrides: Partial<LiteratureItemInput> = {}): LiteratureItemInput
 })
 
 describe('toCslItem', () => {
+  it('keeps journal abbreviations separate from article short titles in both directions', () => {
+    const source = item({
+      title: 'A useful paper',
+      shortTitle: 'Useful paper',
+      containerTitle: 'Journal of Useful Results',
+      typeFields: { journalAbbreviation: 'J Useful Results' }
+    })
+    const csl = toCslItem('paper', source)
+    expect(csl).toMatchObject({
+      'title-short': 'Useful paper',
+      'container-title-short': 'J Useful Results'
+    })
+    expect(fromCslItem(csl)).toMatchObject({
+      shortTitle: 'Useful paper',
+      typeFields: { journalAbbreviation: 'J Useful Results' }
+    })
+  })
+
   it.each([
     ['2024-03-12', 2023, [2024, 3, 12]],
     ['2024-3-12', undefined, [2024, 3, 12]],
     ['2024-02', undefined, [2024, 2]],
     ['2024', undefined, [2024]],
     ['2024-02-29', undefined, [2024, 2, 29]],
+    ['2024 Jan 15', 2024, [2024, 1, 15]],
+    ['2024 Dec', 2024, [2024, 12]],
+    ['2024 Feb 29', 2024, [2024, 2, 29]],
+    ['2023 Feb 29', 2023, [2023]],
+    ['2024 Jan-Feb', 2024, [2024]],
+    ['2024 Winter', 2024, [2024]],
     ['2023-02-29', 2023, [2023]],
     ['2024-13-01', 2024, [2024]],
     ['2024-04-31', 2024, [2024]],

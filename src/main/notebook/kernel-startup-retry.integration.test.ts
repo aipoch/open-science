@@ -68,7 +68,11 @@ it.skipIf(process.platform !== 'win32').each([
           executable: wrapped.argv[0]!,
           args: wrapped.argv.slice(1),
           annotateStderr: (stderr) => stderr,
-          cleanup: () => undefined
+          cleanup: async (_reason, processOutcome) => ({
+            processesTerminated: processOutcome.processesTerminated,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
         }
       }
     }

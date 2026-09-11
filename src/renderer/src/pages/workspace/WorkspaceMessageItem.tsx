@@ -907,6 +907,7 @@ const ArtifactCard = ({
   const requestKey = JSON.stringify([
     artifact.id,
     artifact.artifactId ?? null,
+    artifact.versionId ?? null,
     artifact.resolvedProjectId ?? null,
     artifact.resolvedSessionId ?? null,
     artifact.path,

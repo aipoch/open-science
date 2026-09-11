@@ -1,0 +1,44 @@
+[
+  {
+    "name": "python-setup",
+    "language": "python",
+    "epoch": "python",
+    "status": "completed",
+    "script": "import pandas as pd\ndf=pd.DataFrame({\"group\":[\"Ctrl\",\"Ctrl\",\"IRI\",\"IRI\"],\"value\":[1,2,3,4]})\ndf.to_csv(\"qa_intermediate.csv\",index=False)\ncounts=df.groupby(\"group\")[\"value\"].sum()\nprint(counts)"
+  },
+  {
+    "name": "python-plot",
+    "language": "python",
+    "epoch": "python",
+    "status": "completed",
+    "script": "import matplotlib.pyplot as plt\nfig,ax=plt.subplots()\ncounts.plot.bar(ax=ax)\nfig.savefig(\"qa_python.png\")\ncounts.to_csv(\"qa_counts.csv\")\nplt.close(fig)\nprint(\"done\")"
+  },
+  {
+    "name": "r-setup",
+    "language": "r",
+    "epoch": "r",
+    "status": "completed",
+    "script": "d <- data.frame(group=c(\"Ctrl\",\"IRI\"),n=c(3,7))\nsets <- lapply(names(d), function(nm) unique(d[[nm]]))\nsaveRDS(d,\"qa_small.rds\")\nprint(sapply(sets,length))"
+  },
+  {
+    "name": "r-plot",
+    "language": "r",
+    "epoch": "r",
+    "status": "completed",
+    "script": "d2 <- readRDS(\"qa_small.rds\")\npng(\"qa_r.png\",width=600,height=400)\nbarplot(d2$n,names.arg=d2$group,col=c(\"steelblue\",\"orange\"))\ntext(c(.7,1.9),d2$n,labels=d2$n,pos=3)\ndev.off()\nwrite.csv(d2,\"qa_r.csv\",row.names=FALSE)"
+  },
+  {
+    "name": "python-failure",
+    "language": "python",
+    "epoch": "python-recovery",
+    "status": "failed",
+    "script": "scratch = 999\nraise ValueError(\"QA intentional failure before recovery\")"
+  },
+  {
+    "name": "python-recovery",
+    "language": "python",
+    "epoch": "python-recovery",
+    "status": "completed",
+    "script": "import pandas as pd\nimport matplotlib.pyplot as plt\ndf = pd.DataFrame({\"x\":[1,2,3],\"y\":[2,4,6]})\nfig,ax = plt.subplots()\nax.plot(df.x, df.y, marker=\"o\")\nfig.savefig(\"qa_recovered.png\")\ndf.to_csv(\"qa_recovered.csv\", index=False)\nplt.close(fig)\nprint(\"recovered\")"
+  }
+]

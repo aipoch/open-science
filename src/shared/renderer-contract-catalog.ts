@@ -46,6 +46,20 @@ import type {
   SideChatStartRequest,
   SideChatStartResponse
 } from './side-chat'
+import type {
+  InstallMissingWslDependenciesRequest,
+  InstallWslDistroRequest,
+  OpenWslTerminalRequest,
+  LocalShellRuntimePreference,
+  SelectWslProfileRequest,
+  SwitchToPowerShellResult,
+  UseWsl2BashResult,
+  WslPlatformInstallResult,
+  Wsl2BashPreviewStatus,
+  WslSetupSnapshot,
+  WslSetupStatus,
+  WslSetupConversationBootstrap
+} from './wsl-setup'
 import type { SourcePreviewLoadState } from './source-preview'
 import type { ArtifactLiteratureManifest } from './artifact-literature'
 import type {
@@ -68,6 +82,30 @@ import type {
   GetArtifactLineageRequest,
   GetArtifactVersionProvenanceRequest
 } from './artifact-provenance'
+import type {
+  ArtifactReproducibilityCheckRequest,
+  ArtifactReproducibilityCheckLogRecord,
+  ArtifactReproducibilityCheckState,
+  ArtifactEnvironmentLockBundleInfo,
+  ArtifactReproducibilityReceiptPage,
+  CancelArtifactReproducibilityCheckRequest,
+  ExportArtifactEnvironmentLockRequest,
+  ExportArtifactEnvironmentLockResult,
+  DescribeArtifactEnvironmentLockRequest,
+  ExportArtifactReproducibilityReceiptRequest,
+  ReadArtifactReproducibilityOutputRequest,
+  ArtifactReproducibilityReceiptScope,
+  ArtifactReproducibilityOutputStorage,
+  ArtifactReproducibilityOutputPreview,
+  ExportArtifactReproducibilityReceiptResult,
+  GetArtifactReproducibilityCheckLogRequest,
+  GetArtifactReproducibilityCheckRequest,
+  ImportArtifactEnvironmentLockRequest,
+  ImportArtifactEnvironmentLockResult,
+  CreateArtifactEnvironmentFromLockRequest,
+  CreateArtifactEnvironmentFromLockResult,
+  ListArtifactReproducibilityReceiptsRequest
+} from './artifact-reproducibility'
 import type {
   ArtifactCodeReconstructionState,
   GenerateArtifactCodeReconstructionRequest,
@@ -852,6 +890,43 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'acp.steerFollowUp': callable<
     (request: AcpSteerFollowUpRequest) => Promise<AcpSteerFollowUpResult>
   >()('acp', ['acp:steer-follow-up']),
+  'artifacts.cancelReproducibilityCheck': callable<
+    (request: CancelArtifactReproducibilityCheckRequest) => Promise<void>
+  >()('artifacts', ['artifacts:cancel-reproducibility-check', ELECTRON], { optionalMember: true }),
+  'artifacts.exportEnvironmentLock': callable<
+    (request: ExportArtifactEnvironmentLockRequest) => Promise<ExportArtifactEnvironmentLockResult>
+  >()('artifacts', ['artifacts:export-environment-lock', ELECTRON], { optionalMember: true }),
+  'artifacts.describeEnvironmentLock': callable<
+    (request: DescribeArtifactEnvironmentLockRequest) => Promise<ArtifactEnvironmentLockBundleInfo>
+  >()('artifacts', ['artifacts:describe-environment-lock', ELECTRON], { optionalMember: true }),
+  'artifacts.importEnvironmentLock': callable<
+    (request: ImportArtifactEnvironmentLockRequest) => Promise<ImportArtifactEnvironmentLockResult>
+  >()('artifacts', ['artifacts:import-environment-lock', ELECTRON], { optionalMember: true }),
+  'artifacts.createEnvironmentFromLock': callable<
+    (
+      request: CreateArtifactEnvironmentFromLockRequest
+    ) => Promise<CreateArtifactEnvironmentFromLockResult>
+  >()('artifacts', ['artifacts:create-environment-from-lock', ELECTRON], { optionalMember: true }),
+  'artifacts.readReproducibilityOutput': callable<
+    (
+      request: ReadArtifactReproducibilityOutputRequest
+    ) => Promise<ArtifactReproducibilityOutputPreview>
+  >()('artifacts', ['artifacts:read-reproducibility-output', ELECTRON], { optionalMember: true }),
+  'artifacts.getReproducibilityOutputStorage': callable<
+    (request: ArtifactReproducibilityReceiptScope) => Promise<ArtifactReproducibilityOutputStorage>
+  >()('artifacts', ['artifacts:get-reproducibility-output-storage', ELECTRON], {
+    optionalMember: true
+  }),
+  'artifacts.clearReproducibilityOutputs': callable<
+    (request: ArtifactReproducibilityReceiptScope) => Promise<ArtifactReproducibilityOutputStorage>
+  >()('artifacts', ['artifacts:clear-reproducibility-outputs', ELECTRON], { optionalMember: true }),
+  'artifacts.exportReproducibilityReceipt': callable<
+    (
+      request: ExportArtifactReproducibilityReceiptRequest
+    ) => Promise<ExportArtifactReproducibilityReceiptResult>
+  >()('artifacts', ['artifacts:export-reproducibility-receipt', ELECTRON], {
+    optionalMember: true
+  }),
   'artifacts.finalizeRunArtifacts': callable<
     (request: FinalizeRunArtifactsRequest) => Promise<FinalizeRunArtifactsResult>
   >()('artifacts', ['artifacts:finalize-run']),
@@ -866,6 +941,18 @@ export const RENDERER_API_CONTRACT = Object.freeze({
       request: GetArtifactLineageRequest
     ) => Promise<ProvenanceReadResult<ArtifactLineageProvenance | undefined>>
   >()('artifacts', ['artifacts:get-lineage']),
+  'artifacts.getReproducibilityCheck': callable<
+    (
+      request: GetArtifactReproducibilityCheckRequest
+    ) => Promise<ArtifactReproducibilityCheckState | undefined>
+  >()('artifacts', ['artifacts:get-reproducibility-check', ELECTRON], { optionalMember: true }),
+  'artifacts.getReproducibilityCheckLog': callable<
+    (
+      request: GetArtifactReproducibilityCheckLogRequest
+    ) => Promise<ArtifactReproducibilityCheckLogRecord | undefined>
+  >()('artifacts', ['artifacts:get-reproducibility-check-log', ELECTRON], {
+    optionalMember: true
+  }),
   'artifacts.getVersionExecution': callable<
     (
       request: GetArtifactVersionProvenanceRequest
@@ -891,10 +978,22 @@ export const RENDERER_API_CONTRACT = Object.freeze({
       request: GetArtifactVersionProvenanceRequest
     ) => Promise<ProvenanceReadResult<ArtifactVersionReviewProvenance>>
   >()('artifacts', ['artifacts:get-version-review']),
+  'artifacts.listReproducibilityReceipts': callable<
+    (
+      request: ListArtifactReproducibilityReceiptsRequest
+    ) => Promise<ArtifactReproducibilityReceiptPage>
+  >()('artifacts', ['artifacts:list-reproducibility-receipts', ELECTRON], {
+    optionalMember: true
+  }),
   'artifacts.openFile': callable<(request: OpenArtifactFileRequest) => Promise<void>>()(
     'artifacts',
     ['artifacts:open-file', LOCAL]
   ),
+  'artifacts.onReproducibilityCheckChanged': callable<
+    (listener: (state: ArtifactReproducibilityCheckState) => void) => RemoveListener
+  >()('artifacts', ['artifacts:reproducibility-check-changed', ELECTRON_EVENT], {
+    optionalMember: true
+  }),
   'artifacts.readPreview': callable<
     (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
   >()('artifacts', ['artifacts:read-preview']),
@@ -904,6 +1003,14 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'artifacts.resolveVersionDescriptors': callable<
     (request: ResolveArtifactVersionDescriptorsRequest) => Promise<ArtifactVersionDescriptor[]>
   >()('artifacts', ['artifacts:resolve-version-descriptors']),
+  'artifacts.startReproducibilityCheck': callable<
+    (request: ArtifactReproducibilityCheckRequest) => Promise<ArtifactReproducibilityCheckState>
+  >()('artifacts', ['artifacts:start-reproducibility-check', ELECTRON], { optionalMember: true }),
+  'artifacts.sessionReproducibility': callable<
+    (
+      request: import('./session-reproducibility').SessionReproducibilityCommand
+    ) => Promise<import('./session-reproducibility').SessionReproducibilityBatch | undefined>
+  >()('artifacts', ['artifacts:session-reproducibility', ELECTRON], { optionalMember: true }),
   'cli.getStatus': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:get-status']),
   'cli.install': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:install', LOCAL]),
   'cli.uninstall': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:uninstall', LOCAL]),
@@ -1935,6 +2042,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'settings',
     ['settings:changed', EVENT]
   ),
+  'settings.onWslSetupChanged': callable<
+    (listener: (status: WslSetupStatus) => void) => () => void
+  >()('settings', ['settings:wsl-setup-changed', ELECTRON_EVENT]),
   'settings.onConnectorApprovalRequest': callable<
     (listener: AcpListener<ConnectorApprovalRequest>) => RemoveListener
   >()('settings', ['connectors:approval-request', EVENT]),
@@ -2075,6 +2185,49 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'settings',
     ['settings:get-notebook-network-status', LOCAL]
   ),
+  'settings.getWsl2BashPreviewStatus': callable<() => Promise<Wsl2BashPreviewStatus>>()(
+    'settings',
+    ['settings:get-wsl2-bash-preview-status', LOCAL]
+  ),
+  'settings.getWslSetupStatus': callable<() => Promise<WslSetupStatus>>()('settings', [
+    'settings:get-wsl-setup-status',
+    LOCAL
+  ]),
+  'settings.getLocalShellRuntimePreference': callable<
+    () => Promise<LocalShellRuntimePreference | undefined>
+  >()('settings', ['settings:get-local-shell-runtime-preference', LOCAL]),
+  'settings.probeWslSetup': callable<() => Promise<WslSetupSnapshot>>()('settings', [
+    'settings:probe-wsl-setup',
+    LOCAL
+  ]),
+  'settings.installWslPlatform': callable<() => Promise<WslPlatformInstallResult>>()('settings', [
+    'settings:install-wsl-platform',
+    LOCAL
+  ]),
+  'settings.installMissingWslDependencies': callable<
+    (request: InstallMissingWslDependenciesRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:install-missing-wsl-dependencies', LOCAL]),
+  'settings.createWslSupportHandoff': callable<() => Promise<WslSetupConversationBootstrap>>()(
+    'settings',
+    ['settings:create-wsl-support-handoff', LOCAL]
+  ),
+  'settings.selectWslProfile': callable<
+    (request: SelectWslProfileRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:select-wsl-profile', LOCAL]),
+  'settings.switchLocalShellToPowerShell': callable<() => Promise<SwitchToPowerShellResult>>()(
+    'settings',
+    ['settings:switch-local-shell-to-powershell', LOCAL]
+  ),
+  'settings.useWsl2Bash': callable<() => Promise<UseWsl2BashResult>>()('settings', [
+    'settings:use-wsl2-bash',
+    LOCAL
+  ]),
+  'settings.installRecommendedWslDistro': callable<
+    (request: InstallWslDistroRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:install-recommended-wsl-distro', LOCAL]),
+  'settings.openWslTerminal': callable<
+    (request: OpenWslTerminalRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:open-wsl-terminal', LOCAL]),
   'settings.installNotebookNetwork': callable<() => Promise<NotebookNetworkStatus>>()('settings', [
     'settings:install-notebook-network',
     LOCAL

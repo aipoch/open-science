@@ -44,10 +44,45 @@ remove any real Open-Science installation or change its permissions.
 | Access denied, unattended update   | No blocking notice; exit 2, previous app launchable                                  |
 | File occupied, unattended update   | No blocking notice; exit 2, previous app launchable                                  |
 
-With the unmodified hook, the three interactive cases fail because the installer
+Before the failure-notice change, the three interactive cases fail because the installer
 exits 2 without displaying a notice, leaving the old app launchable. The unattended
 cases already pass. This reproduces a sufficient cause of the reported silent
 failure, not proof of a specific reporter's ACL or antivirus state.
 
 This fixture covers the installer boundary, not Electron relaunch, all NSIS error
 codes, full package contents, antivirus products, or elevated/manual recovery.
+
+## Legacy per-machine elevation ordering
+
+The additional `elevation` installer embeds the current hook and replaces only
+`UAC_RunElevated` with `elevation-probe.nsh`. Real secure-desktop consent cannot be
+driven unattended by this test. The replacement records the request and returns
+Win32 cancellation (1223); the real NSIS initialization and cancellation handling
+still run. No administrative rights are granted and no production seam is added.
+
+The `denied-elevation` cases select all-users mode through the public `/allusers`
+argument, with an actual protected fixture uninstaller. They require reaching UAC
+before rejecting the file, preserving cancellation status, and keeping the old
+executable launchable. The nested-data case also requires the original data to
+remain in place at the moment of the request and after cancellation.
+`denied-currentuser` verifies that `/currentuser` retains the access-denied notice
+without requesting UAC. `writable` verifies a normal current-user upgrade succeeds.
+
+On the pre-fix hook, `denied-elevation` fails with the actual error-5 notice and
+installer exit 2 before any elevation request. After the fix it reaches the request
+and preserves the simulated cancellation. This covers the same upstream decision
+used for a registered legacy per-machine install; it does not create an HKLM
+registration or certify real UAC approval, different-account credentials, or a
+complete elevated upgrade. The `0.26.0` fixture directory is a version marker;
+its hook always comes from the current working tree.
+
+`denied-elevated-target` exercises the elevated preflight with both user and
+machine registrations pointing to different directories. The fixture reports an
+admin token to NSIS but keeps real OS write denial in place. Its `preInit` uses
+Win32 `RegOverridePredefKey` to redirect HKLM only within the fixture process to
+a dedicated HKCU test hive; it never writes the real machine registration. The
+test requires the machine-target error notice and the original user executable
+to remain launchable, proving target selection happens before either uninstall.
+The temporary hive and machine-target file are removed in `finally`.
+This covers branch behavior, not the security properties of an actual elevated
+token. Both test prefixes are excluded from uninstaller generation/execution.

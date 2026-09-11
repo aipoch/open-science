@@ -29,6 +29,7 @@ type Harness = {
     promptMessageIdFor: Mock<AcpPromptTurnWorkflowOptions['artifacts']['promptMessageIdFor']>
     publish: Mock<AcpPromptTurnWorkflowOptions['artifacts']['publish']>
     dispose: Mock<AcpPromptTurnWorkflowOptions['artifacts']['dispose']>
+    publicationCount: Mock<AcpPromptTurnWorkflowOptions['artifacts']['publicationCount']>
   }
   authorize: Mock<AcpPromptTurnWorkflowOptions['skills']['authorize']>
   context: ContextWindowTurnHandle
@@ -284,7 +285,8 @@ const createHarness = (
     }),
     dispose: vi.fn(async () => {
       journal.push('artifact:dispose')
-    })
+    }),
+    publicationCount: vi.fn(() => 1)
   }
   const permission = { clearCorrelationsForSession: vi.fn() }
   const contextUsage = { reconcileUsed: vi.fn(() => true) }

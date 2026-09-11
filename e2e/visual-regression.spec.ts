@@ -317,7 +317,15 @@ test('keeps representative conversation, project, and recovery states visually s
   await page.getByRole('button', { name: 'Files', exact: true }).click()
   await expect(page.locator('[data-testid="files-view"]')).toBeVisible()
   await setVisualState(page, { theme: 'Light', width: 767 })
-  await pinConversationToStart(page)
+  // Resizing can remeasure the virtualized transcript after scrollTop first reaches zero.
+  // Wait for the first prompt itself so the dimmed background uses the same visual anchor.
+  await expect
+    .poll(async () => {
+      await pinConversationToStart(page)
+      const firstPrompt = await page.getByText(prompts[0], { exact: true }).boundingBox()
+      return firstPrompt !== null && firstPrompt.y >= 0
+    })
+    .toBe(true)
   await expectStableScreenshot(page, 'files-narrow-light.png')
 
   await setViewport(page, 1280)

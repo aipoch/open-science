@@ -4,6 +4,7 @@ import type { McpServer } from '@agentclientprotocol/sdk'
 import type { AgentFramework, SessionSetup } from '../agent-framework/types'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import type { AcpPromptRequest } from '../../shared/acp'
+import type { ShellRuntimeAgentContract } from '../notebook/shell-runtime'
 import type { SessionCapabilityPolicy } from './session-capability-owner'
 
 type AcpSessionToolingAvailability = Readonly<{
@@ -16,6 +17,7 @@ type AcpSessionSetupPresentationInput = Readonly<{
   framework: Pick<AgentFramework, 'id' | 'buildSessionSetup'>
   tooling: AcpSessionToolingAvailability
   role?: SessionCapabilityPolicy['role']
+  shellRuntimeAgentContract?: ShellRuntimeAgentContract
   backendSystemPromptAppends?: readonly string[]
   extraSystemPromptAppends?: readonly string[]
   persistentSystemPrompt?: string
@@ -142,6 +144,14 @@ const REMOTE_COMPUTE_AWARENESS_SYSTEM_PROMPT_APPEND = [
   '</open_science_remote_compute_awareness>'
 ].join('\n')
 
+const shellRuntimeSystemPromptAppend = (contract: ShellRuntimeAgentContract): string => {
+  return [
+    '<open_science_shell_runtime>',
+    contract.sessionInstruction,
+    '</open_science_shell_runtime>'
+  ].join('\n')
+}
+
 // Converts runtime-owned prompt facts into provider-specific setup and turn presentation without
 // owning Session state or capability decisions.
 class AcpSessionPresentationPolicy {
@@ -186,8 +196,17 @@ class AcpSessionPresentationPolicy {
           : undefined
     const skillRuntimeScope =
       input.role && input.role !== 'primary' ? undefined : (skillWhitelist ?? 'all')
+    const sessionSpecificSystemPromptAppends =
+      (input.role ?? 'primary') === 'primary' &&
+      input.tooling.notebook &&
+      input.shellRuntimeAgentContract
+        ? [shellRuntimeSystemPromptAppend(input.shellRuntimeAgentContract)]
+        : []
     const setup = input.framework.buildSessionSetup({
-      systemPromptAppends: this.systemPromptAppends(input),
+      systemPromptAppends: [
+        ...this.systemPromptAppends(input),
+        ...sessionSpecificSystemPromptAppends
+      ],
       sessionOptions: input.sessionOptions,
       skillRuntimeScope,
       ...(skillWhitelist !== undefined ? { skillWhitelist } : {})

@@ -66,11 +66,13 @@ import { ConversationExportDialog } from './ConversationExportDialog'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { DownloadProjectArtifactsDialog } from './DownloadProjectArtifactsDialog'
 import { DownloadSessionArtifactsDialog } from './DownloadSessionArtifactsDialog'
+import { SessionReproducibilityDialog } from './SessionReproducibilityDialog'
 import { FilePreviewDialog } from './FilePreviewDialog'
 import { EditSessionDialog } from './EditSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
 import { JobDetailModal } from '@/components/JobDetailModal'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
+import { startWslSetupConversation } from '@/lib/wsl-support-handoff'
 import { ProjectFormDialog } from '../home/ProjectFormDialog'
 import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'
@@ -134,11 +136,13 @@ const WorkspacePage = ({
   const pendingLiteratureReviewPrefill = useNavigationStore(
     (state) => state.pendingLiteratureReviewPrefill
   )
+  const pendingWslSupportPrefill = useNavigationStore((state) => state.pendingWslSupportPrefill)
   const pendingArtifactMention = useNavigationStore((state) => state.pendingArtifactMention)
   const consumeCustomizePrefill = useNavigationStore((state) => state.consumeCustomizePrefill)
   const consumeLiteratureReviewPrefill = useNavigationStore(
     (state) => state.consumeLiteratureReviewPrefill
   )
+  const consumeWslSupportPrefill = useNavigationStore((state) => state.consumeWslSupportPrefill)
   const consumeArtifactMention = useNavigationStore((state) => state.consumeArtifactMention)
   const setArtifactMentionAvailability = useNavigationStore(
     (state) => state.setArtifactMentionAvailability
@@ -240,6 +244,7 @@ const WorkspacePage = ({
   // disabled as the first defense.
   const [isDownloadingProjectArtifacts, setIsDownloadingProjectArtifacts] = useState(false)
   const [isProjectDownloadOpen, setIsProjectDownloadOpen] = useState(false)
+  const [checkSession, setCheckSession] = useState<ChatSession>()
   const [artifactFinalizationRetrySessionId, setArtifactFinalizationRetrySessionId] =
     useState<string>()
   const [manualReviewRequests, setManualReviewRequests] = useState<
@@ -479,7 +484,9 @@ const WorkspacePage = ({
     newConversationDraftKey,
     activeProjectId,
     pendingCustomizePrefill,
+    pendingWslSupportPrefill,
     onCustomizePrefillApplied: sessionController.actions.resetNewConversationSpecialist,
+    onWslSupportPrefillApplied: sessionController.actions.resetNewConversationSpecialist,
     historyEntries: composerHistoryEntries,
     activeSession,
     historyPolicy: composerHistoryPolicy,
@@ -844,6 +851,10 @@ const WorkspacePage = ({
   useEffect(() => {
     if (pendingCustomizePrefill !== undefined) consumeCustomizePrefill()
   }, [pendingCustomizePrefill, consumeCustomizePrefill])
+
+  useEffect(() => {
+    if (pendingWslSupportPrefill !== undefined) consumeWslSupportPrefill()
+  }, [pendingWslSupportPrefill, consumeWslSupportPrefill])
 
   // The first agent-side notebook call reveals the new notebook entry and its preview together.
   useEffect(() => {
@@ -1215,6 +1226,9 @@ const WorkspacePage = ({
             onRenameSessionTitle={sessionController.actions.renameTitle}
             canDownloadArtifacts={typeof window.api?.saveSessionArtifacts === 'function'}
             onDownloadArtifacts={sessionController.actions.openDownloadArtifacts}
+            onCheckArtifacts={
+              window.api.artifacts?.sessionReproducibility ? setCheckSession : undefined
+            }
             onViewNotebook={sessionController.actions.openNotebook}
             onExportSession={
               typeof window.api.sessions?.exportConversation === 'function'
@@ -1291,6 +1305,14 @@ const WorkspacePage = ({
               close()
               sessionController.actions.openDownloadArtifacts(session)
             }}
+            onCheckArtifacts={
+              window.api.artifacts?.sessionReproducibility
+                ? (session) => {
+                    close()
+                    setCheckSession(session)
+                  }
+                : undefined
+            }
             onViewNotebook={(session) => {
               close()
               sessionController.actions.openNotebook(session)
@@ -1430,6 +1452,9 @@ const WorkspacePage = ({
                 disabledReason: saveAsSkillAvailability.disabledReason,
                 running: activeSessionSaveAsSkillRunning,
                 request: requestSaveAsSkill
+              },
+              wslSetup: {
+                start: () => startWslSetupConversation(scopedProjectId, t)
               }
             }}
             sessionTools={{
@@ -1479,6 +1504,10 @@ const WorkspacePage = ({
       <DownloadSessionArtifactsDialog
         session={sessionController.view.dialogs.downloadArtifacts ?? undefined}
         onClose={sessionController.actions.closeDownloadArtifacts}
+      />
+      <SessionReproducibilityDialog
+        session={checkSession}
+        onClose={() => setCheckSession(undefined)}
       />
       <ConversationExportDialog
         session={sessionController.view.dialogs.exportConversation ?? undefined}

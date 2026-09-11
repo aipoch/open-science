@@ -13,6 +13,25 @@ import { createInitialNotebookEnvState, useNotebookEnvStore } from '../../stores
 import { useRuntimeSettingsStore } from '../../stores/runtime-settings-store'
 import { RuntimesPanel } from './RuntimesPanel'
 
+vi.mock('./WslLocalShellSection', () => ({
+  WslLocalShellSection: ({
+    previewAvailable,
+    developmentPreview,
+    previewUnavailableReason
+  }: {
+    previewAvailable: boolean
+    developmentPreview?: boolean
+    previewUnavailableReason?: string
+  }) => (
+    <div
+      data-preview-available={String(previewAvailable)}
+      data-preview-development={String(developmentPreview === true)}
+      data-preview-reason={previewUnavailableReason}
+      data-testid="wsl2-preview-section"
+    />
+  )
+}))
+
 let container: HTMLDivElement
 let root: Root
 
@@ -64,6 +83,7 @@ let pickInterpreter: ReturnType<typeof vi.fn>
 let provision: ReturnType<typeof vi.fn>
 let cancelBridge: ReturnType<typeof vi.fn>
 let repairBridge: ReturnType<typeof vi.fn>
+let importEnvironmentLock: ReturnType<typeof vi.fn>
 
 const provisionStatus: ProvisionStatus = {
   pythonReady: false,
@@ -126,7 +146,22 @@ beforeEach(() => {
   provision = vi.fn().mockRejectedValue(new Error('runtime CDN unavailable'))
   cancelBridge = vi.fn().mockResolvedValue(undefined)
   repairBridge = vi.fn().mockResolvedValue(undefined)
+  importEnvironmentLock = vi.fn().mockResolvedValue({
+    imported: true,
+    environmentName: 'repro-eeeeeeeeeeee',
+    kernelKind: 'python',
+    reused: false
+  })
   ;(window as unknown as { api: unknown }).api = {
+    platform: 'linux',
+    settings: {
+      getWsl2BashPreviewStatus: vi.fn().mockResolvedValue({
+        available: false,
+        reason: 'unsupported-platform'
+      }),
+      getLocalShellRuntimePreference: vi.fn().mockResolvedValue(undefined)
+    },
+    artifacts: { importEnvironmentLock },
     runtime: {
       listEnvironments,
       listPackages,
@@ -320,6 +355,48 @@ describe('RuntimesPanel', () => {
       expect(container.textContent?.includes('R access verified')).toBe(!cancelled)
     }
   )
+
+  it('shows WSL2 Bash Preview only when the main process admits this build and host', async () => {
+    window.api.platform = 'win32'
+    window.api.settings.getWsl2BashPreviewStatus = vi.fn().mockResolvedValue({
+      available: true,
+      reason: 'available',
+      development: true
+    })
+
+    await render()
+
+    expect(container.querySelector('[data-testid="wsl2-preview-section"]')).not.toBeNull()
+    expect(container.querySelector('[data-preview-available="true"]')).not.toBeNull()
+    expect(container.querySelector('[data-preview-development="true"]')).not.toBeNull()
+  })
+
+  it('leaves the runtime UI unchanged when main rejects the Preview', async () => {
+    window.api.platform = 'win32'
+    window.api.settings.getWsl2BashPreviewStatus = vi.fn().mockResolvedValue({
+      available: false,
+      reason: 'build-disabled'
+    })
+
+    await render()
+
+    expect(container.querySelector('[data-testid="wsl2-preview-section"]')).toBeNull()
+  })
+
+  it('keeps only the PowerShell recovery surface when a rejected Preview remains selected', async () => {
+    window.api.platform = 'win32'
+    window.api.settings.getWsl2BashPreviewStatus = vi.fn().mockResolvedValue({
+      available: false,
+      reason: 'assets-unavailable'
+    })
+    window.api.settings.getLocalShellRuntimePreference = vi.fn().mockResolvedValue('wsl2-bash')
+
+    await render()
+
+    expect(container.querySelector('[data-preview-available="false"]')).not.toBeNull()
+    expect(container.querySelector('[data-preview-reason="assets-unavailable"]')).not.toBeNull()
+  })
+
   it('shows the network protection entry only when Settings provides its route', async () => {
     const onOpenNetworkProtection = vi.fn()
     ;(window.api as unknown as { settings: unknown }).settings = {
@@ -349,9 +426,19 @@ describe('RuntimesPanel', () => {
     const recheck = section?.querySelector<HTMLButtonElement>('[data-testid="runtimes-recheck"]')
     const checkedAt = section?.querySelector('[data-testid="runtimes-checked-at"]')
     expect(recheck?.textContent).toContain('Recheck')
-    expect(recheck?.parentElement?.parentElement?.className).toContain('ml-auto')
+    expect(recheck?.parentElement?.parentElement?.parentElement?.className).toContain('ml-auto')
     expect(checkedAt?.textContent).toContain('Last checked')
-    expect(recheck?.nextElementSibling).toBe(checkedAt)
+    expect(recheck?.parentElement?.nextElementSibling).toBe(checkedAt)
+  })
+
+  it('imports an external Environment bundle from global runtime settings', async () => {
+    await render()
+
+    await click(container.querySelector('[data-testid="runtimes-import-environment"]'))
+
+    expect(importEnvironmentLock).toHaveBeenCalledWith({})
+    expect(listEnvironments).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('Environment imported as repro-eeeeeeeeeeee.')
   })
 
   it('disables Recheck until the initial registry load settles', async () => {
