@@ -681,7 +681,9 @@ const createApplicationModules = async (
       resourceRoot: app.isPackaged
         ? join(process.resourcesPath, 'notebook-network-sandbox')
         : join(app.getAppPath(), 'packages', 'notebook-network-sandbox', 'vendor'),
-      temporaryRoot: join(app.getPath('userData'), 'notebook-command-temp'),
+      // R rejects a TEMP path containing spaces. Electron's product-named userData directory
+      // includes them in both production and development; keep command temp under the fixed config root.
+      temporaryRoot: join(resolveConfigRoot(), 'notebook-command-temp'),
       getSettings: async () => {
         const service = settingsServiceRef.current
         if (!service) throw new Error('Settings are not ready.')

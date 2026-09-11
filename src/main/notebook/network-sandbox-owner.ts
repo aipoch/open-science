@@ -895,7 +895,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         cause: verificationError
       })
     }
-    await rm(cwd, { recursive: true, force: true })
+    // Windows can retain directory handles briefly after the probe's process tree has exited.
+    // Retry only after termination and sandbox cleanup are confirmed; persistent locks still fail.
+    await rm(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     if (verificationError !== undefined) throw verificationError
     return verified
   }
