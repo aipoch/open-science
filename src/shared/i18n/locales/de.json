@@ -105,6 +105,8 @@
     "Import Environment lock": "Umgebungssperre importieren"
   },
   "renderer": {
+    "This provider is referenced by saved conversations and cannot be deleted.": "Dieser Anbieter wird von gespeicherten Konversationen referenziert und kann nicht gelöscht werden.",
+    "Could not check saved conversations. Resolve session storage errors and try again.": "Gespeicherte Konversationen konnten nicht geprüft werden. Beheben Sie die Speicherfehler der Sitzungen und versuchen Sie es erneut.",
     "The source message is no longer available.": "Die ursprüngliche Nachricht ist nicht mehr verfügbar.",
     "This Notebook exceeds the 10 MB preview limit.": "Dieses Notebook überschreitet die Vorschaugrenze von 10 MB.",
     "Recent searches": "Letzte Suchen",

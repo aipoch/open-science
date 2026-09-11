@@ -26,7 +26,8 @@ type TestSettingsWorkflowEffects = Partial<
 const testEffects = (effects: TestSettingsWorkflowEffects = {}): SettingsWorkflowEffects => ({
   runtime: {
     requestProviderReconnect: effects.requestProviderReconnect ?? (() => undefined),
-    requestAgentFrameworkSwitch: effects.requestAgentFrameworkSwitch ?? (() => undefined)
+    requestAgentFrameworkSwitch: effects.requestAgentFrameworkSwitch ?? (() => undefined),
+    withProviderRemoval: effects.withProviderRemoval ?? (async (_ids, remove) => remove())
   },
   localShell: {
     requestShellRuntimeRefresh: effects.requestShellRuntimeRefresh ?? (async () => undefined)
@@ -163,6 +164,36 @@ const fakeStore = () => {
 }
 
 describe('SettingsWorkflows runtime effects', () => {
+  it.each([
+    ['provider-a', ['provider-a']],
+    [CLAUDE_SHARED_PROVIDER_ID, [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID]]
+  ])(
+    'preserves a referenced %s and its credentials before any deletion effects',
+    async (providerId, affectedIds) => {
+      const { store, capability } = fakeStore()
+      const requestProviderReconnect = vi.fn()
+      const withProviderRemoval = vi
+        .fn()
+        .mockRejectedValue(
+          new Error('This provider is referenced by saved conversations and cannot be deleted.')
+        )
+      const workflows = createSettingsWorkflows(
+        capability,
+        testEffects({
+          requestProviderReconnect,
+          withProviderRemoval
+        })
+      ).runtime
+
+      await expect(workflows.deleteProvider(providerId as string)).rejects.toThrow(
+        'referenced by saved conversations'
+      )
+      expect(withProviderRemoval).toHaveBeenCalledWith(affectedIds, expect.any(Function))
+      expect(store.deleteProvider).not.toHaveBeenCalled()
+      expect(requestProviderReconnect).not.toHaveBeenCalled()
+    }
+  )
+
   it.each([
     ['uninstallClaude', 'claude-code', 'opencode'],
     ['uninstallOpencode', 'opencode', 'codex'],

@@ -104,6 +104,8 @@
     "Import Environment lock": "환경 잠금 가져오기"
   },
   "renderer": {
+    "This provider is referenced by saved conversations and cannot be deleted.": "이 모델 제공업체는 저장된 대화에서 참조되므로 삭제할 수 없습니다.",
+    "Could not check saved conversations. Resolve session storage errors and try again.": "저장된 대화를 확인할 수 없습니다. 세션 저장소 오류를 해결한 후 다시 시도하세요.",
     "The source message is no longer available.": "원본 메시지를 더 이상 사용할 수 없습니다.",
     "This Notebook exceeds the 10 MB preview limit.": "이 Notebook은 10 MB 미리보기 제한을 초과합니다.",
     "Recent searches": "최근 검색",

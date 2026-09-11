@@ -474,6 +474,7 @@ describe('Session persistence coordinator architecture', () => {
         'readChildren',
         'withUnreferencedLiteratureAttachment',
         'withLiteratureAttachmentRemoval',
+        'withProviderRemoval',
         'readSessionRuntimeContext',
         'recoverInterruptedDelegatedWork',
         'replaceSessionMetadata',
@@ -687,6 +688,7 @@ describe('Session persistence coordinator architecture', () => {
       runGlobal: [
         'withUnreferencedLiteratureAttachment',
         'withLiteratureAttachmentRemoval',
+        'withProviderRemoval',
         'listLegacyProjectSessionTombstones',
         'loadAll',
         'loadAllReadOnly',
@@ -782,7 +784,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(42)
+    expect(expectedSchedulerRoute.size).toBe(43)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')

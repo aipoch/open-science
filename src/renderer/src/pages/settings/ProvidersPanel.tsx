@@ -73,6 +73,22 @@ const providerErrorCopy = (error: ProviderPanelError, t: TFunction): string => {
     case 'test':
       return t('Could not test the provider connection.')
     case 'delete':
+      if (
+        error.detail?.endsWith(
+          'This provider is referenced by saved conversations and cannot be deleted.'
+        )
+      ) {
+        return t('This provider is referenced by saved conversations and cannot be deleted.')
+      }
+      if (
+        error.detail?.endsWith(
+          'Could not check saved conversations. Resolve session storage errors and try again.'
+        )
+      ) {
+        return t(
+          'Could not check saved conversations. Resolve session storage errors and try again.'
+        )
+      }
       return t('Could not delete the provider.')
     case 'codex-sign-in':
       return t('Could not sign in to Codex.')

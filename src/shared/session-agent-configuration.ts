@@ -32,6 +32,36 @@ const providerIdFromBackendId = (backendId: string | undefined): string | undefi
   return normalized ? canonicalSessionProviderId(normalized) : undefined
 }
 
+// Inspect all retained history, including inactive branches, without rewriting legacy identities.
+const sessionReferencesProvider = (
+  session: PersistedChatSession,
+  providerIds: readonly string[]
+): boolean => {
+  const references = [
+    session.agentConfiguration?.providerId,
+    providerIdFromBackendId(session.agentBackendId),
+    session.sessionDetailsGeneration && 'providerId' in session.sessionDetailsGeneration
+      ? session.sessionDetailsGeneration.providerId
+      : undefined,
+    session.runtimeContext?.sideChat?.providerId,
+    providerIdFromBackendId(session.runtimeContext?.sideChat?.backendId),
+    ...(session.conversationGraph?.runtimeSegments ?? []).flatMap((segment) => [
+      segment.providerId,
+      providerIdFromBackendId(segment.backendId)
+    ]),
+    ...(session.conversationGraph?.messages ?? session.messages).flatMap((message) => [
+      message.agentTarget?.providerId,
+      providerIdFromBackendId(message.agentTarget?.backendId)
+    ]),
+    ...(session.runtimeContext?.delegatedWork?.records ?? []).flatMap((record) =>
+      record.attempts.map((attempt) => attempt.executionModel?.providerId)
+    )
+  ]
+  return references.some(
+    (id) => id !== undefined && providerIds.includes(canonicalSessionProviderId(id))
+  )
+}
+
 const resolveSelectableConfiguration = (
   catalog: readonly ConfiguredModelCatalogEntry[],
   providerId: string | undefined,
@@ -129,6 +159,7 @@ const resolveSessionAgentConfiguration = (input: {
 }
 
 export {
+  sessionReferencesProvider,
   isConfigurationSelectable,
   resolveSelectableConfiguration,
   resolveSessionAgentConfiguration
