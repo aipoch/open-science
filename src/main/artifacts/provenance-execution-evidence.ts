@@ -424,10 +424,9 @@ const buildBoundedExecutionSnapshot = (
   }
   if (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES) {
     while (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES && helperModules.length > 0) {
-      const evidenceWasIncomplete = helperEvidenceReasons.size > 0
       helperModules = helperModules.slice(0, -1)
       helperEvidenceReasons.add('payload-limit')
-      if (!evidenceWasIncomplete) invalidateRecipe()
+      invalidateRecipe()
     }
   }
   if (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES) {
