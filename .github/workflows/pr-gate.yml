@@ -212,6 +212,7 @@ jobs:
             'interface_contracts',
             'cli_sdk',
             'i18n',
+            'runtime_bundle',
             'unit_macos',
             'linux_runtime',
             'windows_runtime',

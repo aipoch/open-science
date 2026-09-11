@@ -190,6 +190,7 @@ describe('PR Gate workflow', () => {
       'node "$TRUSTED_CLASSIFIER_DIR/module-impact-authority.mjs" --base "$BASE_SHA" --head "$HEAD_SHA"'
     )
     expect(classify?.run).toContain("mode: 'full'")
+    expect(classify?.run).toContain("'runtime_bundle'")
     expect(classify?.run).not.toContain(
       'node scripts/ci/classify-pr-changes.mjs --base "$BASE_SHA" --head "$HEAD_SHA"'
     )
@@ -409,6 +410,10 @@ describe('PR Gate workflow', () => {
     expect(enforce?.run).toContain('check runtime_bundle "$RUNTIME_BUNDLE_OUTCOME"')
     expect(manifest.laneBundles.runtime_bundle).toBe('static')
     expect(manifest.laneOrder).toContain('runtime_bundle')
+    const classify = workflow.jobs.preflight.steps?.find(
+      ({ name }) => name === 'Classify change impact'
+    )
+    expect(classify?.run).toContain("'runtime_bundle'")
   })
 
   it('shards full portable tests on Ubuntu and merges coverage into the stable unit bundle', () => {
