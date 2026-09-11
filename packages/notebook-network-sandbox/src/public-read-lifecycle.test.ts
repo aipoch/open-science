@@ -58,39 +58,43 @@ const fixture = async (
     )
   return { ca, gateway, blocked, connectClient, connectHead }
 }
-it('records real curl SPKI pin rejection after successful local TLS, without sending HTTP', async () => {
-  const { ca, gateway, blocked } = await fixture()
-  const directory = await mkdtemp(join(tmpdir(), 'read-pin-'))
-  cleanup.push(() => rm(directory, { recursive: true, force: true }))
-  const path = join(directory, 'ca.pem')
-  await writeFile(path, ca.certificatePem)
-  let failure: unknown
-  try {
-    await promisify(execFile)(
-      'curl',
-      [
-        '--silent',
-        '--show-error',
-        '--max-time',
-        '5',
-        '--noproxy',
-        '',
-        '--proxy',
-        `http://test:secret@127.0.0.1:${gateway.port}`,
-        '--cacert',
-        path,
-        '--pinnedpubkey',
-        'sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-        'https://data.example/file'
-      ],
-      { env: { ...process.env, ALL_PROXY: '', HTTPS_PROXY: '', HTTP_PROXY: '' } }
-    )
-  } catch (error) {
-    failure = error
+// Windows curl uses Schannel, which does not implement --pinnedpubkey.
+it.skipIf(process.platform === 'win32')(
+  'records real curl SPKI pin rejection after successful local TLS, without sending HTTP',
+  async () => {
+    const { ca, gateway, blocked } = await fixture()
+    const directory = await mkdtemp(join(tmpdir(), 'read-pin-'))
+    cleanup.push(() => rm(directory, { recursive: true, force: true }))
+    const path = join(directory, 'ca.pem')
+    await writeFile(path, ca.certificatePem)
+    let failure: unknown
+    try {
+      await promisify(execFile)(
+        'curl',
+        [
+          '--silent',
+          '--show-error',
+          '--max-time',
+          '5',
+          '--noproxy',
+          '',
+          '--proxy',
+          `http://test:secret@127.0.0.1:${gateway.port}`,
+          '--cacert',
+          path,
+          '--pinnedpubkey',
+          'sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+          'https://data.example/file'
+        ],
+        { env: { ...process.env, ALL_PROXY: '', HTTPS_PROXY: '', HTTP_PROXY: '' } }
+      )
+    } catch (error) {
+      failure = error
+    }
+    expect((failure as { code: number }).code).toBe(90)
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce())
   }
-  expect((failure as { code: number }).code).toBe(90)
-  await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce())
-})
+)
 it('cannot revive a certificate signing result after reset', async () => {
   const ca = await createLocalCertificateAuthority()
   cleanup.push(() => ca.dispose())

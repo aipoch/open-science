@@ -317,8 +317,18 @@ export const sandboxedPackageSpawn =
       ended = true
       processesTerminated = result.processesTerminated ?? true
       return { ...result, stderr: sandboxed.annotateStderr(result.stderr) }
+    } catch (error) {
+      if (!ended && sandboxed.confirmProcessTreeTermination) {
+        processesTerminated = await sandboxed.confirmProcessTreeTermination().catch(() => false)
+      }
+      throw error
     } finally {
       if (!ended) endExecution?.()
-      await sandboxed.cleanup(ended ? 'exit' : 'spawn-failed', { processesTerminated })
+      await sandboxed.cleanup(ended ? 'exit' : 'spawn-failed', {
+        processesTerminated,
+        ...(sandboxed.confirmProcessTreeTermination
+          ? { confirmTermination: sandboxed.confirmProcessTreeTermination }
+          : {})
+      })
     }
   }

@@ -240,7 +240,54 @@ describe('sandboxedPackageSpawn', () => {
     )
     expect(cleanup).toHaveBeenCalledOnce()
     expect(cleanup).toHaveBeenCalledWith('exit', {
-      processesTerminated: true
+      processesTerminated: true,
+      confirmTermination: expect.any(Function)
+    })
+  })
+
+  it('confirms an aborted installer tree before recording retryable cleanup', async () => {
+    const confirmTermination = vi.fn(async () => true)
+    const cleanup = vi.fn().mockResolvedValue({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    })
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async (invocation) => ({
+        executable: invocation.executable,
+        args: invocation.args,
+        env: invocation.env,
+        confirmProcessTreeTermination: confirmTermination,
+        beginExecution: () => () => undefined,
+        annotateStderr: (stderr: string) => stderr,
+        cleanup
+      }))
+    }
+    const spawn = sandboxedPackageSpawn({
+      processSandbox,
+      request: { language: 'python', packages: ['example'] },
+      runtimeRoot: process.cwd(),
+      storageRoot: process.cwd()
+    })
+    const cancellation = new AbortController()
+    await expect(
+      spawn(
+        process.execPath,
+        ['-e', 'setTimeout(() => {}, 30_000)'],
+        process.env,
+        () => {
+          cancellation.abort(new DOMException('Package operation cancelled.', 'AbortError'))
+        },
+        undefined,
+        false,
+        undefined,
+        { signal: cancellation.signal }
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(confirmTermination).toHaveBeenCalled()
+    expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
+      processesTerminated: true,
+      confirmTermination
     })
   })
 
@@ -468,7 +515,10 @@ describe('sandboxedPackageSpawn', () => {
       expect(cleanup).not.toHaveBeenCalled()
       releaseReaping?.()
       await expect(completion).resolves.toMatchObject({ code })
-      expect(cleanup).toHaveBeenCalledWith('exit', { processesTerminated })
+      expect(cleanup).toHaveBeenCalledWith('exit', {
+        processesTerminated,
+        confirmTermination: expect.any(Function)
+      })
     }
   )
 

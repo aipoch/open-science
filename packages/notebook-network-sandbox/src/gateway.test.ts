@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -33,7 +34,7 @@ const runResetTunnelChild = (
     const gatewayModuleUrl = `data:text/javascript;base64,${Buffer.from(
       buildSync({
         entryPoints: [
-          new URL('../runtime/src/gateway/command-gateway.ts', import.meta.url).pathname
+          fileURLToPath(new URL('../runtime/src/gateway/command-gateway.ts', import.meta.url))
         ],
         bundle: true,
         platform: 'node',

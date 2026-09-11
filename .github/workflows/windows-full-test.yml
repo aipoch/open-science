@@ -62,7 +62,7 @@ jobs:
     needs: plan
     if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
     env:
       VITEST_WINDOWS_FULL_TEST: '1'
     strategy:
@@ -88,9 +88,10 @@ jobs:
         # SQLite-heavy integration suites contend heavily for Windows disk I/O when Vitest uses
         # every available core, and hosted-runner disk latency occasionally exceeds the default
         # per-test/hook budgets. Keep files serial and use bounded 60-second budgets; individual
-        # tests still fail at that bound. The 35-minute job timeout covers checkout, npm ci, and a
-        # slow serial suite without treating a still-progressing shard as a hang.
-        run: npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
+        # tests still fail at that bound. The 50-minute job timeout covers checkout, npm ci, and a
+        # slow serial suite without treating a still-progressing shard as a hang. GitHub annotations
+        # keep the failing test visible if the job is later cancelled.
+        run: npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github
 
       - name: Test recent Windows regressions
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}
@@ -104,9 +105,23 @@ jobs:
           src/main/database/database-null-and-version-bounds.test.ts
           src/main/database/migration-service.test.ts
           src/main/notebook/runtime-service.test.ts
+          src/main/notebook/source-file-access-analysis.test.ts
+          src/main/notebook/package-manager.test.ts
+          src/main/notebook/package-process-sandbox.test.ts
+          src/main/notebook/network-sandbox-owner.test.ts
+          src/main/notebook/dependency-analysis.test.ts
+          src/main/notebook/dependency-analysis.chord.test.ts
+          src/main/notebook/provisioner.test.ts
+          src/main/notebook/reproduction-runtime.test.ts
+          src/main/notebook/recovery-coordinator.test.ts
           src/main/artifacts/provenance-repository.test.ts
           src/main/artifacts/provenance-write-contract.test.ts
+          src/main/artifacts/artifact-reproducibility-export.test.ts
+          src/main/agent-framework/opencode.test.ts
+          src/main/logger.test.ts
           src/main/delegation/production-composition.test.ts
+          packages/notebook-network-sandbox/src/gateway.test.ts
+          packages/notebook-network-sandbox/src/public-read-lifecycle.test.ts
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
 
   notebook_sandbox:

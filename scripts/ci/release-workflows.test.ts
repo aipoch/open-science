@@ -63,6 +63,7 @@ describe('release and scheduled workflow topology', () => {
     expect(job.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
     expect(test.run).toContain('--shard=${{ matrix.shard }}/3')
     expect(test.run).toContain('--maxWorkers=1')
+    expect(test.run).toContain('--reporter=github')
     expect(windows.on).not.toHaveProperty('push')
     expect(schedule).toEqual([{ cron: '47 * * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
@@ -80,7 +81,7 @@ describe('release and scheduled workflow topology', () => {
     expect(job).toMatchObject({
       needs: 'plan',
       if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
-      'timeout-minutes': 35
+      'timeout-minutes': 50
     })
     expect(sandbox).toMatchObject({
       needs: 'plan',
@@ -105,9 +106,23 @@ describe('release and scheduled workflow topology', () => {
       'src/main/database/database-null-and-version-bounds.test.ts',
       'src/main/database/migration-service.test.ts',
       'src/main/notebook/runtime-service.test.ts',
+      'src/main/notebook/source-file-access-analysis.test.ts',
+      'src/main/notebook/package-manager.test.ts',
+      'src/main/notebook/package-process-sandbox.test.ts',
+      'src/main/notebook/network-sandbox-owner.test.ts',
+      'src/main/notebook/dependency-analysis.test.ts',
+      'src/main/notebook/dependency-analysis.chord.test.ts',
+      'src/main/notebook/provisioner.test.ts',
+      'src/main/notebook/reproduction-runtime.test.ts',
+      'src/main/notebook/recovery-coordinator.test.ts',
       'src/main/artifacts/provenance-repository.test.ts',
       'src/main/artifacts/provenance-write-contract.test.ts',
-      'src/main/delegation/production-composition.test.ts'
+      'src/main/artifacts/artifact-reproducibility-export.test.ts',
+      'src/main/agent-framework/opencode.test.ts',
+      'src/main/logger.test.ts',
+      'src/main/delegation/production-composition.test.ts',
+      'packages/notebook-network-sandbox/src/gateway.test.ts',
+      'packages/notebook-network-sandbox/src/public-read-lifecycle.test.ts'
     ]) {
       expect(regressions.run).toContain(file)
     }

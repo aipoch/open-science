@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { createHash } from 'node:crypto'
-import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, link, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -72,7 +72,12 @@ describe('NotebookRecoveryCoordinator', () => {
     const extracted = join(downloads, 'r-example-1.0-0')
     await mkdir(join(extracted, 'info'), { recursive: true })
     await writeFile(join(extracted, 'info', 'index.json'), '{}')
-    await symlink('libR.dylib', join(extracted, 'libR.so'))
+    await writeFile(join(extracted, 'libR.dylib'), 'lib')
+    if (process.platform === 'win32') {
+      await link(join(extracted, 'libR.dylib'), join(extracted, 'libR.so'))
+    } else {
+      await symlink('libR.dylib', join(extracted, 'libR.so'))
+    }
     const file = 'r-example-1.0-0.conda'
     await writeFile(join(downloads, file), 'verified archive')
     const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))

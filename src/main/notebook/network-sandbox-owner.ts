@@ -83,6 +83,30 @@ const sameCleanupDomain = (left: NotebookSandboxTarget, right: NotebookSandboxTa
 const cleanupComplete = (result: NotebookSandboxCleanupResult): boolean =>
   result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
 
+const WINDOWS_PROBE_DIRECTORY_LOCK_CODES = new Set([
+  'EBUSY',
+  'EPERM',
+  'EACCES',
+  'ENOTEMPTY',
+  'EAGAIN'
+])
+
+const removeDirectoryAfterWindowsProbeLock = async (path: string): Promise<void> => {
+  let lastError: unknown
+  for (let attempt = 0; attempt < 16; attempt++) {
+    try {
+      await rm(path, { recursive: true, force: true })
+      return
+    } catch (error) {
+      lastError = error
+      const code = (error as NodeJS.ErrnoException).code
+      if (!code || !WINDOWS_PROBE_DIRECTORY_LOCK_CODES.has(code)) throw error
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)))
+    }
+  }
+  throw lastError
+}
+
 const statusLogFields = (status: NotebookNetworkStatus): Record<string, unknown> => {
   switch (status.kind) {
     case 'ready':
@@ -903,7 +927,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
     // Windows can retain directory handles briefly after the probe's process tree has exited.
     // Retry only after termination and sandbox cleanup are confirmed; persistent locks still fail.
-    await rm(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    // Node's fs.rm retries omit EACCES, which hosted Windows runners can surface for a live cwd.
+    await removeDirectoryAfterWindowsProbeLock(cwd)
     if (verificationError !== undefined) throw verificationError
     return verified
   }

@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
 import sharp from 'sharp'
@@ -504,7 +506,7 @@ describe('Artifact reproducibility verification export', () => {
     expect(showSaveDialog).toHaveBeenCalledWith(
       { window: 1 },
       expect.objectContaining({
-        defaultPath: `/downloads/${verificationArchiveName('results.csv', value.completedAt)}`
+        defaultPath: join('/downloads', verificationArchiveName('results.csv', value.completedAt))
       })
     )
     expect(writeArchive).toHaveBeenCalledWith('/exports/verification.zip', expect.any(Uint8Array))
@@ -831,7 +833,7 @@ describe('Artifact Environment lock export', () => {
     expect(showSaveDialog).toHaveBeenCalledWith(
       { window: 1 },
       expect.objectContaining({
-        defaultPath: `/downloads/environment-lock-${environmentLockChecksum}.zip`
+        defaultPath: join('/downloads', `environment-lock-${environmentLockChecksum}.zip`)
       })
     )
     expect(writeArchive).toHaveBeenCalledWith(
@@ -1010,4 +1012,3 @@ describe('Artifact Environment lock export', () => {
 })
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'

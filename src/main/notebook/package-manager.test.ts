@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -1404,9 +1404,10 @@ describe('installPackages', () => {
     )
 
     const env = calls[0][2] ?? {}
+    const root = runtimeRoot(base.storageRoot)
     expect(env.CONDA_PKGS_DIRS).toBe('C:\\osp1234567890')
-    expect(env.MAMBA_ROOT_PREFIX).toBe('/root/runtime')
-    expect(env.CONDA_ENVS_PATH).toBe('\\root\\runtime\\envs')
+    expect(env.MAMBA_ROOT_PREFIX).toBe(root)
+    expect(env.CONDA_ENVS_PATH).toBe(win32.join(root, 'envs'))
   })
 
   it('does not inject the package cache into a pip subprocess', async () => {

@@ -111,14 +111,14 @@ describe('post-merge Windows validation', () => {
       if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
       env: { VITEST_WINDOWS_FULL_TEST: '1' },
       'runs-on': 'windows-latest',
-      'timeout-minutes': 35
+      'timeout-minutes': 50
     })
     expect(job['continue-on-error']).toBeUndefined()
     expect(job.strategy?.matrix).toEqual({
       shard: "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3]') }}"
     })
     expect(findStep(job, 'Test complete suite shard').run).toBe(
-      'npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000'
+      'npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github'
     )
     expect(findStep(job, 'Test complete suite shard').if).toBe(
       "${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}"
