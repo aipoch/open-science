@@ -242,7 +242,7 @@ describe('NotificationBell', () => {
     )
     expect(chip?.className).toContain('rounded-full')
     expect(chip?.className).toContain('border')
-    expect(chip?.className).toContain('text-text-300')
+    expect(chip?.className).toContain('text-text-100')
   })
 
   it('dims read titles and clamps detail previews to two lines', async () => {
