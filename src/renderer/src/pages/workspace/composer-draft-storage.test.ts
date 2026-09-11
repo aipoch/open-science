@@ -6,7 +6,8 @@ import {
   writeComposerDraft,
   revokeComposerDraftStorage,
   removeComposerDrafts,
-  flushComposerDrafts
+  flushComposerDrafts,
+  preserveComposerDraftsForRecovery
 } from './composer-draft-storage'
 import type { ComposerDraft } from './workspace-composer-upload-controller'
 const draft = (text: string): ComposerDraft => ({
@@ -71,6 +72,23 @@ describe('composer refresh storage', () => {
     revokeComposerDraftStorage()
     writeComposerDraft('project-a', 'same-session', draft('late write'))
     expect(sessionStorage.getItem('open-science-composer-drafts-v1')).toBeNull()
+  })
+  it('preserves drafts only for the same authorization scope during recovery', () => {
+    configureComposerDraftStorage('host/principal-a')
+    writeComposerDraft('project', 'session', draft('keep me'))
+    preserveComposerDraftsForRecovery()
+
+    configureComposerDraftStorage('host/principal-a')
+    expect(readComposerDraft('project', 'session', 'retry')?.doc.nodes).toEqual([
+      { type: 'text', text: 'keep me' }
+    ])
+    expect(sessionStorage.getItem('open-science-composer-drafts-recovery-v1')).toBeNull()
+
+    configureComposerDraftStorage('host/principal-a')
+    writeComposerDraft('project', 'session', draft('discard me'))
+    preserveComposerDraftsForRecovery()
+    configureComposerDraftStorage('host/principal-b')
+    expect(readComposerDraft('project', 'session', 'retry')).toBeUndefined()
   })
   it('does not revive deleted sessions or projects from late writes', () => {
     configureComposerDraftStorage('scope')

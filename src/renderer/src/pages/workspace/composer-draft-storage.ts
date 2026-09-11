@@ -4,6 +4,7 @@ import { docToText } from './composer/composer-doc'
 import type { ComposerDraft } from './workspace-composer-upload-controller'
 
 const STORAGE_KEY = 'open-science-composer-drafts-v1'
+const RECOVERY_STORAGE_KEY = 'open-science-composer-drafts-recovery-v1'
 const storedDraftSchema = z.object({
   projectId: z.string(),
   key: z.string(),
@@ -61,8 +62,18 @@ export const configureComposerDraftStorage = (nextScope?: string): void => {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY)
     const parsed = raw ? envelopeSchema.safeParse(JSON.parse(raw)) : undefined
-    if (scope && parsed?.success && parsed.data.scope === scope) drafts = parsed.data.drafts
-    else sessionStorage.removeItem(STORAGE_KEY)
+    const recoveryRaw = sessionStorage.getItem(RECOVERY_STORAGE_KEY)
+    const recovery = recoveryRaw ? envelopeSchema.safeParse(JSON.parse(recoveryRaw)) : undefined
+    if (scope && recovery?.success && recovery.data.scope === scope) {
+      drafts = recovery.data.drafts
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(recovery.data))
+      sessionStorage.removeItem(RECOVERY_STORAGE_KEY)
+    } else if (scope && parsed?.success && parsed.data.scope === scope) {
+      drafts = parsed.data.drafts
+    } else {
+      sessionStorage.removeItem(STORAGE_KEY)
+      sessionStorage.removeItem(RECOVERY_STORAGE_KEY)
+    }
   } catch {
     failed = true
   }
@@ -75,8 +86,23 @@ export const revokeComposerDraftStorage = (): void => {
   drafts = []
   try {
     sessionStorage.removeItem(STORAGE_KEY)
+    sessionStorage.removeItem(RECOVERY_STORAGE_KEY)
   } catch {
     /* Re-pairing changes scope even if removal fails. */
+  }
+}
+
+export const preserveComposerDraftsForRecovery = (): void => {
+  for (const writer of writers) writer()
+  if (!scope) return
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY)
+    const parsed = raw ? envelopeSchema.safeParse(JSON.parse(raw)) : undefined
+    if (parsed?.success && parsed.data.scope === scope) {
+      sessionStorage.setItem(RECOVERY_STORAGE_KEY, JSON.stringify(parsed.data))
+    }
+  } catch {
+    // Recovery is best-effort; the in-memory draft remains available to the dialog copy action.
   }
 }
 

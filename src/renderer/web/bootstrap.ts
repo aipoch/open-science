@@ -1,6 +1,6 @@
 import {
   configureComposerDraftStorage,
-  revokeComposerDraftStorage
+  preserveComposerDraftsForRecovery
 } from '@/pages/workspace/composer-draft-storage'
 import { flushSync } from 'react-dom'
 import {
@@ -319,7 +319,7 @@ const publishEventConnectionPhase = (phase: WebEventConnectionPhase): void => {
 }
 
 const requireAuthorization = (): void => {
-  revokeComposerDraftStorage()
+  preserveComposerDraftsForRecovery()
   eventRecoveryRequired = true
   eventConnectionController.abort(new AuthorizationExpiredError(AUTHORIZATION_EXPIRED_MESSAGE))
   publishEventConnectionPhase('authorization-required')
