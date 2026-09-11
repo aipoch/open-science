@@ -180,7 +180,7 @@ it('attaches startup diagnostics before disposing a failed renderer launch', asy
       expectedStatus: 'passed',
       attach
     })
-  ).rejects.toBe(startupError)
+  ).rejects.toMatchObject({ cause: startupError })
   expect(attach).toHaveBeenCalledWith(
     'startup-main-process-log',
     expect.objectContaining({ contentType: 'text/plain' })
@@ -226,7 +226,9 @@ it('still fails with diagnostics when initialization never finishes', async () =
     )
   await vi.waitFor(() => expect(boundary.evaluated).toHaveBeenCalled())
   await vi.advanceTimersByTimeAsync(100_000)
-  expect(String(await operation)).toContain('while waiting on the predicate')
+  const failure = (await operation) as Error
+  expect(failure.message).toContain('Startup transitions:')
+  expect(String(failure.cause)).toContain('while waiting on the predicate')
   expect(install).not.toHaveBeenCalled()
   expect(attach).toHaveBeenCalledWith(
     'startup-main-process-log',

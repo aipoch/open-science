@@ -508,9 +508,9 @@ describe('App startup routing', () => {
     mocks.syncWindowFindAppearance.mockClear()
     mocks.syncUnreadTaskView.mockClear()
     const storageStatus = {
-      dataRoot: '/workspace/OpenScience',
+      dataRoot: '/workspace/Open-Science',
       isDefault: true,
-      defaultDataRoot: '/workspace/OpenScience',
+      defaultDataRoot: '/workspace/Open-Science',
       dataRootMissing: false,
       legacyDataMovePrompt: false,
       defaultParent: '/workspace'
@@ -1365,9 +1365,9 @@ describe('App startup routing', () => {
       new Error("No handler registered for 'storage:get-status'")
     )
     mocks.getInfo.mockResolvedValue({
-      dataRoot: '/workspace/OpenScience',
+      dataRoot: '/workspace/Open-Science',
       isDefault: true,
-      defaultDataRoot: '/workspace/OpenScience',
+      defaultDataRoot: '/workspace/Open-Science',
       dataRootMissing: false,
       legacyDataMovePrompt: false,
       defaultParent: '/workspace',
@@ -1486,14 +1486,14 @@ describe('App startup routing', () => {
   it('warns that in-memory conversation changes are not durable and retries them', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.writeError =
-      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
 
     await render()
 
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert?.textContent).toContain('Conversation storage needs attention')
     expect(alert?.textContent).toContain(
-      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
     )
     expect(alert?.textContent).not.toContain('could not confirm')
     expect(alert?.querySelector('[data-testid="session-persistence-dismiss"]')).not.toBeNull()
@@ -1554,7 +1554,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.hasCompleteSessionCatalog = false
     mocks.sessionPersistence.catalogRecovery = { kind: 'repairable', reason: 'session-scan' }
     mocks.sessionPersistence.writeError =
-      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
 
     await render()
 
@@ -1727,7 +1727,7 @@ describe('App startup routing', () => {
     mocks.settings.isLoaded = true
     mocks.navigation.view = 'workspace'
     mocks.getStatus.mockResolvedValue({
-      dataRoot: '/Volumes/Science/OpenScience',
+      dataRoot: '/Volumes/Science/Open-Science',
       dataRootMissing: true,
       legacyDataMovePrompt: false,
       defaultParent: '/Users/example'
@@ -1743,7 +1743,7 @@ describe('App startup routing', () => {
         .canDeleteConversations
     ).toBe('true')
     expect(container.querySelector('[data-testid="missing-root"]')?.textContent).toBe(
-      '/Volumes/Science/OpenScience'
+      '/Volumes/Science/Open-Science'
     )
   })
 
@@ -1753,7 +1753,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.isLoading = true
     mocks.sessionPersistence.isReady = false
     mocks.getStatus.mockResolvedValue({
-      dataRoot: '/Volumes/Science/OpenScience',
+      dataRoot: '/Volumes/Science/Open-Science',
       dataRootMissing: true,
       legacyDataMovePrompt: false,
       defaultParent: '/Users/example'
@@ -1762,7 +1762,7 @@ describe('App startup routing', () => {
     await render()
 
     expect(container.querySelector('[data-testid="missing-root"]')?.textContent).toBe(
-      '/Volumes/Science/OpenScience'
+      '/Volumes/Science/Open-Science'
     )
     expect(
       container.querySelector('[data-testid="session-persistence-startup-loading"]')

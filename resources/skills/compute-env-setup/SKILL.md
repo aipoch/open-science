@@ -1,21 +1,21 @@
 ---
 name: compute-env-setup
-description: Prepare reproducible setup instructions and validate a user-managed named software environment on an Open Science SSH Compute Host, including direct SSH and Slurm hosts. Use when a remote job needs packages, modules, cache variables, or a repeatable activation that the host does not already provide.
+description: Prepare reproducible setup instructions and validate a user-managed named software environment on an Open-Science SSH Compute Host, including direct SSH and Slurm hosts. Use when a remote job needs packages, modules, cache variables, or a repeatable activation that the host does not already provide.
 license: Apache-2.0
 ---
 
 # Compute environment setup
 
 Prepare one reproducible environment definition and instructions for one small user-managed host
-activation file. Open Science resolves `submitJob(..., { environment: '<name>' })` by sourcing
-`~/.openscience/environments/<name>.sh` before the workload. The file contains activation only; it
+activation file. Open-Science resolves `submitJob(..., { environment: '<name>' })` by sourcing
+`~/.open-science/environments/<name>.sh` before the workload. The file contains activation only; it
 does not install packages when a job starts.
 
 The environment, package caches, images, and activation file are user-managed durable resources,
-not Open Science-owned components. This Skill may inspect them and prepare exact setup/removal
+not Open-Science-owned components. This Skill may inspect them and prepare exact setup/removal
 commands, but must not execute commands that create, replace, or remove those resources. The user
-or host administrator runs those commands outside Open Science and owns their lifecycle. Do not
-interpret the `~/.openscience` path as app ownership.
+or host administrator runs those commands outside Open-Science and owns their lifecycle. Do not
+interpret the `~/.open-science` path as app ownership.
 
 Use `host.compute` only in `repl_execute` JavaScript. Python and R data kernels do not expose it.
 Start from the Session catalog and do not guess a provider id:
@@ -44,14 +44,14 @@ not install locally as a substitute for a requested remote environment.
 Keep the reproducible source in the user's project: an `environment.yml`, requirements or lock
 file, container definition, or a short setup script appropriate to the stack. When installation
 must run on a compute node, include exact user- or administrator-run staging and scheduler commands
-in the plan; do not submit that installation through Open Science. Do not store project package
+in the plan; do not submit that installation through Open-Science. Do not store project package
 lists or secrets in the host knowledge document.
 
 Use a logical name containing 1–64 letters, numbers, periods, underscores, or hyphens, starting with
 a letter or number. Its host activation file is:
 
 ```text
-~/.openscience/environments/<name>.sh
+~/.open-science/environments/<name>.sh
 ```
 
 The activation file itself and every path it references must be visible at the same path on the
@@ -92,7 +92,7 @@ module family, or permission to choose among materially different package stacks
 Produce a bounded, copyable installation plan for the user or host administrator. When the host is
 configured for Slurm, explain whether the plan must be run in an interactive allocation or submitted
 with provider-approved `#SBATCH` directives. Do not run the bootstrap through `callCommand` or
-`submitJob`: package installation, image pulls, caches, and activation files outlive the Open Science
+`submitJob`: package installation, image pulls, caches, and activation files outlive the Open-Science
 process and have no application-owned receipt or uninstall lifecycle.
 
 Name every path the plan will create, its expected storage/network impact, and a matching idempotent
@@ -112,7 +112,7 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 ```
 
 Guard every required setup command with `|| return $?` so a missing module, activation failure, or
-invalid export stops before the workload. Open Science also treats any non-zero result from sourcing
+invalid export stops before the workload. Open-Science also treats any non-zero result from sourcing
 the activation file as a job failure. Do not append repeatedly or put activation in `.bashrc`; the
 named file makes job behavior deterministic without changing the user's interactive shell.
 
@@ -130,7 +130,7 @@ For direct SSH, run the witness with `callCommand`:
 
 ```javascript
 const witness = await compute.callCommand(
-  '. "$HOME/.openscience/environments/protein-gpu.sh" && python -c "import sys; print(sys.executable)"',
+  '. "$HOME/.open-science/environments/protein-gpu.sh" && python -c "import sys; print(sys.executable)"',
   'Validate protein-gpu environment',
   { loginShell: true, timeoutSeconds: 120 }
 )
@@ -153,8 +153,8 @@ await new Promise((resolve) => setTimeout(resolve, 2000))
 return compute.attachJob(job.job_id).result()
 ```
 
-The immediate result read is a single non-blocking failure check. End the cell afterward; Open
-Science polls and harvests the job in the background and starts the analysis turn when it finishes.
+The immediate result read is a single non-blocking failure check. End the cell afterward;
+Open-Science polls and harvests the job in the background and starts the analysis turn when it finishes.
 Do not poll.
 
 When validation fails, diagnose the layer identified by the error: environment definition,
@@ -179,9 +179,29 @@ assumptions that still need confirmation in both the project reproduction notes 
 ```javascript
 await host.compute.details(providerId, {
   mode: 'append',
-  text: '\n### Environment: protein-gpu\nActivation: ~/.openscience/environments/protein-gpu.sh\nDefinition: environment.yml in the project\nValidated: <date>, direct or Slurm witness succeeded\n'
+  text: '\n### Environment: protein-gpu\nActivation: ~/.open-science/environments/protein-gpu.sh\nDefinition: environment.yml in the project\nValidated: <date>, direct or Slurm witness succeeded\n'
 })
 ```
 
 If the requested environment already exists and the exact witness passes, leave it unchanged and
 record only genuinely new host knowledge.
+
+## Transitioning an existing activation file
+
+A host may have an earlier user-managed `~/.openscience/environments/<name>.sh` activation file.
+New setup writes `~/.open-science/environments/<name>.sh`; named activation still reads the old file
+only when the new one is absent. On the next authorized setup for that named environment:
+
+1. Inspect both exact paths. If both exist, compare bytes and ask the owner to reconcile any difference;
+   do not overwrite either. Do not move the underlying conda/venv prefix as part of this text-file change.
+2. Copy the old activation file to a private sibling staging file under the new parent, preserving mode.
+   Verify its checksum, then source that staged file and validate the selected interpreter as above.
+3. Publish only if the new target remains absent. Update the host's environment profile to the new
+   activation path, re-read it, and run the same interpreter witness through that path.
+4. Retain the old activation file as an explicit rollback copy until the owner confirms no consumers
+   use it. Record both paths and the checksum in the setup result; retire the fallback only after that
+   verification. Running historical jobs retain their submitted workdir and scheduler name until they
+   reach a terminal state and their outputs are harvested.
+
+This transition requires the normal host/container authorization for the setup task; documentation
+or a local application upgrade does not authorize a remote connection.

@@ -709,7 +709,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
       if (isMigrationInProgress())
         throw new Error(
-          'Open Science is moving your data. Wait for the move to finish before running this.'
+          'Open-Science is moving your data. Wait for the move to finish before running this.'
         )
       const result = await withDataRootWrite(async () => {
         if (request.signal?.aborted)
@@ -724,7 +724,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
         if (!this.options.allowRuntimeAccessPrompt)
           throw new Error(
-            'R access requires administrator authorization on the local Open Science desktop.'
+            'R access requires administrator authorization on the local Open-Science desktop.'
           )
         return this.applyWindowsRuntimeAccess(request.executable, true, request.signal)
       })

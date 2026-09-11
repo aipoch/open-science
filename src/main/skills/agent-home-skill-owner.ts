@@ -468,7 +468,7 @@ class AgentHomeSkillOwner {
 
   // Imports a single agent-home skill by copying its source subtree under the imported-skill store.
   // The copy preserves the directory layout (SKILL.md + references/) so the skill is byte-for-byte
-  // the same shape Open Science would have produced from a fresh in-app edit. Suffix allocation
+  // the same shape Open-Science would have produced from a fresh in-app edit. Suffix allocation
   // mirrors importFromZip: the same source identity is unchanged, while a same-name skill from a
   // different source gets `-2`, `-3`, ... appended and never clobbers an existing record.
   async importAgentHomeSkill(

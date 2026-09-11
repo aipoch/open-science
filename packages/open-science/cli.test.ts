@@ -1430,8 +1430,8 @@ describe('task CLI', () => {
 
     expect(client.waitForRun).toHaveBeenCalledWith('run-1', { timeoutMs: 60_000 })
     expect(warn.mock.calls.map(([message]) => message)).toEqual([
-      'Run event history could not be fully replayed. Final Run state will still be read from Open Science.',
-      'Run is waiting for approval. Approve the request in Open Science Desktop or the Web UI.'
+      'Run event history could not be fully replayed. Final Run state will still be read from Open-Science.',
+      'Run is waiting for approval. Approve the request in Open-Science Desktop or the Web UI.'
     ])
   })
 
@@ -1554,7 +1554,7 @@ describe('task CLI', () => {
 
   it('keeps the authoritative Run result when the event stream times out mid-run', async () => {
     const streamFailure = Object.assign(
-      new Error('Open Science event stream timed out after 30000 milliseconds.'),
+      new Error('Open-Science event stream timed out after 30000 milliseconds.'),
       { code: 'timeout' }
     )
     const events = (): {
@@ -1624,7 +1624,7 @@ describe('task CLI', () => {
 
     expect(client.waitForRun).toHaveBeenCalledWith('run-1')
     expect(warn).toHaveBeenCalledWith(
-      'Run event stream stopped: Open Science event stream timed out after 30000 milliseconds. Final Run state will still be read from Open Science.'
+      'Run event stream stopped: Open-Science event stream timed out after 30000 milliseconds. Final Run state will still be read from Open-Science.'
     )
     expect(log).toHaveBeenCalledWith('Done')
     expect(setExitCode).not.toHaveBeenCalled()
@@ -1632,7 +1632,7 @@ describe('task CLI', () => {
 
   it('keeps the authoritative Run failure in JSONL when the event stream times out', async () => {
     const streamFailure = Object.assign(
-      new Error('Open Science event stream timed out after 30000 milliseconds.'),
+      new Error('Open-Science event stream timed out after 30000 milliseconds.'),
       { code: 'timeout' }
     )
     const events = (): {
@@ -1701,7 +1701,7 @@ describe('task CLI', () => {
     )
 
     expect(warn).toHaveBeenCalledWith(
-      'Run event stream stopped: Open Science event stream timed out after 30000 milliseconds. Final Run state will still be read from Open Science.'
+      'Run event stream stopped: Open-Science event stream timed out after 30000 milliseconds. Final Run state will still be read from Open-Science.'
     )
     expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
       id: 'run-1',
@@ -2036,7 +2036,7 @@ describe('task CLI', () => {
     expect(stopService).not.toHaveBeenCalled()
     expect(result).toMatchObject({
       installerPath,
-      nextAction: expect.stringContaining('Quit the running Open Science app')
+      nextAction: expect.stringContaining('Quit the running Open-Science app')
     })
   })
 

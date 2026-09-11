@@ -13,8 +13,8 @@ $hostExe = (Resolve-Path $Exe).Path
 $installationId = '0123456789abcdef01234567'
 $secondInstallationId = '89abcdef0123456789abcdef'
 
-$ownershipRoot = Join-Path $env:LOCALAPPDATA "Aipoch\OpenScience\notebook-sandbox\$installationId"
-$secondOwnershipRoot = Join-Path $env:LOCALAPPDATA "Aipoch\OpenScience\notebook-sandbox\$secondInstallationId"
+$ownershipRoot = Join-Path $env:LOCALAPPDATA "Aipoch\Open-Science\notebook-sandbox\$installationId"
+$secondOwnershipRoot = Join-Path $env:LOCALAPPDATA "Aipoch\Open-Science\notebook-sandbox\$secondInstallationId"
 $receipt = Join-Path $ownershipRoot 'receipt.json'
 $journal = Join-Path $ownershipRoot 'creating.json'
 $leaseRoot = Join-Path $ownershipRoot 'acl-leases'

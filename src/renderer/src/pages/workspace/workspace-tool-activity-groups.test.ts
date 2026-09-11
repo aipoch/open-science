@@ -80,7 +80,7 @@ const toolSearchWrapper = (overrides: Partial<ToolActivity> = {}): ToolActivity 
 const inferredSearchRow = (overrides: Partial<ToolActivity> = {}): ToolActivity =>
   createActivity({
     id: 'tool-search-query',
-    title: '"open science repositories"',
+    title: '"open-science repositories"',
     toolKind: 'fetch',
     status: 'in_progress',
     ...overrides

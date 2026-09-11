@@ -9,7 +9,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   activateRollbackConfig,
   convertSessionToV073,
-  runRollbackToV073
+  runRollbackToV073,
+  resolveConfiguredDataRoot
 } from './rollback-to-0.7.3.mjs'
 
 const temporaryRoots: string[] = []
@@ -32,6 +33,20 @@ afterEach(async () => {
 })
 
 describe('rollback-to-0.7.3', () => {
+  it('discovers the canonical default and retains only explicit legacy recovery fallback', async () => {
+    const home = await temporaryRoot()
+    const config = join(home, '.open-science')
+    const current = join(home, 'Open-Science')
+    const legacy = join(home, 'OpenScience')
+    expect(await resolveConfiguredDataRoot(config, home)).toBe(current)
+    await mkdir(legacy)
+    expect(await resolveConfiguredDataRoot(config, home)).toBe(legacy)
+    await mkdir(current)
+    await expect(resolveConfiguredDataRoot(config, home)).rejects.toThrow(
+      'Both legacy and current Data Roots exist'
+    )
+  })
+
   it('preserves both recovery candidates when activation and automatic restoration fail', async () => {
     const renamePath = vi
       .fn()
@@ -731,7 +746,7 @@ describe('rollback-to-0.7.3', () => {
     await expect(stat(markerPath)).resolves.toBeDefined()
   })
 
-  it('rechecks that Open Science is closed immediately before cutover', async () => {
+  it('rechecks that Open-Science is closed immediately before cutover', async () => {
     const root = await temporaryRoot()
     const configRoot = join(root, '.open-science')
     const dataRoot = join(root, 'OpenScience')
@@ -754,7 +769,7 @@ describe('rollback-to-0.7.3', () => {
           )
         }
       })
-    ).rejects.toThrow('Open Science is still running')
+    ).rejects.toThrow('Open-Science is still running')
 
     await expect(stat(configRoot)).resolves.toBeDefined()
     await expect(stat(rollbackDataRoot)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -803,14 +818,14 @@ describe('rollback-to-0.7.3', () => {
 
     await expect(
       runRollbackToV073({ configRoot, output: rollbackDataRoot, confirm: true })
-    ).rejects.toThrow('Open Science is still running')
+    ).rejects.toThrow('Open-Science is still running')
 
     await expect(stat(configRoot)).resolves.toBeDefined()
     await expect(stat(stagingConfigRoot)).resolves.toBeDefined()
     await expect(stat(preservedConfigRoot)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('does not resume an interrupted cutover while Open Science is running', async () => {
+  it('does not resume an interrupted cutover while Open-Science is running', async () => {
     const root = await temporaryRoot()
     const configRoot = join(root, '.open-science')
     const rollbackDataRoot = join(root, 'OpenScience-Rollback-0.7.3')
@@ -834,7 +849,7 @@ describe('rollback-to-0.7.3', () => {
 
     await expect(
       runRollbackToV073({ configRoot, output: rollbackDataRoot, confirm: true })
-    ).rejects.toThrow('Open Science is still running')
+    ).rejects.toThrow('Open-Science is still running')
 
     await expect(stat(configRoot)).resolves.toBeDefined()
     await expect(stat(stagingConfigRoot)).resolves.toBeDefined()

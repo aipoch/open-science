@@ -32,7 +32,7 @@ const makeJob = (
     intent: 'Run EDA',
     created_at: now,
     started_at: now,
-    remote_workdir: '/home/user/.openscience/jobs/job-abc',
+    remote_workdir: '/home/user/.open-science/jobs/job-abc',
     ...overrides
   })
 }

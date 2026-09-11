@@ -138,12 +138,12 @@ export const resolveCodexLoginConfiguration = async (configRoot, dependencies = 
   } catch (error) {
     if (error?.code === 'ENOENT') {
       throw new CodexLoginError(
-        'Codex is not configured for this Open Science profile. Configure the Codex runtime first.',
+        'Codex is not configured for this Open-Science profile. Configure the Codex runtime first.',
         'codex_not_configured'
       )
     }
     throw new CodexLoginError(
-      'Open Science could not read the configured Codex runtime.',
+      'Open-Science could not read the configured Codex runtime.',
       'codex_configuration_invalid'
     )
   }
@@ -234,12 +234,12 @@ export const codexLoginCommand = async (options, dependencies = {}) => {
     })
     if (status.code === 0) {
       deps.log(
-        'Codex is already signed in for Open Science. Use "open-science codex login --force" to sign in again.'
+        'Codex is already signed in for Open-Science. Use "open-science codex login --force" to sign in again.'
       )
       return
     }
     if (status.code !== 1 || status.signal) {
-      throw new CodexLoginError('Open Science could not check the existing Codex sign-in.')
+      throw new CodexLoginError('Open-Science could not check the existing Codex sign-in.')
     }
   }
 
@@ -256,5 +256,5 @@ export const codexLoginCommand = async (options, dependencies = {}) => {
       login.code ?? 1
     )
   }
-  deps.log('Codex is signed in for Open Science.')
+  deps.log('Codex is signed in for Open-Science.')
 }

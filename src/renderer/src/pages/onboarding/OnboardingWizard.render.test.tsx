@@ -112,8 +112,8 @@ describe('OnboardingWizard flow', () => {
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
       storageInfo({
-        dataRoot: 'C:\\Users\\researcher\\OpenScience',
-        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        dataRoot: 'C:\\Users\\researcher\\Open-Science',
+        defaultDataRoot: 'C:\\Users\\researcher\\Open-Science',
         defaultParent: 'C:\\Users\\researcher',
         canAutoSelectDataDrive: true
       })
@@ -125,7 +125,7 @@ describe('OnboardingWizard flow', () => {
     ])
     window.api.storage.inspectDataRoot = vi.fn().mockResolvedValueOnce({
       kind: 'move',
-      dataRoot: 'D:\\OpenScience',
+      dataRoot: 'D:\\Open-Science',
       targetWasAbsent: true
     })
     readyClaudeState()
@@ -133,7 +133,7 @@ describe('OnboardingWizard flow', () => {
     await renderWizard()
     await goToLocationStep()
 
-    expect(container.textContent).toContain('D:\\OpenScience')
+    expect(container.textContent).toContain('D:\\Open-Science')
     expect(window.api.storage.inspectDataRoot).toHaveBeenCalledWith('D:\\')
     expect(window.api.storage.inspectDataRoot).toHaveBeenCalledTimes(1)
 
@@ -147,8 +147,8 @@ describe('OnboardingWizard flow', () => {
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
       storageInfo({
-        dataRoot: 'C:\\Users\\researcher\\OpenScience',
-        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        dataRoot: 'C:\\Users\\researcher\\Open-Science',
+        defaultDataRoot: 'C:\\Users\\researcher\\Open-Science',
         defaultParent: 'C:\\Users\\researcher',
         canAutoSelectDataDrive: true
       })
@@ -163,16 +163,16 @@ describe('OnboardingWizard flow', () => {
       .fn()
       .mockResolvedValueOnce({
         kind: 'invalid',
-        dataRoot: 'D:\\OpenScience',
+        dataRoot: 'D:\\Open-Science',
         error: 'The selected folder is not writable.'
       })
       .mockResolvedValueOnce({
         kind: 'adopt',
-        dataRoot: 'E:\\OpenScience'
+        dataRoot: 'E:\\Open-Science'
       })
       .mockResolvedValueOnce({
         kind: 'move',
-        dataRoot: 'F:\\OpenScience',
+        dataRoot: 'F:\\Open-Science',
         targetWasAbsent: true
       })
     readyClaudeState()
@@ -180,7 +180,7 @@ describe('OnboardingWizard flow', () => {
     await renderWizard()
     await goToLocationStep()
 
-    expect(container.textContent).toContain('F:\\OpenScience')
+    expect(container.textContent).toContain('F:\\Open-Science')
     expect(window.api.storage.inspectDataRoot).toHaveBeenNthCalledWith(1, 'D:\\')
     expect(window.api.storage.inspectDataRoot).toHaveBeenNthCalledWith(2, 'E:\\')
     expect(window.api.storage.inspectDataRoot).toHaveBeenNthCalledWith(3, 'F:\\')
@@ -190,8 +190,8 @@ describe('OnboardingWizard flow', () => {
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
       storageInfo({
-        dataRoot: 'C:\\Users\\researcher\\OpenScience',
-        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        dataRoot: 'C:\\Users\\researcher\\Open-Science',
+        defaultDataRoot: 'C:\\Users\\researcher\\Open-Science',
         defaultParent: 'C:\\Users\\researcher',
         canAutoSelectDataDrive: true
       })
@@ -205,12 +205,12 @@ describe('OnboardingWizard flow', () => {
       .fn()
       .mockResolvedValueOnce({
         kind: 'move',
-        dataRoot: 'D:\\OpenScience',
+        dataRoot: 'D:\\Open-Science',
         targetWasAbsent: false
       })
       .mockResolvedValueOnce({
         kind: 'move',
-        dataRoot: 'E:\\OpenScience',
+        dataRoot: 'E:\\Open-Science',
         targetWasAbsent: true
       })
     readyClaudeState()
@@ -218,8 +218,8 @@ describe('OnboardingWizard flow', () => {
     await renderWizard()
     await goToLocationStep()
 
-    expect(container.textContent).toContain('E:\\OpenScience')
-    expect(container.textContent).not.toContain('D:\\OpenScience')
+    expect(container.textContent).toContain('E:\\Open-Science')
+    expect(container.textContent).not.toContain('D:\\Open-Science')
     expect(window.api.storage.inspectDataRoot).toHaveBeenNthCalledWith(1, 'D:\\')
     expect(window.api.storage.inspectDataRoot).toHaveBeenNthCalledWith(2, 'E:\\')
   })
@@ -228,8 +228,8 @@ describe('OnboardingWizard flow', () => {
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
       storageInfo({
-        dataRoot: 'C:\\Users\\researcher\\OpenScience',
-        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        dataRoot: 'C:\\Users\\researcher\\Open-Science',
+        defaultDataRoot: 'C:\\Users\\researcher\\Open-Science',
         defaultParent: 'C:\\Users\\researcher',
         canAutoSelectDataDrive: true
       })
@@ -240,7 +240,7 @@ describe('OnboardingWizard flow', () => {
     ])
     window.api.storage.inspectDataRoot = vi.fn().mockResolvedValue({
       kind: 'invalid',
-      dataRoot: 'D:\\OpenScience',
+      dataRoot: 'D:\\Open-Science',
       error: 'The selected folder is not writable.'
     })
     readyClaudeState()
@@ -248,7 +248,7 @@ describe('OnboardingWizard flow', () => {
     await renderWizard()
     await goToLocationStep()
 
-    expect(container.textContent).toContain('C:\\Users\\researcher\\OpenScience')
+    expect(container.textContent).toContain('C:\\Users\\researcher\\Open-Science')
     await clickButton(/continue/i)
     expect(currentSection('Set up the agent runtime')).not.toBeNull()
     expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
@@ -259,9 +259,9 @@ describe('OnboardingWizard flow', () => {
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
       storageInfo({
-        dataRoot: 'E:\\Research\\OpenScience',
+        dataRoot: 'E:\\Research\\Open-Science',
         isDefault: false,
-        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultDataRoot: 'C:\\Users\\researcher\\Open-Science',
         defaultParent: 'C:\\Users\\researcher'
       })
     )
@@ -283,10 +283,10 @@ describe('OnboardingWizard flow', () => {
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
       storageInfo({
-        dataRoot: 'E:\\Research\\OpenScience',
+        dataRoot: 'E:\\Research\\Open-Science',
         dataRootMissing: true,
         isDefault: false,
-        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultDataRoot: 'C:\\Users\\researcher\\Open-Science',
         defaultParent: 'C:\\Users\\researcher'
       })
     )
@@ -297,7 +297,7 @@ describe('OnboardingWizard flow', () => {
     expect(currentSection('Prepare environment')).not.toBeNull()
     await goToLocationStep()
     expect(currentSection('Choose data location')).not.toBeNull()
-    expect(container.textContent).toContain('E:\\Research\\OpenScience')
+    expect(container.textContent).toContain('E:\\Research\\Open-Science')
     expect(findButton(/browse/i)).not.toBeNull()
   })
 
@@ -331,8 +331,8 @@ describe('OnboardingWizard flow', () => {
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
       storageInfo({
-        dataRoot: 'C:\\Users\\researcher\\OpenScience',
-        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        dataRoot: 'C:\\Users\\researcher\\Open-Science',
+        defaultDataRoot: 'C:\\Users\\researcher\\Open-Science',
         defaultParent: 'C:\\Users\\researcher',
         canAutoSelectDataDrive: true
       })
@@ -346,10 +346,10 @@ describe('OnboardingWizard flow', () => {
       if (parent === 'D:\\') {
         return new Promise((resolve) => {
           releaseDefaultProbe = () =>
-            resolve({ kind: 'move', dataRoot: 'D:\\OpenScience', targetWasAbsent: true })
+            resolve({ kind: 'move', dataRoot: 'D:\\Open-Science', targetWasAbsent: true })
         })
       }
-      return Promise.resolve({ kind: 'move', dataRoot: 'F:\\Research\\OpenScience' })
+      return Promise.resolve({ kind: 'move', dataRoot: 'F:\\Research\\Open-Science' })
     })
     readyClaudeState()
 
@@ -357,20 +357,20 @@ describe('OnboardingWizard flow', () => {
     await goToLocationStep()
     await clickButton(/browse/i)
 
-    expect(container.textContent).toContain('F:\\Research\\OpenScience')
+    expect(container.textContent).toContain('F:\\Research\\Open-Science')
     await act(async () => {
       releaseDefaultProbe?.()
     })
-    expect(container.textContent).toContain('F:\\Research\\OpenScience')
-    expect(container.textContent).not.toContain('D:\\OpenScience')
+    expect(container.textContent).toContain('F:\\Research\\Open-Science')
+    expect(container.textContent).not.toContain('D:\\Open-Science')
   })
 
   it('keeps Continue available while the Windows default recommendation is pending', async () => {
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
       storageInfo({
-        dataRoot: 'C:\\Users\\researcher\\OpenScience',
-        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        dataRoot: 'C:\\Users\\researcher\\Open-Science',
+        defaultDataRoot: 'C:\\Users\\researcher\\Open-Science',
         defaultParent: 'C:\\Users\\researcher',
         canAutoSelectDataDrive: true
       })
@@ -381,7 +381,7 @@ describe('OnboardingWizard flow', () => {
     await renderWizard()
     await goToLocationStep()
 
-    expect(container.textContent).toContain('C:\\Users\\researcher\\OpenScience')
+    expect(container.textContent).toContain('C:\\Users\\researcher\\Open-Science')
     expect(findButton(/^continue$/i)?.disabled).toBe(false)
 
     await clickButton(/^continue$/i)
@@ -393,8 +393,8 @@ describe('OnboardingWizard flow', () => {
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
       storageInfo({
-        dataRoot: 'C:\\Users\\researcher\\OpenScience',
-        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        dataRoot: 'C:\\Users\\researcher\\Open-Science',
+        defaultDataRoot: 'C:\\Users\\researcher\\Open-Science',
         defaultParent: 'C:\\Users\\researcher',
         canAutoSelectDataDrive: true
       })
@@ -429,8 +429,8 @@ describe('OnboardingWizard flow', () => {
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
       storageInfo({
-        dataRoot: 'C:\\Users\\researcher\\OpenScience',
-        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        dataRoot: 'C:\\Users\\researcher\\Open-Science',
+        defaultDataRoot: 'C:\\Users\\researcher\\Open-Science',
         defaultParent: 'C:\\Users\\researcher',
         canAutoSelectDataDrive: true
       })
@@ -454,7 +454,7 @@ describe('OnboardingWizard flow', () => {
       })
 
       expect(currentSection('Choose data location')?.getAttribute('aria-busy')).toBe('false')
-      expect(container.textContent).toContain('C:\\Users\\researcher\\OpenScience')
+      expect(container.textContent).toContain('C:\\Users\\researcher\\Open-Science')
     } finally {
       vi.useRealTimers()
     }
@@ -465,8 +465,8 @@ describe('OnboardingWizard flow', () => {
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
       storageInfo({
-        dataRoot: 'C:\\Users\\researcher\\OpenScience',
-        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        dataRoot: 'C:\\Users\\researcher\\Open-Science',
+        defaultDataRoot: 'C:\\Users\\researcher\\Open-Science',
         defaultParent: 'C:\\Users\\researcher',
         canAutoSelectDataDrive: true
       })
@@ -479,20 +479,20 @@ describe('OnboardingWizard flow', () => {
       () =>
         new Promise((resolve) => {
           releaseDefaultProbe = () =>
-            resolve({ kind: 'move', dataRoot: 'D:\\OpenScience', targetWasAbsent: true })
+            resolve({ kind: 'move', dataRoot: 'D:\\Open-Science', targetWasAbsent: true })
         })
     )
     readyClaudeState()
 
     await renderWizard()
     await goToLocationStep()
-    expect(container.textContent).toContain('C:\\Users\\researcher\\OpenScience')
+    expect(container.textContent).toContain('C:\\Users\\researcher\\Open-Science')
     expect(findButton(/^continue$/i)?.disabled).toBe(false)
 
     await act(async () => releaseDefaultProbe?.())
 
-    expect(container.textContent).toContain('D:\\OpenScience')
-    expect(container.textContent).not.toContain('C:\\Users\\researcher\\OpenScience')
+    expect(container.textContent).toContain('D:\\Open-Science')
+    expect(container.textContent).not.toContain('C:\\Users\\researcher\\Open-Science')
     expect(findButton(/^continue$/i)?.disabled).toBe(false)
   })
 
@@ -548,7 +548,7 @@ describe('OnboardingWizard flow', () => {
     )
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'move', dataRoot: 'F:\\Research\\OpenScience' })
+      .mockResolvedValue({ kind: 'move', dataRoot: 'F:\\Research\\Open-Science' })
     readyClaudeState()
 
     await renderWizard()
@@ -558,8 +558,8 @@ describe('OnboardingWizard flow', () => {
     await act(async () => {
       resolveStorageInfo?.(
         storageInfo({
-          dataRoot: 'D:\\OpenScience',
-          defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+          dataRoot: 'D:\\Open-Science',
+          defaultDataRoot: 'C:\\Users\\researcher\\Open-Science',
           isDefault: false
         })
       )
@@ -570,7 +570,7 @@ describe('OnboardingWizard flow', () => {
     await act(async () => {
       resolvePickedDirectory?.('F:\\Research')
     })
-    expect(container.textContent).toContain('F:\\Research\\OpenScience')
+    expect(container.textContent).toContain('F:\\Research\\Open-Science')
     expect(container.textContent).not.toContain('Set up the agent runtime')
   })
 
@@ -625,21 +625,21 @@ describe('OnboardingWizard flow', () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' })
     readyClaudeState()
 
     await renderWizard()
     await goToLocationStep()
     await clickButton(/browse/i)
-    expect(container.textContent).toContain('/mnt/data/OpenScience')
+    expect(container.textContent).toContain('/mnt/data/Open-Science')
 
     await clickButton(/^back$/i)
     expect(currentSection('Prepare environment')).not.toBeNull()
     await clickButton(/^continue$/i)
 
     expect(currentSection('Choose data location')).not.toBeNull()
-    expect(container.textContent).toContain('/mnt/data/OpenScience')
-    expect(container.textContent).toContain('Open Science will restart to set this up')
+    expect(container.textContent).toContain('/mnt/data/Open-Science')
+    expect(container.textContent).toContain('Open-Science will restart to set this up')
   })
 
   it('initializes (detects) the env store on mount without auto-provisioning python', async () => {
@@ -658,7 +658,7 @@ describe('OnboardingWizard flow', () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' })
     window.api.storage.setDataRootAndRelaunch = vi.fn().mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -685,7 +685,7 @@ describe('OnboardingWizard flow', () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
       .fn()
-      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' })
     window.api.storage.setDataRootAndRelaunch = vi
       .fn()
       .mockResolvedValue({ ok: false, error: 'Disk is full.' })
@@ -699,7 +699,7 @@ describe('OnboardingWizard flow', () => {
 
     expect(currentSection('Choose data location')).not.toBeNull()
     expect(container.textContent).toContain('Disk is full.')
-    expect(container.textContent).toContain('/mnt/data/OpenScience')
+    expect(container.textContent).toContain('/mnt/data/Open-Science')
     expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
   })
 
@@ -744,7 +744,7 @@ it('regression: step changes move focus to the new heading', async () => {
   })
   await clickButton(/^continue$/i)
   expect(currentSection('Choose data location')).not.toBeNull()
-  expect(document.activeElement?.textContent).toBe('Where should Open Science store your data?')
+  expect(document.activeElement?.textContent).toBe('Where should Open-Science store your data?')
   expect(document.activeElement?.tagName).toBe('H2')
   act(() => {
     findButton(/^back$/i)!.focus()
@@ -762,7 +762,7 @@ it('regression: every setup step exposes and focuses its own level-two heading',
     expect(document.activeElement?.textContent).toBe(title)
   }
   await clickButton(/^continue$/i)
-  expectHeading('Where should Open Science store your data?')
+  expectHeading('Where should Open-Science store your data?')
   await clickButton(/^continue$/i)
   expectHeading('Set up the agent runtime')
   await clickButton(/^continue$/i)
@@ -773,7 +773,7 @@ it('regression: every setup step exposes and focuses its own level-two heading',
   for (const title of [
     'Connect a model',
     'Set up the agent runtime',
-    'Where should Open Science store your data?',
+    'Where should Open-Science store your data?',
     'Prepare environment'
   ]) {
     await clickButton(/^back$/i)

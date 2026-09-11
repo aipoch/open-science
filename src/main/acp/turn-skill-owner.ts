@@ -267,7 +267,7 @@ class AcpTurnSkillOwner {
       input.frameworkId === 'codebuddy'
         ? [
             '<open_science_codebuddy_skill_route>',
-            'This turn replaces every earlier CodeBuddy Skill route. The exact Skill documents listed below are already loaded by Open Science for this turn.',
+            'This turn replaces every earlier CodeBuddy Skill route. The exact Skill documents listed below are already loaded by Open-Science for this turn.',
             ...(codeBuddySkillNames.length > 0
               ? [
                   'Follow these documents before any Notebook or Connector call. Do not call `mcp__skills__load_skill`; the documents are already loaded.',

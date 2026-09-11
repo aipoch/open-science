@@ -374,7 +374,7 @@ describe('ArchivedPanel', () => {
     const deleteProject = vi
       .fn()
       .mockRejectedValue(
-        new Error('ENOENT: no such file or directory, unlink /Users/private/OpenScience/project-1')
+        new Error('ENOENT: no such file or directory, unlink /Users/private/Open-Science/project-1')
       )
     useProjectStore.setState({
       ...createInitialProjectState(),

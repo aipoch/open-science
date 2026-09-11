@@ -99,7 +99,7 @@ const createRuntimeConfig = (
   const windowsOwnershipRoot = join(
     process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'),
     'Aipoch',
-    'OpenScience',
+    'Open-Science',
     'notebook-sandbox',
     installationId
   )

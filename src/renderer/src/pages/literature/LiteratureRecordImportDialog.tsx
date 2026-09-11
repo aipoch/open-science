@@ -1,4 +1,4 @@
-/* Hallmark · component: import dialog · genre: modern-minimal · theme: Open Science
+/* Hallmark · component: import dialog · genre: modern-minimal · theme: Open-Science
  * states: default · hover · focus · active · disabled · loading · error · success
  * pre-emit critique: P5 H4 E4 S5 R5 V4
  */

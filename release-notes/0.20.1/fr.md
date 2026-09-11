@@ -2,7 +2,7 @@
 
 - **Détails de session générés et éditables.** Les nouvelles sessions reçoivent un titre et une description générés à partir du premier message, modifiables à tout moment — les cartes de l'accueil montrent désormais le sujet de chaque session au lieu de premières lignes tronquées. (#1721)
 - **Usage détaillé par appel.** Lorsque le framework rapporte suffisamment de données, les jetons de chaque appel de modèle et sa part de fenêtre de contexte sont enregistrés, et la vue Appels du dialogue de fenêtre de contexte devient un graphique par appel avec panneau de détails épinglé et groupement par tour, modèle ou framework. (#1718, #1734, #1740)
-- **Import/export de configurations client MCP.** Importez le JSON standard `mcpServers` utilisé par les autres hôtes MCP (les fichiers multi-serveurs permettent d'en choisir un) et exportez soit un connecteur Open Science, soit une configuration client MCP — les identifiants et en-têtes exportés sont toujours remplacés par des espaces réservés `${NAME}`. (#1698)
+- **Import/export de configurations client MCP.** Importez le JSON standard `mcpServers` utilisé par les autres hôtes MCP (les fichiers multi-serveurs permettent d'en choisir un) et exportez soit un connecteur Open-Science, soit une configuration client MCP — les identifiants et en-têtes exportés sont toujours remplacés par des espaces réservés `${NAME}`. (#1698)
 - **Rétablissement de brouillon dans le composeur.** Le raccourci standard de rétablissement (`Cmd/Ctrl+Shift+Z`) réapplique le dernier état de brouillon annulé, complétant l'historique unifié partagé par le texte, les collage et les pièces jointes. (#1699, #1694)
 
 ## 🚀 Nouveautés

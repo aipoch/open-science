@@ -5,6 +5,7 @@ const fixture = vi.hoisted(() => {
   return {
     log,
     startupFailure: vi.fn(),
+    reconcileProtectedPaths: vi.fn(async () => {}),
     disposeRuntime: vi.fn(async () => {}),
     disposeWeb: vi.fn(async () => {}),
     shutdownRemote: vi.fn(async () => {}),
@@ -16,6 +17,8 @@ const fixture = vi.hoisted(() => {
       app: {
         isPackaged: true,
         setName: vi.fn(),
+        setPath: vi.fn(),
+        commandLine: { hasSwitch: vi.fn(() => false) },
         getPath: () => '/isolated-test',
         getVersion: () => '0.0.0',
         on: vi.fn(),
@@ -61,6 +64,10 @@ vi.mock('./diagnostics/startup', () => ({
   reportApplicationStartupFailure: fixture.startupFailure
 }))
 vi.mock('./settings/credential-store-mode', () => ({ configureCredentialStore: vi.fn() }))
+// Keep filesystem migration outside this fixture so failures exercise startup cleanup only.
+vi.mock('./brand-path-migration', () => ({
+  prepareBrandPathMigration: () => ({ reconcileProtectedPaths: fixture.reconcileProtectedPaths })
+}))
 vi.mock('./crash-diagnostics', () => ({
   installChildProcessGoneLogging: vi.fn(),
   startLocalCrashReporting: () => ({ enabled: false })

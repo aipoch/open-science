@@ -2014,7 +2014,7 @@ describe('ReviewerMcpServer named-pipe proxy', () => {
     const evidence = createReviewerEvidence()
     const onSubmit = vi.fn().mockResolvedValue(undefined)
     const server = new ReviewerMcpServer(scope, onSubmit, evidence, 'initial', [], {
-      command: 'C:\\Open Science.exe',
+      command: 'C:\\Open-Science.exe',
       entryPath: 'C:\\app\\main.js',
       transport: 'pipe'
     })

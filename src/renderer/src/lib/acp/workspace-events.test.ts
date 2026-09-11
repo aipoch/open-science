@@ -1937,7 +1937,7 @@ describe('workspace runtime events', () => {
         toolCallId: 'tool-web-1',
         toolKind: 'fetch',
         providerToolName: 'WebSearch',
-        title: '"open science repositories"',
+        title: '"open-science repositories"',
         status: 'pending',
         toolContent: [
           {
@@ -1973,7 +1973,7 @@ describe('workspace runtime events', () => {
         kind: 'tool',
         toolKind: 'fetch',
         providerToolName: 'WebSearch',
-        title: '"open science repositories"',
+        title: '"open-science repositories"',
         status: 'completed',
         createdAt: 10,
         updatedAt: 25,

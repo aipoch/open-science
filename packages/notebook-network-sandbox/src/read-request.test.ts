@@ -23,7 +23,7 @@ describe('automatic public read contract', () => {
   it.each(['GET', 'HEAD'])('accepts %s and rebuilds headers', (method) => {
     expect(inspect(['User-Agent', 'synthetic-marker', 'Content-Length', '0'], method)).toEqual({
       kind: 'read',
-      headers: { host: 'data.example', 'user-agent': 'OpenScience/1.0' }
+      headers: { host: 'data.example', 'user-agent': 'Open-Science/1.0' }
     })
   })
   it.each(['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'CONNECT'])(

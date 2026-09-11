@@ -140,7 +140,7 @@ const managedSaveErrorMessage = (code: ManagedFileVersionErrorCode, t: TFunction
     case 'STORAGE_UNAVAILABLE':
       return t('File storage is unavailable. Check the storage location and try again.')
     case 'PERMISSION_DENIED':
-      return t('Open Science does not have permission to save this file.')
+      return t('Open-Science does not have permission to save this file.')
     case 'OUT_OF_SPACE':
       return t('There is not enough storage space to save this file.')
     // The file operator and service use different integrity codes for the same recovery action.

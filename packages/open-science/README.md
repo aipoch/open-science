@@ -1,6 +1,6 @@
 # @aipoch/open-science
 
-Node.js SDK and command-line client for an Open Science daemon running on the local machine.
+Node.js SDK and command-line client for an Open-Science daemon running on the local machine.
 
 ## Documentation
 
@@ -65,11 +65,11 @@ evicting an existing guarantee.
 The `project` request field and the `listSessions(projectId)` argument both require a Project ID.
 Project display names are not accepted as routing identifiers.
 
-SDK and HTTP callers must supply an absolute `cwd`. Open Science canonicalizes and validates it,
+SDK and HTTP callers must supply an absolute `cwd`. Open-Science canonicalizes and validates it,
 persists it as the Session working directory, and returns the effective path on every Run. Supplying
 `cwd` with `sessionId` is allowed only when both paths resolve to the same directory. Omit `cwd` to
 use a managed workspace. External working directories remain caller-owned and are never removed by
-Open Science.
+Open-Science.
 
 For live automation feedback, subscribe before starting the Run. `run.progress` reports ordered
 provider-neutral phases and emits a progress heartbeat every ten seconds until the first visible
@@ -132,7 +132,7 @@ const cancelled = await client.cancelRun(run.id)
 console.log(cancelled.status) // cancelled
 ```
 
-The client discovers the local daemon and reads its authentication token from the Open Science config
+The client discovers the local daemon and reads its authentication token from the Open-Science config
 directory. Tokens are sent in request headers and are never included in normal command output.
 
 ### Automation new-session defaults

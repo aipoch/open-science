@@ -23,16 +23,16 @@ describe('parseWebModeOptions', () => {
 
   it('rejects invalid ports', () => {
     expect(() => parseWebModeOptions(['electron', '--serve=nope'], {})).toThrow(
-      'Invalid Open Science web port'
+      'Invalid Open-Science web port'
     )
     expect(() => parseWebModeOptions(['electron', '--serve=44100abc'], {})).toThrow(
-      'Invalid Open Science web port'
+      'Invalid Open-Science web port'
     )
     expect(() => parseWebModeOptions(['electron', '--serve='], {})).toThrow(
-      'Invalid Open Science web port'
+      'Invalid Open-Science web port'
     )
     expect(() => parseWebModeOptions(['electron'], { OPEN_SCIENCE_WEB_PORT: '44100xyz' })).toThrow(
-      'Invalid Open Science web port'
+      'Invalid Open-Science web port'
     )
   })
 })

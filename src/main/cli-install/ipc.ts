@@ -38,7 +38,11 @@ const resolveCliLauncherEnv = (): CliLauncherEnv => ({
     : join(app.getAppPath(), 'cli', 'index.mjs'),
   appImagePath: process.env.APPIMAGE,
   packaged: app.isPackaged,
-  homeDir: app.getPath('home') ?? homedir(),
+  homeDir:
+    process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT?.trim() ||
+    (!app.isPackaged && process.env.OPEN_SCIENCE_STORAGE_ROOT?.trim()) ||
+    app.getPath('home') ||
+    homedir(),
   userDataDir: app.getPath('userData'),
   pathVar: process.env.PATH ?? ''
 })

@@ -330,7 +330,7 @@ describe('native Responses compatibility', () => {
         {
           type: 'namespace',
           name: 'mcp__open_science_notebook',
-          description: 'Open Science notebook tools.',
+          description: 'Open-Science notebook tools.',
           tools: [
             {
               type: 'function',
@@ -369,7 +369,7 @@ describe('native Responses compatibility', () => {
       {
         type: 'function',
         name: 'mcp__open_science_notebook__repl_execute',
-        description: 'Open Science notebook tools.\n\nRun control-plane JavaScript.',
+        description: 'Open-Science notebook tools.\n\nRun control-plane JavaScript.',
         parameters: { type: 'object' },
         strict: false
       },

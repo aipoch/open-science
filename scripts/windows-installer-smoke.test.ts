@@ -404,7 +404,7 @@ describe('Windows installer smoke plan', () => {
   })
 
   it('authenticates token-free readiness through state while accepting legacy token output', async () => {
-    const output = 'Open Science Web: http://127.0.0.1:52378/'
+    const output = 'Open-Science Web: http://127.0.0.1:52378/'
     expect(parsePackagedAppEndpoint(output)).toEqual({
       endpoint: 'http://127.0.0.1:52378'
     })
@@ -465,7 +465,7 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     await expect(
       readPackagedAppConfigRoot(
         {
-          appName: 'Open Science',
+          appName: 'Open-Science',
           appVersion: '0.8.0',
           configRoot,
           platform: 'win32'
@@ -475,7 +475,7 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     ).resolves.toBe(configRoot)
     await expect(
       readPackagedAppConfigRoot(
-        { appName: 'Open Science', appVersion: '0.8.0', platform: 'win32' },
+        { appName: 'Open-Science', appVersion: '0.8.0', platform: 'win32' },
         '0.8.0'
       )
     ).rejects.toThrow(/config root/)
@@ -812,32 +812,35 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     warning.mockRestore()
   })
 
-  it('removes only stale registrations owned by the exact failed smoke root', async () => {
-    const root = 'C:\\Temp\\open-science-installer-smoke-owned'
-    const uninstall = join(root, 'installed app 程序', 'Uninstall open-science.exe')
-    const install = join(root, 'installed app 程序')
-    const run = vi.fn(async (_executable: string, args: string[]) => {
-      if (args[0] === 'delete') return { code: 0, stdout: '', stderr: '' }
-      const output = args[1].includes('CurrentVersion')
-        ? `DisplayName    REG_SZ    Open Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    ${install}\r\nUninstallString    REG_SZ    "${uninstall}"\r\nQuietUninstallString    REG_SZ    "${uninstall}" /S\r\n`
-        : `InstallLocation    REG_SZ    ${install}\r\n`
-      return { code: 0, stdout: output, stderr: '' }
-    })
+  it.each(['Open Science', 'OpenScience', 'Open-Science'])(
+    'removes only stale %s registrations owned by the exact failed smoke root',
+    async (displayName) => {
+      const root = 'C:\\Temp\\open-science-installer-smoke-owned'
+      const uninstall = join(root, 'installed app 程序', 'Uninstall open-science.exe')
+      const install = join(root, 'installed app 程序')
+      const run = vi.fn(async (_executable: string, args: string[]) => {
+        if (args[0] === 'delete') return { code: 0, stdout: '', stderr: '' }
+        const output = args[1].includes('CurrentVersion')
+          ? `DisplayName    REG_SZ    ${displayName}\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    ${install}\r\nUninstallString    REG_SZ    "${uninstall}"\r\nQuietUninstallString    REG_SZ    "${uninstall}" /S\r\n`
+          : `InstallLocation    REG_SZ    ${install}\r\n`
+        return { code: 0, stdout: output, stderr: '' }
+      })
 
-    await cleanupOwnedSmokeRegistrations(root, '0.25.1', { run })
+      await cleanupOwnedSmokeRegistrations(root, '0.25.1', { run })
 
-    expect(run.mock.calls.filter(([, args]) => args[0] === 'delete')).toEqual([
-      [
-        'reg.exe',
+      expect(run.mock.calls.filter(([, args]) => args[0] === 'delete')).toEqual([
         [
-          'delete',
-          'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\a65c5229-0b29-5716-a0fe-d8755e62f3ca',
-          '/f'
-        ]
-      ],
-      ['reg.exe', ['delete', 'HKCU\\Software\\a65c5229-0b29-5716-a0fe-d8755e62f3ca', '/f']]
-    ])
-  })
+          'reg.exe',
+          [
+            'delete',
+            'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\a65c5229-0b29-5716-a0fe-d8755e62f3ca',
+            '/f'
+          ]
+        ],
+        ['reg.exe', ['delete', 'HKCU\\Software\\a65c5229-0b29-5716-a0fe-d8755e62f3ca', '/f']]
+      ])
+    }
+  )
 
   it('preserves unrelated installer registrations', async () => {
     const root = 'C:\\Temp\\open-science-installer-smoke-owned'

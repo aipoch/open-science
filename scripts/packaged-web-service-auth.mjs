@@ -6,7 +6,7 @@ import { join } from 'node:path'
 const STATE_FILE = 'web-service.json'
 const TOKEN_FILE = 'web-token'
 const READY_URL_PATTERN =
-  /Open Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
+  /Open[ -]Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
 
 const parsePackagedAppEndpoint = (output) => {
   const match = output.match(READY_URL_PATTERN)

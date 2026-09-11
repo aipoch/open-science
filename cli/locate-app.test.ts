@@ -18,7 +18,7 @@ describe('locateApp', () => {
   })
 
   it('resolves an explicit --app-path to a packaged executable', async () => {
-    const exe = join(dir, 'Open Science')
+    const exe = join(dir, 'Open-Science')
     await writeFile(exe, '')
     // Empty env so repository discovery can't shadow the explicit override.
     const app = await locateApp({ appPath: exe, env: {} })

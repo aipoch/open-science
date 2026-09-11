@@ -408,7 +408,7 @@ class LiteratureMetadataEnricher {
     const response = await this.fetchFn(sourceUrl, {
       headers: {
         Accept: 'application/json',
-        'User-Agent': 'OpenScience/1.0 (+https://github.com/aipoch/open-science)'
+        'User-Agent': 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
       },
       signal: AbortSignal.timeout(15_000)
     })

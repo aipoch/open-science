@@ -48,14 +48,14 @@ describe('Windows micromamba cache preparation', () => {
     } as MicromambaCacheDeps
 
     const cache = selectMicromambaCache(
-      'D:\\OpenScience\\runtime',
+      'D:\\Open-Science\\runtime',
       DEFAULT_MAX_CACHE_RELATIVE_PATH,
       deps
     )
 
-    expect(cache.path).toMatch(/^D:\\OpenScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
+    expect(cache.path).toMatch(/^D:\\Open-ScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
     expect(hardenOwnership).toHaveBeenCalledTimes(2)
-    expect(hardenOwnership).toHaveBeenNthCalledWith(1, 'D:\\OpenScienceTmp')
+    expect(hardenOwnership).toHaveBeenNthCalledWith(1, 'D:\\Open-ScienceTmp')
     expect(hardenOwnership).toHaveBeenNthCalledWith(2, cache.path)
     expect(hardenOwnership.mock.invocationCallOrder[0]).toBeLessThan(
       fsMocks.writeFileSync.mock.invocationCallOrder[0]
@@ -67,10 +67,10 @@ describe('Windows micromamba cache preparation', () => {
 
   it('verifies the shared parent but skips a second ACL read for a securely hardened cache child', () => {
     const hardenOwnership = vi.fn(() => true)
-    const verifyOwnership = vi.fn((path: string) => path === 'D:\\OpenScienceTmp')
+    const verifyOwnership = vi.fn((path: string) => path === 'D:\\Open-ScienceTmp')
 
     const cache = selectMicromambaCache(
-      'D:\\OpenScience\\runtime',
+      'D:\\Open-Science\\runtime',
       DEFAULT_MAX_CACHE_RELATIVE_PATH,
       {
         platform: 'win32',
@@ -81,10 +81,10 @@ describe('Windows micromamba cache preparation', () => {
       }
     )
 
-    expect(cache.path).toMatch(/^D:\\OpenScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
+    expect(cache.path).toMatch(/^D:\\Open-ScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
     expect(hardenOwnership).toHaveBeenCalledTimes(2)
     expect(verifyOwnership).toHaveBeenCalledOnce()
-    expect(verifyOwnership).toHaveBeenCalledWith('D:\\OpenScienceTmp', 'alice')
+    expect(verifyOwnership).toHaveBeenCalledWith('D:\\Open-ScienceTmp', 'alice')
   })
 
   it('removes newly created candidates when ACL hardening fails', () => {
@@ -93,7 +93,7 @@ describe('Windows micromamba cache preparation', () => {
     })
 
     expect(() =>
-      selectMicromambaCache('D:\\OpenScience\\runtime', DEFAULT_MAX_CACHE_RELATIVE_PATH, {
+      selectMicromambaCache('D:\\Open-Science\\runtime', DEFAULT_MAX_CACHE_RELATIVE_PATH, {
         platform: 'win32',
         env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\alice' },
         canonicalize: (path) => win32.normalize(path),
@@ -103,10 +103,10 @@ describe('Windows micromamba cache preparation', () => {
     ).toThrow(/temporary parent ACL could not be hardened \(Set-Acl denied\)/)
 
     expect(hardenOwnership).toHaveBeenCalledTimes(2)
-    expect(fsMocks.rmdirSync).toHaveBeenCalledWith('D:\\OpenScienceTmp')
+    expect(fsMocks.rmdirSync).toHaveBeenCalledWith('D:\\Open-ScienceTmp')
     expect(fsMocks.rmdirSync).toHaveBeenCalledWith('C:\\Users\\alice\\os-tmp')
     expect(fsMocks.rmSync).not.toHaveBeenCalledWith(
-      expect.stringMatching(/(?:OpenScienceTmp|os-tmp)$/),
+      expect.stringMatching(/(?:Open-ScienceTmp|os-tmp)$/),
       expect.objectContaining({ recursive: true })
     )
   })
@@ -132,7 +132,7 @@ describe('Windows micromamba cache preparation', () => {
     ])
 
     expect(() =>
-      selectMicromambaCache('D:\\OpenScience\\runtime', DEFAULT_MAX_CACHE_RELATIVE_PATH, {
+      selectMicromambaCache('D:\\Open-Science\\runtime', DEFAULT_MAX_CACHE_RELATIVE_PATH, {
         platform: 'win32',
         env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\alice' },
         canonicalize: (path) => win32.normalize(path),
@@ -141,15 +141,15 @@ describe('Windows micromamba cache preparation', () => {
       })
     ).not.toThrow()
 
-    expect(fsMocks.rmSync).toHaveBeenCalledWith(expect.stringMatching(/^D:\\OpenScienceTmp\\m-/), {
+    expect(fsMocks.rmSync).toHaveBeenCalledWith(expect.stringMatching(/^D:\\Open-ScienceTmp\\m-/), {
       recursive: true,
       force: true
     })
     expect(fsMocks.rmSync).not.toHaveBeenCalledWith(
-      'D:\\OpenScienceTmp',
+      'D:\\Open-ScienceTmp',
       expect.objectContaining({ recursive: true })
     )
-    expect(fsMocks.rmdirSync).not.toHaveBeenCalledWith('D:\\OpenScienceTmp')
+    expect(fsMocks.rmdirSync).not.toHaveBeenCalledWith('D:\\Open-ScienceTmp')
   })
 
   it('does not harden or take over an existing marked candidate', () => {
@@ -169,14 +169,14 @@ describe('Windows micromamba cache preparation', () => {
     fsMocks.readFileSync.mockImplementationOnce(() =>
       JSON.stringify({
         schema: 1,
-        canonicalRoot: 'd:\\openscience\\runtime',
+        canonicalRoot: 'd:\\open-science\\runtime',
         userIdentity: 'alice'
       })
     )
     const hardenOwnership = vi.fn()
 
     const cache = selectMicromambaCache(
-      'D:\\OpenScience\\runtime',
+      'D:\\Open-Science\\runtime',
       DEFAULT_MAX_CACHE_RELATIVE_PATH,
       {
         platform: 'win32',
@@ -187,7 +187,7 @@ describe('Windows micromamba cache preparation', () => {
       }
     )
 
-    expect(cache.path).toMatch(/^D:\\OpenScienceTmp\\m-/)
+    expect(cache.path).toMatch(/^D:\\Open-ScienceTmp\\m-/)
     expect(hardenOwnership).not.toHaveBeenCalled()
   })
 
@@ -210,7 +210,7 @@ describe('Windows micromamba cache preparation', () => {
     const verifyOwnership = vi.fn(() => false)
 
     expect(() =>
-      selectMicromambaCache('D:\\OpenScience\\runtime', DEFAULT_MAX_CACHE_RELATIVE_PATH, {
+      selectMicromambaCache('D:\\Open-Science\\runtime', DEFAULT_MAX_CACHE_RELATIVE_PATH, {
         platform: 'win32',
         env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\alice' },
         canonicalize: (path) => win32.normalize(path),

@@ -111,7 +111,7 @@ const SkillImportApprovalRequestDialog = ({
                 <Dialog.Description className={cn(dialogDescriptionClassName, 'text-xs')}>
                   {/* The source label is user data: interpolated, never translated. */}
                   <Trans
-                    i18nKey="The agent requested an import from <name>{{source}}</name>. Review and choose exactly what Open Science may install."
+                    i18nKey="The agent requested an import from <name>{{source}}</name>. Review and choose exactly what Open-Science may install."
                     values={{ source: request.source.label }}
                     components={{
                       name: <span className="break-all font-medium text-foreground" />

@@ -120,7 +120,7 @@ describe('C01 automatic service discovery', () => {
           return {
             ok: healthy,
             status: healthy ? 200 : 503,
-            json: async () => ({ data: { appName: 'Open Science' } }),
+            json: async () => ({ data: { appName: 'Open-Science' } }),
             arrayBuffer: async () => new ArrayBuffer(0)
           }
         })
@@ -147,7 +147,7 @@ describe('C01 automatic service discovery', () => {
       vi.spyOn(process, 'kill').mockImplementation(() => true)
       const log = vi.spyOn(console, 'log').mockImplementation(() => {})
       await runCli(['start', '--no-open', '--app-path', join(tmpdir(), 'missing-open-science-app')])
-      expect(log).toHaveBeenCalledWith('Open Science is already running (PID 4242).')
+      expect(log).toHaveBeenCalledWith('Open-Science is already running (PID 4242).')
     })
   })
 
@@ -492,7 +492,7 @@ describe('stopCommand', () => {
   it('reports not running and does nothing when no live daemon is found', async () => {
     const deps = makeDeps({ findServiceState: vi.fn().mockResolvedValue(undefined) })
     await stopCommand({}, deps)
-    expect(deps.log).toHaveBeenCalledWith('Open Science is not running.')
+    expect(deps.log).toHaveBeenCalledWith('Open-Science is not running.')
     expect(deps.fetch).not.toHaveBeenCalled()
     expect(deps.removeState).not.toHaveBeenCalled()
   })
@@ -509,7 +509,7 @@ describe('stopCommand', () => {
     )
     expect(deps.forceKill).not.toHaveBeenCalled()
     expect(deps.removeState).toHaveBeenCalledWith(RUNNING_STATE.configRoot)
-    expect(deps.log).toHaveBeenCalledWith('Open Science stopped.')
+    expect(deps.log).toHaveBeenCalledWith('Open-Science stopped.')
   })
 
   it('does not signal or remove state when the process survives the graceful timeout', async () => {
@@ -519,7 +519,7 @@ describe('stopCommand', () => {
 
     expect(deps.forceKill).not.toHaveBeenCalled()
     expect(deps.removeState).not.toHaveBeenCalled()
-    expect(deps.log).not.toHaveBeenCalledWith('Open Science stopped.')
+    expect(deps.log).not.toHaveBeenCalledWith('Open-Science stopped.')
   })
 
   it('fails closed without signalling when the authenticated shutdown request fails', async () => {
@@ -594,7 +594,7 @@ describe('stopCommand', () => {
     expect(deps.forceKill).not.toHaveBeenCalled()
     expect(deps.removeState).toHaveBeenCalledWith(RUNNING_STATE.configRoot)
     expect(deps.log).toHaveBeenCalledWith(
-      'Open Science web service stopped; the app is still running.'
+      'Open-Science web service stopped; the app is still running.'
     )
   })
 
@@ -638,7 +638,7 @@ describe('statusCommand', () => {
   it('prints not running and sets a non-zero exit code when the daemon is down', async () => {
     const deps = makeDeps({ findServiceState: vi.fn().mockResolvedValue(undefined) })
     await statusCommand({}, deps)
-    expect(deps.log).toHaveBeenCalledWith('Open Science is not running.')
+    expect(deps.log).toHaveBeenCalledWith('Open-Science is not running.')
     expect(process.exitCode).toBe(1)
   })
 
@@ -660,6 +660,6 @@ describe('urlCommand', () => {
 
   it('throws when the daemon is not running', async () => {
     const deps = makeDeps({ isAlive: vi.fn().mockReturnValue(false) })
-    await expect(urlCommand({}, deps)).rejects.toThrow('Open Science is not running.')
+    await expect(urlCommand({}, deps)).rejects.toThrow('Open-Science is not running.')
   })
 })

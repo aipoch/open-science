@@ -49,7 +49,7 @@ const recordValue = (value: unknown): Record<string, unknown> =>
     : {}
 
 // Keep the native capability surface deliberately narrow. Agent, Skill, Workflow, TaskOutput,
-// TaskStop, WebFetch, and WebSearch stay absent so native capabilities cannot bypass Open Science's
+// TaskStop, WebFetch, and WebSearch stay absent so native capabilities cannot bypass Open-Science's
 // lifecycle, Skill routing, Connector ownership, and permission owners.
 // Glob/Grep bypass the app's scope checks; discovery uses the Notebook Shell instead.
 const CODEBUDDY_LOCAL_TOOLS = ['Read', 'Write', 'Edit']
@@ -247,13 +247,13 @@ export const createCodeBuddyFramework = ({
     const sessionOptions = { ...(ctx.sessionOptions ?? {}) }
     const skillRuntime = recordValue(sessionOptions[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION])
     const externalRetrievalGuidance =
-      'Open Science owns external-data routing for CodeBuddy. Do not use WebFetch, WebSearch, or direct HTTP (including curl or wget from Bash or PowerShell) as a fallback for missing or failed Skill/Connector routing. If no routed Skill or Connector is available, report that external retrieval is unavailable.'
+      'Open-Science owns external-data routing for CodeBuddy. Do not use WebFetch, WebSearch, or direct HTTP (including curl or wget from Bash or PowerShell) as a fallback for missing or failed Skill/Connector routing. If no routed Skill or Connector is available, report that external retrieval is unavailable.'
     const skillProjectionAvailable =
       ctx.skillRuntimeScope !== undefined &&
       (ctx.skillRuntimeScope === 'all' || ctx.skillRuntimeScope.length > 0) &&
       typeof skillRuntime.root === 'string'
     const skillLoaderGuidance = skillProjectionAvailable
-      ? 'Open Science pre-routes and loads required Skill documents into the current turn before CodeBuddy runs. Follow only that current route; do not call `mcp__skills__load_skill`, use Notebook `host.skills`, guess Connector names or methods, or replace a routed Connector with WebFetch, WebSearch, or direct HTTP.'
+      ? 'Open-Science pre-routes and loads required Skill documents into the current turn before CodeBuddy runs. Follow only that current route; do not call `mcp__skills__load_skill`, use Notebook `host.skills`, guess Connector names or methods, or replace a routed Connector with WebFetch, WebSearch, or direct HTTP.'
       : undefined
     const promptPrefix = [
       ...ctx.systemPromptAppends,

@@ -165,7 +165,7 @@ const parseCitationStyle = (
   if (!citation || !bibliography) {
     throw new ApplicationCommandError(
       'csl-missing-sections',
-      'Open Science requires CSL styles with both citation and bibliography sections.'
+      'Open-Science requires CSL styles with both citation and bibliography sections.'
     )
   }
 

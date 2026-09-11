@@ -3348,13 +3348,13 @@ type BuildEnvFn = (
 
 describe('NotebookKernelExecutor spawn env', () => {
   it('grants the complete macOS app bundle to the Electron-backed repl kernel', () => {
-    const executable = '/Applications/Open Science.app/Contents/MacOS/Open Science'
+    const executable = '/Applications/Open-Science.app/Contents/MacOS/Open-Science'
 
     expect(kernelExecutableReadRoot(executable, 'repl', 'darwin')).toBe(
-      '/Applications/Open Science.app'
+      '/Applications/Open-Science.app'
     )
     expect(kernelExecutableReadRoot(executable, 'python', 'darwin')).toBe(
-      '/Applications/Open Science.app/Contents/MacOS'
+      '/Applications/Open-Science.app/Contents/MacOS'
     )
   })
 

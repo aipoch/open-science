@@ -26,6 +26,7 @@ export const normalizeBibtexEntry = (entry: Record<string, unknown>): Record<str
   }
 }
 
+// Keep the RIS marker compatible with files exported by earlier app versions.
 const literalNamePrefix = 'Open Science literal creator: '
 
 const lineValue = (value: string): string => value.replace(/[\r\n]+/gu, ' ').trim()

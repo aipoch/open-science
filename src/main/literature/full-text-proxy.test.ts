@@ -70,7 +70,7 @@ it.each(['http', 'https', 'socks4', 'socks5'])(
     )
     expect(fixture.requests.mock.calls[0][1].headers).toEqual({
       Accept: 'application/pdf',
-      'User-Agent': 'OpenScience/1.0'
+      'User-Agent': 'Open-Science/1.0'
     })
   }
 )

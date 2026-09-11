@@ -25,7 +25,8 @@ describe('Vitest discovery boundaries', () => {
     '**/tmp/**',
     '**/.worktrees/**',
     '**/.worktree/**',
-    'docs/internal/**'
+    'docs/internal/**',
+    'dist/**'
   ])('excludes %s from recursive test discovery', (pattern) => {
     expect(VITEST_EXCLUDE_PATTERNS).toContain(pattern)
   })
@@ -123,7 +124,7 @@ it.each(['0', '1'])('resolves real Vitest project budgets with Windows profile %
   expect(probe.error).toBeUndefined()
   expect(probe.status, probe.stderr).toBe(0)
   expect(JSON.parse(probe.stdout)).toEqual(
-    ['default', 'architecture', 'process', 'database'].map((name) => ({
+    ['default', 'architecture', 'process', 'brand-migration', 'database'].map((name) => ({
       name,
       hookTimeout: profile === '1' ? 60_000 : 30_000,
       maxWorkers: profile === '1' || name !== 'default' ? 1 : resolveVitestMaxWorkers(),

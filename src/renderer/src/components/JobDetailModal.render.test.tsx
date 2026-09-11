@@ -103,7 +103,7 @@ const makeJob = (
     intent: 'Run EDA analysis',
     created_at: now,
     started_at: now,
-    remote_workdir: '/home/user/.openscience/jobs/job-abc',
+    remote_workdir: '/home/user/.open-science/jobs/job-abc',
     stdout_tail: 'stdout output line 1\nline 2',
     stderr_tail: 'stderr output line 1',
     ...overrides
@@ -266,7 +266,7 @@ describe('JobDetailModal — detail view', () => {
 
     expect(container.textContent).toContain('Unable to load remote jobs.')
     expect(container.textContent).toContain(
-      'Harvest pending. Open Science will retry automatically.'
+      'Harvest pending. Open-Science will retry automatically.'
     )
     const retry = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'Retry'
@@ -406,7 +406,7 @@ describe('JobDetailModal — detail view', () => {
 
   it('renders remote workdir link', async () => {
     const { JobDetailModal } = await import('./JobDetailModal')
-    const job = makeJob({ remote_workdir: '/home/user/.openscience/jobs/job-abc' })
+    const job = makeJob({ remote_workdir: '/home/user/.open-science/jobs/job-abc' })
     useSessionJobStore.getState().applyUpdate(job)
 
     act(() => {
@@ -415,13 +415,13 @@ describe('JobDetailModal — detail view', () => {
       )
     })
 
-    expect(container.textContent).toContain('/home/user/.openscience/jobs/job-abc')
+    expect(container.textContent).toContain('/home/user/.open-science/jobs/job-abc')
   })
 
   it('opens FileBrowserModal when workdir link is clicked', async () => {
     const { JobDetailModal } = await import('./JobDetailModal')
     const job = makeJob({
-      remote_workdir: '/home/user/.openscience/jobs/job-abc',
+      remote_workdir: '/home/user/.open-science/jobs/job-abc',
       provider_id: 'ssh:biowulf'
     })
     useSessionJobStore.getState().applyUpdate(job)

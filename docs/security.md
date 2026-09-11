@@ -1,13 +1,13 @@
-# Open Science security model
+# Open-Science security model
 
-Open Science is a local-first desktop application for AI-assisted research. Its security
+Open-Science is a local-first desktop application for AI-assisted research. Its security
 model combines application controls with the operating system, selected service
 providers, and the user's approval decisions. This document describes those boundaries;
 the [security policy](../SECURITY.md) explains how to report a suspected vulnerability.
 
 ## Agent actions and permissions
 
-Agent-driven side effects route through Open Science's permission system. Grants can be
+Agent-driven side effects route through Open-Science's permission system. Grants can be
 scoped to a session, project, or global setting, while safe defaults reduce prompts for
 low-risk operations. Full access is an explicit choice that suppresses additional
 approval prompts.
@@ -55,7 +55,7 @@ sessions.
 
 Model requests, Web search, Connector calls, OAuth flows, and remote jobs can send the
 content needed for the request to the selected third party. The permission system
-controls whether Open Science initiates a call; the receiving service's terms and data
+controls whether Open-Science initiates a call; the receiving service's terms and data
 practices govern how it processes that content.
 
 Treat project content, model output, downloaded files, Skills, Specialist packages,
@@ -72,7 +72,7 @@ and endpoint in Settings when choosing these models.
 Read-only Connectors still send query terms, identifiers, filters, or other tool arguments to their
 sources. Literature lookup may query several services with DOI/PMID identifiers; a metadata lookup
 is not an automatic upload of the local PDF. Remote jobs transfer the scripts and selected inputs
-needed for the job. In the Web UI, uploaded files first go to the machine running Open Science,
+needed for the job. In the Web UI, uploaded files first go to the machine running Open-Science,
 which can be different from the machine running the browser.
 
 Custom remote model endpoints require HTTPS. HTTP is supported for `localhost`, IPv4 loopback, and
@@ -102,7 +102,7 @@ not instruct the model provider to erase its copies. Remote job file cleanup and
 deletion are separate operations and must be confirmed by the owning service.
 
 Retention, training use, and deletion guarantees depend on the selected service and account policy.
-Open Science does not infer a zero-retention guarantee from HTTPS, local models, or cancellation.
+Open-Science does not infer a zero-retention guarantee from HTTPS, local models, or cancellation.
 
 ### Runtime network verification
 
@@ -120,14 +120,14 @@ completed or that all runtimes are offline.
 
 ## Local data and credentials
 
-Open Science keeps configuration and research data in local storage by default:
+Open-Science keeps configuration and research data in local storage by default:
 
 - `~/.open-science` contains settings, the application database, session state,
   permissions, provider profiles, and Skills; and
-- `~/OpenScience` contains artifacts, uploads, Notebook and workspace data, managed
+- `~/Open-Science` contains artifacts, uploads, Notebook and workspace data, managed
   runtimes, and related large files. The data root can be relocated in Settings.
 
-Development builds use `~/.open-science-project` and `~/OpenScience-DEV` unless an
+Development builds use `~/.open-science-project` and `~/Open-Science-DEV` unless an
 explicit development override is supplied. Desktop logs use Electron's
 operating-system-specific logs directory; the CLI daemon writes `cli-daemon.log` under
 the configuration root.
@@ -136,7 +136,7 @@ Project, session, Notebook, artifact, and log content remain user-readable local
 and rely on operating-system account isolation and filesystem protection. Use full-disk
 encryption when the device or research data requires protection at rest.
 
-By default, Open Science protects API keys, Connector secrets and OAuth state, GitHub
+By default, Open-Science protects API keys, Connector secrets and OAuth state, GitHub
 tokens, and compute passwords with Electron `safeStorage`, backed by the operating
 system's secure storage. OS mode rejects new secret writes when a secure backend is
 unavailable, including Linux's unprotected `basic_text` backend.
@@ -157,7 +157,7 @@ Codex subscription authentication uses an app-owned `codex-subscription/auth.jso
 under the configuration root and relies on operating-system account and filesystem
 protection. Shared Claude mode uses the default `~/.claude` profile. Isolated Claude mode
 stores its OAuth token as a `safeStorage`-encrypted provider key and uses an app-owned
-`CLAUDE_CONFIG_DIR` under the Open Science configuration root, separate from `~/.claude`.
+`CLAUDE_CONFIG_DIR` under the Open-Science configuration root, separate from `~/.claude`.
 
 ## Diagnostics
 

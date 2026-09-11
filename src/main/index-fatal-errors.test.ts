@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -11,7 +12,10 @@ const mocks = vi.hoisted(() => {
   }
   const app = {
     isPackaged: false,
+    commandLine: { hasSwitch: vi.fn(() => false) },
     setName: vi.fn(),
+    setPath: vi.fn(),
+    setAppLogsPath: vi.fn(),
     getPath: vi.fn(() => 'test-logs'),
     getVersion: vi.fn(() => '0.0.0-test'),
     on: vi.fn(),
@@ -42,6 +46,8 @@ vi.mock('node:module', async (importOriginal) => ({
     protocol: { registerSchemesAsPrivileged: vi.fn() }
   })
 }))
+
+vi.mock('./brand-path-migration', () => ({ prepareBrandPathMigration: vi.fn(() => ({})) }))
 
 vi.mock('./single-instance', () => ({
   acquireSingleInstanceLock: vi.fn(() => true)
@@ -136,6 +142,7 @@ const bootUntilFailureHandlersAreInstalled = async (): Promise<
   Map<NodeJS.Signals | string, ProcessFailureListener>
 > => {
   vi.resetModules()
+  mocks.app.setPath.mockClear()
   mocks.app.quit.mockClear()
   mocks.app.exit.mockClear()
   mocks.log.error.mockClear()
@@ -162,6 +169,35 @@ afterEach(() => {
 })
 
 describe('main-process fatal errors', () => {
+  it.each([true, false])(
+    'uses the migrated Electron profile before opening writers (packaged=%s)',
+    async (packaged) => {
+      mocks.app.isPackaged = packaged
+      try {
+        await bootUntilFailureHandlersAreInstalled()
+        expect(mocks.app.setPath).toHaveBeenCalledWith(
+          'userData',
+          join('test-logs', packaged ? 'Open-Science' : 'Open-Science (DEV)')
+        )
+        expect(mocks.app.setName).toHaveBeenCalledWith(
+          packaged ? 'Open-Science' : 'Open-Science (DEV)'
+        )
+      } finally {
+        mocks.app.isPackaged = false
+      }
+    }
+  )
+
+  it('respects an explicit Chromium user-data-dir instead of replacing the profile', async () => {
+    mocks.app.commandLine.hasSwitch.mockReturnValue(true)
+    try {
+      await bootUntilFailureHandlersAreInstalled()
+      expect(mocks.app.setPath).not.toHaveBeenCalled()
+    } finally {
+      mocks.app.commandLine.hasSwitch.mockReturnValue(false)
+    }
+  })
+
   it('exits Electron after reporting a UI startup failure', async () => {
     const originalExitCode = process.exitCode
     let finishReporting!: () => void

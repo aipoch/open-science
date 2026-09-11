@@ -76,8 +76,8 @@ describe('remote-compute-ssh saved-id result guidance', () => {
     const skill = await readFile(skillPath, 'utf8')
 
     expect(skill).toContain('You may set the scheduler allocation limit with')
-    expect(skill).toContain('Open Science derives a default allocation')
-    expect(skill).not.toContain('Open Science owns the Slurm time')
+    expect(skill).toContain('Open-Science derives a default allocation')
+    expect(skill).not.toContain('Open-Science owns the Slurm time')
   })
 })
 

@@ -574,7 +574,7 @@ describe('settings IPC handlers', () => {
     service.logoutIsolatedCodex.mockResolvedValue({
       ok: false,
       category: 'unknown',
-      message: 'The Open Science Codex login could not be removed.'
+      message: 'The Open-Science Codex login could not be removed.'
     })
     const onActiveProviderChanged = vi.fn()
     registerTestSettingsIpcHandlers({

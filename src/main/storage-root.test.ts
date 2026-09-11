@@ -37,21 +37,21 @@ describe('dataFolderName', () => {
     appMock.isPackaged = false
   })
 
-  it('is OpenScience when packaged', () => {
+  it('is Open-Science when packaged', () => {
     appMock.isPackaged = true
-    expect(dataFolderName()).toBe('OpenScience')
+    expect(dataFolderName()).toBe('Open-Science')
   })
 
-  it('is OpenScience-DEV in dev (not packaged)', () => {
+  it('is Open-Science-DEV in dev (not packaged)', () => {
     appMock.isPackaged = false
-    expect(dataFolderName()).toBe('OpenScience-DEV')
+    expect(dataFolderName()).toBe('Open-Science-DEV')
   })
 })
 
 describe('dataRootForParent', () => {
   it('joins the parent with the data folder name', () => {
     appMock.isPackaged = true
-    expect(dataRootForParent('/mnt/data')).toBe(join('/mnt/data', 'OpenScience'))
+    expect(dataRootForParent('/mnt/data')).toBe(join('/mnt/data', 'Open-Science'))
   })
 })
 
@@ -71,40 +71,40 @@ describe('dataRootForPicked', () => {
     const picked = '/mnt/data'
     // Expected is derived with the host's own resolve/join so the assertion holds on Windows too
     // (where resolve() prepends a drive letter and uses backslashes).
-    expect(dataRootForPicked(picked)).toBe(join(resolve(picked), 'OpenScience'))
+    expect(dataRootForPicked(picked)).toBe(join(resolve(picked), 'Open-Science'))
   })
 
   it('uses the picked folder as-is when it IS already the data folder (no doubling)', () => {
-    // Selecting the OpenScience folder itself must not derive <picked>/OpenScience/OpenScience.
+    // Selecting the Open-Science folder itself must not derive <picked>/Open-Science/Open-Science.
     appMock.isPackaged = true
-    const picked = '/mnt/data/OpenScience'
+    const picked = '/mnt/data/Open-Science'
     expect(dataRootForPicked(picked)).toBe(resolve(picked))
   })
 
   it('respects the dev folder name for the no-double check', () => {
     appMock.isPackaged = false
-    const devFolder = '/mnt/data/OpenScience-DEV'
+    const devFolder = '/mnt/data/Open-Science-DEV'
     expect(dataRootForPicked(devFolder)).toBe(resolve(devFolder))
     const parent = '/mnt/data'
-    expect(dataRootForPicked(parent)).toBe(join(resolve(parent), 'OpenScience-DEV'))
+    expect(dataRootForPicked(parent)).toBe(join(resolve(parent), 'Open-Science-DEV'))
   })
 
   it('matches the folder name case-insensitively on Windows (no doubling on differing case)', () => {
-    // Windows filesystems are case-insensitive, so a differently-cased OpenScience folder must
+    // Windows filesystems are case-insensitive, so a differently-cased Open-Science folder must
     // still be recognized as the data folder rather than getting a second one appended.
     setPlatform('win32')
     appMock.isPackaged = true
-    const lower = '/mnt/data/openscience'
+    const lower = '/mnt/data/open-science'
     expect(dataRootForPicked(lower)).toBe(resolve(lower))
-    const upper = '/mnt/data/OPENSCIENCE'
+    const upper = '/mnt/data/OPEN-SCIENCE'
     expect(dataRootForPicked(upper)).toBe(resolve(upper))
   })
 
   it('is case-sensitive off Windows (a differently-cased folder is not the data folder)', () => {
     setPlatform('linux')
     appMock.isPackaged = true
-    const lower = '/mnt/data/openscience'
-    expect(dataRootForPicked(lower)).toBe(join(resolve(lower), 'OpenScience'))
+    const lower = '/mnt/data/open-science'
+    expect(dataRootForPicked(lower)).toBe(join(resolve(lower), 'Open-Science'))
   })
 })
 
@@ -122,8 +122,8 @@ describe('samePath / isPathInsideOrEqual (platform-aware)', () => {
 
   it('compares case-insensitively on win32 (NTFS is case-insensitive)', () => {
     setPlatform('win32')
-    expect(samePath(p('Data', 'OpenScience'), p('data', 'openscience'))).toBe(true)
-    expect(isPathInsideOrEqual(p('Data'), p('data', 'OpenScience'))).toBe(true)
+    expect(samePath(p('Data', 'Open-Science'), p('data', 'open-science'))).toBe(true)
+    expect(isPathInsideOrEqual(p('Data'), p('data', 'Open-Science'))).toBe(true)
   })
 
   it('compares case-sensitively off win32', () => {
@@ -156,9 +156,9 @@ describe('computeDefaultDataRoot', () => {
     await rm(homeDir, { recursive: true, force: true })
   })
 
-  it('defaults to <home>/OpenScience for a fresh config root', () => {
+  it('defaults to <home>/Open-Science for a fresh config root', () => {
     // resolveConfigRoot() resolves under homeDir but nothing has been created there.
-    expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience'))
+    expect(computeDefaultDataRoot()).toBe(join(homeDir, 'Open-Science'))
   })
 
   it('keeps packaged E2E config and data under the disposable certification root', () => {
@@ -166,10 +166,10 @@ describe('computeDefaultDataRoot', () => {
     vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', e2eRoot)
 
     expect(resolveConfigRoot()).toBe(e2eRoot)
-    expect(computeDefaultDataRoot()).toBe(join(e2eRoot, 'OpenScience'))
+    expect(computeDefaultDataRoot()).toBe(join(e2eRoot, 'Open-Science'))
   })
 
-  it('stays at the config root when it already has legacy data and no OpenScience subdir', async () => {
+  it('stays at the config root when it already has legacy data and no Open-Science subdir', async () => {
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'notebooks'), { recursive: true })
 
@@ -178,12 +178,12 @@ describe('computeDefaultDataRoot', () => {
     await rm(configRoot, { recursive: true, force: true })
   })
 
-  it('does not treat a config root with an OpenScience subdir as legacy', async () => {
+  it('does not treat a config root with an Open-Science subdir as legacy', async () => {
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
-    await mkdir(join(configRoot, 'OpenScience'), { recursive: true })
+    await mkdir(join(configRoot, 'Open-Science'), { recursive: true })
 
-    expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience'))
+    expect(computeDefaultDataRoot()).toBe(join(homeDir, 'Open-Science'))
 
     await rm(configRoot, { recursive: true, force: true })
   })
@@ -205,18 +205,18 @@ describe('computeDefaultDataRoot', () => {
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'runtime'), { recursive: true })
 
-    expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience'))
+    expect(computeDefaultDataRoot()).toBe(join(homeDir, 'Open-Science'))
 
     await rm(configRoot, { recursive: true, force: true })
   })
 
-  it('stays at the legacy config root when <home>/OpenScience exists but carries a migration marker', async () => {
+  it('stays at the legacy config root when <home>/Open-Science exists but carries a migration marker', async () => {
     // A crashed/in-flight migration left a marker-bearing staging dir at homeDefault. It is NOT the
     // committed default yet, so a legacy config root with real data must still win — otherwise the
     // half-copied staging dir would split a legacy user's data across two locations.
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
-    const homeDefault = join(homeDir, 'OpenScience')
+    const homeDefault = join(homeDir, 'Open-Science')
     await mkdir(homeDefault, { recursive: true })
     await writeFile(join(homeDefault, MIGRATION_MARKER_FILENAME), '{}')
 
@@ -225,19 +225,19 @@ describe('computeDefaultDataRoot', () => {
     await rm(configRoot, { recursive: true, force: true })
   })
 
-  it('does not treat a markerless partial <home>/OpenScience copy as committed', async () => {
+  it('does not treat a markerless partial <home>/Open-Science copy as committed', async () => {
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
-    await mkdir(join(homeDir, 'OpenScience', 'artifacts'), { recursive: true })
+    await mkdir(join(homeDir, 'Open-Science', 'artifacts'), { recursive: true })
 
     expect(computeDefaultDataRoot()).toBe(configRoot)
 
     await rm(configRoot, { recursive: true, force: true })
   })
 
-  it('treats an explicitly configured <home>/OpenScience as the committed default', async () => {
+  it('treats an explicitly configured <home>/Open-Science as the committed default', async () => {
     const configRoot = resolveConfigRoot()
-    const homeDefault = join(homeDir, 'OpenScience')
+    const homeDefault = join(homeDir, 'Open-Science')
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
     await mkdir(join(homeDefault, 'artifacts'), { recursive: true })
     initDataRoot(homeDefault)
@@ -249,7 +249,7 @@ describe('computeDefaultDataRoot', () => {
 
   it('keeps an explicitly configured default committed while its cleanup marker remains', async () => {
     const configRoot = resolveConfigRoot()
-    const homeDefault = join(homeDir, 'OpenScience')
+    const homeDefault = join(homeDir, 'Open-Science')
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
     await mkdir(join(homeDefault, 'artifacts'), { recursive: true })
     await writeFile(join(homeDefault, MIGRATION_MARKER_FILENAME), '{}')
@@ -274,7 +274,7 @@ describe('computeDefaultDataRoot (dev mode)', () => {
     await rm(homeDir, { recursive: true, force: true })
   })
 
-  it('stays at the (dev) config root when it already has legacy data and no OpenScience-DEV subdir', async () => {
+  it('stays at the (dev) config root when it already has legacy data and no Open-Science-DEV subdir', async () => {
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
 
@@ -283,18 +283,18 @@ describe('computeDefaultDataRoot (dev mode)', () => {
     await rm(configRoot, { recursive: true, force: true })
   })
 
-  it('defaults to <home>/OpenScience-DEV for a fresh (dev) config root', () => {
+  it('defaults to <home>/Open-Science-DEV for a fresh (dev) config root', () => {
     // resolveConfigRoot() resolves under homeDir but nothing has been created there.
-    expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience-DEV'))
+    expect(computeDefaultDataRoot()).toBe(join(homeDir, 'Open-Science-DEV'))
   })
 
-  it('prefers an explicitly configured <home>/OpenScience-DEV over legacy data', async () => {
+  it('prefers an explicitly configured <home>/Open-Science-DEV over legacy data', async () => {
     // A relocated legacy install: leftover markers linger in the config root, but the modern data
     // folder already exists (and is in use). It must win, or isDefault/return-to-default would keep
     // pointing at the stale legacy path.
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
-    const homeDefault = join(homeDir, 'OpenScience-DEV')
+    const homeDefault = join(homeDir, 'Open-Science-DEV')
     await mkdir(join(homeDefault, 'artifacts'), { recursive: true })
     initDataRoot(homeDefault)
 

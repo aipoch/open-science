@@ -816,7 +816,7 @@ describe('RuntimesPanel', () => {
     expect(installToggle?.disabled).toBe(true)
     expect(installToggle?.getAttribute('data-state')).toBe('unchecked')
     expect(container.textContent).toContain(
-      'Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.'
+      'Open-Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.'
     )
   })
 

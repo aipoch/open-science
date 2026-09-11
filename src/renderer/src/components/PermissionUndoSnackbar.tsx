@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H4 E5 S5 R5 V4 */
-/* Hallmark · component: snackbar · genre: modern-minimal · theme: Open Science semantic tokens
+/* Hallmark · component: snackbar · genre: modern-minimal · theme: Open-Science semantic tokens
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: pass (46–50)
  */

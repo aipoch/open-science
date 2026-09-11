@@ -1,4 +1,4 @@
-/* Hallmark · component: reproducibility panel · genre: modern-minimal · theme: Open Science
+/* Hallmark · component: reproducibility panel · genre: modern-minimal · theme: Open-Science
  * Conclusion and next action first; details use existing tokens and controls.
  * States: default, hover, focus, active, unavailable, running, failed, reproduced.
  * Pre-emit critique: P5 H5 E4 S5 R5 V4; contrast checked on the revised summary.
@@ -197,15 +197,15 @@ const failedCheckDetail = (
   switch (phase) {
     case 'loading-evidence':
       return t(
-        'Open Science could not load the captured evidence. The original result was not changed.'
+        'Open-Science could not load the captured evidence. The original result was not changed.'
       )
     case 'materializing-inputs':
       return t(
-        'Open Science could not prepare the isolated inputs. The original result was not changed.'
+        'Open-Science could not prepare the isolated inputs. The original result was not changed.'
       )
     case 'restoring-environments':
       return t(
-        'Open Science could not restore the captured environment. The original result was not changed.'
+        'Open-Science could not restore the captured environment. The original result was not changed.'
       )
     case 'executing':
       return t(
@@ -213,11 +213,11 @@ const failedCheckDetail = (
       )
     case 'comparing':
       return t(
-        'Open Science could not compare the reproduced files. The original result was not changed.'
+        'Open-Science could not compare the reproduced files. The original result was not changed.'
       )
     default:
       return t(
-        'Open Science could not record the check result. The original result was not changed.'
+        'Open-Science could not record the check result. The original result was not changed.'
       )
   }
 }

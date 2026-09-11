@@ -1,13 +1,145 @@
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
+import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   closeElectronApplicationForCleanup,
+  ElectronAppHarness,
   STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
-  suppressWorkspaceStarNudge
+  suppressWorkspaceStarNudge,
+  waitForRendererReady
 } from '../e2e/fixtures/electron-app'
+
+describe('Electron E2E startup failure evidence', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('reports the migration ID when database readiness times out', async () => {
+    const page = {
+      waitForLoadState: async () => undefined,
+      evaluate: async () => ({ phase: 'migrating', migrationId: '0042_test_migration' })
+    } as unknown as Page
+    await expect(waitForRendererReady(page, 100)).rejects.toThrow('0042_test_migration')
+  })
+
+  it('preserves the main log before removing a failed first-launch profile', async () => {
+    const startupError = new Error('database readiness timed out')
+    let profileRoot = ''
+    let capturedLog: string | undefined
+    let captureError: unknown
+    let windowCreated = false
+    vi.spyOn(electron, 'launch').mockImplementation(async (options) => {
+      profileRoot = dirname(options!.env!.OPEN_SCIENCE_STORAGE_ROOT!)
+      const logs = join(profileRoot, 'logs')
+      await mkdir(logs, { recursive: true })
+      await writeFile(join(logs, 'main.log'), 'database migration started: 0042\n')
+      return {
+        evaluate: async (callback: (electron: unknown) => unknown) => {
+          return callback({
+            app: {
+              getPath: () => {
+                if (!windowCreated) throw new Error('Electron is not ready for diagnostics')
+                return logs
+              }
+            },
+            safeStorage: { setUsePlainTextEncryption: () => undefined }
+          })
+        },
+        firstWindow: async () => {
+          windowCreated = true
+          return {
+            emulateMedia: async () => undefined,
+            on: () => undefined,
+            consoleMessages: async () => [],
+            pageErrors: async () => [],
+            waitForLoadState: async () => {
+              throw startupError
+            }
+          }
+        },
+        close: async () => undefined
+      } as unknown as ElectronApplication
+    })
+
+    try {
+      await expect(
+        ElectronAppHarness.create('hidden', async (app) => {
+          try {
+            capturedLog = await app.captureMainLog('startup-regression.log')
+          } catch (error) {
+            captureError = error
+          }
+        })
+      ).rejects.toBe(startupError)
+      expect(captureError).toBeUndefined()
+      expect(capturedLog).toBeDefined()
+      expect(await readFile(capturedLog!, 'utf8')).toBe('database migration started: 0042\n')
+      await expect(readFile(join(profileRoot, 'logs', 'main.log'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+    } finally {
+      if (capturedLog) await rm(capturedLog, { force: true })
+    }
+  })
+
+  it('prepares an explicitly selected fake agent before the first Electron launch', async () => {
+    const stopped = new Error('stop before launching an actual process')
+    let initialSettings: Record<string, unknown> = {}
+    let initialEnvironment: Record<string, string | undefined> = {}
+    vi.spyOn(electron, 'launch').mockImplementation(async (options) => {
+      initialEnvironment = options!.env!
+      initialSettings = JSON.parse(
+        await readFile(
+          join(options!.env!.OPEN_SCIENCE_STORAGE_ROOT!, 'settings.json'),
+          'utf8'
+        ).catch(() => '{}')
+      )
+      throw stopped
+    })
+    await expect(ElectronAppHarness.create('hidden', undefined, true)).rejects.toBe(stopped)
+    expect(initialEnvironment.OPEN_SCIENCE_AGENT_FRAMEWORK).toBe('opencode')
+    expect(initialSettings).toMatchObject({ opencodeVersion: '1.0.0', localePreference: 'en' })
+    expect(initialSettings.opencodePath).toMatch(/fake-agent-bin[/\\]opencode(?:\.cmd)?$/)
+  })
+
+  it('pins English before first launch even without a fake agent', async () => {
+    const stopped = new Error('stop before launching an actual process')
+    let initialSettings: Record<string, unknown> = {}
+    vi.spyOn(electron, 'launch').mockImplementation(async (options) => {
+      initialSettings = JSON.parse(
+        await readFile(
+          join(options!.env!.OPEN_SCIENCE_STORAGE_ROOT!, 'settings.json'),
+          'utf8'
+        ).catch(() => '{}')
+      )
+      throw stopped
+    })
+    await expect(ElectronAppHarness.create('hidden')).rejects.toBe(stopped)
+    expect(initialSettings.localePreference).toBe('en')
+    expect(initialSettings.opencodePath).toBeUndefined()
+  })
+
+  it('retains the startup error and cleans up when evidence capture fails', async () => {
+    const startupError = new Error('Electron failed to launch')
+    let storageRoot = ''
+    let attemptedCapture = false
+    vi.spyOn(electron, 'launch').mockImplementation(async (options) => {
+      storageRoot = options!.env!.OPEN_SCIENCE_STORAGE_ROOT!
+      throw startupError
+    })
+    await expect(
+      ElectronAppHarness.create('hidden', async () => {
+        attemptedCapture = true
+        throw new Error('evidence directory is not writable')
+      })
+    ).rejects.toBe(startupError)
+    expect(attemptedCapture).toBe(true)
+    await expect(readFile(join(storageRoot, 'fake-remoteit-state.json'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+})
 
 const deferred = (): {
   promise: Promise<void>

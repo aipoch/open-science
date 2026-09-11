@@ -1,4 +1,4 @@
-// Single source of truth for identifying the Open Science notebook MCP server's kernel-run tools.
+// Single source of truth for identifying the Open-Science notebook MCP server's kernel-run tools.
 // Both the transcript (workspace-tool-activity-details) and the permission dialog
 // (PermissionApprovalControls) must agree on which tools carry previewable code, so the suffix
 // list and the identity check live here rather than being duplicated per call site.

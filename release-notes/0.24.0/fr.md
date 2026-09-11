@@ -1,7 +1,7 @@
 ## ✨ Points forts
 
 - **Passez d'un projet à l'autre en quelques secondes.** Le menu de projet de l'espace de travail liste désormais vos autres projets actifs avec un aperçu du titre et de la description, si bien que vous pouvez changer de projet sans quitter la session en cours. (#1957)
-- **Le code Notebook reste dans vos limites réseau.** Les environnements d'exécution Notebook et de calcul ne peuvent joindre que les valeurs par défaut d'Open Science et les domaines que vous approuvez, et quand le code tente une nouvelle destination, vous l'approuvez ou le refusez directement dans la conversation. Sur Windows, la protection s'applique une fois la configuration administrateur unique du bac à sable terminée. (#1911)
+- **Le code Notebook reste dans vos limites réseau.** Les environnements d'exécution Notebook et de calcul ne peuvent joindre que les valeurs par défaut d'Open-Science et les domaines que vous approuvez, et quand le code tente une nouvelle destination, vous l'approuvez ou le refusez directement dans la conversation. Sur Windows, la protection s'applique une fois la configuration administrateur unique du bac à sable terminée. (#1911)
 - **Saisissez vos identifiants une fois, réutilisez-les partout.** Les clés API, les jetons d'accès et les connexions OAuth peuvent être stockés à l'échelle de l'appareil et liés aux variables d'environnement, en-têtes ou connexions de n'importe quel connecteur personnalisé. (#1948, #1963)
 - **Une interface en allemand.** L'allemand rejoint l'espagnol, le français, le chinois (simplifié et traditionnel), le japonais, le coréen et le russe, avec des traductions de README en conséquence. (#1761)
 

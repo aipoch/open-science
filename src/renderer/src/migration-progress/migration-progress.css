@@ -1,0 +1,30 @@
+/* Keep the anchor independent of status text height; only the details below it expand. */
+.migration-progress-logo > div {
+  width: 210px;
+  height: 210px;
+}
+
+.migration-progress-logo canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.migration-progress-indeterminate {
+  width: 30%;
+  animation: migration-progress-scan 1.8s ease-in-out infinite alternate;
+}
+
+@keyframes migration-progress-scan {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(233%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .migration-progress-indeterminate {
+    animation: none;
+  }
+}

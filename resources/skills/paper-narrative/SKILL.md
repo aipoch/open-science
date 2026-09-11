@@ -10,7 +10,7 @@ license: Apache-2.0
 story before `figure-composer` designs any one figure. The inputs are the work
 itself: a manuscript (or abstract), figure captions, and the current full deck.
 
-## Open Science Notebook call
+## Open-Science Notebook call
 
 Every `notebook_execute` request whose `code` uses a function named in this skill
 includes this skill ID:

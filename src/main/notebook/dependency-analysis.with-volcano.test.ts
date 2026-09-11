@@ -120,7 +120,7 @@ it('keeps reported regression fixtures free of original host paths and source-la
   expect(fixtures.length).toBeGreaterThan(0)
   for (const name of fixtures) {
     const source = readFileSync(join(__dirname, name), 'utf8')
-    expect(source, name).not.toMatch(/\/(?:Users|home)\/|\.dev-isolate|OpenScience-DEV/)
+    expect(source, name).not.toMatch(/\/(?:Users|home)\/|\.dev-isolate|Open-?Science-DEV/)
     expect(source, name).not.toMatch(/inputs\/_-|GS[EM]\d+/)
     expect(source, name).not.toMatch(/\p{Script=Han}/u)
   }

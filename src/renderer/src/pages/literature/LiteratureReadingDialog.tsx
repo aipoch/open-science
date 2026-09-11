@@ -1,4 +1,4 @@
-/* Hallmark · component scope · existing Open Science tokens · P5 H5 E5 S5 R5 V4 */
+/* Hallmark · component scope · existing Open-Science tokens · P5 H5 E5 S5 R5 V4 */
 import { useMemo, useState } from 'react'
 import * as Dialog from '@/components/ui/dialog'
 import { BookOpenText, LoaderCircle, X } from 'lucide-react'

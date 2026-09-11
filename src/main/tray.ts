@@ -146,7 +146,7 @@ const createAppTray = (opts: {
     rebuildMenu()
     trayMenuRefreshers.set(tray, rebuildMenu)
 
-    tray.setToolTip(headlessWeb ? 'Open Science (Web)' : 'Open Science')
+    tray.setToolTip(headlessWeb ? 'Open-Science (Web)' : 'Open-Science')
 
     const primaryAction = (): void => {
       if (headlessWeb) void opts.onOpenWeb!()

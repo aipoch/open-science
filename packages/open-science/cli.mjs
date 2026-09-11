@@ -63,7 +63,7 @@ Commands:
 
 Options:
   --port <port>          Web service port (default: 44100)
-  --app-path <path>      Installed Open Science executable
+  --app-path <path>      Installed Open-Science executable
   --config-root <path>   Config directory override
   --data-root <path>     Current Data Root override (rollback only)
   --project <id-or-name> Project id or exact name
@@ -724,7 +724,7 @@ const sandboxFailurePattern =
 export const formatStartupFailure = (outcome, logTail, options) => {
   if (!options.noSandbox && sandboxFailurePattern.test(logTail)) {
     return [
-      'Open Science could not start because Chromium sandboxing is unavailable on this host.',
+      'Open-Science could not start because Chromium sandboxing is unavailable on this host.',
       logTail,
       'This can occur when an AppImage mount cannot provide the SUID permissions required by Chromium; some Linux hosts also restrict unprivileged user namespaces.',
       'For an explicit rootless fallback, run "open-science start --no-sandbox" or retry an update with "open-science update --no-sandbox".',
@@ -733,12 +733,12 @@ export const formatStartupFailure = (outcome, logTail, options) => {
       .filter(Boolean)
       .join('\n\n')
   }
-  if (outcome.kind === 'error') return `Could not start Open Science: ${outcome.error.message}`
+  if (outcome.kind === 'error') return `Could not start Open-Science: ${outcome.error.message}`
 
   const exitStatus = outcome.signal
     ? ` after receiving ${outcome.signal}`
     : ` with exit code ${outcome.code ?? 'unknown'}`
-  return `Open Science exited before becoming healthy${exitStatus}.${logTail ? `\n\n${logTail}` : ''}`
+  return `Open-Science exited before becoming healthy${exitStatus}.${logTail ? `\n\n${logTail}` : ''}`
 }
 
 export const startCommand = async (options, deps = DEFAULT_DEPS) => {
@@ -746,10 +746,10 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
   if (await healthCheck(existing, deps)) {
     if (options.credentialStore !== undefined)
       throw new Error(
-        'Open Science is already running. Stop it before selecting a credential store.'
+        'Open-Science is already running. Stop it before selecting a credential store.'
       )
     const url = await authenticatedUrl(existing, deps)
-    deps.log(`Open Science is already running (PID ${existing.pid}).`)
+    deps.log(`Open-Science is already running (PID ${existing.pid}).`)
     if (options.open) openBrowser(url)
     else deps.log('Run "open-science url" to print a browser login URL.')
     return { state: existing, started: false }
@@ -802,12 +802,12 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
       throw new Error(formatStartupFailure(startup, logTail, options))
     }
     throw new Error(
-      `Open Science did not become healthy within ${START_TIMEOUT_MS / 1000}s.${logTail ? `\n\n${logTail}` : ''}`
+      `Open-Science did not become healthy within ${START_TIMEOUT_MS / 1000}s.${logTail ? `\n\n${logTail}` : ''}`
     )
   }
   const state = startup.state
   const url = await authenticatedUrl(state, deps)
-  deps.log(`Open Science started (PID ${state.pid}).`)
+  deps.log(`Open-Science started (PID ${state.pid}).`)
   if (options.open) openBrowser(url)
   else deps.log('Run "open-science url" to print a browser login URL.')
   return { state, started: true }
@@ -835,7 +835,7 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
   const state = await findCurrentState(options, deps)
   if (!state) {
     deps.log(
-      options.json ? JSON.stringify({ result: 'already-stopped' }) : 'Open Science is not running.'
+      options.json ? JSON.stringify({ result: 'already-stopped' }) : 'Open-Science is not running.'
     )
     return
   }
@@ -856,7 +856,7 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
 
   if (!shutdownAccepted) {
     throw new Error(
-      `Could not safely stop Open Science (PID ${state.pid}); the authenticated shutdown request was not accepted, so no process signal was sent.`
+      `Could not safely stop Open-Science (PID ${state.pid}); the authenticated shutdown request was not accepted, so no process signal was sent.`
     )
   }
 
@@ -866,14 +866,14 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
     const stopped = await waitForWebServiceStopped(state, deps, STOP_TIMEOUT_MS)
     if (!stopped) {
       throw new Error(
-        `Could not stop the Open Science web service (PID ${state.pid}); the app is still serving.`
+        `Could not stop the Open-Science web service (PID ${state.pid}); the app is still serving.`
       )
     }
     await deps.removeState(state.configRoot)
     deps.log(
       options.json
         ? JSON.stringify({ result: 'web-service-stopped' })
-        : 'Open Science web service stopped; the app is still running.'
+        : 'Open-Science web service stopped; the app is still running.'
     )
     return
   }
@@ -888,11 +888,11 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
   // the state in place and fail loudly so the user isn't told it stopped when it didn't.
   if (!stopped) {
     throw new Error(
-      `Could not stop Open Science (PID ${state.pid}); it is still running, so no process signal was sent.`
+      `Could not stop Open-Science (PID ${state.pid}); it is still running, so no process signal was sent.`
     )
   }
   await deps.removeState(state.configRoot)
-  deps.log(options.json ? JSON.stringify({ result: 'daemon-stopped' }) : 'Open Science stopped.')
+  deps.log(options.json ? JSON.stringify({ result: 'daemon-stopped' }) : 'Open-Science stopped.')
 }
 
 export const statusCommand = async (options, deps = DEFAULT_DEPS) => {
@@ -901,16 +901,16 @@ export const statusCommand = async (options, deps = DEFAULT_DEPS) => {
   if (options.json) {
     deps.log(JSON.stringify(running ? { running: true, ...state } : { running: false }, null, 2))
   } else if (running) {
-    deps.log(`Open Science is running (PID ${state.pid}, port ${state.port}).`)
+    deps.log(`Open-Science is running (PID ${state.pid}, port ${state.port}).`)
   } else {
-    deps.log('Open Science is not running.')
+    deps.log('Open-Science is not running.')
   }
   if (!running) process.exitCode = 1
 }
 
 export const urlCommand = async (options, deps = DEFAULT_DEPS) => {
   const state = await findCurrentState(options, deps)
-  if (!(await healthCheck(state, deps))) throw new Error('Open Science is not running.')
+  if (!(await healthCheck(state, deps))) throw new Error('Open-Science is not running.')
   deps.log(await authenticatedUrl(state, deps))
 }
 
@@ -1011,12 +1011,12 @@ export const rollbackCommand = async (options, dependencies = {}) => {
     deps.log(JSON.stringify(manifest))
     return
   }
-  deps.log(`Prepared an isolated Open Science ${manifest.targetVersion} rollback.`)
+  deps.log(`Prepared an isolated Open-Science ${manifest.targetVersion} rollback.`)
   deps.log(`Rollback Data Root: ${manifest.rollbackDataRoot}`)
   deps.log(`Preserved newer Config Root: ${manifest.preservedConfigRoot}`)
   deps.log(`Preserved newer Data Root: ${manifest.preservedDataRoot}`)
   deps.log(`Converted Sessions: ${manifest.sessionsConverted}`)
-  deps.log(`You can now install and start Open Science ${manifest.targetVersion}.`)
+  deps.log(`You can now install and start Open-Science ${manifest.targetVersion}.`)
 }
 
 const UPDATE_DOWNLOAD_PAGE = 'https://www.aipoch.com/open-science'
@@ -1046,12 +1046,12 @@ const supportsApplicationCommand = async (client, channel) => {
 const invokeApplicationCommand = async (client, channel, args = []) => {
   const bootstrap = await updateBootstrap(client)
   if (!Array.isArray(bootstrap.rpcChannels) || !bootstrap.rpcChannels.includes(channel)) {
-    throw new OpenScienceApiError(`Open Science does not support ${channel}.`, {
+    throw new OpenScienceApiError(`Open-Science does not support ${channel}.`, {
       code: 'command_unavailable'
     })
   }
   if (!Number.isInteger(bootstrap.rpcProtocolVersion)) {
-    throw new OpenScienceApiError('Open Science does not expose a compatible RPC protocol.', {
+    throw new OpenScienceApiError('Open-Science does not expose a compatible RPC protocol.', {
       code: 'command_unavailable'
     })
   }
@@ -1071,7 +1071,7 @@ const invokeApplicationCommand = async (client, channel, args = []) => {
   try {
     payload = await response.json()
   } catch {
-    throw new OpenScienceApiError('Open Science RPC returned an invalid response.', {
+    throw new OpenScienceApiError('Open-Science RPC returned an invalid response.', {
       code: 'invalid_response',
       status: response.status
     })
@@ -1082,12 +1082,12 @@ const invokeApplicationCommand = async (client, channel, args = []) => {
     typeof payload?.ok !== 'boolean'
   ) {
     throw new OpenScienceApiError(
-      payload?.error?.message ?? 'Open Science RPC returned an invalid response.',
+      payload?.error?.message ?? 'Open-Science RPC returned an invalid response.',
       { code: payload?.error?.code ?? 'invalid_response', status: response.status }
     )
   }
   if (!payload.ok) {
-    throw new OpenScienceApiError(payload.error?.message ?? 'Open Science command failed.', {
+    throw new OpenScienceApiError(payload.error?.message ?? 'Open-Science command failed.', {
       code: payload.error?.code ?? 'command_failed',
       status: response.status
     })
@@ -1145,14 +1145,14 @@ export const updateCommand = async (options, dependencies = {}) => {
   if (!bootstrap.rpcCapabilities?.includes(UPDATE_CLI_RPC_CAPABILITY)) {
     const status = { current: bootstrap.appVersion ?? 'unknown' }
     result = updateResult(status, 'manual-action-required', {
-      nextAction: `Install the latest Open Science release from ${UPDATE_DOWNLOAD_PAGE}, then run this command again.`
+      nextAction: `Install the latest Open-Science release from ${UPDATE_DOWNLOAD_PAGE}, then run this command again.`
     })
   } else if (!(await supports('update:check'))) {
     throw new Error(
-      'The running Open Science version advertises update CLI support without update:check.'
+      'The running Open-Science version advertises update CLI support without update:check.'
     )
   } else {
-    if (!options.json) deps.log('Checking for Open Science updates...')
+    if (!options.json) deps.log('Checking for Open-Science updates...')
     let status = await deps.invokeCommand(client, 'update:check')
     if (status.state === 'error') throw new Error(status.error ?? 'Update check failed.')
 
@@ -1164,11 +1164,11 @@ export const updateCommand = async (options, dependencies = {}) => {
       if (status.state === 'available') {
         if (!(await supports('update:download'))) {
           result = updateResult(status, 'manual-action-required', {
-            nextAction: `Install Open Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
+            nextAction: `Install Open-Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
           })
         } else {
           if (!options.json) {
-            deps.log(`Open Science ${status.latest ?? 'update'} is available. Downloading...`)
+            deps.log(`Open-Science ${status.latest ?? 'update'} is available. Downloading...`)
           }
           status = await downloadWithProgress(client, options, deps)
           if (status.state === 'error') throw new Error(status.error ?? 'Update download failed.')
@@ -1186,12 +1186,12 @@ export const updateCommand = async (options, dependencies = {}) => {
           result = updateResult(status, 'manual-action-required', {
             ...(installerPath ? { installerPath } : {}),
             nextAction: installerPath
-              ? `Run the installer at ${installerPath}, then start Open Science again.`
-              : `Install Open Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
+              ? `Run the installer at ${installerPath}, then start Open-Science again.`
+              : `Install Open-Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
           })
         } else if (!(await supports('update:apply'))) {
           result = updateResult(status, 'manual-action-required', {
-            nextAction: `Install Open Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
+            nextAction: `Install Open-Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
           })
         } else {
           if (!options.json) deps.log('Applying the update without opening the desktop app...')
@@ -1228,12 +1228,12 @@ export const updateCommand = async (options, dependencies = {}) => {
     if (attachedToDesktopApp) {
       result = {
         ...result,
-        nextAction: `Quit the running Open Science app, then run the installer at ${result.installerPath} and start Open Science again.`
+        nextAction: `Quit the running Open-Science app, then run the installer at ${result.installerPath} and start Open-Science again.`
       }
     } else if (requiresManualStop) {
       result = {
         ...result,
-        nextAction: `Run "open-science stop", then run the installer at ${result.installerPath} and start Open Science again.`
+        nextAction: `Run "open-science stop", then run the installer at ${result.installerPath} and start Open-Science again.`
       }
     }
   }
@@ -1248,16 +1248,16 @@ export const updateCommand = async (options, dependencies = {}) => {
 
 const formatUpdateResult = (result) => {
   if (result.outcome === 'up-to-date') {
-    return `Open Science ${result.current} is up to date.`
+    return `Open-Science ${result.current} is up to date.`
   }
   if (result.outcome === 'install-started') {
-    return `Installation of Open Science ${result.latest ?? 'update'} was handed off to the platform updater. The desktop app will not be opened; verify the installed version after the updater exits.`
+    return `Installation of Open-Science ${result.latest ?? 'update'} was handed off to the platform updater. The desktop app will not be opened; verify the installed version after the updater exits.`
   }
   if (result.outcome === 'blocked') {
     return `Update blocked by active research: ${result.blockedBy.join(', ')}.`
   }
   return [
-    `Open Science ${result.latest ?? result.current} requires a manual install.`,
+    `Open-Science ${result.latest ?? result.current} requires a manual install.`,
     result.installerPath ? `Installer: ${result.installerPath}` : undefined,
     result.nextAction
   ]
@@ -1325,7 +1325,7 @@ const emitRunEvent = (event, options, deps) => {
     deps.log(JSON.stringify(event))
   } else if (event.type === 'stream.resync-required') {
     deps.warn(
-      'Run event history could not be fully replayed. Final Run state will still be read from Open Science.'
+      'Run event history could not be fully replayed. Final Run state will still be read from Open-Science.'
     )
   } else if (event.type === 'run.progress') {
     if (event.data?.heartbeat) {
@@ -1345,7 +1345,7 @@ const emitRunEvent = (event, options, deps) => {
     if (message) deps.log(message)
   } else if (event.type === 'permission.requested') {
     deps.warn(
-      'Run is waiting for approval. Approve the request in Open Science Desktop or the Web UI.'
+      'Run is waiting for approval. Approve the request in Open-Science Desktop or the Web UI.'
     )
   } else if (
     event.type === 'run.event' &&
@@ -1783,7 +1783,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
             if (abortController.signal.aborted) return
             const message = error instanceof Error ? error.message : String(error)
             deps.warn(
-              `Run event stream stopped: ${message} Final Run state will still be read from Open Science.`
+              `Run event stream stopped: ${message} Final Run state will still be read from Open-Science.`
             )
           }
         )

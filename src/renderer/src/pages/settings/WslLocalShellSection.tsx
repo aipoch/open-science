@@ -93,11 +93,11 @@ const recoveryCopy = (
           )
     case 'wsl_dependency_install_failed':
       return t(
-        'Open Science could not install the missing Linux dependencies. Check the distribution’s package manager, then try again.'
+        'Open-Science could not install the missing Linux dependencies. Check the distribution’s package manager, then try again.'
       )
     case 'wsl_dependency_install_unconfirmed':
       return t(
-        'Open Science could not confirm that the missing Linux dependencies were installed. Check again before retrying.'
+        'Open-Science could not confirm that the missing Linux dependencies were installed. Check again before retrying.'
       )
     case 'wsl_dependency_install_not_allowed':
       return t(
@@ -113,7 +113,7 @@ const recoveryCopy = (
       )
     case 'wsl_install_journal_unavailable':
       return t(
-        'Open Science could not safely record the installation. No new installation command was started.'
+        'Open-Science could not safely record the installation. No new installation command was started.'
       )
     case 'wsl_network_mode_unsupported':
       return t('Set WSL networkingMode to mirrored, shut down WSL, then check again.')
@@ -122,7 +122,7 @@ const recoveryCopy = (
     case 'wsl_workspace_not_local':
     case 'wsl_workspace_not_ntfs':
     case 'wsl_workspace_volume_unavailable':
-      return t('Move the Open Science data folder to a local NTFS drive, then check again.')
+      return t('Move the Open-Science data folder to a local NTFS drive, then check again.')
     default:
       return t('Check again, or solve this setup issue in a conversation.')
   }
@@ -182,7 +182,7 @@ const installFailureTitle = (failure: InstallFailure, t: Translate): string => {
     case 'uac-cancelled':
       return t('WSL2 installation was cancelled in Windows.')
     case 'spawn-failed':
-      return t('Open Science could not start the WSL2 installer.')
+      return t('Open-Science could not start the WSL2 installer.')
     case 'unknown':
       return t('Windows did not confirm the WSL2 installation result.')
   }
@@ -574,13 +574,13 @@ export const WslLocalShellSection = ({
               }
               title={
                 shellSwitchFailed
-                  ? t('Open Science could not finish changing the Shell runtime.')
+                  ? t('Open-Science could not finish changing the Shell runtime.')
                   : t('WSL2 Bash Preview is unavailable.')
               }
               description={
                 shellSwitchFailed
                   ? t(
-                      'Restart Open Science before running another Shell command, then try the switch again.'
+                      'Restart Open-Science before running another Shell command, then try the switch again.'
                     )
                   : t('Switch to PowerShell to continue with Shell commands.')
               }
@@ -664,7 +664,7 @@ export const WslLocalShellSection = ({
           tone="amber"
           title={statusCopy(snapshot, t)}
           description={t(
-            'Windows will ask for administrator approval. Open Science installs only the WSL2 platform, without a distribution.'
+            'Windows will ask for administrator approval. Open-Science installs only the WSL2 platform, without a distribution.'
           )}
           errorCode={operationErrorReference(snapshot)}
           diagnosticsLabel={t('Diagnostics')}
@@ -732,7 +732,7 @@ export const WslLocalShellSection = ({
           : t('Local Shell · WSL2 Bash Preview')
       }
       description={t(
-        'Choose the exact WSL2 distribution and non-root Linux user Open Science should verify. Selection alone never enables WSL2 Bash.'
+        'Choose the exact WSL2 distribution and non-root Linux user Open-Science should verify. Selection alone never enables WSL2 Bash.'
       )}
       action={
         <Button
@@ -812,7 +812,7 @@ export const WslLocalShellSection = ({
             </Button>
             <p className="mt-2 text-xs text-muted-foreground">
               {t(
-                'Finish the distribution’s username and password prompts in the terminal. Open Science never enters credentials for you.'
+                'Finish the distribution’s username and password prompts in the terminal. Open-Science never enters credentials for you.'
               )}
             </p>
           </div>
@@ -928,9 +928,9 @@ export const WslLocalShellSection = ({
               role="alert"
               icon={CircleX}
               tone="red"
-              title={t('Open Science could not finish changing the Shell runtime.')}
+              title={t('Open-Science could not finish changing the Shell runtime.')}
               description={t(
-                'Restart Open Science before running another Shell command, then try the switch again.'
+                'Restart Open-Science before running another Shell command, then try the switch again.'
               )}
               diagnosticsLabel={t('Diagnostics')}
               primaryButton={{
@@ -974,7 +974,7 @@ export const WslLocalShellSection = ({
                 role="alert"
                 icon={CircleX}
                 tone="red"
-                title={t('Open Science could not prepare the WSL2 setup conversation.')}
+                title={t('Open-Science could not prepare the WSL2 setup conversation.')}
                 description={t('Check the WSL2 status again, then retry the conversation setup.')}
                 primaryButton={{
                   label: t('Try again'),
@@ -989,7 +989,7 @@ export const WslLocalShellSection = ({
         open={confirmDependencyInstall}
         title={t('Install missing Linux dependencies?')}
         description={t(
-          'Open Science will run a one-time root installation in {{distro}} for missing Linux packages only. It will not change sudoers, and {{user}} will remain the selected non-root user for everyday and future runs.',
+          'Open-Science will run a one-time root installation in {{distro}} for missing Linux packages only. It will not change sudoers, and {{user}} will remain the selected non-root user for everyday and future runs.',
           {
             distro: snapshot.selection?.distro ?? '',
             user: snapshot.selection?.user ?? ''

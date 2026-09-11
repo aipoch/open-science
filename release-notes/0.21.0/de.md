@@ -25,7 +25,7 @@
 - Timeouts bei Konnektoranfragen werden nicht mehr erneut versucht. Eine blockierte Anfrage schlägt einmal mit einer klaren Erklärung der Frist fehl, statt dreimal jeweils 30 Sekunden zu warten. (#1829)
 - Das Abbrechen einer Konnektorabfrage wirkt sofort, ohne das Abfrageintervall abzuwarten. (#1830)
 - Reviewer-Sitzungen begrenzen die Größe erfasster Protokolle, damit übermäßig umfangreiche Tool-Ausgaben die App nicht blockieren. (#1824)
-- Die Aufforderung, Open Science auf GitHub mit einem Stern zu markieren, berücksichtigt nun eine projektübergreifende Wartezeit und erscheint deutlich seltener. (#1813)
+- Die Aufforderung, Open-Science auf GitHub mit einem Stern zu markieren, berücksichtigt nun eine projektübergreifende Wartezeit und erscheint deutlich seltener. (#1813)
 - Die japanischen Übersetzungen wurden hinsichtlich Terminologie und Konsistenz überarbeitet. (#1823)
 - Der Startfehler in den Einstellungen verwendet nun die Standardfehleranzeige mit einer Option zum erneuten Versuch. (#1835)
 

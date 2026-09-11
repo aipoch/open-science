@@ -830,7 +830,7 @@ describe('OpenScienceClient', () => {
 
     await expect(events.ready).rejects.toMatchObject({
       code: 'event_stream_failed',
-      message: 'Open Science event stream failed.'
+      message: 'Open-Science event stream failed.'
     })
   })
 
@@ -959,7 +959,7 @@ describe('OpenScienceClient', () => {
 
     await expect(next).rejects.toMatchObject({
       code: 'event_stream_failed',
-      message: 'Open Science event stream access was revoked.'
+      message: 'Open-Science event stream access was revoked.'
     })
     expect(TrackingWebSocket.instances).toHaveLength(1)
   })
@@ -993,7 +993,7 @@ describe('OpenScienceClient', () => {
 
       expect(outcome).toMatchObject({
         code: 'timeout',
-        message: 'Open Science event stream timed out after 25 milliseconds.'
+        message: 'Open-Science event stream timed out after 25 milliseconds.'
       })
       expect(ControllableWebSocket.instance.closed).toBe(true)
     } finally {
@@ -1110,11 +1110,11 @@ describe('OpenScienceClient', () => {
       JSON.stringify({ pid: process.pid, port: 44100, startedAt: new Date().toISOString() })
     )
     await writeFile(join(configRoot, 'web-token'), 'discovered-token\n')
-    const fetch = vi.fn().mockImplementation(async () => response(200, { appName: 'Open Science' }))
+    const fetch = vi.fn().mockImplementation(async () => response(200, { appName: 'Open-Science' }))
 
     const client = await connectToOpenScience({ configRoot, fetch })
 
-    await expect(client.health()).resolves.toEqual({ appName: 'Open Science' })
+    await expect(client.health()).resolves.toEqual({ appName: 'Open-Science' })
     expect(fetch).toHaveBeenCalledWith(
       'http://127.0.0.1:44100/api/bootstrap',
       expect.objectContaining({

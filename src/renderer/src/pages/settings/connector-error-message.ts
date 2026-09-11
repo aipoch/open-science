@@ -20,8 +20,8 @@ export const localizeConnectorError = (message: string, t: TFunction): string =>
       return t('MCP server transport does not match its connection fields.')
     case 'MCP server names must remain unique after normalization.':
       return t('MCP server names must remain unique after normalization.')
-    case 'MCP server name was normalized for Open Science.':
-      return t('MCP server name was normalized for Open Science.')
+    case 'MCP server name was normalized for Open-Science.':
+      return t('MCP server name was normalized for Open-Science.')
     case 'Credential values were excluded and must be entered locally.':
       return t('Credential values were excluded and must be entered locally.')
     case 'The MCP client configuration must contain at least one server.':

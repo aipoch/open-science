@@ -420,7 +420,7 @@ describe('ConnectorsPanel (groups)', () => {
     await act(async () => rejectLoad?.(new Error('catalog unavailable')))
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
-      'Open Science could not load Connectors.'
+      'Open-Science could not load Connectors.'
     )
     const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Retry'

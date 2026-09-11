@@ -460,7 +460,7 @@ const buildEnvironmentLockReadme = (
         ]
       : []
   return [
-    '# Open Science environment lock',
+    '# Open-Science environment lock',
     '',
     `- Environment: ${info.environmentName}`,
     `- Runtime: ${info.kernelKind}`,
@@ -472,7 +472,7 @@ const buildEnvironmentLockReadme = (
     '',
     ...(info.lockState === 'partial'
       ? [
-          '> This bundle is for inspection only. Its captured evidence is incomplete, so Open Science will not import it as a runnable environment.',
+          '> This bundle is for inspection only. Its captured evidence is incomplete, so Open-Science will not import it as a runnable environment.',
           ''
         ]
       : []),

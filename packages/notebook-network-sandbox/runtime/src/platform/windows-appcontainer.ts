@@ -264,7 +264,7 @@ const checkWindowsAppContainer = async (
     if (!status.networkFenceReady)
       errors.push('Notebook AppContainer loopback network fence is not installed')
     if (!status.owned || status.ownershipState !== 'owned')
-      errors.push('Notebook AppContainer resources have no valid Open Science ownership receipt')
+      errors.push('Notebook AppContainer resources have no valid Open-Science ownership receipt')
     if (status.gatewayPort === null) {
       errors.push('Notebook AppContainer gateway port is not configured')
     } else if (!sharedGatewayPortActive(status.gatewayPort)) {

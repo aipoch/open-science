@@ -11,14 +11,22 @@ const sha256 = (relativePath: string): string =>
     .digest('hex')
 
 describe('Notebook network sandbox resources', () => {
+  it.each(['x64', 'arm64'])('ships the current display brand in the %s host', (architecture) => {
+    const binary = readFileSync(
+      resolve(packageRoot, `vendor/windows/${architecture}/notebook-appcontainer-host.exe`)
+    )
+    expect(binary.includes(Buffer.from('Open-Science Notebook'))).toBe(true)
+    expect(binary.includes(Buffer.from('Open Science Notebook'))).toBe(false)
+  })
+
   it.each([
     [
       'vendor/windows/x64/notebook-appcontainer-host.exe',
-      'f57d2bae093b080d58e8d009d1f826765ca9746efd77261fb4afff72317d682e'
+      '25a8bcece66a700196a2412b9c38202738d9642ee2127f97b767c316184748ef'
     ],
     [
       'vendor/windows/arm64/notebook-appcontainer-host.exe',
-      '57a48536f6288887578b2d025b9cd288414dda7562a2b46754d4397380147d57'
+      '2b24a3c07618871ade588ec69b54d0857520e09873e9ab54820bf31c6df00a5b'
     ]
   ])('verifies %s', (relativePath, expectedHash) => {
     expect(sha256(relativePath)).toBe(expectedHash)

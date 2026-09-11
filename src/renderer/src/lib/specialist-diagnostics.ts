@@ -61,7 +61,7 @@ const INSTALL_FAILURES: Record<SpecialistInstallFailureCode, SpecialistInstallFa
     'This package targets a protected Specialist and cannot be installed.'
   ),
   'recovery-failed': installFailure(
-    'Open Science could not recover an earlier package operation. Restart the app before trying again.',
+    'Open-Science could not recover an earlier package operation. Restart the app before trying again.',
     { revealStorage: true }
   ),
   'rollback-failed': installFailure(

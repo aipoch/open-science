@@ -133,7 +133,7 @@ test('reports accessibility violations in startup and home surfaces', async ({ a
   await expect(locationStep).toBeVisible()
   await expectKeyboardOutcome(app.page, 'Onboarding step focus', async () => {
     await expect(
-      app.page.getByRole('heading', { name: 'Where should Open Science store your data?' })
+      app.page.getByRole('heading', { name: 'Where should Open-Science store your data?' })
     ).toBeFocused()
   })
   await scanAccessibility(app.page, 'Onboarding step focus')
@@ -165,6 +165,16 @@ test('reports accessibility violations in core dialog and workspace surfaces', a
     .getByRole('button', { name: 'General', exact: true })
     .click()
   await expect(settings.getByRole('heading', { name: 'Appearance' })).toBeVisible()
+  const logPath = settings.getByLabel('Log file path', { exact: true })
+  const openLog = settings.getByRole('button', { name: 'Open', exact: true })
+  await expect(openLog).toBeEnabled()
+  await openLog.focus()
+  await page.keyboard.press('Tab')
+  await expect(logPath).toBeFocused()
+  if (await logPath.evaluate((element) => element.scrollWidth > element.clientWidth)) {
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(() => logPath.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0)
+  }
   await scanAccessibility(page, 'Settings')
 })
 

@@ -300,7 +300,7 @@ class PartialTaskCompletionError extends Error {
 }
 
 const MAX_RETAINED_RUNS = 200
-const PROCESS_RESTARTED_MESSAGE = 'Run interrupted because Open Science restarted.'
+const PROCESS_RESTARTED_MESSAGE = 'Run interrupted because Open-Science restarted.'
 const TASK_RUN_HEARTBEAT_INTERVAL_MS = 10_000
 export const TASK_RUN_DISPOSAL_BUDGET_MS = 1000
 const VISIBLE_PROVIDER_EVENT_KINDS = new Set<AcpRuntimeEvent['kind']>([

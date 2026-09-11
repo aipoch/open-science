@@ -109,7 +109,7 @@ export const downloadFullText = async (
         {
           signal,
           ...(agent ? { agent } : {}),
-          headers: { Accept: 'application/pdf', 'User-Agent': 'OpenScience/1.0' },
+          headers: { Accept: 'application/pdf', 'User-Agent': 'Open-Science/1.0' },
           lookup: (hostname, options, callback) => {
             void lookup(hostname, { all: true }).then(
               (addresses) => {

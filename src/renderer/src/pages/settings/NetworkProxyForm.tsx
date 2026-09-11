@@ -78,14 +78,14 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
       <SettingsSection
         title={t('Proxy')}
         description={t(
-          'Choose how Open Science reaches the internet. Changes apply to new app requests and processes.'
+          'Choose how Open-Science reaches the internet. Changes apply to new app requests and processes.'
         )}
         aria-label={t('Proxy settings')}
       >
         <SettingsRow
           label={t('Mode')}
           description={t(
-            'System follows your device proxy for app requests. Agent processes inherit only the proxy environment Open Science started with; choose Manual to give them a fixed proxy.'
+            'System follows your device proxy for app requests. Agent processes inherit only the proxy environment Open-Science started with; choose Manual to give them a fixed proxy.'
           )}
           className="pt-0"
         >

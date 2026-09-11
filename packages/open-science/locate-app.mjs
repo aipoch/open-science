@@ -39,16 +39,22 @@ const executableOnPath = async (name, env = process.env) => {
 }
 
 const defaultInstalledCandidates = (env = process.env) => {
+  // Upgrades can retain the old installation directory while replacing its executable.
+  const names = ['Open-Science', 'Open Science']
   if (process.platform === 'win32') {
-    return [
-      env.LOCALAPPDATA && join(env.LOCALAPPDATA, 'Programs', 'Open Science', 'Open Science.exe'),
-      env.PROGRAMFILES && join(env.PROGRAMFILES, 'Open Science', 'Open Science.exe')
-    ].filter(Boolean)
+    const roots = [env.LOCALAPPDATA && join(env.LOCALAPPDATA, 'Programs'), env.PROGRAMFILES].filter(
+      Boolean
+    )
+    return names.flatMap((folder) =>
+      names.flatMap((executable) => roots.map((root) => join(root, folder, `${executable}.exe`)))
+    )
   }
   if (process.platform === 'darwin') {
-    const app = 'Open Science.app/Contents/MacOS/Open Science'
-    return [join('/Applications', app), env.HOME && join(env.HOME, 'Applications', app)].filter(
-      Boolean
+    const roots = ['/Applications', env.HOME && join(env.HOME, 'Applications')].filter(Boolean)
+    return names.flatMap((folder) =>
+      names.flatMap((executable) =>
+        roots.map((root) => join(root, `${folder}.app`, 'Contents', 'MacOS', executable))
+      )
     )
   }
   return ['/usr/bin/open-science', '/usr/local/bin/open-science']
@@ -75,7 +81,7 @@ export const locateApp = async ({ appPath, env = process.env } = {}) => {
   const explicit = appPath ?? env.OPEN_SCIENCE_APP_PATH
   if (explicit) {
     const command = resolve(explicit)
-    if (!(await exists(command))) throw new Error(`Open Science executable not found: ${command}`)
+    if (!(await exists(command))) throw new Error(`Open-Science executable not found: ${command}`)
     return { command, args: [], packaged: true, repositoryRoot }
   }
 
@@ -97,7 +103,7 @@ export const locateApp = async ({ appPath, env = process.env } = {}) => {
 
   // When run from a packaged build's resources dir there is no package.json next to the CLI, so fall
   // back to the product name rather than letting the read mask the real "could not locate" message.
-  let productName = 'Open Science'
+  let productName = 'Open-Science'
   try {
     productName =
       JSON.parse(await readFile(join(repositoryRoot, 'package.json'), 'utf8')).productName ??

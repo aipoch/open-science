@@ -303,7 +303,7 @@ describe('workspace session dialogs behavior wiring', () => {
     )
 
     expect(getTextContent(alert)).toBe(
-      "The agent was stopped, but Open Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again."
+      "The agent was stopped, but Open-Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again."
     )
     expect(getTextContent(tree)).not.toContain('disk locked')
     ;(retryButton?.props.onClick as () => void)()
@@ -321,7 +321,7 @@ describe('workspace session dialogs behavior wiring', () => {
       (element) => element.props.role === 'alert'
     )
     expect(getTextContent(runtimeAlert)).toBe(
-      "Open Science couldn't stop the agent for this Session. The Session was not deleted. Please try again."
+      "Open-Science couldn't stop the agent for this Session. The Session was not deleted. Please try again."
     )
   })
 })

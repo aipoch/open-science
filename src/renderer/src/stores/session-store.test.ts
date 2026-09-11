@@ -5203,7 +5203,7 @@ describe('session store', () => {
       eventId: 'event-1',
       toolKind: 'fetch',
       providerToolName: 'WebSearch',
-      title: '"open science repositories"',
+      title: '"open-science repositories"',
       status: 'pending'
     })
     useSessionStore.getState().upsertToolActivity({
@@ -5225,7 +5225,7 @@ describe('session store', () => {
         kind: 'tool',
         toolKind: 'fetch',
         providerToolName: 'WebSearch',
-        title: '"open science repositories"',
+        title: '"open-science repositories"',
         status: 'completed',
         eventIds: ['event-1', 'event-2']
       })
@@ -5342,7 +5342,7 @@ describe('session store', () => {
       eventId: 'event-1',
       toolKind: 'fetch',
       providerToolName: 'WebSearch',
-      title: '"open science repositories"',
+      title: '"open-science repositories"',
       status: 'pending',
       toolContent: [
         {
@@ -5458,7 +5458,7 @@ describe('session store', () => {
       eventId: 'event-1',
       timestamp: 10,
       toolKind: 'fetch',
-      title: '"open science repositories"',
+      title: '"open-science repositories"',
       status: 'in_progress'
     })
     useSessionStore.getState().upsertToolActivity({
@@ -5542,7 +5542,7 @@ describe('session store', () => {
       toolCallId: 'tool-web-1',
       eventId: 'event-1',
       toolKind: 'fetch',
-      title: '"open science repositories"',
+      title: '"open-science repositories"',
       status: 'pending'
     })
 
@@ -5552,7 +5552,7 @@ describe('session store', () => {
       expect.objectContaining({
         id: 'tool-web-1',
         kind: 'tool',
-        title: '"open science repositories"',
+        title: '"open-science repositories"',
         status: 'pending',
         toolKind: 'fetch'
       })
@@ -6145,7 +6145,7 @@ describe('session store', () => {
   it('keeps a staged upload path until the main process publishes its immutable Version', () => {
     const attachment = createUploadAttachment({
       id: 'staged-upload-1',
-      path: '/Users/example/OpenScience-DEV/uploads/default-project/.pending/staged.csv'
+      path: '/Users/example/Open-Science-DEV/uploads/default-project/.pending/staged.csv'
     })
     const pending = useSessionStore.getState().appendPendingUserMessage({
       content: 'Analyze the uploaded file',

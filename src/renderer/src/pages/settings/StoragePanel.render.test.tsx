@@ -85,7 +85,7 @@ const openEditor = async (): Promise<void> => {
 }
 
 beforeEach(() => {
-  vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('Open Science Electron')
+  vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('Open-Science Electron')
   useSettingsStore.setState(createInitialSettingsState())
   useStorageInfoStore.setState({
     status: null,
@@ -130,7 +130,7 @@ beforeEach(() => {
       pickDirectory: vi.fn().mockResolvedValue(null),
       inspectDataRoot: vi
         .fn()
-        .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' }),
+        .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/Open-Science' }),
       setDataRootAndRelaunch: vi.fn().mockResolvedValue({ ok: true }),
       detectActive: vi.fn().mockResolvedValue([]),
       migrate: vi.fn().mockResolvedValue({ ok: true, cleanupPending: false }),
@@ -320,7 +320,7 @@ describe('StoragePanel', () => {
       window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }
     ).api.storage.inspectDataRoot.mockResolvedValue({
       kind: 'adopt',
-      dataRoot: '/mnt/existing/OpenScience'
+      dataRoot: '/mnt/existing/Open-Science'
     })
 
     await act(async () => {
@@ -397,7 +397,7 @@ describe('StoragePanel', () => {
           id: 'storage',
           label: 'App storage permission',
           status: 'failed',
-          summary: 'Open Science cannot write to its private data folder.',
+          summary: 'Open-Science cannot write to its private data folder.',
           detail
         }
       ])
@@ -421,7 +421,7 @@ describe('StoragePanel', () => {
         id: 'storage',
         label: 'App storage permission',
         status: 'passed',
-        summary: 'Open Science can write to its private data folder.',
+        summary: 'Open-Science can write to its private data folder.',
         detail: '/home/u/.open-science'
       }
     ])
@@ -435,7 +435,7 @@ describe('StoragePanel', () => {
           id: 'storage',
           label: 'App storage permission',
           status: 'failed',
-          summary: 'Open Science cannot write to its private data folder.',
+          summary: 'Open-Science cannot write to its private data folder.',
           detail: '/home/u/.open-science — EACCES: permission denied'
         }
       ]),
@@ -471,7 +471,7 @@ describe('StoragePanel', () => {
         id: 'storage',
         label: 'App storage permission',
         status: 'passed',
-        summary: 'Open Science can write to its private data folder.',
+        summary: 'Open-Science can write to its private data folder.',
         detail: '/home/u/.open-science'
       },
       {
@@ -492,7 +492,7 @@ describe('StoragePanel', () => {
           id: 'storage',
           label: 'App storage permission',
           status: 'failed',
-          summary: 'Open Science cannot write to its private data folder.',
+          summary: 'Open-Science cannot write to its private data folder.',
           detail: '/home/u/.open-science — EACCES: permission denied'
         }
       ]),
@@ -526,7 +526,7 @@ describe('StoragePanel', () => {
           id: 'storage',
           label: 'App storage permission',
           status: 'failed',
-          summary: 'Open Science cannot write to its private data folder.',
+          summary: 'Open-Science cannot write to its private data folder.',
           detail: '/home/u/.open-science — EACCES: permission denied'
         }
       ]),
@@ -550,7 +550,7 @@ describe('StoragePanel', () => {
         id: 'storage',
         label: 'App storage permission',
         status: 'passed',
-        summary: 'Open Science can write to its private data folder.'
+        summary: 'Open-Science can write to its private data folder.'
       },
       {
         id: 'agent',
@@ -569,7 +569,7 @@ describe('StoragePanel', () => {
           id: 'storage',
           label: 'App storage permission',
           status: 'failed',
-          summary: 'Open Science cannot write to its private data folder.'
+          summary: 'Open-Science cannot write to its private data folder.'
         }
       ]),
       checkEnvironment
@@ -589,7 +589,7 @@ describe('StoragePanel', () => {
             id: 'storage',
             label: 'App storage permission',
             status: 'passed',
-            summary: 'Open Science can write to its private data folder.'
+            summary: 'Open-Science can write to its private data folder.'
           }
         ])
       })
@@ -605,7 +605,7 @@ describe('StoragePanel', () => {
           id: 'storage',
           label: 'App storage permission',
           status: 'failed',
-          summary: 'Open Science cannot write to its private data folder.'
+          summary: 'Open-Science cannot write to its private data folder.'
         }
       ])
     })
@@ -638,7 +638,7 @@ describe('StoragePanel', () => {
           id: 'storage',
           label: 'App storage permission',
           status: 'failed',
-          summary: 'Open Science cannot write to its private data folder.'
+          summary: 'Open-Science cannot write to its private data folder.'
         }
       ]),
       checkEnvironment
@@ -675,14 +675,14 @@ describe('StoragePanel', () => {
     })
 
     // The warning is gated behind the confirm step — not shown on the collapsed panel.
-    expect(container.textContent).not.toContain('Open Science manages this folder')
+    expect(container.textContent).not.toContain('Open-Science manages this folder')
 
     await act(async () => {
       clickButton((button) => button.textContent?.trim() === 'Change location')
       await Promise.resolve()
     })
 
-    expect(document.body.textContent).toContain('Open Science manages this folder')
+    expect(document.body.textContent).toContain('Open-Science manages this folder')
     expect(document.body.textContent).toContain(
       "Don't move, rename, or delete files inside it — doing so can break your projects and history."
     )
@@ -783,7 +783,7 @@ describe('StoragePanel', () => {
       window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }
     ).api.storage.inspectDataRoot.mockResolvedValue({
       kind: 'move',
-      dataRoot: '/mnt/data/OpenScience',
+      dataRoot: '/mnt/data/Open-Science',
       targetAvailableBytes: 100_000_000
     })
 
@@ -809,10 +809,10 @@ describe('StoragePanel', () => {
 
     const input = container.querySelector('input[type="text"]') as HTMLInputElement
     expect(input.value).toBe('/mnt/data')
-    // The final `<parent>/OpenScience` path is shown so the user sees the appended folder before
+    // The final `<parent>/Open-Science` path is shown so the user sees the appended folder before
     // acting, not just the raw parent they picked.
     expect(container.textContent).toContain('Data will be stored in')
-    expect(container.textContent).toContain('/mnt/data/OpenScience')
+    expect(container.textContent).toContain('/mnt/data/Open-Science')
     expect(container.textContent).toContain('Available on target disk: 100.0 MB')
     // Migration excludes runtime but includes the independently stored execution evidence.
     expect(container.textContent).toContain('Your existing data (~31.0 MB) will be moved')
@@ -889,7 +889,7 @@ describe('StoragePanel', () => {
       window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }
     ).api.storage.inspectDataRoot.mockResolvedValue({
       kind: 'move',
-      dataRoot: '/mnt/empty/OpenScience'
+      dataRoot: '/mnt/empty/Open-Science'
     })
 
     await act(async () => {
@@ -924,7 +924,7 @@ describe('StoragePanel', () => {
       window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }
     ).api.storage.inspectDataRoot.mockResolvedValue({
       kind: 'adopt',
-      dataRoot: '/mnt/existing/OpenScience'
+      dataRoot: '/mnt/existing/Open-Science'
     })
 
     await act(async () => {
@@ -939,9 +939,9 @@ describe('StoragePanel', () => {
       await Promise.resolve()
     })
 
-    expect(container.textContent).toContain('already contains Open Science data')
+    expect(container.textContent).toContain('already contains Open-Science data')
     expect(container.textContent).toContain('Data will be stored in')
-    expect(container.textContent).toContain('/mnt/existing/OpenScience')
+    expect(container.textContent).toContain('/mnt/existing/Open-Science')
     expect(
       Array.from(container.querySelectorAll('button')).some(
         (button) => button.textContent?.trim() === 'Change location'
@@ -951,8 +951,8 @@ describe('StoragePanel', () => {
     clickButton((button) => button.textContent?.trim() === 'Use this folder')
     const dialog = document.body.querySelector('[role="alertdialog"]')
     expect(dialog).not.toBeNull()
-    // The confirm dialog shows the derived `<parent>/OpenScience` target, not the raw parent.
-    expect(dialog?.textContent).toContain('/mnt/existing/OpenScience')
+    // The confirm dialog shows the derived `<parent>/Open-Science` target, not the raw parent.
+    expect(dialog?.textContent).toContain('/mnt/existing/Open-Science')
 
     // Search only within the dialog: the "Use this folder" trigger button (still in `container`,
     // which lives inside document.body) has identical text to the dialog's confirm action.
@@ -985,7 +985,7 @@ describe('StoragePanel', () => {
       window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }
     ).api.storage.inspectDataRoot.mockResolvedValue({
       kind: 'invalid',
-      dataRoot: '/mnt/bad/OpenScience',
+      dataRoot: '/mnt/bad/Open-Science',
       error: 'The selected folder is not writable.'
     })
 
@@ -1023,11 +1023,11 @@ describe('StoragePanel', () => {
       .mockResolvedValueOnce({
         kind: 'recover',
         recoveryStatus: 'verified',
-        dataRoot: '/mnt/interrupted/OpenScience'
+        dataRoot: '/mnt/interrupted/Open-Science'
       })
       .mockResolvedValue({
         kind: 'move',
-        dataRoot: '/mnt/interrupted/OpenScience'
+        dataRoot: '/mnt/interrupted/Open-Science'
       })
 
     await act(async () => {
@@ -1041,7 +1041,7 @@ describe('StoragePanel', () => {
     })
 
     expect(container.textContent).toContain('verified copy from an interrupted move')
-    expect(container.textContent).toContain('/mnt/interrupted/OpenScience')
+    expect(container.textContent).toContain('/mnt/interrupted/Open-Science')
 
     await act(async () => {
       clickButton((button) => button.textContent?.trim() === 'Resolve unfinished move')
@@ -1078,9 +1078,9 @@ describe('StoragePanel', () => {
     ;(
       window as unknown as { api: { storage: { getInfo: ReturnType<typeof vi.fn> } } }
     ).api.storage.getInfo.mockResolvedValue({
-      dataRoot: '/mnt/data/OpenScience',
+      dataRoot: '/mnt/data/Open-Science',
       isDefault: false,
-      defaultDataRoot: '/home/u/OpenScience',
+      defaultDataRoot: '/home/u/Open-Science',
       defaultParent: '/home/u',
       usage: { categories: [], totalBytes: 12_000_000 },
       availableBytes: 500_000_000_000
@@ -1103,7 +1103,7 @@ describe('StoragePanel', () => {
       )
     ).toBe(true)
     // The destination (default data root) is shown so the user sees where "back to default" goes.
-    expect(container.textContent).toContain('/home/u/OpenScience')
+    expect(container.textContent).toContain('/home/u/Open-Science')
   })
 
   it('does not offer return-to-default when the current root is already the default', async () => {
@@ -1123,9 +1123,9 @@ describe('StoragePanel', () => {
     ;(
       window as unknown as { api: { storage: { getInfo: ReturnType<typeof vi.fn> } } }
     ).api.storage.getInfo.mockResolvedValue({
-      dataRoot: '/mnt/data/OpenScience',
+      dataRoot: '/mnt/data/Open-Science',
       isDefault: false,
-      defaultDataRoot: '/home/u/OpenScience',
+      defaultDataRoot: '/home/u/Open-Science',
       defaultParent: '/home/u',
       usage: { categories: [], totalBytes: 12_000_000 },
       availableBytes: 500_000_000_000
@@ -1135,7 +1135,7 @@ describe('StoragePanel', () => {
       window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }
     ).api.storage.inspectDataRoot.mockResolvedValue({
       kind: 'move',
-      dataRoot: '/home/u/OpenScience'
+      dataRoot: '/home/u/Open-Science'
     })
 
     await act(async () => {

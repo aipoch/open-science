@@ -313,7 +313,7 @@ test('persists Russian into the built main-process native quit dialog', async ({
       buttons: ['Отмена', 'Выйти'],
       detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
       includesRendererCatalog: false,
-      message: 'Выйти из Open Science?'
+      message: 'Выйти из Open-Science?'
     })
 
   page = await app.restart()
@@ -324,7 +324,7 @@ test('persists Russian into the built main-process native quit dialog', async ({
       buttons: ['Отмена', 'Выйти'],
       detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
       includesRendererCatalog: false,
-      message: 'Выйти из Open Science?'
+      message: 'Выйти из Open-Science?'
     })
 })
 
@@ -338,7 +338,7 @@ test('persists German into the built main-process native quit dialog', async ({ 
     buttons: ['Abbrechen', 'Beenden'],
     detail: 'Die Arbeit läuft noch und wird beim Beenden unterbrochen.',
     includesRendererCatalog: false,
-    message: 'Open Science beenden?'
+    message: 'Open-Science beenden?'
   }
 
   await expect.poll(() => app.capturePersistedLocaleNativeQuitDialog()).toEqual(expectedDialog)
@@ -351,6 +351,9 @@ test('persists German into the built main-process native quit dialog', async ({ 
 for (const localized of localizedSettingsCases) {
   test(`persists ${localized.language} after an Electron restart`, async ({ app }) => {
     let page = await app.completeOnboarding()
+    // The language picker helper uses English labels; the host's system locale may differ.
+    await page.evaluate(async () => window.api.locale.setPreference({ preference: 'en' }))
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en')
     await selectLanguage(page, localized.pickerLabel)
     await expect(page.locator('html')).toHaveAttribute('lang', localized.locale)
     page = await app.restart()

@@ -44,7 +44,7 @@ diff --git a/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
 -    Sleep 1000
 -    Goto UninstallLoop
 +  CheckResult:
-+    # Open Science handles a non-zero result in customUnInstallCheck with path-scoped process
++    # Open-Science handles a non-zero result in customUnInstallCheck with path-scoped process
 +    # cleanup and one controlled retry. Return immediately so the upstream retry loop cannot
 +    # misreport every old-uninstaller failure as an application that could not be closed.
 +    Return

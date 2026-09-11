@@ -1,8 +1,19 @@
-import { expect, test as base, type TestInfo } from '@playwright/test'
-import { spawn } from 'node:child_process'
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { expect, test as base } from '@playwright/test'
+import { execFileSync, spawn } from 'node:child_process'
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
 import {
@@ -12,6 +23,7 @@ import {
 } from '../../scripts/performance/runtime-resource-profiler'
 import { terminateProcessTree } from '../../src/main/process-tree'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
+import type { DatabaseStartupState } from '../../src/shared/database-startup'
 import { RendererFailureGate } from './renderer-failure-gate'
 
 const APP_ROOT = resolve(process.cwd())
@@ -132,6 +144,13 @@ type ElectronApp = {
   configureFileBrowserFixture: () => Promise<void>
   configureFakeAgent: () => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
+  restartWithLegacyBrandPaths: (failedPreparing?: boolean) => Promise<{
+    page: Page
+    oldRoot: string
+    newRoot: string
+    identityBefore: unknown
+    identityAfter: unknown
+  }>
   enableFakeRemoteIt: () => Promise<Page>
   findOverlayIsVisible: () => Promise<boolean>
   launchSecondInstance: () => Promise<Page>
@@ -174,7 +193,7 @@ const launchEnvironment = (
   environment.OPEN_SCIENCE_E2E_WINDOW_MODE = windowMode
   if (process.platform === 'win32' && environment.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS) {
     // The production runner caches resolved tools under LocalAppData. Keep the controlled process
-    // fixture isolated from any micromamba selected by an ordinary Open Science session.
+    // fixture isolated from any micromamba selected by an ordinary Open-Science session.
     environment.LOCALAPPDATA = join(storageRoot, 'local-app-data')
   }
   if (sessionPerformanceTrace) environment.OPEN_SCIENCE_PERF_SESSION_TRACE = '1'
@@ -278,27 +297,39 @@ const makeTreeWritable = async (root: string): Promise<void> => {
   )
 }
 
-const waitForRendererReady = async (page: Page): Promise<void> => {
-  const deadline = performance.now() + 90_000
+const waitForRendererReady = async (page: Page, timeout = 90_000): Promise<void> => {
+  const deadline = performance.now() + timeout
   const remainingTimeout = (): number => Math.max(1, deadline - performance.now())
   await page.waitForLoadState('domcontentloaded', { timeout: remainingTimeout() })
+  const startedAt = Date.now()
+  const transitions: { elapsedMs: number; state: DatabaseStartupState }[] = []
   // A fresh Windows profile can spend longer than the general assertion budget applying the real
-  // schema manifest under runner I/O contention (58s observed before application composition).
-  // Share one renderer-readiness budget so settings cannot add another full wait before
-  // the journey begins under the 120s test budget.
-  await expect
-    .poll(
-      () =>
-        page.evaluate(async () => {
-          const bridge = globalThis as unknown as {
-            api: { databaseStartup: { getState: () => Promise<{ phase: string }> } }
+  // schema manifest under runner I/O contention. Share one deadline with settings loading.
+  try {
+    await expect
+      .poll(
+        async () => {
+          const state = await page.evaluate(async () => {
+            const bridge = globalThis as unknown as {
+              api: { databaseStartup: { getState: () => Promise<DatabaseStartupState> } }
+            }
+            // Preserve startup diagnostics when a migration blocks before the journey can begin.
+            return await bridge.api.databaseStartup.getState()
+          })
+          if (JSON.stringify(transitions.at(-1)?.state) !== JSON.stringify(state)) {
+            transitions.push({ elapsedMs: Date.now() - startedAt, state })
           }
-          // Preserve startup diagnostics when a migration blocks before the journey can begin.
-          return await bridge.api.databaseStartup.getState()
-        }),
-      { timeout: remainingTimeout() }
+          return state
+        },
+        { timeout: remainingTimeout() }
+      )
+      .toMatchObject({ phase: 'ready' })
+  } catch (cause) {
+    throw new Error(
+      `Database readiness failed after ${Date.now() - startedAt}ms. Startup transitions: ${JSON.stringify(transitions)}`,
+      { cause }
     )
-    .toMatchObject({ phase: 'ready' })
+  }
   await page
     .getByTestId('settings-startup-loading')
     .waitFor({ state: 'hidden', timeout: remainingTimeout() })
@@ -314,11 +345,10 @@ const applyHiddenWindowPresentation = async (
 }
 
 const openMainWindow = async (
-  application: ElectronApplication,
+  page: Page,
   rendererFailures: RendererFailureGate,
   windowMode: E2eWindowMode
 ): Promise<Page> => {
-  const page = await application.firstWindow()
   await applyHiddenWindowPresentation(page, windowMode)
   await rendererFailures.observe(page)
   await waitForRendererReady(page)
@@ -349,7 +379,8 @@ class ElectronAppHarness implements ElectronApp {
 
   static async create(
     windowMode: E2eWindowMode,
-    testInfo: Pick<TestInfo, 'attach'>
+    onStartupFailure?: (app: ElectronAppHarness) => Promise<void>,
+    fakeAgentOnLaunch = false
   ): Promise<ElectronAppHarness> {
     const testRoot = await mkdtemp(join(tmpdir(), 'open-science-electron-e2e-'))
     const harness = new ElectronAppHarness(
@@ -365,18 +396,25 @@ class ElectronAppHarness implements ElectronApp {
     )
     try {
       await mkdir(harness.roots.storageRoot, { recursive: true })
+      // All specs start with English copy, including onboarding without a fake agent.
+      // Initialize only the new isolated profile; later locale changes survive relaunch.
+      await writeFile(
+        join(harness.roots.storageRoot, 'settings.json'),
+        JSON.stringify({ version: 2, providers: [], localePreference: 'en' }),
+        'utf8'
+      )
       await writeFile(harness.roots.fakeRemoteItState, JSON.stringify({ services: [] }), 'utf8')
       await writeFakeAgentLauncher(harness.roots.fakeAgentBinRoot)
       await writeFakeRemoteItCommands(harness.roots.fakeRemoteItRoot)
+      if (fakeAgentOnLaunch) {
+        await harness.prepareFakeAgentSettings()
+        harness.fakeAgentEnabled = true
+      }
       await harness.launch()
       return harness
     } catch (error) {
-      await harness
-        .captureMainLog('startup-failure.log')
-        .then((path) =>
-          testInfo.attach('startup-main-process-log', { path, contentType: 'text/plain' })
-        )
-        .catch(() => undefined)
+      // Copy startup evidence before cleanup, preserving both failures if cleanup also fails.
+      await onStartupFailure?.(harness).catch(() => undefined)
       try {
         await harness.dispose()
       } catch (cleanupError) {
@@ -677,10 +715,24 @@ class ElectronAppHarness implements ElectronApp {
       await bridge.api.settings.setAgentFramework({ id: 'opencode' })
     }, FAKE_PROVIDER_NAME)
 
+    // A dedicated fake fixture already has its binary and environment at first launch.
+    // Provider selection above still exercises the production IPC and persistence.
+    if (this.fakeAgentEnabled) return this.page
     this.fakeAgentEnabled = true
     await this.close()
+    await this.prepareFakeAgentSettings()
+    await this.launch()
+    return this.page
+  }
+
+  private async prepareFakeAgentSettings(): Promise<void> {
     const settingsPath = join(this.roots.storageRoot, 'settings.json')
-    const settings = JSON.parse(await readFile(settingsPath, 'utf8')) as Record<string, unknown>
+    const settings = JSON.parse(
+      await readFile(settingsPath, 'utf8').catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return JSON.stringify({ version: 2, providers: [] })
+        throw error
+      })
+    ) as Record<string, unknown>
     settings.opencodePath = join(
       this.roots.fakeAgentBinRoot,
       process.platform === 'win32' ? 'opencode.cmd' : 'opencode'
@@ -708,8 +760,6 @@ class ElectronAppHarness implements ElectronApp {
       settings.sessionDetailsModel = { mode: 'disabled' }
     }
     await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
-    await this.launch()
-    return this.page
   }
 
   async createTestDirectory(name: string): Promise<string> {
@@ -739,7 +789,7 @@ class ElectronAppHarness implements ElectronApp {
   async mainWindowState(): Promise<{ minimized: boolean; visible: boolean }> {
     return this.runningApplication.evaluate(({ BrowserWindow }) => {
       const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      if (!mainWindow) throw new Error('Open-Science main window was not found.')
 
       return { minimized: mainWindow.isMinimized(), visible: mainWindow.isVisible() }
     })
@@ -748,7 +798,7 @@ class ElectronAppHarness implements ElectronApp {
   async showMainWindow(): Promise<void> {
     await this.runningApplication.evaluate(({ BrowserWindow }) => {
       const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      if (!mainWindow) throw new Error('Open-Science main window was not found.')
       mainWindow.show()
     })
     await expect.poll(() => this.mainWindowState()).toMatchObject({ visible: true })
@@ -757,7 +807,7 @@ class ElectronAppHarness implements ElectronApp {
   async setMainWindowZoomFactor(factor: number): Promise<void> {
     await this.runningApplication.evaluate(({ BrowserWindow }, nextFactor) => {
       const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      if (!mainWindow) throw new Error('Open-Science main window was not found.')
       mainWindow.webContents.setZoomFactor(nextFactor)
     }, factor)
   }
@@ -799,7 +849,7 @@ class ElectronAppHarness implements ElectronApp {
     await this.runningApplication.evaluate(
       ({ BrowserWindow }, input) => {
         const mainWindow = BrowserWindow.getAllWindows()[0]
-        if (!mainWindow) throw new Error('Open Science main window was not found.')
+        if (!mainWindow) throw new Error('Open-Science main window was not found.')
 
         mainWindow.webContents.focus()
         mainWindow.webContents.sendInputEvent({
@@ -820,7 +870,7 @@ class ElectronAppHarness implements ElectronApp {
   async requestMainWindowClose(): Promise<void> {
     await this.runningApplication.evaluate(({ BrowserWindow }) => {
       const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      if (!mainWindow) throw new Error('Open-Science main window was not found.')
       mainWindow.close()
     })
   }
@@ -828,7 +878,7 @@ class ElectronAppHarness implements ElectronApp {
   async emitPreviewContextMenuAtCssPoint(point: { x: number; y: number }): Promise<void> {
     await this.runningApplication.evaluate(({ BrowserWindow }, cssPoint) => {
       const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      if (!mainWindow) throw new Error('Open-Science main window was not found.')
       const { webContents } = mainWindow
       const frame = webContents.mainFrame.framesInSubtree.find(
         (candidate) =>
@@ -917,6 +967,133 @@ class ElectronAppHarness implements ElectronApp {
     return this.page
   }
 
+  async restartWithLegacyBrandPaths(failedPreparing = false): Promise<{
+    page: Page
+    oldRoot: string
+    newRoot: string
+    identityBefore: unknown
+    identityAfter: unknown
+  }> {
+    const newRoot = await this.page.evaluate(
+      async () => (await window.api.storage.getInfo()).dataRoot
+    )
+    if (
+      !newRoot.startsWith(`${this.roots.storageRoot}${sep}`) ||
+      !this.roots.storageRoot.startsWith(`${this.testRoot}${sep}`)
+    )
+      throw new Error('Legacy migration fixture must remain inside its disposable test root')
+    const oldRoot = newRoot.replace(/Open-Science(-DEV)?$/, 'OpenScience$1')
+    if (oldRoot === newRoot) throw new Error('Unexpected fixture data root')
+    await this.close()
+    const { DatabaseSync } = await import('node:sqlite')
+    const dbPath = join(this.roots.storageRoot, 'open-science.db')
+    const fixtureDb = new DatabaseSync(dbPath)
+    try {
+      fixtureDb
+        .prepare(
+          'INSERT INTO GrantedLocalRoot (id, path, name, access, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)'
+        )
+        .run('brand-migration-e2e-root', oldRoot, 'Historical research root', 'ro', 1, 1)
+    } finally {
+      fixtureDb.close()
+    }
+    const snapshot = (): unknown => {
+      const db = new DatabaseSync(dbPath, { readOnly: true })
+      try {
+        const tables = [
+          'Project',
+          'Session',
+          'ManagedFile',
+          'ContentBlob',
+          'UploadVersion',
+          'ArtifactVersion',
+          'GrantedLocalRoot'
+        ]
+        return Object.fromEntries(
+          tables.map((table) => [
+            table,
+            db
+              .prepare(`SELECT * FROM "${table}"`)
+              .all()
+              .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+              .map((row) => {
+                // Ignore non-identity projection bookkeeping when comparing the restored records.
+                const identity = { ...row }
+                if (table === 'GrantedLocalRoot') delete identity.path
+                delete identity.updatedAt
+                delete identity.sourceByteLength
+                delete identity.sourceMtimeMs
+                return identity
+              })
+          ])
+        )
+      } finally {
+        db.close()
+      }
+    }
+    const identityBefore = snapshot()
+    await rename(newRoot, oldRoot)
+    const settingsFile = join(this.roots.storageRoot, 'settings.json')
+    const settings = JSON.parse(await readFile(settingsFile, 'utf8'))
+    settings.dataRoot = oldRoot
+    await writeFile(settingsFile, JSON.stringify(settings, null, 2))
+    // Discard only the empty fresh-install receipt in this disposable fixture to simulate upgrade.
+    const state = `${this.roots.storageRoot}.brand-migration`
+    const receipt = JSON.parse(await readFile(join(state, 'journal.json'), 'utf8'))
+    if (receipt.participants.length)
+      throw new Error('Fixture already contains a real migration receipt')
+    await rm(state, { recursive: true })
+    if (failedPreparing) {
+      // Leave a real copied stage and receipt, then change the current source while stopped.
+      // All paths are the same disposable roots used by the subsequent actual Electron startup.
+      const migrationUrl = pathToFileURL(
+        join(APP_ROOT, 'resources', 'brand-migration', 'transaction.mjs')
+      ).href
+      const { runMigration } = await import(migrationUrl)
+      await expect(
+        runMigration(
+          {
+            home: this.roots.storageRoot,
+            appData: join(this.roots.storageRoot, 'electron-app-data'),
+            configRoot: this.roots.storageRoot,
+            userData: this.roots.userDataRoot,
+            mode: 'dev',
+            execute: true
+          },
+          {
+            onProgress(event: { phase: string }) {
+              if (event.phase === 'copied') throw new Error('disposable migration interruption')
+            }
+          }
+        )
+      ).rejects.toThrow('disposable migration interruption')
+      await writeFile(settingsFile, `${JSON.stringify(settings, null, 2)}\n`)
+      await writeFile(join(oldRoot, 'fresh-retry.txt'), 'created after the failed attempt')
+      if (process.platform === 'darwin') {
+        const cache = join(oldRoot, 'runtime', 'pkgs', 'cache')
+        await mkdir(cache, { recursive: true })
+        await chmod(cache, 0o2775)
+        for (const [name, value] of [
+          ['com.apple.cs.CodeSignature', ''],
+          ['com.apple.quarantine', '0081;65000000;Fixture;']
+        ])
+          execFileSync('/usr/bin/xattr', ['-w', name, value, join(oldRoot, 'fresh-retry.txt')])
+      }
+    }
+    await this.launch()
+    const migratedDb = new DatabaseSync(dbPath, { readOnly: true })
+    try {
+      expect(
+        migratedDb
+          .prepare('SELECT path FROM GrantedLocalRoot WHERE id = ?')
+          .get('brand-migration-e2e-root')?.path
+      ).toBe(newRoot)
+    } finally {
+      migratedDb.close()
+    }
+    return { page: this.page, oldRoot, newRoot, identityBefore, identityAfter: snapshot() }
+  }
+
   async restartAfterCrash(): Promise<Page> {
     const application = this.application
     if (!application) throw new Error('No Electron process is available to terminate.')
@@ -987,16 +1164,21 @@ class ElectronAppHarness implements ElectronApp {
       this.resourceProfiler !== undefined
     )
     await this.resourceProfiler?.attach(this.application)
+    // Wait for the first window before querying main-process paths on Windows.
     try {
-      this.currentPage = await openMainWindow(
-        this.application,
-        this.rendererFailures,
-        this.windowMode
-      )
+      const page = await this.application.firstWindow()
+      this.currentPage = await openMainWindow(page, this.rendererFailures, this.windowMode)
     } finally {
       this.mainLogDirectory = await this.application
         .evaluate(({ app }) => app.getPath('logs'))
         .catch(() => undefined)
+    }
+    if (this.mainLogDirectory) {
+      // Electron canonicalizes macOS /var to /private/var; compare real directories.
+      const logPath = relative(await realpath(this.testRoot), await realpath(this.mainLogDirectory))
+      if (isAbsolute(logPath) || logPath === '..' || logPath.startsWith(`..${sep}`)) {
+        throw new Error('Electron E2E log directory escaped the isolated fixture.')
+      }
     }
   }
 
@@ -1080,11 +1262,30 @@ class ElectronAppHarness implements ElectronApp {
   }
 }
 
-const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
+const test = base.extend<{
+  app: ElectronApp
+  windowMode: E2eWindowMode
+  fakeAgentOnLaunch: boolean
+}>({
   windowMode: ['hidden', { option: true }],
+  fakeAgentOnLaunch: [false, { option: true }],
   // Playwright fixture callbacks require an object pattern even when no base fixture is needed.
-  app: async ({ windowMode }, install, testInfo) => {
-    const app = await ElectronAppHarness.create(windowMode, testInfo)
+  app: async ({ windowMode, fakeAgentOnLaunch }, install, testInfo) => {
+    const attachFailureLog = async (app: ElectronApp, name = 'main-process-log'): Promise<void> => {
+      // Attach bytes directly so concurrent jobs/tests cannot overwrite a shared evidence file.
+      const path = await app.captureMainLog(
+        `failure-${(testInfo.testId ?? 'fixture').replace(/[^a-z0-9-]/giu, '-')}-${testInfo.retry}.log`
+      )
+      await testInfo.attach(name, {
+        body: await readFile(path),
+        contentType: 'text/plain'
+      })
+    }
+    const app = await ElectronAppHarness.create(
+      windowMode,
+      (app) => attachFailureLog(app, 'startup-main-process-log'),
+      fakeAgentOnLaunch
+    )
 
     let bodyError: unknown
     try {
@@ -1094,20 +1295,12 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
     }
     if (testInfo.status !== testInfo.expectedStatus) {
       // Preserve the original test failure even if shutdown left no readable log.
-      await app
-        .captureMainLog('test-failure.log')
-        .then((path) => testInfo.attach('main-process-log', { path, contentType: 'text/plain' }))
-        .catch(() => undefined)
+      await attachFailureLog(app).catch(() => undefined)
     }
     try {
       await app.dispose()
     } catch (cleanupError) {
-      await app
-        .captureMainLog('cleanup-failure.log')
-        .then((path) =>
-          testInfo.attach('cleanup-main-process-log', { path, contentType: 'text/plain' })
-        )
-        .catch(() => undefined)
+      await attachFailureLog(app, 'cleanup-main-process-log').catch(() => undefined)
       if (bodyError !== undefined) {
         throw new AggregateError([bodyError, cleanupError], 'Electron test and cleanup failed.')
       }
@@ -1119,10 +1312,12 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
 
 export {
   closeElectronApplicationForCleanup,
+  ElectronAppHarness,
   electronLaunchTarget,
   launchEnvironment,
   STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
   suppressWorkspaceStarNudge,
+  waitForRendererReady,
   test
 }
 export type { ElectronApp }

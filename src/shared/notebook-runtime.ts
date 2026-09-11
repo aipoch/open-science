@@ -49,7 +49,7 @@ export type EnvPackage = {
 // The v4 per-language enablement state, keyed by `envId` (the interpreter's real path). `enabled` is
 // an EXPLICIT override map — a present entry wins over the provenance default (see isEnvEnabled), an
 // absent one falls back to it, so re-detection and new envs keep working without a migration.
-// `installAuthorized` is the SEPARATE high-risk opt-in that lets Open Science write packages into an
+// `installAuthorized` is the SEPARATE high-risk opt-in that lets Open-Science write packages into an
 // external env (default OFF; execute-after-enable stays read-only until this is turned on).
 export type RuntimeEnablement = {
   enabled: Record<string, boolean>

@@ -165,7 +165,7 @@ const LocationStep = ({
     <>
       <CardHeader className="gap-1 rounded-t-lg px-4 py-5 sm:px-6">
         <h2 tabIndex={-1} className="text-[15px] font-semibold">
-          {t('Where should Open Science store your data?')}
+          {t('Where should Open-Science store your data?')}
         </h2>
         <CardDescription className="text-xs leading-5">
           {t(
@@ -236,7 +236,7 @@ const LocationStep = ({
                 {/* Trans keeps the path's mono styling and the reset button inline while letting each
                     locale place them where its own word order needs them. */}
                 <Trans
-                  i18nKey="Your data will be stored in <path>{{path}}</path>. Open Science will restart to set this up. <reset>Use default location instead</reset>"
+                  i18nKey="Your data will be stored in <path>{{path}}</path>. Open-Science will restart to set this up. <reset>Use default location instead</reset>"
                   values={{ path: chosenDataRoot }}
                   components={{
                     path: <span className="font-mono" />,
@@ -256,7 +256,7 @@ const LocationStep = ({
             {chosenKind === 'adopt' ? (
               <p className="mt-2 text-xs text-text-100">
                 {t(
-                  'This folder already contains Open Science data — it will be used as-is (nothing is moved).'
+                  'This folder already contains Open-Science data — it will be used as-is (nothing is moved).'
                 )}
               </p>
             ) : null}
@@ -314,7 +314,7 @@ const LocationStep = ({
             <div className={dialogBodyClassName}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
                 <Trans
-                  i18nKey="Open Science will restart to set up your data at <path>{{path}}</path>."
+                  i18nKey="Open-Science will restart to set up your data at <path>{{path}}</path>."
                   values={{ path: chosenDataRoot }}
                   components={{ path: <span className="font-mono" /> }}
                 />

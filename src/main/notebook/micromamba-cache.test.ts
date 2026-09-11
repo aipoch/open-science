@@ -65,12 +65,12 @@ describe('selectMicromambaCache', () => {
 
   it('chooses a deterministic same-volume cache keyed by user and canonical runtime root', () => {
     const first = selectMicromambaCache(
-      'D:\\OpenScience\\runtime',
+      'D:\\Open-Science\\runtime',
       DEFAULT_MAX_CACHE_RELATIVE_PATH,
       windowsDeps()
     )
     const repeated = selectMicromambaCache(
-      'D:\\OpenScience\\runtime\\.',
+      'D:\\Open-Science\\runtime\\.',
       DEFAULT_MAX_CACHE_RELATIVE_PATH,
       windowsDeps()
     )
@@ -80,7 +80,7 @@ describe('selectMicromambaCache', () => {
       windowsDeps()
     )
 
-    expect(first.path).toMatch(/^D:\\OpenScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
+    expect(first.path).toMatch(/^D:\\Open-ScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
     expect(repeated).toEqual(first)
     expect(otherRoot.path).not.toBe(first.path)
     expect(first.lockKey).toBe(first.path.toLowerCase())
@@ -92,7 +92,7 @@ describe('selectMicromambaCache', () => {
     )
 
     const cache = selectMicromambaCache(
-      'D:\\OpenScience\\runtime',
+      'D:\\Open-Science\\runtime',
       DEFAULT_MAX_CACHE_RELATIVE_PATH,
       windowsDeps({
         env: {
@@ -112,7 +112,7 @@ describe('selectMicromambaCache', () => {
     const prepare = vi.fn((path: string) => path)
 
     const cache = selectMicromambaCache(
-      'D:\\OpenScience\\runtime',
+      'D:\\Open-Science\\runtime',
       DEFAULT_MAX_CACHE_RELATIVE_PATH,
       windowsDeps({
         exists: (path) => path.includes('\\os-tmp\\'),
@@ -120,10 +120,10 @@ describe('selectMicromambaCache', () => {
       })
     )
 
-    expect(cache.path).toMatch(/^D:\\OpenScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
+    expect(cache.path).toMatch(/^D:\\Open-ScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
     expect(prepare).toHaveBeenCalledOnce()
     expect(prepare).toHaveBeenCalledWith(
-      expect.stringMatching(/^D:\\OpenScienceTmp\\m-/),
+      expect.stringMatching(/^D:\\Open-ScienceTmp\\m-/),
       expect.any(Object)
     )
   })
@@ -136,7 +136,7 @@ describe('selectMicromambaCache', () => {
     )
 
     const cache = selectMicromambaCache(
-      'D:\\OpenScience\\runtime',
+      'D:\\Open-Science\\runtime',
       DEFAULT_MAX_CACHE_RELATIVE_PATH,
       windowsDeps({
         env: {
@@ -149,21 +149,21 @@ describe('selectMicromambaCache', () => {
       })
     )
 
-    expect(cache.path).toMatch(/^E:\\Tmp\\OpenScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
+    expect(cache.path).toMatch(/^E:\\Tmp\\Open-ScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
     expect(prepare).toHaveBeenCalledTimes(3)
   })
 
   it('rejects candidates that are writable but do not fit the actual pack budget', () => {
     expect(() =>
       selectMicromambaCache(
-        'D:\\OpenScience\\runtime',
+        'D:\\Open-Science\\runtime',
         250,
         windowsDeps({ env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\a-very-long-profile' } })
       )
     ).toThrow(/Candidate diagnostics:/i)
     expect(() =>
       selectMicromambaCache(
-        'D:\\OpenScience\\runtime',
+        'D:\\Open-Science\\runtime',
         250,
         windowsDeps({ env: { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\a-very-long-profile' } })
       )
@@ -175,7 +175,7 @@ describe('selectMicromambaCache', () => {
     let message = ''
     try {
       selectMicromambaCache(
-        'E:\\open science\\OpenScience\\runtime',
+        'E:\\open science\\Open-Science\\runtime',
         DEFAULT_MAX_CACHE_RELATIVE_PATH,
         windowsDeps({
           env: { USERNAME: 'peipeidamowang', USERPROFILE: profile },
@@ -192,7 +192,7 @@ describe('selectMicromambaCache', () => {
 
     expect(message).toContain('Candidate diagnostics:')
     expect(message).toMatch(
-      /E:\\OpenScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}: ownership or permissions are not trusted/
+      /E:\\Open-ScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}: ownership or permissions are not trusted/
     )
     expect(message).not.toContain('unavailable, untrusted, or not writable')
     expect(message).not.toContain('restrict write access')
@@ -201,7 +201,7 @@ describe('selectMicromambaCache', () => {
 
   it('keeps non-Windows cache behavior unchanged', () => {
     expect(
-      selectMicromambaCache('/Users/alice/OpenScience/runtime', 999, {
+      selectMicromambaCache('/Users/alice/Open-Science/runtime', 999, {
         platform: 'darwin',
         env: {},
         canonicalize: (path) => path,
@@ -210,15 +210,15 @@ describe('selectMicromambaCache', () => {
         }
       })
     ).toEqual({
-      path: '/Users/alice/OpenScience/runtime/pkgs',
-      lockKey: '/Users/alice/OpenScience/runtime/pkgs'
+      path: '/Users/alice/Open-Science/runtime/pkgs',
+      lockKey: '/Users/alice/Open-Science/runtime/pkgs'
     })
   })
 
   it('rejects a cache whose OS ownership/trust boundary cannot be verified', () => {
     expect(() =>
       selectMicromambaCache(
-        'D:\\OpenScience\\runtime',
+        'D:\\Open-Science\\runtime',
         DEFAULT_MAX_CACHE_RELATIVE_PATH,
         windowsDeps({ verifyOwnership: () => false })
       )
@@ -227,7 +227,7 @@ describe('selectMicromambaCache', () => {
 })
 
 describe('removeMicromambaCacheForRoot', () => {
-  const root = 'D:\\OpenScience\\runtime'
+  const root = 'D:\\Open-Science\\runtime'
   const env = {
     USERNAME: 'alice',
     PUBLIC: 'C:\\Users\\Public',
@@ -270,7 +270,7 @@ describe('removeMicromambaCacheForRoot', () => {
 
     expect(completed).toBe(true)
     expect(removed).toHaveLength(1)
-    expect(removed[0]).toMatch(/^D:\\OpenScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
+    expect(removed[0]).toMatch(/^D:\\Open-ScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
   })
 
   it('retains symlinked, unowned, and non-Windows candidates', () => {
@@ -309,7 +309,7 @@ describe('removeMicromambaCacheForRoot', () => {
     })
 
     expect(removed).toHaveLength(6)
-    expect(removed[0]).toMatch(/^D:\\OpenScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
+    expect(removed[0]).toMatch(/^D:\\Open-ScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
     expect(removed[1]).toMatch(/^C:\\Users\\alice\\os-tmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
     expect(removed.slice(2)).toEqual([
       expect.stringMatching(/^D:\\osp[0-9a-f]{10}$/),
@@ -328,14 +328,14 @@ describe('removeMicromambaCacheForRoot', () => {
       verifyOwnership: () => true,
       inspectParent: (path) => ({
         ...inspectTrustedParent(path),
-        symbolicLink: path === 'D:\\OpenScienceTmp',
+        symbolicLink: path === 'D:\\Open-ScienceTmp',
         physical: path === 'C:\\Users\\alice\\os-tmp' ? 'C:\\Users\\alice\\unexpected-parent' : path
       }),
       inspect: (path) => ({
         directory: true,
         symbolicLink: false,
         marker:
-          path.includes('\\OpenScienceTmp\\') || path.includes('\\os-tmp\\')
+          path.includes('\\Open-ScienceTmp\\') || path.includes('\\os-tmp\\')
             ? marker
             : { ...marker, canonicalRoot: 'd:\\tampered' }
       }),
@@ -382,7 +382,7 @@ describe('removeMicromambaCacheForRoot', () => {
 })
 
 describe('removeEmptyManagedParent', () => {
-  const parent = 'D:\\OpenScienceTmp'
+  const parent = 'D:\\Open-ScienceTmp'
   const raw = `${JSON.stringify({
     schema: 1,
     kind: 'micromamba-working-cache-parent',
@@ -400,7 +400,7 @@ describe('removeEmptyManagedParent', () => {
       removeParent
     })
 
-    expect(removeMarker).toHaveBeenCalledWith('D:\\OpenScienceTmp\\.open-science-temp.json')
+    expect(removeMarker).toHaveBeenCalledWith('D:\\Open-ScienceTmp\\.open-science-temp.json')
     expect(removeParent).toHaveBeenCalledWith(parent)
   })
 
@@ -418,12 +418,12 @@ describe('removeEmptyManagedParent', () => {
         restoreMarker
       })
     ).toThrow(/directory not empty/)
-    expect(restoreMarker).toHaveBeenCalledWith('D:\\OpenScienceTmp\\.open-science-temp.json', raw)
+    expect(restoreMarker).toHaveBeenCalledWith('D:\\Open-ScienceTmp\\.open-science-temp.json', raw)
   })
 })
 
 describe('isTrustedMicromambaWorkingCacheForRoot', () => {
-  const root = 'D:\\OpenScience\\runtime'
+  const root = 'D:\\Open-Science\\runtime'
   const env = { USERNAME: 'alice', USERPROFILE: 'C:\\Users\\alice' }
   const cache = selectMicromambaCache(root, DEFAULT_MAX_CACHE_RELATIVE_PATH, windowsDeps({ env }))
   const marker = {
@@ -453,8 +453,8 @@ describe('isTrustedMicromambaWorkingCacheForRoot', () => {
     expect(isTrustedMicromambaWorkingCacheForRoot(root, cache.path, trustedDeps)).toBe(true)
   })
 
-  it('accepts a marker-owned OpenScienceTmp fallback after TEMP changes', () => {
-    const retained = win32.join('E:\\PreviousTemp\\OpenScienceTmp', win32.basename(cache.path))
+  it('accepts a marker-owned Open-ScienceTmp fallback after TEMP changes', () => {
+    const retained = win32.join('E:\\PreviousTemp\\Open-ScienceTmp', win32.basename(cache.path))
 
     expect(isTrustedMicromambaWorkingCacheForRoot(root, retained, trustedDeps)).toBe(true)
   })
@@ -533,8 +533,8 @@ describe('retainMicromambaWorkingCache', () => {
       publishArchives,
       cleanup
     }
-    const releaseFirst = await retainMicromambaWorkingCache('D:\\OpenScience\\runtime', deps)
-    const releaseSecond = await retainMicromambaWorkingCache('D:\\OpenScience\\runtime', deps)
+    const releaseFirst = await retainMicromambaWorkingCache('D:\\Open-Science\\runtime', deps)
+    const releaseSecond = await retainMicromambaWorkingCache('D:\\Open-Science\\runtime', deps)
     const archiveAuthorization = {
       file: 'a-1.conda',
       algorithm: 'sha256' as const,
@@ -549,7 +549,7 @@ describe('retainMicromambaWorkingCache', () => {
     const firstCompletion = releaseFirst({
       archivePublications: [
         {
-          workingRoot: 'D:\\OpenScienceTmp\\m-test',
+          workingRoot: 'D:\\Open-ScienceTmp\\m-test',
           authorizations: [archiveAuthorization]
         }
       ]
@@ -567,13 +567,13 @@ describe('retainMicromambaWorkingCache', () => {
     await expect(Promise.all([firstCompletion, secondCompletion])).resolves.toEqual([true, true])
     expect(publishArchives).toHaveBeenNthCalledWith(
       1,
-      'D:\\OpenScience\\runtime',
-      'D:\\OpenScienceTmp\\m-test',
+      'D:\\Open-Science\\runtime',
+      'D:\\Open-ScienceTmp\\m-test',
       [archiveAuthorization]
     )
     expect(publishArchives).toHaveBeenNthCalledWith(
       2,
-      'D:\\OpenScience\\runtime',
+      'D:\\Open-Science\\runtime',
       'C:\\Users\\alice\\os-tmp\\m-bundle',
       [secondAuthorization]
     )
@@ -581,7 +581,7 @@ describe('retainMicromambaWorkingCache', () => {
   })
 
   it('keeps finalization incomplete when cleanup reports a retryable failure', async () => {
-    const release = await retainMicromambaWorkingCache('G:\\OpenScience\\runtime', {
+    const release = await retainMicromambaWorkingCache('G:\\Open-Science\\runtime', {
       platform: 'win32',
       canonicalize: (path) => win32.normalize(path),
       cleanup: () => false,
@@ -604,11 +604,11 @@ describe('retainMicromambaWorkingCache', () => {
       publishArchives,
       cleanup
     }
-    const releaseFirst = await retainMicromambaWorkingCache('D:\\OpenScience\\runtime', deps)
+    const releaseFirst = await retainMicromambaWorkingCache('D:\\Open-Science\\runtime', deps)
     const firstRelease = releaseFirst({
       archivePublications: [
         {
-          workingRoot: 'D:\\OpenScienceTmp\\m-test',
+          workingRoot: 'D:\\Open-ScienceTmp\\m-test',
           authorizations: [{ file: 'a-1.conda', algorithm: 'sha256', digest: 'a'.repeat(64) }]
         }
       ]
@@ -616,7 +616,7 @@ describe('retainMicromambaWorkingCache', () => {
     await vi.waitFor(() => expect(publishArchives).toHaveBeenCalledOnce())
 
     let secondAcquired = false
-    const secondLease = retainMicromambaWorkingCache('D:\\OpenScience\\runtime', deps).then(
+    const secondLease = retainMicromambaWorkingCache('D:\\Open-Science\\runtime', deps).then(
       (lease) => {
         secondAcquired = true
         return lease
@@ -646,12 +646,12 @@ describe('retainMicromambaWorkingCache', () => {
       publishArchives,
       cleanup
     } as const
-    const failedRelease = await retainMicromambaWorkingCache('E:\\OpenScience\\runtime', deps)
+    const failedRelease = await retainMicromambaWorkingCache('E:\\Open-Science\\runtime', deps)
     await expect(
       failedRelease({
         archivePublications: [
           {
-            workingRoot: 'E:\\OpenScienceTmp\\m-test',
+            workingRoot: 'E:\\Open-ScienceTmp\\m-test',
             authorizations: [{ file: 'a-1.conda', algorithm: 'sha256', digest: 'a'.repeat(64) }]
           }
         ]
@@ -659,13 +659,13 @@ describe('retainMicromambaWorkingCache', () => {
     ).resolves.toBe(false)
     expect(cleanup).not.toHaveBeenCalled()
 
-    const retryRelease = await retainMicromambaWorkingCache('E:\\OpenScience\\runtime', deps)
+    const retryRelease = await retainMicromambaWorkingCache('E:\\Open-Science\\runtime', deps)
     await expect(retryRelease({})).resolves.toBe(true)
     expect(publishArchives).toHaveBeenCalledTimes(2)
     expect(cleanup).toHaveBeenCalledOnce()
     cleanup.mockClear()
 
-    const retainedRelease = await retainMicromambaWorkingCache('F:\\OpenScience\\runtime', {
+    const retainedRelease = await retainMicromambaWorkingCache('F:\\Open-Science\\runtime', {
       platform: 'win32',
       canonicalize: (path) => win32.normalize(path),
       cleanup
@@ -674,7 +674,7 @@ describe('retainMicromambaWorkingCache', () => {
     expect(cleanup).not.toHaveBeenCalled()
 
     const publishAfterRetention = vi.fn().mockResolvedValue(1)
-    const laterRelease = await retainMicromambaWorkingCache('F:\\OpenScience\\runtime', {
+    const laterRelease = await retainMicromambaWorkingCache('F:\\Open-Science\\runtime', {
       platform: 'win32',
       canonicalize: (path) => win32.normalize(path),
       publishArchives: publishAfterRetention,
@@ -689,21 +689,21 @@ describe('retainMicromambaWorkingCache', () => {
       laterRelease({
         archivePublications: [
           {
-            workingRoot: 'F:\\OpenScienceTmp\\m-later',
+            workingRoot: 'F:\\Open-ScienceTmp\\m-later',
             authorizations: [laterAuthorization]
           }
         ]
       })
     ).resolves.toBe(true)
     expect(publishAfterRetention).toHaveBeenCalledWith(
-      'F:\\OpenScience\\runtime',
-      'F:\\OpenScienceTmp\\m-later',
+      'F:\\Open-Science\\runtime',
+      'F:\\Open-ScienceTmp\\m-later',
       [laterAuthorization]
     )
     expect(cleanup).not.toHaveBeenCalled()
 
     await finalizeRecoveredMicromambaWorkingCache(
-      'F:\\OpenScience\\runtime',
+      'F:\\Open-Science\\runtime',
       {
         platform: 'win32',
         env,
@@ -716,7 +716,7 @@ describe('retainMicromambaWorkingCache', () => {
     expect(cleanup).toHaveBeenCalledOnce()
 
     cleanup.mockClear()
-    const releaseAfterRecovery = await retainMicromambaWorkingCache('F:\\OpenScience\\runtime', {
+    const releaseAfterRecovery = await retainMicromambaWorkingCache('F:\\Open-Science\\runtime', {
       platform: 'win32',
       canonicalize: (path) => win32.normalize(path),
       cleanup
@@ -769,7 +769,7 @@ describe('retainMicromambaWorkingCache', () => {
     const runtimeRoot = mkdtempSync(join(tmpdir(), 'os-working-cache-published-'))
     try {
       const operationId = 'completed-install'
-      const workingRoot = 'C:\\OpenScienceTmp\\m-current'
+      const workingRoot = 'C:\\Open-ScienceTmp\\m-current'
       const authorization = {
         file: 'numpy-1.conda',
         algorithm: 'sha256' as const,
@@ -815,7 +815,7 @@ describe('retainMicromambaWorkingCache', () => {
   it('refuses a new writer while recovered archive publication is still pending', async () => {
     const runtimeRoot = mkdtempSync(join(tmpdir(), 'os-working-cache-publication-block-'))
     try {
-      const workingRoot = 'C:\\OpenScienceTmp\\m-recovered'
+      const workingRoot = 'C:\\Open-ScienceTmp\\m-recovered'
       const authorization = {
         file: 'numpy-1.conda',
         algorithm: 'sha256' as const,
@@ -861,7 +861,7 @@ describe('retainMicromambaWorkingCache', () => {
     const exists = vi.fn().mockReturnValue(true)
     await expect(
       finalizeRecoveredMicromambaWorkingCache(
-        'G:\\OpenScience\\runtime',
+        'G:\\Open-Science\\runtime',
         {
           platform: 'win32',
           env,
@@ -874,14 +874,14 @@ describe('retainMicromambaWorkingCache', () => {
     ).resolves.toBe(true)
 
     expect(exists).toHaveBeenCalledWith(
-      expect.stringMatching(/^G:\\OpenScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
+      expect.stringMatching(/^G:\\Open-ScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
     )
-    expect(cleanup).toHaveBeenCalledWith('G:\\OpenScience\\runtime')
+    expect(cleanup).toHaveBeenCalledWith('G:\\Open-Science\\runtime')
 
     exists.mockReturnValue(false)
     await expect(
       finalizeRecoveredMicromambaWorkingCache(
-        'H:\\OpenScience\\runtime',
+        'H:\\Open-Science\\runtime',
         {
           platform: 'win32',
           env,
@@ -899,7 +899,7 @@ describe('retainMicromambaWorkingCache', () => {
 
     await expect(
       finalizeRecoveredMicromambaWorkingCache(
-        'G:\\OpenScience\\runtime',
+        'G:\\Open-Science\\runtime',
         {
           platform: 'win32',
           env,
@@ -911,16 +911,16 @@ describe('retainMicromambaWorkingCache', () => {
       )
     ).resolves.toBe(true)
 
-    expect(cleanup).toHaveBeenCalledWith('G:\\OpenScience\\runtime')
+    expect(cleanup).toHaveBeenCalledWith('G:\\Open-Science\\runtime')
   })
 
   it('finalizes the exact recovered fallback even after TEMP changes', async () => {
-    const recovered = 'E:\\PreviousTemp\\OpenScienceTmp\\m-retained'
+    const recovered = 'E:\\PreviousTemp\\Open-ScienceTmp\\m-retained'
     const cleanupExact = vi.fn().mockReturnValue(true)
 
     await expect(
       finalizeRecoveredMicromambaWorkingCache(
-        'G:\\OpenScience\\runtime',
+        'G:\\Open-Science\\runtime',
         {
           platform: 'win32',
           env,
@@ -932,7 +932,7 @@ describe('retainMicromambaWorkingCache', () => {
       )
     ).resolves.toBe(true)
 
-    expect(cleanupExact).toHaveBeenCalledWith('G:\\OpenScience\\runtime', recovered)
+    expect(cleanupExact).toHaveBeenCalledWith('G:\\Open-Science\\runtime', recovered)
   })
 
   it('retains the journal when exact-cache inspection is inconclusive', async () => {
@@ -940,7 +940,7 @@ describe('retainMicromambaWorkingCache', () => {
 
     await expect(
       finalizeRecoveredMicromambaWorkingCache(
-        'G:\\OpenScience\\runtime',
+        'G:\\Open-Science\\runtime',
         {
           platform: 'win32',
           env,
@@ -950,7 +950,7 @@ describe('retainMicromambaWorkingCache', () => {
         },
         {
           mode: 'exact',
-          workingRoots: ['E:\\PreviousTemp\\OpenScienceTmp\\m-retained']
+          workingRoots: ['E:\\PreviousTemp\\Open-ScienceTmp\\m-retained']
         }
       )
     ).resolves.toBe(false)
@@ -958,7 +958,7 @@ describe('retainMicromambaWorkingCache', () => {
   })
 
   it('treats the non-Windows durable package root as requiring no disposable cleanup', async () => {
-    const runtimeRoot = join('data', 'OpenScience', 'runtime')
+    const runtimeRoot = join('data', 'Open-Science', 'runtime')
     await expect(
       finalizeRecoveredMicromambaWorkingCache(
         runtimeRoot,

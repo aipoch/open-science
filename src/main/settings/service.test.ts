@@ -820,7 +820,7 @@ describe('SettingsService: providers', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
-    ).resolves.not.toContain('Open Science:')
+    ).resolves.not.toContain('Open-Science:')
     await expect(readFile(join(userCodexDir, 'auth.json'), 'utf8')).resolves.toContain('global')
   })
 
@@ -1115,7 +1115,7 @@ describe('SettingsService: providers', () => {
       ok: false,
       category: 'auth',
       message:
-        'No existing Codex login was found. Run `codex login` or use the isolated Open Science login.'
+        'No existing Codex login was found. Run `codex login` or use the isolated Open-Science login.'
     })
     expect(codexAuth.getStatus).toHaveBeenCalledWith('shared')
   })
@@ -1368,7 +1368,7 @@ describe('SettingsService: providers', () => {
     expect(result).toEqual({
       ok: false,
       category: 'unknown',
-      message: 'No isolated Open Science Codex login is configured.'
+      message: 'No isolated Open-Science Codex login is configured.'
     })
     expect(codexAuth.cancelLogin).not.toHaveBeenCalled()
     expect(codexAuth.logoutIsolated).not.toHaveBeenCalled()
@@ -1567,15 +1567,15 @@ describe('SettingsService: providers', () => {
     })
 
     const backend = await resolveActiveBackend(service, {
-      systemPromptAppends: ['Stable Open Science app guidance.']
+      systemPromptAppends: ['Stable Open-Science app guidance.']
     })
 
-    expect(backend.persistentSystemPrompt).toContain('Stable Open Science app guidance.')
+    expect(backend.persistentSystemPrompt).toContain('Stable Open-Science app guidance.')
     const appInstructions = await readFile(
       join(storageRoot, 'opencode', 'config', 'opencode', 'instructions', 'open-science.md'),
       'utf8'
     )
-    expect(appInstructions).toContain('Stable Open Science app guidance.')
+    expect(appInstructions).toContain('Stable Open-Science app guidance.')
     expect(appInstructions).toContain(join(storageRoot, 'skills', 'personal'))
     expect(appInstructions).toContain(join(storageRoot, 'skills', 'imported'))
 
@@ -2681,7 +2681,7 @@ describe('SettingsService: preflight & spawn config', () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
     const backend = await resolveActiveBackend(service, {
-      systemPromptAppends: ['Stable Open Science developer guidance.']
+      systemPromptAppends: ['Stable Open-Science developer guidance.']
     })
     const selection = await service.captureActiveAgentBackendSelection()
 
@@ -2697,7 +2697,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.env.CODEX_API_KEY).toBeUndefined()
     const developerInstructions = JSON.parse(backend.env.CODEX_CONFIG ?? '{}')
       .developer_instructions as string
-    expect(developerInstructions).toContain('Stable Open Science developer guidance.')
+    expect(developerInstructions).toContain('Stable Open-Science developer guidance.')
     expect(developerInstructions).toContain(
       'Load the matching `mcp-*` skill before the first `host.mcp` call'
     )
@@ -2922,7 +2922,7 @@ describe('SettingsService: preflight & spawn config', () => {
     await service.setActiveProvider(provider.id)
 
     await expect(resolveActiveBackend(service)).rejects.toThrow(
-      'Open Science Codex ACP adapter not found. Install Codex in settings.'
+      'Open-Science Codex ACP adapter not found. Install Codex in settings.'
     )
   })
 
@@ -8335,9 +8335,9 @@ describe('SettingsService: claude-shared login orchestration', () => {
     ).resolves.toMatchObject({
       ok: false,
       category: 'auth',
-      message: expect.stringContaining('disconnected from Open Science')
+      message: expect.stringContaining('disconnected from Open-Science')
     })
-    await expect(resolveActiveBackend(service)).rejects.toThrow(/disconnected from Open Science/)
+    await expect(resolveActiveBackend(service)).rejects.toThrow(/disconnected from Open-Science/)
 
     await expect(service.loginClaudeShared()).resolves.toMatchObject({ ok: true, applied: true })
     await expect(resolveActiveBackend(service)).resolves.toMatchObject({

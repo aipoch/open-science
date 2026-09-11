@@ -108,7 +108,7 @@ describe('toCslItem', () => {
             },
             {
               nameMode: 'organization',
-              literalName: 'Open Science Group',
+              literalName: 'Open-Science Group',
               creatorType: 'editor'
             }
           ],
@@ -121,7 +121,7 @@ describe('toCslItem', () => {
             volume: ' 12 ',
             issue: '3',
             pages: '44–58',
-            publisher: 'Open Science Press',
+            publisher: 'Open-Science Press',
             publisherPlace: 'London',
             edition: '2'
           }
@@ -132,7 +132,7 @@ describe('toCslItem', () => {
       type: 'article-journal',
       title: 'Corrective retrieval',
       author: [{ family: 'Yan', given: 'Shi-Qi' }],
-      editor: [{ literal: 'Open Science Group' }],
+      editor: [{ literal: 'Open-Science Group' }],
       issued: { 'date-parts': [[2024]] },
       accessed: { 'date-parts': [[2026, 8, 31]] },
       'container-title': 'Research Journal',
@@ -141,7 +141,7 @@ describe('toCslItem', () => {
       volume: '12',
       issue: '3',
       page: '44–58',
-      publisher: 'Open Science Press',
+      publisher: 'Open-Science Press',
       'publisher-place': 'London',
       edition: '2'
     })
@@ -207,7 +207,7 @@ describe('fromCslItem', () => {
         id: 'yan2024',
         type: 'article-journal',
         title: 'Corrective Retrieval Augmented Generation',
-        author: [{ family: 'Yan', given: 'Shi-Qi' }, { literal: 'Open Science Group' }],
+        author: [{ family: 'Yan', given: 'Shi-Qi' }, { literal: 'Open-Science Group' }],
         issued: { 'date-parts': [[2024, 2, 16]] },
         accessed: { 'date-parts': [[2026, 8, 31]] },
         'container-title': 'arXiv',
@@ -241,7 +241,7 @@ describe('fromCslItem', () => {
         },
         {
           nameMode: 'organization',
-          literalName: 'Open Science Group',
+          literalName: 'Open-Science Group',
           creatorType: 'author'
         }
       ],

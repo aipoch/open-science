@@ -203,7 +203,7 @@ describe('ArtifactSourcesPanel', () => {
                 creators: [
                   {
                     nameMode: 'organization',
-                    literalName: 'Open Science Consortium',
+                    literalName: 'Open-Science Consortium',
                     creatorType: 'author'
                   }
                 ]
@@ -213,7 +213,7 @@ describe('ArtifactSourcesPanel', () => {
         }}
       />
     )
-    expect(screen.getByText('Open Science Consortium')).not.toBeNull()
+    expect(screen.getByText('Open-Science Consortium')).not.toBeNull()
     expect(screen.getByText('2024 · arXiv')).not.toBeNull()
   })
 

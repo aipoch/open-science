@@ -6,6 +6,14 @@ import { test } from './fixtures/electron-app'
 import { setTheme } from './fixtures/settings-preferences'
 
 const prepareVisualPage = async (page: Page): Promise<void> => {
+  // Visual baselines use English even when the host's system language differs.
+  await page.evaluate(async () => {
+    const bridge = globalThis as unknown as {
+      api: { locale: { setPreference: (request: { preference: 'en' }) => Promise<unknown> } }
+    }
+    await bridge.api.locale.setPreference({ preference: 'en' })
+  })
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en')
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.addStyleTag({
     content:
@@ -223,7 +231,7 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
 
 test('keeps home actions and content inside compact viewports', async ({ app }) => {
   const page = await app.completeOnboarding()
-  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await prepareVisualPage(page)
   await seedHomeActivitySessions(page, await app.createTestDirectory('mobile-activity-project'))
 
   for (const width of [320, 375, 390, 414, 768]) {
@@ -309,7 +317,15 @@ test('keeps representative conversation, project, and recovery states visually s
   await page.getByRole('button', { name: 'Files', exact: true }).click()
   await expect(page.locator('[data-testid="files-view"]')).toBeVisible()
   await setVisualState(page, { theme: 'Light', width: 767 })
-  await pinConversationToStart(page)
+  // Resizing can remeasure the virtualized transcript after scrollTop first reaches zero.
+  // Wait for the first prompt itself so the dimmed background uses the same visual anchor.
+  await expect
+    .poll(async () => {
+      await pinConversationToStart(page)
+      const firstPrompt = await page.getByText(prompts[0], { exact: true }).boundingBox()
+      return firstPrompt !== null && firstPrompt.y >= 0
+    })
+    .toBe(true)
   await expectStableScreenshot(page, 'files-narrow-light.png')
 
   await setViewport(page, 1280)
@@ -324,6 +340,35 @@ test('keeps representative conversation, project, and recovery states visually s
   await expect(provenance).toBeVisible()
   await expect(provenance.getByLabel('Loading Provenance')).toBeHidden({ timeout: 30_000 })
   await expectStableScreenshot(page, 'provenance-desktop-light.png')
+  // Narrow tabs intentionally truncate; every label remains discoverable and reachable.
+  const tabList = provenance.getByRole('tablist', { name: 'Provenance' })
+  for (const label of [
+    'Code',
+    'Execution Log',
+    'Messages',
+    'Environment',
+    'Reproducibility',
+    'Review'
+  ]) {
+    const tab = tabList.getByRole('tab', { name: label, exact: true })
+    await expect(tab).toHaveAttribute('title', label)
+    expect(
+      await tab.evaluate((element) => {
+        const bounds = element.getBoundingClientRect()
+        const parent = element.parentElement!.getBoundingClientRect()
+        return bounds.width > 0 && bounds.left >= parent.left && bounds.right <= parent.right
+      })
+    ).toBe(true)
+    await tab.click()
+    await expect(tab).toHaveAttribute('aria-selected', 'true')
+  }
+  await tabList.getByRole('tab', { name: 'Review', exact: true }).press('Home')
+  await expect(tabList.getByRole('tab', { name: 'Code', exact: true })).toBeFocused()
+  await tabList.getByRole('tab', { name: 'Code', exact: true }).press('Enter')
+  await expect(tabList.getByRole('tab', { name: 'Code', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
   await provenance.getByRole('button', { name: 'Close Provenance' }).click()
   await preview.getByRole('button', { name: 'Close preview of provenance-evidence.txt' }).click()
   await page

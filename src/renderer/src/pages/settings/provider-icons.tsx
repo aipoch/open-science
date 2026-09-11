@@ -12,7 +12,7 @@ import anthropicLogo from '@/assets/provider-icons/anthropic.svg'
 import apodexLogo from '@/assets/provider-icons/apodex.svg'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
 // CodeBuddy is a third-party product mark used only to identify its compatible ACP runtime.
-// Keep it separate from Open Science branding and avoid implying affiliation or endorsement.
+// Keep it separate from Open-Science branding and avoid implying affiliation or endorsement.
 import codebuddyLogo from '@/assets/provider-icons/codebuddy.svg'
 import grokLogo from '@/assets/provider-icons/grok.svg'
 import bailianLogo from '@/assets/provider-icons/bailian.svg'

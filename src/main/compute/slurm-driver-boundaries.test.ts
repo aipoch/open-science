@@ -18,9 +18,9 @@ const handle = {
   driver: 'slurm' as const,
   version: 1 as const,
   scheduler_job_id: '123',
-  workdir: '~/.openscience/jobs/test-job',
-  stdout_path: '~/.openscience/jobs/test-job/stdout',
-  stderr_path: '~/.openscience/jobs/test-job/stderr'
+  workdir: '~/.open-science/jobs/test-job',
+  stdout_path: '~/.open-science/jobs/test-job/stdout',
+  stderr_path: '~/.open-science/jobs/test-job/stderr'
 }
 const entry = {
   job: { ...job('true'), remote_workdir: handle.workdir } as ComputeJob,
@@ -40,8 +40,8 @@ describe('Slurm lifecycle boundaries', () => {
       run: async () =>
         success(
           'receipt|123\n' +
-            'expected|/home/researcher/.openscience/jobs/test-job\n' +
-            'active|123|openscience-test-job|/home/researcher/.openscience/jobs/test-job\n'
+            'expected|/home/researcher/.open-science/jobs/test-job\n' +
+            'active|123|open-science-test-job|/home/researcher/.open-science/jobs/test-job\n'
         )
     } as unknown as ComputeConnectionLease
 
@@ -55,7 +55,7 @@ describe('Slurm lifecycle boundaries', () => {
       run: async () =>
         success(
           'receipt|999\n' +
-            'expected|/home/researcher/.openscience/jobs/test-job\n' +
+            'expected|/home/researcher/.open-science/jobs/test-job\n' +
             'active|999|other-job|/shared/other/job\n'
         )
     } as unknown as ComputeConnectionLease
@@ -67,8 +67,8 @@ describe('Slurm lifecycle boundaries', () => {
     const connection = {
       run: async () =>
         success(
-          'expected|/home/researcher/.openscience/jobs/test-job\n' +
-            'active|123|openscience-test-job|/home/researcher/.openscience/jobs/test-job\n'
+          'expected|/home/researcher/.open-science/jobs/test-job\n' +
+            'active|123|open-science-test-job|/home/researcher/.open-science/jobs/test-job\n'
         )
     } as unknown as ComputeConnectionLease
 
@@ -81,8 +81,8 @@ describe('Slurm lifecycle boundaries', () => {
     const connection = {
       run: async () =>
         success(
-          'expected|/home/researcher/.openscience/jobs/test-job\n' +
-            'active|123|openscience-test-job|/shared/other/.openscience/jobs/test-job\n'
+          'expected|/home/researcher/.open-science/jobs/test-job\n' +
+            'active|123|open-science-test-job|/shared/other/.open-science/jobs/test-job\n'
         )
     } as unknown as ComputeConnectionLease
 
@@ -129,7 +129,7 @@ describe('Slurm lifecycle boundaries', () => {
     expect(() =>
       buildSlurmScript(job('#SBATCH --time=00:05:00 --job-name=custom\necho done'), handle.workdir)
     ).toThrow(
-      'Slurm directive --job-name is managed by Open Science. Remove it; Open Science assigns the Job name used for tracking and recovery.'
+      'Slurm directive --job-name is managed by Open-Science. Remove it; Open-Science assigns the Job name used for tracking and recovery.'
     )
   })
 

@@ -46,7 +46,7 @@ import type { StoredProvider, StoredSettings } from './types'
 const CLAUDE_SHARED_AUTH_STATUS_TTL_MS = 5_000
 const SETUP_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000
 const CLAUDE_SHARED_DISCONNECTED_MESSAGE =
-  'Claude is disconnected from Open Science. Sign in again to use your shared Claude profile.'
+  'Claude is disconnected from Open-Science. Sign in again to use your shared Claude profile.'
 
 type ProviderAuthLifecycleOwnerOptions = {
   repository: SettingsRepository
@@ -268,7 +268,7 @@ class ProviderAuthLifecycleOwner {
       return {
         ok: false,
         category: 'unknown',
-        message: 'No isolated Open Science Codex login is configured.'
+        message: 'No isolated Open-Science Codex login is configured.'
       }
     }
 
@@ -284,7 +284,7 @@ class ProviderAuthLifecycleOwner {
       return {
         ok: false,
         category: 'unknown',
-        message: 'The Open Science Codex login could not be removed.'
+        message: 'The Open-Science Codex login could not be removed.'
       }
     }
 
@@ -629,7 +629,7 @@ class ProviderAuthLifecycleOwner {
       message:
         status.message ??
         (status.mode === 'shared'
-          ? 'No existing Codex login was found. Run `codex login` or use the isolated Open Science login.'
+          ? 'No existing Codex login was found. Run `codex login` or use the isolated Open-Science login.'
           : isolatedFallback)
     }
   }

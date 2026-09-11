@@ -69,7 +69,7 @@ const manualProxyConfig = (
   proxyBypassRules: ['<local>', environment.NO_PROXY].filter(Boolean).join(',')
 })
 
-// Projects the persisted Network preference into the two network stacks Open Science owns:
+// Projects the persisted Network preference into the two network stacks Open-Science owns:
 // Electron's Chromium Session and the environment inherited by processes started after the change.
 // It never changes the operating-system proxy and never restarts an already-running process.
 export class NetworkProxyRuntime {

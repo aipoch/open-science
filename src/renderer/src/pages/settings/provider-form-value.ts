@@ -249,8 +249,8 @@ export type ProviderKindGroupLabelKey =
 // string: it is a vendor name from the registry (`Anthropic`, `Moonshot`) or a subscription identity,
 // which the glossary keeps in English in every locale. Only the description is prose.
 export type ProviderKindDescriptionKey =
-  | 'Use an existing Codex profile or sign in with a separate Open Science profile.'
-  | 'Use an existing Claude profile or sign in with a separate Open Science profile.'
+  | 'Use an existing Codex profile or sign in with a separate Open-Science profile.'
+  | 'Use an existing Claude profile or sign in with a separate Open-Science profile.'
   | 'Sign in to your xAI subscription with a browser device code.'
   | 'API key — models provided'
   | 'Base URL, key, and model for a Messages or Chat Completions endpoint'
@@ -289,7 +289,7 @@ export const PROVIDER_KINDS: ProviderKind[] = [
     key: 'codex-subscription',
     label: codexSubscriptionProviderIdentity().name,
     descriptionKey:
-      'Use an existing Codex profile or sign in with a separate Open Science profile.',
+      'Use an existing Codex profile or sign in with a separate Open-Science profile.',
     group: 'codex'
   },
   {
@@ -299,7 +299,7 @@ export const PROVIDER_KINDS: ProviderKind[] = [
     key: 'claude-subscription',
     label: claudeIsolatedProviderIdentity().name,
     descriptionKey:
-      'Use an existing Claude profile or sign in with a separate Open Science profile.',
+      'Use an existing Claude profile or sign in with a separate Open-Science profile.',
     group: 'claude'
   },
   ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({

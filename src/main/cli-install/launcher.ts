@@ -7,8 +7,11 @@ import { basename, join, posix } from 'node:path'
 import type { CliLauncherStatus } from '../../shared/cli'
 import { defaultFileDurability } from '../storage/file-durability'
 
-const MANAGED_LAUNCHER_HEADER_V1 =
+// Ownership markers are versioned on-disk contracts; retain their pre-rename spelling.
+const LEGACY_MANAGED_LAUNCHER_HEADER_V1 =
   'Open Science command-line launcher. Managed by the app. Format version: 1.'
+const MANAGED_LAUNCHER_HEADER_V1 =
+  'Open-Science command-line launcher. Managed by the app. Format version: 1.'
 const LEGACY_POSIX_HEADER =
   '# Open Science command-line launcher. Managed by the app (Settings -> General -> Command line'
 const LEGACY_POSIX_BODIES = new Set([
@@ -96,7 +99,7 @@ const posixShim = (env: CliLauncherEnv): string => {
       '# Edits are overwritten on reinstall. Mounts the AppImage for this CLI process.',
       `app_image=${quote(env.appImagePath!)}`,
       'mount_output=$(mktemp "${TMPDIR:-/tmp}/open-science-cli.XXXXXX") || {',
-      "  echo 'Open Science could not create a temporary file for the AppImage mount.' >&2",
+      "  echo 'Open-Science could not create a temporary file for the AppImage mount.' >&2",
       '  exit 1',
       '}',
       'mount_pid=',
@@ -118,7 +121,7 @@ const posixShim = (env: CliLauncherEnv): string => {
       '    wait "$mount_pid"',
       '    mount_status=$?',
       '    if [ "$mount_status" -eq 0 ]; then mount_status=1; fi',
-      "    echo 'Open Science AppImage exited before reporting its mount point.' >&2",
+      "    echo 'Open-Science AppImage exited before reporting its mount point.' >&2",
       '    exit "$mount_status"',
       '  fi',
       '  sleep 0.05',
@@ -127,7 +130,7 @@ const posixShim = (env: CliLauncherEnv): string => {
       `app_exec="$mount_dir"/${quote(executable)}`,
       `cli_entry="$mount_dir"/${quote(cliEntry)}`,
       'if [ ! -x "$app_exec" ] || [ ! -f "$cli_entry" ]; then',
-      "  echo 'Open Science AppImage is missing its executable or CLI entry.' >&2",
+      "  echo 'Open-Science AppImage is missing its executable or CLI entry.' >&2",
       '  exit 1',
       'fi',
       'OPEN_SCIENCE_APP_PATH="$app_image" ELECTRON_RUN_AS_NODE=1 \\',
@@ -259,7 +262,7 @@ export const buildWindowsPathCommand = (binDir: string): { command: string; args
     '}',
     'function Read-PathJournal($path) {',
     '  try { $journal = [IO.File]::ReadAllText($path) | ConvertFrom-Json }',
-    "  catch { throw 'The PATH ownership journal is not managed by Open Science.' }",
+    "  catch { throw 'The PATH ownership journal is not managed by Open-Science.' }",
     '  $beforeIsValid = $null -eq $journal.beforePath -or $journal.beforePath -is [string]',
     "  $expectedAfter = (@(Get-PathParts $journal.beforePath) + $binDir) -join ';'",
     '  if ($journal.version -ne 1 -or $journal.owner -cne $receiptOwner -or',
@@ -267,7 +270,7 @@ export const buildWindowsPathCommand = (binDir: string): { command: string; args
     '      -not $beforeIsValid -or (Get-MatchCount $journal.beforePath) -ne 0 -or',
     '      $journal.afterPath -isnot [string] -or',
     '      $journal.afterPath -cne $expectedAfter) {',
-    "    throw 'The PATH ownership journal is not managed by Open Science.'",
+    "    throw 'The PATH ownership journal is not managed by Open-Science.'",
     '  }',
     '  return $journal',
     '}',
@@ -342,7 +345,7 @@ const buildWindowsPathRemovalCommand = (
     `$receiptOwner = ${powershellLiteral(WINDOWS_PATH_RECEIPT_OWNER)}`,
     `$state = ${powershellLiteral(state)}`,
     'try { $journal = [IO.File]::ReadAllText($journalPath) | ConvertFrom-Json }',
-    "catch { throw 'The PATH ownership journal is not managed by Open Science.' }",
+    "catch { throw 'The PATH ownership journal is not managed by Open-Science.' }",
     '  $beforeIsValid = $null -eq $journal.beforePath -or $journal.beforePath -is [string]',
     "$beforeParts = @($journal.beforePath -split ';' | Where-Object { $_ -ne '' })",
     "$normalizedBinDir = $binDir.TrimEnd([char[]]'\\/')",
@@ -355,7 +358,7 @@ const buildWindowsPathRemovalCommand = (
     '    -not $beforeIsValid -or $beforeMatchCount -ne 0 -or',
     '    $journal.afterPath -isnot [string] -or',
     '    $journal.afterPath -cne $expectedAfter) {',
-    "  throw 'The PATH ownership journal is not managed by Open Science.'",
+    "  throw 'The PATH ownership journal is not managed by Open-Science.'",
     '}',
     '$beforePath = $journal.beforePath',
     '$afterPath = $journal.afterPath',
@@ -383,7 +386,7 @@ class UnmanagedCliLauncherError extends Error {}
 
 const refuseUnmanagedCliLauncher = (target: string): never => {
   throw new UnmanagedCliLauncherError(
-    `Refusing to modify ${target} because it is not managed by Open Science. ` +
+    `Refusing to modify ${target} because it is not managed by Open-Science. ` +
       'Move or rename the existing file, then try again.'
   )
 }
@@ -493,12 +496,15 @@ const isManagedCliLauncher = (content: string): boolean => {
   if (lines[0] === '#!/bin/sh') {
     return (
       lines[1] === `# ${MANAGED_LAUNCHER_HEADER_V1}` ||
+      lines[1] === `# ${LEGACY_MANAGED_LAUNCHER_HEADER_V1}` ||
       (lines[1] === LEGACY_POSIX_HEADER && LEGACY_POSIX_BODIES.has(lines[2] ?? ''))
     )
   }
   return (
     lines[0]?.toLowerCase() === '@echo off' &&
-    (lines[1] === `rem ${MANAGED_LAUNCHER_HEADER_V1}` || lines[1] === LEGACY_WINDOWS_HEADER)
+    (lines[1] === `rem ${MANAGED_LAUNCHER_HEADER_V1}` ||
+      lines[1] === `rem ${LEGACY_MANAGED_LAUNCHER_HEADER_V1}` ||
+      lines[1] === LEGACY_WINDOWS_HEADER)
   )
 }
 
@@ -762,10 +768,9 @@ export const getCliLauncherStatus = async (env: CliLauncherEnv): Promise<CliLaun
   }
 }
 
-// Only an existing app-managed AppImage launcher is eligible for automatic migration. Comparing the
-// complete planned content covers the stable AppImage path, mount procedure, and CLI entry behavior.
+// Refresh only an existing owned launcher. Exact planned content also repairs renamed app bundles
+// and CLI entry paths on macOS/Windows; unowned shell scripts remain untouched.
 export const isCliShimStale = async (env: CliLauncherEnv): Promise<boolean> => {
-  if (!isLinuxAppImage(env)) return false
   const plan = planCliLauncher(env)
   const content = await readCliLauncher(plan.target)
   return content !== undefined && isManagedCliLauncher(content) && content !== plan.shim
@@ -778,4 +783,77 @@ export const ensureCliLauncherCurrent = async (
 ): Promise<CliLauncherStatus | undefined> => {
   if (!(await isCliShimStale(env))) return undefined
   return installCliLauncher(env, runCommand)
+}
+
+// Called only with a committed profile mapping and the application migration lease. Reuse the
+// existing compare-and-set PATH ownership workflow; never edit an arbitrary user's PATH snapshot.
+export const migrateCliLauncherProfile = async (
+  env: CliLauncherEnv,
+  previousProfile: string,
+  stateDir: string,
+  runCommand: CommandRunner = defaultRunCommand,
+  afterRemoval: () => void = () => {}
+): Promise<void> => {
+  if (env.platform !== 'win32') return
+  const old = { ...env, userDataDir: previousProfile }
+  const previousPlan = planCliLauncher(old)
+  const nextPlan = planCliLauncher(env)
+  const stateFile = join(stateDir, 'launcher.json')
+  const raw = await readCliLauncher(stateFile)
+  const migration = JSON.parse((await readCliLauncher(join(stateDir, 'journal.json'))) ?? '{}')
+  if (!migration.id || migration.status !== 'committed')
+    throw new Error('Committed brand transaction is required')
+  const identity = { version: 1, id: migration.id, from: previousProfile, to: env.userDataDir }
+  let state = raw ? JSON.parse(raw) : undefined
+  if (
+    state &&
+    (state.version !== 1 ||
+      state.id !== identity.id ||
+      state.from !== identity.from ||
+      state.to !== identity.to ||
+      !['preparing', 'installing', 'committed'].includes(state.status))
+  )
+    throw new Error('CLI profile migration receipt mismatch')
+  if (state?.status === 'committed') return
+  // The retained old profile must resolve to this new profile, not an unrelated installation.
+  const { realpath } = await import('node:fs/promises')
+  if ((await realpath(previousProfile)) !== (await realpath(env.userDataDir)))
+    throw new Error('CLI profile alias ownership mismatch')
+  const save = async (status: string): Promise<void> => {
+    const temporary = join(stateDir, `launcher.${randomUUID()}.tmp`)
+    const handle = await open(temporary, 'wx', 0o600)
+    try {
+      await handle.writeFile(JSON.stringify({ ...state, ...identity, status }))
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await rename(temporary, stateFile)
+    await defaultFileDurability.syncDirectory(stateDir)
+    state = { ...state, ...identity, status }
+  }
+  if (!state) {
+    const content = await readCliLauncher(nextPlan.target)
+    if (content === undefined || !isManagedCliLauncher(content)) return
+    const receipt = await readCliLauncher(windowsPathReceiptPath(nextPlan.binDir))
+    if (parseWindowsPathJournal(receipt, nextPlan.binDir)) return
+    if (receipt !== undefined && !parseWindowsPathJournal(receipt, previousPlan.binDir))
+      throw new Error('Legacy CLI PATH ownership cannot be verified')
+    state = {
+      ...identity,
+      originalShim: content,
+      originalReceipt: receipt ?? null,
+      plannedShim: nextPlan.shim
+    }
+    await save('preparing')
+  }
+  if (state.status === 'preparing') {
+    await uninstallCliLauncher(old, runCommand)
+    await save('installing')
+    afterRemoval()
+  }
+  const installed = await installCliLauncher(env, runCommand)
+  if (!installed.onPath)
+    throw new Error('New CLI PATH entry could not be installed; restart to resume')
+  await save('committed')
 }

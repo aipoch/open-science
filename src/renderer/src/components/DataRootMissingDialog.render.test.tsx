@@ -73,7 +73,7 @@ describe('DataRootMissingDialog', () => {
     const onResolved = vi.fn()
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={onResolved} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={onResolved} />
       )
     })
     expect(document.body.querySelectorAll('button')).toHaveLength(1)
@@ -98,7 +98,7 @@ describe('DataRootMissingDialog', () => {
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={vi.fn()} />
       )
     })
 
@@ -106,7 +106,7 @@ describe('DataRootMissingDialog', () => {
     expect(buttons).toHaveLength(1)
     expect(buttons[0]?.textContent).toContain('Reconnect & retry')
     expect(document.body.textContent).toContain(
-      'To choose another location or continue with an empty folder, use Open Science on the home computer.'
+      'To choose another location or continue with an empty folder, use Open-Science on the home computer.'
     )
     expect(document.body.textContent).not.toContain('Choose another location')
     expect(document.body.textContent).not.toContain('Continue with an empty folder')
@@ -119,7 +119,7 @@ describe('DataRootMissingDialog', () => {
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={vi.fn()} />
       )
     })
 
@@ -134,7 +134,7 @@ describe('DataRootMissingDialog', () => {
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={vi.fn()} />
       )
     })
 
@@ -169,12 +169,12 @@ describe('DataRootMissingDialog', () => {
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={vi.fn()} />
       )
     })
 
     expect(document.body.textContent).toContain('Your data folder')
-    expect(document.body.textContent).toContain('/mnt/drive/OpenScience')
+    expect(document.body.textContent).toContain('/mnt/drive/Open-Science')
     expect(document.body.textContent).toContain(
       "It may have been deleted, or it's on a drive that isn't connected."
     )
@@ -187,7 +187,7 @@ describe('DataRootMissingDialog', () => {
       root.render(
         <DataRootMissingDialog
           open={false}
-          dataRoot="/mnt/drive/OpenScience"
+          dataRoot="/mnt/drive/Open-Science"
           onResolved={vi.fn()}
         />
       )
@@ -202,7 +202,7 @@ describe('DataRootMissingDialog', () => {
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={onResolved} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={onResolved} />
       )
     })
 
@@ -221,7 +221,7 @@ describe('DataRootMissingDialog', () => {
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={onResolved} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={onResolved} />
       )
     })
 
@@ -240,7 +240,7 @@ describe('DataRootMissingDialog', () => {
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={vi.fn()} />
       )
     })
 
@@ -260,13 +260,13 @@ describe('DataRootMissingDialog', () => {
       pickDirectory: vi.fn().mockResolvedValue('/mnt/other'),
       inspectDataRoot: vi
         .fn()
-        .mockResolvedValue({ kind: 'adopt', dataRoot: '/mnt/other/OpenScience' }),
+        .mockResolvedValue({ kind: 'adopt', dataRoot: '/mnt/other/Open-Science' }),
       setDataRootAndRelaunch: vi.fn().mockResolvedValue({ ok: true })
     })
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={vi.fn()} />
       )
     })
 
@@ -289,13 +289,13 @@ describe('DataRootMissingDialog', () => {
       pickDirectory: vi.fn().mockResolvedValue('/mnt/empty'),
       inspectDataRoot: vi
         .fn()
-        .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/empty/OpenScience' }),
+        .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/empty/Open-Science' }),
       setDataRootAndRelaunch: vi.fn().mockResolvedValue({ ok: true })
     })
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={vi.fn()} />
       )
     })
 
@@ -313,7 +313,7 @@ describe('DataRootMissingDialog', () => {
       pickDirectory: vi.fn().mockResolvedValue('/mnt/bad'),
       inspectDataRoot: vi.fn().mockResolvedValue({
         kind: 'invalid',
-        dataRoot: '/mnt/bad/OpenScience',
+        dataRoot: '/mnt/bad/Open-Science',
         error: 'The selected folder is not writable.'
       }),
       setDataRootAndRelaunch: vi.fn()
@@ -321,7 +321,7 @@ describe('DataRootMissingDialog', () => {
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={vi.fn()} />
       )
     })
 
@@ -343,7 +343,7 @@ describe('DataRootMissingDialog', () => {
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={vi.fn()} />
       )
     })
 
@@ -364,7 +364,7 @@ describe('DataRootMissingDialog', () => {
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={vi.fn()} />
       )
     })
 
@@ -384,13 +384,13 @@ describe('DataRootMissingDialog', () => {
       pickDirectory: vi.fn().mockResolvedValue('/mnt/other'),
       inspectDataRoot: vi
         .fn()
-        .mockResolvedValue({ kind: 'adopt', dataRoot: '/mnt/other/OpenScience' }),
+        .mockResolvedValue({ kind: 'adopt', dataRoot: '/mnt/other/Open-Science' }),
       setDataRootAndRelaunch: vi.fn().mockRejectedValue(new Error('IPC unavailable'))
     })
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={vi.fn()} />
       )
     })
 
@@ -413,7 +413,7 @@ describe('DataRootMissingDialog', () => {
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={vi.fn()} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={vi.fn()} />
       )
     })
 
@@ -431,7 +431,7 @@ describe('DataRootMissingDialog', () => {
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={onResolved} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={onResolved} />
       )
     })
 
@@ -454,7 +454,7 @@ describe('DataRootMissingDialog', () => {
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={onResolved} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={onResolved} />
       )
     })
 
@@ -477,7 +477,7 @@ describe('DataRootMissingDialog', () => {
 
     await act(async () => {
       root.render(
-        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={onResolved} />
+        <DataRootMissingDialog open dataRoot="/mnt/drive/Open-Science" onResolved={onResolved} />
       )
     })
 

@@ -22,15 +22,15 @@ type LegacyDataMoveDialogProps = {
   active?: boolean
   // The hidden config root where a legacy install's data currently lives (e.g. ~/.open-science).
   currentDataRoot: string
-  // The parent the "Move to OpenScience" action relocates into; its derived data root (resolved via
-  // inspectDataRoot below) is the visible <parent>/OpenScience folder.
+  // The parent the "Move to Open-Science" action relocates into; its derived data root (resolved via
+  // inspectDataRoot below) is the visible <parent>/Open-Science folder.
   defaultParent: string
   // Called after the user declines and the "don't ask again" flag has been persisted.
   onDismiss: () => void
 }
 
 // One-time, non-forced upgrade prompt for a pre-§20 legacy install whose data still sits in the
-// hidden config root. Offers to move it into the visible OpenScience folder (default or a folder the
+// hidden config root. Offers to move it into the visible Open-Science folder (default or a folder the
 // user picks), or to keep it where it is - the last choice is remembered so it never re-appears.
 // Accepting reuses the ordinary relocation flow (StorageMigrationModal): a reversible copy, then a
 // restart. Moving sets settings.dataRoot, which by itself disqualifies the prompt on the next launch,
@@ -48,7 +48,7 @@ const LegacyDataMoveDialog = ({
     path: string
     recoveryStatus?: DataRootRecoveryStatus
   } | null>(null)
-  // The exact <home>/OpenScience path "Move to OpenScience" would create. Resolved server-side via
+  // The exact <home>/Open-Science path "Move to Open-Science" would create. Resolved server-side via
   // inspectDataRoot(defaultParent) rather than getInfo's dataRoot, which for a legacy install is the
   // hidden config root itself.
   const [defaultInspectionState, setDefaultInspectionState] = useState<
@@ -116,7 +116,7 @@ const LegacyDataMoveDialog = ({
     setOperationError(
       defaultInspection.kind === 'adopt'
         ? t(
-            'That folder already contains Open Science data. Pick an empty folder, or use the default location.'
+            'That folder already contains Open-Science data. Pick an empty folder, or use the default location.'
           )
         : (defaultInspection.error ?? t('That folder can’t be used. Pick another one.'))
     )
@@ -143,7 +143,7 @@ const LegacyDataMoveDialog = ({
       setOperationError(
         inspection.kind === 'adopt'
           ? t(
-              'That folder already contains Open Science data. Pick an empty folder, or use the default location.'
+              'That folder already contains Open-Science data. Pick an empty folder, or use the default location.'
             )
           : (inspection.error ?? t('That folder can’t be used. Pick another one.'))
       )
@@ -196,7 +196,7 @@ const LegacyDataMoveDialog = ({
           <div className={cn(dialogBodyClassName, 'space-y-4')}>
             <AlertDialog.Description className={dialogDescriptionClassName}>
               {t(
-                'Your research data is in a hidden folder. Moving it into a visible OpenScience folder makes it easy to find and back up — your settings and history stay where they are.'
+                'Your research data is in a hidden folder. Moving it into a visible Open-Science folder makes it easy to find and back up — your settings and history stay where they are.'
               )}
             </AlertDialog.Description>
             <div>
@@ -241,7 +241,7 @@ const LegacyDataMoveDialog = ({
               ) : (
                 <FolderInput aria-hidden="true" />
               )}
-              {defaultInspectionFailed ? t('Try again') : t('Move to OpenScience')}
+              {defaultInspectionFailed ? t('Try again') : t('Move to Open-Science')}
             </Button>
             <Button
               type="button"

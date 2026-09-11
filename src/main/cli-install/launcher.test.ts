@@ -42,22 +42,22 @@ let home: string
 
 const posixEnv = (overrides: Partial<CliLauncherEnv> = {}): CliLauncherEnv => ({
   platform: 'linux',
-  appExecPath: '/opt/Open Science/open-science',
-  cliEntryPath: '/opt/Open Science/resources/cli/index.mjs',
+  appExecPath: '/opt/Open-Science/open-science',
+  cliEntryPath: '/opt/Open-Science/resources/cli/index.mjs',
   packaged: true,
   homeDir: home,
-  userDataDir: join(home, '.config', 'Open Science'),
+  userDataDir: join(home, '.config', 'Open-Science'),
   pathVar: '/usr/bin',
   ...overrides
 })
 
 const winEnv = (overrides: Partial<CliLauncherEnv> = {}): CliLauncherEnv => ({
   platform: 'win32',
-  appExecPath: 'C:\\Program Files\\Open Science\\open-science.exe',
-  cliEntryPath: 'C:\\Program Files\\Open Science\\resources\\cli\\index.mjs',
+  appExecPath: 'C:\\Program Files\\Open-Science\\open-science.exe',
+  cliEntryPath: 'C:\\Program Files\\Open-Science\\resources\\cli\\index.mjs',
   packaged: true,
   homeDir: home,
-  userDataDir: join(home, 'AppData', 'Roaming', 'Open Science'),
+  userDataDir: join(home, 'AppData', 'Roaming', 'Open-Science'),
   pathVar: 'C:\\Windows\\System32',
   ...overrides
 })
@@ -104,8 +104,8 @@ describe('planCliLauncher', () => {
     expect(plan.shim).toContain('Format version: 1')
     expect(plan.shim).toContain('ELECTRON_RUN_AS_NODE=1')
     // Packaged: pins the app path and single-quotes both paths (they contain a space).
-    expect(plan.shim).toContain("OPEN_SCIENCE_APP_PATH='/opt/Open Science/open-science'")
-    expect(plan.shim).toContain('\'/opt/Open Science/resources/cli/index.mjs\' "$@"')
+    expect(plan.shim).toContain("OPEN_SCIENCE_APP_PATH='/opt/Open-Science/open-science'")
+    expect(plan.shim).toContain('\'/opt/Open-Science/resources/cli/index.mjs\' "$@"')
   })
 
   it('omits OPEN_SCIENCE_APP_PATH for a development (unpackaged) build', () => {
@@ -127,11 +127,11 @@ describe('planCliLauncher', () => {
       posixEnv({
         appExecPath: '/tmp/.mount_open-scienceOLD/open-science',
         cliEntryPath: '/tmp/.mount_open-scienceOLD/resources/cli/index.mjs',
-        appImagePath: "/home/alice/Open Science's build.AppImage"
+        appImagePath: "/home/alice/Open-Science's build.AppImage"
       })
     )
 
-    expect(plan.shim).toContain("app_image='/home/alice/Open Science'\\''s build.AppImage'")
+    expect(plan.shim).toContain("app_image='/home/alice/Open-Science'\\''s build.AppImage'")
     expect(plan.shim).toContain('"$app_image" --appimage-mount')
     expect(plan.shim).toContain('app_exec="$mount_dir"/\'open-science\'')
     expect(plan.shim).toContain('cli_entry="$mount_dir"/\'resources/cli/index.mjs\'')
@@ -145,8 +145,8 @@ describe('planCliLauncher', () => {
       planCliLauncher(
         posixEnv({
           appExecPath: '/tmp/.mount_open-science/open-science',
-          cliEntryPath: '/opt/Open Science/resources/cli/index.mjs',
-          appImagePath: '/home/alice/Open Science.AppImage'
+          cliEntryPath: '/opt/Open-Science/resources/cli/index.mjs',
+          appImagePath: '/home/alice/Open-Science.AppImage'
         })
       )
     ).toThrow('inside the current AppImage mount')
@@ -156,8 +156,8 @@ describe('planCliLauncher', () => {
     const plan = planCliLauncher(
       posixEnv({
         platform: 'win32',
-        appExecPath: 'C:\\Program Files\\Open Science\\open-science.exe',
-        userDataDir: 'C:\\Users\\me\\AppData\\Roaming\\Open Science'
+        appExecPath: 'C:\\Program Files\\Open-Science\\open-science.exe',
+        userDataDir: 'C:\\Users\\me\\AppData\\Roaming\\Open-Science'
       })
     )
     expect(plan.target.endsWith('open-science.cmd')).toBe(true)
@@ -256,7 +256,7 @@ describe('initial CLI installation failure recovery', () => {
 
       await expect(installCliLauncher(env)).rejects.toBe(error)
       await expect(readFile(plan.target, 'utf8')).resolves.toBe(userContent)
-      await expect(installCliLauncher(env)).rejects.toThrow(/not managed by Open Science/)
+      await expect(installCliLauncher(env)).rejects.toThrow(/not managed by Open-Science/)
     }
   )
 })
@@ -304,7 +304,7 @@ pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
 
     await expect(
       installCliLauncher(
-        posixEnv({ appExecPath: '/opt/Open Science/open-science-next' }),
+        posixEnv({ appExecPath: '/opt/Open-Science/open-science-next' }),
         () => true
       )
     ).rejects.toMatchObject({ code: 'ENOSPC' })
@@ -343,7 +343,7 @@ pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
       return originalSync.apply(this, args)
     })
 
-    const nextEnv = posixEnv({ appExecPath: '/opt/Open Science/open-science-next' })
+    const nextEnv = posixEnv({ appExecPath: '/opt/Open-Science/open-science-next' })
     await installCliLauncher(nextEnv)
 
     const validatedFd = events.find((event) => event.operation === 'stat')?.fd
@@ -432,7 +432,7 @@ describe.each([
     await writeFile(plan.target, userContent)
 
     await expect(installCliLauncher(env, () => true)).rejects.toThrow(
-      'because it is not managed by Open Science'
+      'because it is not managed by Open-Science'
     )
     await expect(readFile(plan.target, 'utf8')).resolves.toBe(userContent)
   })
@@ -445,7 +445,7 @@ describe.each([
     await writeFile(plan.target, userContent)
 
     await expect(uninstallCliLauncher(env)).rejects.toThrow(
-      'because it is not managed by Open Science'
+      'because it is not managed by Open-Science'
     )
     await expect(readFile(plan.target, 'utf8')).resolves.toBe(userContent)
   })
@@ -467,14 +467,14 @@ describe.each([
     const plan = planCliLauncher(env)
     const userContent = [
       'user-managed launcher',
-      'Open Science command-line launcher. Managed by the app',
+      'Open-Science command-line launcher. Managed by the app',
       'still user-managed'
     ].join('\n')
     await mkdir(plan.binDir, { recursive: true })
     await writeFile(plan.target, userContent)
 
     await expect(installCliLauncher(env, () => true)).rejects.toThrow(
-      'because it is not managed by Open Science'
+      'because it is not managed by Open-Science'
     )
     await expect(readFile(plan.target, 'utf8')).resolves.toBe(userContent)
   })
@@ -517,7 +517,7 @@ symlinkDescribe('symlinked launcher safety', () => {
     const env = posixEnv()
     const plan = planCliLauncher(env)
     const userFile = join(home, 'user-script')
-    const userContent = 'Open Science command-line launcher. Managed by the app\nuser content\n'
+    const userContent = 'Open-Science command-line launcher. Managed by the app\nuser content\n'
     await mkdir(plan.binDir, { recursive: true })
     await writeFile(userFile, userContent)
     await symlink(userFile, plan.target, 'file')
@@ -533,7 +533,7 @@ symlinkDescribe('symlinked launcher safety', () => {
   it('refuses to follow a symlink during install', async () => {
     const { env, target, userFile, userContent } = await arrangeManagedTargetSymlink()
 
-    await expect(installCliLauncher(env)).rejects.toThrow('not managed by Open Science')
+    await expect(installCliLauncher(env)).rejects.toThrow('not managed by Open-Science')
     await expect(readFile(userFile, 'utf8')).resolves.toBe(userContent)
     expect((await lstat(target)).isSymbolicLink()).toBe(true)
   })
@@ -541,7 +541,7 @@ symlinkDescribe('symlinked launcher safety', () => {
   it('refuses to remove a symlink during uninstall', async () => {
     const { env, target, userFile, userContent } = await arrangeManagedTargetSymlink()
 
-    await expect(uninstallCliLauncher(env)).rejects.toThrow('not managed by Open Science')
+    await expect(uninstallCliLauncher(env)).rejects.toThrow('not managed by Open-Science')
     await expect(readFile(userFile, 'utf8')).resolves.toBe(userContent)
     expect((await lstat(target)).isSymbolicLink()).toBe(true)
   })
@@ -557,7 +557,7 @@ describe('hard-linked launcher safety', () => {
     const env = posixEnv()
     const plan = planCliLauncher(env)
     const userFile = join(home, 'user-script')
-    const userContent = 'Open Science command-line launcher. Managed by the app\nuser content\n'
+    const userContent = 'Open-Science command-line launcher. Managed by the app\nuser content\n'
     await mkdir(plan.binDir, { recursive: true })
     await writeFile(userFile, userContent)
     await link(userFile, plan.target)
@@ -573,14 +573,14 @@ describe('hard-linked launcher safety', () => {
   it('refuses to follow a hard link during install', async () => {
     const { env, userFile, userContent } = await arrangeManagedTargetHardLink()
 
-    await expect(installCliLauncher(env)).rejects.toThrow('not managed by Open Science')
+    await expect(installCliLauncher(env)).rejects.toThrow('not managed by Open-Science')
     await expect(readFile(userFile, 'utf8')).resolves.toBe(userContent)
   })
 
   it('refuses to remove a hard link during uninstall', async () => {
     const { env, target, userFile, userContent } = await arrangeManagedTargetHardLink()
 
-    await expect(uninstallCliLauncher(env)).rejects.toThrow('not managed by Open Science')
+    await expect(uninstallCliLauncher(env)).rejects.toThrow('not managed by Open-Science')
     await expect(readFile(userFile, 'utf8')).resolves.toBe(userContent)
     await expect(lstat(target)).resolves.toMatchObject({ nlink: 2 })
   })
@@ -588,7 +588,7 @@ describe('hard-linked launcher safety', () => {
 
 describe('buildWindowsPathCommand', () => {
   it('embeds the bin dir as a PowerShell literal, not via -args', () => {
-    const binDir = 'C:\\Users\\me\\AppData\\Roaming\\Open Science\\bin'
+    const binDir = 'C:\\Users\\me\\AppData\\Roaming\\Open-Science\\bin'
     const { command, args } = buildWindowsPathCommand(binDir)
     expect(command).toBe('powershell')
     // The script must be passed to -Command and contain the actual dir literal; -args (the fragile
@@ -643,7 +643,7 @@ describe('installCliLauncher on Windows PATH edit', () => {
     expect(status.pathHint).toContain('new terminal')
     // The injected runner received the actual bin dir embedded in the script (regression guard for
     // the -args passing bug).
-    const binDir = join(home, 'AppData', 'Roaming', 'Open Science', 'bin')
+    const binDir = join(home, 'AppData', 'Roaming', 'Open-Science', 'bin')
     expect(calls).toHaveLength(1)
     expect(calls[0].args.at(-1)).toContain(binDir)
   })
@@ -656,7 +656,7 @@ describe('installCliLauncher on Windows PATH edit', () => {
   })
 
   it('skips the PATH edit entirely when the bin dir is already on PATH', async () => {
-    const binDir = join(home, 'AppData', 'Roaming', 'Open Science', 'bin')
+    const binDir = join(home, 'AppData', 'Roaming', 'Open-Science', 'bin')
     let called = false
     const status = await installCliLauncher(
       winEnv({ pathVar: `C:\\Windows;${binDir.toUpperCase()}\\` }),
@@ -671,7 +671,7 @@ describe('installCliLauncher on Windows PATH edit', () => {
   })
 
   it.each([
-    ['unmanaged', 'because it is not managed by Open Science'],
+    ['unmanaged', 'because it is not managed by Open-Science'],
     ['ambiguous', 'The Windows PATH ownership journal is ambiguous.']
   ] as const)('rejects an %s PATH journal before creating the shim', async (scenario, message) => {
     const env = winEnv()
@@ -712,7 +712,7 @@ describe('uninstallCliLauncher on Windows PATH edit', () => {
     const runCommand = vi.fn(() => true)
 
     await expect(uninstallCliLauncher(env, runCommand)).rejects.toThrow(
-      'because it is not managed by Open Science'
+      'because it is not managed by Open-Science'
     )
 
     expect(runCommand).not.toHaveBeenCalled()
@@ -793,7 +793,7 @@ describe('uninstallCliLauncher on Windows PATH edit', () => {
   })
 
   it('preserves a pre-existing user PATH entry when no ownership receipt exists', async () => {
-    const binDir = join(home, 'AppData', 'Roaming', 'Open Science', 'bin')
+    const binDir = join(home, 'AppData', 'Roaming', 'Open-Science', 'bin')
     const env = winEnv({ pathVar: `C:\\Windows;${binDir.toUpperCase()}\\` })
     const runCommand = vi.fn(() => true)
     await installCliLauncher(env, runCommand)
@@ -816,7 +816,7 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
     posixEnv({
       appExecPath: '/tmp/.mount_open-scienceNEW/open-science',
       cliEntryPath: '/tmp/.mount_open-scienceNEW/resources/cli/index.mjs',
-      appImagePath: '/home/alice/Open Science.AppImage',
+      appImagePath: '/home/alice/Open-Science.AppImage',
       ...overrides
     })
 
@@ -831,7 +831,7 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
 
   it('runs the CLI through the mounted payload and cleans up the mount process', async () => {
     const mountDir = join(home, 'mounted AppImage')
-    const appImagePath = join(home, "Open Science's build.AppImage")
+    const appImagePath = join(home, "Open-Science's build.AppImage")
     const resultPath = join(home, 'cli-result.txt')
     const stoppedPath = join(home, 'mount-stopped.txt')
     const cliDir = join(mountDir, 'resources', 'cli')
@@ -897,18 +897,18 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
     expect(result).toMatchObject({ installed: true })
 
     const shim = await readFile(result!.target, 'utf8')
-    expect(shim).toContain("app_image='/home/alice/Open Science.AppImage'")
+    expect(shim).toContain("app_image='/home/alice/Open-Science.AppImage'")
     expect(shim).not.toContain('/tmp/.mount_open-scienceNEW')
   })
 
   it('updates the stable shim after the AppImage file moves', async () => {
     await installCliLauncher(appImageEnv())
-    const moved = appImageEnv({ appImagePath: '/home/alice/Applications/Open Science.AppImage' })
+    const moved = appImageEnv({ appImagePath: '/home/alice/Applications/Open-Science.AppImage' })
 
     expect(await isCliShimStale(moved)).toBe(true)
     await ensureCliLauncherCurrent(moved)
     expect(await readFile(planCliLauncher(moved).target, 'utf8')).toContain(
-      "app_image='/home/alice/Applications/Open Science.AppImage'"
+      "app_image='/home/alice/Applications/Open-Science.AppImage'"
     )
   })
 
@@ -942,10 +942,10 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
 
 describe('AppImage reconciliation platform boundary', () => {
   it.each([
-    ['win32', () => winEnv({ appImagePath: 'C:\\Users\\me\\Open Science.AppImage' })],
+    ['win32', () => winEnv({ appImagePath: 'C:\\Users\\me\\Open-Science.AppImage' })],
     [
       'darwin',
-      () => posixEnv({ platform: 'darwin', appImagePath: '/Applications/Open Science.AppImage' })
+      () => posixEnv({ platform: 'darwin', appImagePath: '/Applications/Open-Science.AppImage' })
     ]
   ])('does not rewrite a packaged %s launcher', async (_platform, createEnv) => {
     const env = createEnv()
@@ -956,5 +956,67 @@ describe('AppImage reconciliation platform boundary', () => {
     expect(await isCliShimStale(env)).toBe(false)
     expect(await ensureCliLauncherCurrent(env)).toBeUndefined()
     expect(await readFile(plan.target, 'utf8')).toBe('user-managed launcher')
+  })
+})
+
+describe('owned launchers after the application bundle is renamed', () => {
+  it.each(['darwin', 'linux', 'win32'] as const)(
+    'refreshes the exact app executable and CLI path on %s',
+    async (platform) => {
+      const env = platform === 'win32' ? winEnv() : posixEnv({ platform })
+      await installCliLauncher(env, () => true)
+      const updated = {
+        ...env,
+        appExecPath: join(home, 'Open-Science', 'new-executable'),
+        cliEntryPath: join(home, 'Open-Science', 'cli', 'index.mjs')
+      }
+      const result = await ensureCliLauncherCurrent(updated, () => true)
+      expect(result?.installed).toBe(true)
+      expect(await readFile(planCliLauncher(updated).target, 'utf8')).toBe(
+        planCliLauncher(updated).shim
+      )
+    }
+  )
+})
+
+describe('Windows profile PATH transition', () => {
+  it('recovers after removal of the old owned PATH entry and installs the new launcher', async () => {
+    const { migrateCliLauncherProfile } = await import('./launcher')
+    const env = winEnv()
+    const old = { ...env, userDataDir: join(home, 'AppData', 'Roaming', 'Open Science') }
+    await installCliLauncher(old, () => true)
+    await writeWindowsPathJournal(old)
+    await rename(old.userDataDir, env.userDataDir)
+    await symlink(
+      env.userDataDir,
+      old.userDataDir,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const state = join(home, 'migration-state')
+    await mkdir(state)
+    await writeFile(
+      join(state, 'journal.json'),
+      JSON.stringify({ id: '11111111-1111-1111-1111-111111111111', status: 'committed' })
+    )
+    const commands: string[] = []
+    const run = (_command: string, args: string[]): boolean => {
+      commands.push(args.join('\n'))
+      return true
+    }
+    await expect(
+      migrateCliLauncherProfile(env, old.userDataDir, state, run, () => {
+        throw new Error('interrupted between PATH generations')
+      })
+    ).rejects.toThrow('between PATH')
+    await migrateCliLauncherProfile(env, old.userDataDir, state, run)
+    expect(await readFile(planCliLauncher(env).target, 'utf8')).toBe(planCliLauncher(env).shim)
+    expect(commands[0]).toContain(planCliLauncher(old).binDir)
+    expect(commands.at(-1)).toContain(planCliLauncher(env).binDir)
+    expect(JSON.parse(await readFile(join(state, 'launcher.json'), 'utf8')).status).toBe(
+      'committed'
+    )
+    const count = commands.length
+    await migrateCliLauncherProfile(env, old.userDataDir, state, run)
+    expect(commands.length).toBe(count)
   })
 })

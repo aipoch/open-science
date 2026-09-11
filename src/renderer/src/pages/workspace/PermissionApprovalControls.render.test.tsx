@@ -173,7 +173,7 @@ const networkApprovalRequest: AcpPermissionRequest = {
   toolCallId: 'app-approval:network-1',
   title: 'Connect to data.example.org?',
   appOwned: true,
-  providerToolName: 'Open Science',
+  providerToolName: 'Open-Science',
   rawInput: {
     notebookNetworkApproval: {
       hostname: 'data.example.org',
@@ -558,7 +558,7 @@ describe('PermissionApprovalControls', () => {
     )
 
     expect(html).toContain('Artifact save</span>')
-    expect(html).not.toContain('Open Science Artifacts / Write Artifact File')
+    expect(html).not.toContain('Open-Science Artifacts / Write Artifact File')
     expect(html).toContain('report.md')
   })
 

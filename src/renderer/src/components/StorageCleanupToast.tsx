@@ -17,7 +17,7 @@ const StorageCleanupToast = (): React.JSX.Element | null => {
     <ActionToast
       title={t('Old data location needs cleanup')}
       detail={t(
-        'Your data is using the new location, but some files remain in the old one. Open Science will try again the next time it starts.'
+        'Your data is using the new location, but some files remain in the old one. Open-Science will try again the next time it starts.'
       )}
       actionLabel={t('Open Storage')}
       dismissLabel={t('Close')}

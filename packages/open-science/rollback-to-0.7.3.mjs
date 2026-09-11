@@ -135,7 +135,7 @@ const resolveVersion = (kind, candidate, versions) => {
   if (!versionId) return undefined
   const version = versions.get(versionId)
   if (!version) {
-    throw new Error(`Cannot materialize ${kind} Version ${versionId} for Open Science 0.7.3.`)
+    throw new Error(`Cannot materialize ${kind} Version ${versionId} for Open-Science 0.7.3.`)
   }
   return version
 }
@@ -231,7 +231,7 @@ const resolveRollbackMessages = (source) => {
     !Array.isArray(graph.branches) ||
     !Array.isArray(graph.messages)
   ) {
-    throw new Error('Session Conversation Graph cannot be projected for Open Science 0.7.3.')
+    throw new Error('Session Conversation Graph cannot be projected for Open-Science 0.7.3.')
   }
 
   const rootFrame = graph.frames.find((frame) => isRecord(frame) && frame.id === graph.rootFrameId)
@@ -334,7 +334,7 @@ const readVersionMap = (database, table, state) => {
 const assertDatabaseIntegrity = (database, label) => {
   const rows = database.prepare('PRAGMA quick_check').all()
   if (rows.length !== 1 || String(rows[0]?.quick_check).toLowerCase() !== 'ok') {
-    throw new Error(`${label} Open Science database failed SQLite quick_check.`)
+    throw new Error(`${label} Open-Science database failed SQLite quick_check.`)
   }
 }
 
@@ -395,7 +395,7 @@ const validateVersionContents = async (indexes, dataRoot, label) => {
   }
 }
 
-const resolveConfiguredDataRoot = async (configRoot) => {
+export const resolveConfiguredDataRoot = async (configRoot, dataHome = homedir()) => {
   const settingsPath = join(configRoot, 'settings.json')
   try {
     const settings = JSON.parse(await readFile(settingsPath, 'utf8'))
@@ -408,7 +408,17 @@ const resolveConfiguredDataRoot = async (configRoot) => {
   const hasLegacyData = await Promise.all(
     DATA_DIRECTORIES.map((directory) => exists(join(configRoot, directory)))
   ).then((values) => values.some(Boolean))
-  return hasLegacyData ? configRoot : join(homedir(), 'OpenScience')
+  if (hasLegacyData) return configRoot
+  const current = join(dataHome, 'Open-Science')
+  const legacy = join(dataHome, 'OpenScience')
+  const [hasCurrent, hasLegacy] = await Promise.all([exists(current), exists(legacy)])
+  if (hasCurrent && hasLegacy && (await realpath(current)) !== (await realpath(legacy))) {
+    throw new Error(
+      `Both legacy and current Data Roots exist: ${legacy}; ${current}. Select --data-root explicitly.`
+    )
+  }
+  // Read-only downgrade discovery may recover an unmigrated installation; never create old roots.
+  return hasCurrent || !hasLegacy ? current : legacy
 }
 
 const readActivatedRollback = async (configRoot, requestedOutput) => {
@@ -612,7 +622,7 @@ const assertOffline = async (configRoot) => {
   for (const suffix of ['-wal', '-shm']) {
     if (await exists(join(configRoot, `open-science.db${suffix}`))) {
       throw new Error(
-        `Open Science may still be running (${`open-science.db${suffix}`} exists). Quit the app completely before rollback.`
+        `Open-Science may still be running (${`open-science.db${suffix}`} exists). Quit the app completely before rollback.`
       )
     }
   }
@@ -621,10 +631,10 @@ const assertOffline = async (configRoot) => {
     if (Number.isInteger(state.pid) && state.pid > 0) {
       try {
         process.kill(state.pid, 0)
-        throw new Error('Open Science is still running. Quit it completely before rollback.')
+        throw new Error('Open-Science is still running. Quit it completely before rollback.')
       } catch (error) {
         if (error?.code === 'EPERM') {
-          throw new Error('Open Science is still running. Quit it completely before rollback.')
+          throw new Error('Open-Science is still running. Quit it completely before rollback.')
         }
         if (error?.code !== 'ESRCH') throw error
       }
@@ -688,7 +698,7 @@ export const activateRollbackConfig = async ({
           'Rollback activation failed and the original Config Root could not be restored automatically.',
           `Preserved newer Config Root: ${preservedConfigRoot}.`,
           `Prepared 0.7.3 Config Root: ${stagingConfigRoot}.`,
-          `Restore one of them to ${configRoot} before starting Open Science.`
+          `Restore one of them to ${configRoot} before starting Open-Science.`
         ].join(' '),
         { cause: activationError }
       )
@@ -806,7 +816,7 @@ const validatePreparedRollback = async (marker) => {
 export const runRollbackToV073 = async (options = {}) => {
   if (options.confirm !== true) {
     throw new Error(
-      'Rollback requires explicit confirmation. Re-run with --yes after closing Open Science.'
+      'Rollback requires explicit confirmation. Re-run with --yes after closing Open-Science.'
     )
   }
   const now = options.now ?? Date.now
@@ -829,7 +839,7 @@ export const runRollbackToV073 = async (options = {}) => {
   const removeMarker = options.removeMarker ?? ((path) => rm(path, { force: true }))
 
   if (!(await exists(join(configRoot, 'open-science.db')))) {
-    throw new Error(`Open Science database does not exist: ${join(configRoot, 'open-science.db')}`)
+    throw new Error(`Open-Science database does not exist: ${join(configRoot, 'open-science.db')}`)
   }
   if (!(await exists(dataRoot))) throw new Error(`Data Root does not exist: ${dataRoot}`)
   const canonicalConfigRoot = await assertSafeSourceRoot(configRoot, 'Config Root')

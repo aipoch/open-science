@@ -553,7 +553,7 @@ const InstalledSpecialistsPanel = ({
           </div>
           <h3 className="mt-4 text-lg font-semibold">{t('Template saved')}</h3>
           <p className="mt-2 text-sm text-muted-foreground">
-            {t('openscience-specialist-template.zip is ready for contributor editing.')}
+            {t('open-science-specialist-template.zip is ready for contributor editing.')}
           </p>
           <Button type="button" className="mt-5" onClick={() => setTemplateSaved(false)}>
             {t('Done')}
@@ -1627,7 +1627,7 @@ const InstalledSpecialistsPanel = ({
         >
           <div className="flex items-start gap-2">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            <p>{t('Open Science could not load Specialists. Retry to continue.')}</p>
+            <p>{t('Open-Science could not load Specialists. Retry to continue.')}</p>
           </div>
           <Button
             type="button"

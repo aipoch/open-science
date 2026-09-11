@@ -3374,7 +3374,7 @@ const hostCompute = {
       // Non-blocking job submission. Returns immediately with job_id + remote_workdir.
       // options: { environment?, resources?, inputs?, outputs?, timeoutSeconds?, harvest? }
       // A named environment resolves to the host-owned
-      // ~/.openscience/environments/<name>.sh activation file in the Host's configured execution mode.
+      // ~/.open-science/environments/<name>.sh activation file in the Host's configured execution mode.
       // Session/project context is always threaded from spawn env for grant-scope memory.
       // workspace_cwd is captured at spawn time so the main process can resolve workspace paths.
       async submitJob(intent, command, options = {}) {

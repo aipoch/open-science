@@ -397,7 +397,7 @@ export const LiteratureFullTextLookup = ({
                 }
                 description={
                   error === 'runtime'
-                    ? t('Restart Open Science to enable full-text search.')
+                    ? t('Restart Open-Science to enable full-text search.')
                     : error === 'rate-limited'
                       ? t(
                           'This source is limiting downloads (HTTP 429). Wait before trying again, choose another source, or upload a PDF.'

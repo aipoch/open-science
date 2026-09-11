@@ -188,7 +188,7 @@ const installApi = (): void => {
     logs: {
       getStatus: vi.fn().mockResolvedValue({
         configured: true,
-        path: '/Users/x/Library/Logs/Open Science/main.log',
+        path: '/Users/x/Library/Logs/Open-Science/main.log',
         existing: true,
         lastWriteSucceeded: true,
         lastFailureCategory: null
@@ -2158,7 +2158,7 @@ describe('SettingsPage layout', () => {
     ).api.logs
     logs.getStatus.mockResolvedValueOnce({
       configured: true,
-      path: '/Users/x/Library/Logs/Open Science/main.log',
+      path: '/Users/x/Library/Logs/Open-Science/main.log',
       existing: false,
       lastWriteSucceeded: null,
       lastFailureCategory: null
@@ -4113,7 +4113,7 @@ describe('SettingsPage layout', () => {
           {
             id: 'official',
             kind: 'official',
-            name: 'OpenScience Marketplace',
+            name: 'Open-Science Marketplace',
             repositoryUrl: 'https://github.com/aipoch/marketplace',
             ref: 'published',
             trust: 'official',
@@ -4125,7 +4125,7 @@ describe('SettingsPage layout', () => {
         specialists: [
           {
             sourceId: 'official',
-            sourceName: 'OpenScience Marketplace',
+            sourceName: 'Open-Science Marketplace',
             sourceTrust: 'official',
             id: 'example-specialist',
             displayName: 'Example Specialist',
@@ -4197,7 +4197,7 @@ describe('SettingsPage layout', () => {
           id: 'storage' as const,
           label: 'App storage permission',
           status: 'failed' as const,
-          summary: 'Open Science cannot write to its private data folder.'
+          summary: 'Open-Science cannot write to its private data folder.'
         }
       ],
       ready: false,
@@ -4213,7 +4213,7 @@ describe('SettingsPage layout', () => {
           id: 'storage' as const,
           label: 'App storage permission',
           status: 'passed' as const,
-          summary: 'Open Science can write to its private data folder.'
+          summary: 'Open-Science can write to its private data folder.'
         },
         {
           id: 'agent' as const,

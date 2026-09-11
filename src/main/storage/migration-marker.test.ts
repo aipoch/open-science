@@ -19,8 +19,8 @@ let root: string
 const sampleMarker = (overrides: Partial<MigrationMarker> = {}): MigrationMarker => ({
   version: 1,
   token: 'tok-123',
-  source: '/old/OpenScience',
-  target: '/new/OpenScience',
+  source: '/old/Open-Science',
+  target: '/new/Open-Science',
   createdAt: 1_700_000_000_000,
   status: 'copying',
   ...overrides

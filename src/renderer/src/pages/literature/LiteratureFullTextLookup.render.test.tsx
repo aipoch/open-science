@@ -333,7 +333,7 @@ describe('LiteratureFullTextLookup', () => {
     fullText.mockRejectedValue(new Error("No handler registered for 'literature:full-text'"))
     render(<LiteratureFullTextLookup {...props} />)
     expect(
-      await screen.findByText('Restart Open Science to enable full-text search.')
+      await screen.findByText('Restart Open-Science to enable full-text search.')
     ).not.toBeNull()
     expect(screen.queryByText('Full-text search failed. Try again.')).toBeNull()
     fireEvent.click(screen.getByText('Search sources'))

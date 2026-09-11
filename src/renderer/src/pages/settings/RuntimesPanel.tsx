@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · macrostructure: Workbench · genre: modern-minimal · tone: technical/austere
- * theme: existing Open Science Settings tokens · enrichment: none · motion: existing controls only
+ * theme: existing Open-Science Settings tokens · enrichment: none · motion: existing controls only
  */
 import {
   CheckCircle2,
@@ -691,10 +691,10 @@ const RuntimesPanel = ({
               description={
                 language === 'r'
                   ? t(
-                      'Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.'
+                      'Open-Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.'
                     )
                   : t(
-                      'Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.'
+                      'Lets Open-Science install packages into this environment. Installs go to your own environment, not the app-managed storage.'
                     )
               }
             >

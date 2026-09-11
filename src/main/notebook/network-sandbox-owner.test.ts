@@ -2060,7 +2060,7 @@ describe('R startup authorization admission', () => {
     const owner = createOwner('win32', false)
     backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
     try {
-      await expect(owner.ensureRuntimeAccess(request)).rejects.toThrow('local Open Science desktop')
+      await expect(owner.ensureRuntimeAccess(request)).rejects.toThrow('local Open-Science desktop')
       expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
     } finally {
       await owner.dispose()

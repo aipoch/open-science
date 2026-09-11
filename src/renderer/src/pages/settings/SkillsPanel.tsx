@@ -89,7 +89,7 @@ const SOURCE_GROUPS = [
   {
     source: 'imported',
     labelKey: 'Imported',
-    subtitleKey: 'Skills you imported into Open Science.'
+    subtitleKey: 'Skills you imported into Open-Science.'
   },
   {
     source: 'personal',
@@ -351,7 +351,7 @@ const SkillsPanel = ({
         <SettingsLoadNotice
           state={catalogState === 'error' ? 'error' : 'loading'}
           loadingLabel={t('Loading Skills…')}
-          errorMessage={t('Open Science could not load Skills.')}
+          errorMessage={t('Open-Science could not load Skills.')}
           onRetry={retryCatalog}
         />
       </div>
@@ -362,7 +362,7 @@ const SkillsPanel = ({
     <div className="p-5">
       <SettingsSection
         title={t('Conversation imports')}
-        description={t('Choose what conversations can import into Open Science.')}
+        description={t('Choose what conversations can import into Open-Science.')}
         aria-label={t('Conversation imports')}
         className="mb-4"
         contentClassName="mt-1"
@@ -504,7 +504,7 @@ const SkillsPanel = ({
         <SettingsLoadNotice
           state="error"
           loadingLabel={t('Loading Skills…')}
-          errorMessage={t('Open Science could not load Skills.')}
+          errorMessage={t('Open-Science could not load Skills.')}
           onRetry={retryCatalog}
           className="mb-3"
         />

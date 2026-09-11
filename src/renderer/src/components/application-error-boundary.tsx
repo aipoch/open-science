@@ -14,7 +14,7 @@ const ApplicationErrorFallback = (): React.JSX.Element => {
           role="alert"
           icon={RefreshCw}
           tone="amber"
-          title={t("Open Science couldn't display this page")}
+          title={t("Open-Science couldn't display this page")}
           description={t(
             'Background work may still be running. Reloading may lose unsaved changes on this page.'
           )}

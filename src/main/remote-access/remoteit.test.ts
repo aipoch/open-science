@@ -98,7 +98,7 @@ describe('Remote.It adapter', () => {
       }
     })
     const commands = [
-      ['service', 'add', '--name', 'Open Science Remote', '--json'],
+      ['service', 'add', '--name', 'Open-Science Remote', '--json'],
       ['service', 'add', '--name', 'System Service', '--json']
     ]
 
@@ -112,7 +112,7 @@ describe('Remote.It adapter', () => {
       { timeoutMs: 120_000 }
     )
     const script = String(run.mock.calls.at(-1)?.[1][1])
-    expect(script).toContain('Open Science Remote')
+    expect(script).toContain('Open-Science Remote')
     expect(script).toContain('System Service')
     expect(script).toContain('with administrator privileges')
   })
@@ -277,7 +277,7 @@ describe('Remote.It adapter', () => {
       enableRemoteItService(
         '/usr/local/bin/remoteit',
         4180,
-        { name: 'Open Science Remote', preferredServiceId: 'service-1' },
+        { name: 'Open-Science Remote', preferredServiceId: 'service-1' },
         run,
         'linux'
       )
@@ -339,7 +339,7 @@ describe('Remote.It adapter', () => {
       enableRemoteItService(
         '/usr/local/bin/remoteit',
         4180,
-        { name: 'Open Science Remote', preferredServiceId: 'service-1' },
+        { name: 'Open-Science Remote', preferredServiceId: 'service-1' },
         run
       )
     ).resolves.toMatchObject({
@@ -390,7 +390,7 @@ describe('Remote.It adapter', () => {
     })
 
     await expect(
-      enableRemoteItService('/usr/local/bin/remoteit', 4180, { name: 'Open Science Remote' }, run)
+      enableRemoteItService('/usr/local/bin/remoteit', 4180, { name: 'Open-Science Remote' }, run)
     ).resolves.toMatchObject({ serviceId: 'service-new' })
     expect(run).toHaveBeenCalledWith(
       '/usr/local/bin/remoteit',
@@ -398,7 +398,7 @@ describe('Remote.It adapter', () => {
         'service',
         'add',
         '--name',
-        'Open Science Remote',
+        'Open-Science Remote',
         '--port',
         '4180',
         '--type',
@@ -511,7 +511,7 @@ describe('Remote.It adapter', () => {
     const script = String(
       run.mock.calls.find(([command]) => command === '/usr/bin/osascript')?.[1][1]
     )
-    expect(script).toContain('Open Science Remote')
+    expect(script).toContain('Open-Science Remote')
     expect(script).toContain('System Service')
   })
 
@@ -662,7 +662,7 @@ describe('Remote.It adapter', () => {
                 {
                   id: 'device-1',
                   services: [
-                    { id: 'app-service', name: 'Open Science Remote' },
+                    { id: 'app-service', name: 'Open-Science Remote' },
                     { id: 'browser-service', name: 'System Service' }
                   ]
                 }
@@ -694,6 +694,45 @@ describe('Remote.It adapter', () => {
       browserServiceId: 'browser-service'
     })
     expect(run.mock.calls.filter(([, args]) => args[0] === 'exec-gql')).toHaveLength(1)
+    expect(run.mock.calls.some(([, args]) => args[0] === 'service')).toBe(false)
+  })
+
+  it('reuses the legacy branded App service when stored IDs are missing', async () => {
+    const run = vi.fn<RemoteItCommandRunner>(async (_command, args) => {
+      if (args.join(' ') === 'status --json') {
+        return {
+          stdout: status([
+            {
+              id: 'legacy-app',
+              name: 'Open Science Remote',
+              type: 7,
+              addressHost: '127.0.0.1',
+              addressPort: 44100,
+              isEnabled: true,
+              state: 4
+            },
+            {
+              id: 'browser-service',
+              name: 'System Service',
+              type: 7,
+              addressHost: '127.0.0.1',
+              addressPort: 44100,
+              isEnabled: true,
+              state: 4
+            }
+          ]),
+          stderr: ''
+        }
+      }
+      if (args[0] === 'version') return { stdout: '4.1.0\n', stderr: '' }
+      throw new Error(`Unexpected command: ${args.join(' ')}`)
+    })
+    await expect(
+      enableRemoteItServices('/usr/local/bin/remoteit', 44100, { active: 'app' }, run, 'darwin')
+    ).resolves.toMatchObject({
+      appServiceId: 'legacy-app',
+      browserServiceId: 'browser-service'
+    })
     expect(run.mock.calls.some(([, args]) => args[0] === 'service')).toBe(false)
   })
 
@@ -729,7 +768,7 @@ describe('Remote.It adapter', () => {
       if (args[0] === 'service' && args[1] === 'add') {
         addCount += 1
         if (addCount === 2) phase = 'restarting'
-        const serviceId = args.includes('Open Science Remote') ? 'app-service' : 'browser-service'
+        const serviceId = args.includes('Open-Science Remote') ? 'app-service' : 'browser-service'
         return { stdout: JSON.stringify({ code: 0, data: { serviceId } }), stderr: '' }
       }
       throw new Error(`Unexpected command: ${args.join(' ')}`)
@@ -821,7 +860,7 @@ describe('Remote.It adapter', () => {
     })
 
     await expect(
-      enableRemoteItService('/usr/local/bin/remoteit', 4180, { name: 'Open Science Remote' }, run)
+      enableRemoteItService('/usr/local/bin/remoteit', 4180, { name: 'Open-Science Remote' }, run)
     ).rejects.toThrow('complete Add Device once')
     expect(run.mock.calls.some(([command]) => command === '/usr/bin/osascript')).toBe(false)
     expect(run.mock.calls.some(([, args]) => args[0] === 'device' && args[1] === 'register')).toBe(
@@ -895,7 +934,7 @@ describe('Remote.It adapter', () => {
       enableRemoteItService(
         '/usr/local/bin/remoteit',
         4180,
-        { name: 'Open Science Remote', preferredServiceId: 'service-that-was-deleted' },
+        { name: 'Open-Science Remote', preferredServiceId: 'service-that-was-deleted' },
         run
       )
     ).resolves.toMatchObject({ serviceId: 'service-recreated' })

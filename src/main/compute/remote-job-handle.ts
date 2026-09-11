@@ -12,7 +12,7 @@ export const parseRemoteJobWorkdir = (
     !/^[A-Za-z0-9_-]+$/.test(jobId) ||
     /[\0\r\n]/.test(workdir) ||
     hasTraversal ||
-    !workdir.endsWith(`/.openscience/jobs/${jobId}`)
+    !['.open-science', '.openscience'].some((root) => workdir.endsWith(`/${root}/jobs/${jobId}`))
   ) {
     return null
   }

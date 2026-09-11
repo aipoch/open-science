@@ -528,7 +528,7 @@ const isMcpPermission = (
   )
 }
 
-// Open Science owns per-session grants, so Codex approvals omit options that grant persistent
+// Open-Science owns per-session grants, so Codex approvals omit options that grant persistent
 // (cross-session) access outside the app's visible, revocable grant model.
 const projectPermissionOptions = (
   params: RequestPermissionRequest,
@@ -940,7 +940,7 @@ class AcpPermissionBroker {
       toolCallId: `app-approval:${requestId}`,
       title: input.title,
       appOwned: true,
-      providerToolName: 'Open Science',
+      providerToolName: 'Open-Science',
       rawInput: input.rawInput,
       options: input.options.map((option) => ({ ...option }))
     }
@@ -1383,7 +1383,7 @@ class AcpPermissionBroker {
         return true
       }
 
-      // Legacy Session grants are owned by Open Science. The Agent receives only its one-shot option.
+      // Legacy Session grants are owned by Open-Science. The Agent receives only its one-shot option.
       if (pending.categoryKey) {
         this.rememberSessionGrant(pending.request, pending.categoryKey, response.optionId)
       }
@@ -1489,7 +1489,7 @@ class AcpPermissionBroker {
     return request.options.find((option) => option.scope === 'once')?.optionId
   }
 
-  // Records the category when the user picks Open Science's synthetic session scope.
+  // Records the category when the user picks Open-Science's synthetic session scope.
   private rememberSessionGrant(
     request: AcpPermissionRequest,
     categoryKey: string,

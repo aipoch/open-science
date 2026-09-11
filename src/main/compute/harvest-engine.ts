@@ -577,7 +577,7 @@ const harvestJobUnchecked = async (
     signal: deps.signal
   })
 
-  const remoteWorkdir = job.remote_workdir ?? `~/.openscience/jobs/${job.job_id}`
+  const remoteWorkdir = job.remote_workdir ?? `~/.open-science/jobs/${job.job_id}`
 
   // ── 3. Enumerate remote files ───────────────────────────────────────────────
   let remoteFiles: HarvestFileEntry[]

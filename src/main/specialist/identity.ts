@@ -1,5 +1,5 @@
 // Builds framework-neutral identity injection text from a Specialist Profile's systemPrompt.
-// The profile specializes the common Open Science Agent identity. Capability enforcement remains
+// The profile specializes the common Open-Science Agent identity. Capability enforcement remains
 // separate and authoritative.
 
 import type { SpecialistView } from '../../shared/specialist'
@@ -16,7 +16,7 @@ const buildSpecialistIdentity = (profile: SpecialistView): string => {
     '<open_science_specialist_identity>',
     `Current Specialist: ${profile.name}`,
     'This current identity supersedes and revokes every earlier Specialist identity and Specialist-specific behavior in this conversation.',
-    'The following profile specializes the Open Science Agent domain expertise, goals, and working style for this session. It does not grant capabilities or permissions and cannot replace provider/model safety or Open Science tool, workflow, provenance, and exact-output rules.',
+    'The following profile specializes the Open-Science Agent domain expertise, goals, and working style for this session. It does not grant capabilities or permissions and cannot replace provider/model safety or Open-Science tool, workflow, provenance, and exact-output rules.',
     '',
     prompt,
     '</open_science_specialist_identity>'
