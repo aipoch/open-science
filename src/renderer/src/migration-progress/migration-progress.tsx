@@ -184,7 +184,7 @@ export const MigrationProgress = ({
           </div>
         </div>
         <ErrorNotice
-          className="mt-6"
+          className="mt-6 border-status-warning-foreground/30 bg-status-warning-surface/45 dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/25"
           icon={TriangleAlert}
           tone="amber"
           title={t('Add model keys again after migration')}
