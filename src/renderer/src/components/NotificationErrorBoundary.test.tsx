@@ -40,8 +40,9 @@ it('allows retry after a refresh failure', async () => {
   const root = createRoot(container)
   const refresh = vi.fn().mockRejectedValueOnce(new Error('refresh failed'))
   const getState = vi.spyOn(useNotificationInboxStore, 'getState').mockReturnValue({
+    ...useNotificationInboxStore.getState(),
     refresh
-  } as ReturnType<typeof useNotificationInboxStore.getState>)
+  })
   const BrokenNotification = (): React.JSX.Element => {
     throw new Error('damaged notification')
   }

@@ -320,7 +320,6 @@ describe('workspace composer controller', () => {
       expect.objectContaining({ name: 'pending.txt', status: 'error' })
     ])
     expect(restored.result.current.view.doc).toEqual(textDoc('keep text'))
-
   })
 
   it('DF-01 retains both conversation drafts and annotations after route remount', () => {

@@ -767,7 +767,10 @@ const RuntimesPanel = ({
                   }
                 >
                   {importingEnvironmentLock ? (
-                    <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                    <LoaderCircle
+                      className="animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
                   ) : (
                     <Upload aria-hidden="true" />
                   )}

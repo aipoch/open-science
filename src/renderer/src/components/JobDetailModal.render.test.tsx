@@ -200,7 +200,6 @@ describe('JobDetailModal — detail view', () => {
     }
   )
 
-
   it('requests cancellation with the complete owner tuple and disables while cancelling', async () => {
     const { JobDetailModal } = await import('./JobDetailModal')
     const job = makeJob()
