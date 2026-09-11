@@ -5354,6 +5354,8 @@
     "Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.": "이전 circlize 그리기 매개변수가 기록되지 않았습니다. 설정 및 그리기 전에 circlize::circos.clear()를 호출한 다음 셀을 다시 실행하세요.",
     "Analysis rules: {{revision}}": "분석 규칙: {{revision}}",
     "Analysis rules were not recorded for this version.": "이 버전의 분석 규칙은 기록되지 않았습니다.",
-    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "이 아티팩트 버전을 만들 때 기록되었습니다. 이후 분석 업데이트는 이 검증 근거를 변경하지 않습니다."
+    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "이 아티팩트 버전을 만들 때 기록되었습니다. 이후 분석 업데이트는 이 검증 근거를 변경하지 않습니다.",
+    "Continue with force update": "강제 업데이트 계속",
+    "Force update will interrupt active tasks and may lose unsaved work. Continue?": "강제 업데이트는 실행 중인 작업을 중단하고 저장되지 않은 작업을 잃을 수 있습니다. 계속하시겠습니까?"
   }
 }

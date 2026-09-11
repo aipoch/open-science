@@ -3836,9 +3836,9 @@ const createApplicationModules = async (
   )
   const updateStrategy = createUpdateStrategy(process.platform, {
     translate,
-    installGate: async () => {
+    installGate: async (options) => {
       releaseSettingsInstallAdmission = settingsService.holdInstallAdmission()
-      return updateInstallGate()
+      return updateInstallGate(options)
     },
     releaseInstallHandoff: abortUpdateHandoff
   })

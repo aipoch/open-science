@@ -17,7 +17,7 @@ export type InstallReadiness = {
 // Runs backend teardown before an in-place install and reports whether it is safe to proceed. The
 // in-place strategy receives it at construction and awaits it before quitAndInstall, so the installer
 // never starts while a background process still holds app files open.
-export type InstallGate = () => Promise<InstallReadiness>
+export type InstallGate = (options?: { force?: boolean }) => Promise<InstallReadiness>
 
 const restoreAfterFinalRefusal = (restore: () => void): void => {
   try {
@@ -36,12 +36,13 @@ export const createActiveResearchSafeInstallGate =
     isExclusiveHandoffActive: () => boolean = () => false,
     onFinalRefusal: () => void = () => undefined
   ): InstallGate =>
-  async () => {
+  async (options = {}) => {
     if (isExclusiveHandoffActive()) return { completed: false, reaped: false }
     const blockedBy = [...new Set(detectBlockers())]
-    if (blockedBy.length > 0) return { completed: false, reaped: false, blockedBy }
+    if (blockedBy.length > 0 && !options.force)
+      return { completed: false, reaped: false, blockedBy }
 
-    const readiness = await runTeardownGate()
+    const readiness = await runTeardownGate(options)
     if (!readiness.completed || !readiness.reaped) return readiness
     if (isExclusiveHandoffActive()) {
       restoreAfterFinalRefusal(onFinalRefusal)
@@ -75,8 +76,8 @@ export const createDataRootResearchSafeInstallGate = (
 // allows the still-open app to reconnect on the next action.
 export const createDurableInstallGate =
   (runTeardownGate: InstallGate, confirmRendererDurability: () => Promise<boolean>): InstallGate =>
-  async () => {
-    const readiness = await runTeardownGate()
+  async (options = {}) => {
+    const readiness = await runTeardownGate(options)
     if (!readiness.completed || !readiness.reaped) return readiness
     return (await confirmRendererDurability()) ? readiness : { completed: false, reaped: false }
   }

@@ -56,6 +56,21 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
   const isBackgroundProcessError =
     dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_ERROR ||
     dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
+  const isForceableGateError =
+    dialogStatus?.error ===
+      'Research work is still running. Stop it before restarting to update.' ||
+    dialogStatus?.error ===
+      'Subagents are still running. Return to their tasks and stop them before restarting to update.' ||
+    dialogStatus?.error === UPDATE_SETTINGS_INSTALL_ERROR
+  const forceUpdate = (): void => {
+    if (
+      window.confirm(
+        t('Force update will interrupt active tasks and may lose unsaved work. Continue?')
+      )
+    ) {
+      void apply({ force: true })
+    }
+  }
   const activeLanguage = i18n.resolvedLanguage ?? i18n.language
   const locale = isLocale(activeLanguage) ? activeLanguage : 'en'
   const localizedNotes = locale === 'en' ? undefined : dialogStatus?.localizedNotes?.[locale]
@@ -212,6 +227,15 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                     <ExternalTextLink href={APP.update.downloadPage} className="mt-1 text-xs">
                       {t('Download manually')}
                     </ExternalTextLink>
+                    {isForceableGateError && isReady ? (
+                      <button
+                        type="button"
+                        onClick={forceUpdate}
+                        className="mt-2 block text-xs text-destructive underline"
+                      >
+                        {t('Continue with force update')}
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
                 {isInstallerUnavailable ? (

@@ -5678,6 +5678,8 @@
     "Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.": "Les paramètres graphiques précédents de circlize n’ont pas été enregistrés. Appelez circlize::circos.clear() avant de configurer et de tracer le graphique, puis réexécutez la cellule.",
     "Analysis rules: {{revision}}": "Règles d’analyse : {{revision}}",
     "Analysis rules were not recorded for this version.": "Les règles d’analyse n’ont pas été enregistrées pour cette version.",
-    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "Enregistrées lors de la création de cette version de l’artefact. Les mises à jour ultérieures de l’analyse ne modifient pas ces preuves de vérification."
+    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "Enregistrées lors de la création de cette version de l’artefact. Les mises à jour ultérieures de l’analyse ne modifient pas ces preuves de vérification.",
+    "Continue with force update": "Poursuivre la mise à jour forcée",
+    "Force update will interrupt active tasks and may lose unsaved work. Continue?": "La mise à jour forcée interrompra les tâches actives et peut entraîner la perte du travail non enregistré. Continuer ?"
   }
 }

@@ -601,7 +601,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       operation.phase('install-gate')
       let readiness: Awaited<ReturnType<InstallGate>>
       try {
-        readiness = await this.installGate()
+        readiness = await this.installGate({ force: options.force })
       } catch (error) {
         this.releaseAbortedInstallHandoff()
         this.log.error('update install gate failed', error)

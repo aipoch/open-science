@@ -10,6 +10,7 @@ import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import {
   isNewer,
   selectDownload,
+  type UpdateApplyOptions,
   type UpdateDownloadOptions,
   type UpdateStatus
 } from '../../shared/update'
@@ -422,11 +423,11 @@ export class UpdateService implements UpdateStrategy {
   // Opens the downloaded installer. A missing file drops back to 'available' for re-download. When
   // the file still exists but the OS cannot open it, keep the ready artifact and surface the reason so
   // the user can retry without another transfer. With no artifact, open the public download page.
-  apply(): Promise<UpdateStatus> {
+  apply(options?: UpdateApplyOptions): Promise<UpdateStatus> {
     if (this.applyLifecycle) return this.applyLifecycle
 
     const admittedStatus = this.status
-    const lifecycle = Promise.resolve().then(() => this.applyAdmitted(admittedStatus))
+    const lifecycle = Promise.resolve().then(() => this.applyAdmitted(admittedStatus, options))
     this.applyLifecycle = lifecycle
     const clearLifecycle = (): void => {
       if (this.applyLifecycle === lifecycle) this.applyLifecycle = undefined
@@ -435,7 +436,11 @@ export class UpdateService implements UpdateStrategy {
     return lifecycle
   }
 
-  private async applyAdmitted(admittedStatus: UpdateStatus): Promise<UpdateStatus> {
+  private async applyAdmitted(
+    admittedStatus: UpdateStatus,
+    options?: UpdateApplyOptions
+  ): Promise<UpdateStatus> {
+    void options
     if (this.status !== admittedStatus) return this.status
     let ownedStatus = admittedStatus
     const operation = startDiagnosticOperation(this.log, {

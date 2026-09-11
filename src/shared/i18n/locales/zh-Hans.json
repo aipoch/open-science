@@ -5356,6 +5356,8 @@
     "Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.": "未捕获先前的 circlize 绘图参数。请在配置和绘图之前调用 circlize::circos.clear()，然后重新运行此单元。",
     "Analysis rules: {{revision}}": "分析规则：{{revision}}",
     "Analysis rules were not recorded for this version.": "此版本未记录分析规则。",
-    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "记录于创建此 Artifact 版本时。后续分析更新不会更改这些验证证据。"
+    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "记录于创建此 Artifact 版本时。后续分析更新不会更改这些验证证据。",
+    "Continue with force update": "继续强制更新",
+    "Force update will interrupt active tasks and may lose unsaved work. Continue?": "强制更新会中断正在运行的任务，并可能丢失未保存的工作。是否继续？"
   }
 }

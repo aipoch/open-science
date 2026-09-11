@@ -474,7 +474,7 @@ import type {
   StorageStatus
 } from './storage'
 import type { CliLauncherStatus } from './cli'
-import type { AppInfo, DownloadProgress, UpdateStatus } from './update'
+import type { AppInfo, DownloadProgress, UpdateApplyOptions, UpdateStatus } from './update'
 import type {
   AppendUploadTransferRequest,
   BeginUploadTransferRequest,
@@ -2556,7 +2556,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     undefined,
     RUNTIME_VALIDATED
   ]),
-  'update.apply': callable<() => Promise<UpdateStatus>>()('update', ['update:apply', LOCAL]),
+  'update.apply': callable<(options?: UpdateApplyOptions) => Promise<UpdateStatus>>()('update', [
+    'update:apply',
+    LOCAL
+  ]),
   'update.cancel': callable<() => Promise<UpdateStatus>>()('update', ['update:cancel', LOCAL]),
   'update.check': callable<() => Promise<UpdateStatus>>()('update', ['update:check']),
   'update.download': callable<() => Promise<UpdateStatus>>()('update', ['update:download', LOCAL]),
