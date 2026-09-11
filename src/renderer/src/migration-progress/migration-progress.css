@@ -9,16 +9,6 @@
   height: 100%;
 }
 
-.migration-progress-key-notice h2,
-.migration-progress-key-notice p {
-  color: var(--color-status-warning-foreground);
-}
-
-.dark .migration-progress-key-notice h2,
-.dark .migration-progress-key-notice p {
-  color: var(--color-status-warning-dark-foreground);
-}
-
 .migration-progress-indeterminate {
   width: 30%;
   animation: migration-progress-scan 1.8s ease-in-out infinite alternate;
