@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
     commandLine: { hasSwitch: vi.fn(() => false) },
     setName: vi.fn(),
     setPath: vi.fn(),
+    setAppLogsPath: vi.fn(),
     getPath: vi.fn(() => 'test-logs'),
     getVersion: vi.fn(() => '0.0.0-test'),
     on: vi.fn(),
@@ -46,7 +47,7 @@ vi.mock('node:module', async (importOriginal) => ({
   })
 }))
 
-vi.mock('./brand-path-migration', () => ({ prepareBrandPathMigration: vi.fn() }))
+vi.mock('./brand-path-migration', () => ({ prepareBrandPathMigration: vi.fn(() => ({})) }))
 
 vi.mock('./single-instance', () => ({
   acquireSingleInstanceLock: vi.fn(() => true)

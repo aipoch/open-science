@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+import time
 
 request = json.load(sys.stdin)
 roots = [os.path.realpath(root) for root in request['roots']]
@@ -12,6 +13,15 @@ occupied = []
 errors = []
 permission_denied = False
 identities = set()
+mapped_groups = set()
+root_names = set(roots)
+root_prefixes = tuple(root.rstrip('/') + '/' for root in roots)
+deadline = time.monotonic() + 25
+
+
+def check_budget():
+    if time.monotonic() >= deadline:
+        raise TimeoutError('Task inspection did not finish within its budget; stop writers and retry')
 
 
 def fail(path, error):
@@ -30,13 +40,11 @@ def identity(base):
 def record(pid, descriptor, path, file_identity=None):
     if path.endswith(' (deleted)'):
         path = path[:-10]
-    if file_identity in identities or (path.startswith('/') and any(
-        path == root or path.startswith(root.rstrip('/') + '/') for root in roots
-    )):
+    if file_identity in identities or path in root_names or path.startswith(root_prefixes):
         occupied.append({'pid': pid, 'descriptor': descriptor})
 
 
-def inspect_thread(pid, base, expected_start):
+def inspect_thread(pid, base, expected_start, group):
     before = identity(base)
     if before[0] != expected_start:
         errors.append('Task identity changed before inspection: ' + base)
@@ -64,17 +72,23 @@ def inspect_thread(pid, base, expected_start):
                 local_errors.append((base + '/fd/' + fd, error))
     except OSError as error:
         local_errors.append((base + '/fd', error))
-    try:
-        with open(base + '/maps') as stream:
-            for line in stream:
-                fields = line.rstrip('\n').split(None, 5)
-                if len(fields) == 6:
-                    # proc maps escapes newline as octal, unlike fd/cwd readlink.
-                    path = re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), fields[5])
-                    device = fields[3].split(':')
-                    record(pid, 'maps', path, (os.makedev(int(device[0], 16), int(device[1], 16)), int(fields[4])))
-    except OSError as error:
-        local_errors.append((base + '/maps', error))
+    maps_read = False
+    if group not in mapped_groups:
+        try:
+            with open(base + '/maps') as stream:
+                for line in stream:
+                    fields = line.rstrip('\n').split(None, 5)
+                    if len(fields) == 6:
+                        # proc maps escapes newline as octal, unlike fd/cwd readlink.
+                        path = re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), fields[5])
+                        device = fields[3].split(':')
+                        record(pid, 'maps', path, (os.makedev(int(device[0], 16), int(device[1], 16)), int(fields[4])))
+            # CLONE_THREAD requires CLONE_VM: all live threads share this mapping table.
+            # Only a complete read is reusable, within this probe and this process identity.
+            # cwd and descriptors can be unshared and are still inspected for every thread.
+            maps_read = True
+        except OSError as error:
+            local_errors.append((base + '/maps', error))
     try:
         after = identity(base)
     except FileNotFoundError:
@@ -83,11 +97,14 @@ def inspect_thread(pid, base, expected_start):
         if before[0] != after[0]:
             errors.append('Process identity changed during inspection: ' + base)
         return
+    if maps_read:
+        mapped_groups.add(group)
     for path, error in local_errors:
         fail(path, error)
 
 
 def index_tree(path):
+    check_budget()
     node = os.lstat(path)
     identities.add((node.st_dev, node.st_ino))
     if not os.path.islink(path) and os.path.isdir(path):
@@ -116,6 +133,7 @@ try:
     def tasks():
         result = set()
         for name in os.listdir('/proc'):
+            check_budget()
             if not name.isdigit() or int(name) in ignored:
                 continue
             pid = int(name)
@@ -152,24 +170,35 @@ try:
         return result
 
     seen = set()
-    for _ in range(3):
+    # Leave room for reporting inside the parent's unchanged 30-second process timeout.
+    while time.monotonic() < deadline:
         pending = tasks() - seen
         if not pending:
             break
+        # execve can replace the shared mappings without changing the leader's starttime.
+        # A later round containing new threads must therefore read the group's maps again.
+        mapped_groups.clear()
         for pid, leader_start, tid, thread_start in sorted(pending):
+            check_budget()
             base = '/proc/' + str(pid)
             thread = base + '/task/' + str(tid)
             try:
                 if identity(base)[0] != leader_start:
                     errors.append('Process identity changed before inspection: ' + base)
                 else:
-                    inspect_thread(pid, thread, thread_start)
+                    inspect_thread(pid, thread, thread_start, (pid, leader_start))
             except FileNotFoundError:
                 pass
             except OSError as error:
                 fail(thread, error)
             seen.add((pid, leader_start, tid, thread_start))
-    if tasks() - seen:
+            if errors:
+                break
+        if errors:
+            # Incomplete inspection is already a refusal. Do not spend another full scan on
+            # unreadable system threads; any authorized retry starts a fresh privileged probe.
+            break
+    else:
         errors.append('Task inventory kept changing during inspection; stop writers and retry')
 
 except Exception as error:

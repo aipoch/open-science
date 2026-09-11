@@ -237,6 +237,13 @@ check only; another process's open files are never exempted by that flag. No pro
 On macOS the helper uses the system `lsof` and its NUL-delimited cwd, descriptor and mapped-file
 records. Linux uses the bundled read-only `linux-occupancy.py` with `/usr/bin/python3 -I -S -B`: it inspects
 all visible user-space processes and their threads, including cwd/root/exe, every descriptor and mapped file.
+Within one inventory round, a successfully read mapping table is shared only by the same verified thread
+group identity: Linux `CLONE_THREAD` requires `CLONE_VM`. Cwd and descriptor tables can be unshared,
+so they are still inspected for every thread. A new round reads maps again because `execve` can
+replace a mapping table without changing the leader's start time. No occupancy conclusion is cached between probes.
+An unreadable task ends the current probe as incomplete; an authorized privileged retry always
+starts a new full inspection. Newly discovered task identities are inspected until the inventory
+stabilizes within the existing 30-second helper budget, otherwise the operation is refused.
 Directory boundaries and device/inode identities detect retained handles even through hardlinks or
 alternate mount paths. Kernel threads are outside this user-space inspection capability; kernel NFS/VM services and
 remote/shared-filesystem writers must be stopped separately. Exited/zombie task state is checked per
