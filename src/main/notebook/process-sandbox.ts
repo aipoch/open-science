@@ -78,7 +78,20 @@ export type NotebookNetworkAccessDecisionResult = Readonly<{
   status: 'alreadyAllowed' | 'allowedOnce' | 'alwaysAllowed' | 'denied' | 'blocked' | 'unavailable'
 }>
 
+// The native UAC decision cancels preparation before any cell is dispatched.
+export class NotebookRuntimeAccessCancelledError extends Error {
+  constructor(
+    message = 'R access authorization was cancelled. Automatic retries in this conversation will not prompt again. Use Authorize and verify in Runtimes to retry authorization.'
+  ) {
+    super(message)
+    this.name = 'NotebookRuntimeAccessCancelledError'
+  }
+}
+
 export interface NotebookProcessSandbox {
+  ensureRuntimeAccess?(
+    request: Pick<NotebookSandboxInvocation, 'runtime' | 'executable' | 'sessionId' | 'signal'>
+  ): Promise<void>
   wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn>
   requestNetworkAccess?(
     request: NotebookNetworkAccessDecisionRequest

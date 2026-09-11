@@ -30,6 +30,62 @@ describe('Windows AppContainer network fence probe', () => {
 })
 
 describe('Windows AppContainer elevation', () => {
+  it.skipIf(process.platform !== 'win32')(
+    'preserves native helper arguments and waits for its exit code',
+    () => {
+      const root = mkdtempSync(join(tmpdir(), 'r elevation '))
+      try {
+        const helper = join(root, "argument helper's.exe")
+        const output = join(root, 'arguments.txt')
+        const args = [
+          'with spaces',
+          'with"quote',
+          'trailing\\',
+          'space and slash\\',
+          'slash\\"quote'
+        ]
+        const expected = ['setup', 'installation', root, ...args]
+        const source = `using System; using System.IO;
+          public class Arguments {
+            public static int Main(string[] args) {
+              File.WriteAllLines(Environment.GetEnvironmentVariable("R_ELEVATION_TEST_OUTPUT"),
+                Array.ConvertAll(args, arg => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(arg))));
+              return 7;
+            }
+          }`
+        // Keep the real Windows argument parser and process wait; do not request UAC in CI.
+        const script = windowsElevationScript(helper, 'installation', root, 'setup', args)
+          .replace('-Verb RunAs', '-Verb Open')
+          .replace("$start.Verb = 'runas'", "$start.Verb = 'open'")
+        const fixture = `Add-Type -TypeDefinition '${source.replaceAll("'", "''")}' -OutputAssembly '${helper.replaceAll("'", "''")}' -OutputType ConsoleApplication; `
+        const result = spawnSync(
+          'powershell.exe',
+          [
+            '-NoLogo',
+            '-NoProfile',
+            '-NonInteractive',
+            '-EncodedCommand',
+            Buffer.from(fixture + script, 'utf16le').toString('base64')
+          ],
+          {
+            windowsHide: true,
+            encoding: 'utf8',
+            env: { ...process.env, R_ELEVATION_TEST_OUTPUT: output }
+          }
+        )
+        expect(result.status, result.stderr).toBe(7)
+        expect(
+          readFileSync(output, 'utf8')
+            .trimEnd()
+            .split(/\r?\n/)
+            .map((value) => Buffer.from(value, 'base64').toString('utf8'))
+        ).toEqual(expected)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('recognizes a wrapped Windows UAC cancellation without matching localized text', () => {
     const script = windowsElevationScript(
       "C:\\Program Files\\Open Science\\host's.exe",
@@ -38,7 +94,10 @@ describe('Windows AppContainer elevation', () => {
       'setup'
     )
 
-    expect(script).toContain('} catch { exit 1223 }')
+    expect(script).toContain('$failure.NativeErrorCode -eq 1223')
+    expect(script).toContain('$failure = $failure.InnerException')
+    expect(script).toContain('[Console]::Error.WriteLine($_.Exception.Message)')
+    expect(script).toContain('exit 1')
     expect(script).toContain("'C:\\Program Files\\Open Science\\host''s.exe'")
   })
 })

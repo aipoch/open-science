@@ -4,10 +4,12 @@ import {
   NotebookNetworkRuntime,
   installWindows,
   setWindowsRuntimeAccess,
+  getWindowsRuntimeAccess,
   removeWindows,
   statusForPlatform,
   type SandboxDependencyCheck,
-  type WindowsShell
+  type WindowsShell,
+  type WindowsRuntimeVerification
 } from '../runtime/src/index.js'
 
 import { createRuntimeConfig, normalizePolicy } from './config.js'
@@ -303,14 +305,29 @@ class NotebookNetworkSandbox {
     return { cancelled: result.cancelled === true }
   }
 
+  async getWindowsRuntimeAccess(
+    executable: string
+  ): Promise<{ authorized: boolean; registered: boolean }> {
+    if (process.platform !== 'win32')
+      throw new Error('R runtime access is only available on Windows.')
+    if (this.#initializing) await this.#initializing
+    return getWindowsRuntimeAccess(createRuntimeConfig(this.#options), executable)
+  }
+
   async setWindowsRuntimeAccess(
     executable: string,
-    authorized: boolean
+    authorized: boolean,
+    verification?: WindowsRuntimeVerification
   ): Promise<{ cancelled: boolean }> {
     if (process.platform !== 'win32')
       throw new Error('R runtime access is only available on Windows.')
     if (this.#initializing) await this.#initializing
-    return setWindowsRuntimeAccess(createRuntimeConfig(this.#options), executable, authorized)
+    return setWindowsRuntimeAccess(
+      createRuntimeConfig(this.#options),
+      executable,
+      authorized,
+      verification
+    )
   }
 
   async removeWindows(): Promise<{ cancelled: boolean }> {
