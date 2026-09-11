@@ -404,6 +404,7 @@ describe('PR Gate workflow', () => {
       run: 'node scripts/verify-runtime-bundle.mjs linux-64 osx-arm64 osx-64 win-64'
     })
     expect(runtimeBundle?.if).toContain("'runtime_bundle'")
+    expect(runtimeBundle?.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'full'")
     expect(enforce?.env).toMatchObject({
       RUNTIME_BUNDLE_OUTCOME: '${{ steps.runtime_bundle.outcome }}'
     })

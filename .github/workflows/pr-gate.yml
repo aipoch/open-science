@@ -410,7 +410,10 @@ jobs:
         run: npx vitest run src/renderer/src/i18n/resources.test.ts
       - name: Verify published runtime bundle
         id: runtime_bundle
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'runtime_bundle') }}
+        # Trusted-base classification cannot name a lane that does not exist on main yet, so the
+        # introducing PR's full plan would otherwise skip this check. After merge, version-file
+        # changes select the overlay lane; full plans keep fail-closed CDN coverage.
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'runtime_bundle') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
         continue-on-error: true
         run: node scripts/verify-runtime-bundle.mjs linux-64 osx-arm64 osx-64 win-64
       - name: Enforce selected static checks
