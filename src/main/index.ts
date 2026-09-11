@@ -87,6 +87,8 @@ if (shouldRunArtifactMcpServer) {
 } else {
   void startElectronApp(fileURLToPath(import.meta.url)).catch(async (error: unknown) => {
     bootstrapLog.error('application startup failed', diagnosticErrorFields(error))
+    // DIAGNOSTIC-ONLY: temporary branch diag/v028-startup-repro; never merge.
+    console.error('DIAG startup error:', error)
     await reportApplicationStartupFailure({
       operation: startupDiagnostics,
       error,
@@ -717,6 +719,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               databaseStartupQuitGuard
             }
           } catch (error) {
+            // DIAGNOSTIC-ONLY: temporary branch diag/v028-startup-repro; never merge.
+            console.error('DIAG composition error:', error)
             // Invalidate caller leases immediately if composition fails after registering IPC. The
             // outer shell rollback destroys the window and quits, but renderer calls can still arrive
             // while that shutdown is in flight.
