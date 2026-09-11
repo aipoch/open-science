@@ -65,7 +65,10 @@ const NotificationRecovery = ({
           void Promise.resolve()
             .then(() => useNotificationInboxStore.getState().refresh())
             .catch(() => undefined)
-            .finally(reset)
+            .finally(() => {
+              setRetrying(false)
+              reset()
+            })
         }
       }}
     />
