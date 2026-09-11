@@ -4,6 +4,9 @@ name: Diag v0.28.0 Windows startup
 # Reproduces the packaged Windows smoke startup failure with unstripped error output.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - diag/v028-startup-repro
 
 permissions: {}
 
