@@ -29,6 +29,7 @@ type RuntimeInstallAuthorizationRequest = Readonly<{
   language: NotebookLanguage
   envId: string
   authorized: boolean
+  library?: string
 }>
 type RuntimeInterpreterRequest = Readonly<{ language: NotebookLanguage; path: string }>
 type RuntimeAgentEnvironmentCreationRequest = Readonly<{ enabled: boolean }>

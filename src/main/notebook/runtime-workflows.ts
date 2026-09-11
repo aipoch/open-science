@@ -7,6 +7,7 @@ import {
   type DiscoveredInterpreter
 } from './environment-discovery'
 import { listEnvPackages } from './package-listing'
+import { resolveExternalRLibrary } from './external-r-library'
 import type { MicromambaRunner } from './windows-micromamba-runner'
 import { isMigrationInProgress, withDataRootWrite } from '../storage/migration-state'
 
@@ -27,7 +28,8 @@ type RuntimeSettings = {
   setInstallAuthorized(
     language: NotebookLanguage,
     envId: string,
-    authorized: boolean
+    authorized: boolean,
+    library?: string
   ): Promise<RuntimeEnablement>
   getAgentEnvironmentCreationEnabled(): Promise<boolean>
   setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<boolean>
@@ -79,6 +81,7 @@ type RuntimeWorkflows = {
     language: NotebookLanguage
     envId: string
     authorized: boolean
+    library?: string
   }): Promise<RuntimeEnablement>
   register(request: { language: NotebookLanguage; path: string }): Promise<string[]>
   setSandboxAccess(request: {
@@ -266,12 +269,21 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
         }
         return next
       }),
-    setInstallAuthorized: (request) =>
-      deps.settingsService.setInstallAuthorized(
+    setInstallAuthorized: async (request) => {
+      let library: string | undefined
+      if (request.language === 'r' && request.authorized) {
+        const runtime = (await discoverLanguageEnvs('r')).find((env) => env.envId === request.envId)
+        if (!runtime || runtime.provenance !== 'user-own' || !runtime.runnable)
+          throw new Error('Select a runnable external R runtime.')
+        library = await resolveExternalRLibrary(request.library ?? '')
+      }
+      return deps.settingsService.setInstallAuthorized(
         request.language,
         request.envId,
-        request.authorized
-      ),
+        request.authorized,
+        ...(request.language === 'r' ? [library] : [])
+      )
+    },
     register: async (request) => {
       const result = await deps.settingsService.addManualInterpreter(request.language, request.path)
       invalidateDiscovery()

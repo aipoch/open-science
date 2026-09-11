@@ -1940,7 +1940,6 @@
     "PHASE {{number}}": "フェーズ {{number}}",
     "PINNED": "固定済み",
     "Package": "パッケージ",
-    "Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.": "Open Science は、ユーザー所有の R 環境にはまだパッケージをインストールできません。環境内のパッケージは引き続きご自身で管理できます。",
     "Package mirror": "パッケージミラー",
     "Package provenance": "パッケージの来歴",
     "Package version": "パッケージバージョン",
@@ -5458,6 +5457,10 @@
     "Retry reloads messages. It does not approve or reject requests.": "再試行するとメッセージが再読み込みされます。リクエストの承認や拒否は行われません。",
     "Messages unavailable": "メッセージを利用できません",
     "Showing previously loaded messages.": "以前読み込んだメッセージを表示しています。",
-    "Messages could not be loaded.": "メッセージを読み込めませんでした。"
+    "Messages could not be loaded.": "メッセージを読み込めませんでした。",
+    "Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.": "既存の個人用 R ライブラリを許可します。インストールにより、他のプロジェクトが使用するパッケージが変更される場合があります。環境の復元には一致するインタープリターが必要です。",
+    "Personal R package library": "個人用 R パッケージライブラリ",
+    "Enter a personal library path from .libPaths()": ".libPaths() にある個人用ライブラリのパスを入力",
+    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "ロックファイル一式をダウンロードし、一致するインタープリターでパッケージを復元します。環境全体は再作成されません。"
   }
 }

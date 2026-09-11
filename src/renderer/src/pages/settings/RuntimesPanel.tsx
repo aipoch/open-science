@@ -190,6 +190,7 @@ const RuntimesPanel = ({
   const [packages, setPackages] = useState<EnvPackage[] | null>(null)
   const [packagesError, setPackagesError] = useState<string | null>(null)
   const [packagesRetryNonce, setPackagesRetryNonce] = useState(0)
+  const [installLibraries, setInstallLibraries] = useState<Record<string, string>>({})
   const [wsl2Preview, setWsl2Preview] = useState<{
     available: boolean
     development: boolean
@@ -319,7 +320,8 @@ const RuntimesPanel = ({
     isEnvEnabled(env, enablement[language])
 
   const isInstallAuthorized = (language: NotebookLanguage, env: DiscoveredInterpreter): boolean =>
-    enablement[language]?.installAuthorized[env.envId] ?? false
+    (enablement[language]?.installAuthorized[env.envId] ?? false) &&
+    (language !== 'r' || Boolean(enablement.r?.installLibraries?.[env.envId]))
 
   const applyEnabled = async (
     language: NotebookLanguage,
@@ -405,7 +407,10 @@ const RuntimesPanel = ({
       const next = await window.api.runtime.setInstallAuthorized(
         language,
         env.envId,
-        !isInstallAuthorized(language, env)
+        !isInstallAuthorized(language, env),
+        ...(language === 'r'
+          ? [installLibraries[env.envId] ?? enablement.r?.installLibraries?.[env.envId]]
+          : [])
       )
       setEnablement(language, next)
     } catch (e) {
@@ -716,7 +721,7 @@ const RuntimesPanel = ({
               description={
                 language === 'r'
                   ? t(
-                      'Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.'
+                      'Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.'
                     )
                   : t(
                       'Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.'
@@ -725,13 +730,38 @@ const RuntimesPanel = ({
             >
               <div className="flex justify-end">
                 <SettingsToggle
-                  enabled={language !== 'r' && isInstallAuthorized(language, env)}
+                  enabled={isInstallAuthorized(language, env)}
                   onToggle={() => void toggleInstallAuthorized(language, env)}
-                  disabled={busy || language === 'r' || languageOperationActive(language)}
+                  disabled={
+                    busy ||
+                    languageOperationActive(language) ||
+                    (language === 'r' &&
+                      !isInstallAuthorized(language, env) &&
+                      !(
+                        installLibraries[env.envId] ?? enablement.r?.installLibraries?.[env.envId]
+                      )?.trim())
+                  }
                   aria-label={t('Allow package install for {{label}}', { label: env.label })}
                 />
               </div>
             </SettingsRow>
+            {language === 'r' ? (
+              <Input
+                className="mt-2"
+                aria-label={t('Personal R package library')}
+                placeholder={t('Enter a personal library path from .libPaths()')}
+                value={
+                  installLibraries[env.envId] ?? enablement.r?.installLibraries?.[env.envId] ?? ''
+                }
+                disabled={busy || isInstallAuthorized(language, env)}
+                onChange={(event) =>
+                  setInstallLibraries((current) => ({
+                    ...current,
+                    [env.envId]: event.target.value
+                  }))
+                }
+              />
+            ) : null}
           </div>
         ) : null}
       </div>

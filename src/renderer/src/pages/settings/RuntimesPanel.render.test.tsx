@@ -879,7 +879,7 @@ describe('RuntimesPanel', () => {
     expect(setInstallAuthorized).toHaveBeenCalledWith('python', '/usr/bin/python3', true)
   })
 
-  it('explains that package installation is unavailable for an enabled user-owned R environment', async () => {
+  it('requires library consent even when historical external R authorization is true', async () => {
     getEnablement.mockImplementation(async (language: string) =>
       language === 'r'
         ? {
@@ -896,8 +896,24 @@ describe('RuntimesPanel', () => {
     )
     expect(installToggle?.disabled).toBe(true)
     expect(installToggle?.getAttribute('data-state')).toBe('unchecked')
-    expect(container.textContent).toContain(
-      'Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.'
+    expect(container.textContent).toContain('Authorize an existing personal R library.')
+    const input = container.querySelector<HTMLInputElement>(
+      '[placeholder="Enter a personal library path from .libPaths()"]'
+    )!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+        input,
+        '/home/user/R/library'
+      )
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(installToggle?.disabled).toBe(false)
+    await click(installToggle)
+    expect(setInstallAuthorized).toHaveBeenCalledWith(
+      'r',
+      '/opt/conda/envs/bio/bin/R',
+      true,
+      '/home/user/R/library'
     )
   })
 

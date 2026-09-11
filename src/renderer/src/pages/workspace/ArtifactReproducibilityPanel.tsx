@@ -164,6 +164,10 @@ const environmentCaptureDetails = (
     ...new Set(
       (capture.partialReasons ?? []).map((reason) => {
         switch (reason) {
+          case 'external-interpreter-required':
+            return t(
+              'Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.'
+            )
           case 'environment-manifest-partial':
             return t('The installed package inventory was incomplete.')
           case 'native-lock-file-best-effort':

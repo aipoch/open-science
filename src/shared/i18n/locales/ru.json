@@ -2009,7 +2009,6 @@
     "PHASE {{number}}": "ФАЗА {{number}}",
     "PINNED": "ЗАКРЕПЛЕННЫЙ",
     "Package": "Пакет",
-    "Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.": "Open Science пока не может устанавливать пакеты в принадлежащие пользователю среды R. Вы по-прежнему можете самостоятельно управлять пакетами в этих средах.",
     "Package mirror": "Зеркало репозитория пакетов",
     "Package provenance": "Происхождение пакета",
     "Package version": "Версия пакета",
@@ -5916,6 +5915,10 @@
     "Retry reloads messages. It does not approve or reject requests.": "Повторная попытка заново загружает сообщения. Запросы при этом не утверждаются и не отклоняются.",
     "Messages unavailable": "Сообщения недоступны",
     "Showing previously loaded messages.": "Показаны ранее загруженные сообщения.",
-    "Messages could not be loaded.": "Не удалось загрузить сообщения."
+    "Messages could not be loaded.": "Не удалось загрузить сообщения.",
+    "Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.": "Разрешить использование существующей личной библиотеки R. Установка может изменить пакеты других проектов. Для восстановления требуется соответствующий интерпретатор.",
+    "Personal R package library": "Личная библиотека пакетов R",
+    "Enter a personal library path from .libPaths()": "Введите путь к личной библиотеке из .libPaths()",
+    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "Скачайте набор файлов фиксации, чтобы восстановить пакеты с соответствующим интерпретатором. Это не воссоздаёт среду целиком."
   }
 }

@@ -55,7 +55,9 @@ type NotebookPackageAdmittedTarget = Readonly<{
   request: InstallRequest
   environmentName: string
   binding?: NotebookSessionRuntimeBinding
-  interpreter?: Pick<NotebookSessionResolvedInterpreter, 'command' | 'args' | 'condaPrefix'>
+  interpreter?: Pick<NotebookSessionResolvedInterpreter, 'command' | 'args' | 'condaPrefix'> & {
+    library?: string
+  }
   environmentCaptureTarget: EnvironmentCaptureTarget
   repairRuntimeId: string
   repairMarkerKey: string
@@ -164,14 +166,21 @@ class NotebookPackageAdmissionOwner {
           receipt
         )
       }
-      if (request.language !== 'python') {
+      if (request.language === 'r' && !enablement?.installLibraries?.[binding.runtimeId]) {
         return refusal(
-          'Package management for an external R runtime is not supported yet. Use the managed R ' +
-            'environment, or install the package yourself.',
+          'Select and authorize a personal R package library in Settings before installing packages.',
           receipt
         )
       }
       interpreter = binding.resolvedInterpreter
+        ? {
+            ...binding.resolvedInterpreter,
+            ...(request.language === 'r'
+              ? { library: enablement?.installLibraries?.[binding.runtimeId] }
+              : {})
+          }
+        : undefined
+      if (!interpreter) return refusal('The external runtime interpreter is unavailable.', receipt)
     } else if (binding) {
       const blocked =
         (binding.status ?? 'active') !== 'active' && binding.reason !== 'repair-required'
@@ -291,6 +300,25 @@ class NotebookPackageAdmissionOwner {
     const { binding, environmentName, request } = target
     const repair = this.options.repairPolicy.requirement(request.language, environmentName, binding)
     return this.protectedRepairRefusal(target, repair.protectedIdentity)
+  }
+
+  async recheckAuthorization(
+    target: NotebookPackageAdmittedTarget
+  ): Promise<NotebookPackageRefusal | undefined> {
+    if (target.binding?.source !== 'external') return undefined
+    const current = await this.options.resolveRuntimeEnablement(target.request.language)
+    const id = target.binding.runtimeId
+    if (
+      !current?.installAuthorized[id] ||
+      (target.request.language === 'r' &&
+        (!target.interpreter?.library ||
+          current.installLibraries?.[id] !== target.interpreter.library))
+    )
+      return refusal(
+        'Package installation authorization changed. Review this runtime in Settings and retry.',
+        target.receipt
+      )
+    return undefined
   }
 
   private protectedRepairRefusal(

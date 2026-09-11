@@ -8,7 +8,8 @@ import type { StoredSettings } from './types'
 
 const cloneRuntimeEnablement = (enablement: RuntimeEnablement | undefined): RuntimeEnablement => ({
   enabled: { ...enablement?.enabled },
-  installAuthorized: { ...enablement?.installAuthorized }
+  installAuthorized: { ...enablement?.installAuthorized },
+  ...(enablement?.installLibraries ? { installLibraries: { ...enablement.installLibraries } } : {})
 })
 
 const clonePackageMirror = (mirror: PackageMirror | undefined): PackageMirror => ({ ...mirror })
@@ -40,6 +41,7 @@ class NotebookRuntimeSettingsModule implements NotebookRuntimeSettings {
     enabled: boolean
   ): Promise<RuntimeEnablement> {
     const settings = await this.repository.setRuntimeEnablement(language, (current) => ({
+      ...current,
       enabled: { ...current.enabled, [envId]: enabled },
       installAuthorized: { ...current.installAuthorized }
     }))
@@ -50,11 +52,23 @@ class NotebookRuntimeSettingsModule implements NotebookRuntimeSettings {
   async setInstallAuthorized(
     language: NotebookLanguage,
     envId: string,
-    authorized: boolean
+    authorized: boolean,
+    library?: string
   ): Promise<RuntimeEnablement> {
+    if (language === 'r' && authorized && !library)
+      throw new Error('Select an R package library before allowing installation.')
     const settings = await this.repository.setRuntimeEnablement(language, (current) => ({
+      ...current,
       enabled: { ...current.enabled },
-      installAuthorized: { ...current.installAuthorized, [envId]: authorized }
+      installAuthorized: { ...current.installAuthorized, [envId]: authorized },
+      ...(language === 'r'
+        ? {
+            installLibraries: Object.fromEntries([
+              ...Object.entries(current.installLibraries ?? {}).filter(([id]) => id !== envId),
+              ...(authorized && library ? [[envId, library]] : [])
+            ])
+          }
+        : {})
     }))
 
     return cloneRuntimeEnablement(settings.notebookRuntimeEnablement?.[language])

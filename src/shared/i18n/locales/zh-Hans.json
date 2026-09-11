@@ -2027,7 +2027,6 @@
     "PHASE {{number}}": "阶段 {{number}}",
     "PINNED": "已固定",
     "Package": "软件包",
-    "Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.": "Open Science 暂时无法在用户自有的 R 环境中安装软件包。您仍然可以自行管理该环境中的软件包。",
     "Package mirror": "软件包镜像",
     "Package provenance": "软件包溯源",
     "Package version": "软件包版本",
@@ -5458,6 +5457,10 @@
     "Retry reloads messages. It does not approve or reject requests.": "重试会重新加载消息，不会批准或拒绝请求。",
     "Messages unavailable": "消息不可用",
     "Showing previously loaded messages.": "正在显示之前加载的消息。",
-    "Messages could not be loaded.": "无法加载消息。"
+    "Messages could not be loaded.": "无法加载消息。",
+    "Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.": "授权现有的个人 R 包库。安装可能更改其他项目使用的软件包。恢复环境需要匹配的解释器。",
+    "Personal R package library": "个人 R 包库",
+    "Enter a personal library path from .libPaths()": "输入 .libPaths() 中的个人包库路径",
+    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "下载锁定文件包，使用匹配的解释器恢复软件包。这不会重建完整环境。"
   }
 }

@@ -1755,7 +1755,12 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     ) => Promise<RuntimeEnablement>
   >()('runtime', ['runtime:set-environment-enabled', LOCAL, RUNTIME_ENABLEMENT]),
   'runtime.setInstallAuthorized': callable<
-    (language: NotebookLanguage, envId: string, authorized: boolean) => Promise<RuntimeEnablement>
+    (
+      language: NotebookLanguage,
+      envId: string,
+      authorized: boolean,
+      library?: string
+    ) => Promise<RuntimeEnablement>
   >()('runtime', ['runtime:set-install-authorized', LOCAL, RUNTIME_INSTALL_AUTH]),
   'runtime.unregisterInterpreter': callable<
     (language: NotebookLanguage, path: string) => Promise<string[]>

@@ -9,6 +9,8 @@ import {
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { resolveExternalRLibrary, externalRInstallScript } from './external-r-library'
+import { condaActivatedPath } from './runtime-paths'
 import { Transform, type TransformCallback } from 'node:stream'
 import { finished } from 'node:stream/promises'
 
@@ -216,7 +218,7 @@ export type InstallDeps = {
   // Set for an EXTERNAL (BYO) runtime: install with THIS interpreter's own pip (`<command> [args] -m
   // pip install …`) instead of the app-managed prefix. The bundled micromamba never touches a foreign
   // environment. Absent -> managed install into the app prefix (today's behavior).
-  interpreter?: { command: string; args?: string[] }
+  interpreter?: { command: string; args?: string[]; library?: string; condaPrefix?: string }
   // Invoked with each spawned installer's PID so the caller (managePackages) can journal it for
   // crash-recovery supervision of a surviving installer after a hard quit.
   onChild?: (pid: number) => void
@@ -1361,7 +1363,7 @@ export async function installPackages(
       deps.onChild,
       deps.onBeforeSpawn,
       undefined,
-      undefined,
+      deps.interpreter ? req.workspaceCwd : undefined,
       spawnOptions
     )
 
@@ -1649,6 +1651,53 @@ export async function installPackages(
       }
     }
     const { command, args = [] } = deps.interpreter
+    if (req.language === 'r') {
+      const library = deps.interpreter.library
+      if (
+        !library ||
+        req.packages.some((name) => !R_PACKAGE_NAME.test(name)) ||
+        req.installer ||
+        req.usePip
+      )
+        return {
+          ok: false,
+          needsRestart: false,
+          log: '',
+          error: 'External R installation requires an authorized library and CRAN package names.'
+        }
+      if ((await resolveExternalRLibrary(library)) !== library)
+        return {
+          ok: false,
+          needsRestart: false,
+          log: '',
+          error: 'The authorized R library changed. Authorize its new location before installing.'
+        }
+      if (deps.interpreter.condaPrefix)
+        spawnEnv.PATH = condaActivatedPath(deps.interpreter.condaPrefix, spawnEnv.PATH)
+      const result = await run(command, [
+        ...args,
+        '--slave',
+        '-e',
+        externalRInstallScript(
+          library,
+          req.packages,
+          deps.cranMirror ?? 'https://cloud.r-project.org'
+        )
+      ])
+      return {
+        ok: result.code === 0,
+        needsRestart: true,
+        log: mergeLog(result),
+        ...installLogTruncation(result),
+        method: 'cran',
+        attempts: [installerAttempt(0, 'r-install-packages', req.packages, result)],
+        fallbackUsed: false,
+        error:
+          result.code === 0
+            ? undefined
+            : 'R package installation failed. Inspect the log before retrying.'
+      }
+    }
     const pipArgs = [
       ...args,
       '-m',

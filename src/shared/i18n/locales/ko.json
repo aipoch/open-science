@@ -1951,7 +1951,6 @@
     "PHASE {{number}}": "단계 {{number}}",
     "PINNED": "고정됨",
     "Package": "패키지",
-    "Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.": "Open Science는 아직 사용자 소유 R 환경에 패키지를 설치할 수 없습니다. 환경의 패키지는 계속 직접 관리할 수 있습니다.",
     "Package mirror": "패키지 미러",
     "Package provenance": "패키지 출처",
     "Package version": "패키지 버전",
@@ -5456,6 +5455,10 @@
     "Retry reloads messages. It does not approve or reject requests.": "다시 시도하면 메시지를 다시 불러옵니다. 요청을 승인하거나 거부하지 않습니다.",
     "Messages unavailable": "메시지를 사용할 수 없음",
     "Showing previously loaded messages.": "이전에 불러온 메시지를 표시합니다.",
-    "Messages could not be loaded.": "메시지를 불러올 수 없습니다."
+    "Messages could not be loaded.": "메시지를 불러올 수 없습니다.",
+    "Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.": "기존 개인 R 라이브러리를 승인합니다. 설치 시 다른 프로젝트에서 사용하는 패키지가 변경될 수 있습니다. 환경 복원에는 일치하는 인터프리터가 필요합니다.",
+    "Personal R package library": "개인 R 패키지 라이브러리",
+    "Enter a personal library path from .libPaths()": ".libPaths()의 개인 라이브러리 경로 입력",
+    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "잠금 파일 묶음을 다운로드하고 일치하는 인터프리터로 패키지를 복원합니다. 전체 환경을 다시 생성하지는 않습니다."
   }
 }

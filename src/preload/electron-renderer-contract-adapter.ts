@@ -118,7 +118,14 @@ const encodeRequestArguments = (
     case 'runtime-enablement-object':
       return [{ language: args[0], envId: args[1], enabled: args[2], force: args[3] }]
     case 'runtime-install-authorization-object':
-      return [{ language: args[0], envId: args[1], authorized: args[2] }]
+      return [
+        {
+          language: args[0],
+          envId: args[1],
+          authorized: args[2],
+          ...(args[3] === undefined ? {} : { library: args[3] })
+        }
+      ]
     case 'runtime-interpreter-path-object':
       return [{ language: args[0], path: args[1] }]
     default:

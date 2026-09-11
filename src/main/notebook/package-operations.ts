@@ -146,6 +146,7 @@ class NotebookPackageOperations {
       micromambaRunner: options.micromambaRunner,
       retainWorkingCache: options.retainWorkingCache,
       recheckRepair: (target) => this.admission.recheckRepair(target),
+      recheckAuthorization: (target) => this.admission.recheckAuthorization(target),
       canSkipInstall: (target) =>
         !options.repairPolicy.requirement(
           target.request.language,

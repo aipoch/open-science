@@ -1,5 +1,6 @@
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, join, posix } from 'node:path'
+import { conditionalRestoreScript } from '../notebook/conditional-restore-script'
 
 import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
 
@@ -401,6 +402,29 @@ const buildEnvironmentLockReadme = (
   info: ArtifactEnvironmentLockBundleInfo,
   lock?: NotebookEnvironmentLock
 ): string => {
+  if (lock?.schemaVersion === 2)
+    return [
+      '# Conditional package restoration',
+      '',
+      'This bundle restores packages using an interpreter you provide. It does not recreate the interpreter, OS, system libraries, or guarantee identical results.',
+      '',
+      `Required runtime: ${lock.kernelKind} ${lock.externalRuntime!.version}; ${lock.platform}/${lock.architecture}.`,
+      `Required package manager: ${lock.kernelKind === 'r' ? 'renv' : 'pip'} ${lock.externalRuntime!.installerVersion}.`,
+      '',
+      'For R, jsonlite must also be available to the supplied Rscript. R repository/version records are not cryptographic package archive pins; repository availability and content remain prerequisites.',
+      '',
+      'Inspect the bundle and its sources. From the extracted directory, use Python 3.9 or later to run:',
+      '',
+      '```sh',
+      'python restore-packages.py --interpreter /path/to/interpreter --destination /path/to/new-library',
+      '```',
+      '',
+      'Pass Rscript for R or python for Python. Use a new destination whose parent exists. The script checks runtime/platform/architecture and package-manager versions before installation, and leaves any failed destination for inspection.',
+      'The destination belongs to you. Open Science does not register, adopt, or delete it; inspect and remove failed destinations yourself. Activate the supplied interpreter in your shell first if it requires Conda or other native library paths.',
+      '',
+      'For R execution, explicitly put the new library first in .libPaths(). For Python, use the new environment interpreter. Re-execute the original code with the original inputs and compare outputs; successful package restoration alone is not a successful reproducibility check.',
+      ''
+    ].join('\n')
   const native = lock ? nativeLockRestoreState(lock) : undefined
   const quote = (value: string): string => `'${value.replace(/'/gu, `'"'"'`)}'`
   const nativeCommands: string[] = []
@@ -501,6 +525,7 @@ const buildEnvironmentLockArchive = (
     ['bundle-manifest.json', `${JSON.stringify(info, null, 2)}\n`],
     ['README.md', buildEnvironmentLockReadme(info, lock)]
   ])
+  if (lock.schemaVersion === 2) contents.set('restore-packages.py', conditionalRestoreScript)
   const addFile = (path: string, content: string): void => {
     const existing = contents.get(path)
     if (existing === undefined) {

@@ -54,6 +54,8 @@ export type EnvPackage = {
 export type RuntimeEnablement = {
   enabled: Record<string, boolean>
   installAuthorized: Record<string, boolean>
+  // Explicit R library consent. Historical booleans alone never authorize R writes.
+  installLibraries?: Record<string, string>
 }
 
 // How many live sessions are bound to a runtime, split by kernel state, so the Settings disable

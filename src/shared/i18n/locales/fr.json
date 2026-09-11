@@ -2007,7 +2007,6 @@
     "PHASE {{number}}": "PHASE {{number}}",
     "PINNED": "ÉPINGLEÉ",
     "Package": "Paquet",
-    "Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.": "Open Science ne peut pas encore installer de paquets dans les environnements R appartenant à l’utilisateur. Vous pouvez toujours gérer vous-même les paquets dans l’environnement.",
     "Package mirror": "Miroir de paquet",
     "Package provenance": "Provenance du colis",
     "Package version": "Version du paquet",
@@ -5780,6 +5779,10 @@
     "Retry reloads messages. It does not approve or reject requests.": "Réessayer recharge les messages sans approuver ni refuser les demandes.",
     "Messages unavailable": "Messages indisponibles",
     "Showing previously loaded messages.": "Affichage des messages précédemment chargés.",
-    "Messages could not be loaded.": "Les messages n’ont pas pu être chargés."
+    "Messages could not be loaded.": "Les messages n’ont pas pu être chargés.",
+    "Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.": "Autoriser une bibliothèque R personnelle existante. L’installation peut modifier des paquets utilisés par d’autres projets. La restauration nécessite un interpréteur correspondant.",
+    "Personal R package library": "Bibliothèque personnelle de paquets R",
+    "Enter a personal library path from .libPaths()": "Saisir le chemin d’une bibliothèque personnelle de .libPaths()",
+    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "Téléchargez les fichiers de verrouillage pour restaurer les paquets avec un interpréteur correspondant. Cela ne recrée pas l’environnement complet."
   }
 }

@@ -802,7 +802,8 @@ class SettingsRepository {
       const current = settings.notebookRuntimeEnablement?.[language]
       const enablement = update({
         enabled: { ...current?.enabled },
-        installAuthorized: { ...current?.installAuthorized }
+        installAuthorized: { ...current?.installAuthorized },
+        ...(current?.installLibraries ? { installLibraries: { ...current.installLibraries } } : {})
       })
       const sanitized = sanitizeSettings({ notebookRuntimeEnablement: { [language]: enablement } })
         .notebookRuntimeEnablement?.[language]

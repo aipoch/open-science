@@ -40,7 +40,7 @@ type PackageProcessSandboxOptions = Readonly<{
   runtimeRoot: string
   storageRoot: string
   mirror?: PackageMirror
-  interpreter?: Readonly<{ command: string; condaPrefix?: string }>
+  interpreter?: Readonly<{ command: string; condaPrefix?: string; library?: string }>
   platform?: NodeJS.Platform
   terminateTree?: typeof terminateProcessTree
 }>
@@ -289,10 +289,18 @@ export const sandboxedPackageSpawn =
       signal: spawnOptions?.signal,
       superviseProcessTree: platform === 'win32',
       filesystem: {
-        readOnlyRoots: [...absolutePath(dirname(command)), ...absolutePath(request.workspaceCwd)],
+        readOnlyRoots: [
+          ...absolutePath(dirname(command)),
+          ...absolutePath(request.workspaceCwd),
+          ...(options.interpreter?.library
+            ? absolutePath(externalEnvironmentRoot(options.interpreter))
+            : [])
+        ],
         readWriteRoots: [
           runtimeRoot,
-          ...absolutePath(externalEnvironmentRoot(options.interpreter)),
+          ...absolutePath(
+            options.interpreter?.library ?? externalEnvironmentRoot(options.interpreter)
+          ),
           ...packageWriteRoots(projectedEnv, platform)
         ],
         deniedReadRoots: [],
