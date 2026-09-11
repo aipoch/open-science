@@ -509,14 +509,22 @@ describe('post-merge Windows validation', () => {
     expect(released.run).toContain('Released migrations are not a continuous prefix')
     expect(released.run).toContain('"sha=$releasedSha"')
     expect(released.run).toContain('"migration_count=$($migrationFiles.Count)"')
+    expect(released.run).toContain('1a6faf134836d417b8bb1cdf89571f5d9dee2a0b')
     expect(released.run).toContain('f12fd1f871022c7a9b771d193202d9ecf98aca96')
     expect(released.run)
-      .toContain(`$artifactReservationBase = git merge-base $artifactReservationCommit $releasedSha
+      .toContain(`$artifactSaveBase = git merge-base $artifactSaveCommit $releasedSha
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($artifactSaveBase)) {
+  Write-Error "Could not resolve the released Artifact RPC contract at $releasedSha."
+  exit 1
+}
+$artifactReservationBase = git merge-base $artifactReservationCommit $releasedSha
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($artifactReservationBase)) {
   Write-Error "Could not resolve the released Artifact RPC contract at $releasedSha."
   exit 1
 }
-if ($artifactReservationBase -eq $artifactReservationCommit) {
+if ($artifactSaveBase -eq $artifactSaveCommit) {
+  $artifactRpcContract = 'save'
+} elseif ($artifactReservationBase -eq $artifactReservationCommit) {
   $artifactRpcContract = 'reservation'
 } else {
   $artifactRpcContract = 'legacy'

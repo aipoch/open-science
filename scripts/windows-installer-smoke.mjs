@@ -55,6 +55,18 @@ const RPC_SMOKE_ARTIFACT_SCOPE = {
   artifactStorageSessionId: 'installer-smoke-session',
   artifactRunId: 'installer-smoke-artifact-run'
 }
+const RPC_SMOKE_SAVE_PROVENANCE = {
+  rootFrameId: 'installer-smoke-root-frame',
+  agentFrameId: 'installer-smoke-agent-frame',
+  messageBranchId: 'installer-smoke-branch',
+  runtimeSegmentId: 'installer-smoke-runtime',
+  promptMessageId: 'installer-smoke-prompt'
+}
+const RPC_SMOKE_INLINE_SOURCE = {
+  kind: 'inline',
+  content: Buffer.from(RPC_SMOKE_CONTENT).toString('base64'),
+  encoding: 'base64'
+}
 
 const delay = (milliseconds) =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds))
@@ -443,12 +455,54 @@ const assertPackagedArtifactScope = (params, requireWriteOperationId) => {
   }
 }
 
-const packagedArtifactSmokeRpcResult = (body, workspace, artifactRpcContract = 'reservation') => {
+const packagedArtifactSmokeVersion = (workspace, fileBytes, checksum) => ({
+  id: 'installer-smoke-version',
+  artifactId: 'installer-smoke-artifact',
+  versionId: 'installer-smoke-version',
+  versionNumber: 1,
+  checksum,
+  createdAt: new Date(0).toISOString(),
+  projectId: 'installer-smoke-project',
+  sessionId: 'installer-smoke-session',
+  runId: 'installer-smoke-artifact-run',
+  name: 'windows-rpc-smoke.txt',
+  path: join(workspace, 'windows-rpc-smoke.txt'),
+  fileUrl: 'file:///windows-rpc-smoke.txt',
+  mimeType: 'text/plain',
+  size: fileBytes,
+  mtimeMs: 0,
+  producerRunId: 'installer-smoke-shell-run'
+})
+
+const packagedArtifactSmokeRpcResult = (body, workspace, artifactRpcContract = 'save') => {
   const params = body.params ?? {}
   const fileBytes = Buffer.byteLength(RPC_SMOKE_CONTENT)
+  const checksum = createHash('sha256').update(RPC_SMOKE_CONTENT).digest('hex')
+  if (body.method === 'artifactSaveVersion') {
+    if (artifactRpcContract !== 'save') {
+      throw new Error('Packaged Artifact save requests require the save RPC contract.')
+    }
+    assertPackagedArtifactScope(params, true)
+    if (
+      Object.entries(RPC_SMOKE_SAVE_PROVENANCE).some(
+        ([key, expectedValue]) => params[key] !== expectedValue
+      ) ||
+      params.filename !== 'windows-rpc-smoke.txt' ||
+      params.contentType !== 'text/plain' ||
+      params.producerRunId !== 'installer-smoke-shell-run' ||
+      !isDeepStrictEqual(params.source, RPC_SMOKE_INLINE_SOURCE)
+    ) {
+      throw new Error('Unexpected packaged Artifact save request.')
+    }
+    return packagedArtifactSmokeVersion(workspace, fileBytes, checksum)
+  }
   if (body.method === 'artifactReserveWrite') {
     if (artifactRpcContract !== 'reservation') {
-      throw new Error('Legacy packaged Artifact RPC must not reserve a write.')
+      throw new Error(
+        artifactRpcContract === 'legacy'
+          ? 'Legacy packaged Artifact RPC must not reserve a write.'
+          : 'Save packaged Artifact RPC must not reserve a write.'
+      )
     }
     assertPackagedArtifactScope(params, true)
     if (params.filename !== 'windows-rpc-smoke.txt' || params.fileBytes !== fileBytes) {
@@ -461,8 +515,12 @@ const packagedArtifactSmokeRpcResult = (body, workspace, artifactRpcContract = '
     }
   }
   if (body.method === 'artifactCreateVersion') {
+    if (artifactRpcContract === 'save') {
+      throw new Error(
+        'Save packaged Artifact RPC must not create a Version without a save request.'
+      )
+    }
     assertPackagedArtifactScope(params, true)
-    const checksum = createHash('sha256').update(RPC_SMOKE_CONTENT).digest('hex')
     if (artifactRpcContract === 'legacy') {
       if (
         params.resourceReservationId !== undefined ||
@@ -478,28 +536,15 @@ const packagedArtifactSmokeRpcResult = (body, workspace, artifactRpcContract = '
     ) {
       throw new Error('Unexpected packaged Artifact Version reservation metadata.')
     }
-    return {
-      id: 'installer-smoke-version',
-      artifactId: 'installer-smoke-artifact',
-      versionId: 'installer-smoke-version',
-      versionNumber: 1,
-      checksum,
-      createdAt: new Date(0).toISOString(),
-      projectId: 'installer-smoke-project',
-      sessionId: 'installer-smoke-session',
-      runId: 'installer-smoke-artifact-run',
-      name: 'windows-rpc-smoke.txt',
-      path: join(workspace, 'windows-rpc-smoke.txt'),
-      fileUrl: 'file:///windows-rpc-smoke.txt',
-      mimeType: 'text/plain',
-      size: fileBytes,
-      mtimeMs: 0,
-      producerRunId: 'installer-smoke-shell-run'
-    }
+    return packagedArtifactSmokeVersion(workspace, fileBytes, checksum)
   }
   if (body.method === 'artifactReleaseWrite') {
     if (artifactRpcContract !== 'reservation') {
-      throw new Error('Legacy packaged Artifact RPC must not release a write reservation.')
+      throw new Error(
+        artifactRpcContract === 'legacy'
+          ? 'Legacy packaged Artifact RPC must not release a write reservation.'
+          : 'Save packaged Artifact RPC must not release a write reservation.'
+      )
     }
     assertPackagedArtifactScope(params, false)
     if (params.reservationId !== RPC_SMOKE_RESERVATION_ID) {
@@ -561,7 +606,7 @@ const connectPackagedMcp = async ({ executable, entryPath, serverArg, env, cwd }
 const runPackagedLocalRpcSmoke = async ({
   installDirectory,
   env,
-  artifactRpcContract = 'reservation'
+  artifactRpcContract = 'save'
 }) => {
   const root = await mkdtemp(join(env.TEMP, RPC_SMOKE_ROOT_PREFIX))
   const workspace = join(root, 'workspace')
@@ -710,7 +755,9 @@ const runPackagedLocalRpcSmoke = async ({
     const expectedMethods =
       artifactRpcContract === 'legacy'
         ? ['state', 'executeShell', 'artifactCreateVersion']
-        : ['state', 'executeShell', 'artifactReserveWrite', 'artifactCreateVersion']
+        : artifactRpcContract === 'reservation'
+          ? ['state', 'executeShell', 'artifactReserveWrite', 'artifactCreateVersion']
+          : ['state', 'executeShell', 'artifactSaveVersion']
     if (JSON.stringify(methods) !== JSON.stringify(expectedMethods)) {
       throw new Error(`Unexpected packaged local RPC sequence: ${methods.join(' -> ')}`)
     }
@@ -1350,13 +1397,17 @@ const parseArguments = (argv) => {
   const installerDirectory = valueFor('--installer-dir')
   if (!installerDirectory)
     throw new Error(
-      'Usage: --installer-dir <path> [--previous-installer-dir <path>] [--artifact-rpc-contract <legacy|reservation>] [--expected-migration-count <count>] [--retain-installation] [--wsl-certification-distro <name> --wsl-certification-user <name>]'
+      'Usage: --installer-dir <path> [--previous-installer-dir <path>] [--artifact-rpc-contract <legacy|reservation|save>] [--expected-migration-count <count>] [--retain-installation] [--wsl-certification-distro <name> --wsl-certification-user <name>]'
     )
   const artifactRpcContractIndex = argv.indexOf('--artifact-rpc-contract')
   const artifactRpcContract =
-    artifactRpcContractIndex === -1 ? 'reservation' : argv[artifactRpcContractIndex + 1]
-  if (artifactRpcContract !== 'legacy' && artifactRpcContract !== 'reservation') {
-    throw new Error('Artifact RPC contract must be legacy or reservation.')
+    artifactRpcContractIndex === -1 ? 'save' : argv[artifactRpcContractIndex + 1]
+  if (
+    artifactRpcContract !== 'legacy' &&
+    artifactRpcContract !== 'reservation' &&
+    artifactRpcContract !== 'save'
+  ) {
+    throw new Error('Artifact RPC contract must be legacy, reservation, or save.')
   }
   const expectedMigrationCountIndex = argv.indexOf('--expected-migration-count')
   const expectedMigrationCountValue =
