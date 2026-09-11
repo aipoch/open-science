@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { ArtifactReproducibilityEnvironmentRequirement } from '../../shared/artifact-provenance'
 import type { NotebookEnvironmentLock } from '../../shared/notebook'
-import { micromambaCacheLockKey } from './micromamba-cache'
+import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
 import { withExclusiveCacheLock } from './pkgs-cache-lock'
 import type { NotebookSessionExecutor } from './session-aggregate'
 import {
@@ -457,7 +457,7 @@ describe('Notebook reproduction runtime', () => {
     ])
     const argv = runMicromamba.mock.calls[0]![0]
     expect(runMicromamba.mock.calls[0]![1]?.CONDA_PKGS_DIRS).toBe(
-      join(storageRoot, 'runtime', 'pkgs')
+      selectMicromambaCache(join(storageRoot, 'runtime')).path
     )
     expect(argv).toEqual(
       expect.arrayContaining([
