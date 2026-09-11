@@ -21,7 +21,7 @@ export type UpdateBlocker = 'agent' | 'delegated' | 'notebook' | 'reviewer' | 's
 // Call intent stays transient and transport-neutral. Desktop callers omit these options; headless
 // callers use them to avoid native dialogs and desktop relaunches.
 export type UpdateDownloadOptions = { nonInteractive?: boolean }
-export type UpdateApplyOptions = { relaunch?: boolean }
+export type UpdateApplyOptions = { relaunch?: boolean; force?: boolean }
 
 // The single status the main process broadcasts and the renderer store mirrors.
 export type UpdateStatus = {

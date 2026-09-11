@@ -5678,6 +5678,7 @@
     "Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.": "No se registraron los parámetros gráficos anteriores de circlize. Llame a circlize::circos.clear() antes de configurar y dibujar el gráfico y, después, vuelva a ejecutar la celda.",
     "Analysis rules: {{revision}}": "Reglas de análisis: {{revision}}",
     "Analysis rules were not recorded for this version.": "No se registraron las reglas de análisis de esta versión.",
-    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "Se registraron al crear esta versión del artefacto. Las actualizaciones posteriores del análisis no modifican estas evidencias de verificación."
+    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "Se registraron al crear esta versión del artefacto. Las actualizaciones posteriores del análisis no modifican estas evidencias de verificación.",
+    "Continue with force update": "Continuar con la actualización forzada"
   }
 }

@@ -5356,6 +5356,7 @@
     "Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.": "未擷取先前的 circlize 繪圖參數。請在設定及繪圖之前呼叫 circlize::circos.clear()，然後重新執行此儲存格。",
     "Analysis rules: {{revision}}": "分析規則：{{revision}}",
     "Analysis rules were not recorded for this version.": "此版本未記錄分析規則。",
-    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "記錄於建立此 Artifact 版本時。後續分析更新不會變更這些驗證證據。"
+    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "記錄於建立此 Artifact 版本時。後續分析更新不會變更這些驗證證據。",
+    "Continue with force update": "繼續強制更新"
   }
 }

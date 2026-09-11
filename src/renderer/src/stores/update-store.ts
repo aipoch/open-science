@@ -121,9 +121,9 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
     await acceptUpdateResponse(() => cancel())
   },
 
-  apply: async () => {
+  apply: async (options?: { force?: boolean }) => {
     const api = window.api?.update
     if (!api) return
-    await acceptUpdateResponse(() => api.apply())
+    await acceptUpdateResponse(() => api.apply(options))
   }
 }))

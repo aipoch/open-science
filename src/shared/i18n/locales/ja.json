@@ -5356,6 +5356,7 @@
     "Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.": "以前の circlize 描画パラメーターが記録されていません。設定と描画の前に circlize::circos.clear() を呼び出してから、セルを再実行してください。",
     "Analysis rules: {{revision}}": "解析ルール: {{revision}}",
     "Analysis rules were not recorded for this version.": "このバージョンの解析ルールは記録されていません。",
-    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "この Artifact バージョンの作成時に記録されました。その後の解析の更新によって、この検証の証拠が変更されることはありません。"
+    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "この Artifact バージョンの作成時に記録されました。その後の解析の更新によって、この検証の証拠が変更されることはありません。",
+    "Continue with force update": "強制更新を続行"
   }
 }
