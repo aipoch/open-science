@@ -628,6 +628,28 @@ type CodexAuthenticationSnapshot = Readonly<{
   providerRoute?: ImportedCodexProviderRoute
 }>
 
+export type CodexStoredAuthInspection =
+  { state: 'present' } | { state: 'missing' } | { state: 'invalid' } | { state: 'unreadable' }
+
+export const inspectAppOwnedCodexAuthentication = async (
+  storageRoot: string
+): Promise<CodexStoredAuthInspection> => {
+  try {
+    const content = await readFile(
+      join(codexSubscriptionStorageDir(storageRoot), 'auth.json'),
+      'utf8'
+    )
+    const parsed = JSON.parse(content) as unknown
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? { state: 'present' }
+      : { state: 'invalid' }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { state: 'missing' }
+    if (error instanceof SyntaxError) return { state: 'invalid' }
+    return { state: 'unreadable' }
+  }
+}
+
 const readCodexAuthenticationSnapshot = async (
   sourceHome: string,
   required: boolean

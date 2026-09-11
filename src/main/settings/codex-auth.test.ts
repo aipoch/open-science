@@ -13,6 +13,7 @@ import {
   createCodexAuthEnvironment,
   ensureCodexAuthHome,
   importCodexAuthentication,
+  inspectAppOwnedCodexAuthentication,
   projectSafeCodexProviderRoute,
   resolveEffectiveCodexSubscriptionTransport,
   type CodexAuthSession
@@ -34,6 +35,89 @@ const session = (overrides: Partial<CodexAuthSession> = {}): CodexAuthSession =>
 
 const autoTransportConfig = (prefix: string[] = []): string =>
   [...prefix, 'cli_auth_credentials_store = "file"', ''].join('\n')
+
+describe('inspectAppOwnedCodexAuthentication', () => {
+  it('reports a missing credential without creating the app-owned home', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-inspect-missing-'))
+    const home = codexSubscriptionStorageDir(root)
+    try {
+      await expect(inspectAppOwnedCodexAuthentication(root)).resolves.toEqual({ state: 'missing' })
+      expect(existsSync(home)).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reports a stored credential without changing auth or config files', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-inspect-present-'))
+    const home = codexSubscriptionStorageDir(root)
+    const authPath = join(home, 'auth.json')
+    const configPath = join(home, 'config.toml')
+    try {
+      await mkdir(home, { recursive: true })
+      await writeFile(authPath, '{"tokens":{"access_token":"secret"}}')
+      await writeFile(configPath, 'model = "account-default"\n')
+      const before = {
+        auth: await stat(authPath),
+        config: await stat(configPath)
+      }
+
+      await expect(inspectAppOwnedCodexAuthentication(root)).resolves.toEqual({ state: 'present' })
+
+      expect(await readFile(authPath, 'utf8')).toBe('{"tokens":{"access_token":"secret"}}')
+      expect(await readFile(configPath, 'utf8')).toBe('model = "account-default"\n')
+      expect(await stat(authPath)).toMatchObject({
+        mode: before.auth.mode,
+        size: before.auth.size,
+        mtimeMs: before.auth.mtimeMs
+      })
+      expect(await stat(configPath)).toMatchObject({
+        mode: before.config.mode,
+        size: before.config.size,
+        mtimeMs: before.config.mtimeMs
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reports malformed credentials without rewriting them or creating config.toml', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-inspect-invalid-'))
+    const home = codexSubscriptionStorageDir(root)
+    const authPath = join(home, 'auth.json')
+    const configPath = join(home, 'config.toml')
+    try {
+      await mkdir(home, { recursive: true })
+      await writeFile(authPath, '{not-json')
+      const before = await stat(authPath)
+
+      await expect(inspectAppOwnedCodexAuthentication(root)).resolves.toEqual({ state: 'invalid' })
+
+      expect(await readFile(authPath, 'utf8')).toBe('{not-json')
+      expect(await stat(authPath)).toMatchObject({
+        mode: before.mode,
+        size: before.size,
+        mtimeMs: before.mtimeMs
+      })
+      expect(existsSync(configPath)).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reports credential read failures without throwing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-inspect-unreadable-'))
+    const authPath = join(codexSubscriptionStorageDir(root), 'auth.json')
+    try {
+      await mkdir(authPath, { recursive: true })
+      await expect(inspectAppOwnedCodexAuthentication(root)).resolves.toEqual({
+        state: 'unreadable'
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})
 
 describe('resolveEffectiveCodexSubscriptionTransport', () => {
   it('retains learned HTTPS only while the preference is Auto', () => {

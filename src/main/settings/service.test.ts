@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import {
   chmod,
   mkdir,
@@ -31,6 +32,7 @@ import type { UserSkillRepository as UserSkillRepositoryType } from '../skills/u
 import type { SystemProxyEnvironment } from './system-proxy'
 import type { AgentBackendResolutionContext } from './backend-resolver'
 import type { Logger } from '../logger'
+import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import type { SettingsServiceOptions } from './service'
 import { SettingsInstallCoordinator } from './settings-install-coordinator'
 
@@ -2466,6 +2468,49 @@ describe('SettingsService: preflight & spawn config', () => {
     }
   })
 
+  it('returns structured Codex readiness without starting auth when the runtime is incomplete', async () => {
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    const authHome = codexSubscriptionStorageDir(storageRoot)
+    const authPath = join(authHome, 'auth.json')
+    const configPath = join(authHome, 'config.toml')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await mkdir(authHome, { recursive: true })
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    const authContent = JSON.stringify({
+      auth_mode: 'chatgpt',
+      tokens: {
+        id_token: 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0In0.signature',
+        access_token: 'app-owned',
+        refresh_token: 'refresh'
+      },
+      last_refresh: '2026-09-11T00:00:00Z'
+    })
+    await writeFile(authPath, authContent)
+    await writeFile(configPath, 'model = "account-default"\n')
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      managedCodexAdapterPath: adapterPath
+    })
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.6.2' })
+    await repository.setAgentFramework('codex')
+    await repository.upsertProvider({
+      id: CODEX_ISOLATED_PROVIDER_ID,
+      type: 'codex-isolated',
+      name: 'codex-isolated',
+      apiEndpoints: ['responses'],
+      lastValidatedAt: 100
+    })
+    await service.setActiveProvider(CODEX_ISOLATED_PROVIDER_ID, 'gpt-5.6-terra')
+
+    await expect(service.getPreflight()).resolves.toMatchObject({
+      runtimeReadiness: { status: 'not_ready' },
+      providerReadiness: { status: 'ready' }
+    })
+    expect(await readFile(adapterPath, 'utf8')).toBe(MANAGED_CODEX_ADAPTER_FIXTURE)
+    expect(await readFile(authPath, 'utf8')).toBe(authContent)
+    expect(await readFile(configPath, 'utf8')).toBe('model = "account-default"\n')
+  })
+
   it('detects Codex and exposes readiness for its selected adapter', async () => {
     const adapterPath = '/data/codex-managed/adapter/dist/index.js'
     const nativePath = '/data/codex-managed/codex/vendor/target/bin/codex'
@@ -2935,12 +2980,14 @@ describe('SettingsService: preflight & spawn config', () => {
       lastValidatedAt: 100
     })
     await service.setActiveProvider(CODEX_SHARED_PROVIDER_ID, 'gpt-5.6-terra')
+    const authHome = codexSubscriptionStorageDir(storageRoot)
 
     expect(await service.getPreflight()).toMatchObject({
       activeProviderReady: false,
       providerReadiness: { status: 'not_ready', reason: 'credential_invalid' }
     })
-    expect(codexAuth.getStatus).toHaveBeenCalledWith('isolated')
+    expect(codexAuth.getStatus).not.toHaveBeenCalled()
+    expect(existsSync(authHome)).toBe(false)
     const migratedProviders = (await repository.getSettings()).providers
 
     expect(migratedProviders).toEqual([
@@ -2995,6 +3042,9 @@ describe('SettingsService: preflight & spawn config', () => {
       lastValidatedAt: 100
     })
     await service.setActiveProvider(CODEX_ISOLATED_PROVIDER_ID, 'gpt-5.6-terra')
+    const authHome = codexSubscriptionStorageDir(storageRoot)
+    await mkdir(authHome, { recursive: true })
+    await writeFile(join(authHome, 'auth.json'), '{"tokens":{"access_token":"app-owned"}}')
     const configPath = join(storageRoot, 'codex', 'config.toml')
     await mkdir(dirname(configPath), { recursive: true })
     await writeFile(
