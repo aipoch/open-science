@@ -53,6 +53,40 @@ const readBinding = async (
 }
 
 describe('EnvironmentStateTracker', () => {
+  it.each(['python', 'r'] as const)(
+    'cancels a running fresh %s metadata subprocess',
+    async (language) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'cancel-package-inspection-'))
+      const ready = join(dataRoot, 'ready')
+      const tracker = new EnvironmentStateTracker({ dataRoot })
+      const controller = new AbortController()
+      const pending = tracker.inspectPackages(
+        {
+          ...target,
+          language,
+          runtimeSource: 'managed',
+          condaPrefix: dataRoot,
+          command: process.execPath,
+          args: [
+            '-e',
+            `require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready'); setInterval(() => {}, 1000)`,
+            '--'
+          ]
+        },
+        ['numpy'],
+        { fresh: true, signal: controller.signal }
+      )
+      const rejection = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+      try {
+        await vi.waitFor(async () => expect(await readFile(ready, 'utf8')).toBe('ready'))
+      } finally {
+        controller.abort()
+      }
+      await rejection
+      expect(await readdir(dataRoot)).toEqual(['ready'])
+    }
+  )
+
   it.each(['win32', 'darwin', 'linux'] as const)(
     'isolates fresh managed Python/R metadata from host libraries on %s',
     async (platform) => {

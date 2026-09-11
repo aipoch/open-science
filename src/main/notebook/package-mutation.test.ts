@@ -252,10 +252,13 @@ describe('NotebookPackageMutationOwner', () => {
   it('honors cancellation after the metadata probe without starting an installer', async () => {
     const { owner, options, target } = ownerHarness()
     const controller = new AbortController()
-    vi.mocked(options.environmentStateTracker.inspectPackages).mockImplementation(async () => {
-      controller.abort(new Error('cancelled during probe'))
-      throw new Error('probe failed')
-    })
+    vi.mocked(options.environmentStateTracker.inspectPackages).mockImplementation(
+      async (_target, _packages, probeOptions) => {
+        expect(probeOptions?.signal).toBe(controller.signal)
+        controller.abort(new Error('cancelled during probe'))
+        throw new Error('probe failed')
+      }
+    )
     await expect(owner.mutate({ target, mirror: {} }, controller.signal)).rejects.toThrow(
       'cancelled during probe'
     )

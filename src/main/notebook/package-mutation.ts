@@ -74,7 +74,8 @@ class NotebookPackageMutationOwner {
   constructor(private readonly options: NotebookPackageMutationOwnerOptions) {}
 
   private async alreadySatisfied(
-    target: NotebookPackageAdmittedTarget
+    target: NotebookPackageAdmittedTarget,
+    signal?: AbortSignal
   ): Promise<InstallResult | undefined> {
     const { request, environmentCaptureTarget } = target
     if (
@@ -86,6 +87,8 @@ class NotebookPackageMutationOwner {
       (request.language === 'r' && request.usePip)
     )
       return undefined
+    // Deliberately optimize only literal numeric pins. Equivalent spellings and richer version
+    // syntax remain installer decisions; a missed shortcut is preferable to a false success.
     const specPattern =
       request.language === 'python'
         ? /^[A-Za-z0-9][A-Za-z0-9._-]*(?:==[0-9]+(?:\.[0-9]+)*)?$/u
@@ -95,7 +98,7 @@ class NotebookPackageMutationOwner {
       const inspection = await this.options.environmentStateTracker.inspectPackages(
         environmentCaptureTarget,
         request.packages,
-        { fresh: true }
+        { fresh: true, ...(signal ? { signal } : {}) }
       )
       if (
         inspection.inventory.validation !== 'full-scan' ||
@@ -176,7 +179,7 @@ class NotebookPackageMutationOwner {
             return result
           }
           result = this.options.canSkipInstall(target)
-            ? await this.alreadySatisfied(target)
+            ? await this.alreadySatisfied(target, signal)
             : undefined
           signal?.throwIfAborted()
           if (result) return result

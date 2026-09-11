@@ -26,7 +26,7 @@ import { EnvironmentLockCaptureOwner, type EnvironmentLockWorkspace } from './en
 type EnvironmentExecFile = (
   command: string,
   args: string[],
-  options: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv }
+  options: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv; signal?: AbortSignal }
 ) => Promise<{ stdout: string; stderr?: string }>
 
 const execFileAsync = promisify(execFile) as EnvironmentExecFile
@@ -869,7 +869,8 @@ const inspectInstalledDefault = async (
   target: EnvironmentCaptureTarget,
   platform: NodeJS.Platform = process.platform,
   execute: EnvironmentExecFile = execFileAsync,
-  managedRoot?: string
+  managedRoot?: string,
+  signal?: AbortSignal
 ): Promise<InstalledEnvironmentInventory> => {
   if (managedRoot && !target.condaPrefix)
     throw new Error('Managed package inspection requires its prefix.')
@@ -880,6 +881,7 @@ const inspectInstalledDefault = async (
       : ['--vanilla', '--slave', '-e', R_INVENTORY_SCRIPT])
   ]
   const { stdout } = await execute(target.command, args, {
+    ...(signal ? { signal } : {}),
     timeout: INSPECTION_TIMEOUT_MS,
     maxBuffer: 16 * 1024 * 1024,
     env: environmentCaptureProcessEnv(
@@ -924,7 +926,8 @@ const captureFingerprintDefault = async (
 class EnvironmentStateTracker {
   private readonly inspectInstalled: (
     target: EnvironmentCaptureTarget,
-    fresh?: boolean
+    fresh?: boolean,
+    signal?: AbortSignal
   ) => Promise<InstalledEnvironmentInventory>
   private readonly captureFingerprint: (
     target: EnvironmentCaptureTarget
@@ -944,12 +947,13 @@ class EnvironmentStateTracker {
     this.execute = execute
     this.inspectInstalled =
       options.inspectInstalled ??
-      ((target, fresh) =>
+      ((target, fresh, signal) =>
         inspectInstalledDefault(
           target,
           this.platform,
           execute,
-          fresh && target.runtimeSource === 'managed' ? runtimeRoot(options.dataRoot) : undefined
+          fresh && target.runtimeSource === 'managed' ? runtimeRoot(options.dataRoot) : undefined,
+          signal
         ))
     this.captureFingerprint =
       options.captureFingerprint ??
@@ -964,12 +968,13 @@ class EnvironmentStateTracker {
   async inspectPackages(
     target: EnvironmentCaptureTarget,
     requestedPackages: string[],
-    options?: { fresh?: boolean }
+    options?: { fresh?: boolean; signal?: AbortSignal }
   ): Promise<PackageInspectionResult> {
     if (options?.fresh) {
       // Installation preflight needs current evidence, without publishing a mutation or lock.
       return this.serializeTarget(target, async () => {
-        const inventory = await this.inspectInstalled(target, true)
+        options.signal?.throwIfAborted()
+        const inventory = await this.inspectInstalled(target, true, options.signal)
         const packages = sortPackages(inventory.packages)
         const lookup = requestedPackageIndex(target.language, packages)
         return {
