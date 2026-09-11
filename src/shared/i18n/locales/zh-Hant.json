@@ -5357,6 +5357,7 @@
     "Analysis rules: {{revision}}": "分析規則：{{revision}}",
     "Analysis rules were not recorded for this version.": "此版本未記錄分析規則。",
     "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "記錄於建立此 Artifact 版本時。後續分析更新不會變更這些驗證證據。",
-    "Continue with force update": "繼續強制更新"
+    "Continue with force update": "繼續強制更新",
+    "Force update will interrupt active tasks and may lose unsaved work. Continue?": "強制更新會中斷正在執行的工作，並可能遺失未儲存的內容。是否繼續？"
   }
 }

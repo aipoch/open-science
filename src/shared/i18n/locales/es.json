@@ -5679,6 +5679,7 @@
     "Analysis rules: {{revision}}": "Reglas de análisis: {{revision}}",
     "Analysis rules were not recorded for this version.": "No se registraron las reglas de análisis de esta versión.",
     "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "Se registraron al crear esta versión del artefacto. Las actualizaciones posteriores del análisis no modifican estas evidencias de verificación.",
-    "Continue with force update": "Continuar con la actualización forzada"
+    "Continue with force update": "Continuar con la actualización forzada",
+    "Force update will interrupt active tasks and may lose unsaved work. Continue?": "La actualización forzada interrumpirá las tareas activas y puede perder trabajo no guardado. ¿Continuar?"
   }
 }

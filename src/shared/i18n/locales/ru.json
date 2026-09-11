@@ -5815,6 +5815,7 @@
     "Analysis rules: {{revision}}": "Правила анализа: {{revision}}",
     "Analysis rules were not recorded for this version.": "Правила анализа для этой версии не записаны.",
     "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "Записано при создании этой версии артефакта. Последующие обновления анализа не изменяют эти свидетельства проверки.",
-    "Continue with force update": "Продолжить принудительное обновление"
+    "Continue with force update": "Продолжить принудительное обновление",
+    "Force update will interrupt active tasks and may lose unsaved work. Continue?": "Принудительное обновление прервет активные задачи и может привести к потере несохраненной работы. Продолжить?"
   }
 }

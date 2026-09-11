@@ -56,7 +56,15 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
   const isBackgroundProcessError =
     dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_ERROR ||
     dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
-  const forceUpdate = (): void => void apply({ force: true })
+  const forceUpdate = (): void => {
+    if (
+      window.confirm(
+        t('Force update will interrupt active tasks and may lose unsaved work. Continue?')
+      )
+    ) {
+      void apply({ force: true })
+    }
+  }
   const activeLanguage = i18n.resolvedLanguage ?? i18n.language
   const locale = isLocale(activeLanguage) ? activeLanguage : 'en'
   const localizedNotes = locale === 'en' ? undefined : dialogStatus?.localizedNotes?.[locale]

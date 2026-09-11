@@ -5514,6 +5514,7 @@
     "Analysis rules: {{revision}}": "Analyseregeln: {{revision}}",
     "Analysis rules were not recorded for this version.": "Für diese Version wurden keine Analyseregeln aufgezeichnet.",
     "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "Bei der Erstellung dieser Artefaktversion aufgezeichnet. Spätere Analyseaktualisierungen ändern diese Verifizierungsnachweise nicht.",
-    "Continue with force update": "Mit erzwungenem Update fortfahren"
+    "Continue with force update": "Mit erzwungenem Update fortfahren",
+    "Force update will interrupt active tasks and may lose unsaved work. Continue?": "Das Erzwingen des Updates unterbricht aktive Aufgaben und kann nicht gespeicherte Arbeit verlieren. Fortfahren?"
   }
 }
