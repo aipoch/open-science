@@ -16,10 +16,11 @@ vi.mock('node:child_process', async (importOriginal) => {
       args: readonly string[],
       options: unknown,
       callback: (error: Error) => void
-    ) =>
-      callback(
-        Object.assign(new Error(`spawn ${command} ENOENT`), { code: 'ENOENT' })
-      )) as typeof actual.execFile,
+    ) => {
+      void args
+      void options
+      callback(Object.assign(new Error(`spawn ${command} ENOENT`), { code: 'ENOENT' }))
+    }) as typeof actual.execFile,
     spawn: (command: string, args: readonly string[], options: SpawnOptions) =>
       actual.spawn(command, args, {
         ...options,
