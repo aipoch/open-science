@@ -53,6 +53,94 @@ const readBinding = async (
 }
 
 describe('EnvironmentStateTracker', () => {
+  it.each(['python', 'r'] as const)(
+    'fresh %s inspection bypasses cache and does not publish state',
+    async (language) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'fresh-package-inspection-'))
+      const name = language === 'python' ? 'scikit-learn' : 'R.utils'
+      const requested = language === 'python' ? 'scikit_learn' : name
+      const inspectInstalled = vi.fn().mockResolvedValue({
+        packages: [
+          {
+            name,
+            ecosystem: language,
+            version: '1.0',
+            versionStatus: 'known',
+            evidenceSources: []
+          }
+        ]
+      })
+      const captureFingerprint = vi.fn()
+      const resolveMicromamba = vi.fn()
+      const tracker = new EnvironmentStateTracker({
+        dataRoot,
+        inspectInstalled,
+        captureFingerprint,
+        resolveMicromamba
+      })
+      const capture = { ...target, language, runtimeSource: 'managed' as const }
+      expect(
+        (await tracker.inspectPackages(capture, [requested], { fresh: true })).packages[0]
+      ).toMatchObject({ status: 'installed', version: '1.0' })
+      inspectInstalled.mockResolvedValue({ packages: [] })
+      expect(
+        (await tracker.inspectPackages(capture, [requested], { fresh: true })).packages[0].status
+      ).toBe('missing')
+      expect(inspectInstalled).toHaveBeenCalledTimes(2)
+      expect(captureFingerprint).not.toHaveBeenCalled()
+      expect(resolveMicromamba).not.toHaveBeenCalled()
+      expect(await readdir(dataRoot)).toEqual([])
+    }
+  )
+
+  it('does not certify conflicting Python distribution versions', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'ambiguous-python-inspection-'))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: async () => ({
+        packages: ['1.0', '2.0'].map((version) => ({
+          name: 'numpy',
+          version,
+          versionStatus: 'known' as const,
+          ecosystem: 'python' as const,
+          evidenceSources: []
+        }))
+      })
+    })
+    expect(
+      (await tracker.inspectPackages(target, ['numpy==2.0'], { fresh: true })).packages[0].status
+    ).toBe('unknown')
+  })
+
+  it('uses exact R names and the first library rank during fresh inspection', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'ranked-r-inspection-'))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: async () => ({
+        packages: [2, 1].map((libraryRank) => ({
+          name: 'R.utils',
+          version: `${libraryRank}.0`,
+          libraryRank,
+          versionStatus: 'known' as const,
+          ecosystem: 'r' as const,
+          evidenceSources: []
+        }))
+      })
+    })
+    const result = await tracker.inspectPackages(
+      { ...target, language: 'r' },
+      ['R.utils', 'r.utils', 'R-utils'],
+      { fresh: true }
+    )
+    expect(result.packages[0]).toMatchObject({
+      status: 'installed',
+      version: '1.0',
+      libraryRank: 1
+    })
+    expect(result.packages[1].status).toBe('missing')
+    expect(result.packages[2].status).toBe('missing')
+  })
+
   it.each([
     { language: 'r', requested: 'org.Hs.eg.db', names: ['org.Hs.eg.db'], matched: true },
     { language: 'r', requested: 'org.hs.eg.db', names: ['org.Hs.eg.db'], matched: false },

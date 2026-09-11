@@ -37,7 +37,7 @@ const isArchiveEvidenceIncompleteError = (error: unknown): boolean =>
 
 type NotebookPackageMutationInput = Readonly<{
   target: NotebookPackageAdmittedTarget
-  mirror: PackageMirror
+  mirror: PackageMirror | (() => Promise<PackageMirror>)
 }>
 
 type NotebookPackageMutationOwnerOptions = {
@@ -49,7 +49,7 @@ type NotebookPackageMutationOwnerOptions = {
   >
   environmentStateTracker: Pick<
     EnvironmentStateTracker,
-    'markPackageMutationDirty' | 'refreshAfterPackageMutation'
+    'inspectPackages' | 'markPackageMutationDirty' | 'refreshAfterPackageMutation'
   >
   installPackages: (
     request: NotebookPackageAdmittedTarget['request'],
@@ -57,6 +57,7 @@ type NotebookPackageMutationOwnerOptions = {
   ) => Promise<InstallResult>
   packageSpawn?: (target: NotebookPackageAdmittedTarget, mirror: PackageMirror) => InstallSpawn
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
+  canSkipInstall: (target: NotebookPackageAdmittedTarget) => boolean
   recheckRepair: (
     target: NotebookPackageAdmittedTarget
   ) => Extract<NotebookPackageAdmission, { status: 'refused' }> | undefined
@@ -72,8 +73,69 @@ type NotebookPackageMutationOwnerOptions = {
 class NotebookPackageMutationOwner {
   constructor(private readonly options: NotebookPackageMutationOwnerOptions) {}
 
+  private async alreadySatisfied(
+    target: NotebookPackageAdmittedTarget
+  ): Promise<InstallResult | undefined> {
+    const { request, environmentCaptureTarget } = target
+    if (
+      environmentCaptureTarget.runtimeSource !== 'managed' ||
+      request.operation === 'uninstall' ||
+      request.installer ||
+      request.channels?.length ||
+      request.packages.length === 0 ||
+      (request.language === 'r' && request.usePip)
+    )
+      return undefined
+    const specPattern =
+      request.language === 'python'
+        ? /^[A-Za-z0-9][A-Za-z0-9._-]*(?:==[0-9]+(?:\.[0-9]+)*)?$/u
+        : /^[A-Za-z][A-Za-z0-9.]*$/u
+    if (request.packages.some((spec) => !specPattern.test(spec))) return undefined
+    try {
+      const inspection = await this.options.environmentStateTracker.inspectPackages(
+        environmentCaptureTarget,
+        request.packages,
+        { fresh: true }
+      )
+      if (
+        inspection.inventory.validation !== 'full-scan' ||
+        inspection.packages.length !== request.packages.length ||
+        inspection.packages.some((pkg, index) => {
+          const exact = request.packages[index].split('==')[1]
+          return (
+            pkg.requested !== request.packages[index] ||
+            pkg.status !== 'installed' ||
+            pkg.versionStatus !== 'known' ||
+            !pkg.version ||
+            (exact !== undefined && pkg.version !== exact)
+          )
+        })
+      )
+        return undefined
+      return {
+        ok: true,
+        needsRestart: false,
+        attempts: [],
+        log: 'Requested packages are already installed at satisfactory versions.',
+        packageChanges: inspection.packages.map((pkg) => ({
+          name: pkg.name,
+          ecosystem: request.language,
+          relationship: 'requested',
+          change: 'unchanged',
+          beforeVersion: pkg.version,
+          afterVersion: pkg.version,
+          ...(pkg.libraryRank !== undefined ? { libraryRank: pkg.libraryRank } : {}),
+          ...(pkg.libraryScope ? { libraryScope: pkg.libraryScope } : {})
+        }))
+      }
+    } catch {
+      // Metadata failure must leave the installer available to repair a missing/broken package.
+      return undefined
+    }
+  }
+
   async mutate(
-    { target, mirror }: NotebookPackageMutationInput,
+    { target, mirror: requestedMirror }: NotebookPackageMutationInput,
     signal?: AbortSignal
   ): Promise<InstallResult> {
     const {
@@ -93,9 +155,7 @@ class NotebookPackageMutationOwner {
       this.options.retainWorkingCache !== undefined &&
       request.usePip !== true &&
       request.installer === undefined
-    const releaseWorkingCache = archiveCacheTransaction
-      ? await this.options.retainWorkingCache?.(runtimeRoot, operationId)
-      : undefined
+    let releaseWorkingCache: Awaited<ReturnType<MicromambaWorkingCacheRetainer>> | undefined
     let result: InstallResult | undefined
     let retainForRecovery = false
     let begun = false
@@ -114,6 +174,17 @@ class NotebookPackageMutationOwner {
             result = repairRefusal.result
             return result
           }
+          result = this.options.canSkipInstall(target)
+            ? await this.alreadySatisfied(target)
+            : undefined
+          signal?.throwIfAborted()
+          if (result) return result
+          const mirror =
+            typeof requestedMirror === 'function' ? await requestedMirror() : requestedMirror
+          signal?.throwIfAborted()
+          releaseWorkingCache = archiveCacheTransaction
+            ? await this.options.retainWorkingCache?.(runtimeRoot, operationId)
+            : undefined
           await journal.begin({
             operationId,
             kind: 'install',
@@ -425,7 +496,7 @@ class NotebookPackageMutationOwner {
       }
     }
     if (!result) throw new Error('package mutation completed without an installer result')
-    if (result.ok) await this.options.runtimeRepair.completeInterruptedInstall(target)
+    if (begun && result.ok) await this.options.runtimeRepair.completeInterruptedInstall(target)
     return result
   }
 }

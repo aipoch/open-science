@@ -208,6 +208,69 @@ describe('WorkspaceActivityGroup i18n', () => {
     expect(container.textContent).not.toContain('manage_packages()')
   })
 
+  it.each(['python', 'r'] as const)(
+    'does not invent an installer for satisfied %s packages',
+    (language) => {
+      const name = language === 'python' ? 'numpy' : 'ggplot2'
+      act(() => {
+        root.render(
+          <WorkspaceActivityGroup
+            group={{
+              id: 'satisfied-group',
+              type: 'activity-group',
+              createdAt: 1,
+              sortIndex: 1,
+              activities: [
+                {
+                  id: 'satisfied',
+                  kind: 'tool',
+                  title: 'open-science-notebook.manage_packages',
+                  status: 'completed',
+                  eventIds: [],
+                  sortIndex: 1,
+                  createdAt: 1,
+                  updatedAt: 100,
+                  rawInput: { language, packages: [name] },
+                  rawOutput: {
+                    structuredContent: {
+                      ok: true,
+                      needsRestart: false,
+                      attempts: [],
+                      environmentName: 'analysis',
+                      packageChanges: [
+                        {
+                          name,
+                          relationship: 'requested',
+                          change: 'unchanged',
+                          afterVersion: '2.0'
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }}
+            isExpanded={true}
+            onToggleGroup={vi.fn()}
+            expansionOverrides={{ satisfied: true }}
+            onToggleRow={vi.fn()}
+          />
+        )
+      })
+      expect(container.textContent).toContain(
+        language === 'python' ? 'Python · analysis' : 'R · analysis'
+      )
+      expect(container.textContent).not.toContain('conda')
+      expect(container.textContent).not.toContain('kernel restart')
+      expect(
+        container.querySelector('[data-testid="manage-packages-package-status"]')?.textContent
+      ).toBe('Unchanged')
+      expect(
+        container.querySelector('[data-testid="manage-packages-package-version"]')?.textContent
+      ).toBe('2.0')
+    }
+  )
+
   it('shows the version transition for an updated package', () => {
     act(() => {
       root.render(

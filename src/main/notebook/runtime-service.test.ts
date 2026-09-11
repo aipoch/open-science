@@ -10583,7 +10583,7 @@ describe('notebook runtime service', () => {
       expect(calls[0][1]?.spawn).toBeTypeOf('function')
     })
 
-    it('resolves the mirror before returning a package admission refusal', async () => {
+    it('does not resolve a mirror for a package admission refusal', async () => {
       const root = await createStorageRoot()
       const probe = vi.fn(async () => {
         throw new Error('probe unreachable (test)')
@@ -10604,7 +10604,7 @@ describe('notebook runtime service', () => {
         sessionId: 'unloaded-session'
       })
 
-      expect(probe).toHaveBeenCalled()
+      expect(probe).not.toHaveBeenCalled()
       expect(result.error).toContain('RUNTIME_SESSION_UNAVAILABLE')
       expect(result.target).toEqual({ language: 'python', selection: 'unresolved' })
     })
@@ -14392,6 +14392,7 @@ describe('v4 runtime bindings & agent tools', () => {
     repairRegistryKeys
       .mockReturnValueOnce([DEFAULT_PY_ENV, managedRepairRegistryKey(DEFAULT_PY_ENV, 'python')])
       .mockReturnValueOnce([DEFAULT_PY_ENV, managedRepairRegistryKey(DEFAULT_PY_ENV, 'python')])
+      .mockReturnValueOnce([DEFAULT_PY_ENV, managedRepairRegistryKey(DEFAULT_PY_ENV, 'python')])
       .mockReturnValueOnce([
         DEFAULT_PY_ENV,
         managedRepairRegistryKey(DEFAULT_PY_ENV, 'python'),
@@ -14401,7 +14402,7 @@ describe('v4 runtime bindings & agent tools', () => {
     const result = await service.managePackages({ language: 'python', packages: ['numpy'] })
 
     expect(result.ok).toBe(true)
-    expect(repairRegistryKeys).toHaveBeenCalledTimes(3)
+    expect(repairRegistryKeys).toHaveBeenCalledTimes(4)
     expect(isRepairRequired(runtimeRoot, postInstallAlias)).toBe(false)
   })
 

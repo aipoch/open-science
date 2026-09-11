@@ -942,8 +942,31 @@ class EnvironmentStateTracker {
 
   async inspectPackages(
     target: EnvironmentCaptureTarget,
-    requestedPackages: string[]
+    requestedPackages: string[],
+    options?: { fresh?: boolean }
   ): Promise<PackageInspectionResult> {
+    if (options?.fresh) {
+      // Installation preflight needs current evidence, without publishing a mutation or lock.
+      return this.serializeTarget(target, async () => {
+        const inventory = await this.inspectInstalled(target)
+        const packages = sortPackages(inventory.packages)
+        const lookup = requestedPackageIndex(target.language, packages)
+        return {
+          inventory: { source: 'full-scan', validation: 'full-scan' },
+          packages: requestedPackages.map((requested) => {
+            const inspected = inspectRequestedPackage(target, requested, packages, lookup)
+            const candidates = lookup(requested)
+            // Multiple Python distributions with different versions cannot prove satisfaction.
+            if (
+              target.language === 'python' &&
+              candidates.some((pkg) => pkg.version !== inspected.version)
+            )
+              return { ...inspected, status: 'unknown' as const }
+            return inspected
+          })
+        }
+      })
+    }
     const prepared = await this.prepareRun(target)
     return this.serializeTarget(target, async () => {
       const cache = await this.readBinding(target)

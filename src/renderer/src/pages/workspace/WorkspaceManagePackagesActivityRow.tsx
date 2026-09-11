@@ -208,8 +208,16 @@ const WorkspaceManagePackagesActivityRow = ({
     .filter((detail) => detail.name)
   const languageLabel =
     input?.language === 'r' ? 'R' : input?.language === 'python' ? 'Python' : null
-  const installer =
-    typeof result?.method === 'string' && result.method.trim()
+  const noInstallerNeeded =
+    result?.ok === true &&
+    !result.method &&
+    Array.isArray(result.attempts) &&
+    result.attempts.length === 0 &&
+    packageChanges.length > 0 &&
+    packageChanges.every((change) => change.change === 'unchanged')
+  const installer = noInstallerNeeded
+    ? null
+    : typeof result?.method === 'string' && result.method.trim()
       ? result.method === 'biocmanager'
         ? t('Bioconductor')
         : result.method === 'github'
