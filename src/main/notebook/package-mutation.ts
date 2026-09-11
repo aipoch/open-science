@@ -82,9 +82,9 @@ class NotebookPackageMutationOwner {
       environmentCaptureTarget.runtimeSource !== 'managed' ||
       request.operation === 'uninstall' ||
       request.installer ||
+      request.usePip === true ||
       request.channels?.length ||
-      request.packages.length === 0 ||
-      (request.language === 'r' && request.usePip)
+      request.packages.length === 0
     )
       return undefined
     // Deliberately optimize only literal numeric pins. Equivalent spellings and richer version

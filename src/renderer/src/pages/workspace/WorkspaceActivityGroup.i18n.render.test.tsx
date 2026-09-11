@@ -208,9 +208,14 @@ describe('WorkspaceActivityGroup i18n', () => {
     expect(container.textContent).not.toContain('manage_packages()')
   })
 
-  it.each(['python', 'r'] as const)(
-    'does not invent an installer for satisfied %s packages',
-    (language) => {
+  it.each([
+    ['python', false],
+    ['python', true],
+    ['r', false],
+    ['r', true]
+  ] as const)(
+    'does not invent an installer for satisfied %s packages (compacted: %s)',
+    (language, compacted) => {
       const name = language === 'python' ? 'numpy' : 'ggplot2'
       act(() => {
         root.render(
@@ -235,7 +240,7 @@ describe('WorkspaceActivityGroup i18n', () => {
                     structuredContent: {
                       ok: true,
                       needsRestart: false,
-                      attempts: [],
+                      ...(compacted ? {} : { attempts: [] }),
                       environmentName: 'analysis',
                       packageChanges: [
                         {

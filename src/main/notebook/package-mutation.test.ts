@@ -235,6 +235,7 @@ describe('NotebookPackageMutationOwner', () => {
     { packages: ['--force-reinstall'] },
     { packages: [] },
     { channels: ['bioconda'] },
+    { language: 'python' as const, usePip: true },
     { operation: 'uninstall' as const },
     { language: 'r' as const, packages: ['r-ggplot2'] },
     { language: 'r' as const, packages: ['bioconductor-deseq2'] },
