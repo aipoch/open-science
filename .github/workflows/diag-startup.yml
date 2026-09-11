@@ -26,6 +26,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Prune foreign Prisma engines
+        shell: bash
+        run: |
+          keep='windows.dll'
+          found=0
+          for f in node_modules/.prisma/client/*query_engine-*; do
+            [ -e "$f" ] || continue
+            case "$f" in
+              *"$keep"*) found=1 ;;
+              *) echo "pruning $(basename "$f")"; rm -f "$f" ;;
+            esac
+          done
+          [ "$found" = 1 ] || { echo "::error::no Prisma engine matching '$keep' was generated"; exit 1; }
+
       - name: Stage notebook runtime resources
         shell: bash
         run: |
