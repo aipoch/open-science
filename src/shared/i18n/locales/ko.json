@@ -5759,6 +5759,25 @@
     "Disable": "비활성화",
     "Delete…": "삭제…",
     "Install…": "설치…",
-    "Update…": "업데이트…"
+    "Update…": "업데이트…",
+    "Intelligence": "인텔리전스",
+    "Connections": "연결",
+    "Search settings": "설정 검색",
+    "No matching settings": "일치하는 설정이 없습니다",
+    "Settings could not be saved": "설정을 저장할 수 없습니다",
+    "Create and reorder tags, then browse everything attached to each tag.": "태그를 생성하고 재정렬한 뒤 각 태그에 연결된 모든 항목을 살펴보세요.",
+    "Appearance, notifications, diagnostics, and community links for this device.": "이 기기의 외관, 알림, 진단 및 커뮤니티 링크입니다.",
+    "Could not save reasoning effort. Try again.": "추론 강도를 저장할 수 없습니다. 다시 시도하세요.",
+    "Could not save Session details model. Refresh the model catalog and try again.": "세션 세부 정보 모델을 저장할 수 없습니다. 모델 카탈로그를 새로 고치고 다시 시도하세요.",
+    "Could not save Reviewer model. Refresh the model catalog and try again.": "리뷰어 모델을 저장할 수 없습니다. 모델 카탈로그를 새로 고치고 다시 시도하세요.",
+    "Could not save Subagent model. Refresh the model catalog and try again.": "서브에이전트 모델을 저장할 수 없습니다. 모델 카탈로그를 새로 고치고 다시 시도하세요.",
+    "Could not save notification preference. Try again.": "알림 설정을 저장할 수 없습니다. 다시 시도하세요.",
+    "Could not save conversation Skill import preference. Try again.": "대화 스킬 가져오기 설정을 저장할 수 없습니다. 다시 시도하세요.",
+    "Could not save window close preference. Try again.": "창 닫기 동작 설정을 저장할 수 없습니다. 다시 시도하세요.",
+    "Could not save app icon preference. Try again.": "앱 아이콘 설정을 저장할 수 없습니다. 다시 시도하세요.",
+    "Could not save files filter preference. Try again.": "파일 필터 설정을 저장할 수 없습니다. 다시 시도하세요.",
+    "Could not save the default permission mode. Try again.": "기본 권한 모드를 저장할 수 없습니다. 다시 시도하세요.",
+    "Could not switch active provider or model. Try again.": "사용 중인 모델 제공업체 또는 모델을 전환할 수 없습니다. 다시 시도하세요.",
+    "Could not switch agent framework. Try again.": "에이전트 프레임워크를 전환할 수 없습니다. 다시 시도하세요."
   }
 }

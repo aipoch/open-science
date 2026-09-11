@@ -23,6 +23,7 @@ import type {
 import { AppIconSection } from './AppIconSection'
 import { AppVersionSection } from './AppVersionSection'
 import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
+import { SettingsPanelHeader } from './SettingsPanelHeader'
 
 // Community entry links (Discord, X) share the GitHub badge's compact look so the row reads as one
 // set of "connect with the project" actions.
@@ -231,6 +232,12 @@ const GeneralPanel = (): React.JSX.Element => {
 
   return (
     <div className="space-y-5 p-5">
+      <SettingsPanelHeader
+        title={t('General')}
+        description={t(
+          'Appearance, notifications, diagnostics, and community links for this device.'
+        )}
+      />
       <AppVersionSection />
 
       <SettingsSection
