@@ -3053,7 +3053,18 @@ describe('SettingsService: preflight & spawn config', () => {
     await service.setActiveProvider(CODEX_ISOLATED_PROVIDER_ID, 'gpt-5.6-terra')
     const authHome = codexSubscriptionStorageDir(storageRoot)
     await mkdir(authHome, { recursive: true })
-    await writeFile(join(authHome, 'auth.json'), '{"tokens":{"access_token":"app-owned"}}')
+    await writeFile(
+      join(authHome, 'auth.json'),
+      JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: {
+          id_token: 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0In0.signature',
+          access_token: 'app-owned',
+          refresh_token: 'refresh'
+        },
+        last_refresh: '2026-09-11T00:00:00Z'
+      })
+    )
     const configPath = join(storageRoot, 'codex', 'config.toml')
     await mkdir(dirname(configPath), { recursive: true })
     await writeFile(
