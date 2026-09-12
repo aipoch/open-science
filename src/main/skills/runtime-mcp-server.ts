@@ -134,16 +134,12 @@ const readSkillRuntimeCatalog = async (
   const discoveryBudget = MAX_SKILL_CATALOG_SCHEMA_BYTES - SKILL_CATALOG_SCHEMA_RESERVED_BYTES
   let catalogBytes = 0
   for (const entry of entries) {
-    const name = entry.name
-    if (
-      !SAFE_PROJECTED_SKILL_NAME.test(name) ||
-      name.includes('..') ||
-      (environment.allowedNames && !environment.allowedNames.has(name))
-    ) {
+    const directoryName = entry.name
+    if (!SAFE_PROJECTED_SKILL_NAME.test(directoryName) || directoryName.includes('..')) {
       continue
     }
 
-    const skillDir = join(skillsDir, name)
+    const skillDir = join(skillsDir, directoryName)
     const skillMetadata = await lstat(skillDir)
     if (skillMetadata.isSymbolicLink() || !skillMetadata.isDirectory()) continue
     const documentPath = join(skillDir, 'SKILL.md')
@@ -160,7 +156,13 @@ const readSkillRuntimeCatalog = async (
     const { fields } = parseFrontmatter(
       await readSkillCatalogFrontmatter(documentPath, documentMetadata.size)
     )
-    if (fields.name !== name || fields['disable-model-invocation']?.toLowerCase() === 'true') {
+    const name = fields.name
+    if (
+      !SAFE_PROJECTED_SKILL_NAME.test(name) ||
+      (environment.allowedNames && !environment.allowedNames.has(name)) ||
+      fields['disable-model-invocation']?.toLowerCase() === 'true' ||
+      (directoryName !== name && !directoryName.startsWith('os-'))
+    ) {
       continue
     }
     const description = (fields.description ?? '')
@@ -275,16 +277,39 @@ const readSkillDocument = async (
 
   try {
     const skillsDir = await skillCatalogDirectory(environment)
-    const skillDir = join(skillsDir, name)
-    await requireRealDirectory(skillDir, 'Skill package')
-    const documentPath = join(skillDir, 'SKILL.md')
-    const documentMetadata = await lstat(documentPath)
-    if (documentMetadata.isSymbolicLink() || !documentMetadata.isFile()) {
-      throw new Error('Skill document is not a regular file.')
+    const candidates = [name, ...(await readdir(skillsDir))]
+    let skillDir: string | undefined
+    let documentPath: string | undefined
+    let documentMetadata: Awaited<ReturnType<typeof lstat>> | undefined
+    for (const directoryName of [...new Set(candidates)]) {
+      if (!SAFE_PROJECTED_SKILL_NAME.test(directoryName) || directoryName.includes('..')) continue
+      const candidateDir = join(skillsDir, directoryName)
+      try {
+        await requireRealDirectory(candidateDir, 'Skill package')
+        const candidatePath = join(candidateDir, 'SKILL.md')
+        const candidateMetadata = await lstat(candidatePath)
+        if (
+          candidateMetadata.isSymbolicLink() ||
+          !candidateMetadata.isFile() ||
+          candidateMetadata.size > SKILL_IMPORT_LIMITS.maxFileBytes
+        ) {
+          continue
+        }
+        const { fields } = parseFrontmatter(
+          await readSkillCatalogFrontmatter(candidatePath, candidateMetadata.size)
+        )
+        if (fields.name !== name || (directoryName !== name && !directoryName.startsWith('os-'))) {
+          continue
+        }
+        skillDir = candidateDir
+        documentPath = candidatePath
+        documentMetadata = candidateMetadata
+        break
+      } catch {
+        continue
+      }
     }
-    if (documentMetadata.size > SKILL_IMPORT_LIMITS.maxFileBytes) {
-      throw new Error('Skill document is too large.')
-    }
+    if (!skillDir || !documentPath || !documentMetadata) throw new Error('Skill not found.')
     return {
       document: applySkillArguments(await readFile(documentPath, 'utf8'), args),
       skillDir
