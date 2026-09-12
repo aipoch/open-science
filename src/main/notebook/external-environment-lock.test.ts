@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { captureNotebookEnvironmentLock, decodeNotebookEnvironmentLock } from './environment-lock'
@@ -111,6 +112,62 @@ describe('conditional external environment locks', () => {
       decodeNotebookEnvironmentLock(JSON.stringify({ ...lock, architecture: 'mips' })).status
     ).toBe('corrupt')
   })
+
+  // Opt-in integration: the supplied R must have renv, jsonlite, and glue installed.
+  it.skipIf(!process.env.OPEN_SCIENCE_TEST_RSCRIPT)(
+    'serializes a real renv snapshot while base packages remain interpreter-owned',
+    async () => {
+      const command = process.env.OPEN_SCIENCE_TEST_RSCRIPT!
+      const execute = async (argv: string[]): Promise<string> =>
+        execFileSync(argv[0]!, argv.slice(1), {
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: 30_000
+        })
+      const identity = JSON.parse(
+        await execute([
+          command,
+          '--slave',
+          '-e',
+          'cat(jsonlite::toJSON(list(version=paste(R.version$major,R.version$minor,sep="."),glue=as.character(packageVersion("glue"))),auto_unbox=TRUE))'
+        ])
+      ) as { version: string; glue: string }
+      const actualManifest: NotebookEnvironmentManifest = {
+        ...manifest,
+        runtimeVersion: identity.version,
+        platform: process.platform,
+        architecture: process.arch,
+        packages: [
+          { ...manifest.packages[0]!, version: identity.glue },
+          { ...manifest.packages[0]!, name: 'stats', version: identity.version, priority: 'base' }
+        ]
+      }
+      const result = await captureNotebookEnvironmentLock(
+        {
+          language: 'r',
+          environmentName: 'external-r',
+          runtimeSource: 'external',
+          command
+        },
+        actualManifest,
+        { execute }
+      )
+      expect(result).toMatchObject({
+        state: 'captured',
+        captureStatus: 'partial',
+        partialReasons: ['external-interpreter-required']
+      })
+      if (result.state !== 'captured') throw new Error('Real R capture failed')
+      const component = result.lock.components[0]!
+      if (component.format !== 'renv-lock') throw new Error('Expected a native R lock')
+      const native = JSON.parse(component.files[0]!.content)
+      expect(native.R.Version).toBe(identity.version)
+      expect(native.Packages.glue.Version).toBe(identity.glue)
+      expect(native.Packages.stats).toBeUndefined()
+      expect(decodeNotebookEnvironmentLock(JSON.stringify(result.lock)).status).toBe('valid')
+    },
+    40_000
+  )
 
   it('captures native R evidence as conditional and refuses observed version drift', async () => {
     const execute = vi.fn(async (argv: string[]) =>

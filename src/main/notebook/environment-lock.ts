@@ -934,7 +934,7 @@ class EnvironmentLockCaptureOwner {
             RENV_PATHS_ROOT=file.path(tempdir(), "renv"));
           invisible(capture.output(lock <- renv::snapshot(project=tempdir(), library=.libPaths(),
             lockfile=NULL, packages=c(${requested.map((pkg) => JSON.stringify(pkg.name)).join(',')}), prompt=FALSE)));
-          cat(jsonlite::toJSON(lock, auto_unbox=TRUE))
+          cat(jsonlite::toJSON(unclass(lock), auto_unbox=TRUE))
         })`
         const content = await options.execute([
           target.command,
