@@ -225,8 +225,18 @@ describe('SkillBulkManageView', () => {
       button('Delete 2 Skills')?.click()
       await Promise.resolve()
     })
-    expect(useSettingsStore.getState().deleteSkill).toHaveBeenNthCalledWith(1, 'imported-team')
-    expect(useSettingsStore.getState().deleteSkill).toHaveBeenNthCalledWith(2, 'personal-mine')
+    expect(useSettingsStore.getState().deleteSkill).toHaveBeenNthCalledWith(
+      1,
+      'imported-team',
+      'imported',
+      undefined
+    )
+    expect(useSettingsStore.getState().deleteSkill).toHaveBeenNthCalledWith(
+      2,
+      'personal-mine',
+      'personal',
+      undefined
+    )
     expect(document.body.querySelector('[role="status"]')?.textContent).toContain(
       'Deleted 2 Skills.'
     )
@@ -270,7 +280,11 @@ describe('SkillBulkManageView', () => {
       await Promise.resolve()
     })
     expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledOnce()
-    expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith('imported-team')
+    expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith(
+      'imported-team',
+      'imported',
+      undefined
+    )
     expect(
       document.body.querySelector<HTMLInputElement>('[aria-label="Select Mine"]')?.checked
     ).toBe(true)

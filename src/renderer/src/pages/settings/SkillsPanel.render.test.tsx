@@ -413,7 +413,7 @@ describe('SkillsPanel (list view)', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'detail', id: 'a' })
   })
 
-  it('shows identity-conflicting Skills without exposing ambiguous actions', () => {
+  it('keeps identity-conflicting user Skills deletable without exposing runtime actions', () => {
     const onNavigate = vi.fn()
     useSettingsStore.setState({
       skills: [
@@ -438,7 +438,9 @@ describe('SkillsPanel (list view)', () => {
 
     expect(document.body.textContent).toContain('Conflicting Skill')
     expect(document.body.textContent).toContain('Identity conflict')
-    expect(document.body.querySelector('[aria-label="Actions for Conflicting Skill"]')).toBeNull()
+    expect(
+      document.body.querySelector('[aria-label="Actions for Conflicting Skill"]')
+    ).not.toBeNull()
     const toggle = document.body.querySelector<HTMLButtonElement>(
       '[aria-label="Toggle Conflicting Skill"]'
     )
@@ -628,7 +630,10 @@ describe('SkillsPanel (list view)', () => {
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
     ).find((item) => item.textContent?.trim() === 'Delete')
     clickRadixMenuItem(remove)
-    expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith('personal-mine')
+    expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith(
+      'personal-mine',
+      'personal'
+    )
   })
 
   it('exports imported and personal Skills but never built-in Skills', async () => {

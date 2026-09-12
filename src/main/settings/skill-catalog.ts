@@ -374,6 +374,9 @@ class SkillCatalogModule {
       ...this.toSkillView(skill, disabled),
       available,
       catalogEntryKey,
+      ...(skill.source === 'imported' || skill.source === 'personal'
+        ? { directoryName: skill.name }
+        : {}),
       ...(available ? {} : { availability: 'identity-conflict' as const })
     }))
   }
@@ -632,12 +635,26 @@ class SkillCatalogModule {
 
   async deleteSkill(
     request: DeleteSkillRequest,
-    guard?: (skillId: string) => Promise<void>
+    guard?: (request: DeleteSkillRequest) => Promise<void>
   ): Promise<SkillView[]> {
-    await this.userSkills.delete(request.id, guard)
-    await this.options.repository.setSkillEnabled(request.id, true)
+    if (
+      !request.source &&
+      (await this.skillRegistry.list()).some((skill) => skill.id === request.id)
+    ) {
+      throw new Error('Built-in Skills cannot be deleted.')
+    }
+    await this.userSkills.delete(
+      request.id,
+      request.source,
+      request.directoryName,
+      guard ? () => guard(request) : undefined
+    )
     await this.refreshRegisteredHelpers()
-    return this.listSkills()
+    const skills = await this.listSkills()
+    if (!skills.some((skill) => skill.id === request.id)) {
+      await this.options.repository.setSkillEnabled(request.id, true)
+    }
+    return skills
   }
 
   async importSkill(request: ImportSkillRequest, signal?: AbortSignal): Promise<ImportSkillResult> {

@@ -374,6 +374,8 @@ describe('SkillCatalogModule', () => {
       await expect(
         readFile(join(runtimeRoot, 'skills', 'os-demo', 'SKILL.md'), 'utf8')
       ).resolves.toContain('demo body')
+      await catalog.deleteSkill({ id: 'demo', source })
+      await expect(readFile(join(userDir, 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' })
       await chmod(join(runtimeRoot, 'skills', 'os-demo'), 0o755)
     }
   )
@@ -422,6 +424,7 @@ describe('SkillCatalogModule', () => {
   it('surfaces every duplicate user Skill id in the Settings catalog', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
     roots.push(storageRoot)
+    const deleteSkill = vi.fn()
     const catalog = new SkillCatalogModule({
       repository: new SettingsRepository(storageRoot),
       storageRoot,
@@ -446,7 +449,8 @@ describe('SkillCatalogModule', () => {
             updatedAt: '2026-03-01T00:00:00.000Z',
             sourceDir: storageRoot
           }
-        ]
+        ],
+        delete: deleteSkill
       } as unknown as UserSkillRepository
     })
 
@@ -462,6 +466,18 @@ describe('SkillCatalogModule', () => {
       ])
     )
     expect(new Set(skills.map((skill) => skill.catalogEntryKey)).size).toBe(2)
+
+    await catalog.deleteSkill({
+      id: 'shared-sidecar-id',
+      source: 'personal',
+      directoryName: 'personal-copy'
+    })
+    expect(deleteSkill).toHaveBeenCalledWith(
+      'shared-sidecar-id',
+      'personal',
+      'personal-copy',
+      undefined
+    )
   })
 
   it('ignores an unsafe Personal sidecar id instead of materializing outside the Skills root', async () => {
@@ -973,6 +989,9 @@ describe('SkillCatalogModule', () => {
     expect(
       (await catalog.deleteSkill({ id: 'personal-my-skill' })).map((skill) => skill.id)
     ).toEqual(['demo'])
+    await expect(catalog.deleteSkill({ id: 'demo' })).rejects.toThrow(
+      'Built-in Skills cannot be deleted.'
+    )
   })
 
   it.each(['personal', 'imported'] as const)(

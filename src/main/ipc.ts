@@ -2155,8 +2155,12 @@ const createApplicationModules = async (
     )
   }
   composition.phase('marketplace-recover')
-  settingsService.setSkillDeletionGuard((skillId) =>
-    specialistPackageService.assertSkillDeletionAllowed(skillId)
+  settingsService.setSkillDeletionGuard((request) =>
+    specialistPackageService.assertSkillDeletionAllowed(
+      request.id,
+      request.source,
+      request.directoryName
+    )
   )
   // Per-session specialist binding store. Shared between the SET_SESSION_SPECIALIST barrier
   // (validate + record) and the runtime switch so a hot-switch lands on the same source of truth.

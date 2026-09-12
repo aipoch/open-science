@@ -452,6 +452,30 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     expect(notifySkillCatalogChanged).toHaveBeenCalledOnce()
   })
 
+  it('keeps surviving same-id catalog relationships after a user Skill deletion', async () => {
+    const { store, capability } = fakeStore()
+    const removeTagsForSkill = vi.fn().mockResolvedValue(undefined)
+    store.deleteSkill.mockResolvedValue([
+      {
+        id: 'shared-id',
+        source: 'featured',
+        name: 'Built-in',
+        displayName: 'Built-in',
+        description: '',
+        updatedAt: '',
+        enabled: true
+      }
+    ])
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({ removeTagsForSkill })
+    ).skills
+
+    await workflows.deleteSkill({ id: 'shared-id', source: 'personal' })
+
+    expect(removeTagsForSkill).not.toHaveBeenCalled()
+  })
+
   it('invalidates permissions before a fire-and-forget Connector refresh and reloads on settle', async () => {
     const calls: string[] = []
     const { store, capability } = fakeStore()
