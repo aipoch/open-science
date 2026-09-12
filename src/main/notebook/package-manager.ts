@@ -1686,7 +1686,7 @@ export async function installPackages(
       ])
       return {
         ok: result.code === 0,
-        needsRestart: true,
+        needsRestart: result.code === 0,
         log: mergeLog(result),
         ...installLogTruncation(result),
         method: 'cran',

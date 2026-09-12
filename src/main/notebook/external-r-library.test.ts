@@ -21,7 +21,7 @@ describe('external R package installation', () => {
   })
 
   it.each([0, 1])(
-    'uses the bound R and exact library, preserves exit failure %s and requests restart',
+    'uses the bound R and exact library and derives restart advice from exit code %s',
     async (code) => {
       const directory = await mkdtemp(join(tmpdir(), 'external-r-library-'))
       try {
@@ -44,7 +44,13 @@ describe('external R package installation', () => {
         expect(args).not.toContain('-m')
         expect(args.at(-1)).toContain(JSON.stringify(library))
         expect(args.at(-1)).toContain('installed.packages(lib.loc=destination)')
-        expect(result).toMatchObject({ ok: code === 0, needsRestart: true, method: 'cran' })
+        expect(result).toMatchObject({ ok: code === 0, needsRestart: code === 0, method: 'cran' })
+        expect(result.attempts).toEqual([
+          expect.objectContaining({
+            status: code === 0 ? 'succeeded' : 'failed',
+            mutationRisk: code === 0 ? 'confirmed' : 'possible'
+          })
+        ])
       } finally {
         await rm(directory, { recursive: true, force: true })
       }
