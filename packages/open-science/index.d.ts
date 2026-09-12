@@ -240,6 +240,12 @@ export type DoctorReport = {
     argv?: readonly string[]
   }>
 }
+export type AgentRuntime = {
+  framework: AgentFramework
+  status: ReadinessStatus
+  version?: string
+  source?: 'managed' | 'external'
+}
 export type AgentConfiguration = {
   providerId: string
   model?: string
@@ -504,6 +510,7 @@ export class OpenScienceClient {
     options?: RequestOptions
   ): Promise<{ installed: boolean; onPath: boolean; target: string; pathHint?: string }>
   doctor(options?: RequestOptions): Promise<DoctorReport>
+  listRuntimes(options?: RequestOptions): Promise<AgentRuntime[]>
   listConnectors(options?: RequestOptions): Promise<ConnectorsSnapshot>
   getConnector(
     id: string,

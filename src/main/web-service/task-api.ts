@@ -32,6 +32,7 @@ import type {
   StartTaskRunRequest,
   TaskProject,
   TaskAgentRouting,
+  TaskAgentRuntime,
   TaskDoctorReport,
   TaskProjectSessionDefaults,
   TaskPlanResponseRequest,
@@ -242,6 +243,58 @@ class HeadlessTaskApi {
   async installCli(): Promise<CliLauncherStatus> {
     this.requireLocalConnectorCaller()
     return this.invoke('cli:install') as Promise<CliLauncherStatus>
+  }
+
+  async listRuntimes(): Promise<TaskAgentRuntime[]> {
+    const [preflight, settings] = await Promise.all([
+      this.invoke('settings:get-preflight') as Promise<ReadinessPreflight>,
+      this.invoke('settings:get-settings') as Promise<SettingsSnapshot>
+    ])
+    const readyByFramework = {
+      'claude-code': preflight.claudeReady,
+      opencode: preflight.opencodeReady,
+      codex: preflight.codexReady,
+      codebuddy: preflight.codebuddyReady
+    } as const
+    const runtimeByFramework = {
+      'claude-code': {
+        configured: Boolean(settings.claude.resolvedPath),
+        version: settings.claude.version,
+        managed: settings.claudeManaged
+      },
+      opencode: {
+        configured: Boolean(settings.opencode.resolvedPath),
+        version: settings.opencode.version,
+        managed: settings.opencodeManaged
+      },
+      codex: {
+        configured: Boolean(settings.codex.resolvedPath),
+        version: settings.codex.nativeVersion,
+        managed: settings.codexManaged && settings.codex.nativeManaged === true
+      },
+      codebuddy: {
+        configured: Boolean(settings.codebuddy.resolvedPath),
+        version: settings.codebuddy.version,
+        managed: settings.codebuddyManaged
+      }
+    } as const
+
+    return settings.agentFrameworks.map(({ id: framework }) => {
+      const runtime = runtimeByFramework[framework]
+      const status = readyByFramework[framework]
+        ? ('ready' as const)
+        : runtime.configured
+          ? ('not_ready' as const)
+          : ('missing' as const)
+      return {
+        framework,
+        status,
+        ...(runtime.version ? { version: runtime.version } : {}),
+        ...(runtime.configured
+          ? { source: runtime.managed ? ('managed' as const) : ('external' as const) }
+          : {})
+      }
+    })
   }
 
   async doctor(): Promise<TaskDoctorReport> {

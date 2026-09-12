@@ -43,12 +43,17 @@ await client.updateAgentRouting({
   reviewer: { mode: 'inherit' },
   subagent: { mode: 'inherit' }
 })
+
+const runtimes = await client.listRuntimes()
 ```
 
 Session updates use `revision`; Project-default updates use `updatedAt`. Both reject stale writes.
 Project defaults are copied only when a Session is created, with precedence `startRun` request,
 Project defaults, application settings, then provider default. Agent-routing updates are atomic and
 never return provider credentials.
+
+Agent runtime listings expose only framework, readiness, version, and managed/external source. They
+do not expose executable paths.
 
 SDK requests have a 30-second default deadline that remains active while the response body is being
 consumed. Override the client default with `requestTimeoutMs`, or pass `{ signal, timeoutMs }` as the
