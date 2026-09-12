@@ -892,9 +892,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Keep the number of macOS jobs below the hosted-runner concurrency ceiling. Delegation is
-        # independent at the test level but shares the journeys runner to avoid an avoidable queue.
-        group: [journeys, presentation, regressions]
+        group: [journeys, presentation, regressions, delegation]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -978,7 +976,7 @@ jobs:
         run: npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout=1200000
       - name: Run supplemental delegation
         id: e2e_delegation_macos
-        if: ${{ matrix.group == 'journeys' && steps.setup.outcome == 'success' }}
+        if: ${{ matrix.group == 'delegation' && steps.setup.outcome == 'success' }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/delegation_macos
@@ -1074,7 +1072,7 @@ jobs:
           check unit_macos_native "$UNIT_MACOS_NATIVE_OUTCOME"
           # These groups are selected whenever this bundle runs; skipped is not success.
           if [[ "${E2E_GROUP:-}" == "regressions" && "${E2E_REGRESSIONS_OUTCOME:-}" != "success" ]]; then failed=1; fi
-          if [[ "${E2E_GROUP:-}" == "journeys" && "${E2E_DELEGATION_OUTCOME:-}" != "success" ]]; then failed=1; fi
+          if [[ "${E2E_GROUP:-}" == "delegation" && "${E2E_DELEGATION_OUTCOME:-}" != "success" ]]; then failed=1; fi
           exit "$failed"
 
   windows_e2e:

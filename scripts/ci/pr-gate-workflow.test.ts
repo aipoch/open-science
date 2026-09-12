@@ -660,7 +660,7 @@ describe('PR Gate workflow', () => {
     expect(workflow.jobs.windows_e2e['timeout-minutes']).toBe(35)
   })
 
-  it('budgets the combined macOS builds and queued E2E groups', () => {
+  it('budgets the combined macOS builds and all four E2E groups', () => {
     expect(workflow.jobs.macos_e2e['timeout-minutes']).toBe(30)
   })
 
@@ -1091,14 +1091,18 @@ describe('E2E throughput contracts', () => {
 
   it('partitions macOS groups while preserving the stable aggregate gate', () => {
     const job = workflow.jobs.macos_e2e
-    expect(job.strategy?.matrix?.group).toEqual(['journeys', 'presentation', 'regressions'])
+    expect(job.strategy?.matrix?.group).toEqual([
+      'journeys',
+      'presentation',
+      'regressions',
+      'delegation'
+    ])
     for (const [id, group] of [
       ['e2e_functional_macos', 'journeys'],
       ['e2e_workspace_macos', 'journeys'],
       ['e2e_accessibility_macos', 'presentation'],
       ['e2e_visual_macos', 'presentation'],
-      ['renderer_layout', 'presentation'],
-      ['e2e_delegation_macos', 'journeys']
+      ['renderer_layout', 'presentation']
     ]) {
       expect(job.steps?.find((step) => step.id === id)?.if).toContain(`matrix.group == '${group}'`)
     }
