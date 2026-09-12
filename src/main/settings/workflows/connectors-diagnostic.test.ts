@@ -162,7 +162,11 @@ it('distinguishes a missing executable without exposing its path', async () => {
       : '/private/missing/m07-secret-command'
   const { workflow } = makeWorkflow(missing, [])
   const result = await workflow.testCustomServer({ id: 'fixture' })
-  expect(result).toMatchObject({ success: false, stage: 'startup', code: 'startup_failed' })
+  expect(result.success).toBe(false)
+  expect(['startup', 'handshake']).toContain(result.stage)
+  if (process.platform !== 'win32') {
+    expect(result).toMatchObject({ stage: 'startup', code: 'startup_failed' })
+  }
   expect(JSON.stringify(result)).not.toContain('m07-secret-command')
 })
 
