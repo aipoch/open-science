@@ -124,6 +124,7 @@ def bar_with_points(ax, x, ymat, labels, colors, jitter=0.08, show_points=True,
     """§6.1: bar = mean; optionally overlay raw points or draw an interval.
 
     colors   : per-label color list (e.g. from focal_palette)
+    x, ymat and labels must have equal lengths; mismatches raise before drawing.
     errorbar : None | 'sd' | 'ci95' — drawn only when show_points is False.
                'ci95' is the t-distribution 95% CI of the mean
                (half-width t_{0.975,n-1} · s/√n); correct at small n where the
@@ -136,6 +137,10 @@ def bar_with_points(ax, x, ymat, labels, colors, jitter=0.08, show_points=True,
             "bar_with_points x must be one-dimensional numeric positions; "
             "pass category names through labels"
         )
+    ymat = list(ymat)
+    labels = list(labels)
+    if len(x) != len(ymat) or len(x) != len(labels):
+        raise ValueError("bar_with_points x, ymat and labels must have equal lengths")
     means = np.array([np.mean(y) for y in ymat], float)
     err = None
     if errorbar and not show_points:
@@ -163,11 +168,22 @@ def bar_with_points(ax, x, ymat, labels, colors, jitter=0.08, show_points=True,
 
 
 def strip_with_median(ax, groups, values, colors=None, jitter=0.12):
-    """§6.1: jittered points + bold horizontal median tick per group."""
+    """§6.1: jittered points + bold horizontal median tick per group.
+
+    groups, values and explicit colors must have equal lengths. Mismatches
+    raise before drawing; colors=None supplies one default color per group.
+    """
     import numpy as np
     labs = list(groups)
+    values = list(values)
+    if len(labs) != len(values):
+        raise ValueError("strip_with_median groups and values must have equal lengths")
     if colors is None:
         colors = ["#444444"] * len(labs)
+    else:
+        colors = list(colors)
+        if len(colors) != len(labs):
+            raise ValueError("strip_with_median colors must contain one color per group")
     for i, (ys, c) in enumerate(zip(values, colors)):
         ys = np.asarray(ys)
         jit = (np.random.rand(ys.size) - 0.5) * 2 * jitter
