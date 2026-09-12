@@ -294,6 +294,15 @@ describe('UserSkillRepository', () => {
     expect(await repo.list()).toEqual([])
   })
 
+  it('deletes ordinary skills when the row includes its source and directory name', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const id = await repo.createPersonal({ name: 'ordinary', description: 'a', body: 'x' })
+
+    await repo.delete(id, 'personal', 'ordinary')
+
+    expect(await repo.list()).toEqual([])
+  })
+
   it('round-trips a description with newlines and YAML fences without corrupting the body', async () => {
     const repo = new UserSkillRepository(await makeStorage())
 

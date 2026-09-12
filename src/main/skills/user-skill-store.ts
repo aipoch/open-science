@@ -243,6 +243,10 @@ export class UserSkillStore {
       throw new Error('Invalid user Skill directory name.')
     }
     if (sourceFilter !== undefined && directoryName !== undefined) {
+      const conventional = parseUserSkillId(id)
+      if (conventional?.source === sourceFilter && conventional.directoryName === directoryName) {
+        return conventional
+      }
       const metadata = await readSpecialistPackageSkillMetadata(
         this.skillDirectory(sourceFilter, directoryName)
       )
