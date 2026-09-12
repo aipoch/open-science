@@ -80,6 +80,9 @@ jobs:
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
       - name: Pack dependencies
+        # Windows defaults to pwsh, which does not expand $RUNNER_TEMP. Pack into the same
+        # runner.temp directory that upload-artifact reads, matching PR Gate's Windows E2E setup.
+        shell: bash
         run: node scripts/ci/e2e-setup-snapshot.mjs pack-dependencies "$RUNNER_TEMP/windows-dependencies"
       - name: Upload dependencies
         id: upload
@@ -121,6 +124,7 @@ jobs:
           merge-multiple: true
 
       - name: Restore dependencies
+        shell: bash
         run: node scripts/ci/e2e-setup-snapshot.mjs restore-dependencies "$RUNNER_TEMP/windows-dependencies"
 
       - name: Test complete suite shard
@@ -243,6 +247,7 @@ jobs:
           path: ${{ runner.temp }}/windows-dependencies/
           merge-multiple: true
       - name: Restore dependencies
+        shell: bash
         run: node scripts/ci/e2e-setup-snapshot.mjs restore-dependencies "$RUNNER_TEMP/windows-dependencies"
       - name: Build Electron application
         run: npm run build:e2e
