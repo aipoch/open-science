@@ -112,6 +112,7 @@ describe('release and scheduled workflow topology', () => {
       'src/main/notebook/network-sandbox-owner.test.ts',
       'src/main/notebook/dependency-analysis.test.ts',
       'src/main/notebook/dependency-analysis.chord.test.ts',
+      'src/main/notebook/dependency-analysis.path-plot.test.ts',
       'src/main/notebook/provisioner.test.ts',
       'src/main/notebook/reproduction-runtime.test.ts',
       'src/main/notebook/recovery-coordinator.test.ts',
