@@ -32,6 +32,26 @@ function surface<Electron, Web>(electron: Electron, web: Web): Surface<Electron,
 }
 
 describe('installWebRendererContracts', () => {
+  it('forwards external R library consent through the Web contract', async () => {
+    const api: Record<string, unknown> = {}
+    const invoke = vi.fn()
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['runtime:set-install-authorized']),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    await methodAt(api, 'runtime.setInstallAuthorized')!('r', 'external-r', true, '/user/R/library')
+    expect(invoke).toHaveBeenCalledWith('runtime:set-install-authorized', [
+      {
+        language: 'r',
+        envId: 'external-r',
+        authorized: true,
+        library: '/user/R/library'
+      }
+    ])
+  })
   it('preserves recoverable deletion diagnostics without turning rejection into success', async () => {
     const diagnostic = {
       reason: 'scan-incomplete' as const,

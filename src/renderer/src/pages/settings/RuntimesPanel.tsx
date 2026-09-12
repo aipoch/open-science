@@ -190,6 +190,7 @@ const RuntimesPanel = ({
   const [packages, setPackages] = useState<EnvPackage[] | null>(null)
   const [packagesError, setPackagesError] = useState<string | null>(null)
   const [packagesRetryNonce, setPackagesRetryNonce] = useState(0)
+  const [installLibraries, setInstallLibraries] = useState<Record<string, string>>({})
   const [wsl2Preview, setWsl2Preview] = useState<{
     available: boolean
     development: boolean
@@ -319,7 +320,27 @@ const RuntimesPanel = ({
     isEnvEnabled(env, enablement[language])
 
   const isInstallAuthorized = (language: NotebookLanguage, env: DiscoveredInterpreter): boolean =>
+    // Display persisted consent so historical R grants without a library can still be revoked.
+    // Package admission separately requires a library before an R installation can run.
     enablement[language]?.installAuthorized[env.envId] ?? false
+
+  const selectedRLibrary = (env: DiscoveredInterpreter): string | undefined =>
+    enablement.r?.installLibraries?.[env.envId] ??
+    installLibraries[env.envId] ??
+    (env.personalRLibraries?.length === 1 ? env.personalRLibraries[0] : undefined)
+
+  const chooseRLibrary = async (env: DiscoveredInterpreter): Promise<void> => {
+    if (busy || languageOperationActive('r')) return
+    setBusy(true)
+    try {
+      const selected = await window.api.storage.pickDirectory()
+      if (selected) setInstallLibraries((current) => ({ ...current, [env.envId]: selected }))
+    } catch (error) {
+      setError(error instanceof Error ? error.message : t('Could not select a folder.'))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const applyEnabled = async (
     language: NotebookLanguage,
@@ -405,7 +426,8 @@ const RuntimesPanel = ({
       const next = await window.api.runtime.setInstallAuthorized(
         language,
         env.envId,
-        !isInstallAuthorized(language, env)
+        !isInstallAuthorized(language, env),
+        ...(language === 'r' ? [selectedRLibrary(env)] : [])
       )
       setEnablement(language, next)
     } catch (e) {
@@ -716,7 +738,7 @@ const RuntimesPanel = ({
               description={
                 language === 'r'
                   ? t(
-                      'Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.'
+                      'Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.'
                     )
                   : t(
                       'Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.'
@@ -725,13 +747,83 @@ const RuntimesPanel = ({
             >
               <div className="flex justify-end">
                 <SettingsToggle
-                  enabled={language !== 'r' && isInstallAuthorized(language, env)}
+                  enabled={isInstallAuthorized(language, env)}
                   onToggle={() => void toggleInstallAuthorized(language, env)}
-                  disabled={busy || language === 'r' || languageOperationActive(language)}
+                  disabled={
+                    busy ||
+                    languageOperationActive(language) ||
+                    (language === 'r' &&
+                      !isInstallAuthorized(language, env) &&
+                      !selectedRLibrary(env)?.trim())
+                  }
                   aria-label={t('Allow package install for {{label}}', { label: env.label })}
                 />
               </div>
             </SettingsRow>
+            {language === 'r' ? (
+              <div className="mt-2 space-y-2 text-xs">
+                {(env.personalRLibraries?.length ?? 0) > 1 ? (
+                  <select
+                    className="w-full rounded-md border border-input bg-background p-2"
+                    aria-label={t('Personal R package library')}
+                    value={selectedRLibrary(env) ?? ''}
+                    disabled={
+                      busy || languageOperationActive('r') || isInstallAuthorized(language, env)
+                    }
+                    onChange={(event) =>
+                      setInstallLibraries((current) => ({
+                        ...current,
+                        [env.envId]: event.target.value
+                      }))
+                    }
+                  >
+                    <option value="">{t('Select a personal R library')}</option>
+                    {[
+                      ...new Set([
+                        ...env.personalRLibraries!,
+                        ...(selectedRLibrary(env) ? [selectedRLibrary(env)!] : [])
+                      ])
+                    ].map((path) => (
+                      <option key={path} value={path}>
+                        {path}
+                      </option>
+                    ))}
+                  </select>
+                ) : selectedRLibrary(env) ? (
+                  <p
+                    className="break-all text-muted-foreground"
+                    aria-label={t('Personal R package library')}
+                  >
+                    {selectedRLibrary(env)}
+                  </p>
+                ) : (
+                  <p className="text-muted-foreground">
+                    {t(
+                      'No personal R library detected. Select an existing folder in advanced options.'
+                    )}
+                  </p>
+                )}
+                <details>
+                  <summary className="cursor-pointer">{t('Advanced options')}</summary>
+                  <p className="my-2 text-muted-foreground">
+                    {t(
+                      'Choose an existing personal library visible to this R runtime. No folder will be created.'
+                    )}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={
+                      busy || languageOperationActive('r') || isInstallAuthorized(language, env)
+                    }
+                    onClick={() => void chooseRLibrary(env)}
+                  >
+                    {t('Choose library folder…')}
+                  </Button>
+                </details>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

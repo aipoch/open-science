@@ -11510,6 +11510,63 @@ describe('v4 runtime bindings & agent tools', () => {
     runnable: true
   }
 
+  it.each([true, false])(
+    'isolates external R restart recommendations across runtimes and sessions (targeted=%s)',
+    async (targeted) => {
+      const root = await createStorageRoot()
+      const otherR = { ...userR, envId: '/other/bin/R', interpreterPath: '/other/bin/R' }
+      await mkdir(join(root, 'personal-r-library'))
+      const service = bindingService(root, {
+        discovered: [userR, otherR, managedR],
+        enablement: {
+          enabled: { [userR.envId]: true, [otherR.envId]: true, [managedR.envId]: true },
+          installAuthorized: { [userR.envId]: true },
+          installLibraries: { [userR.envId]: await realpath(join(root, 'personal-r-library')) }
+        },
+        installPackagesImpl: async () => ({ ok: true, needsRestart: true, log: 'installed' })
+      })
+      const request = (
+        sessionId: string
+      ): { sessionId: string; workspaceCwd: string; language: 'r' } => ({
+        sessionId,
+        workspaceCwd: root,
+        language: 'r' as const
+      })
+      for (const [id, runtimeId] of [
+        ['first', userR.envId],
+        ['second', userR.envId],
+        ['other', otherR.envId],
+        ['managed', managedR.envId]
+      ]) {
+        await service.bindRuntime({ ...request(id), runtimeId })
+        expect((await service.state(request(id))).runtimeBindings.r?.runtimeId).toBe(runtimeId)
+        expect((await service.execute({ ...request(id), code: '1' })).status).toBe('completed')
+      }
+      const recommended = async (id: string): Promise<boolean | undefined> =>
+        (await service.state(request(id))).environments.find(
+          (entry) => entry.processKey === 'r:default-r'
+        )?.restartRecommended
+      expect(
+        (await service.managePackages({ ...request('first'), packages: ['praise'] })).needsRestart
+      ).toBe(true)
+      expect(await recommended('first')).toBe(true)
+      expect(await recommended('second')).toBe(true)
+      expect(await recommended('other')).toBe(false)
+      expect(await recommended('managed')).toBe(false)
+      await service.restart(
+        targeted
+          ? { sessionId: 'first', workspaceCwd: root, language: 'r', environment: DEFAULT_R_ENV }
+          : { sessionId: 'first', workspaceCwd: root }
+      )
+      expect(await recommended('first')).toBe(false)
+      expect(await recommended('second')).toBe(true)
+      await service.switchRuntime({ ...request('second'), runtimeId: otherR.envId })
+      await service.switchRuntime({ ...request('second'), runtimeId: userR.envId })
+      await service.execute({ ...request('second'), code: '1' })
+      expect(await recommended('second')).toBe(false)
+    }
+  )
+
   // Service with injected discovery + enablement + a recording executor, so the tools run without any
   // real interpreter and executions can be inspected for the resolved interpreter.
   const bindingService = (
@@ -12851,6 +12908,75 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(executions[0].resolvedInterpreter?.command).toBe('/usr/local/bin/Rscript')
     expect(provisionR).not.toHaveBeenCalled()
   })
+
+  it('uses fresh external R library consent for each execution without persisting a new binding field', async () => {
+    const root = await createStorageRoot()
+    const library = join(root, 'personal-r-library')
+    await mkdir(library)
+    const physical = await realpath(library)
+    const executions: NotebookExecutionRequest[] = []
+    const enablement: RuntimeEnablement = {
+      enabled: { [userR.envId]: true },
+      installAuthorized: { [userR.envId]: true },
+      installLibraries: { [userR.envId]: physical }
+    }
+    const service = bindingService(root, { discovered: [userR], enablement, executions })
+    const request = { sessionId: 'library', workspaceCwd: root, language: 'r' as const }
+    await service.bindRuntime({ ...request, runtimeId: userR.envId })
+    expect((await service.execute({ ...request, code: '1' })).status).toBe('completed')
+    expect(executions[0].resolvedInterpreter).toMatchObject({ rLibrary: physical })
+    expect((await service.state(request)).runtimeBindings.r).not.toHaveProperty('rLibrary')
+    enablement.installAuthorized[userR.envId] = false
+    expect((await service.execute({ ...request, code: '2' })).status).toBe('completed')
+    expect(executions[1].resolvedInterpreter).not.toHaveProperty('rLibrary')
+    enablement.installAuthorized[userR.envId] = true
+    await rm(library, { recursive: true })
+    expect((await service.execute({ ...request, code: '3' })).status).toBe('failed')
+    expect(executions).toHaveLength(2)
+  })
+
+  it.each(['revoke', 'replace'] as const)(
+    'rejects queued external R execution when library consent changes (%s)',
+    async (change) => {
+      const root = await createStorageRoot()
+      const library = join(root, 'personal-r-library')
+      const replacement = join(root, 'replacement-r-library')
+      await mkdir(library)
+      await mkdir(replacement)
+      const enablement: RuntimeEnablement = {
+        enabled: { [userR.envId]: true },
+        installAuthorized: { [userR.envId]: true },
+        installLibraries: { [userR.envId]: await realpath(library) }
+      }
+      const executions: NotebookExecutionRequest[] = []
+      const service = bindingService(root, { discovered: [userR], enablement, executions })
+      const request = { sessionId: 'queued-library', workspaceCwd: root, language: 'r' as const }
+      await service.bindRuntime({ ...request, runtimeId: userR.envId })
+      const entered = createDeferred<void>()
+      const release = createDeferred<void>()
+      const holding = service.withEnvLock(DEFAULT_R_ENV, async () => {
+        entered.resolve()
+        await release.promise
+      })
+      await entered.promise
+      const queued = service.execute({ ...request, code: '1' })
+      try {
+        await vi.waitFor(async () =>
+          expect((await service.state(request)).cells[0]?.status).toBe('running')
+        )
+        if (change === 'revoke') enablement.installAuthorized[userR.envId] = false
+        else enablement.installLibraries![userR.envId] = await realpath(replacement)
+      } finally {
+        release.resolve()
+      }
+      await holding
+      expect(await queued).toMatchObject({
+        status: 'failed',
+        text: { traceback: expect.stringContaining('RUNTIME_BINDING_CHANGED') }
+      })
+      expect(executions).toEqual([])
+    }
+  )
 
   it('carries an external Windows conda R own activation prefix into execution', async () => {
     const root = await createStorageRoot()

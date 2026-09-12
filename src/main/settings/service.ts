@@ -474,9 +474,10 @@ class SettingsService {
   async setInstallAuthorized(
     language: NotebookLanguage,
     envId: string,
-    authorized: boolean
+    authorized: boolean,
+    library?: string
   ): Promise<RuntimeEnablement> {
-    return this.notebookRuntimeSettings.setInstallAuthorized(language, envId, authorized)
+    return this.notebookRuntimeSettings.setInstallAuthorized(language, envId, authorized, library)
   }
 
   async getAgentEnvironmentCreationEnabled(): Promise<boolean> {

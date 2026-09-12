@@ -33,6 +33,7 @@ import {
 import { assertProcessTreeSupport, terminateProcessTree } from '../process-tree'
 import { buildNotebookKernelEnvironment, PIP_TRANSPORT_ENV_KEYS } from './process-environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
+import { kernelExecutableReadRoot } from './kernel-executable-read-root'
 
 type PackageProcessSandboxOptions = Readonly<{
   processSandbox: NotebookProcessSandbox
@@ -40,7 +41,7 @@ type PackageProcessSandboxOptions = Readonly<{
   runtimeRoot: string
   storageRoot: string
   mirror?: PackageMirror
-  interpreter?: Readonly<{ command: string; condaPrefix?: string }>
+  interpreter?: Readonly<{ command: string; condaPrefix?: string; library?: string }>
   platform?: NodeJS.Platform
   terminateTree?: typeof terminateProcessTree
 }>
@@ -131,16 +132,21 @@ const packageEnvironment = (
 }
 
 const externalEnvironmentRoot = (
-  interpreter: PackageProcessSandboxOptions['interpreter']
+  interpreter: PackageProcessSandboxOptions['interpreter'],
+  language: InstallRequest['language'],
+  platform: NodeJS.Platform
 ): string | undefined => {
   if (!interpreter) return undefined
-  if (interpreter.condaPrefix && isAbsolute(interpreter.condaPrefix)) return interpreter.condaPrefix
-  if (!isAbsolute(interpreter.command)) return undefined
+  const absolute = platform === 'win32' ? win32.isAbsolute : isAbsolute
+  if (interpreter.condaPrefix && absolute(interpreter.condaPrefix)) return interpreter.condaPrefix
+  if (!absolute(interpreter.command)) return undefined
+  if (language === 'r' && platform === 'win32')
+    return kernelExecutableReadRoot(interpreter.command, 'r', platform)
   return dirname(dirname(interpreter.command))
 }
 
-const absolutePath = (value: string | undefined): string[] =>
-  value && isAbsolute(value) ? [value] : []
+const absolutePath = (value: string | undefined, platform = process.platform): string[] =>
+  value && (platform === 'win32' ? win32.isAbsolute(value) : isAbsolute(value)) ? [value] : []
 
 const inside = (root: string, candidate: string, platform: NodeJS.Platform): boolean => {
   const path = platform === 'win32' ? win32 : { resolve, sep }
@@ -269,6 +275,12 @@ export const sandboxedPackageSpawn =
     const platform = options.platform ?? process.platform
     assertProcessTreeSupport(platform)
     const projectedEnv = packageEnvironment(env ?? {}, platform)
+    const externalR = request.language === 'r' && Boolean(options.interpreter?.library)
+    // External R consent covers one library and the workload cache, never managed environments
+    // or inherited Conda/Mamba roots. Keep the default cwd readable without granting writes.
+    const cacheWriteRoots = externalR
+      ? absolutePath(projectedEnv.OPEN_SCIENCE_NOTEBOOK_CACHE_DIR, platform).filter(existsSync)
+      : packageWriteRoots(projectedEnv, platform)
     normalizeDarwinRepodataCachePermissions(projectedEnv, runtimeRoot, platform)
     const workspaceCwd =
       request.workspaceCwd && isAbsolute(request.workspaceCwd) ? request.workspaceCwd : runtimeRoot
@@ -289,11 +301,25 @@ export const sandboxedPackageSpawn =
       signal: spawnOptions?.signal,
       superviseProcessTree: platform === 'win32',
       filesystem: {
-        readOnlyRoots: [...absolutePath(dirname(command)), ...absolutePath(request.workspaceCwd)],
+        readOnlyRoots: [
+          ...(externalR ? [runtimeRoot] : []),
+          ...absolutePath(dirname(command)),
+          ...absolutePath(request.workspaceCwd),
+          ...(options.interpreter?.library
+            ? absolutePath(
+                externalEnvironmentRoot(options.interpreter, request.language, platform),
+                platform
+              )
+            : [])
+        ],
         readWriteRoots: [
-          runtimeRoot,
-          ...absolutePath(externalEnvironmentRoot(options.interpreter)),
-          ...packageWriteRoots(projectedEnv, platform)
+          ...(externalR ? [] : [runtimeRoot]),
+          ...absolutePath(
+            options.interpreter?.library ??
+              externalEnvironmentRoot(options.interpreter, request.language, platform),
+            platform
+          ),
+          ...cacheWriteRoots
         ],
         deniedReadRoots: [],
         deniedWriteRoots: []

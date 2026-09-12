@@ -2007,7 +2007,6 @@
     "PHASE {{number}}": "FASE {{number}}",
     "PINNED": "FIJADO",
     "Package": "Paquete",
-    "Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.": "Open Science todavía no puede instalar paquetes en entornos R propiedad del usuario. Puede seguir administrando los paquetes del entorno por su cuenta.",
     "Package mirror": "Repositorio espejo de paquetes",
     "Package provenance": "Procedencia del paquete",
     "Package version": "Versión del paquete",
@@ -5780,6 +5779,15 @@
     "Retry reloads messages. It does not approve or reject requests.": "Reintentar vuelve a cargar los mensajes. No aprueba ni rechaza solicitudes.",
     "Messages unavailable": "Mensajes no disponibles",
     "Showing previously loaded messages.": "Se muestran los mensajes cargados anteriormente.",
-    "Messages could not be loaded.": "No se pudieron cargar los mensajes."
+    "Messages could not be loaded.": "No se pudieron cargar los mensajes.",
+    "Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.": "Autorizar una biblioteca personal de R existente. La instalación puede cambiar paquetes usados por otros proyectos. La restauración requiere un intérprete compatible con la versión registrada.",
+    "Personal R package library": "Biblioteca personal de paquetes de R",
+    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "Descargue el paquete de archivos de bloqueo para restaurar los paquetes con un intérprete compatible con la versión registrada. Esto no recrea el entorno completo.",
+    "Could not select a folder.": "No se pudo seleccionar una carpeta.",
+    "Select a personal R library": "Seleccionar una biblioteca personal de R",
+    "No personal R library detected. Select an existing folder in advanced options.": "No se ha detectado ninguna biblioteca personal de R. Seleccione una carpeta existente en las opciones avanzadas.",
+    "Advanced options": "Opciones avanzadas",
+    "Choose an existing personal library visible to this R runtime. No folder will be created.": "Seleccione una biblioteca personal existente visible para este entorno de R. No se creará ninguna carpeta.",
+    "Choose library folder…": "Seleccionar carpeta de biblioteca…"
   }
 }

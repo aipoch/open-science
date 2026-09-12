@@ -140,6 +140,18 @@ describe('electron renderer contract adapter', () => {
     expect(port.invoke).toHaveBeenNthCalledWith(4, 'acp:create-session', {})
   })
 
+  it('forwards the explicitly authorized external R library', async () => {
+    const port = createPort()
+    const adapter = createElectronRendererContractAdapter(port)
+    await adapter.invoke('runtime.setInstallAuthorized', 'r', 'external-r', true, '/user/R/library')
+    expect(port.invoke).toHaveBeenCalledWith('runtime:set-install-authorized', {
+      language: 'r',
+      envId: 'external-r',
+      authorized: true,
+      library: '/user/R/library'
+    })
+  })
+
   it('preserves positional request arguments and result identity', async () => {
     const result = { saved: true }
     const port = createPort()

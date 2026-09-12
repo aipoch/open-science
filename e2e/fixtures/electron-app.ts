@@ -279,13 +279,12 @@ const makeTreeWritable = async (root: string): Promise<void> => {
 }
 
 const waitForRendererReady = async (page: Page): Promise<void> => {
-  const deadline = performance.now() + 90_000
+  const deadline = performance.now() + (process.platform === 'win32' ? 180_000 : 90_000)
   const remainingTimeout = (): number => Math.max(1, deadline - performance.now())
   await page.waitForLoadState('domcontentloaded', { timeout: remainingTimeout() })
-  // A fresh Windows profile can spend longer than the general assertion budget applying the real
-  // schema manifest under runner I/O contention (58s observed before application composition).
-  // Share one renderer-readiness budget so settings cannot add another full wait before
-  // the journey begins under the 120s test budget.
+  // Hosted Windows spent 89s applying the real schema before application composition began.
+  // Keep readiness bounded and share its budget with settings; the fixture owns startup time
+  // independently of the test body's assertion budget.
   await expect
     .poll(
       () =>
@@ -1083,38 +1082,41 @@ class ElectronAppHarness implements ElectronApp {
 const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
   windowMode: ['hidden', { option: true }],
   // Playwright fixture callbacks require an object pattern even when no base fixture is needed.
-  app: async ({ windowMode }, install, testInfo) => {
-    const app = await ElectronAppHarness.create(windowMode, testInfo)
+  app: [
+    async ({ windowMode }, install, testInfo) => {
+      const app = await ElectronAppHarness.create(windowMode, testInfo)
 
-    let bodyError: unknown
-    try {
-      await install(app)
-    } catch (error) {
-      bodyError = error
-    }
-    if (testInfo.status !== testInfo.expectedStatus) {
-      // Preserve the original test failure even if shutdown left no readable log.
-      await app
-        .captureMainLog('test-failure.log')
-        .then((path) => testInfo.attach('main-process-log', { path, contentType: 'text/plain' }))
-        .catch(() => undefined)
-    }
-    try {
-      await app.dispose()
-    } catch (cleanupError) {
-      await app
-        .captureMainLog('cleanup-failure.log')
-        .then((path) =>
-          testInfo.attach('cleanup-main-process-log', { path, contentType: 'text/plain' })
-        )
-        .catch(() => undefined)
-      if (bodyError !== undefined) {
-        throw new AggregateError([bodyError, cleanupError], 'Electron test and cleanup failed.')
+      let bodyError: unknown
+      try {
+        await install(app)
+      } catch (error) {
+        bodyError = error
       }
-      throw cleanupError
-    }
-    if (bodyError !== undefined) throw bodyError
-  }
+      if (testInfo.status !== testInfo.expectedStatus) {
+        // Preserve the original test failure even if shutdown left no readable log.
+        await app
+          .captureMainLog('test-failure.log')
+          .then((path) => testInfo.attach('main-process-log', { path, contentType: 'text/plain' }))
+          .catch(() => undefined)
+      }
+      try {
+        await app.dispose()
+      } catch (cleanupError) {
+        await app
+          .captureMainLog('cleanup-failure.log')
+          .then((path) =>
+            testInfo.attach('cleanup-main-process-log', { path, contentType: 'text/plain' })
+          )
+          .catch(() => undefined)
+        if (bodyError !== undefined) {
+          throw new AggregateError([bodyError, cleanupError], 'Electron test and cleanup failed.')
+        }
+        throw cleanupError
+      }
+      if (bodyError !== undefined) throw bodyError
+    },
+    process.platform === 'win32' ? { timeout: 240_000 } : {}
+  ]
 })
 
 export {

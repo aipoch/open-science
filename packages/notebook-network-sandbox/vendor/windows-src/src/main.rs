@@ -4051,21 +4051,27 @@ mod windows_host {
             let result =
                 run_suspended_process_in_job(&spec, &process, &thread, &mut terminate, None, 100);
             let proof_value = fs::read_to_string(&proof).ok();
-            for attempt in 0..16 {
-                match fs::remove_dir_all(&root) {
-                    Ok(()) => break,
-                    Err(error) => {
-                        if attempt < 15 && error.raw_os_error() == Some(32) {
-                            std::thread::sleep(Duration::from_millis(50 * (attempt + 1)));
-                        } else {
-                            panic!("{error}");
-                        }
-                    }
-                }
-            }
             assert!(format!("{:#}", result.unwrap_err()).contains("R verification timed out"));
             assert!(started.elapsed() < Duration::from_secs(5));
             assert_eq!(proof_value.as_deref(), Some("owned-timeout-proof"));
+            drop(terminate);
+            drop(thread);
+            drop(process);
+            // CI can briefly retain a sharing lock after termination. Keep this cleanup grace
+            // separate from the process-termination assertions and bounded to this test root.
+            let cleanup_deadline = Instant::now() + Duration::from_secs(1);
+            loop {
+                match fs::remove_dir_all(&root) {
+                    Ok(()) => break,
+                    Err(error)
+                        if error.raw_os_error() == Some(32)
+                            && Instant::now() < cleanup_deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("remove timeout test directory: {error}"),
+                }
+            }
         }
 
         #[test]

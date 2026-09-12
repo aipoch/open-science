@@ -1,6 +1,7 @@
-import { join } from 'node:path'
-
 import { strFromU8, unzipSync } from 'fflate'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import sharp from 'sharp'
 import { compareReproducedContent } from './output-comparison'
@@ -598,6 +599,35 @@ describe('Artifact reproducibility verification export', () => {
 })
 
 describe('Artifact Environment lock export', () => {
+  it('exports a conditional runner without a fabricated Conda restore command', () => {
+    const content = JSON.stringify({
+      R: { Version: '4.4.3' },
+      Packages: { glue: { Version: '1.8.0' } }
+    })
+    const lock: NotebookEnvironmentLock = {
+      schemaVersion: 2,
+      format: 'environment-lock-bundle',
+      kernelKind: 'r',
+      environmentName: 'external-r',
+      platform: 'win32',
+      architecture: 'x64',
+      externalRuntime: { version: '4.4.3', installerVersion: '1.2.4' },
+      untrackedPackages: ['r:glue'],
+      components: [
+        {
+          ecosystem: 'r',
+          format: 'renv-lock',
+          resolution: 'locked',
+          files: [{ path: 'r/renv.lock', content, checksum: sha256(content) }]
+        }
+      ]
+    }
+    const files = unzipSync(buildEnvironmentLockArchive(lock, JSON.stringify(lock)))
+    expect(files['conda-explicit.txt']).toBeUndefined()
+    expect(strFromU8(files['README.md']!)).toContain('does not recreate the interpreter')
+    expect(strFromU8(files['restore-packages.py']!)).toContain('Nothing was installed.')
+    expect(strFromU8(files['README.md']!)).not.toContain('micromamba create')
+  })
   it('preserves the run scope and omitted packages in exported lock evidence', () => {
     const lock = { ...condaOnlyEnvironmentLock, omittedPackages: ['python:pandas'] }
     const serialized = JSON.stringify(lock)
@@ -1010,5 +1040,3 @@ describe('Artifact Environment lock export', () => {
     }
   })
 })
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'

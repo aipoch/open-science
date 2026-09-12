@@ -18,7 +18,7 @@ import { createLogger, diagnosticErrorFields } from '../logger'
 import { normalizeExplicitLock } from './micromamba'
 import { lockedPackageVersions, nativeLockRestoreState } from './native-lock-restoration'
 import { capturePipInstallEvidence, recoverPipInstallEvidence } from './pip-install-evidence'
-import { rLibraryDir, rScriptBin } from './runtime-paths'
+import { normalizeRuntimeArchitecture, rLibraryDir, rScriptBin } from './runtime-paths'
 import {
   decodeVersionedJson,
   type VersionedJsonDecodeResult
@@ -30,6 +30,8 @@ type EnvironmentLockTarget = Pick<
 > & {
   language: NotebookEnvironmentManifest['kernelKind']
   condaPrefix?: string
+  command?: string
+  args?: string[]
 }
 
 type EnvironmentLockExec = (argv: string[]) => Promise<string>
@@ -419,7 +421,7 @@ const environmentLockValue = (value: unknown): NotebookEnvironmentLock | undefin
       })
     : []
   if (
-    lock.schemaVersion !== 1 ||
+    (lock.schemaVersion !== 1 && lock.schemaVersion !== 2) ||
     lock.format !== 'environment-lock-bundle' ||
     (lock.kernelKind !== 'python' && lock.kernelKind !== 'r') ||
     typeof lock.environmentName !== 'string' ||
@@ -429,7 +431,25 @@ const environmentLockValue = (value: unknown): NotebookEnvironmentLock | undefin
     components.length === 0 ||
     !components.every(lockComponentValue) ||
     new Set(componentIdentities).size !== componentIdentities.length ||
-    components.filter((component) => component.ecosystem === 'conda').length !== 1 ||
+    (lock.schemaVersion === 1
+      ? components.filter((component) => component.ecosystem === 'conda').length !== 1 ||
+        lock.externalRuntime !== undefined
+      : components.some((component) => component.ecosystem === 'conda') ||
+        !recordValue(lock.externalRuntime) ||
+        !hasOnlyKeys(recordValue(lock.externalRuntime)!, ['version', 'installerVersion']) ||
+        !/^\d+\.\d+\.\d+(?:[a-z0-9.+-]*)?$/iu.test(
+          String(recordValue(lock.externalRuntime)?.version ?? '')
+        ) ||
+        !/^\d+\.\d+(?:[a-z0-9.+-]*)?$/iu.test(
+          String(recordValue(lock.externalRuntime)?.installerVersion ?? '')
+        ) ||
+        !['win32', 'darwin', 'linux'].includes(String(lock.platform)) ||
+        !['x64', 'arm64'].includes(normalizeRuntimeArchitecture(String(lock.architecture))) ||
+        components.length !== 1 ||
+        !components.every(
+          (component) =>
+            component.format === (lock.kernelKind === 'r' ? 'renv-lock' : 'pip-requirements')
+        )) ||
     components.some(
       (component) => component.ecosystem !== 'conda' && component.ecosystem !== lock.kernelKind
     ) ||
@@ -462,7 +482,8 @@ const environmentLockValue = (value: unknown): NotebookEnvironmentLock | undefin
       'components',
       'untrackedPackages',
       'omittedPackages',
-      'nonCondaInstallers'
+      'nonCondaInstallers',
+      'externalRuntime'
     ])
   ) {
     return undefined
@@ -472,12 +493,16 @@ const environmentLockValue = (value: unknown): NotebookEnvironmentLock | undefin
 
 const decodeNotebookEnvironmentLock = (
   value: string
-): VersionedJsonDecodeResult<NotebookEnvironmentLock> =>
-  decodeVersionedJson(value, {
-    currentVersion: 1,
+): VersionedJsonDecodeResult<NotebookEnvironmentLock> => {
+  const result = decodeVersionedJson(value, {
+    currentVersion: 2,
+    legacyVersions: [1],
     readVersion: (candidate) => recordValue(candidate)?.schemaVersion,
     decode: environmentLockValue
   })
+  // Both contracts remain supported; v1 is not migrated or rewritten.
+  return result.status === 'legacy' ? { ...result, status: 'valid', version: 1 } : result
+}
 
 const parseNotebookEnvironmentLock = (value: string): NotebookEnvironmentLock => {
   const decoded = decodeNotebookEnvironmentLock(value)
@@ -875,13 +900,98 @@ const assessEnvironmentLock = (
 class EnvironmentLockCaptureOwner {
   private readonly cache = new Map<string, EnvironmentLockCacheEntry>()
 
+  private async captureExternal(
+    target: EnvironmentLockTarget,
+    manifest: NotebookEnvironmentManifest,
+    options: CaptureNotebookEnvironmentLockOptions
+  ): Promise<EnvironmentLockCaptureResult> {
+    const unavailable = { state: 'unavailable', reason: 'environment-not-managed' } as const
+    if (
+      !target.command ||
+      !manifest.runtimeVersion ||
+      !manifest.complete ||
+      manifest.captureStatus !== 'complete'
+    )
+      return unavailable
+    try {
+      const native = await discoverNativeLockComponents(target.language, options.workspace)
+      if (native.rejected) return unavailable
+      const observed = manifest.packages.filter((pkg) => pkg.priority !== 'base')
+      const requested = observed.filter((pkg) => pkg.loadedState !== 'installed-only')
+      if (!requested.length) return unavailable
+      const version = (
+        await options.execute([
+          target.command,
+          ...(target.args ?? []),
+          ...(target.language === 'r'
+            ? ['--slave', '-e', 'cat(as.character(utils::packageVersion("renv")))']
+            : ['-c', 'import importlib.metadata; print(importlib.metadata.version("pip"))'])
+        ])
+      ).trim()
+      if (target.language === 'r' && native.components.length === 0) {
+        const script = `local({
+          Sys.setenv(RENV_CONFIG_CACHE_ENABLED="FALSE", RENV_CONFIG_AUTO_SNAPSHOT="FALSE",
+            RENV_PATHS_ROOT=file.path(tempdir(), "renv"));
+          invisible(capture.output(lock <- renv::snapshot(project=tempdir(), library=.libPaths(),
+            lockfile=NULL, packages=c(${requested.map((pkg) => JSON.stringify(pkg.name)).join(',')}), prompt=FALSE)));
+          cat(jsonlite::toJSON(unclass(lock), auto_unbox=TRUE))
+        })`
+        const content = await options.execute([
+          target.command,
+          ...(target.args ?? []),
+          '--slave',
+          '-e',
+          script
+        ])
+        const component: NativeLockComponent = {
+          ecosystem: 'r',
+          format: 'renv-lock',
+          resolution: 'locked',
+          files: [{ path: 'r/renv.lock', content, checksum: sha256(content) }]
+        }
+        if (nativeComponentValue(component)) native.components.push(component)
+      }
+      const component = native.components.find(
+        (entry) => entry.format === (target.language === 'r' ? 'renv-lock' : 'pip-requirements')
+      )
+      if (!component || component.resolution !== 'locked') return unavailable
+      if (target.language === 'r') {
+        const nativeLock = recordValue(JSON.parse(component.files[0]!.content))
+        if (recordValue(nativeLock?.R)?.Version !== manifest.runtimeVersion) return unavailable
+      }
+      const lock: NotebookEnvironmentLock = {
+        schemaVersion: 2,
+        format: 'environment-lock-bundle',
+        kernelKind: target.language,
+        environmentName: target.environmentName,
+        platform: manifest.platform,
+        architecture: manifest.architecture,
+        externalRuntime: { version: manifest.runtimeVersion, installerVersion: version },
+        components: [component],
+        untrackedPackages: [
+          ...new Set(requested.map((pkg) => `${pkg.ecosystem}:${normalizedPackageName(pkg.name)}`))
+        ]
+      }
+      if (!environmentLockValue(lock) || nativeLockRestoreState(lock, observed).state !== 'ready')
+        return unavailable
+      return {
+        state: 'captured',
+        lock,
+        captureStatus: 'partial',
+        partialReasons: ['external-interpreter-required']
+      }
+    } catch {
+      return unavailable
+    }
+  }
+
   async capture(
     target: EnvironmentLockTarget,
     manifest: NotebookEnvironmentManifest,
     options: CaptureNotebookEnvironmentLockOptions
   ): Promise<EnvironmentLockCaptureResult> {
     if (target.runtimeSource !== 'managed') {
-      return { state: 'unavailable', reason: 'environment-not-managed' }
+      return this.captureExternal(target, manifest, options)
     }
     if (!target.condaPrefix) {
       return { state: 'unavailable', reason: 'conda-prefix-unavailable' }

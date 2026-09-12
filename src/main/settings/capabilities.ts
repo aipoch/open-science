@@ -72,7 +72,8 @@ export interface NotebookRuntimeSettings {
   setInstallAuthorized(
     language: NotebookLanguage,
     envId: string,
-    authorized: boolean
+    authorized: boolean,
+    library?: string
   ): Promise<RuntimeEnablement>
   getAgentEnvironmentCreationEnabled(): Promise<boolean>
   setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<boolean>

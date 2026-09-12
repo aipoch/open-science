@@ -366,6 +366,8 @@ test('keeps representative conversation, project, and recovery states visually s
   const recoveryMessage = recoveryAlert.locator('p')
   for (const width of [320, 375, 414, 768]) {
     await setViewport(page, width)
+    await expect(recoveryAction).toBeVisible()
+    await expect(recoveryAction).toBeInViewport({ ratio: 1 })
     const [alertBox, actionBox, messageBox] = await Promise.all([
       recoveryAlert.boundingBox(),
       recoveryAction.boundingBox(),
@@ -379,7 +381,14 @@ test('keeps representative conversation, project, and recovery states visually s
     expect(actionBox.y).toBeGreaterThanOrEqual(messageBox.y + messageBox.height)
     expect(actionBox.x).toBeGreaterThanOrEqual(0)
     expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(width)
-    // Compact ErrorNotice actions wrap at narrow widths; nowrap would overflow the viewport.
+    // Compact ErrorNotice actions may wrap; their text must remain readable without clipping.
+    expect(
+      await recoveryAction.evaluate(
+        (button) =>
+          button.scrollWidth <= button.clientWidth + 1 &&
+          button.scrollHeight <= button.clientHeight + 1
+      )
+    ).toBe(true)
   }
   await setViewport(page, 1280)
   await expectStableScreenshot(page, 'session-recovery-warning.png')

@@ -16,6 +16,58 @@ afterEach(() => {
 })
 
 describe('sandboxedPackageSpawn', () => {
+  it.each(
+    process.platform === 'win32'
+      ? [
+          ['bin', 'Rscript.exe'],
+          ['bin', 'x64', 'Rscript.exe']
+        ]
+      : [['bin', 'Rscript']]
+  )(
+    'grants library writes and R home reads for %s/%s without interpreter writes',
+    async (...parts) => {
+      const root = mkdtempSync(join(tmpdir(), 'external-runtime-scope-'))
+      temporaryDirectories.push(root)
+      mkdirSync(join(root, 'etc'))
+      mkdirSync(join(root, 'library'))
+      const command = join(root, ...parts)
+      const library = join(tmpdir(), 'personal-r-library')
+      const runtimeRoot = join(root, 'managed-runtime')
+      const cacheRoot = join(runtimeRoot, 'workload-cache')
+      mkdirSync(cacheRoot, { recursive: true })
+      const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async () => {
+        throw new Error('scope captured')
+      })
+      const spawn = sandboxedPackageSpawn({
+        processSandbox: { wrap },
+        request: { language: 'r', packages: ['glue'] },
+        runtimeRoot,
+        storageRoot: join(tmpdir(), 'app-storage'),
+        interpreter: { command, library }
+      })
+      await expect(
+        spawn(command, [], {
+          R_LIBS_USER: library,
+          MAMBA_ROOT_PREFIX: runtimeRoot,
+          CONDA_PKGS_DIRS: runtimeRoot,
+          OPEN_SCIENCE_NOTEBOOK_CACHE_DIR: cacheRoot,
+          R_LIBS: '/unrelated/library',
+          R_PROFILE_USER: '/unrelated/profile'
+        })
+      ).rejects.toThrow('scope captured')
+      const env = wrap.mock.calls[0]![0].env!
+      expect(env.R_LIBS_USER).toBe(library)
+      expect(env.R_LIBS).toBeUndefined()
+      expect(env.R_PROFILE_USER).toBeUndefined()
+      const filesystem = wrap.mock.calls[0]![0].filesystem!
+      expect(filesystem.readWriteRoots).toContain(library)
+      expect(filesystem.readWriteRoots).not.toContain(root)
+      expect(filesystem.readWriteRoots).toEqual([library, cacheRoot])
+      expect(filesystem.readWriteRoots).not.toContain(runtimeRoot)
+      expect(filesystem.readOnlyRoots).toContain(runtimeRoot)
+      expect(filesystem.readOnlyRoots).toContain(root)
+    }
+  )
   it('does not prepare or launch an installer for an already-cancelled request', async () => {
     const processSandbox: NotebookProcessSandbox = { wrap: vi.fn() }
     const spawn = sandboxedPackageSpawn({

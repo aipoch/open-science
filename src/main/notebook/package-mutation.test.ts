@@ -88,6 +88,7 @@ const ownerHarness = (
       method: 'conda'
     }),
     recheckRepair: vi.fn(() => undefined),
+    recheckAuthorization: vi.fn(async () => undefined),
     canSkipInstall: vi.fn(() => true),
     runtimeRepair: {
       quarantineProtectedIdentity: vi.fn().mockResolvedValue(undefined),
@@ -305,6 +306,46 @@ describe('NotebookPackageMutationOwner', () => {
 
     await expect(owner.mutate({ target, mirror: {} })).resolves.toMatchObject({ ok: true })
     expect(existsSync(markerPath)).toBe(false)
+  })
+
+  it('rechecks installation consent after the mutation lock and mirror resolution', async () => {
+    const order: string[] = []
+    const refusal = {
+      status: 'refused' as const,
+      result: {
+        ok: false,
+        needsRestart: false,
+        log: '',
+        error: 'authorization changed'
+      }
+    }
+    const { owner, options, target, runtimeRoot } = ownerHarness({
+      recheckAuthorization: vi.fn(async () => {
+        order.push('authorization')
+        return refusal
+      }),
+      environmentOperations: {
+        runMutation: async <T>(_env: string, operation: () => Promise<T>): Promise<T> => {
+          order.push('lock')
+          return operation()
+        },
+        logPackageFailure: vi.fn(),
+        logPackageResult: vi.fn()
+      }
+    })
+    await expect(
+      owner.mutate({
+        target,
+        mirror: async () => {
+          order.push('mirror')
+          return {}
+        }
+      })
+    ).resolves.toEqual(refusal.result)
+    expect(order).toEqual(['lock', 'mirror', 'authorization'])
+    expect(options.installPackages).not.toHaveBeenCalled()
+    expect(options.environmentStateTracker.markPackageMutationDirty).not.toHaveBeenCalled()
+    expect(await pending(runtimeRoot)).toEqual([])
   })
 
   it('rechecks repair policy after acquiring the mutation lock', async () => {

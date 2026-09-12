@@ -314,16 +314,38 @@ export class NotebookEnvironmentOperations {
     return Promise.all(Array.from(this.revocationDrains)).then(() => undefined)
   }
 
-  recommendRestart(language: NotebookLanguage, environment: string): void {
-    this.restartRecommendations.add(processKey(language, environment))
+  recommendRestart(
+    language: NotebookLanguage,
+    environment: string,
+    scope?: { sessionId: string; runtimeId: string }
+  ): void {
+    this.restartRecommendations.add(
+      this.restartRecommendationKey(processKey(language, environment), scope)
+    )
   }
 
-  clearRestartRecommendations(processKeys: Iterable<string>): void {
-    for (const key of processKeys) this.restartRecommendations.delete(key)
+  clearRestartRecommendations(
+    processKeys: Iterable<string>,
+    scope?: { sessionId: string; runtimeId: string }
+  ): void {
+    for (const key of processKeys)
+      this.restartRecommendations.delete(this.restartRecommendationKey(key, scope))
   }
 
-  isRestartRecommended(environmentProcessKey: string): boolean {
-    return this.restartRecommendations.has(environmentProcessKey)
+  isRestartRecommended(
+    environmentProcessKey: string,
+    scope?: { sessionId: string; runtimeId: string }
+  ): boolean {
+    return this.restartRecommendations.has(
+      this.restartRecommendationKey(environmentProcessKey, scope)
+    )
+  }
+
+  private restartRecommendationKey(
+    key: string,
+    scope?: { sessionId: string; runtimeId: string }
+  ): string {
+    return scope ? JSON.stringify([key, scope.runtimeId, scope.sessionId]) : key
   }
 
   isRepairBlocked(environmentKey: string): boolean {

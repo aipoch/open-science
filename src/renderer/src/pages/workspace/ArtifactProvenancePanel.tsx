@@ -168,7 +168,13 @@ const partialEnvironmentLockSummary = (
 ): string => {
   const details = new Set<string>()
   for (const reason of reasons ?? []) {
-    if (reason === 'environment-manifest-partial') {
+    if (reason === 'external-interpreter-required') {
+      details.add(
+        t(
+          'Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.'
+        )
+      )
+    } else if (reason === 'environment-manifest-partial') {
       details.add(t('Package inventory was incomplete.'))
     } else if (
       reason === 'non-conda-package-detected' ||
@@ -182,7 +188,9 @@ const partialEnvironmentLockSummary = (
     }
   }
   return [
-    t('Inspection only; this partial lock cannot run a reproducibility check.'),
+    ...(reasons?.includes('external-interpreter-required')
+      ? []
+      : [t('Inspection only; this partial lock cannot run a reproducibility check.')]),
     ...details
   ].join(' ')
 }

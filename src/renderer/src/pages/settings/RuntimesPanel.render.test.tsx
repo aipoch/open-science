@@ -164,6 +164,7 @@ beforeEach(() => {
       getLocalShellRuntimePreference: vi.fn().mockResolvedValue(undefined)
     },
     artifacts: { importEnvironmentLock },
+    storage: { pickDirectory: vi.fn().mockResolvedValue(null) },
     runtime: {
       listEnvironments,
       listPackages,
@@ -879,7 +880,7 @@ describe('RuntimesPanel', () => {
     expect(setInstallAuthorized).toHaveBeenCalledWith('python', '/usr/bin/python3', true)
   })
 
-  it('explains that package installation is unavailable for an enabled user-owned R environment', async () => {
+  it('revokes historical R consent without a library and requires a library to authorize again', async () => {
     getEnablement.mockImplementation(async (language: string) =>
       language === 'r'
         ? {
@@ -888,18 +889,76 @@ describe('RuntimesPanel', () => {
           }
         : enablement
     )
+    setInstallAuthorized.mockResolvedValue({
+      enabled: { '/opt/conda/envs/bio/bin/R': true },
+      installAuthorized: { '/opt/conda/envs/bio/bin/R': false }
+    })
 
     await render()
 
     const installToggle = container.querySelector<HTMLButtonElement>(
       '[aria-label="Allow package install for R 4.4.1"]'
     )
+    expect(installToggle?.disabled).toBe(false)
+    expect(installToggle?.getAttribute('data-state')).toBe('checked')
+    expect(container.textContent).toContain('Authorize an existing personal R library.')
+    const picker = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Choose library folder…'
+    )!
+    expect(picker.disabled).toBe(true)
+    await click(installToggle)
+    expect(setInstallAuthorized).toHaveBeenCalledWith(
+      'r',
+      '/opt/conda/envs/bio/bin/R',
+      false,
+      undefined
+    )
     expect(installToggle?.disabled).toBe(true)
     expect(installToggle?.getAttribute('data-state')).toBe('unchecked')
-    expect(container.textContent).toContain(
-      'Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.'
+    expect(picker.disabled).toBe(false)
+    await click(picker)
+    expect(installToggle?.disabled).toBe(true)
+    vi.mocked(window.api.storage.pickDirectory).mockResolvedValue('/home/user/R/library')
+    await click(picker)
+    expect(installToggle?.disabled).toBe(false)
+    await click(installToggle)
+    expect(setInstallAuthorized).toHaveBeenCalledWith(
+      'r',
+      '/opt/conda/envs/bio/bin/R',
+      true,
+      '/home/user/R/library'
     )
   })
+
+  it.each([['/personal/R'], ['/personal/R', '/other/R']])(
+    'uses detected personal libraries %j without requiring path entry',
+    async (...libraries) => {
+      listEnvironments.mockResolvedValue({
+        python: [],
+        r: [{ ...rEnvs[0], personalRLibraries: libraries }]
+      })
+      getEnablement.mockResolvedValue({
+        enabled: { [rEnvs[0].envId]: true },
+        installAuthorized: {}
+      })
+      await render()
+      const toggle = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Allow package install for R 4.4.1"]'
+      )!
+      if (libraries.length > 1) {
+        expect(toggle.disabled).toBe(true)
+        const select = container.querySelector('select')!
+        await act(async () => {
+          select.value = libraries[1]!
+          select.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+      }
+      expect(toggle.disabled).toBe(false)
+      await click(toggle)
+      expect(setInstallAuthorized).toHaveBeenCalledWith('r', rEnvs[0].envId, true, libraries.at(-1))
+      expect(window.api.storage.pickDirectory).not.toHaveBeenCalled()
+    }
+  )
 
   it('surfaces the "cannot disable the last enabled runtime" error inline', async () => {
     setEnvironmentEnabled.mockRejectedValueOnce(
