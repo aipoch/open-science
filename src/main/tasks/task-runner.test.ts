@@ -100,7 +100,11 @@ const configuredSettings: SettingsSnapshot = {
 
 class RetainedRunEventPayload {}
 
-type TaskRunnerOverrides = Omit<Partial<TaskRunnerDependencies>, 'agent' | 'sessions'> & {
+type TaskRunnerOverrides = Omit<
+  Partial<TaskRunnerDependencies>,
+  'agent' | 'sessions' | 'artifacts'
+> & {
+  artifacts?: Partial<TaskRunnerDependencies['artifacts']>
   agent?: Partial<TaskAgentPort>
   sessions?: Omit<
     Partial<TaskSessionPort>,
@@ -197,9 +201,6 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
       acquire: async () => ({ id: 'resource-1', url: 'preview://resource-1', size: 0 }),
       release: async () => undefined
     },
-    artifacts: {
-      finalizeRun: async () => ({ ok: true, artifacts: [] })
-    },
     runtimeEvents: { subscribe: () => () => undefined },
     settings: { get: async () => settings },
     specialists: { resolve: async (reference) => ({ id: reference }) },
@@ -214,6 +215,11 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
     createId: () => 'generated-id',
     now: () => 1,
     ...overrides,
+    artifacts: {
+      finalizeRun: async () => ({ ok: true, artifacts: [] }),
+      resolveVersionDescriptors: async () => [],
+      ...overrides.artifacts
+    },
     agent: { ...defaultAgent, ...overrides.agent },
     sessions: {
       ...defaultSessions,
@@ -3209,6 +3215,10 @@ describe('TaskRunner', () => {
           artifacts: [
             {
               id: 'artifact-file',
+              artifactId: 'artifact-lineage',
+              versionId: 'artifact-file',
+              versionNumber: 2,
+              checksum: 'a'.repeat(64),
               projectId: project.id,
               sessionId: 'session-artifact',
               messageId: 'artifact-agent',
@@ -3247,7 +3257,14 @@ describe('TaskRunner', () => {
       artifactIds: ['artifact-file']
     })
     expect(savedSessions.at(-1)?.artifacts).toEqual([
-      expect.objectContaining({ id: 'artifact-file', createdAt: 10 })
+      expect.objectContaining({
+        id: 'artifact-file',
+        createdAt: 10,
+        artifactId: 'artifact-lineage',
+        versionId: 'artifact-file',
+        versionNumber: 2,
+        sha256: 'a'.repeat(64)
+      })
     ])
   })
 

@@ -1000,6 +1000,7 @@ describe('HeadlessTaskApi adapter', () => {
       if (channel === 'sessions:load-all') {
         return { sessions: [session], manifest: { version: 1 } }
       }
+      if (channel === 'artifacts:resolve-version-descriptors') return []
       if (channel === 'preview-resources:acquire') {
         return {
           id: 'resource-query',
@@ -1037,6 +1038,11 @@ describe('HeadlessTaskApi adapter', () => {
     })
     await api.releaseArtifact('resource-query')
 
+    expect(invoke).toHaveBeenCalledWith(
+      'artifacts:resolve-version-descriptors',
+      taskCallerContext(),
+      [{ projectId: project.id, appSessionId: session.id, versionIds: ['artifact-query'] }]
+    )
     expect(invoke).toHaveBeenCalledWith('preview-resources:acquire', taskCallerContext(), [
       {
         source: 'artifact',

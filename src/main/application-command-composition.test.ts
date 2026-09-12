@@ -373,6 +373,7 @@ describe('application command composition', () => {
       'reviewer:get-for-session',
       'reviewer:run',
       'artifacts:finalize-run',
+      'artifacts:resolve-version-descriptors',
       'preview-resources:acquire',
       'preview-resources:release'
     ])

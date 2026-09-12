@@ -199,6 +199,7 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'reviewer:get-for-session',
   'reviewer:run',
   'artifacts:finalize-run',
+  'artifacts:resolve-version-descriptors',
   'preview-resources:acquire',
   'preview-resources:release'
 ])
