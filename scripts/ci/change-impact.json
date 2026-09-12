@@ -88,15 +88,8 @@
       "capabilities": ["ci_integrity_surface"]
     },
     {
-      "id": "skills_content",
-      "role": "owner",
-      "paths": ["resources/skills/**"],
-      "capabilities": []
-    },
-    {
       "id": "documentation",
       "role": "owner",
-      "fallbackOwner": true,
       "paths": ["**/*.md", "docs/**", "LICENSE", ".gitignore"],
       "capabilities": ["documentation"]
     },

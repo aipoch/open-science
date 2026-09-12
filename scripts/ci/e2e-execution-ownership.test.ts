@@ -79,8 +79,7 @@ it.each(['regressions', 'delegation'])(
     expect(execution.if).toBe(
       `\${{ matrix.group == '${group}' && steps.setup.outcome == 'success' }}`
     )
-    expect(execution.run).toContain(`npm run test:e2e:${group} -- --global-timeout=`)
-    expect(execution.run).not.toContain('--fail-on-flaky-tests')
+    expect(execution.run).toContain(`npm run test:e2e:${group} -- --fail-on-flaky-tests`)
     const enforce = steps.find(({ name }) => name === 'Enforce selected macOS checks')!
     for (const outcome of ['failure', 'cancelled', 'skipped', '', 'success']) {
       const run = spawnSync('bash', ['-c', enforce.run!], {

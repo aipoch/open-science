@@ -234,18 +234,6 @@ describe('pull request change classification', () => {
     )
   })
 
-  it('keeps skill content changes off the unrelated desktop matrix', () => {
-    const plan = classifyChanges([
-      { path: 'resources/skills/scvi-tools/SKILL.md', status: 'modified' },
-      { path: 'resources/skills/scvi-tools/kernel.py', status: 'modified' }
-    ])
-
-    expect(plan.mode).toBe('selective')
-    expect(plan.lanes).toEqual(['policy'])
-    expect(plan.bundles).toEqual(['policy'])
-    expect(plan.reasonChains).toEqual([])
-  })
-
   it('uses one specific owner instead of a broad fallback owner', () => {
     const manifest = readManifest()
     manifest.rules.push({
