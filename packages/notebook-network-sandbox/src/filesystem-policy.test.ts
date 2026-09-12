@@ -111,6 +111,7 @@ describe('Notebook filesystem policy', () => {
         '-c',
         '/usr/bin/curl --silent http://example.com/'
       ])
+      expect(launch.env.HTTP_PROXY).toContain('command:secret@localhost:4312')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

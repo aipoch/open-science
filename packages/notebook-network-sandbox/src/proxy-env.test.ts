@@ -8,18 +8,27 @@ describe('Notebook network proxy environment', () => {
 
   it('forces every destination through the policy gateway', () => {
     const env = proxyEnvironment(4100, credentials)
+    const http = 'http://command%20id:random%2Fsecret@127.0.0.1:4100'
 
     expect(env).toMatchObject({
       NO_PROXY: '',
       no_proxy: '',
-      HTTP_PROXY: 'http://command%20id:random%2Fsecret@127.0.0.1:4100',
-      HTTPS_PROXY: 'http://command%20id:random%2Fsecret@127.0.0.1:4100',
-      ALL_PROXY: 'http://command%20id:random%2Fsecret@127.0.0.1:4100',
+      HTTP_PROXY: http,
+      HTTPS_PROXY: http,
+      ALL_PROXY: http,
       FTP_PROXY: 'socks5h://command%20id:random%2Fsecret@127.0.0.1:4100',
+      CLOUDSDK_PROXY_ADDRESS: '127.0.0.1',
       CLOUDSDK_PROXY_USERNAME: 'command id',
       CLOUDSDK_PROXY_PASSWORD: 'random/secret'
     })
     expect(env).not.toHaveProperty('RSYNC_PROXY')
+  })
+
+  it('accepts localhost when the caller matches a macOS seatbelt allow rule', () => {
+    const env = proxyEnvironment(4100, credentials, 'localhost')
+
+    expect(env.HTTP_PROXY).toBe('http://command%20id:random%2Fsecret@localhost:4100')
+    expect(env.CLOUDSDK_PROXY_ADDRESS).toBe('localhost')
   })
 
   it('does not inject unrelated language or certificate settings', () => {
