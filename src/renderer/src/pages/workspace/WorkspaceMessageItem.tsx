@@ -167,6 +167,8 @@ type WorkspaceMessageItemProps = {
   // A trailing buffered reply can reserve the loading-row geometry it replaces. When another
   // live row remains below it, the message keeps only its natural text-line height.
   reserveLoadingRowHeight?: boolean
+  // Whole-window find owns scroll positioning while it is open.
+  disableScrollAnchor?: boolean
   // Durable lifecycle of an application-authored correction request. Keeping the response state
   // explicit prevents a missing historical response from looking like a successfully started one.
   reviewerCorrectionState?: ReviewerCorrectionState
@@ -1354,6 +1356,7 @@ const WorkspaceMessageItemImpl = ({
   presentationSourceOpen,
   presentationAnimateOnMount,
   reserveLoadingRowHeight = true,
+  disableScrollAnchor = false,
   reviewerCorrectionState = 'failed'
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -1583,7 +1586,7 @@ const WorkspaceMessageItemImpl = ({
         key={message.id}
         messageId={message.id}
         disableContainment={skipContentVisibilityNow || skipContentVisibility}
-        scrollAnchor={message.role === 'user'}
+        scrollAnchor={message.role === 'user' && !disableScrollAnchor}
         className="min-w-0"
       >
         <div className={cn('px-4 pb-1 pt-5 md:px-6', contentPaddingClassName)}>
@@ -2083,7 +2086,8 @@ const areWorkspaceMessageItemPropsEqual = (
   previous.onPresentationChange === next.onPresentationChange &&
   (previous.presentationSourceOpen ?? true) === (next.presentationSourceOpen ?? true) &&
   previous.presentationAnimateOnMount === next.presentationAnimateOnMount &&
-  (previous.reserveLoadingRowHeight ?? true) === (next.reserveLoadingRowHeight ?? true)
+  (previous.reserveLoadingRowHeight ?? true) === (next.reserveLoadingRowHeight ?? true) &&
+  (previous.disableScrollAnchor ?? false) === (next.disableScrollAnchor ?? false)
 
 const WorkspaceMessageItem = memo(WorkspaceMessageItemImpl, areWorkspaceMessageItemPropsEqual)
 WorkspaceMessageItem.displayName = 'WorkspaceMessageItem'

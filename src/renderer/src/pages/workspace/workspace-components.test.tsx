@@ -378,7 +378,10 @@ describe('conversation message scroller integration', () => {
     )
     expect(workspaceMessageScrollerSource).toContain('scrollPreviousItemPeek={64}')
     expect(workspaceMessageScrollerSource).toContain('<WorkspaceMessageItem')
-    expect(workspaceMessageItemSource).toContain("scrollAnchor={message.role === 'user'}")
+    expect(workspaceMessageItemSource).toContain(
+      "scrollAnchor={message.role === 'user' && !disableScrollAnchor}"
+    )
+    expect(workspaceMessageItemSource).toContain('disableScrollAnchor?: boolean')
     expect(workspaceMessageItemSource).toContain('messageId={message.id}')
     expect(workspaceMessageItemSource).toContain('<SessionMessageMarkdown')
     expect(workspaceMessageItemSource).toContain('content={assistantPresentation.content}')

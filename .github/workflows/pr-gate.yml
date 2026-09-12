@@ -984,7 +984,7 @@ jobs:
         run: npm run test:e2e:delegation -- --fail-on-flaky-tests --global-timeout=1200000
       - name: Run renderer layout pilot
         id: renderer_layout
-        if: ${{ matrix.group == 'presentation' }}
+        if: ${{ matrix.group == 'presentation' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos') }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout

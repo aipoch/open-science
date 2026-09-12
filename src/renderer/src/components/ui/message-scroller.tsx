@@ -40,6 +40,9 @@ function MessageScroller({
 
 function MessageScrollerViewport({
   className,
+  onKeyDown,
+  onTouchMove,
+  onWheel,
   ...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Viewport>) {
   return (
@@ -49,6 +52,9 @@ function MessageScrollerViewport({
         'size-full min-h-0 min-w-0 scroll-fade-b scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain data-autoscrolling:scrollbar-thumb-transparent data-autoscrolling:scrollbar-track-transparent',
         className
       )}
+      onKeyDown={onKeyDown}
+      onTouchMove={onTouchMove}
+      onWheel={onWheel}
       {...props}
     />
   )

@@ -157,6 +157,22 @@ describe('PR Gate workflow', () => {
     }
   })
 
+  it('does not make the renderer layout pilot an unrelated blocking check', () => {
+    const macos = workflow.jobs.macos_e2e.steps?.find(
+      ({ name }) => name === 'Run renderer layout pilot'
+    )
+    const windows = workflow.jobs.windows_e2e.steps?.find(
+      ({ name }) => name === 'Run renderer layout pilot'
+    )
+
+    expect(macos?.if).toContain(
+      "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos')"
+    )
+    // Keep the existing Windows font pilot reachable for Windows-only plans.
+    expect(windows?.if).toBe('${{ matrix.shard == 1 }}')
+    expect(workflowText).toContain('--fail-on-flaky-tests')
+  })
+
   it('plans with the trusted base classifier and fails closed during bootstrap', () => {
     const prepare = workflow.jobs.preflight.steps?.find(
       ({ name }) => name === 'Prepare trusted classifier'
