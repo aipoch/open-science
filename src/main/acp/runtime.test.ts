@@ -1233,7 +1233,11 @@ describe('ACP runtime migration write-gate', () => {
       ).rejects.toThrow(capacityError)
       expect(runtime.getSnapshot().events).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ kind: 'error', text: expect.stringContaining(capacityError) })
+          expect.objectContaining({
+            kind: 'error',
+            text: expect.stringContaining(capacityError),
+            providerError: true
+          })
         ])
       )
     } finally {

@@ -108,6 +108,23 @@ describe('describePromptError', () => {
 })
 
 describe('isProviderPromptError', () => {
+  it.each([
+    [-32603, 'serverOverloaded', true],
+    [-32002, 'serverOverloaded', false],
+    [-32603, 'internalServerError', false],
+    [-32603, undefined, false]
+  ] as const)('classifies Codex code %s with detail %s structurally', (code, detail, expected) => {
+    const error = Object.assign(
+      new Error('Selected model is at capacity. Please try a different model.'),
+      {
+        code,
+        data: { codexErrorInfo: detail },
+        name: 'RequestError'
+      }
+    )
+    expect(isProviderPromptError(error)).toBe(expected)
+  })
+
   it('flags an upstream APIError (auth/rate/quota/5xx all share this tag)', () => {
     expect(isProviderPromptError(agentError('Invalid API key'))).toBe(true)
     expect(isProviderPromptError(agentError('429 Too Many Requests'))).toBe(true)

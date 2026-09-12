@@ -21,6 +21,7 @@ import type { TaskRun } from '../../shared/task-api'
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
 import { loadManagedCodexErrorHandler } from '../settings/codex-error.test-utils'
+import { isProviderPromptError } from '../acp/prompt-error'
 import { FileTaskRunJournal, type TaskRunJournalEntry } from './task-run-journal'
 import {
   TASK_RUN_DISPOSAL_BUDGET_MS,
@@ -233,8 +234,14 @@ describe('TaskRunner', () => {
       const root = await mkdtemp(join(tmpdir(), 'codex-capacity-'))
       temporaryRoots.push(root)
       const adapter = await loadManagedCodexErrorHandler(root)
+      const savedSessions: PersistedChatSession[] = []
       let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
       const runner = createRunner({
+        sessions: {
+          save: async (saved) => {
+            savedSessions.push(structuredClone(saved))
+          }
+        },
         runtimeEvents: {
           subscribe: (listener) => {
             emitEvent = listener
@@ -275,7 +282,19 @@ describe('TaskRunner', () => {
                   : 'Retrieved references successfully.'
             })
             const failure = adapter.getFailure()
-            if (failure) throw failure
+            if (failure) {
+              emitEvent?.({
+                id: 'capacity-error',
+                timestamp: 3,
+                sessionId,
+                promptMessageId,
+                kind: 'error',
+                level: 'error',
+                text: failure.message,
+                providerError: isProviderPromptError(failure)
+              })
+              throw failure
+            }
           }
         }
       })
@@ -285,7 +304,13 @@ describe('TaskRunner', () => {
       })
       const result = await runner.waitForRun(started.id)
       expect(result.status).toBe(delivery === 'terminal-error' ? 'failed' : 'completed')
-      if (delivery === 'terminal-error') expect(result.error).toContain(capacityError)
+      if (delivery === 'terminal-error') {
+        expect(result.error).toContain(capacityError)
+        expect(savedSessions.at(-1)).toMatchObject({
+          status: 'error',
+          errorReportable: false
+        })
+      }
     }
   )
 
