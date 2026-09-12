@@ -844,7 +844,7 @@ describe('provider registry', () => {
 
     it('returns true only for KimiForCode k3 model', () => {
       expect(isVendorModelMultimodal('kimiforcode', 'kimi-k3')).toBe(true)
-      expect(isVendorModelMultimodal('kimiforcode', 'kimi-for-coding')).toBe(false)
+      expect(isVendorModelMultimodal('kimiforcode', 'kimi-for-coding')).toBe(true)
       expect(isVendorModelMultimodal('kimiforcode', 'kimi-for-coding-highspeed')).toBe(false)
     })
 

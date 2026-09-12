@@ -474,11 +474,11 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     apiKeyUrl: 'https://www.kimi.com/code/docs',
     models: [
       { id: 'kimi-k3', contextWindow: 1_000_000, reasoningEffort: 'standard-5' },
-      { id: 'kimi-for-coding', contextWindow: 256_000 },
+      { id: 'kimi-for-coding', contextWindow: 1_048_576 },
       { id: 'kimi-for-coding-highspeed', contextWindow: 256_000 }
     ],
     // Only the k3 model in this plan is vision-capable; the coding-tuned ids are text-only.
-    multimodal: { multimodalModels: ['kimi-k3'] }
+    multimodal: { multimodalModels: ['kimi-k3', 'kimi-for-coding'] }
   },
   {
     id: 'minimax',
