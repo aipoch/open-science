@@ -107,6 +107,7 @@
     "Import Environment lock": "Импортировать блокировку окружения"
   },
   "renderer": {
+    "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "Для проверки доступа к R защита сети должна быть готова. Проверьте настройки сети, затем повторно проверьте среды выполнения.",
     "The source message is no longer available.": "Исходное сообщение больше недоступно.",
     "This Notebook exceeds the 10 MB preview limit.": "Этот Notebook превышает ограничение предпросмотра в 10 МБ.",
     "Recent searches": "Недавние поиски",

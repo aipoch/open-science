@@ -145,7 +145,8 @@ const publicOperations = (): string[] => {
         getModifiers(member)?.some((modifier) =>
           [SyntaxKind.PrivateKeyword, SyntaxKind.ProtectedKeyword].includes(modifier.kind)
         )
-      return !hidden && isMethodDeclaration(member) && isIdentifier(member.name)
+      // Overload signatures describe the same operation; inventory its implementation once.
+      return !hidden && isMethodDeclaration(member) && member.body && isIdentifier(member.name)
         ? [member.name.text]
         : []
     })

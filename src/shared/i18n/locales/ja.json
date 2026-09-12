@@ -104,6 +104,7 @@
     "Import Environment lock": "環境ロックをインポート"
   },
   "renderer": {
+    "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "R のアクセス検証にはネットワーク保護の準備が必要です。ネットワーク設定を確認してから、ランタイムを再確認してください。",
     "The source message is no longer available.": "元のメッセージは利用できなくなりました。",
     "This Notebook exceeds the 10 MB preview limit.": "この Notebook はプレビューの上限 10 MB を超えています。",
     "Recent searches": "最近の検索",

@@ -632,7 +632,8 @@ describe('SkillsPanel (list view)', () => {
     clickRadixMenuItem(remove)
     expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith(
       'personal-mine',
-      'personal'
+      'personal',
+      undefined
     )
   })
 

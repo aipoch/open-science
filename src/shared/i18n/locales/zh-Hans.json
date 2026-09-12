@@ -104,6 +104,7 @@
     "Import Environment lock": "导入环境锁文件"
   },
   "renderer": {
+    "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "验证 R 访问权限需要网络保护就绪。请检查网络设置，然后重新检查运行环境。",
     "The source message is no longer available.": "源消息已不可用。",
     "This Notebook exceeds the 10 MB preview limit.": "此 Notebook 超过 10 MB 预览限制。",
     "Recent searches": "最近搜索",

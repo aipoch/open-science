@@ -55,6 +55,7 @@ import {
 import { PythonIcon, RIcon } from './language-icons'
 import { NotebookRecoveryNotice } from './NotebookRecoveryNotice'
 import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
+import { useNotebookNetworkStatus } from './use-notebook-network-status'
 import { WslLocalShellSection } from './WslLocalShellSection'
 import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'
 import { provisionProgressText } from '../workspace/provision-progress-text'
@@ -116,6 +117,10 @@ const RuntimesPanel = ({
   )
   const loaded = useRuntimeSettingsStore((state) => state.loaded)
   const checkedAt = useRuntimeSettingsStore((state) => state.checkedAt)
+  const networkStatus = useNotebookNetworkStatus(
+    window.api.platform === 'win32' || Boolean(onOpenNetworkProtection),
+    checkedAt
+  )
   const busy = useRuntimeSettingsStore((state) => state.busy)
   const error = useRuntimeSettingsStore((state) => state.error)
   const packageCounts = useRuntimeSettingsStore((state) => state.packageCounts)
@@ -673,7 +678,7 @@ const RuntimesPanel = ({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={busy || !enabled || !env.runnable}
+                disabled={busy || !enabled || !env.runnable || networkStatus.kind !== 'ready'}
                 onClick={() => void setSandboxAccess(env, true)}
               >
                 {t('Authorize and verify')}
@@ -688,6 +693,13 @@ const RuntimesPanel = ({
                 {t('Remove R access')}
               </Button>
             </div>
+            {networkStatus.kind !== 'ready' ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t(
+                  'R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.'
+                )}
+              </p>
+            ) : null}
             {runtimeAccessMessage[env.envId] ? (
               <p role="status" className="mt-2 text-xs">
                 {runtimeAccessMessage[env.envId]}
@@ -817,7 +829,10 @@ const RuntimesPanel = ({
         ) : null}
         <NotebookRecoveryNotice recovery={recovery} />
         {onOpenNetworkProtection ? (
-          <NotebookNetworkProtectionBanner onOpen={onOpenNetworkProtection} />
+          <NotebookNetworkProtectionBanner
+            onOpen={onOpenNetworkProtection}
+            status={networkStatus}
+          />
         ) : null}
         {environmentLockImportResult?.imported ? (
           <p role="status" className="text-sm text-status-info-foreground">

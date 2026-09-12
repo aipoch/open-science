@@ -105,6 +105,7 @@
     "Import Environment lock": "Umgebungssperre importieren"
   },
   "renderer": {
+    "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "Die Überprüfung des R-Zugriffs erfordert einen einsatzbereiten Netzwerkschutz. Prüfen Sie die Netzwerkeinstellungen und überprüfen Sie anschließend die Laufzeitumgebungen erneut.",
     "The source message is no longer available.": "Die ursprüngliche Nachricht ist nicht mehr verfügbar.",
     "This Notebook exceeds the 10 MB preview limit.": "Dieses Notebook überschreitet die Vorschaugrenze von 10 MB.",
     "Recent searches": "Letzte Suchen",
