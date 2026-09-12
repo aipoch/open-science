@@ -377,7 +377,9 @@ test('keeps representative conversation, project, and recovery states visually s
     expect(alertBox.x).toBeGreaterThanOrEqual(0)
     expect(alertBox.x + alertBox.width).toBeLessThanOrEqual(width)
     expect(actionBox.y).toBeGreaterThanOrEqual(messageBox.y + messageBox.height)
-    await expect(recoveryAction).toHaveCSS('white-space', 'nowrap')
+    expect(actionBox.x).toBeGreaterThanOrEqual(0)
+    expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(width)
+    // Compact ErrorNotice actions wrap at narrow widths; nowrap would overflow the viewport.
   }
   await setViewport(page, 1280)
   await expectStableScreenshot(page, 'session-recovery-warning.png')
