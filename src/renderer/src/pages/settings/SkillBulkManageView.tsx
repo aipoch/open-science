@@ -180,7 +180,7 @@ const SkillBulkManageView = (): React.JSX.Element => {
     for (const { skill } of deletableSkills) {
       if (skill.source === 'featured') continue
       try {
-        await deleteSkill(skill.id, skill.source)
+        await deleteSkill(skill.id, skill.source, skill.directoryName)
         deletedIds.add(skill.id)
       } catch (error) {
         failures.push(errorMessage(error) || skill.displayName)
