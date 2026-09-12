@@ -110,6 +110,35 @@ class ComposerTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     grid_geom(outline)
 
+    def test_numpy_row_heights_preserve_multirow_composition(self):
+        self.outline["row_heights_mm"] = [25.4, 25.4]
+        self.outline["panels"][0]["rowspan"] = 2
+        self.outline["panels"][1]["row"] = 1
+        paths = self.make_panels()
+        outline = copy.deepcopy(self.outline)
+        outline["row_heights_mm"] = np.array([25.4, 25.4])
+        target = self.root / "numpy-rows.png"
+        compose_figure(outline, paths, target, dpi=100)
+        with Image.open(target) as result:
+            self.assertEqual(result.size, (200, 215))
+            self.assertEqual(result.getpixel((40, 180)), (255, 0, 0))
+            self.assertEqual(result.getpixel((150, 180)), (0, 0, 255))
+            self.assertEqual(result.getpixel((150, 50)), (255, 255, 255))
+        self.assertEqual(compose_crops(outline, dpi=100),
+                         compose_crops(self.outline, dpi=100))
+
+    def test_invalid_numpy_row_heights_fail_before_overwriting(self):
+        paths = self.make_panels()
+        for heights in ([], [0], [-1], [float("nan")], [float("inf")], [[25.4, 25.4]]):
+            with self.subTest(heights=heights):
+                outline = copy.deepcopy(self.outline)
+                outline["row_heights_mm"] = np.array(heights)
+                target = self.root / "existing.png"
+                target.write_bytes(b"preserve existing output")
+                with self.assertRaisesRegex(ValueError, "positive finite heights"):
+                    compose_figure(outline, paths, target, dpi=100)
+                self.assertEqual(target.read_bytes(), b"preserve existing output")
+
     def test_mismatched_image_is_rejected_without_resizing_or_overwriting(self):
         paths = self.make_panels()
         Image.new("RGB", (100, 100), "blue").save(paths["b"])

@@ -29,7 +29,7 @@ def grid_geom(outline, dpi=300, gutter_mm=4):
     if isinstance(ncol, bool) or not isinstance(ncol, Integral) or ncol < 1:
         raise ValueError("ncol must be a positive integer")
     heights = outline["row_heights_mm"]
-    if not heights or any(isinstance(h, bool) or not isinstance(h, Real)
+    if len(heights) == 0 or any(isinstance(h, bool) or not isinstance(h, Real)
                           or not math.isfinite(h) or h <= 0 for h in heights):
         raise ValueError("row_heights_mm must contain positive finite heights")
     letters, rectangles = set(), []
