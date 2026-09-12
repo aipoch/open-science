@@ -1,9 +1,13 @@
 import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { installPackages } from './package-manager'
 import { discoverExternalRLibraries, resolveExternalRLibrary } from './external-r-library'
+
+import * as externalRLibrary from './external-r-library'
+
+afterEach(() => vi.restoreAllMocks())
 
 describe('external R package installation', () => {
   it('probes the selected R with bounded execution and canonicalizes duplicate candidates', async () => {
@@ -51,12 +55,40 @@ describe('external R package installation', () => {
     await expect(resolveExternalRLibrary('relative/library')).rejects.toThrow('absolute')
   })
 
+  it.each(['missing', 'probe failure'])(
+    'refuses an authorized library when revalidation reports %s',
+    async (failure) => {
+      const directory = await mkdtemp(join(tmpdir(), 'external-r-revalidate-'))
+      try {
+        const library = await realpath(directory)
+        const probe = vi.spyOn(externalRLibrary, 'discoverExternalRLibraries')
+        if (failure === 'missing') probe.mockResolvedValue([])
+        else probe.mockRejectedValue(new Error('R probe failed'))
+        const spawn = vi.fn()
+        const result = await installPackages(
+          { language: 'r', packages: ['glue'] },
+          {
+            interpreter: { command: '/external/Rscript', library },
+            spawn
+          }
+        )
+        expect(result).toMatchObject({ ok: false, needsRestart: false })
+        expect(spawn).not.toHaveBeenCalled()
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
   it.each([0, 1])(
     'uses the bound R and exact library and derives restart advice from exit code %s',
     async (code) => {
       const directory = await mkdtemp(join(tmpdir(), 'external-r-library-'))
       try {
         const library = await realpath(directory)
+        const probe = vi
+          .spyOn(externalRLibrary, 'discoverExternalRLibraries')
+          .mockResolvedValue([library])
         const spawn = vi.fn(async () => ({
           code,
           stdout: '',
@@ -69,7 +101,11 @@ describe('external R package installation', () => {
             spawn
           }
         )
+        expect(probe).toHaveBeenCalledWith('/external/Rscript')
         expect(spawn).toHaveBeenCalledTimes(1)
+        expect(
+          (spawn.mock.calls[0] as unknown as [string, string[], NodeJS.ProcessEnv])[2].R_LIBS_USER
+        ).toBe(library)
         const [command, args] = spawn.mock.calls[0] as unknown as [string, string[]]
         expect(command).toBe('/external/Rscript')
         expect(args).not.toContain('-m')

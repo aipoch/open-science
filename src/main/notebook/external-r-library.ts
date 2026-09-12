@@ -55,7 +55,7 @@ export const resolveExternalRLibrary = async (library: string): Promise<string> 
   return physical
 }
 
-/** Same interpreter/profile context as execution; refuse a different or system library. */
+/** The owner revalidates consent, then supplies R_LIBS_USER; still refuse a system library. */
 export const externalRInstallScript = (
   library: string,
   packages: readonly string[],

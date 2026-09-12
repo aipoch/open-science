@@ -9,7 +9,11 @@ import {
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resolveExternalRLibrary, externalRInstallScript } from './external-r-library'
+import {
+  discoverExternalRLibraries,
+  resolveExternalRLibrary,
+  externalRInstallScript
+} from './external-r-library'
 import { condaActivatedPath } from './runtime-paths'
 import { Transform, type TransformCallback } from 'node:stream'
 import { finished } from 'node:stream/promises'
@@ -1672,6 +1676,31 @@ export async function installPackages(
           log: '',
           error: 'The authorized R library changed. Authorize its new location before installing.'
         }
+      // Revalidate in the same profile-visible context used for consent before projecting the
+      // one authorized library into the restricted installer environment.
+      try {
+        const libraries = await discoverExternalRLibraries(command)
+        const samePath = (path: string): string =>
+          process.platform === 'win32' ? path.toLowerCase() : path
+        if (!libraries.some((candidate) => samePath(candidate) === samePath(library)))
+          return {
+            ok: false,
+            needsRestart: false,
+            log: '',
+            error:
+              'The authorized library is no longer a personal library visible to this R runtime.'
+          }
+      } catch {
+        return {
+          ok: false,
+          needsRestart: false,
+          log: '',
+          error:
+            'Could not revalidate the authorized R package library. Check the selected R runtime.'
+        }
+      }
+      deps.signal?.throwIfAborted()
+      spawnEnv.R_LIBS_USER = library
       if (deps.interpreter.condaPrefix)
         spawnEnv.PATH = condaActivatedPath(deps.interpreter.condaPrefix, spawnEnv.PATH)
       const result = await run(command, [

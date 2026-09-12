@@ -42,7 +42,17 @@ describe('sandboxedPackageSpawn', () => {
         storageRoot: join(tmpdir(), 'app-storage'),
         interpreter: { command, library }
       })
-      await expect(spawn(command, [])).rejects.toThrow('scope captured')
+      await expect(
+        spawn(command, [], {
+          R_LIBS_USER: library,
+          R_LIBS: '/unrelated/library',
+          R_PROFILE_USER: '/unrelated/profile'
+        })
+      ).rejects.toThrow('scope captured')
+      const env = wrap.mock.calls[0]![0].env!
+      expect(env.R_LIBS_USER).toBe(library)
+      expect(env.R_LIBS).toBeUndefined()
+      expect(env.R_PROFILE_USER).toBeUndefined()
       const filesystem = wrap.mock.calls[0]![0].filesystem!
       expect(filesystem.readWriteRoots).toContain(library)
       expect(filesystem.readWriteRoots).not.toContain(root)
