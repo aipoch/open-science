@@ -33,6 +33,7 @@ export type TaskDoctorReport = Readonly<{
   next: ReadonlyArray<
     Readonly<{
       code: 'runtime_missing' | 'runtime_not_ready' | 'provider_missing' | 'provider_not_ready'
+      argv?: readonly string[]
     }>
   >
 }>

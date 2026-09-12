@@ -179,6 +179,14 @@ export class OpenScienceClient {
     )
   }
 
+  bootstrap(request, options) {
+    return this.request('/api/v1/bootstrap', { ...options, method: 'POST', body: request })
+  }
+
+  installCli(options) {
+    return this.request('/api/v1/cli/install', { ...options, method: 'POST' })
+  }
+
   doctor(options) {
     return this.request('/api/v1/doctor', { ...options, method: 'GET' })
   }
@@ -720,7 +728,9 @@ export const connectToOpenScience = async ({
         return true
       } catch (error) {
         signal?.throwIfAborted()
-        lastError = error
+        // A stale candidate must not hide an earlier authorization or configuration failure.
+        const transportCode = error?.cause?.code ?? error?.code
+        if (transportCode !== 'ECONNREFUSED') lastError = error
         return false
       }
     }

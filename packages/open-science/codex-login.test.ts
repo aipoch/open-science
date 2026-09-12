@@ -1,4 +1,6 @@
 import { resolve } from 'node:path'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -17,6 +19,7 @@ const codexPath = resolve('managed-codex', process.platform === 'win32' ? 'codex
 // The exact Vitest mock tuple types are test-local implementation detail.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const commandDeps = (runCodex = vi.fn()) => ({
+  connect: vi.fn().mockResolvedValue({ bootstrap: vi.fn().mockResolvedValue({ ok: true }) }),
   locateApp: vi.fn().mockResolvedValue({ packaged: false }),
   resolveConfigRoot: vi.fn().mockReturnValue(configRoot),
   resolveConfiguration: vi.fn().mockResolvedValue({ codexPath }),
@@ -26,6 +29,92 @@ const commandDeps = (runCodex = vi.fn()) => ({
 })
 
 describe('Codex CLI login', () => {
+  it('prepares an empty profile before resolving the runtime and registers a successful login', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'osci-first-login-'))
+    const nativePath = resolve(root, 'codex')
+    const bootstrap = vi.fn(async (request) => {
+      if (request.action === 'codex-prepare') {
+        await writeFile(nativePath, 'synthetic runtime')
+        await writeFile(resolve(root, 'settings.json'), JSON.stringify({ codex: { nativePath } }))
+      }
+      return { ok: true }
+    })
+    const deps = {
+      ...commandDeps(vi.fn().mockResolvedValue({ code: 0 })),
+      resolveConfigRoot: () => root,
+      resolveConfiguration: resolveCodexLoginConfiguration,
+      connect: vi.fn().mockResolvedValue({ bootstrap })
+    }
+    try {
+      await codexLoginCommand({ configRoot: root }, deps)
+      expect(bootstrap.mock.calls.map(([request]) => request.action)).toEqual([
+        'codex-prepare',
+        'codex-complete'
+      ])
+      expect(deps.runCodex).toHaveBeenCalledWith(nativePath, expect.any(Array), expect.any(Object))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+  it('preserves configured native login when an older daemon lacks bootstrap', async () => {
+    const deps = commandDeps(vi.fn().mockResolvedValue({ code: 0 }))
+    const bootstrap = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('Not found'), { status: 404 }))
+    deps.connect.mockResolvedValue({ bootstrap })
+    await codexLoginCommand({ configRoot }, deps)
+    expect(deps.runCodex).toHaveBeenCalledOnce()
+    expect(bootstrap).toHaveBeenCalledOnce()
+    expect(deps.log.mock.calls.flat().join(' ')).toContain('updated Open Science daemon')
+  })
+
+  it('requests a daemon update for an empty profile on an older daemon', async () => {
+    const deps = commandDeps()
+    deps.connect.mockResolvedValue({
+      bootstrap: vi.fn().mockRejectedValue(Object.assign(new Error('Not found'), { status: 404 }))
+    })
+    deps.resolveConfiguration.mockRejectedValue(new Error('not configured'))
+    await expect(codexLoginCommand({ configRoot }, deps)).rejects.toMatchObject({
+      code: 'bootstrap_unavailable'
+    })
+    expect(deps.runCodex).not.toHaveBeenCalled()
+  })
+
+  it.each([401, 403, 500])(
+    'does not bypass bootstrap HTTP %s errors with native login',
+    async (status) => {
+      const deps = commandDeps()
+      const error = Object.assign(new Error('failed'), { status })
+      deps.connect.mockResolvedValue({ bootstrap: vi.fn().mockRejectedValue(error) })
+      await expect(codexLoginCommand({ configRoot }, deps)).rejects.toBe(error)
+      expect(deps.runCodex).not.toHaveBeenCalled()
+    }
+  )
+
+  it('preserves configured native login when the daemon is unavailable', async () => {
+    const deps = commandDeps(vi.fn().mockResolvedValue({ code: 0 }))
+    deps.connect.mockRejectedValue(
+      Object.assign(new Error('stopped'), { code: 'daemon_unavailable' })
+    )
+    await codexLoginCommand({ configRoot }, deps)
+    expect(deps.runCodex).toHaveBeenCalledOnce()
+    expect(deps.log.mock.calls.flat().join(' ')).toContain('updated Open Science daemon')
+  })
+
+  it.each([401, 403, 500])(
+    'preserves connection health HTTP %s errors before native login',
+    async (status) => {
+      const deps = commandDeps()
+      const error = Object.assign(new Error('health rejected'), {
+        code: 'daemon_unavailable',
+        status
+      })
+      deps.connect.mockRejectedValue(error)
+      await expect(codexLoginCommand({ configRoot }, deps)).rejects.toBe(error)
+      expect(deps.runCodex).not.toHaveBeenCalled()
+    }
+  )
+
   it('isolates Codex credentials from the user environment', () => {
     const codexHome = resolve('profile', 'codex-subscription')
     const env = createCodexLoginEnvironment(

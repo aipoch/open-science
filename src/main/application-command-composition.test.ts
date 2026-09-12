@@ -45,6 +45,35 @@ import { LocalFsService } from './local-fs/service'
 import type { ManagedPreviewResource, ManagedPreviewRangeResult } from '../shared/preview-resources'
 
 const EMPTY_OWNER = Object.freeze({})
+
+it('exposes bootstrap only to local Task callers without widening renderer management', async () => {
+  const bootstrap = vi.fn(async () => ({ ok: true }))
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    settingsCore: {
+      service: { bootstrap },
+      emitInstallEvent: vi.fn(),
+      snapshotCommits: { projectAfter: (pending: Promise<unknown>) => pending }
+    } as never
+  })
+  expect(composition.localWeb.commandNames()).not.toContain('settings:bootstrap')
+  expect(composition.remoteWeb.commandNames()).not.toContain('settings:bootstrap')
+  await expect(
+    composition.task.invoke('settings:bootstrap', {
+      ...invocation('remote'),
+      args: [{ action: 'runtime' }]
+    })
+  ).resolves.toEqual({ ok: false, code: 'invalid_request' })
+  expect(bootstrap).not.toHaveBeenCalled()
+  await expect(
+    composition.task.invoke('settings:bootstrap', {
+      ...invocation(),
+      args: [{ action: 'runtime' }]
+    })
+  ).resolves.toEqual({ ok: true })
+  expect(bootstrap).toHaveBeenCalledOnce()
+  composition.dispose()
+})
 const unexpectedCommand = defineApplicationCommand<'test:unexpected', readonly [], void>(
   'test:unexpected'
 )
@@ -309,6 +338,8 @@ describe('application command composition', () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.task.commandNames()).toEqual([
+      'settings:bootstrap',
+      'cli:install',
       'settings:get-preflight',
       'settings:list-skills',
       'settings:list-connectors',

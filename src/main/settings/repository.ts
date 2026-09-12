@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
+import { BootstrapError } from '../../shared/bootstrap'
 import type {
   AgentFrameworkId,
   AppIconVariant,
@@ -93,6 +94,71 @@ class SettingsRepository {
   // Reads and sanitizes the settings document, returning empty settings when nothing is stored yet.
   async getSettings(): Promise<StoredSettings> {
     return this.store.read()
+  }
+
+  async selectBootstrapCodex(): Promise<void> {
+    await this.mutate((settings) => {
+      if (settings.agentFrameworkId && settings.agentFrameworkId !== 'codex')
+        throw new BootstrapError('configuration_conflict')
+      if (!settings.agentFrameworkId && settings.providers.length > 0)
+        throw new BootstrapError('configuration_conflict')
+      return settings.agentFrameworkId === 'codex'
+        ? settings
+        : { ...settings, agentFrameworkId: 'codex' }
+    })
+  }
+
+  async publishBootstrapProvider(
+    expected: StoredSettings,
+    provider: StoredProvider,
+    activate: boolean
+  ): Promise<void> {
+    await this.mutate((settings) => {
+      if (
+        settings.agentFrameworkId !== 'codex' ||
+        !isDeepStrictEqual(settings.providers, expected.providers) ||
+        settings.activeProviderId !== expected.activeProviderId ||
+        settings.activeModel !== expected.activeModel ||
+        (settings.activeProviderId && settings.activeProviderId !== provider.id)
+      )
+        throw new BootstrapError('configuration_conflict')
+      const providers = settings.providers.some(({ id }) => id === provider.id)
+        ? settings.providers.map((entry) => (entry.id === provider.id ? provider : entry))
+        : [...settings.providers, provider]
+      return {
+        ...settings,
+        providers,
+        ...(activate
+          ? {
+              activeProviderId: provider.id,
+              activeModel:
+                settings.activeProviderId === provider.id ? settings.activeModel : provider.model
+            }
+          : {})
+      }
+    })
+  }
+
+  async publishBootstrapOpenAlex(
+    expected: StoredConnectors | undefined,
+    apiKeyRef: string
+  ): Promise<void> {
+    await this.mutate((settings) => {
+      if (!isDeepStrictEqual(settings.connectors, expected))
+        throw new BootstrapError('configuration_conflict')
+      return {
+        ...settings,
+        connectors: {
+          enabledIds: [],
+          autoAllowIds: [],
+          ...settings.connectors,
+          openAlexApiKeyRef: apiKeyRef,
+          disabledConnectorIds: (settings.connectors?.disabledConnectorIds ?? []).filter(
+            (id) => id !== 'literature'
+          )
+        }
+      }
+    })
   }
 
   // Inserts or replaces a provider without reordering existing entries. existingId, when supplied,

@@ -110,9 +110,82 @@ Codex or validating expiry/revocation remotely; historical provider validation r
 
 `checks.skills.enabled` contains the sorted IDs of enabled, available Skills; Skills do not block
 overall readiness. `next` contains stable action codes such as
-`runtime_missing` and `provider_not_ready`, never commands that may not exist. A completed inspection
+`runtime_missing` and `provider_not_ready`, with an additive `argv` recovery command for the Codex bootstrap path. A completed inspection
 exits with code `0` even when `ready` is false; connection and command failures keep the existing
 nonzero CLI error codes.
+
+## First-run setup (Codex)
+
+The desktop application must already be installed. The standalone npm runtime remains deferred.
+`init` creates a configuration directory only; packaged builds do not accept `--profile` overrides.
+
+```bash
+open-science start --no-open
+open-science runtime install codex --json
+open-science codex login
+open-science connector configure literature --openalex-key-env OPENALEX_API_KEY --json
+open-science doctor --json
+open-science project create "First review" --json
+open-science run --project "First review" --skill literature-review \
+  --prompt "Review the evidence for the research question in the project context" --wait --jsonl
+```
+
+Place credentials in the named environment variables through your existing secret-management flow.
+Do not put secret values in command arguments. The CLI reads only the variable explicitly named by
+`--api-key-env` or `--openalex-key-env`; it never imports external Codex credentials.
+
+For an OpenAI API-key provider instead of subscription login, prepare the runtime and then use:
+
+```bash
+open-science provider add --type official --vendor openai --model gpt-5.4 \
+  --api-key-env OPENAI_API_KEY --json
+```
+
+Use a model supported by the installed application's OpenAI catalog. Setup probes that exact model
+before saving its protected credential reference and validation record. This initial command creates
+`cli-openai`; repeating it with the same key and currently selected model revalidates that target.
+If Settings changed the active model, Doctor suggests the selected model; revalidation preserves the
+provider default model and active selection. Different existing credentials,
+providers, or framework selections produce `configuration_conflict`, without overwriting them.
+Later account edits remain in Settings. Other runtime/provider bootstrap combinations are not yet
+supported. Existing run-time selection commands are unchanged.
+
+OpenAlex keys are validated before persistence and Literature Graph enablement. Rejected keys or a
+configuration changed during the probe are not saved. A recognized key may still have exhausted
+quota (the existing probe accepts HTTP 429); a successful probe is not a completed literature run.
+
+All writes use existing Settings/runtime/credential owners and formats. No onboarding completion
+flag or database migration is added. OS storage remains the default; Linux file storage still
+requires the existing explicit `start --credential-store file` option on every start.
+
+`doctor` keeps existing readiness/reason fields. If the daemon is absent, the CLI prints a report
+with `checks.daemon.status: "missing"` and `next: [{ code: "daemon_unavailable", argv: ["start",
+"--no-open"] }]`, exiting 3. This includes a stale state file whose loopback connection is refused; HTTP health
+rejections (including authorization failures) remain errors rather than missing-daemon reports.
+When probing both default profiles, a later refused connection does not hide an earlier HTTP or
+configuration error; a healthy later profile can still be selected. A running-daemon report still exits 0 even when readiness is false.
+Append the same development `--profile` argument when executing a suggested argv in an isolated
+profile. Doctor reports readiness, not a live third-party authorization or research-run guarantee.
+
+`bootstrap` SDK requests return `{ ok: true, providerId? }` or `{ ok: false, code }`. Codes are
+`invalid_request` (including unknown model/input), `configuration_conflict`, `runtime_unavailable`,
+`credential_invalid`, or `bootstrap_failed`. The CLI exits nonzero for failures; results never
+include the submitted secret or raw upstream error. Bootstrap/launcher writes require an
+authenticated local connection and are not exposed as research-agent tools.
+
+Install the PATH launcher with `open-science cli install --json`. Before a launcher exists, invoke
+the bundled CLI by absolute path using the application's Electron executable in Node mode (for
+example on macOS):
+
+```bash
+OPEN_SCIENCE_APP_PATH="/Applications/Open Science.app/Contents/MacOS/Open Science" \
+ELECTRON_RUN_AS_NODE=1 "/Applications/Open Science.app/Contents/MacOS/Open Science" \
+  "/Applications/Open Science.app/Contents/Resources/cli/index.mjs" start --no-open
+```
+
+Repeat the same absolute invocation with `cli install --json`. Respect the returned `pathHint`;
+Windows may require a new terminal and Unix shells may need the existing launcher directory on PATH.
+The launcher uses the existing ownership receipts and does not claim unrelated executables.
 
 ## Application updates
 
@@ -155,15 +228,14 @@ as `open-science start --no-sandbox`; prefer the Debian package or a sandbox-cap
 
 ## Codex subscription sign-in
 
-Sign the Open Science Codex profile in from a server terminal without starting the daemon or opening
-the Web UI:
+Sign the Open Science Codex profile in from a terminal without opening Settings:
 
 ```bash
 open-science codex login
 ```
 
-The command runs the native Codex version already configured by Open Science with OAuth device-code
-authentication. It prints a verification URL and one-time code in the current terminal; open the URL
+For first-run setup, start the daemon with `open-science start --no-open`. The command prepares
+the managed runtime and app-owned provider, then runs native Codex OAuth device-code authentication. It prints a verification URL and one-time code in the current terminal; open the URL
 on any browser-capable device, enter the code, and keep the terminal open until Codex reports
 success. Credentials are written only to the app-owned
 <code>codex-subscription/auth.json</code> profile.
@@ -171,7 +243,9 @@ success. Credentials are written only to the app-owned
 The native login follows the profile's saved Network proxy mode. Manual uses the configured proxy,
 Direct clears inherited proxy variables, and System uses the environment that launched the CLI.
 
-When that profile already contains credentials, the command exits without replacing them. Start a
+When that profile already contains credentials, the command validates and registers them without
+replacing them. Successful validation activates the initial provider; a different active provider is
+never replaced. Start a
 new device-code flow explicitly with:
 
 ```bash
@@ -179,8 +253,12 @@ open-science codex login --force
 ```
 
 The login command is interactive and intentionally does not support <code>--json</code> or
-<code>--jsonl</code>. It does not contact the Open Science daemon or expose the one-time code through
-daemon logs.
+<code>--jsonl</code>. Setup and readiness registration use the local daemon; the one-time code stays
+in the terminal process. Already configured profiles can still sign in while the daemon is stopped,
+but must repeat the command with an updated daemon running to register readiness. A running older daemon
+without the bootstrap endpoint also permits this configured native-login path; it cannot register
+provider readiness. An empty profile instead receives `bootstrap_unavailable` with an instruction to
+update and restart the application. HTTP authorization failures do not trigger this fallback.
 
 ### Linux AppImage sandbox fallback
 

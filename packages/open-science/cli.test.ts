@@ -30,6 +30,45 @@ const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
 ]
 
 describe('task CLI', () => {
+  it('prepares Codex through the public task client', async () => {
+    const bootstrap = vi.fn().mockResolvedValue({ ok: true })
+    await runTaskCommand(parseCliArgs(['runtime', 'install', 'codex', '--json']), {
+      connect: async () => ({ bootstrap }),
+      log: vi.fn()
+    })
+    expect(bootstrap).toHaveBeenCalledWith({ action: 'runtime' }, { timeoutMs: 600_000 })
+  })
+
+  it('reads only the named API credential environment variable and does not print it', async () => {
+    const bootstrap = vi.fn().mockResolvedValue({ ok: true, providerId: 'cli-openai' })
+    const log = vi.fn()
+    await runTaskCommand(
+      parseCliArgs([
+        'provider',
+        'add',
+        '--type',
+        'official',
+        '--vendor',
+        'openai',
+        '--model',
+        'gpt-test',
+        '--api-key-env',
+        'LAB_KEY',
+        '--json'
+      ]),
+      {
+        connect: async () => ({ bootstrap }),
+        env: { LAB_KEY: 'synthetic-secret', OTHER_KEY: 'ambient' },
+        log
+      }
+    )
+    expect(bootstrap).toHaveBeenCalledWith(
+      { action: 'provider', key: 'synthetic-secret', model: 'gpt-test' },
+      expect.any(Object)
+    )
+    expect(JSON.stringify(log.mock.calls)).not.toContain('synthetic-secret')
+    expect(() => parseCliArgs(['provider', 'add', '--api-key', 'secret'])).toThrow()
+  })
   it('accepts --profile as the forward-compatible profile spelling', () => {
     expect(parseCliArgs(['init', '--profile', '/tmp/open-science-profile']).options).toMatchObject({
       configRoot: '/tmp/open-science-profile'
@@ -87,6 +126,42 @@ describe('task CLI', () => {
 
     expect(JSON.parse(log.mock.calls[0][0])).toEqual(report)
   })
+
+  it('reports a concrete startup command when doctor cannot reach a daemon', async () => {
+    const log = vi.fn()
+    const setExitCode = vi.fn()
+    await runTaskCommand(parseCliArgs(['doctor', '--json']), {
+      connect: vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('unavailable'), { code: 'daemon_unavailable' })),
+      log,
+      setExitCode
+    })
+    expect(JSON.parse(log.mock.calls[0][0])).toEqual({
+      ready: false,
+      checks: { daemon: { status: 'missing' } },
+      next: [{ code: 'daemon_unavailable', argv: ['start', '--no-open'] }]
+    })
+    expect(setExitCode).toHaveBeenCalledWith(3)
+  })
+
+  it.each([401, 403, 500])(
+    'does not describe an HTTP %s health rejection as a missing daemon',
+    async (status) => {
+      const log = vi.fn()
+      const error = Object.assign(new Error('health rejected'), {
+        code: 'daemon_unavailable',
+        status
+      })
+      await expect(
+        runTaskCommand(parseCliArgs(['doctor', '--json']), {
+          connect: vi.fn().mockRejectedValue(error),
+          log
+        })
+      ).rejects.toBe(error)
+      expect(log).not.toHaveBeenCalled()
+    }
+  )
 
   it('rejects ports that are not complete decimal values', () => {
     expect(() => parseCliArgs(['start', '--port', '44100xyz'])).toThrow('Invalid port: 44100xyz')
@@ -1832,8 +1907,7 @@ describe('task CLI', () => {
       'compute',
       'notebook',
       'notebook-env',
-      'reviewer',
-      'runtime'
+      'reviewer'
     ]) {
       await expect(runCli([command])).rejects.toThrow(`Unknown command: ${command}`)
     }

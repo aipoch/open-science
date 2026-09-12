@@ -4,6 +4,7 @@ import { access, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createServer } from 'node:net'
 import { promisify } from 'node:util'
+import { BootstrapError } from '../../shared/bootstrap'
 
 import type {
   ClaudeDetectResult,
@@ -650,6 +651,35 @@ export class AgentRuntimeManager {
         if (cached && !(await this.pathExists(cached))) await this.repository.clearCodexInfo()
       }
     }, signal)
+  }
+
+  async bootstrapCodex(onEvent: (event: ClaudeInstallEvent) => void): Promise<void> {
+    await this.repository.selectBootstrapCodex()
+    const healthy = (): Promise<boolean> =>
+      this.trackDetection(async (signal) => {
+        const settings = await this.repository.getSettings()
+        const codex = settings.codex
+        if (
+          !codex?.resolvedPath ||
+          !codex.nativePath ||
+          !codexVersionsFromProbe(await this.probeConfiguredCodexRuntime(codex, signal))
+        )
+          return false
+        const ready = await this.codexDetectDeps.smokeInitialize(
+          codex.resolvedPath,
+          { codexPath: codex.nativePath },
+          signal
+        )
+        signal.throwIfAborted()
+        return ready
+      })
+    if (await healthy()) return this.repository.selectBootstrapCodex()
+    await this.detectCodex()
+    if (await healthy()) return this.repository.selectBootstrapCodex()
+    const installed = await this.installCodex({ source: 'managed' }, onEvent)
+    if (!installed.ok || !(await healthy())) throw new BootstrapError('runtime_unavailable')
+    // Installation may overlap a human Settings change; never change the selection back.
+    await this.repository.selectBootstrapCodex()
   }
 
   async installClaude(

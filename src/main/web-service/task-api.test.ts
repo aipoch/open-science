@@ -84,6 +84,11 @@ const commandsFrom = (
     invoke: async (channel, invocation) => {
       const args = [...invocation.args]
       if (channel === 'settings:get-settings') return taskSettings
+      if (channel === 'settings:bootstrap' && (args[0] as { action: string }).action === 'status')
+        return {
+          ok: true,
+          next: { runtime: ['runtime', 'install', 'codex', '--json'], provider: ['codex', 'login'] }
+        }
       try {
         const result = await invoke(channel, invocation.callerContext, args)
         if (channel === 'sessions:load-all') {
@@ -298,7 +303,10 @@ describe('HeadlessTaskApi adapter', () => {
         provider: { status: 'missing' },
         skills: { status: 'ready', enabled: ['literature-review', 'writing'] }
       },
-      next: [{ code: 'runtime_missing' }, { code: 'provider_missing' }]
+      next: [
+        { code: 'runtime_missing', argv: ['runtime', 'install', 'codex', '--json'] },
+        { code: 'provider_missing', argv: ['codex', 'login'] }
+      ]
     })
   })
 
@@ -330,7 +338,10 @@ describe('HeadlessTaskApi adapter', () => {
         provider: { status: 'not_ready', reason: 'credential_invalid' },
         skills: { status: 'ready', enabled: [] }
       },
-      next: [{ code: 'runtime_not_ready' }, { code: 'provider_not_ready' }]
+      next: [
+        { code: 'runtime_not_ready', argv: ['runtime', 'install', 'codex', '--json'] },
+        { code: 'provider_not_ready', argv: ['codex', 'login'] }
+      ]
     })
   })
 

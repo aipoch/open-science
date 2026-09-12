@@ -169,6 +169,8 @@ type WebServerOptions = {
         | 'getAgentRouting'
         | 'updateAgentRouting'
         | 'doctor'
+        | 'bootstrap'
+        | 'installCli'
       >
     >
   waitUntilTasksReady?: () => Promise<void>
@@ -994,6 +996,25 @@ const handleTaskApiRequest = async (
         const data = await tasks.doctor()
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, { data })
+        return true
+      }
+      if (url.pathname === '/api/v1/bootstrap' && request.method === 'POST' && tasks.bootstrap) {
+        const body = await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const data = await tasks.bootstrap(
+          body as import('../../shared/bootstrap').BootstrapRequest
+        )
+        json(response, 200, { data })
+        return true
+      }
+      if (url.pathname === '/api/v1/cli/install' && request.method === 'POST' && tasks.installCli) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data: await tasks.installCli() })
         return true
       }
       const connectorMatch = url.pathname.match(

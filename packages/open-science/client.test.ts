@@ -56,6 +56,8 @@ describe('OpenScienceClient', () => {
       [
         'constructor',
         'doctor',
+        'bootstrap',
+        'installCli',
         'health',
         'listConnectors',
         'getConnector',
@@ -1143,6 +1145,24 @@ describe('OpenScienceClient', () => {
 
     await expect(iterator.next()).rejects.toMatchObject({ code: 'event_stream_overflow' })
     expect(ControllableWebSocket.instance.closed).toBe(true)
+  })
+
+  it('reports unavailable when a stale state file points at a refused connection', async () => {
+    const configRoot = await mkdtemp(join(tmpdir(), 'open-science-stale-sdk-'))
+    roots.push(configRoot)
+    await writeFile(
+      join(configRoot, 'web-service.json'),
+      JSON.stringify({ pid: process.pid, port: 44100, startedAt: new Date().toISOString() })
+    )
+    await writeFile(join(configRoot, 'web-token'), 'fixture-token')
+    const fetch = vi.fn().mockRejectedValue(
+      new TypeError('fetch failed', {
+        cause: Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' })
+      })
+    )
+    await expect(connectToOpenScience({ configRoot, fetch })).rejects.toMatchObject({
+      code: 'daemon_unavailable'
+    })
   })
 
   it('discovers a daemon from its state and token files before returning a client', async () => {
