@@ -47,7 +47,7 @@ for file in component['files']:
     files[path.name] = physical
 interpreter = str(pathlib.Path(args.interpreter).resolve(strict=True))
 if language == 'r':
-    probe = 'cat(jsonlite::toJSON(list(version=as.character(getRversion()),platform=if (.Platform$OS.type=="windows") "win32" else if(Sys.info()[["sysname"]]=="Darwin") "darwin" else "linux",architecture=R.version$arch,installerVersion=as.character(packageVersion("renv")),toolLibrary=dirname(find.package("renv"))),auto_unbox=TRUE))'
+    probe = 'cat(jsonlite::toJSON(list(version=as.character(getRversion()),platform=if (.Platform$OS.type=="windows") "win32" else if(Sys.info()[["sysname"]]=="Darwin") "darwin" else "linux",architecture=R.version$arch,installerVersion=as.character(packageVersion("renv")),toolLibraries=as.list(.libPaths())),auto_unbox=TRUE))'
     identity = json.loads(run([interpreter, '--vanilla', '--slave', '-e', probe]))
 else:
     probe = 'import json,sys,platform,importlib.metadata as m; print(json.dumps(dict(version=platform.python_version(),platform=sys.platform,architecture=platform.machine(),installerVersion=m.version("pip"))))'
@@ -75,8 +75,9 @@ if language == 'r':
                RENV_PATHS_ROOT=str(destination / '.renv'), RENV_CONFIG_USER_PROFILE='FALSE')
     native = files['renv.lock']
     records = json.loads(native.read_text(encoding='utf-8'))['Packages']
-    # Tool library is discovered from the explicitly supplied interpreter, never from a lock path.
-    script = '.libPaths(c(' + json.dumps(str(destination)) + ',' + json.dumps(identity['toolLibrary']) + ',.Library));'
+    # Tool libraries come from the supplied interpreter, never from lock paths. Keep the
+    # destination first; locked packages must still resolve inside it during verification.
+    script = '.libPaths(c(' + json.dumps(str(destination)) + ',' + ','.join(json.dumps(path) for path in identity['toolLibraries']) + ',.Library));'
     script += 'a<-list(lockfile=' + json.dumps(str(native)) + ',library=' + json.dumps(str(destination)) + ',prompt=FALSE);'
     script += 'f<-names(formals(renv::restore)); if("strict" %in% f) a$strict<-TRUE; if("retry" %in% f) a$retry<-FALSE; do.call(renv::restore,a);'
     run([interpreter, '--vanilla', '--slave', '-e', script], env)
