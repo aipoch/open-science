@@ -311,7 +311,8 @@ export class SpecialistPackageService {
 
   async assertSkillDeletionAllowed(
     skillId: string,
-    source?: Extract<SkillSource, 'imported' | 'personal'>
+    source?: Extract<SkillSource, 'imported' | 'personal'>,
+    directoryName?: string
   ): Promise<void> {
     if (typeof skillId !== 'string' || !skillId.trim()) {
       throw new Error('Skill id must be a non-empty string.')
@@ -323,7 +324,8 @@ export class SpecialistPackageService {
     const skill = catalog.skills.find(
       (candidate) =>
         candidate.id === skillId &&
-        (source === undefined || candidate.source === source || candidate.source === undefined)
+        (source === undefined || candidate.source === source || candidate.source === undefined) &&
+        (directoryName === undefined || candidate.name === directoryName)
     )
     if (source !== undefined && (!skill || skill.builtin || skill.source === 'featured')) return
     if (!skill) return

@@ -235,9 +235,20 @@ export class UserSkillStore {
 
   async resolveSkillId(
     id: string,
-    sourceFilter?: UserSkillSource
+    sourceFilter?: UserSkillSource,
+    directoryName?: string
   ): Promise<{ source: UserSkillSource; directoryName: string }> {
     if (sourceFilter !== undefined) assertUserSkillSource(sourceFilter)
+    if (directoryName !== undefined && !SAFE_SKILL_DIRECTORY_NAME.test(directoryName)) {
+      throw new Error('Invalid user Skill directory name.')
+    }
+    if (sourceFilter !== undefined && directoryName !== undefined) {
+      const metadata = await readSpecialistPackageSkillMetadata(
+        this.skillDirectory(sourceFilter, directoryName)
+      )
+      if (metadata?.id === id) return { source: sourceFilter, directoryName }
+      throw new Error(`Not a user skill id: ${id}`)
+    }
     const conventional = parseUserSkillId(id)
     if (conventional && (!sourceFilter || conventional.source === sourceFilter)) return conventional
     for (const source of sourceFilter ? [sourceFilter] : USER_SOURCES) {
@@ -379,11 +390,12 @@ export class UserSkillStore {
   async delete(
     id: string,
     source?: UserSkillSource,
+    directoryName?: string,
     guard?: (skillId: string) => Promise<void>
   ): Promise<void> {
     return this.transactions.runMutationRecovered(async () => {
       await guard?.(id)
-      const parsed = await this.resolveSkillId(id, source)
+      const parsed = await this.resolveSkillId(id, source, directoryName)
       const metadata = await readSpecialistPackageSkillMetadata(
         this.skillDirectory(parsed.source, parsed.directoryName)
       )

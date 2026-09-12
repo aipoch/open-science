@@ -374,6 +374,9 @@ class SkillCatalogModule {
       ...this.toSkillView(skill, disabled),
       available,
       catalogEntryKey,
+      ...(skill.source === 'imported' || skill.source === 'personal'
+        ? { directoryName: skill.name }
+        : {}),
       ...(available ? {} : { availability: 'identity-conflict' as const })
     }))
   }
@@ -643,6 +646,7 @@ class SkillCatalogModule {
     await this.userSkills.delete(
       request.id,
       request.source,
+      request.directoryName,
       guard ? () => guard(request) : undefined
     )
     await this.refreshRegisteredHelpers()

@@ -707,7 +707,11 @@ const SkillsPanel = ({
                                       onSelect={() => {
                                         if (skill.source === 'featured') return
                                         setDeleteError(undefined)
-                                        void deleteSkill(skill.id, skill.source).catch((error) =>
+                                        void deleteSkill(
+                                          skill.id,
+                                          skill.source,
+                                          skill.directoryName
+                                        ).catch((error) =>
                                           setDeleteError({
                                             id: skill.id,
                                             message:

@@ -467,8 +467,17 @@ describe('SkillCatalogModule', () => {
     )
     expect(new Set(skills.map((skill) => skill.catalogEntryKey)).size).toBe(2)
 
-    await catalog.deleteSkill({ id: 'shared-sidecar-id', source: 'personal' })
-    expect(deleteSkill).toHaveBeenCalledWith('shared-sidecar-id', 'personal', undefined)
+    await catalog.deleteSkill({
+      id: 'shared-sidecar-id',
+      source: 'personal',
+      directoryName: 'personal-copy'
+    })
+    expect(deleteSkill).toHaveBeenCalledWith(
+      'shared-sidecar-id',
+      'personal',
+      'personal-copy',
+      undefined
+    )
   })
 
   it('ignores an unsafe Personal sidecar id instead of materializing outside the Skills root', async () => {

@@ -125,10 +125,15 @@ class UserSkillRepository {
     id: string,
     sourceOrGuard?:
       Parameters<UserSkillStore['delete']>[1] | Parameters<UserSkillStore['delete']>[2],
-    guard?: Parameters<UserSkillStore['delete']>[2]
+    directoryNameOrGuard?:
+      Parameters<UserSkillStore['delete']>[2] | Parameters<UserSkillStore['delete']>[3],
+    guard?: Parameters<UserSkillStore['delete']>[3]
   ): Promise<void> {
-    if (typeof sourceOrGuard === 'function') return this.store.delete(id, undefined, sourceOrGuard)
-    return this.store.delete(id, sourceOrGuard, guard)
+    if (typeof sourceOrGuard === 'function')
+      return this.store.delete(id, undefined, undefined, sourceOrGuard)
+    if (typeof directoryNameOrGuard === 'function')
+      return this.store.delete(id, sourceOrGuard, undefined, directoryNameOrGuard)
+    return this.store.delete(id, sourceOrGuard, directoryNameOrGuard, guard)
   }
 
   async importFromGitHub(
