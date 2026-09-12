@@ -45,7 +45,7 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
-  it('batches latest-main Windows coverage hourly across three serial shards', () => {
+  it('batches latest-main Windows coverage hourly across five serial shards', () => {
     const windows = workflow('windows-full-test.yml')
     const schedule = windows.on?.schedule as Array<{ cron: string }>
     const dispatch = windows.on?.workflow_dispatch as {
@@ -58,10 +58,10 @@ describe('release and scheduled workflow topology', () => {
     const sandboxSmoke = step(sandbox, 'Test AppContainer ownership and removal lifecycle')
 
     expect(job.strategy?.matrix?.shard).toBe(
-      "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3]') }}"
+      "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5]') }}"
     )
     expect(job.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
-    expect(test.run).toContain('--shard=${{ matrix.shard }}/3')
+    expect(test.run).toContain('--shard=${{ matrix.shard }}/5')
     expect(test.run).toContain('--maxWorkers=1')
     expect(test.run).toContain('--reporter=github-actions')
     expect(windows.on).not.toHaveProperty('push')
@@ -81,7 +81,7 @@ describe('release and scheduled workflow topology', () => {
     expect(job).toMatchObject({
       needs: 'plan',
       if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
-      'timeout-minutes': 50
+      'timeout-minutes': 60
     })
     expect(sandbox).toMatchObject({
       needs: 'plan',

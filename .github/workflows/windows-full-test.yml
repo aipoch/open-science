@@ -58,17 +58,17 @@ jobs:
           fi
 
   windows_full_test:
-    name: Windows full test (${{ matrix.shard }}/3)
+    name: Windows full test (${{ matrix.shard }}/5)
     needs: plan
     if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}
     runs-on: windows-latest
-    timeout-minutes: 50
+    timeout-minutes: 60
     env:
       VITEST_WINDOWS_FULL_TEST: '1'
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3]') }}
+        shard: ${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -88,10 +88,10 @@ jobs:
         # SQLite-heavy integration suites contend heavily for Windows disk I/O when Vitest uses
         # every available core, and hosted-runner disk latency occasionally exceeds the default
         # per-test/hook budgets. Keep files serial and use bounded 60-second budgets; individual
-        # tests still fail at that bound. The 50-minute job timeout covers checkout, npm ci, and a
-        # slow serial suite without treating a still-progressing shard as a hang. GitHub annotations
-        # keep the failing test visible if the job is later cancelled.
-        run: npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions
+        # tests still fail at that bound. Five shards keep a still-progressing serial suite inside
+        # the 60-minute job timeout after checkout and npm ci. GitHub annotations keep the failing
+        # test visible if the job is later cancelled.
+        run: npm test -- --shard=${{ matrix.shard }}/5 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions
 
       - name: Test recent Windows regressions
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}
