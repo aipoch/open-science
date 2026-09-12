@@ -30,6 +30,12 @@ const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
 ]
 
 describe('task CLI', () => {
+  it('accepts --profile as the forward-compatible profile spelling', () => {
+    expect(parseCliArgs(['init', '--profile', '/tmp/open-science-profile']).options).toMatchObject({
+      configRoot: '/tmp/open-science-profile'
+    })
+  })
+
   it('initializes a config root without starting the desktop app', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-cli-init-'))
     const log = vi.fn()

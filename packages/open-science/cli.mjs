@@ -66,6 +66,7 @@ Options:
   --port <port>          Web service port (default: 44100)
   --app-path <path>      Installed Open Science executable
   --config-root <path>   Config directory override
+  --profile <path>       Alias for --config-root (portable CLI profile)
   --data-root <path>     Current Data Root override (rollback only)
   --project <id-or-name> Project id or exact name
   --session <id>         Resume an existing session
@@ -117,6 +118,7 @@ const VALUE_OPTIONS = {
   '--port': 'port',
   '--app-path': 'appPath',
   '--config-root': 'configRoot',
+  '--profile': 'configRoot',
   '--data-root': 'dataRoot',
   '--project': 'project',
   '--session': 'session',
