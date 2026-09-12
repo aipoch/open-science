@@ -16,10 +16,46 @@ def figure_outline_schema():
 
 
 def grid_geom(outline, dpi=300, gutter_mm=4):
+    """Validate panel geometry before deriving pixel positions or writing images."""
+    import math
+    for name, value in (("dpi", dpi), ("width_mm", outline["width_mm"]),
+                        ("gutter_mm", gutter_mm)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"{name} must be a finite number")
+    if dpi <= 0 or outline["width_mm"] <= 0 or gutter_mm < 0:
+        raise ValueError("dpi and width_mm must be positive; gutter_mm must be nonnegative")
+    ncol = outline["ncol"]
+    if isinstance(ncol, bool) or not isinstance(ncol, int) or ncol < 1:
+        raise ValueError("ncol must be a positive integer")
+    heights = outline["row_heights_mm"]
+    if not heights or any(isinstance(h, bool) or not isinstance(h, (int, float))
+                          or not math.isfinite(h) or h <= 0 for h in heights):
+        raise ValueError("row_heights_mm must contain positive finite heights")
+    letters, rectangles = set(), []
+    for p in outline["panels"]:
+        letter = p["letter"]
+        if not isinstance(letter, str) or not letter.strip() or letter != letter.strip():
+            raise ValueError("Panel letters must be nonempty strings without surrounding whitespace")
+        # Composition stamps either lower or upper case; avoid visually duplicate labels.
+        key = letter.casefold()
+        if key in letters:
+            raise ValueError(f"Duplicate panel letter: {letter!r}")
+        letters.add(key)
+        r, c, rs, cs = p["row"], p["col"], p.get("rowspan", 1), p["colspan"]
+        if any(isinstance(v, bool) or not isinstance(v, int) for v in (r, c, rs, cs)):
+            raise ValueError("Panel row, col and spans must be integers")
+        if r < 0 or c < 0 or rs < 1 or cs < 1 or r + rs > len(heights) or c + cs > ncol:
+            raise ValueError(f"Panel {letter!r} is outside the grid or has an invalid span")
+        for ar, ac, ars, acs in rectangles:
+            if r < ar + ars and ar < r + rs and c < ac + acs and ac < c + cs:
+                raise ValueError(f"Panel {letter!r} overlaps another panel")
+        rectangles.append((r, c, rs, cs))
     mm = dpi/25.4
     W = int(outline["width_mm"]*mm); ncol = outline["ncol"]; g = int(gutter_mm*mm)
     colw = (W - g*(ncol-1)) // ncol
     rowh = [int(h*mm) for h in outline["row_heights_mm"]]
+    if colw < 1 or any(h < 1 for h in rowh):
+        raise ValueError("Grid dimensions must leave at least one pixel per row and column")
     row_y = [sum(rowh[:i]) + g*i for i in range(len(rowh))]
     return W, ncol, colw, rowh, row_y, g
 
@@ -84,11 +120,11 @@ Neighbors: {neighbours}
 - Environment `figures`, Python/matplotlib. Load `figure-style`; every dependent `notebook_execute` request includes `{{"kernelSkillIds":["figure-style"],"code":"apply_figure_style()\\n..."}}`. `kernelSkillIds` contains the skill ID; call `apply_figure_style()` directly in `code` without an import or discovery step,
   then **immediately** `import matplotlib as mpl; mpl.rcParams['savefig.bbox']=None` (the style helper
   sets it to `'tight'`, which silently resizes the canvas).
-- `fig = plt.figure(figsize=({w/300:.3f},{h/300:.3f}), dpi=300)`; `fig.savefig('panel_{letter}.png', dpi=300, transparent=True)`. **No `bbox_inches='tight'`, no `plt.tight_layout()`, no `constrained_layout`** — they change pixel dimensions. Use `fig.subplots_adjust(...)` only.
+- `import math; fig = plt.figure(figsize=(math.nextafter({w}/300, math.inf), math.nextafter({h}/300, math.inf)), dpi=300)`; `fig.savefig('panel_{letter}.png', dpi=300, transparent=True)`. Keep the integer pixel dimensions in these expressions: nextafter prevents floating-point truncation from losing a pixel. **No `bbox_inches='tight'`** — it changes canvas dimensions. Use `fig.subplots_adjust(...)` to arrange axes inside the fixed canvas.
 - Reserve top-left ~10×6 mm clear for the composer's panel letter. Do NOT draw your own.
 - **§9 Render-then-verify:** after savefig, (a) `from PIL import Image; assert
-  Image.open('panel_{letter}.png').size==({w},{h})` — if not, you used tight_layout/
-  constrained_layout/bbox-tight somewhere, undo it; (b) collect every visible `Text`
+  Image.open('panel_{letter}.png').size==({w},{h})` — if not, check figsize, DPI and
+  bbox settings against the expressions above; (b) collect every visible `Text`
   window_extent and assert none overlaps another, crosses a spine, or exceeds the canvas.
   Fix and re-save until both pass — do not ship a panel that fails either check.
 - Design rules {rules_ref} apply in full.
@@ -98,6 +134,8 @@ Publish `panel_{letter}.png` with the Artifact writer using the exact notebook `
 
 def compose_crops(outline, dpi=300, gutter_mm=4, pad_px=4):
     """Return top-left-origin pixel crop boxes for the composed PNG."""
+    if isinstance(pad_px, bool) or not isinstance(pad_px, int) or pad_px < 0:
+        raise ValueError("pad_px must be a nonnegative integer")
     W, ncol, colw, rowh, row_y, g = grid_geom(outline, dpi, gutter_mm)
     H = row_y[-1] + rowh[-1]
     out = {}
@@ -120,8 +158,10 @@ def compose_figure(outline, panel_paths, out_path, dpi=300, gutter_mm=4,
     except Exception: ft = ImageFont.load_default()
     for p in outline["panels"]:
         L = p["letter"]; w,h = panel_px(outline,L,dpi,gutter_mm); x,y = panel_xy(outline,L,dpi,gutter_mm)
-        im = Image.open(panel_paths[L]).convert("RGBA")
-        if im.size != (w,h): im = im.resize((w,h))
+        with Image.open(panel_paths[L]) as source:
+            if source.size != (w,h):
+                raise ValueError(f"Panel {L!r} has size {source.size}; expected {(w,h)}. Regenerate it at the required dimensions.")
+            im = source.convert("RGBA")
         canvas.paste(im,(x,y),im)
         stamp = L.lower() if letter_case == "lower" else L.upper()
         draw.text((x+int(1.5/25.4*dpi), y+int(1/25.4*dpi)), stamp, fill="black", font=ft)

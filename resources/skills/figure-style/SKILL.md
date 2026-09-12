@@ -240,12 +240,29 @@ baseline.
 **6.2 Single-observation categories.** A filled dot with a thin neutral stem to
 the semantic zero (lollipop). Value labels sit beside the dot.
 
+The grouped plotting helpers require nonempty, one-dimensional, finite real
+observations in every supplied group. They reject empty groups and NaN/Inf before
+drawing: resolve exclusions explicitly, report the retained n, and add a missing
+category marker separately when appropriate. They do not silently drop missing
+observations. Requested SD/CI intervals require at least two observations per
+group; for a single observation, use points without an interval. Labels and
+data groups must align. For `strip_with_median`, nonempty color sequences cycle;
+None or an empty sequence uses default gray.
+An empty bar color sequence uses Matplotlib's default bar color; an empty
+`focal_palette` base sequence uses the default color cycle.
+
 **6.3 Continuous series.** Mean-per-x as a line with markers; individual runs as
 thin translucent lines or points behind it. Label each series with direct text
 at the right end of its line in preference to a legend box;
 `end_of_line_labels(...)` places those labels. Summary glyphs (per-bin
 mean/median) use a shape that cannot be mistaken for a raw observation,
 identical across series, drawn below the raw points in z-order.
+
+`end_of_line_labels` validates series/label counts and nonempty matched x/y
+lengths before adding labels. Endpoints must be finite; interior gaps can remain.
+It accesses the end of each indexed sequence without copying the full series.
+Nonempty color sequences cycle; None or an empty sequence uses the current
+default text color. Panel letters must be unique for `panel_crops`.
 
 **6.4 Distributions on shared support.** When two distributions overlap heavily,
 stack them as small panels with a shared x-axis or use a ridgeline. Overlay only
