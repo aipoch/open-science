@@ -131,6 +131,9 @@ const useApplicationEventBindings = ({
   const deferredNotification = useRef<OpenSessionFromNotificationRequest | undefined>(undefined)
   const pendingNotificationOpenQueue = useRef<Promise<void>>(Promise.resolve())
   const pendingNotificationRetryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const openPendingNotificationSessionRef = useRef<
+    (intent?: NotificationOpenIntent) => Promise<void>
+  >(async () => undefined)
   const notificationOpenIntent = useRef<NotificationOpenIntent>({
     generation: 0,
     userNavigationRevision: useNavigationStore.getState().userNavigationRevision
@@ -362,7 +365,7 @@ const useApplicationEventBindings = ({
           pendingNotificationRetryTimer.current = setTimeout(() => {
             pendingNotificationRetryTimer.current = undefined
             if (intent.generation !== notificationOpenIntent.current.generation) return
-            void openPendingNotificationSession(intent)
+            void openPendingNotificationSessionRef.current(intent)
           }, PENDING_NOTIFICATION_HANDLER_RETRY_MS)
           return
         }
@@ -437,6 +440,7 @@ const useApplicationEventBindings = ({
     [openPendingNotificationSession]
   )
   useEffect(() => {
+    openPendingNotificationSessionRef.current = openPendingNotificationSession
     void openPendingNotificationSession()
     return () => {
       if (pendingNotificationRetryTimer.current !== undefined) {
