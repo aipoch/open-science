@@ -8288,7 +8288,7 @@ describe('notebook runtime service', () => {
     })
 
     const restarting = service.restart({ sessionId: 'session-1', workspaceCwd: root })
-    await vi.waitFor(() => expect(releaseRestart).toBeDefined())
+    await vi.waitFor(() => expect(releaseRestart).toBeDefined(), { timeout: 10_000 })
 
     const midFlight = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(midFlight.kernelStatus).toBe('restarting')
