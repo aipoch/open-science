@@ -879,7 +879,7 @@ describe('release-gate Subagent surfaces', () => {
 
     expect(screen.getByRole('alert').textContent).toContain('could not be read')
     expect(screen.getByRole('button', { name: 'Retry Subagent preview' }).className).toContain(
-      'focus-visible:ring-[3px]'
+      'focus-visible:ring-3'
     )
   })
 

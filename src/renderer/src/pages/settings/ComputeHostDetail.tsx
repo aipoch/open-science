@@ -1,5 +1,5 @@
+import { ErrorNotice } from '@/components/error-notice'
 import {
-  AlertTriangle,
   ChevronDown,
   ChevronUp,
   Cpu,
@@ -477,35 +477,12 @@ export function ComputeHostDetail({
 
       {/* Probe failed banner — shown when the last probe returned ok:false */}
       {status === 'failed' && probed ? (
-        <div
+        <ErrorNotice
           role="alert"
-          className="mt-5 rounded-xl border border-status-failure-border bg-status-failure-subtle/50 px-3 py-3 dark:border-status-failure-dark-border/50 dark:bg-status-failure-dark-surface/20"
-        >
-          <div className="flex items-center gap-2">
-            <AlertTriangle
-              className="size-4 shrink-0 text-status-failure-accent dark:text-status-failure-dark-foreground"
-              aria-hidden="true"
-            />
-            <span className="text-sm font-semibold text-status-failure-foreground dark:text-status-failure-dark-emphasis">
-              {t('Probe failed')}
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => void handleProbe()}
-              disabled={isProbing}
-              aria-label={t('Retry probe')}
-              className="ml-auto text-status-failure-accent hover:bg-status-failure-surface dark:text-status-failure-dark-foreground"
-            >
-              <RefreshCw
-                className={cn('size-3.5', isProbing && 'animate-spin')}
-                aria-hidden="true"
-              />
-            </Button>
-          </div>
-          <p className="mt-2 text-xs text-status-failure-strong dark:text-status-failure-dark-emphasis">
-            {probed.authenticationCode
+          className="mt-4"
+          title={t('Probe failed')}
+          description={
+            probed.authenticationCode
               ? computeRuntimeRecoveryCopy(probed.authenticationCode, t)
               : probed.sshConnected === false
                 ? t(
@@ -513,22 +490,23 @@ export function ComputeHostDetail({
                   )
                 : t(
                     'A connection check failed. Review the recent checks, update the Host configuration, then probe again.'
-                  )}
-          </p>
-          {probed.authenticationCode ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="mt-2"
-              onClick={() =>
-                openSettingsToComputeAuthentication(providerId, probed.authenticationCode!)
-              }
-            >
-              {computeRuntimeRecoveryAction(probed.authenticationCode, t)}
-            </Button>
-          ) : null}
-        </div>
+                  )
+          }
+          primaryButton={{
+            label: t('Retry probe'),
+            loading: isProbing,
+            onClick: () => void handleProbe()
+          }}
+          secondaryButton={
+            probed.authenticationCode
+              ? {
+                  label: computeRuntimeRecoveryAction(probed.authenticationCode, t),
+                  onClick: () =>
+                    openSettingsToComputeAuthentication(providerId, probed.authenticationCode!)
+                }
+              : undefined
+          }
+        />
       ) : null}
 
       {/* IPC / unexpected probe error banner */}
@@ -669,25 +647,28 @@ export function ComputeHostDetail({
           <div
             ref={authenticationAlertRef}
             data-compute-authentication-alert
-            role="alert"
             tabIndex={-1}
-            className="mt-3 rounded-lg border border-status-failure-border bg-status-failure-subtle/50 px-3 py-2 text-sm text-status-failure-strong outline-none"
+            className="mt-3 outline-none"
           >
-            <p>{computeRuntimeRecoveryCopy(authenticationFocus, t)}</p>
-            {authenticationFocus === 'secure_storage_unavailable' ||
-            passwordCapability?.available === false ? (
-              <Button
-                ref={authenticationTestRef}
-                type="button"
-                variant="outline"
-                size="sm"
-                className="mt-2"
-                disabled={isProbing}
-                onClick={() => void handleProbe()}
-              >
-                {t('Test connection')}
-              </Button>
-            ) : null}
+            <ErrorNotice
+              role="alert"
+              description={computeRuntimeRecoveryCopy(authenticationFocus, t)}
+            >
+              {authenticationFocus === 'secure_storage_unavailable' ||
+              passwordCapability?.available === false ? (
+                <Button
+                  ref={authenticationTestRef}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  disabled={isProbing}
+                  onClick={() => void handleProbe()}
+                >
+                  {t('Test connection')}
+                </Button>
+              ) : null}
+            </ErrorNotice>
           </div>
         ) : null}
         {host.authentication?.mode === 'password' &&

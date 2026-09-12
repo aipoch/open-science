@@ -1,7 +1,7 @@
+import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 /* Hallmark · component: settings side rail · genre: modern-minimal · theme: existing Open Science tokens · slop: pass */
 import {
-  AlertTriangle,
   Archive,
   ArrowLeft,
   ArrowRight,
@@ -1390,33 +1390,20 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               ) : null}
 
               {settingsWriteError ? (
-                <div
-                  data-slot="settings-write-error"
-                  role="alert"
-                  className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-                >
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                  <p className="min-w-0 flex-1 break-words py-0.5">
-                    {settingsWriteError ===
-                    'Could not save Vision model. Refresh the model catalog and try again.'
-                      ? t('Could not save Vision model. Refresh the model catalog and try again.')
-                      : settingsWriteError}
-                  </p>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={t('Dismiss settings error')}
-                        className="-my-1 -mr-1 shrink-0 rounded-md text-danger-000 hover:bg-danger-000/10 hover:text-danger-000"
-                        onClick={clearSettingsWriteError}
-                      >
-                        <X className="size-3.5" aria-hidden="true" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{t('Close')}</TooltipContent>
-                  </Tooltip>
+                <div data-slot="settings-write-error" className="mx-3 mt-3">
+                  <ErrorNotice
+                    role="alert"
+                    description={
+                      settingsWriteError ===
+                      'Could not save Vision model. Refresh the model catalog and try again.'
+                        ? t('Could not save Vision model. Refresh the model catalog and try again.')
+                        : settingsWriteError
+                    }
+                    dismissButton={{
+                      label: t('Dismiss settings error'),
+                      onClick: clearSettingsWriteError
+                    }}
+                  />
                 </div>
               ) : null}
             </TooltipProvider>
@@ -1718,25 +1705,33 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     <div className="p-5">
                       {/* Secret writes fail closed when the OS keychain is unavailable. */}
                       {!encryptionAvailable ? (
-                        <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                          {t(
+                        <ErrorNotice
+                          role="alert"
+                          tone="amber"
+                          className="mb-4"
+                          description={t(
                             'Secure key storage is unavailable. API keys cannot be saved until the system keychain is unlocked or authorized.'
                           )}
-                        </p>
+                        />
                       ) : null}
                       {providerEditTargetMissing ? (
-                        <p
-                          className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+                        <ErrorNotice
                           role="alert"
-                        >
-                          {t('This Provider no longer exists. Your draft has not been saved.')}
-                        </p>
+                          tone="amber"
+                          className="mb-4"
+                          description={t(
+                            'This Provider no longer exists. Your draft has not been saved.'
+                          )}
+                        />
                       ) : null}
                       {providerConflict ? (
-                        <div className="mb-4 space-y-3" role="alert">
-                          <p>
-                            {t('Provider configuration changed. Your draft has not been saved.')}
-                          </p>
+                        <ErrorNotice
+                          role="alert"
+                          className="mb-4"
+                          description={t(
+                            'Provider configuration changed. Your draft has not been saved.'
+                          )}
+                        >
                           <details>
                             <summary>{t('Latest saved configuration')}</summary>
                             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
@@ -1792,7 +1787,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           >
                             {t('Reapply my changes to the latest configuration')}
                           </Button>
-                        </div>
+                        </ErrorNotice>
                       ) : null}
                       <ProviderForm
                         value={formValue}

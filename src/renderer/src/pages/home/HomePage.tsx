@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · macrostructure: operational-home-dashboard · genre: modern-minimal · tone: quiet/technical · anchor: teal
  * pre-emit critique: P5 H5 E5 S5 R5 V4 · contrast: pass (40–41) · icons: pass (30)
  * slop: pass (42–49) · mobile: pass (34, 49, 50–57)
@@ -917,22 +918,15 @@ const HomePage = ({
               ) : null}
               <ProjectDeletionCleanupNotice className="mb-3 rounded-2xl px-4 py-3" />
               {loadError ? (
-                <div
-                  className="rounded-2xl border border-danger-000/30 px-4 py-6 text-center text-sm text-danger-000"
+                <ErrorNotice
                   role="alert"
-                >
-                  <p>{t('Open Science could not load projects. Retry to continue.')}</p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mt-3"
-                    disabled={isRetryingProjects}
-                    onClick={retryProjectLoad}
-                  >
-                    {isRetryingProjects ? t('Retrying...') : t('Retry')}
-                  </Button>
-                </div>
+                  description={t('Open Science could not load projects. Retry to continue.')}
+                  primaryButton={{
+                    label: isRetryingProjects ? t('Retrying...') : t('Retry'),
+                    loading: isRetryingProjects,
+                    onClick: retryProjectLoad
+                  }}
+                />
               ) : !isProjectsLoaded && projectSummaries.length === 0 ? (
                 <div role="status" className="px-4 py-10 text-center text-sm text-muted-foreground">
                   {t('Loading…')}

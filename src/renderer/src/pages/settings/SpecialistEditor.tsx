@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 import { ChevronDown } from 'lucide-react'
@@ -252,21 +253,7 @@ const SpecialistEditor = ({
       <div className="max-w-2xl">
         {/* Save error — shown at the top so it is immediately visible */}
         {saveError ? (
-          <div
-            className="mb-4 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
-            role="alert"
-          >
-            <svg className="mt-0.5 shrink-0" width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
-              <path
-                d="M8 4.5v4M8 10.5v.5"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-            </svg>
-            <span>{saveError}</span>
-          </div>
+          <ErrorNotice role="alert" tone="amber" className="mb-4" description={saveError} />
         ) : null}
 
         {/* Saved identity bar — stable reference of what's currently persisted (edit only).
@@ -646,34 +633,24 @@ const SpecialistEditor = ({
         {/* Revision conflict banner — shown when another save raced ahead.
             Local edits are preserved so the user can review before reloading. */}
         {hasConflict ? (
-          <div
-            role="alert"
-            aria-label={t('Revision conflict')}
-            className="mt-4 flex items-start gap-3 rounded-lg border border-border bg-muted/50 p-3 text-sm"
-          >
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold text-foreground">
-                {t('Someone else saved a newer version')}
-              </p>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {t(
-                  'Your local edits are preserved. Reload to get the latest version (your unsaved changes will be discarded), or cancel and try again.'
-                )}
-              </p>
-            </div>
-            {onReload ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => void handleReload()}
-                disabled={isReloading}
-                className="shrink-0"
-              >
-                {isReloading ? t('Reloading…') : t('Reload')}
-              </Button>
-            ) : null}
-          </div>
+          <section aria-label={t('Revision conflict')} className="mt-4">
+            <ErrorNotice
+              role="alert"
+              title={t('Someone else saved a newer version')}
+              description={t(
+                'Your local edits are preserved. Reload to get the latest version (your unsaved changes will be discarded), or cancel and try again.'
+              )}
+              primaryButton={
+                onReload
+                  ? {
+                      label: isReloading ? t('Reloading…') : t('Reload'),
+                      loading: isReloading,
+                      onClick: () => void handleReload()
+                    }
+                  : undefined
+              }
+            />
+          </section>
         ) : null}
 
         {/* Footer actions */}

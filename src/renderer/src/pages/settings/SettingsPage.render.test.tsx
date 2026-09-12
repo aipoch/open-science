@@ -1005,16 +1005,13 @@ describe('SettingsPage layout', () => {
 
     const alert = document.body.querySelector<HTMLElement>('[data-slot="settings-write-error"]')
     const scroll = document.body.querySelector<HTMLElement>('[data-slot="settings-content-scroll"]')
-    expect(alert?.getAttribute('role')).toBe('alert')
+    expect(alert?.querySelector('[role="alert"]')).not.toBeNull()
     expect(alert?.textContent).toContain('Could not save notification preference. Try again.')
-    expect(alert?.className).toContain('border-danger-000/30')
-    expect(alert?.className).toContain('bg-danger-000/10')
-    expect(alert?.className).toContain('text-danger-000')
+    expect(alert?.querySelector('section')?.className).toContain('border-border')
     expect(alert?.nextElementSibling).toBe(scroll)
 
     const dismiss = alert?.querySelector<HTMLButtonElement>('[aria-label="Dismiss settings error"]')
     await act(async () => dismiss?.focus())
-    expect(document.body.textContent).toContain('Close')
 
     act(() => {
       dismiss?.click()

@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import {
   ChevronDown,
   Download,
@@ -483,21 +484,11 @@ const SkillsPanel = ({
       </div>
 
       {exportError ? (
-        <p
-          role="alert"
-          className="mb-3 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-        >
-          {exportError}
-        </p>
+        <ErrorNotice role="alert" tone="amber" className="mb-3" description={exportError} />
       ) : null}
 
       {toggleError ? (
-        <p
-          role="alert"
-          className="mb-3 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-        >
-          {toggleError}
-        </p>
+        <ErrorNotice role="alert" tone="amber" className="mb-3" description={toggleError} />
       ) : null}
 
       {catalogState === 'error' && skills.length > 0 ? (
@@ -746,12 +737,12 @@ const SkillsPanel = ({
                             )}
                           </div>
                           {deleteError?.id === skill.id ? (
-                            <p
+                            <ErrorNotice
                               role="alert"
-                              className="basis-full rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-                            >
-                              {deleteError.message}
-                            </p>
+                              tone="amber"
+                              className="basis-full"
+                              description={deleteError.message}
+                            />
                           ) : null}
                         </li>
                       )

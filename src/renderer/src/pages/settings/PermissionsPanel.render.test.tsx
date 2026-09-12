@@ -462,7 +462,7 @@ describe('PermissionsPanel', () => {
     expect(restoreDefaults).not.toHaveBeenCalled()
   })
 
-  it('uses the shared Settings danger banner for load failures', async () => {
+  it('uses the shared inline recovery notice for load failures', async () => {
     setPermissionApi({ list: vi.fn().mockRejectedValue(new Error('Permission load failed')) })
 
     await act(async () => root.render(<PermissionsPanel />))
@@ -470,9 +470,8 @@ describe('PermissionsPanel', () => {
     await vi.waitFor(() => {
       const alert = document.body.querySelector<HTMLElement>('[role="alert"]')
       expect(alert?.textContent).toContain('Permission load failed')
-      expect(alert?.className).toContain('border-danger-000/30')
-      expect(alert?.className).toContain('bg-danger-000/10')
-      expect(alert?.className).toContain('text-danger-000')
+      expect(alert?.closest('section')?.className).toContain('border-border')
+      expect(alert?.closest('section')?.className).toContain('bg-card')
     })
   })
 

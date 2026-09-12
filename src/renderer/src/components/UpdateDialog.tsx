@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { Trans, useTranslation } from 'react-i18next'
@@ -177,9 +178,11 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                 ) : null}
 
                 {dialogStatus.error ? (
-                  <div className="mt-3" role="alert">
-                    <p className="text-xs text-destructive">
-                      {dialogStatus.error === UPDATE_BACKGROUND_PROCESS_ERROR
+                  <ErrorNotice
+                    role="alert"
+                    className="mt-3"
+                    description={
+                      dialogStatus.error === UPDATE_BACKGROUND_PROCESS_ERROR
                         ? t(
                             'Could not stop background processes before updating. Please try again.'
                           )
@@ -206,8 +209,9 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                                   ? t(
                                       'The installer is missing or has changed. Download the update again.'
                                     )
-                                  : (dialogStatus.error ?? t('Update failed'))}
-                    </p>
+                                  : (dialogStatus.error ?? t('Update failed'))
+                    }
+                  >
                     {isBackgroundProcessError ? (
                       <p className="mt-2 text-xs text-muted-foreground">
                         <Trans
@@ -236,7 +240,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                         {t('Continue with force update')}
                       </button>
                     ) : null}
-                  </div>
+                  </ErrorNotice>
                 ) : null}
                 {isInstallerUnavailable ? (
                   <p className="mt-3 text-xs text-muted-foreground">

@@ -445,9 +445,9 @@ describe('ConnectorsPanel (groups)', () => {
       'Connector settings are saved, but their Agent Skill documents are out of date.'
     )
 
-    const retry = Array.from(notice?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'Retry'
-    )
+    const retry = Array.from(
+      notice?.closest('section')?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent?.trim() === 'Retry')
     await act(async () => retry?.click())
 
     expect(retryConnectorProjection).toHaveBeenCalledOnce()

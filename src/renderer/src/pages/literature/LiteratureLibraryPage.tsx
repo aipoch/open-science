@@ -1058,7 +1058,11 @@ function LiteratureNoteControl({
       />
       {failed ? (
         <div className="flex items-center gap-2 px-2 text-xs text-status-warning-foreground">
-          <p role="alert" className="truncate" title={t('Draft preserved. Escape to discard.')}>
+          <p
+            role="alert"
+            className="whitespace-normal [overflow-wrap:anywhere]"
+            title={t('Draft preserved. Escape to discard.')}
+          >
             {t('Draft preserved. Escape to discard.')}
           </p>
           <button
@@ -4617,6 +4621,27 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               onChanged={receiveBackgroundItems}
             />
           ) : null}
+          {dismissedCandidateUndo ? (
+            <fieldset
+              className="contents"
+              disabled={isBatching || Boolean(pendingCandidateId)}
+              aria-busy={isBatching || Boolean(pendingCandidateId)}
+            >
+              <ActionToast
+                title={t('Dismissed from Inbox')}
+                detail={dismissedCandidateUndo.detail}
+                actionLabel={dismissedCandidateUndo.needsRecheck ? t('Recheck') : t('Undo')}
+                dismissLabel={t('Close')}
+                onAction={() => void restoreDismissedCandidates()}
+                onDismiss={() => {
+                  setDismissedCandidateUndo(undefined)
+                  setUndoNotice(undefined)
+                }}
+                testId="literature-dismiss-undo"
+                className="static w-full max-w-none shadow-none"
+              />
+            </fieldset>
+          ) : null}
           {linkFailure && linkFailure.scopeKey === entriesKey ? (
             <div className="mt-2">
               <LiteratureErrorNotice
@@ -6865,26 +6890,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               .catch(() => undefined)
         }}
       />
-      {dismissedCandidateUndo ? (
-        <fieldset
-          className="contents"
-          disabled={isBatching || Boolean(pendingCandidateId)}
-          aria-busy={isBatching || Boolean(pendingCandidateId)}
-        >
-          <ActionToast
-            title={t('Dismissed from Inbox')}
-            detail={dismissedCandidateUndo.detail}
-            actionLabel={dismissedCandidateUndo.needsRecheck ? t('Recheck') : t('Undo')}
-            dismissLabel={t('Close')}
-            onAction={() => void restoreDismissedCandidates()}
-            onDismiss={() => {
-              setDismissedCandidateUndo(undefined)
-              setUndoNotice(undefined)
-            }}
-            testId="literature-dismiss-undo"
-          />
-        </fieldset>
-      ) : null}
     </main>
   )
 }

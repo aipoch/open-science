@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
+import { ErrorNotice } from '@/components/error-notice'
 import { useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
@@ -182,34 +183,26 @@ const LocationStep = ({
           className="space-y-5"
         >
           {dataRootError ? (
-            <div
-              className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive sm:flex-row sm:items-center sm:justify-between"
+            <ErrorNotice
               role="alert"
-            >
-              <span>
-                {t('Could not load the default data location:')} {dataRootError}
-              </span>
-              <Button
-                type="button"
-                variant="link"
-                size="xs"
-                onClick={onRetryDataRootInfo}
-                disabled={requestInFlight}
-                className="h-auto self-start p-0 text-destructive hover:text-text-000 sm:self-auto"
-              >
-                {t('Retry')}
-              </Button>
-            </div>
+              tone="amber"
+              title={t('Could not load the default data location:')}
+              description={dataRootError}
+              primaryButton={{
+                label: t('Retry'),
+                onClick: onRetryDataRootInfo,
+                disabled: requestInFlight
+              }}
+            />
           ) : null}
 
           {relaunchError ? (
-            <p
-              className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+            <ErrorNotice
               role="alert"
-            >
-              {t('Could not finish setting up storage:')} {t(relaunchError)}{' '}
-              {t('You can retry or keep the default location.')}
-            </p>
+              tone="amber"
+              title={t('Could not finish setting up storage:')}
+              description={`${t(relaunchError)} ${t('You can retry or keep the default location.')}`}
+            />
           ) : null}
 
           <div className="rounded-xl border border-border-200 p-4">

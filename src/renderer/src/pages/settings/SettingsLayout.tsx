@@ -1,5 +1,6 @@
+import { ErrorNotice } from '@/components/error-notice'
 import type { ComponentProps, ReactNode } from 'react'
-import { AlertTriangle, LoaderCircle, type LucideIcon } from 'lucide-react'
+import { LoaderCircle, type LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -190,19 +191,12 @@ const SettingsLoadNotice = ({
   }
 
   return (
-    <div
+    <ErrorNotice
       role="alert"
-      className={cn(
-        'flex items-center gap-3 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-sm text-danger-000',
-        className
-      )}
-    >
-      <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
-      <p className="min-w-0 flex-1">{errorMessage}</p>
-      <Button type="button" variant="outline" size="sm" onClick={onRetry}>
-        {t('Retry')}
-      </Button>
-    </div>
+      className={className}
+      description={errorMessage}
+      primaryButton={{ label: t('Retry'), onClick: onRetry }}
+    />
   )
 }
 

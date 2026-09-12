@@ -36,7 +36,6 @@ const ConnectorAuthToast = (): React.JSX.Element | null => {
       }}
       onDismiss={dismissConnectorAuthNotice}
       autoDismissMs={AUTO_DISMISS_MS}
-      className="top-20"
       testId="connector-auth-toast"
     />
   )

@@ -4,9 +4,5 @@ import { ErrorNotice, type ErrorNoticeProps } from '@/components/error-notice'
 export function LiteratureErrorNotice(
   props: Omit<ErrorNoticeProps, 'fullPage'>
 ): React.JSX.Element {
-  return (
-    <div role="alert">
-      <ErrorNotice {...props} />
-    </div>
-  )
+  return <ErrorNotice role="alert" {...props} />
 }

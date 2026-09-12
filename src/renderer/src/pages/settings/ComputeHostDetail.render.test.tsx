@@ -1189,8 +1189,8 @@ describe('ComputeHostDetail', () => {
     })
 
     const failure = container.querySelector<HTMLElement>('[role="alert"]')
-    expect(failure?.className).toContain('border-status-failure-border')
-    expect(failure?.className).toContain('bg-status-failure-subtle/50')
+    expect(failure?.closest('section')?.className).toContain('border-border')
+    expect(failure?.closest('section')?.className).toContain('bg-card')
   })
 
   it('calls saveDetails with author=user when Save is clicked in details editor', async () => {

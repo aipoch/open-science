@@ -1,5 +1,6 @@
+import { ErrorNotice } from '@/components/error-notice'
 import type { SkillReplacementPreview } from '../../../../shared/settings'
-import { AlertTriangle, Upload } from 'lucide-react'
+import { Upload } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -19,10 +20,12 @@ const mb = (bytes: number): string => `${Math.round(bytes / (1024 * 1024))} MB`
 const ErrorBanner = ({ notice }: { notice: Notice }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
-    <div className="mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000">
-      <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-      <span>{t(notice.key, notice.params)}</span>
-    </div>
+    <ErrorNotice
+      role="alert"
+      tone="amber"
+      className="mt-3"
+      description={t(notice.key, notice.params)}
+    />
   )
 }
 
