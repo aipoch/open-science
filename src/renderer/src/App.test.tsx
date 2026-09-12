@@ -1839,6 +1839,28 @@ describe('App startup routing', () => {
     expect(mocks.openSessionById).toHaveBeenCalledWith('s-late', 'notification')
   })
 
+  it('does not retry a notification peek after unmount', async () => {
+    let rejectPeek: ((error: Error) => void) | undefined
+    mocks.settings.isLoaded = true
+    mocks.notifications.peekPendingOpenSession.mockImplementation(
+      () =>
+        new Promise<null>((_resolve, reject) => {
+          rejectPeek = reject
+        })
+    )
+
+    await render()
+    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledOnce()
+
+    await act(async () => root.unmount())
+    await act(async () => {
+      rejectPeek?.(new Error("No handler registered for 'notifications:peek-pending-open-session'"))
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    })
+
+    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledOnce()
+  })
+
   it('opens an already-hydrated notification target during partial recovery', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isReady = false

@@ -131,6 +131,7 @@ const useApplicationEventBindings = ({
   const deferredNotification = useRef<OpenSessionFromNotificationRequest | undefined>(undefined)
   const pendingNotificationOpenQueue = useRef<Promise<void>>(Promise.resolve())
   const pendingNotificationRetryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const pendingNotificationRetryEpoch = useRef(0)
   const openPendingNotificationSessionRef = useRef<
     (intent?: NotificationOpenIntent) => Promise<void>
   >(async () => undefined)
@@ -352,6 +353,7 @@ const useApplicationEventBindings = ({
     (intent: NotificationOpenIntent = notificationOpenIntent.current): Promise<void> => {
       const attempt = async (): Promise<void> => {
         if (intent.generation !== notificationOpenIntent.current.generation) return
+        const retryEpoch = pendingNotificationRetryEpoch.current
         if (pendingNotificationRetryTimer.current !== undefined) {
           clearTimeout(pendingNotificationRetryTimer.current)
           pendingNotificationRetryTimer.current = undefined
@@ -362,8 +364,10 @@ const useApplicationEventBindings = ({
         } catch (error) {
           // The startup window mounts before full IPC adapters are installed (index.ts).
           if (!isPendingNotificationCommandUnavailable(error)) throw error
+          if (pendingNotificationRetryEpoch.current !== retryEpoch) return
           pendingNotificationRetryTimer.current = setTimeout(() => {
             pendingNotificationRetryTimer.current = undefined
+            if (pendingNotificationRetryEpoch.current !== retryEpoch) return
             if (intent.generation !== notificationOpenIntent.current.generation) return
             void openPendingNotificationSessionRef.current(intent)
           }, PENDING_NOTIFICATION_HANDLER_RETRY_MS)
@@ -440,9 +444,12 @@ const useApplicationEventBindings = ({
     [openPendingNotificationSession]
   )
   useEffect(() => {
+    const epoch = ++pendingNotificationRetryEpoch.current
     openPendingNotificationSessionRef.current = openPendingNotificationSession
     void openPendingNotificationSession()
     return () => {
+      if (pendingNotificationRetryEpoch.current === epoch)
+        pendingNotificationRetryEpoch.current += 1
       if (pendingNotificationRetryTimer.current !== undefined) {
         clearTimeout(pendingNotificationRetryTimer.current)
         pendingNotificationRetryTimer.current = undefined
