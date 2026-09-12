@@ -994,7 +994,6 @@ const WorkspaceMessageScrollerImpl = ({
 
     const previousScrollTop = previousMessageScrollerScrollTopRef.current
     previousMessageScrollerScrollTopRef.current = viewport.scrollTop
-    if (viewport.scrollTop < previousScrollTop) transcriptWindow.recordUserScroll()
     const eligible = updateScrollToFirstMessageEligibility()
     transcriptWindow.expandAtScrollEdge(previousScrollTop)
     if (viewport.scrollTop < previousScrollTop && eligible) revealScrollToFirstMessage()
