@@ -1110,7 +1110,7 @@ jobs:
         run: npx playwright install chromium --only-shell
       - name: Run renderer layout pilot
         id: renderer_layout
-        if: ${{ matrix.shard == 1 && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos') }}
+        if: ${{ matrix.shard == 1 }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout-windows
@@ -1161,7 +1161,7 @@ jobs:
         id: e2e_accessibility_windows
         if: ${{ matrix.shard == 1 && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows') }}
         continue-on-error: true
-        run: npm run test:e2e:accessibility --
+        run: npm run test:e2e:accessibility
       - name: Upload legacy accessibility failure artifacts
         if: ${{ steps.e2e_accessibility_windows.outcome == 'failure' }}
         continue-on-error: true

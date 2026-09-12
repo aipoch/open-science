@@ -93,6 +93,30 @@ describe('CI focused test guard', () => {
   })
 })
 
+describe('PR Gate retry results', () => {
+  it.each(['playwright.config.ts', 'playwright.browser.config.ts'])(
+    'reports a recovered failure without blocking through %s',
+    (config) => {
+      const { exit, report } = runFixture(
+        config,
+        "test('transient', ({}, info) => expect(info.retry).toBe(1));"
+      )
+      expect(exit).toBe(0)
+      expect(report.stats.flaky).toBe(1)
+    },
+    25_000
+  )
+
+  it('still fails after exhausting the configured retry', () => {
+    const { exit, report } = runFixture(
+      'playwright.config.ts',
+      "test('persistent', () => expect(false).toBe(true));"
+    )
+    expect(exit).toBe(1)
+    expect(report.stats.unexpected).toBe(1)
+  }, 25_000)
+})
+
 describe('accessibility runner stability', () => {
   it.each(['clean', 'assertion', 'timeout'])(
     'classifies a complete scan after %s',

@@ -168,9 +168,8 @@ describe('PR Gate workflow', () => {
     expect(macos?.if).toContain(
       "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos')"
     )
-    expect(windows?.if).toContain(
-      "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos')"
-    )
+    // Keep the existing Windows font pilot reachable for Windows-only plans.
+    expect(windows?.if).toBe('${{ matrix.shard == 1 }}')
     expect(workflowText).not.toContain('--fail-on-flaky-tests')
   })
 
@@ -668,7 +667,7 @@ describe('PR Gate workflow', () => {
       expect.arrayContaining([
         'npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=600000',
         'npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=900000',
-        'npm run test:e2e:accessibility --'
+        'npm run test:e2e:accessibility'
       ])
     )
   })
@@ -810,7 +809,7 @@ describe('PR Gate workflow', () => {
     expect(compatibility).toMatchObject({
       id: 'e2e_accessibility_windows',
       'continue-on-error': true,
-      run: 'npm run test:e2e:accessibility --'
+      run: 'npm run test:e2e:accessibility'
     })
     expect(compatibility?.if).toContain(
       "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows')"
@@ -845,7 +844,7 @@ describe('PR Gate workflow', () => {
     )
 
     expect(macosStep?.run).toBe('npm run test:e2e:accessibility:signal')
-    expect(windowsStep?.run).toBe('npm run test:e2e:accessibility --')
+    expect(windowsStep?.run).toBe('npm run test:e2e:accessibility')
   })
 
   it('retains focused real-Darwin coverage in full plans without another macOS job', () => {
@@ -1098,7 +1097,7 @@ describe('E2E throughput contracts', () => {
   it('retains native-platform font coverage in one Windows browser pilot', () => {
     const job = workflow.jobs.windows_e2e
     expect(job.steps?.find(({ id }) => id === 'renderer_layout')).toMatchObject({
-      if: "${{ matrix.shard == 1 && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos') }}",
+      if: '${{ matrix.shard == 1 }}',
       run: 'npm run test:e2e:browser -- --global-timeout=180000'
     })
     expect(
