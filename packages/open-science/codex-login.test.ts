@@ -56,6 +56,65 @@ describe('Codex CLI login', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+  it('preserves configured native login when an older daemon lacks bootstrap', async () => {
+    const deps = commandDeps(vi.fn().mockResolvedValue({ code: 0 }))
+    const bootstrap = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('Not found'), { status: 404 }))
+    deps.connect.mockResolvedValue({ bootstrap })
+    await codexLoginCommand({ configRoot }, deps)
+    expect(deps.runCodex).toHaveBeenCalledOnce()
+    expect(bootstrap).toHaveBeenCalledOnce()
+    expect(deps.log.mock.calls.flat().join(' ')).toContain('updated Open Science daemon')
+  })
+
+  it('requests a daemon update for an empty profile on an older daemon', async () => {
+    const deps = commandDeps()
+    deps.connect.mockResolvedValue({
+      bootstrap: vi.fn().mockRejectedValue(Object.assign(new Error('Not found'), { status: 404 }))
+    })
+    deps.resolveConfiguration.mockRejectedValue(new Error('not configured'))
+    await expect(codexLoginCommand({ configRoot }, deps)).rejects.toMatchObject({
+      code: 'bootstrap_unavailable'
+    })
+    expect(deps.runCodex).not.toHaveBeenCalled()
+  })
+
+  it.each([401, 403, 500])(
+    'does not bypass bootstrap HTTP %s errors with native login',
+    async (status) => {
+      const deps = commandDeps()
+      const error = Object.assign(new Error('failed'), { status })
+      deps.connect.mockResolvedValue({ bootstrap: vi.fn().mockRejectedValue(error) })
+      await expect(codexLoginCommand({ configRoot }, deps)).rejects.toBe(error)
+      expect(deps.runCodex).not.toHaveBeenCalled()
+    }
+  )
+
+  it('preserves configured native login when the daemon is unavailable', async () => {
+    const deps = commandDeps(vi.fn().mockResolvedValue({ code: 0 }))
+    deps.connect.mockRejectedValue(
+      Object.assign(new Error('stopped'), { code: 'daemon_unavailable' })
+    )
+    await codexLoginCommand({ configRoot }, deps)
+    expect(deps.runCodex).toHaveBeenCalledOnce()
+    expect(deps.log.mock.calls.flat().join(' ')).toContain('updated Open Science daemon')
+  })
+
+  it.each([401, 403, 500])(
+    'preserves connection health HTTP %s errors before native login',
+    async (status) => {
+      const deps = commandDeps()
+      const error = Object.assign(new Error('health rejected'), {
+        code: 'daemon_unavailable',
+        status
+      })
+      deps.connect.mockRejectedValue(error)
+      await expect(codexLoginCommand({ configRoot }, deps)).rejects.toBe(error)
+      expect(deps.runCodex).not.toHaveBeenCalled()
+    }
+  )
+
   it('isolates Codex credentials from the user environment', () => {
     const codexHome = resolve('profile', 'codex-subscription')
     const env = createCodexLoginEnvironment(

@@ -145,6 +145,24 @@ describe('task CLI', () => {
     expect(setExitCode).toHaveBeenCalledWith(3)
   })
 
+  it.each([401, 403, 500])(
+    'does not describe an HTTP %s health rejection as a missing daemon',
+    async (status) => {
+      const log = vi.fn()
+      const error = Object.assign(new Error('health rejected'), {
+        code: 'daemon_unavailable',
+        status
+      })
+      await expect(
+        runTaskCommand(parseCliArgs(['doctor', '--json']), {
+          connect: vi.fn().mockRejectedValue(error),
+          log
+        })
+      ).rejects.toBe(error)
+      expect(log).not.toHaveBeenCalled()
+    }
+  )
+
   it('rejects ports that are not complete decimal values', () => {
     expect(() => parseCliArgs(['start', '--port', '44100xyz'])).toThrow('Invalid port: 44100xyz')
     expect(() => parseCliArgs(['start', '--port', '0'])).toThrow('Invalid port: 0')

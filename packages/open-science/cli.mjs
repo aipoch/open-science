@@ -1485,7 +1485,8 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   try {
     client = await deps.connect({ configRoot: options.configRoot })
   } catch (error) {
-    if (command !== 'doctor' || error?.code !== 'daemon_unavailable') throw error
+    if (command !== 'doctor' || error?.code !== 'daemon_unavailable' || error?.status !== undefined)
+      throw error
     deps.log(
       JSON.stringify({
         ready: false,

@@ -734,7 +734,8 @@ export const connectToOpenScience = async ({
     }
   })
   if (!client) {
-    if (lastError) throw lastError
+    const transportCode = lastError?.cause?.code ?? lastError?.code
+    if (lastError && transportCode !== 'ECONNREFUSED') throw lastError
     throw new OpenScienceApiError(
       'Open Science is not running. Start it with "open-science start".',
       {

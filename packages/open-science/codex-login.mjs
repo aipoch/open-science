@@ -226,7 +226,8 @@ export const codexLoginCommand = async (options, dependencies = {}) => {
   let client
   try {
     client = await deps.connect({ configRoot })
-  } catch {
+  } catch (error) {
+    if (error?.code !== 'daemon_unavailable' || error?.status !== undefined) throw error
     // Already-configured profiles retain offline terminal login. First-run writes need the owner.
     try {
       await deps.resolveConfiguration(configRoot)
@@ -242,12 +243,26 @@ export const codexLoginCommand = async (options, dependencies = {}) => {
     const result = await client.bootstrap({ action }, { timeoutMs: 600_000 })
     if (!result.ok) throw new CodexLoginError(`Codex setup failed: ${result.code}.`, result.code)
   }
-  await bootstrap('codex-prepare')
+  try {
+    await bootstrap('codex-prepare')
+  } catch (error) {
+    if (error?.status !== 404) throw error
+    // Older daemons cannot register readiness, but configured native login remains available.
+    try {
+      await deps.resolveConfiguration(configRoot)
+    } catch {
+      throw new CodexLoginError(
+        'Update and restart Open Science before setting up Codex for this profile.',
+        'bootstrap_unavailable'
+      )
+    }
+    client = undefined
+  }
   const complete = async () => {
     if (client) await bootstrap('codex-complete')
     else
       deps.log(
-        'Sign-in saved. Start Open Science and run codex login again to validate and activate the provider.'
+        'Sign-in saved. Use a running, updated Open Science daemon and run codex login again to validate and activate the provider.'
       )
   }
   const { codexPath, networkProxy } = await deps.resolveConfiguration(configRoot)

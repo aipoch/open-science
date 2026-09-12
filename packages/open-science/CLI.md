@@ -158,7 +158,8 @@ requires the existing explicit `start --credential-store file` option on every s
 
 `doctor` keeps existing readiness/reason fields. If the daemon is absent, the CLI prints a report
 with `checks.daemon.status: "missing"` and `next: [{ code: "daemon_unavailable", argv: ["start",
-"--no-open"] }]`, exiting 3. A running-daemon report still exits 0 even when readiness is false.
+"--no-open"] }]`, exiting 3. This includes a stale state file whose loopback connection is refused; HTTP health
+rejections (including authorization failures) remain errors rather than missing-daemon reports. A running-daemon report still exits 0 even when readiness is false.
 Append the same development `--profile` argument when executing a suggested argv in an isolated
 profile. Doctor reports readiness, not a live third-party authorization or research-run guarantee.
 
@@ -250,7 +251,10 @@ open-science codex login --force
 The login command is interactive and intentionally does not support <code>--json</code> or
 <code>--jsonl</code>. Setup and readiness registration use the local daemon; the one-time code stays
 in the terminal process. Already configured profiles can still sign in while the daemon is stopped,
-but must repeat the command with the daemon running to register readiness.
+but must repeat the command with an updated daemon running to register readiness. A running older daemon
+without the bootstrap endpoint also permits this configured native-login path; it cannot register
+provider readiness. An empty profile instead receives `bootstrap_unavailable` with an instruction to
+update and restart the application. HTTP authorization failures do not trigger this fallback.
 
 ### Linux AppImage sandbox fallback
 
