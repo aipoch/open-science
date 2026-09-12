@@ -18,7 +18,7 @@ import { createLogger, diagnosticErrorFields } from '../logger'
 import { normalizeExplicitLock } from './micromamba'
 import { lockedPackageVersions, nativeLockRestoreState } from './native-lock-restoration'
 import { capturePipInstallEvidence, recoverPipInstallEvidence } from './pip-install-evidence'
-import { rLibraryDir, rScriptBin } from './runtime-paths'
+import { normalizeRuntimeArchitecture, rLibraryDir, rScriptBin } from './runtime-paths'
 import {
   decodeVersionedJson,
   type VersionedJsonDecodeResult
@@ -444,7 +444,7 @@ const environmentLockValue = (value: unknown): NotebookEnvironmentLock | undefin
           String(recordValue(lock.externalRuntime)?.installerVersion ?? '')
         ) ||
         !['win32', 'darwin', 'linux'].includes(String(lock.platform)) ||
-        !['x64', 'arm64', 'x86_64', 'aarch64', 'amd64'].includes(String(lock.architecture)) ||
+        !['x64', 'arm64'].includes(normalizeRuntimeArchitecture(String(lock.architecture))) ||
         components.length !== 1 ||
         !components.every(
           (component) =>

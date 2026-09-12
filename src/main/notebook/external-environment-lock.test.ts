@@ -71,6 +71,47 @@ describe('conditional external environment locks', () => {
       )
   })
 
+  it.each(['AMD64', 'ARM64', 'x86_64', 'aarch64'])(
+    'accepts runtime architecture %s without rewriting lock evidence',
+    (architecture) => {
+      const result = decodeNotebookEnvironmentLock(JSON.stringify({ ...lock, architecture }))
+      expect(result.status).toBe('valid')
+      if (result.status === 'valid') expect(result.value.architecture).toBe(architecture)
+    }
+  )
+
+  it('accepts Windows Python machine casing with hash-pinned dependency evidence', () => {
+    const requirements = 'idna==3.10 --hash=sha256:' + 'a'.repeat(64) + '\n'
+    const pythonLock: NotebookEnvironmentLock = {
+      ...lock,
+      kernelKind: 'python',
+      architecture: 'AMD64',
+      externalRuntime: { version: '3.12.7', installerVersion: '24.2' },
+      untrackedPackages: ['python:idna'],
+      components: [
+        {
+          ecosystem: 'python',
+          format: 'pip-requirements',
+          resolution: 'locked',
+          files: [
+            {
+              path: 'python/requirements.txt',
+              content: requirements,
+              checksum: createHash('sha256').update(requirements).digest('hex')
+            }
+          ]
+        }
+      ]
+    }
+    expect(decodeNotebookEnvironmentLock(JSON.stringify(pythonLock)).status).toBe('valid')
+  })
+
+  it('rejects unsupported external architectures', () => {
+    expect(
+      decodeNotebookEnvironmentLock(JSON.stringify({ ...lock, architecture: 'mips' })).status
+    ).toBe('corrupt')
+  })
+
   it('captures native R evidence as conditional and refuses observed version drift', async () => {
     const execute = vi.fn(async (argv: string[]) =>
       argv.at(-1)?.includes('snapshot') ? content : '1.2.4'
