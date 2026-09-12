@@ -310,7 +310,22 @@ export const sessionPackageCommandContracts = {
     validationCodec(exportResultSchema)
   ),
   import: defineApplicationCommandContract(
-    validationCodec(z.tuple([sessionPackageImportRequestSchema.optional()])),
+    validationCodec(
+      z
+        .tuple([
+          sessionPackageImportRequestSchema.optional(),
+          z
+            .string()
+            .min(1)
+            .max(32768)
+            .regex(/\.science$/i)
+            .optional()
+        ])
+        .refine(
+          ([target, sourcePath]) => !sourcePath || Boolean(target?.projectId),
+          'Dropped packages require an existing Project.'
+        )
+    ),
     validationCodec(sessionPackageRequestSchema.nullable())
   )
 }

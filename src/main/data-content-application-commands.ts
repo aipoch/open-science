@@ -134,7 +134,8 @@ type ElectronDataContentApplicationCommandAdapter = InvocationOwner<{
     request: SessionPackage.SessionPackageRequest
   ) => Promise<SessionPackage.SessionPackageExportResult>
   importSessionPackage: (
-    request?: SessionPackage.SessionPackageImportRequest
+    request?: SessionPackage.SessionPackageImportRequest,
+    sourcePath?: string
   ) => Promise<SessionPackage.SessionPackageImportResult>
   sessionPackageOperation: (
     request: SessionPackage.PackageOperationRequest

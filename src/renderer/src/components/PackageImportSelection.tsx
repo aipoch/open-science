@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, FolderPlus, PackageOpen, Plus } from 'lucide-react'
+import { ArrowLeft, FolderPlus, GalleryVerticalEnd, PackageOpen, Plus } from 'lucide-react'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -76,30 +76,47 @@ export const PackageImportSelection = ({
             {preview.title ? (
               <div className="flex items-center gap-3 rounded-lg bg-muted/50 p-4">
                 <PackageOpen className="size-6 shrink-0 text-primary" aria-hidden="true" />
-                <p className="min-w-0 break-words text-sm font-medium">{preview.title}</p>
+                <div className="min-w-0 space-y-1">
+                  <p className="break-words text-sm font-medium">{preview.title}</p>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {t('{{branches}} branches · {{messages}} messages · {{files}} files', {
+                      branches: preview.branchCount,
+                      messages: preview.messageCount,
+                      files: preview.fileCount
+                    })}
+                  </p>
+                </div>
               </div>
             ) : null}
-            <dl className="grid grid-cols-2 gap-4 text-sm">
-              <div>
+            <dl className="space-y-3 text-sm">
+              <div className="flex items-baseline justify-between gap-4">
                 <dt className="text-muted-foreground">{t('Destination project')}</dt>
-                <dd className="mt-1 break-words font-medium">
-                  {destination?.name ?? operation.importTarget?.projectName ?? t('New project')}
+                <dd className="flex min-w-0 items-center gap-2 text-right font-medium">
+                  <GalleryVerticalEnd
+                    className="size-4 shrink-0 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <span className="break-words">
+                    {destination?.name ?? operation.importTarget?.projectName ?? t('New project')}
+                  </span>
                 </dd>
               </div>
-              <div>
+              <div className="flex items-baseline justify-between gap-4">
                 <dt className="text-muted-foreground">{t('Uncompressed content')}</dt>
-                <dd className="mt-1 font-medium tabular-nums">
+                <dd className="shrink-0 font-medium tabular-nums">
                   {formatPackageBytes(preview.totalBytes)}
                 </dd>
               </div>
             </dl>
-            <p className="text-sm text-muted-foreground">
-              {t('{{branches}} branches · {{messages}} messages · {{files}} files', {
-                branches: preview.branchCount,
-                messages: preview.messageCount,
-                files: preview.fileCount
-              })}
-            </p>
+            {!preview.title ? (
+              <p className="text-xs text-muted-foreground">
+                {t('{{branches}} branches · {{messages}} messages · {{files}} files', {
+                  branches: preview.branchCount,
+                  messages: preview.messageCount,
+                  files: preview.fileCount
+                })}
+              </p>
+            ) : null}
             {preview.omissions.length ? (
               <details className="border-t border-border pt-4 text-sm">
                 <summary className="w-fit cursor-pointer rounded-sm py-1 focus-visible:outline-2 focus-visible:outline-ring">
@@ -158,7 +175,6 @@ export const PackageImportSelection = ({
                   setName(event.target.value)
                   setError(undefined)
                 }}
-                placeholder={t('e.g. Reproduction of published research')}
                 className={`${dialogFormInputClassName} h-9 px-3 text-sm`}
               />
             </div>
@@ -238,7 +254,7 @@ export const PackageImportSelection = ({
               disabled={pending}
               onClick={onCancel}
             >
-              {t('Cancel operation')}
+              {t('Cancel')}
             </Button>
             <Button
               disabled={pending || (!preview && !selectedProject)}
@@ -249,7 +265,7 @@ export const PackageImportSelection = ({
                 )
               }}
             >
-              {preview ? t('Import Session package') : t('Continue')}
+              {preview ? t('Import') : t('Continue')}
             </Button>
           </>
         )}

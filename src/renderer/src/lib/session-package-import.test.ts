@@ -77,3 +77,20 @@ it.each([false, true])(
     })
   }
 )
+
+it('deduplicates drops before the first main-process progress event', async () => {
+  let finish!: () => void
+  const pending = new Promise<null>((resolve) => {
+    finish = () => resolve(null)
+  })
+  const importPackage = vi.fn(() => pending)
+  vi.stubGlobal('api', { sessions: { importPackage } })
+  const file = new File(['fixture'], 'research.science')
+  const first = importSessionPackage('existing-project', file)
+  await importSessionPackage('existing-project', file)
+  expect(importPackage).toHaveBeenCalledExactlyOnceWith({ projectId: 'existing-project' }, file)
+  finish()
+  await first
+  await importSessionPackage('existing-project', file)
+  expect(importPackage).toHaveBeenCalledTimes(2)
+})

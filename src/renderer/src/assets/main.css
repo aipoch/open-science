@@ -470,6 +470,17 @@
 }
 
 @layer components {
+  @keyframes package-setup-nudge {
+    0%,
+    60%,
+    100% {
+      transform: translateX(0);
+    }
+    30% {
+      transform: translateX(3px);
+    }
+  }
+
   @keyframes literature-review-cta-attention-bounce {
     0%,
     100% {

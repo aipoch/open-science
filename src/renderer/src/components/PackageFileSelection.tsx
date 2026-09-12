@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Checkbox } from 'radix-ui'
-import { Check, ChevronDown, Info, Minus } from 'lucide-react'
+import { Check, ChevronDown, FileCheck2, Info, Files, ListFilter, Minus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   dialogBodyClassName,
   dialogFooterClassName,
@@ -37,31 +39,78 @@ export const PackageFileSelection = ({
   children?: React.ReactNode
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const thresholdId = useId()
+  const retainedFilesId = useId()
+  const [showRetainedFiles, setShowRetainedFiles] = useState(false)
   const { excludedStorageKeys, selectionPreset, threshold, setThreshold } =
     usePackageOperationStore()
   const [query, setQuery] = useState('')
   const [customizing, setCustomizing] = useState(false)
   const [page, setPage] = useState(0)
   const [retainedPage, setRetainedPage] = useState(0)
+  const [retainedCategory, setRetainedCategory] = useState('')
+  const retainedCategories = [
+    { id: 'notebooks', label: t('Notebook') },
+    { id: 'artifacts', label: t('Artifacts') },
+    { id: 'uploads', label: t('Uploads') },
+    { id: 'execution-file-evidence', label: t('Execution evidence') },
+    { id: 'other', label: t('Other files') }
+  ]
+  const retainedFiles = useMemo(
+    () =>
+      [...(summary?.retainedFiles ?? [])]
+        .map((file) => {
+          const source = file.storageKey.split('/')[0]
+          return {
+            ...file,
+            category: ['notebooks', 'artifacts', 'uploads', 'execution-file-evidence'].includes(
+              source
+            )
+              ? source
+              : 'other'
+          }
+        })
+        .sort((a, b) => b.sizeBytes - a.sizeBytes),
+    [summary?.retainedFiles]
+  )
+  const retainedByCategory = useMemo(() => {
+    const groups = new Map<string, typeof retainedFiles>()
+    for (const file of retainedFiles) {
+      const group = groups.get(file.category)
+      if (group) group.push(file)
+      else groups.set(file.category, [file])
+    }
+    return groups
+  }, [retainedFiles])
+  const visibleRetainedFiles = retainedCategory
+    ? (retainedByCategory.get(retainedCategory) ?? [])
+    : retainedFiles
+  const retainedPages = Math.max(1, Math.ceil(visibleRetainedFiles.length / PAGE_SIZE))
+  const currentRetainedPage = Math.min(retainedPage, retainedPages - 1)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [versionCounts, setVersionCounts] = useState<Record<string, number>>({})
-  const excluded = new Set(excludedStorageKeys ?? [])
+  const excluded = useMemo(() => new Set(excludedStorageKeys ?? []), [excludedStorageKeys])
   const groups = useMemo(() => {
     const result = new Map<string, PackageSelectableFile[]>()
+    const sizes = new Map<string, number>()
     for (const file of files) {
       const key = `${file.source}:${file.groupId}`
+      sizes.set(key, (sizes.get(key) ?? 0) + file.sizeBytes)
       const group = result.get(key)
       if (group) group.push(file)
       else result.set(key, [file])
     }
-    return [...result].sort(
-      (a, b) =>
-        b[1].reduce((sum, file) => sum + file.sizeBytes, 0) -
-        a[1].reduce((sum, file) => sum + file.sizeBytes, 0)
-    )
+    return [...result].sort((a, b) => sizes.get(b[0])! - sizes.get(a[0])!)
   }, [files])
-  const filtered = groups.filter(([, entries]) =>
-    entries.some((file) => file.filename.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+  const normalizedQuery = query.toLocaleLowerCase()
+  const filtered = useMemo(
+    () =>
+      normalizedQuery
+        ? groups.filter(([, entries]) =>
+            entries.some((file) => file.filename.toLocaleLowerCase().includes(normalizedQuery))
+          )
+        : groups,
+    [groups, normalizedQuery]
   )
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const currentPage = Math.min(page, pages - 1)
@@ -75,14 +124,46 @@ export const PackageFileSelection = ({
       }
       return { excludedStorageKeys: [...next], selectionPreset: 'custom' }
     })
-  const selected = files.filter((file) => !excluded.has(file.storageKey))
-  const selectedBytes = selected.reduce((sum, file) => sum + file.sizeBytes, 0)
-  const retainedBytes =
-    (summary?.metadataBytes ?? 0) +
-    (summary?.retainedFiles.reduce((sum, file) => sum + file.sizeBytes, 0) ?? 0)
-  const oversized = files.some((file) => file.sizeBytes > PACKAGE_MAX_FILE_BYTES)
-  const requiredOversized = files.some(
-    (file) => file.requiredForEvidence && file.sizeBytes > PACKAGE_MAX_FILE_BYTES
+  const stats = useMemo(() => {
+    let selectedBytes = 0,
+      requiredBytes = 0,
+      optionalCount = 0,
+      selectedOptionalCount = 0,
+      selectedOptionalBytes = 0
+    let oversized = false,
+      requiredOversized = false
+    for (const file of files) {
+      const selected = !excluded.has(file.storageKey)
+      if (selected) selectedBytes += file.sizeBytes
+      if (file.requiredForEvidence) requiredBytes += file.sizeBytes
+      else {
+        optionalCount++
+        if (selected) {
+          selectedOptionalCount++
+          selectedOptionalBytes += file.sizeBytes
+        }
+      }
+      if (file.sizeBytes > PACKAGE_MAX_FILE_BYTES) {
+        oversized = true
+        if (file.requiredForEvidence) requiredOversized = true
+      }
+    }
+    return {
+      selectedBytes,
+      requiredBytes,
+      optionalCount,
+      selectedOptionalCount,
+      selectedOptionalBytes,
+      oversized,
+      requiredOversized
+    }
+  }, [files, excluded])
+  const { selectedBytes, oversized, requiredOversized } = stats
+  const retainedBytes = useMemo(
+    () =>
+      (summary?.metadataBytes ?? 0) +
+      (summary?.retainedFiles.reduce((sum, file) => sum + file.sizeBytes, 0) ?? 0),
+    [summary]
   )
   const choosePreset = (preset: 'full' | 'compact'): void => {
     usePackageOperationStore.setState({
@@ -101,7 +182,7 @@ export const PackageFileSelection = ({
       >
         <fieldset className="grid gap-2 sm:grid-cols-2">
           <legend className="sr-only">{t('Package contents')}</legend>
-          {(['full', 'compact'] as const).map((preset) => (
+          {(['compact', 'full'] as const).map((preset) => (
             <label
               key={preset}
               className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${selectionPreset === preset ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'} ${preset === 'full' && oversized ? 'cursor-not-allowed opacity-50' : ''}`}
@@ -110,17 +191,24 @@ export const PackageFileSelection = ({
                 type="radio"
                 name="package-preset"
                 className="mt-0.5 shrink-0 accent-primary"
-                aria-label={preset === 'full' ? t('Full export') : t('Compact export')}
+                aria-label={preset === 'full' ? t('Full export') : t('Essential export')}
                 checked={selectionPreset === preset}
                 disabled={preset === 'full' && oversized}
                 onChange={() => choosePreset(preset)}
               />
               <span className="space-y-1">
-                <span className="block font-medium">
-                  {preset === 'full' ? t('Full export') : t('Compact export')}
+                <span className="flex items-center gap-2 font-medium">
+                  {preset === 'compact' ? (
+                    <FileCheck2 className="size-4 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <Files className="size-4 shrink-0" aria-hidden="true" />
+                  )}
+                  {preset === 'full' ? t('Full export') : t('Essential export')}
                 </span>
                 <span className="block text-xs leading-relaxed text-muted-foreground">
-                  {preset === 'full' ? t('All available files.') : t('Required evidence only.')}
+                  {preset === 'full'
+                    ? t('Plus all available files')
+                    : t('History + required evidence')}
                 </span>
               </span>
             </label>
@@ -134,7 +222,7 @@ export const PackageFileSelection = ({
                   { limit: packageBytes(PACKAGE_MAX_FILE_BYTES) }
                 )
               : t(
-                  'Full export is unavailable because a file exceeds {{limit}}. Choose Compact export or customize the contents.',
+                  'Full export is unavailable because a file exceeds {{limit}}. Choose Essential export or customize the contents.',
                   { limit: packageBytes(PACKAGE_MAX_FILE_BYTES) }
                 )}
           </p>
@@ -149,13 +237,14 @@ export const PackageFileSelection = ({
               <TooltipProvider delayDuration={200}>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon-xs"
                       aria-label={t('About the size estimate')}
-                      className="rounded-sm p-1 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
                     >
                       <Info className="size-3.5" aria-hidden="true" />
-                    </button>
+                    </Button>
                   </TooltipTrigger>
                   <TooltipContent>
                     {t('Uncompressed upper estimate. The final package may be smaller.')}
@@ -171,25 +260,16 @@ export const PackageFileSelection = ({
             <p className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
               <span>{t('History and required evidence')}</span>
               <span className="tabular-nums">
-                {packageBytes(
-                  retainedBytes +
-                    files
-                      .filter((file) => file.requiredForEvidence)
-                      .reduce((sum, file) => sum + file.sizeBytes, 0)
-                )}
+                {packageBytes(retainedBytes + stats.requiredBytes)}
               </span>
             </p>
           ) : null}
-          {files.some((file) => !file.requiredForEvidence) ? (
+          {stats.optionalCount > 0 ? (
             <p className="text-xs text-muted-foreground">
               {t('Selected: {{selected}} / {{total}} files · {{size}}', {
-                selected: selected.filter((file) => !file.requiredForEvidence).length,
-                total: files.filter((file) => !file.requiredForEvidence).length,
-                size: packageBytes(
-                  selected
-                    .filter((file) => !file.requiredForEvidence)
-                    .reduce((sum, file) => sum + file.sizeBytes, 0)
-                )
+                selected: stats.selectedOptionalCount,
+                total: stats.optionalCount,
+                size: packageBytes(stats.selectedOptionalBytes)
               })}
             </p>
           ) : null}
@@ -199,152 +279,232 @@ export const PackageFileSelection = ({
             {t('Some file contents are not included. Review your selection in Customize contents.')}
           </p>
         ) : null}
-        <Button
-          variant="ghost"
-          className="-ml-2 gap-2"
-          aria-expanded={customizing}
-          aria-controls="package-customization"
-          onClick={() => setCustomizing(!customizing)}
-        >
-          <ChevronDown
-            className={`size-4 transition-transform ${customizing ? 'rotate-180' : ''}`}
-            aria-hidden="true"
-          />
-          {t('Customize contents')}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            className="-ml-2 gap-2"
+            aria-expanded={customizing}
+            aria-controls="package-customization"
+            onClick={() => setCustomizing(!customizing)}
+          >
+            <ChevronDown
+              className={`size-4 transition-transform ${customizing ? 'rotate-180' : ''}`}
+              aria-hidden="true"
+            />
+            {t('Customize contents')}
+          </Button>
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t('Package contents')}
+                  className="text-muted-foreground"
+                >
+                  <Info className="size-3.5" aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-72">
+                {t(
+                  'Conversation and evidence metadata are always included. Unselected file contents are recorded as not included.'
+                )}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
         {customizing ? (
           <div id="package-customization" className="space-y-4 border-t border-border pt-4">
-            <p className="text-sm text-text-200">
-              {t(
-                'Conversation and evidence metadata are always included. Unselected file contents are recorded as not included.'
-              )}
-            </p>
-            {files.some((file) => file.requiredForEvidence) ? (
-              <p className="text-xs text-muted-foreground">
-                {t(
-                  'Required files stay included to preserve research evidence. Possible duplicates are retained without scanning file contents.'
-                )}
-              </p>
-            ) : null}
             {summary && summary.retainedFiles.length > 0 ? (
-              <details className="rounded-lg border border-border p-3 text-xs">
-                <summary className="cursor-pointer font-medium">
-                  {t('Retained workspace and evidence files')}
-                </summary>
-                <p className="mt-3 text-text-200">
-                  {t('Retained content')} · {packageBytes(retainedBytes)}
-                </p>
-                <p className="mt-2 text-text-200">
-                  {t('Uncompressed upper estimate. The final package may be smaller.')}
-                </p>
-                <p className="mt-2 text-text-200">
-                  {t(
-                    'Review content before sharing; files may contain private information. Files duplicated in retained evidence must remain included.'
-                  )}
-                </p>
-                <p className="my-2 text-text-200">
-                  {t(
-                    'Formal research evidence cannot be excluded. The large-file filter applies only to optional files.'
-                  )}
-                </p>
-                <div className="max-h-32 overflow-y-auto">
-                  {[...summary.retainedFiles]
-                    .sort((a, b) => b.sizeBytes - a.sizeBytes)
-                    .slice(retainedPage * PAGE_SIZE, (retainedPage + 1) * PAGE_SIZE)
-                    .map((file) => (
-                      <div key={file.storageKey} className="flex gap-3 py-1">
-                        <span className="min-w-0 flex-1 truncate" title={file.filename}>
-                          {file.filename}
-                        </span>
-                        <span className="shrink-0 tabular-nums">
-                          {packageBytes(file.sizeBytes)}
-                        </span>
-                      </div>
-                    ))}
+              <section className="rounded-lg border border-border p-3 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Files className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <span className="font-medium">{t('Required files')}</span>
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={t('Required evidence')}
+                          className="text-muted-foreground"
+                        >
+                          <Info className="size-3.5" aria-hidden="true" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-72">
+                        {t(
+                          'Required to preserve research evidence. These files cannot be excluded.'
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <span className="ml-auto tabular-nums text-muted-foreground">
+                    {packageBytes(
+                      summary.retainedFiles.reduce((sum, file) => sum + file.sizeBytes, 0)
+                    )}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-expanded={showRetainedFiles}
+                    aria-controls={retainedFilesId}
+                    onClick={() => setShowRetainedFiles(!showRetainedFiles)}
+                  >
+                    {showRetainedFiles ? t('Hide files') : t('View files')}
+                  </Button>
                 </div>
-                {summary.retainedFiles.length > 25 ? (
-                  <div className="mt-2 flex items-center justify-between gap-2 text-text-200">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={retainedPage === 0}
-                      onClick={() => setRetainedPage(retainedPage - 1)}
+                {showRetainedFiles ? (
+                  <div id={retainedFilesId} className="mt-3 border-t border-border pt-2">
+                    <div
+                      className="mb-2 flex flex-wrap gap-1"
+                      role="group"
+                      aria-label={t('Required files')}
                     >
-                      {t('Previous')}
-                    </Button>
-                    <span>
-                      {retainedPage === 0
-                        ? t('Showing the 25 largest retained files.')
-                        : t('Page {{page}} of {{pages}}', {
-                            page: retainedPage + 1,
-                            pages: Math.ceil(summary.retainedFiles.length / PAGE_SIZE)
+                      {[{ id: '', label: t('All') }, ...retainedCategories].map((category) => {
+                        const count = category.id
+                          ? (retainedByCategory.get(category.id)?.length ?? 0)
+                          : retainedFiles.length
+                        return count > 0 ? (
+                          <Button
+                            key={category.id}
+                            size="xs"
+                            variant={retainedCategory === category.id ? 'secondary' : 'ghost'}
+                            aria-pressed={retainedCategory === category.id}
+                            onClick={() => {
+                              setRetainedCategory(category.id)
+                              setRetainedPage(0)
+                            }}
+                          >
+                            {category.label}
+                            <span className="tabular-nums text-muted-foreground">{count}</span>
+                          </Button>
+                        ) : null
+                      })}
+                    </div>
+                    <div className="max-h-48 overflow-y-auto">
+                      {visibleRetainedFiles
+                        .slice(
+                          currentRetainedPage * PAGE_SIZE,
+                          (currentRetainedPage + 1) * PAGE_SIZE
+                        )
+                        .map((file) => (
+                          <div key={file.storageKey} className="flex gap-3 py-1">
+                            <span className="min-w-0 flex-1 truncate" title={file.filename}>
+                              {file.filename.split(/[\\/]/).pop() || file.filename}
+                            </span>
+                            {!retainedCategory ? (
+                              <span className="shrink-0 text-muted-foreground">
+                                {
+                                  retainedCategories.find(
+                                    (category) => category.id === file.category
+                                  )?.label
+                                }
+                              </span>
+                            ) : null}
+                            <span className="shrink-0 tabular-nums">
+                              {packageBytes(file.sizeBytes)}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                    {retainedPages > 1 ? (
+                      <div className="mt-2 flex items-center justify-between gap-2 text-text-200">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={currentRetainedPage === 0}
+                          onClick={() => setRetainedPage(currentRetainedPage - 1)}
+                        >
+                          {t('Previous')}
+                        </Button>
+                        <span>
+                          {t('Page {{page}} of {{pages}}', {
+                            page: currentRetainedPage + 1,
+                            pages: retainedPages
                           })}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={(retainedPage + 1) * PAGE_SIZE >= summary.retainedFiles.length}
-                      onClick={() => setRetainedPage(retainedPage + 1)}
-                    >
-                      {t('Next')}
-                    </Button>
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={currentRetainedPage + 1 >= retainedPages}
+                          onClick={() => setRetainedPage(currentRetainedPage + 1)}
+                        >
+                          {t('Next')}
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
-              </details>
+              </section>
             ) : null}
             <div className="space-y-3">
               <label className="block w-full min-w-0 text-xs">
                 {t('Search optional files')}
-                <input
+                <Input
                   value={query}
                   onChange={(event) => {
                     setQuery(event.target.value)
                     setPage(0)
                   }}
-                  className="mt-1 w-full rounded border border-border bg-bg-000 px-2 py-1.5"
+                  className="mt-1"
                 />
               </label>
               <details className="group text-xs">
-                <summary className="w-fit cursor-pointer rounded-md px-2 py-2 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
-                  {t('File filters')}
-                </summary>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <label className="text-xs">
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto flex w-fit cursor-pointer list-none text-muted-foreground group-open:bg-primary/10 group-open:text-primary [&::-webkit-details-marker]:hidden"
+                >
+                  <summary>
+                    <ListFilter aria-hidden="true" />
+                    {t('File filters')}
+                  </summary>
+                </Button>
+                <div className="mt-3 space-y-2">
+                  <Label htmlFor={thresholdId} className="text-xs text-muted-foreground">
                     {t('Large-file threshold (MiB)')}
-                    <input
+                  </Label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      id={thresholdId}
                       type="number"
                       min="1"
                       value={threshold}
                       onChange={(event) => setThreshold(event.target.value)}
-                      className="ml-2 w-20 rounded border border-border bg-bg-000 px-2 py-1.5"
+                      className="w-24 tabular-nums"
                     />
-                  </label>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!Number.isFinite(Number(threshold)) || Number(threshold) <= 0}
-                    onClick={() =>
-                      toggle(
-                        files.filter((file) => file.sizeBytes > Number(threshold) * 1024 ** 2),
-                        false
-                      )
-                    }
-                  >
-                    {t('Exclude large files')}
-                  </Button>
+                    <Button
+                      variant="outline"
+                      disabled={!Number.isFinite(Number(threshold)) || Number(threshold) <= 0}
+                      onClick={() =>
+                        toggle(
+                          files.filter((file) => file.sizeBytes > Number(threshold) * 1024 ** 2),
+                          false
+                        )
+                      }
+                    >
+                      {t('Exclude large files')}
+                    </Button>
+                  </div>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {t(
+                      'Optional files are sorted by size, largest first. Files larger than {{limit}} cannot be included.',
+                      { limit: packageBytes(PACKAGE_MAX_FILE_BYTES) }
+                    )}
+                  </p>
+                </div>
+              </details>
+            </div>
+            <div className="rounded-lg border border-border px-3">
+              {stats.optionalCount > 0 ? (
+                <div className="flex justify-end border-b border-border py-2">
                   <Button variant="ghost" size="sm" onClick={() => toggle(files, true)}>
                     {t('Select all')}
                   </Button>
                 </div>
-              </details>
-            </div>
-            <p className="text-xs text-text-200">
-              {t(
-                'Optional files are sorted by size, largest first. Files larger than {{limit}} cannot be included.',
-                { limit: packageBytes(PACKAGE_MAX_FILE_BYTES) }
-              )}
-            </p>
-            <div className="rounded-lg border border-border px-3">
+              ) : null}
               {filtered
                 .slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE)
                 .map(([key, entries]) => {
@@ -352,7 +512,7 @@ export const PackageFileSelection = ({
                   const partial = !all && entries.some((file) => !excluded.has(file.storageKey))
                   const visibleEntries = query
                     ? entries.filter((file) =>
-                        file.filename.toLocaleLowerCase().includes(query.toLocaleLowerCase())
+                        file.filename.toLocaleLowerCase().includes(normalizedQuery)
                       )
                     : entries
                   const isExpanded = Boolean(query) || (expanded[key] ?? false)
@@ -375,9 +535,26 @@ export const PackageFileSelection = ({
                         </Checkbox.Root>
                         <span className="min-w-0 flex-1 break-all">{entries[0].filename}</span>
                         {entries.some((file) => file.requiredForEvidence) ? (
-                          <span className="text-xs text-muted-foreground">
-                            {t('Required evidence')}
-                          </span>
+                          <TooltipProvider delayDuration={200}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="xs"
+                                  className="text-muted-foreground"
+                                >
+                                  {t('Required evidence')}
+                                  <Info className="size-3" aria-hidden="true" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-72">
+                                {t(
+                                  'Required files stay included to preserve research evidence. Possible duplicates are retained without scanning file contents.'
+                                )}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         ) : null}
                         {entries.length > 1 ? (
                           <span className="shrink-0 text-xs text-text-200">
@@ -492,10 +669,10 @@ export const PackageFileSelection = ({
       </div>
       <div className={`${dialogFooterClassName} shrink-0 flex-wrap`}>
         <Button variant="ghost" className={dialogCancelButtonClassName} onClick={onCancel}>
-          {t('Cancel operation')}
+          {t('Cancel')}
         </Button>
         <Button disabled={requiredOversized} onClick={() => onSelect([...excluded])}>
-          {t('Choose save location')}
+          {t('Export')}
         </Button>
       </div>
     </>

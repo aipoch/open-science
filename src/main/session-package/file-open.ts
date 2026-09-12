@@ -3,7 +3,7 @@ import { parseWebModeOptions } from '../web-service/options'
 
 // Installed file associations forward local paths, never URLs or shell command strings.
 export const packagePathsFromArgv = (argv: string[], cwd: string): string[] => {
-  if (parseWebModeOptions(argv, {}).enabled) return []
+  if (parseWebModeOptions(argv).enabled) return []
   return argv
     .slice(1)
     .filter(

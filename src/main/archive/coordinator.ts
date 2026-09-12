@@ -60,44 +60,53 @@ class ArchiveCoordinator {
     return this.exportingSessions.get(sessionId) === projectId
   }
 
-  reserveProjectImport(projectId: string): Promise<() => void> {
-    return this.enqueue(projectId, async () => {
-      await this.activeProject(projectId)
-      if (this.importingProjects.has(projectId))
-        throw new Error('A project import is already in progress.')
-      this.importingProjects.add(projectId)
-      return () => {
-        this.importingProjects.delete(projectId)
-      }
-    })
+  reserveProjectImport(projectId: string, signal?: AbortSignal): Promise<() => void> {
+    return this.enqueue(
+      projectId,
+      async () => {
+        await this.activeProject(projectId)
+        if (this.importingProjects.has(projectId))
+          throw new Error('A project import is already in progress.')
+        this.importingProjects.add(projectId)
+        return () => {
+          this.importingProjects.delete(projectId)
+        }
+      },
+      signal
+    )
   }
 
   reserveSessionExport(
     projectId: string,
     sessionId: string,
-    assertIdle: () => Promise<void>
+    assertIdle: () => Promise<void>,
+    signal?: AbortSignal
   ): Promise<() => void> {
-    return this.enqueue(projectId, async () => {
-      await this.activeProject(projectId)
-      this.assertExportAvailable(sessionId)
-      if (this.pendingDispatches.has(sessionId))
-        throw new Error('Wait for the Session to become idle before exporting.')
-      // Fence new work before awaiting the runtime's database-backed activity check.
-      this.exportingSessions.set(sessionId, projectId)
-      try {
-        if (await this.runtime.isSessionBusy(projectId, sessionId))
+    return this.enqueue(
+      projectId,
+      async () => {
+        await this.activeProject(projectId)
+        this.assertExportAvailable(sessionId)
+        if (this.pendingDispatches.has(sessionId))
           throw new Error('Wait for the Session to become idle before exporting.')
-        await assertIdle()
-        if (await this.runtime.isSessionBusy(projectId, sessionId))
-          throw new Error('The Session is still active.')
-        return () => {
+        // Fence new work before awaiting the runtime's database-backed activity check.
+        this.exportingSessions.set(sessionId, projectId)
+        try {
+          if (await this.runtime.isSessionBusy(projectId, sessionId))
+            throw new Error('Wait for the Session to become idle before exporting.')
+          await assertIdle()
+          if (await this.runtime.isSessionBusy(projectId, sessionId))
+            throw new Error('The Session is still active.')
+          return () => {
+            this.exportingSessions.delete(sessionId)
+          }
+        } catch (error) {
           this.exportingSessions.delete(sessionId)
+          throw error
         }
-      } catch (error) {
-        this.exportingSessions.delete(sessionId)
-        throw error
-      }
-    })
+      },
+      signal
+    )
   }
 
   private assertExportAvailable(sessionId: string): void {
@@ -126,13 +135,32 @@ class ArchiveCoordinator {
     }
   ) {}
 
-  private enqueue<Result>(projectId: string, operation: () => Promise<Result>): Promise<Result> {
+  private enqueue<Result>(
+    projectId: string,
+    operation: () => Promise<Result>,
+    signal?: AbortSignal
+  ): Promise<Result> {
     const currentQueue = this.projectQueues.get(projectId) ?? Promise.resolve()
-    const result = currentQueue.then(operation, operation)
-    const nextQueue = result.then(
-      () => undefined,
-      () => undefined
-    )
+    // Cancelling a waiter must not advance the project queue or start its operation later.
+    const ready = signal
+      ? new Promise<void>((resolve, reject) => {
+          const abort = (): void => reject(signal.reason)
+          if (signal.aborted) {
+            abort()
+            return
+          }
+          signal.addEventListener('abort', abort, { once: true })
+          void currentQueue.finally(() => {
+            signal.removeEventListener('abort', abort)
+            resolve()
+          })
+        })
+      : currentQueue
+    const result = ready.then(() => {
+      signal?.throwIfAborted()
+      return operation()
+    })
+    const nextQueue = Promise.allSettled([currentQueue, result]).then(() => undefined)
     this.projectQueues.set(projectId, nextQueue)
     void nextQueue.then(() => {
       if (this.projectQueues.get(projectId) === nextQueue) {

@@ -28,6 +28,15 @@ describe('OS package file handoff', () => {
     expect(overflow).toHaveBeenCalledOnce()
   })
 
+  it('ignores package arguments when the environment enables web mode', () => {
+    vi.stubEnv('OPEN_SCIENCE_WEB_PORT', '44100')
+    try {
+      expect(packagePathsFromArgv(['open-science', 'study.science'], '/sender')).toEqual([])
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('uses the launching working directory and preserves spaces and Unicode without shell parsing', () => {
     expect(
       packagePathsFromArgv(

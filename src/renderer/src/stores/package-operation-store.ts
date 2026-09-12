@@ -20,7 +20,7 @@ export const usePackageOperationStore = create<{
   setImportError: (importError) => set({ importError }),
   open: false,
   excludedStorageKeys: null,
-  selectionPreset: 'full',
+  selectionPreset: 'compact',
   threshold: '256',
   setThreshold: (threshold) => set({ threshold }),
   dismiss: () =>
@@ -39,6 +39,7 @@ export const usePackageOperationStore = create<{
         operation.session?.projectId === state.operation.session?.projectId &&
         operation.session?.sessionId === state.operation.session?.sessionId
       const draft = same || retry ? state.excludedStorageKeys : null
+      const preset = same || retry ? state.selectionPreset : 'compact'
       const available =
         operation?.files &&
         new Set(
@@ -50,7 +51,7 @@ export const usePackageOperationStore = create<{
         excludedStorageKeys: operation?.files
           ? [
               ...new Set([
-                ...((same || retry) && state.selectionPreset === 'compact'
+                ...(preset === 'compact'
                   ? operation.files
                       .filter((file) => !file.requiredForEvidence)
                       .map((file) => file.storageKey)
@@ -65,11 +66,9 @@ export const usePackageOperationStore = create<{
           : draft,
         selectionPreset:
           operation?.files?.some((file) => file.sizeBytes > PACKAGE_MAX_FILE_BYTES) &&
-          (!(same || retry) || state.selectionPreset === 'full')
+          preset === 'full'
             ? 'custom'
-            : same || retry
-              ? state.selectionPreset
-              : 'full',
+            : preset,
         threshold: same || retry ? state.threshold : '256',
         open:
           same && state.dismissedId === operation?.id

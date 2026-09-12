@@ -51,6 +51,63 @@ const button = (text: string): HTMLButtonElement => {
   expect(result).toBeDefined()
   return result!
 }
+
+it('cancels a hidden export setup directly and waits for the owner to release the Session', async () => {
+  let finish!: () => void
+  const packageOperation = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve
+      })
+  )
+  vi.stubGlobal('api', { sessions: { packageOperation } })
+  usePackageOperationStore.setState({ operation: snapshot, open: false })
+  await act(async () => root.render(<PackageOperationIndicator />))
+  expect(button('Continue setup')).toBeDefined()
+  await act(async () => button('Cancel').click())
+  expect(packageOperation).toHaveBeenCalledExactlyOnceWith({
+    action: 'cancel',
+    operationId: snapshot.id
+  })
+  expect(button('Cancel').disabled).toBe(true)
+  expect(
+    sessionExportLocked(usePackageOperationStore.getState().operation, { id: 's', projectId: 'p' })
+  ).toBe(true)
+  await act(async () => {
+    usePackageOperationStore.getState().receive({ ...snapshot, state: 'cancelling' })
+    finish()
+  })
+  expect(button('Cancel').disabled).toBe(true)
+  expect(document.body.textContent).toContain('Cancelling and cleaning up…')
+  await act(async () =>
+    usePackageOperationStore.getState().receive({ ...snapshot, state: 'cancelled' })
+  )
+  expect(
+    sessionExportLocked(usePackageOperationStore.getState().operation, { id: 's', projectId: 'p' })
+  ).toBe(false)
+  expect(
+    [...document.querySelectorAll('button')].some((item) => item.textContent === 'Cancel')
+  ).toBe(false)
+})
+
+it('keeps failed background cancellation visible and retryable without discarding export choices', async () => {
+  const packageOperation = vi.fn().mockRejectedValue(new Error('Could not reach the application.'))
+  vi.stubGlobal('api', { sessions: { packageOperation } })
+  usePackageOperationStore.setState({
+    operation: snapshot,
+    open: false,
+    excludedStorageKeys: ['large']
+  })
+  await act(async () => root.render(<PackageOperationIndicator />))
+  await act(async () => button('Cancel').click())
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+    'Could not reach the application.'
+  )
+  expect(button('Cancel').disabled).toBe(false)
+  expect(usePackageOperationStore.getState().excludedStorageKeys).toEqual(['large'])
+  await act(async () => button('Continue setup').click())
+  expect(usePackageOperationStore.getState().open).toBe(true)
+})
 beforeEach(() => {
   const container = document.createElement('div')
   document.body.append(container)
@@ -81,16 +138,17 @@ it('offers full and compact export without exposing customization and preserves 
   const preset = (name: string): HTMLInputElement =>
     document.querySelector(`input[aria-label="${name}"]`)!
   expect(preset('Full export')).not.toBeNull()
-  expect(preset('Full export').checked).toBe(true)
+  expect(preset('Essential export').checked).toBe(true)
+  expect(document.querySelector('input[type=radio]')).toBe(preset('Essential export'))
   expect(document.querySelector('#package-customization')).toBeNull()
-  await act(async () => preset('Compact export').click())
+  await act(async () => preset('Essential export').click())
   expect(usePackageOperationStore.getState().excludedStorageKeys).toEqual(['artifacts/p/s/large'])
   await act(async () => button('Customize contents').click())
   const required = document.querySelector<HTMLButtonElement>(
     '[role="checkbox"][aria-label="plot.png"]'
   )!
   expect(required.disabled).toBe(true)
-  await act(async () => button('Choose save location').click())
+  await act(async () => button('Export').click())
   expect(packageOperation).toHaveBeenCalledWith({
     action: 'select',
     operationId: operation.id,
@@ -119,7 +177,7 @@ it('does not label an oversized exclusion as full export and blocks oversized re
     files: snapshot.files!.map((file) => ({ ...file, requiredForEvidence: true }))
   }
   await act(async () => usePackageOperationStore.getState().receive(operation))
-  expect(button('Choose save location').disabled).toBe(true)
+  expect(button('Export').disabled).toBe(true)
   expect(document.body.textContent).toContain('This Session cannot be exported.')
   expect(usePackageOperationStore.getState().excludedStorageKeys).toEqual([])
 })
@@ -147,11 +205,20 @@ it('keeps speed settings collapsed and changes the current operation budget', as
     element.textContent?.includes('Disk activity:')
   )
   expect(activity).toBeDefined()
-  const select = settings.querySelector('select')!
-  expect(select.value).toBe(String(16 * 1024 ** 2))
+  const select = settings.querySelector<HTMLButtonElement>('[role="combobox"]')
+  expect(select, 'speed selection uses the shared in-app control').not.toBeNull()
+  expect(select!.textContent).toContain('16.0 MiB/s')
+  Element.prototype.scrollIntoView ??= () => undefined
   await act(async () => {
-    select.value = String(4 * 1024 ** 2)
-    select.dispatchEvent(new Event('change', { bubbles: true }))
+    settings.open = true
+    select!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  })
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (item) => item.textContent === '4.0 MiB/s'
+  )!
+  expect(option).toBeDefined()
+  await act(async () => {
+    option.click()
   })
   expect(packageOperation).toHaveBeenCalledWith({
     action: 'set-speed',
@@ -316,13 +383,13 @@ it('starts with a simple export summary and reveals optional controls on request
   expect(document.activeElement?.textContent).toBe('Export Session package')
   expect(document.querySelector('[role="checkbox"]')).toBeNull()
   expect(document.body.textContent).not.toContain('Transfer settings')
-  expect(document.body.textContent).toContain('Selected: 2 / 3 files')
-  expect(document.body.textContent).toContain('Some file contents are not included')
-  await act(async () => button('Choose save location').click())
+  expect(document.body.textContent).toContain('Selected: 0 / 3 files')
+  expect(document.body.textContent).not.toContain('Some file contents are not included')
+  await act(async () => button('Export').click())
   expect(request).toHaveBeenLastCalledWith({
     action: 'select',
     operationId: snapshot.id,
-    excludedStorageKeys: ['artifacts/p/s/oversized']
+    excludedStorageKeys: snapshot.files!.map((file) => file.storageKey)
   })
   act(() => button('Customize contents').click())
   const filters = [...document.querySelectorAll('details')].find(
@@ -340,7 +407,7 @@ it('starts with a simple export summary and reveals optional controls on request
   expect(document.querySelector('[role="checkbox"]')).not.toBeNull()
 })
 
-it('includes a 32 GiB file by default while disabling files over the limit', async () => {
+it('allows selecting a 32 GiB file while disabling files over the limit', async () => {
   const inventory = {
     ...snapshot,
     files: [{ ...snapshot.files![0], sizeBytes: 32 * 1024 ** 3 }, snapshot.files![2]]
@@ -350,14 +417,14 @@ it('includes a 32 GiB file by default while disabling files over the limit', asy
     sessions: { onPackageOperation: () => () => undefined, packageOperation: request }
   })
   await act(async () => root.render(<SessionPackageOperation />))
-  expect(document.body.textContent).toContain('Selected: 1 / 2 files')
+  expect(document.body.textContent).toContain('Selected: 0 / 2 files')
   act(() => button('Customize contents').click())
   expect(document.body.textContent).toContain('Files larger than 32.0 GiB cannot be included.')
   expect(document.querySelector('[role="checkbox"][disabled]')?.getAttribute('aria-label')).toBe(
     'raw.bin'
   )
   act(() => button('Select all').click())
-  await act(async () => button('Choose save location').click())
+  await act(async () => button('Export').click())
   expect(request).toHaveBeenLastCalledWith({
     action: 'select',
     operationId: snapshot.id,
@@ -390,6 +457,7 @@ it('shows a matching renamed version beyond the initial version page without cha
     )
   )
   act(() => button('Customize contents').click())
+  act(() => button('Select all').click())
   const search = document.querySelector('input:not([type])') as HTMLInputElement
   act(() => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'final')
@@ -453,7 +521,8 @@ it('selects file contents with a size filter and keeps selection separate from m
     )
   )
   act(() => button('Customize contents').click())
-  expect(document.body.textContent).toContain(
+  act(() => button('Select all').click())
+  expect(document.body.textContent).not.toContain(
     'Conversation and evidence metadata are always included'
   )
   const versions = [...document.querySelectorAll('details')].find(
@@ -469,20 +538,16 @@ it('selects file contents with a size filter and keeps selection separate from m
   act(() => button('Exclude large files').click())
   expect(document.body.textContent).toContain('Selected: 1 / 3 files')
   act(() => (document.querySelector('[aria-label="Hide progress"]') as HTMLButtonElement).click())
-  act(() =>
-    [...document.querySelectorAll('button')]
-      .find((item) => item.textContent === 'View progress')!
-      .click()
-  )
+  act(() => button('Continue setup').click())
   expect(document.body.textContent).toContain('Selected: 1 / 3 files')
-  await act(async () => button('Choose save location').click())
+  await act(async () => button('Export').click())
   expect(request).toHaveBeenLastCalledWith({
     action: 'select',
     operationId: 'operation-1',
     excludedStorageKeys: ['artifacts/p/s/oversized', 'artifacts/p/s/large']
   })
   act(() => publish({ ...snapshot, id: 'operation-2' }))
-  expect(document.body.textContent).toContain('Selected: 2 / 3 files')
+  expect(document.body.textContent).toContain('Selected: 0 / 3 files')
 })
 
 it('restores the operation after remount, shows byte progress in background and cancels through the owner', async () => {
@@ -517,7 +582,7 @@ it('restores the operation after remount, shows byte progress in background and 
       .find((item) => item.textContent === 'View progress')!
       .click()
   )
-  await act(async () => button('Cancel operation').click())
+  await act(async () => button('Cancel').click())
   expect(request).toHaveBeenLastCalledWith({ action: 'cancel', operationId: 'operation-1' })
   act(() => root.render(null))
   expect(remove).toHaveBeenCalledOnce()
@@ -561,10 +626,10 @@ it('keeps import progress available when hidden and waits for cancellation clean
   expect(document.querySelector('[role="dialog"]')).toBeNull()
   expect(document.body.textContent).toContain('Importing research…')
   act(() => button('View progress').click())
-  await act(async () => button('Cancel operation').click())
+  await act(async () => button('Cancel').click())
   expect(request).toHaveBeenLastCalledWith({ action: 'cancel', operationId: 'import' })
   act(() => publish({ ...running, state: 'cancelling' }))
-  expect(button('Cancel operation').disabled).toBe(true)
+  expect(button('Cancel').disabled).toBe(true)
   expect(document.body.textContent).toContain('Cancelling and cleaning up…')
   act(() => publish({ ...running, state: 'cancelled' }))
   expect(document.body.textContent).toContain('Package operation cancelled')
@@ -627,6 +692,7 @@ it('shows retained bytes and small-file units and searches without changing the 
     )
   )
   act(() => button('Customize contents').click())
+  act(() => button('Select all').click())
   expect(document.body.textContent).toContain('128.0 MiB')
   expect(document.body.textContent).toContain('640.0 MiB')
   expect(document.body.textContent).toContain('1.0 KiB')
@@ -670,6 +736,7 @@ it('shows a partly selected group and retains its draft across a failed export r
   act(() =>
     usePackageOperationStore.setState({
       excludedStorageKeys: ['artifacts/p/s/v2'],
+      selectionPreset: 'custom',
       threshold: '12'
     })
   )
@@ -712,6 +779,7 @@ it('paginates large inventories while selection applies across all pages', async
     )
   )
   act(() => button('Customize contents').click())
+  act(() => button('Select all').click())
   expect(document.querySelectorAll('[role="checkbox"]')).toHaveLength(25)
   expect(document.querySelector('[aria-label="file999"]')).not.toBeNull()
   act(() => button('Next').click())
@@ -743,7 +811,7 @@ it('does not carry a previous operation action error into a new transfer', async
       </>
     )
   )
-  await act(async () => button('Choose save location').click())
+  await act(async () => button('Export').click())
   expect(document.body.textContent).toContain('Selection submission failed')
   act(() => publish({ ...snapshot, id: 'next-transfer' }))
   expect(document.body.textContent).not.toContain('Selection submission failed')
@@ -755,11 +823,18 @@ it('lets the user inspect retained files beyond the first page', async () => {
     files: [],
     summary: {
       metadataBytes: 0,
-      retainedFiles: Array.from({ length: 30 }, (_, i) => ({
-        storageKey: `notebooks/p/s/f${i}`,
-        filename: `retained-${i}.csv`,
-        sizeBytes: i + 1
-      }))
+      retainedFiles: [
+        ...Array.from({ length: 30 }, (_, i) => ({
+          storageKey: `notebooks/p/s/f${i}`,
+          filename: `retained-${i}.csv`,
+          sizeBytes: i + 1
+        })),
+        {
+          storageKey: 'artifacts/p/s/evidence.json',
+          filename: 'artifacts/p/s/evidence.json',
+          sizeBytes: 1
+        }
+      ]
     }
   }
   vi.stubGlobal('api', {
@@ -777,12 +852,21 @@ it('lets the user inspect retained files beyond the first page', async () => {
     )
   )
   act(() => button('Customize contents').click())
-  act(() => document.querySelector('summary')!.click())
+  act(() => button('View files').click())
   expect(document.querySelector('[title="retained-29.csv"]')).not.toBeNull()
   expect(document.querySelector('[title="retained-0.csv"]')).toBeNull()
   act(() => button('Next').click())
   expect(document.querySelector('[title="retained-0.csv"]')).not.toBeNull()
   expect(document.querySelector('[title="retained-29.csv"]')).toBeNull()
+  act(() => button('Artifacts1').click())
+  expect(document.querySelector('[title="artifacts/p/s/evidence.json"]')?.textContent).toBe(
+    'evidence.json'
+  )
+  expect(document.querySelector('[title="retained-0.csv"]')).toBeNull()
+  expect(document.body.textContent).not.toContain('Page 2')
+  act(() => button('Notebook30').click())
+  expect(document.body.textContent).toContain('Page 1 of 2')
+  expect(document.querySelector('[title="retained-29.csv"]')).not.toBeNull()
 })
 
 it('requires an explicit destination for an opened file and hides archived projects', async () => {
@@ -849,7 +933,7 @@ it('keeps import confirmation in one dialog with omissions collapsed', async () 
   expect(document.body.textContent).toContain('My research')
   expect(document.querySelector('details')?.open).toBe(false)
   expect(document.body.textContent).not.toContain('system dialog')
-  await act(async () => button('Import Session package').click())
+  await act(async () => button('Import').click())
   expect(packageOperation).toHaveBeenCalledWith({
     action: 'confirm-import',
     operationId: 'review-import'
@@ -916,7 +1000,7 @@ it('navigates once after this desktop window confirms an import', async () => {
   })
   usePackageOperationStore.setState({ operation, open: true })
   await act(async () => root.render(<SessionPackageOperation />))
-  await act(async () => button('Import Session package').click())
+  await act(async () => button('Import').click())
   const completed: PackageOperationSnapshot = {
     ...operation,
     state: 'succeeded',

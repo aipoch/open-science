@@ -136,6 +136,65 @@ describe('ArchiveCoordinator', () => {
     expect(stop).toHaveBeenCalledTimes(2)
   })
 
+  it.each(['export', 'import'] as const)(
+    'cancels queued %s admission without installing a late reservation',
+    async (kind) => {
+      const coordinator = new ArchiveCoordinator(
+        { get: async () => project, updateArchive: vi.fn() },
+        {
+          assertProjectArchivable: vi.fn(),
+          assertSessionAvailable: vi.fn(),
+          updateArchive: vi.fn(),
+          sessionProjectId: async () => project.id
+        },
+        {
+          isSessionBusy: () => false,
+          isProjectBusy: () => false,
+          liveSessionProjectId: () => project.id
+        }
+      )
+      let unblock!: () => void
+      let started!: () => void
+      const entered = new Promise<void>((resolve) => {
+        started = resolve
+      })
+      const blocked = coordinator.withProjectAvailable(project.id, () => {
+        started()
+        return new Promise<void>((resolve) => {
+          unblock = resolve
+        })
+      })
+      await entered
+      const controller = new AbortController()
+      const assertIdle = vi.fn(async () => undefined)
+      const reservation =
+        kind === 'export'
+          ? coordinator.reserveSessionExport(project.id, session.id, assertIdle, controller.signal)
+          : coordinator.reserveProjectImport(project.id, controller.signal)
+      const rejected = vi.fn()
+      const settled = reservation.then((release) => release(), rejected)
+      const reason = new Error('Cancel package admission')
+      controller.abort(reason)
+      const laterWork = vi.fn(async () => undefined)
+      const later = coordinator.withProjectAvailable(project.id, laterWork)
+      try {
+        await vi.waitFor(() => expect(rejected).toHaveBeenCalledWith(reason))
+        expect(laterWork).not.toHaveBeenCalled()
+      } finally {
+        unblock()
+        await blocked
+        await settled
+        await later
+      }
+      expect(laterWork).toHaveBeenCalledOnce()
+      expect(assertIdle).not.toHaveBeenCalled()
+      expect(coordinator.isSessionExporting(project.id, session.id)).toBe(false)
+      const remove = vi.fn(async () => undefined)
+      await coordinator.withProjectDeletion(project.id, remove)
+      expect(remove).toHaveBeenCalledOnce()
+    }
+  )
+
   it('keeps existing Sessions available while import fences Project deletion', async () => {
     const coordinator = new ArchiveCoordinator(
       { get: async () => project, updateArchive: vi.fn() },

@@ -22,8 +22,12 @@ import type { PackageOperationSnapshot } from '../../../src/shared/session-packa
 import '@/assets/main.css'
 import { createRoot } from 'react-dom/client'
 import { initI18n } from '@/i18n'
-import { SessionPackageOperation } from '@/components/SessionPackageOperation'
+import {
+  PackageOperationIndicator,
+  SessionPackageOperation
+} from '@/components/SessionPackageOperation'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
+import { SessionPackageImportError } from '@/components/SessionPackageImportError'
 
 initI18n('en')
 const empty = new URLSearchParams(location.search).has('empty')
@@ -33,7 +37,33 @@ usePackageOperationStore.getState().receive({
   state: 'awaiting-selection',
   session: { projectId: 'fixture', sessionId: 'fixture' },
   progress: { phase: 'selecting' },
-  summary: { metadataBytes: 7987, retainedFiles: [] },
+  summary: {
+    metadataBytes: 7987,
+    retainedFiles: new URLSearchParams(location.search).has('retained')
+      ? [
+          {
+            storageKey: 'notebooks/fixture/session/results.csv',
+            filename: 'notebooks/fixture/session/results.csv',
+            sizeBytes: 262144
+          },
+          {
+            storageKey: 'artifacts/fixture/session/sine_wave.png',
+            filename: 'artifacts/fixture/session/sine_wave.png',
+            sizeBytes: 37273
+          },
+          ...Array.from({ length: 28 }, (_, index) => ({
+            storageKey: `notebooks/fixture/session/run-${index}.json`,
+            filename: `notebooks/fixture/session/run-${index}.json`,
+            sizeBytes: 16000 + index
+          })),
+          {
+            storageKey: 'execution-file-evidence/fixture/session/evidence.json',
+            filename: 'execution-file-evidence/fixture/session/evidence.json',
+            sizeBytes: 49000
+          }
+        ]
+      : []
+  },
   files: empty
     ? []
     : Array.from({ length: 30 }, (_, index) => ({
@@ -48,6 +78,10 @@ usePackageOperationStore.getState().receive({
       }))
 })
 const mode = new URLSearchParams(location.search).get('import')
+if (mode === 'early-error')
+  usePackageOperationStore
+    .getState()
+    .setImportError('The selected file is not a valid Session package.')
 if (mode) {
   const projects = [
     {
@@ -138,7 +172,10 @@ if (mode) {
           action: string
           target?: { projectId?: string; projectName?: string }
           requestId?: string
+          bytesPerSecond?: number
         }) => {
+          if (request.action === 'set-speed')
+            operation.transferBytesPerSecond = request.bytesPerSecond
           if (request.action === 'discard-import')
             operation.pendingImports = operation.pendingImports?.filter(
               (file) => file.id !== request.requestId
@@ -169,6 +206,23 @@ if (mode) {
 }
 const menuMode = new URLSearchParams(location.search).has('menu')
 if (menuMode) usePackageOperationStore.getState().setOpen(false)
+const backgroundMode = new URLSearchParams(location.search).has('background')
+if (backgroundMode) {
+  usePackageOperationStore.getState().setOpen(false)
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: {
+      sessions: {
+        packageOperation: async (request: { action: string }) => {
+          const current = usePackageOperationStore.getState().operation!
+          if (request.action === 'cancel')
+            usePackageOperationStore.getState().receive({ ...current, state: 'cancelling' })
+          return usePackageOperationStore.getState().operation
+        }
+      }
+    }
+  })
+}
 const menuSession: ChatSession = {
   id: 'fixture',
   projectId: 'fixture',
@@ -233,6 +287,11 @@ export const SessionMenuFixture = (): React.JSX.Element => (
 createRoot(document.getElementById('root')!).render(
   <>
     {menuMode ? <SessionMenuFixture /> : null}
-    <SessionPackageOperation />
+    {backgroundMode ? (
+      <div className="mx-auto max-w-4xl p-4">
+        <PackageOperationIndicator />
+      </div>
+    ) : null}
+    {mode === 'early-error' ? <SessionPackageImportError /> : <SessionPackageOperation />}
   </>
 )

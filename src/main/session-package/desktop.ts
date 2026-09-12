@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { dialog, shell, type BrowserWindow } from 'electron'
 import { mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type {
   SessionPackageExportResult,
   SessionPackageImportResult,
@@ -25,13 +25,22 @@ import type {
   PackageOperationRequest
 } from '../../shared/session-package'
 
-// Native pickers own filesystem paths; renderer requests contain only a Session identity. A
-// private archive freezes the bytes reviewed in the confirmation before import or external save.
+type NativeImportFile = {
+  id: string
+  path: string
+  filename: string
+  target?: import('../../shared/session-package').SessionPackageImportRequest
+  originClientId?: string
+}
+class PackageSourceUnavailableError extends Error {}
+
+// Native pickers and the preload File bridge supply filesystem paths. A private archive freezes
+// the bytes reviewed in the confirmation before import or external save.
 export class SessionPackageDesktop {
   readonly operations: SessionPackageOperation
-  private pendingFiles: { id: string; path: string; filename: string }[] = []
-  private activeFile?: { id: string; path: string; filename: string }
-  private lastOpenFile?: { id: string; path: string; filename: string }
+  private pendingFiles: NativeImportFile[] = []
+  private activeFile?: NativeImportFile
+  private lastImportFile?: NativeImportFile
   private enqueueing: Promise<void> = Promise.resolve()
   private busy = false
   private readonly pendingCleanup = new Set<() => Promise<void>>()
@@ -47,8 +56,8 @@ export class SessionPackageDesktop {
         originClientId: string | undefined,
         projectCreated: boolean
       ) => Promise<void>
-      reserveExport?: (identity: SessionPackageRequest) => Promise<() => void>
-      reserveImport?: (projectId: string) => Promise<() => void>
+      reserveExport?: (identity: SessionPackageRequest, signal: AbortSignal) => Promise<() => void>
+      reserveImport?: (projectId: string, signal: AbortSignal) => Promise<() => void>
       onOperationChanged?: (snapshot: PackageOperationSnapshot) => void
       assertCanStart?: () => void
     }
@@ -118,11 +127,10 @@ export class SessionPackageDesktop {
       return
     const file = this.pendingFiles.shift()!
     this.activeFile = file
-    this.lastOpenFile = file
     this.operations.setPendingImports(
       this.pendingFiles.map(({ id, filename }) => ({ id, filename }))
     )
-    void this.import(undefined, undefined, {}, file.path)
+    void this.import(undefined, file.originClientId, file.target ?? {}, file.path)
       .catch(() => undefined)
       .finally(() => {
         this.activeFile = undefined
@@ -155,12 +163,15 @@ export class SessionPackageDesktop {
         if (this.activeFile || this.operations.active || this.operations.snapshot?.cleanupPending)
           throw new Error('Wait for the current package operation to finish.')
         if (request.action === 'retry-import') {
-          if (!this.lastOpenFile || !this.operations.snapshot?.importRequestId)
+          if (
+            !this.lastImportFile ||
+            this.operations.snapshot?.importRequestId !== this.lastImportFile.id
+          )
             throw new Error('No opened package is available.')
           this.pendingFiles = this.pendingFiles.filter(
-            (file) => file.path !== this.lastOpenFile!.path
+            (file) => file.path !== this.lastImportFile!.path
           )
-          this.pendingFiles.unshift(this.lastOpenFile)
+          this.pendingFiles.unshift(this.lastImportFile)
         }
         this.pumpOpenFiles(true)
       }
@@ -216,6 +227,7 @@ export class SessionPackageDesktop {
 
   async close(): Promise<void> {
     this.pendingFiles = []
+    this.lastImportFile = undefined
     this.operations.cancel()
     this.shutdown.abort(new Error('Session package desktop is closed.'))
     await this.operations.close()
@@ -315,6 +327,13 @@ export class SessionPackageDesktop {
       )
       const detail = error instanceof Error ? error.message : ''
       const translate = this.options.translate
+      if (error instanceof PackageSourceUnavailableError)
+        throw new Error(
+          translate(
+            'The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.'
+          ),
+          { cause: error }
+        )
       if (error instanceof PackageCapacityError)
         throw new Error(
           translate(
@@ -366,7 +385,7 @@ export class SessionPackageDesktop {
         operationSignal = signal
         this.options.assertCanStart?.()
         this.operations.setCleanupPending(this.pendingCleanup.size > 0)
-        const release = await this.options.reserveExport?.(request)
+        const release = await this.options.reserveExport?.(request, signal)
         try {
           return await this.staged(async (directory) => {
             const archive = join(directory, 'session.science')
@@ -437,24 +456,42 @@ export class SessionPackageDesktop {
     sourcePath?: string
   ): Promise<SessionPackageImportResult> {
     let operationSignal: AbortSignal | undefined
+    const rememberSource = (path: string): void => {
+      const id = this.operations.snapshot?.importRequestId ?? this.activeFile?.id ?? randomUUID()
+      this.lastImportFile = {
+        id,
+        path,
+        filename: basename(path),
+        target: { ...target },
+        originClientId
+      }
+      this.operations.setImportSource(id, basename(path), target)
+    }
     return this.operations
       .run(
         'import',
         undefined,
         async (signal) => {
           operationSignal = signal
-          if (!sourcePath) this.options.assertCanStart?.()
+          if (
+            sourcePath &&
+            (!isAbsolute(sourcePath) || extname(sourcePath).toLowerCase() !== '.science')
+          )
+            throw new Error('Invalid Session package path.')
+          if (sourcePath) rememberSource(sourcePath)
+          if (!sourcePath || target.projectId || target.projectName) this.options.assertCanStart?.()
           this.operations.setCleanupPending(this.pendingCleanup.size > 0)
-          if (sourcePath) {
+          if (sourcePath && !target.projectId && !target.projectName) {
             const selectedTarget = await this.operations.waitForImport({
-              requestId: this.activeFile?.id,
+              requestId: this.operations.snapshot?.importRequestId,
               filename: basename(sourcePath)
             })
             target = selectedTarget!
+            rememberSource(sourcePath)
             this.options.assertCanStart?.()
           }
           const release = target.projectId
-            ? await this.options.reserveImport?.(target.projectId)
+            ? await this.options.reserveImport?.(target.projectId, signal)
             : undefined
           try {
             return await this.staged(async (directory) => {
@@ -476,7 +513,14 @@ export class SessionPackageDesktop {
                 signal.throwIfAborted()
               }
               const input = selected.filePaths[0]
-              const info = await stat(input)
+              rememberSource(input)
+              const info = await stat(input).catch((error: NodeJS.ErrnoException) => {
+                if (['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error.code ?? ''))
+                  throw new PackageSourceUnavailableError('Package source is unavailable.', {
+                    cause: error
+                  })
+                throw error
+              })
               if (!info.isFile() || info.size > PACKAGE_MAX_BYTES)
                 throw new Error('Session package exceeds the archive limit.')
               const archive = join(directory, 'session.science')

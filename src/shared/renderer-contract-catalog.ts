@@ -1804,12 +1804,12 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     RUNTIME_VALIDATED
   ]),
   'sessions.importPackage': callable<
-    (request?: SessionPackageImportRequest) => Promise<SessionPackageImportResult>
+    (request?: SessionPackageImportRequest, file?: File) => Promise<SessionPackageImportResult>
   >()('sessions', [
     'sessions:import-package',
     MAPPED_ELECTRON,
-    undefined,
-    undefined,
+    'session-package-import-file',
+    POSITIONAL,
     RUNTIME_VALIDATED
   ]),
   'sessions.packageOperation': callable<

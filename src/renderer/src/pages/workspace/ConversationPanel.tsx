@@ -69,6 +69,7 @@ import {
 } from '../../../../shared/annotations'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
+import { sessionPackageImportAvailable } from '@/components/session-package-import-menu-model'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
@@ -1690,7 +1691,11 @@ const ConversationPanel = ({
                         {/* File-drag overlay is scoped to the composer input card only. */}
                         {isDragging ? (
                           <FileDropOverlay
-                            label={t('Drop files to attach')}
+                            label={
+                              sessionPackageImportAvailable()
+                                ? t('Drop files')
+                                : t('Drop files to attach')
+                            }
                             className="rounded-2xl"
                           />
                         ) : null}

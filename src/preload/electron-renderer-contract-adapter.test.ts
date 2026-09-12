@@ -32,6 +32,31 @@ const createPort = (): MockPort => ({
 })
 
 describe('electron renderer contract adapter', () => {
+  it('resolves dropped packages through the native File boundary', async () => {
+    const port = createPort()
+    port.invoke.mockResolvedValue({ ok: true, result: null })
+    port.getPathForFile.mockReturnValue('/data/research.science')
+    const adapter = createElectronRendererContractAdapter(port)
+    const file = { name: 'research.science' }
+    await adapter.invoke('sessions.importPackage', { projectId: 'target' }, file)
+    expect(port.getPathForFile).toHaveBeenCalledExactlyOnceWith(file)
+    expect(port.invoke).toHaveBeenCalledExactlyOnceWith(
+      'sessions:import-package',
+      { projectId: 'target' },
+      '/data/research.science'
+    )
+  })
+
+  it('rejects a dropped File without a native path instead of opening a picker', async () => {
+    const port = createPort()
+    port.getPathForFile.mockReturnValue('')
+    const adapter = createElectronRendererContractAdapter(port)
+    await expect(
+      adapter.invoke('sessions.importPackage', { projectId: 'target' }, {})
+    ).rejects.toThrow()
+    expect(port.invoke).not.toHaveBeenCalled()
+  })
+
   it.each([
     {
       publicPath: 'diagnostics.reportRendererFailure',

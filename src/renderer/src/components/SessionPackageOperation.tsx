@@ -1,12 +1,20 @@
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
 import { PackageImportSelection } from './PackageImportSelection'
 import { PackageImportQueue } from './PackageImportQueue'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import { Dialog } from 'radix-ui'
-import { Check, ChevronRight, Clock3, LoaderCircle, PackageOpen, X } from 'lucide-react'
+import * as Dialog from '@/components/ui/dialog'
+import { Check, ChevronRight, Clock3, Info, LoaderCircle, PackageOpen, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { ErrorNotice } from '@/components/error-notice'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
@@ -152,8 +160,27 @@ const PackageProgressMeter = ({
 export const PackageOperationIndicator = (): React.JSX.Element | null => {
   const { t } = useTranslation()
   const { operation, open, dismissedId, setOpen, dismiss } = usePackageOperationStore()
+  const [cancellingId, setCancellingId] = useState<string>()
+  const [cancelError, setCancelError] = useState<{ id: string; message: string }>()
   if (!operation || open || dismissedId === operation.id) return null
   const active = packageOperationActive(operation)
+  const cancelling = cancellingId === operation.id || operation.state === 'cancelling'
+  const configuringExport = operation.kind === 'export' && operation.state === 'awaiting-selection'
+  const cancel = async (): Promise<void> => {
+    if (cancelling) return
+    setCancellingId(operation.id)
+    setCancelError(undefined)
+    try {
+      await window.api.sessions.packageOperation({ action: 'cancel', operationId: operation.id })
+    } catch (error) {
+      setCancelError({
+        id: operation.id,
+        message: error instanceof Error ? error.message : String(error)
+      })
+    } finally {
+      setCancellingId(undefined)
+    }
+  }
   const { status, waiting, busy } = operationStatus(operation, t)
   const Icon =
     operation.state === 'succeeded' ? Check : waiting ? Clock3 : busy ? LoaderCircle : PackageOpen
@@ -167,7 +194,7 @@ export const PackageOperationIndicator = (): React.JSX.Element | null => {
           className={`size-4 shrink-0 ${waiting ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : 'text-primary'} ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`}
           aria-hidden="true"
         />
-        <p role="status" className="min-w-0 flex-1 text-sm">
+        <p role="status" className="min-w-0 flex-1 basis-48 text-sm">
           {waiting ? (
             <span className="mr-2 text-xs font-medium text-status-warning-foreground dark:text-status-warning-dark-foreground">
               {t('Waiting for you')}
@@ -175,10 +202,31 @@ export const PackageOperationIndicator = (): React.JSX.Element | null => {
           ) : null}
           {status}
         </p>
-        <Button variant="link" size="sm" className="h-6 p-0 text-xs" onClick={() => setOpen(true)}>
-          {t('View progress')}
-          <ChevronRight className="size-3.5" aria-hidden="true" />
-        </Button>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {active ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={cancelling || operation.progress.phase === 'cleaning'}
+              onClick={() => void cancel()}
+            >
+              {cancelling ? (
+                <LoaderCircle
+                  className="size-3.5 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+              ) : null}
+              {t('Cancel')}
+            </Button>
+          ) : null}
+          <Button variant="link" size="sm" className="text-xs" onClick={() => setOpen(true)}>
+            {configuringExport ? t('Continue setup') : t('View progress')}
+            <ChevronRight
+              className={`size-3.5 ${configuringExport && !cancelling ? 'motion-safe:animate-[package-setup-nudge_1.6s_ease-in-out_3] motion-safe:transition-transform motion-safe:group-hover/button:animate-none motion-safe:group-hover/button:translate-x-0.5 motion-safe:group-focus-visible/button:animate-none motion-safe:group-focus-visible/button:translate-x-0.5' : ''}`}
+              aria-hidden="true"
+            />
+          </Button>
+        </div>
         {!active ? (
           <Button
             variant="ghost"
@@ -191,6 +239,14 @@ export const PackageOperationIndicator = (): React.JSX.Element | null => {
           </Button>
         ) : null}
       </div>
+      {active && cancelError?.id === operation.id ? (
+        <ErrorNotice
+          role="alert"
+          tone="amber"
+          description={cancelError.message}
+          className="border-0 bg-transparent px-3 pb-2 pt-0 [&_[role=alert]]:basis-0"
+        />
+      ) : null}
       {operation.state === 'running' && !waiting ? (
         <div className="border-t border-border px-3 py-3">
           <PackageProgressMeter operation={operation} compact />
@@ -202,6 +258,7 @@ export const PackageOperationIndicator = (): React.JSX.Element | null => {
 
 export const SessionPackageOperation = (): React.JSX.Element | null => {
   const { t } = useTranslation()
+  const speedId = useId()
   const { operation, open, receive, setOpen, dismiss } = usePackageOperationStore()
   const [operationError, setError] = useState<{ id: string; message: string }>()
   const [retrying, setRetrying] = useState(false)
@@ -315,32 +372,58 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
               {t('Disk activity: {{speed}}/s', { speed: bytes(operation.ioBytesPerSecond) })}
             </p>
           ) : null}
-          <label className="flex items-center justify-between gap-4">
-            <span>{t('Disk activity limit')}</span>
-            <select
-              className="rounded-md border border-border bg-background px-3 py-2"
-              value={operation.transferBytesPerSecond ?? PACKAGE_DEFAULT_IO_BYTES_PER_SECOND}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-1">
+              <Label htmlFor={speedId}>{t('Disk activity limit')}</Label>
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={t('Disk activity limit')}
+                      className="text-muted-foreground"
+                    >
+                      <Info className="size-3.5" aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-72">
+                    {t(
+                      'Lower speeds reduce disk activity and take longer. The limit is shared by reads and writes.'
+                    )}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+            <Select
+              value={String(
+                operation.transferBytesPerSecond ?? PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
+              )}
               disabled={operation.state === 'cancelling'}
-              onChange={(event) =>
+              onValueChange={(value) =>
                 void respond({
                   action: 'set-speed',
                   operationId: operation.id,
-                  bytesPerSecond: Number(event.target.value)
+                  bytesPerSecond: Number(value)
                 })
               }
             >
-              {[4, 16, 64].map((rate) => (
-                <option key={rate} value={rate * 1024 ** 2}>
-                  {t('{{speed}}/s', { speed: bytes(rate * 1024 ** 2) })}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {t(
-              'Lower speeds reduce disk activity and take longer. The limit is shared by reads and writes.'
-            )}
-          </p>
+              <SelectTrigger
+                id={speedId}
+                aria-label={t('Disk activity limit')}
+                className="w-36 shrink-0 tabular-nums"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[4, 16, 64].map((rate) => (
+                  <SelectItem key={rate} value={String(rate * 1024 ** 2)}>
+                    {t('{{speed}}/s', { speed: bytes(rate * 1024 ** 2) })}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </details>
     ) : null
@@ -425,7 +508,8 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                 ) : null}
                 <Dialog.Description
                   className={
-                    operation.kind === 'import' && selecting && !operation.importPreview
+                    (active && !selecting) ||
+                    (operation.kind === 'import' && !operation.importPreview)
                       ? 'sr-only'
                       : 'text-sm leading-relaxed text-muted-foreground'
                   }
@@ -509,6 +593,22 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                         <p className="mt-2">{t('Last stage: {{stage}}', { stage: phase })}</p>
                       </details>
                     ) : null}
+                    {operation.state === 'failed' &&
+                    !operation.cleanupPending &&
+                    operation.kind === 'import' &&
+                    operation.importRequestId ? (
+                      <div className="basis-full pl-8">
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto min-h-7 max-w-full whitespace-normal px-0 text-left"
+                          disabled={retrying}
+                          onClick={() => void retry(true)}
+                        >
+                          {t('Choose another package')}
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 {operation.cleanupPending && !active ? (
@@ -563,12 +663,14 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                     disabled={operation.state === 'cancelling'}
                     onClick={() => void respond({ action: 'cancel', operationId: operation.id })}
                   >
-                    {t('Cancel operation')}
+                    {t('Cancel')}
                   </Button>
                 ) : null}
                 {!waiting ? (
                   <Button
-                    variant={active ? 'default' : 'outline'}
+                    variant={
+                      active ? 'default' : operation.state === 'failed' ? 'ghost' : 'outline'
+                    }
                     onClick={() => (active ? setOpen(false) : dismiss())}
                   >
                     {active ? t('Run in background') : t('Close')}
@@ -595,20 +697,9 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                   <Button onClick={() => void openImported()}>{t('Open imported Session')}</Button>
                 ) : null}
                 {operation.state === 'failed' && !operation.cleanupPending ? (
-                  <>
-                    {operation.kind === 'import' && operation.importRequestId ? (
-                      <Button
-                        variant="outline"
-                        disabled={retrying}
-                        onClick={() => void retry(true)}
-                      >
-                        {t('Choose another package')}
-                      </Button>
-                    ) : null}
-                    <Button disabled={retrying} onClick={() => void retry()}>
-                      {t('Try again')}
-                    </Button>
-                  </>
+                  <Button disabled={retrying} onClick={() => void retry()}>
+                    {t('Try again')}
+                  </Button>
                 ) : null}
               </div>
             ) : null}

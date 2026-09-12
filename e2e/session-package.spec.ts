@@ -3,6 +3,9 @@ import { stat, writeFile, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test } from './fixtures/electron-app'
 
+// Exercise visible transfer controls without hidden-window frame throttling on Windows.
+test.use({ windowMode: 'normal' })
+
 test('preserves transfer outcomes while showing pending temporary cleanup', async ({
   app
 }, testInfo) => {
@@ -38,11 +41,10 @@ test('preserves transfer outcomes while showing pending temporary cleanup', asyn
     })
     await expect(async () => {
       await app.emitSessionPackageProgress({ ...operation, state: 'running' })
-      await app.emitSessionPackageProgress(operation)
-      await expect(dialog.getByText(status, { exact: true })).toBeVisible({
-        timeout: 1000
-      })
+      await expect(dialog).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 10000 })
+    await app.emitSessionPackageProgress(operation)
+    await expect(dialog.getByText(status, { exact: true })).toBeVisible()
     await expect(dialog.getByRole('button', { name: 'Retry cleanup', exact: true })).toBeVisible()
     if (state === 'succeeded')
       await expect(
@@ -176,7 +178,7 @@ test('presents waiting, measurable work and cleanup through native progress even
   const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
   await page.setViewportSize({ width: 375, height: 800 })
   expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
-  await expect(dialog.getByRole('button', { name: 'Cancel operation' })).toBeInViewport()
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeInViewport()
   await page.screenshot({
     path: testInfo.outputPath('transfer-waiting-narrow-fixture.png'),
     animations: 'disabled'
@@ -187,7 +189,7 @@ test('presents waiting, measurable work and cleanup through native progress even
     state: 'cancelling',
     progress: { phase: 'copying', completedBytes: 300 * 1024 ** 2, totalBytes: 800 * 1024 ** 2 }
   })
-  await expect(dialog.getByRole('button', { name: 'Cancel operation' })).toBeDisabled()
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled()
   await expect(dialog.getByRole('progressbar')).toHaveCount(0)
   await page.screenshot({
     path: testInfo.outputPath('transfer-cleanup-fixture.png'),
@@ -260,7 +262,7 @@ test('exports a Session package and imports its conversation as read-only histor
   await page.screenshot({ path: testInfo.outputPath('session-package-export.png') })
   await exportPackage.click()
   const operation = page.getByRole('dialog', { name: 'Export Session package', exact: true })
-  await expect(operation.getByRole('button', { name: 'Choose save location' })).toBeVisible()
+  await expect(operation.getByRole('button', { name: 'Export' })).toBeVisible()
   await expect(operation.getByRole('spinbutton')).toHaveCount(0)
   await expect(operation.getByRole('checkbox')).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('session-package-default.png') })
@@ -273,43 +275,47 @@ test('exports a Session package and imports its conversation as read-only histor
   await expect(operation).toBeVisible()
   await operation.getByRole('button', { name: 'Customize contents' }).click()
   await operation.getByText('Transfer settings', { exact: true }).click()
-  await operation.getByLabel('Disk activity limit').selectOption(String(4 * 1024 ** 2))
-  await expect(operation.getByLabel('Disk activity limit')).toHaveValue(String(4 * 1024 ** 2))
+  const speed = operation.getByRole('combobox', { name: 'Disk activity limit', exact: true })
+  await speed.click()
+  await page.getByRole('option', { name: '4.0 MiB/s', exact: true }).click()
+  await expect(speed).toHaveText('4.0 MiB/s')
   await page.screenshot({ path: testInfo.outputPath('session-package-transfer-settings.png') })
-  await operation.getByLabel('Disk activity limit').selectOption(String(16 * 1024 ** 2))
-  await expect(operation.getByLabel('Disk activity limit')).toHaveValue(String(16 * 1024 ** 2))
+  await speed.click()
+  await page.getByRole('option', { name: '16.0 MiB/s', exact: true }).click()
+  await expect(speed).toHaveText('16.0 MiB/s')
   await operation.getByText('Transfer settings', { exact: true }).click()
   await operation.getByRole('button', { name: 'Customize contents' }).click()
   const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
   for (const width of [320, 375, 414, 768]) {
     await page.setViewportSize({ width, height: 800 })
-    await expect(operation.getByRole('button', { name: 'Choose save location' })).toBeInViewport()
+    await expect(operation.getByRole('button', { name: 'Export' })).toBeInViewport()
     expect(await operation.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
       true
     )
   }
   await page.screenshot({ path: testInfo.outputPath('session-package-default-narrow.png') })
   await page.setViewportSize(viewport)
+  await operation.getByRole('radio', { name: 'Full export', exact: true }).check()
   await operation.getByRole('button', { name: 'Customize contents' }).click()
-  await expect(
-    operation.getByText(
-      'Optional files are sorted by size, largest first. Files larger than 32.0 GiB cannot be included.',
-      { exact: true }
-    )
-  ).toBeVisible()
   await expect(operation.getByText('raw-results.csv', { exact: true })).toBeVisible()
   await expect(page.getByText('Conversation storage needs attention', { exact: true })).toHaveCount(
     0
   )
   await expect(operation.getByRole('spinbutton')).not.toBeVisible()
   await operation.getByText('File filters', { exact: true }).click()
+  await expect(
+    operation.getByText(
+      'Optional files are sorted by size, largest first. Files larger than 32.0 GiB cannot be included.',
+      { exact: true }
+    )
+  ).toBeVisible()
   await operation.getByRole('spinbutton').fill('1')
   await operation.getByRole('button', { name: 'Exclude large files' }).click()
   await expect(operation.getByText(/Selected: 1 \/ 2 files/)).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('session-package-selection.png') })
   for (const width of [320, 375, 414, 768]) {
     await page.setViewportSize({ width, height: 800 })
-    await expect(operation.getByRole('button', { name: 'Choose save location' })).toBeInViewport()
+    await expect(operation.getByRole('button', { name: 'Export' })).toBeInViewport()
     expect(await operation.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
       true
     )
@@ -317,7 +323,7 @@ test('exports a Session package and imports its conversation as read-only histor
   await page.screenshot({ path: testInfo.outputPath('session-package-selection-narrow.png') })
   await page.setViewportSize(viewport)
   await operation.getByRole('button', { name: 'Hide progress' }).click()
-  await expect(page.getByRole('region', { name: 'Session export in progress' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Package progress', exact: true })).toBeVisible()
   await expect(
     page.getByTestId('conversation-header').getByRole('button', { name: 'Export Session package' })
   ).toHaveCount(0)
@@ -338,13 +344,13 @@ test('exports a Session package and imports its conversation as read-only histor
     .click()
   await page
     .getByRole('region', { name: 'Package progress', exact: true })
-    .getByRole('button', { name: 'View progress', exact: true })
+    .getByRole('button', { name: 'Continue setup', exact: true })
     .click()
   await expect(operation.getByText(/Selected: 1 \/ 2 files/)).toBeVisible()
   await operation.getByRole('button', { name: 'Customize contents' }).click()
   await operation.getByText('File filters', { exact: true }).click()
   await expect(operation.getByRole('spinbutton')).toHaveValue('1')
-  await operation.getByRole('button', { name: 'Choose save location' }).click()
+  await operation.getByRole('button', { name: 'Export' }).click()
   await expect(operation.getByText('Package operation completed', { exact: true })).toBeVisible({
     timeout: 60_000
   })
@@ -357,9 +363,7 @@ test('exports a Session package and imports its conversation as read-only histor
     contentType: 'application/gzip'
   })
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
-  await expect(
-    page.getByRole('button', { name: 'Import Session package', exact: true })
-  ).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Import', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'More actions', exact: true })).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('session-package-home.png') })
   await page
@@ -371,16 +375,14 @@ test('exports a Session package and imports its conversation as read-only histor
   await page.getByRole('menuitem', { name: 'Import Session package…', exact: true }).click()
   await expect(page.getByLabel('Destination project')).toHaveCount(0)
   const importing = page.getByRole('dialog', { name: 'Import Session package', exact: true })
-  await expect(
-    importing.getByRole('button', { name: 'Import Session package', exact: true })
-  ).toBeVisible()
+  await expect(importing.getByRole('button', { name: 'Import', exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('session-package-import-progress.png') })
   await importing.getByRole('button', { name: 'Hide progress' }).click()
   const backgroundImport = page.getByRole('region', { name: 'Package progress', exact: true })
   await expect(backgroundImport.getByText('Waiting for import confirmation…')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('session-package-import-background.png') })
   await backgroundImport.getByRole('button', { name: 'View progress' }).click()
-  await importing.getByRole('button', { name: 'Import Session package', exact: true }).click()
+  await importing.getByRole('button', { name: 'Import', exact: true }).click()
   await expect(importing.getByText('Package operation completed', { exact: true })).toBeVisible({
     timeout: 60_000
   })
@@ -539,6 +541,6 @@ test('receives a package from cold launch arguments and a subsequent file-open e
   await app.emitPackageFileOpen(archive)
   await expect(dialog).toBeVisible()
   await expect(dialog.getByText(/^Waiting packages/)).toHaveCount(0)
-  await dialog.getByRole('button', { name: 'Cancel operation', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(dialog.getByText('Package operation cancelled', { exact: true })).toBeVisible()
 })

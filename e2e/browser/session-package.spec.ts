@@ -1,14 +1,77 @@
 import { expect, test } from '@playwright/test'
 
+for (const width of [1280, 320]) {
+  test(`early import errors use the shared dialog layout at ${width}px`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 800 })
+    await page.goto('/session-package.html?import=early-error')
+    const dialog = page.getByRole('dialog', {
+      name: 'Could not import Session package',
+      exact: true
+    })
+    await expect(dialog.getByRole('heading')).toBeVisible()
+    await expect(dialog.getByRole('alert')).toContainText('not a valid Session package')
+    await expect(dialog.getByText('Your existing research is unchanged.')).toBeVisible()
+    const close = dialog.getByRole('button', { name: 'Close', exact: true })
+    await expect(close).toBeInViewport()
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true
+    )
+    await dialog.screenshot({ path: testInfo.outputPath('early-import-error.png') })
+    await close.click()
+    await expect(dialog).toHaveCount(0)
+  })
+}
+
+for (const width of [1280, 414]) {
+  test(`hidden export setup offers continue and direct cancel at ${width}px`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 })
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await page.goto('/session-package.html?background')
+    const indicator = page.getByRole('region', { name: 'Package progress', exact: true })
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(indicator.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible()
+    const arrow = indicator
+      .getByRole('button', { name: 'Continue setup', exact: true })
+      .locator('svg')
+    await expect(arrow).toHaveCSS('animation-name', 'package-setup-nudge')
+    await expect(arrow).toHaveCSS('animation-iteration-count', '3')
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await expect(arrow).toHaveCSS('animation-name', 'none')
+    await indicator.screenshot({ path: testInfo.outputPath('export-setup-actions.png') })
+    expect(await indicator.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true
+    )
+    await indicator.getByRole('button', { name: 'Continue setup', exact: true }).click()
+    await expect(
+      page.getByRole('dialog', { name: 'Export Session package', exact: true })
+    ).toBeVisible()
+    await page.getByRole('button', { name: 'Hide progress', exact: true }).click()
+    await indicator.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(indicator.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled()
+    await expect(indicator.getByRole('status')).toHaveText('Cancelling and cleaning up…')
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+  })
+}
+
 test('full and compact presets simplify selection while retaining evidence', async ({
   page
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.goto('/session-package.html')
   const dialog = page.getByRole('dialog')
-  await expect(dialog.getByRole('radio', { name: 'Full export', exact: true })).toBeChecked()
-  await page.screenshot({ path: testInfo.outputPath('presets-full.png') })
-  await dialog.getByRole('radio', { name: 'Compact export', exact: true }).check()
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'Package contents', exact: true }).hover()
+  await expect(page.getByRole('tooltip')).toContainText(
+    'Conversation and evidence metadata are always included.'
+  )
+  await page.mouse.move(0, 0, { steps: 10 })
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await expect(dialog.getByRole('radio', { name: 'Essential export', exact: true })).toBeChecked()
+  await expect(dialog.getByRole('radio').first()).toHaveAccessibleName('Essential export')
   await expect(dialog.getByText('Selected: 0 / 29 files · 0 B')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('presets-compact.png') })
   await dialog.getByRole('button', { name: 'Customize contents', exact: true }).click()
@@ -16,6 +79,10 @@ test('full and compact presets simplify selection while retaining evidence', asy
   await dialog.getByRole('button', { name: 'Next', exact: true }).click()
   await expect(required).toBeDisabled()
   await expect(required).toBeChecked()
+  await dialog.getByRole('button', { name: 'Required evidence', exact: true }).focus()
+  await expect(page.getByRole('tooltip')).toContainText('Required files stay included')
+  await expect(required).toBeChecked()
+  await page.keyboard.press('Escape')
   await page.screenshot({ path: testInfo.outputPath('presets-custom.png') })
   await dialog.getByRole('radio', { name: 'Full export', exact: true }).check()
   await expect(dialog.getByText('Selected: 29 / 29 files · 464.0 KiB')).toBeVisible()
@@ -32,7 +99,7 @@ for (const width of [1280, 414]) {
       await page.goto(`/session-package.html${empty ? '?empty' : ''}`)
       const dialog = page.getByRole('dialog', { name: 'Export Session package', exact: true })
       const customize = dialog.getByRole('button', { name: 'Customize contents', exact: true })
-      const save = dialog.getByRole('button', { name: 'Choose save location', exact: true })
+      const save = dialog.getByRole('button', { name: 'Export', exact: true })
       await expect(customize).toBeVisible()
       await page.evaluate(() => document.fonts.ready)
       const before = await dialog.boundingBox()
@@ -55,7 +122,14 @@ for (const width of [1280, 414]) {
         .soft(filterBox!.y - inputBox!.y - inputBox!.height, 'search/filter gap')
         .toBeGreaterThanOrEqual(12)
       await filters.click()
-      await expect(dialog.getByLabel('Large-file threshold (MiB)')).toBeVisible()
+      const threshold = dialog.getByLabel('Large-file threshold (MiB)')
+      const exclude = dialog.getByRole('button', { name: 'Exclude large files', exact: true })
+      await expect(threshold).toBeVisible()
+      expect((await threshold.boundingBox())!.height).toBe((await exclude.boundingBox())!.height)
+      await expect(threshold).toHaveAttribute('data-slot', 'input')
+      await expect(
+        filters.locator('..').getByRole('button', { name: 'Select all', exact: true })
+      ).toHaveCount(0)
       await page.screenshot({ path: testInfo.outputPath('export-expanded.png') })
       const afterFilters = await dialog.boundingBox()
       expect.soft(afterFilters!.height).toBeCloseTo(before!.height, 0)
@@ -84,9 +158,7 @@ for (const width of [1280, 414]) {
           element.getAnimations({ subtree: true }).map((animation) => animation.finished)
         )
       })
-      const cancel = await dialog
-        .getByRole('button', { name: 'Cancel operation', exact: true })
-        .boundingBox()
+      const cancel = await dialog.getByRole('button', { name: 'Cancel', exact: true }).boundingBox()
       const primary = await dialog
         .getByRole('button', { name: 'Continue', exact: true })
         .boundingBox()
@@ -107,7 +179,7 @@ for (const width of [1280, 414]) {
     const omissions = dialog.locator('details').filter({ hasText: /^Not included/ })
     await expect(omissions).not.toHaveAttribute('open')
     await page.screenshot({ path: testInfo.outputPath('import-review.png') })
-    await dialog.getByRole('button', { name: 'Import Session package', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Import', exact: true }).click()
     await expect(dialog.getByRole('progressbar')).toHaveAttribute('value', String(18 * 1024 ** 2))
     await page.screenshot({ path: testInfo.outputPath('import-progress.png') })
     const box = await dialog.boundingBox()
@@ -132,9 +204,7 @@ for (const width of [1280, 768, 414, 375, 320]) {
     await name.fill('Imported research')
     await name.press('Enter')
     await expect(dialog.getByText('Imported research', { exact: true })).toBeVisible()
-    await expect(
-      dialog.getByRole('button', { name: 'Import Session package', exact: true })
-    ).toBeEnabled()
+    await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeEnabled()
     await page.screenshot({ path: testInfo.outputPath('new-project-selected.png') })
     const after = await dialog.boundingBox()
     expect(after?.height).toBe(box?.height)
@@ -245,9 +315,7 @@ for (const theme of ['light', 'dark'] as const) {
     const textBounds = await dialog.getByRole('alert').boundingBox()
     expect(Math.abs(iconBounds!.y - textBounds!.y)).toBeLessThan(8)
     await expect(dialog.getByRole('button', { name: 'Dismiss', exact: true })).toBeInViewport()
-    await expect(
-      dialog.getByRole('button', { name: 'Cancel operation', exact: true })
-    ).toBeInViewport()
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeInViewport()
     await page.screenshot({ path: testInfo.outputPath(`package-queue-${theme}.png`) })
   })
 }
@@ -274,3 +342,41 @@ test('opens package export directly from the shared Session export submenu', asy
   ).toBeVisible()
   await expect(page.getByRole('menu')).toHaveCount(0)
 })
+
+for (const width of [1280, 414]) {
+  test(`transfer speed uses the app menu with optional help at ${width}px`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/session-package.html?import=progress')
+    const dialog = page.getByRole('dialog', { name: 'Import Session package', exact: true })
+    await dialog
+      .locator('summary')
+      .filter({ hasText: /^Transfer details$/ })
+      .click()
+    const help = page.getByRole('tooltip')
+    await expect(help).toHaveCount(0)
+    const tip = dialog.getByRole('button', { name: 'Disk activity limit', exact: true })
+    await tip.hover()
+    await expect(help).toContainText('Lower speeds reduce disk activity')
+    await page.screenshot({ path: testInfo.outputPath('transfer-speed-help.png') })
+    const speed = dialog.getByRole('combobox', { name: 'Disk activity limit', exact: true })
+    await speed.click()
+    const options = page.getByRole('listbox')
+    await expect(options).toBeVisible()
+    await expect(options.getByRole('option')).toHaveCount(3)
+    await page.screenshot({ path: testInfo.outputPath('transfer-speed-menu.png') })
+    await page.getByRole('option', { name: '4.0 MiB/s', exact: true }).click()
+    await expect(speed).toHaveText('4.0 MiB/s')
+    await expect(dialog).toBeVisible()
+    await expect(speed).toBeFocused()
+    await speed.press('Enter')
+    await expect(options).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(options).toHaveCount(0)
+    await expect(dialog).toBeVisible()
+    await expect(speed).toBeFocused()
+    await tip.focus()
+    await expect(help).toBeVisible()
+  })
+}

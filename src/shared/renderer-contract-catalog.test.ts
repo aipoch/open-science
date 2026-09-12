@@ -154,6 +154,10 @@ describe('renderer contract catalog', () => {
 
   it('records every intentional and known-deviating argument codec without normalizing it', () => {
     expect(
+      RENDERER_CONTRACT_CATALOG.find(({ publicPath }) => publicPath === 'sessions.importPackage')
+        ?.parameterCodec
+    ).toEqual({ electron: 'session-package-import-file', web: 'positional' })
+    expect(
       RENDERER_CONTRACT_CATALOG.find(({ publicPath }) => publicPath === 'uploads.stageLocalFile')
         ?.parameterCodec
     ).toEqual({ electron: 'native-file-upload-request', web: 'native-file-upload-request' })

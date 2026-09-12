@@ -71,6 +71,7 @@ import { SessionReproducibilityDialog } from './SessionReproducibilityDialog'
 import { FilePreviewDialog } from './FilePreviewDialog'
 import { EditSessionDialog } from './EditSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
+import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { JobDetailModal } from '@/components/JobDetailModal'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { startWslSetupConversation } from '@/lib/wsl-support-handoff'
@@ -1186,7 +1187,14 @@ const WorkspacePage = ({
     typeof window.api.backgroundResultDelivery?.getProjectActivity === 'function'
 
   return (
-    <main
+    <ProjectPackageDropZone
+      projectId={scopedProjectId}
+      projectName={activeProject?.name ?? t('Project')}
+      canImport={
+        isSessionPersistenceReady &&
+        Boolean(activeProject) &&
+        activeProject?.archivedAt === undefined
+      }
       ref={previewFocusFallbackRef}
       tabIndex={-1}
       className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]"
@@ -1563,7 +1571,7 @@ const WorkspacePage = ({
       />
 
       <ProjectFormDialog {...projectFormDialog.dialogProps} />
-    </main>
+    </ProjectPackageDropZone>
   )
 }
 

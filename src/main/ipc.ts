@@ -4771,7 +4771,7 @@ const createApplicationModules = async (
       if (packageHandoffHeld || isMigrationInProgress() || isMigrationPending())
         throw new Error('Wait for the application handoff to finish before transferring research.')
     },
-    reserveExport: async (request) => {
+    reserveExport: async (request, signal) => {
       let releasePersistence: (() => void) | undefined
       try {
         const releaseAdmission = await archiveCoordinator.reserveSessionExport(
@@ -4783,7 +4783,8 @@ const createApplicationModules = async (
               request.sessionId
             )
             await sessionPackageService.assertExportIdle(request)
-          }
+          },
+          signal
         )
         return () => {
           releasePersistence?.()
@@ -4794,7 +4795,8 @@ const createApplicationModules = async (
         throw error
       }
     },
-    reserveImport: (projectId) => archiveCoordinator.reserveProjectImport(projectId),
+    reserveImport: (projectId, signal) =>
+      archiveCoordinator.reserveProjectImport(projectId, signal),
     onOperationChanged: (snapshot) =>
       applicationEvents.publish('sessions:package-operation-changed', snapshot),
     afterImport: async (identity, originClientId, projectCreated) => {
@@ -5212,7 +5214,8 @@ const createApplicationModules = async (
           sessionPackageDesktop.import(
             BrowserWindow.fromWebContents(electronSenderFor(invocation)) ?? undefined,
             invocation.callerContext.lifecycleClientId,
-            invocation.args[0]
+            invocation.args[0],
+            invocation.args[1]
           ),
         exportConversationFromInvokingWindow: (invocation) => {
           const sender = electronSenderFor(invocation)

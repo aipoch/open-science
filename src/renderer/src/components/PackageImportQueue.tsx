@@ -45,11 +45,11 @@ export const PackageImportQueue = ({
         collisionPadding={12}
         className="w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-popover p-0 text-popover-foreground shadow-menu"
       >
-        <h3 className="px-4 pb-2 pt-4 text-sm font-semibold">
+        <h3 className="border-b border-border px-4 py-3 text-sm font-semibold">
           {t('Waiting packages')} ({count})
         </h3>
         {count ? (
-          <ul className="max-h-56 overflow-y-auto px-2 pb-2">
+          <ul className="max-h-56 overflow-y-auto p-2">
             {operation.pendingImports?.map((file) => (
               <li key={file.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm">
                 <span className="min-w-0 flex-1 truncate" title={file.filename}>

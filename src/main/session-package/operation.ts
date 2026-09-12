@@ -155,6 +155,18 @@ export class SessionPackageOperation {
     this.publish()
   }
 
+  setImportSource(requestId: string, filename: string, target: SessionPackageImportRequest): void {
+    if (!this.controller || this.current?.kind !== 'import')
+      throw new Error('No active import operation.')
+    this.current = {
+      ...this.current,
+      importRequestId: requestId,
+      importFilename: filename,
+      importTarget: { ...target }
+    }
+    this.publish()
+  }
+
   waitForImport = (
     input: {
       requestId?: string
