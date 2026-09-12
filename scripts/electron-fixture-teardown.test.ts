@@ -9,6 +9,7 @@ const boundary = vi.hoisted(() => ({
     use: (app: { restartAfterCrash: () => Promise<unknown> }) => Promise<void>,
     info: unknown
   ) => Promise<void>,
+  fixtureTimeout: undefined as number | undefined,
   launch: vi.fn(),
   reap: vi.fn(),
   rendererFailure: vi.fn(),
@@ -22,8 +23,8 @@ vi.mock('@playwright/test', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@playwright/test')>()
   return {
     test: {
-      extend: (fixtures: { app: typeof boundary.fixture }) => {
-        boundary.fixture = fixtures.app
+      extend: (fixtures: { app: [typeof boundary.fixture, { timeout?: number }] }) => {
+        ;[boundary.fixture, { timeout: boundary.fixtureTimeout }] = fixtures.app
         return {}
       }
     },
@@ -42,6 +43,8 @@ vi.mock('../e2e/fixtures/renderer-failure-gate', () => ({
   }
 }))
 import '../e2e/fixtures/electron-app'
+
+const startupBudget = process.platform === 'win32' ? 180_000 : 90_000
 
 let root: string
 const close = vi.fn()
@@ -85,6 +88,10 @@ beforeEach(() => {
 afterEach(async () => {
   vi.useRealTimers()
   if (root) await rm(root, { recursive: true, force: true })
+})
+
+it('gives Windows startup an independent bounded fixture budget', () => {
+  expect(boundary.fixtureTimeout).toBe(process.platform === 'win32' ? 240_000 : undefined)
 })
 
 it('removes the owned root after successful fixture teardown', async () => {
@@ -188,10 +195,10 @@ it('attaches startup diagnostics before disposing a failed renderer launch', asy
   expect(existsSync(root)).toBe(false)
 })
 
-it('allows a fresh profile to finish initialization after a minute of migration work', async () => {
+it('allows a fresh profile to finish initialization within its platform budget', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
   boundary.realPolling = true
-  boundary.readyAt = 65_000
+  boundary.readyAt = process.platform === 'win32' ? 100_000 : 65_000
   const install = vi.fn(async () => undefined)
   const operation = boundary
     .fixture({ windowMode: 'hidden' }, install, {
@@ -204,7 +211,7 @@ it('allows a fresh profile to finish initialization after a minute of migration 
       (error: unknown) => error
     )
   await vi.waitFor(() => expect(boundary.evaluated).toHaveBeenCalled())
-  await vi.advanceTimersByTimeAsync(70_000)
+  await vi.advanceTimersByTimeAsync(boundary.readyAt + 5_000)
   expect(await operation).toBeUndefined()
   expect(install).toHaveBeenCalledOnce()
 })
@@ -225,7 +232,7 @@ it('still fails with diagnostics when initialization never finishes', async () =
       (error: unknown) => error
     )
   await vi.waitFor(() => expect(boundary.evaluated).toHaveBeenCalled())
-  await vi.advanceTimersByTimeAsync(100_000)
+  await vi.advanceTimersByTimeAsync(startupBudget + 10_000)
   expect(String(await operation)).toContain('while waiting on the predicate')
   expect(install).not.toHaveBeenCalled()
   expect(attach).toHaveBeenCalledWith(
@@ -257,7 +264,7 @@ it.each([true, false])(
   async (finishes) => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
     boundary.realPolling = true
-    boundary.readyAt = 80_000
+    boundary.readyAt = startupBudget - 10_000
     boundary.settingsWait.mockImplementationOnce(
       ({ timeout }: { timeout: number }) =>
         new Promise<void>((resolve, reject) => {
@@ -286,7 +293,7 @@ it.each([true, false])(
         (error: unknown) => error
       )
     await vi.waitFor(() => expect(boundary.evaluated).toHaveBeenCalled())
-    await vi.advanceTimersByTimeAsync(110_000)
+    await vi.advanceTimersByTimeAsync(startupBudget + 20_000)
     expect(boundary.settingsWait).toHaveBeenCalled()
     if (finishes) {
       expect(await operation).toBeUndefined()

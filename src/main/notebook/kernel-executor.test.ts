@@ -697,6 +697,8 @@ gate('NotebookKernelExecutor (fake loop)', () => {
         'import sys',
         'sys.stderr.write("PowerShell FileSystem provider initialization failed.\\n")',
         'sys.stderr.flush()',
+        // Consume the request before exiting so this tests exit diagnostics, not a competing EPIPE.
+        'sys.stdin.readline()',
         'raise SystemExit(23)'
       ].join('\n')
     )
@@ -726,6 +728,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
         'import sys',
         'sys.stderr.write("Permission denied: C:/hidden/credentials.txt\\n")',
         'sys.stderr.flush()',
+        'sys.stdin.readline()',
         'raise SystemExit(25)'
       ].join('\n')
     )
