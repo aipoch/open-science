@@ -44,6 +44,101 @@ const deferred = <T>(): {
 }
 
 describe('ProviderAccountsModule', () => {
+  it('publishes only validated API credentials, repeats safely, and refuses replacement', async () => {
+    await repository.setAgentFramework('codex')
+    const validate = vi
+      .spyOn(module, 'validateProvider')
+      .mockResolvedValue({ ok: true, category: 'ok' })
+    await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
+    const first = await repository.getSettings()
+    await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
+    const restored = await new SettingsRepository(dir).getSettings()
+    expect(restored.providers).toHaveLength(1)
+    expect(restored.providers[0].keyRef).toBe(first.providers[0].keyRef)
+    expect(restored.providers[0].lastValidatedTarget).toEqual({
+      model: 'gpt-5.4',
+      endpoint: 'responses'
+    })
+    expect(restored.activeProviderId).toBe('cli-openai')
+    await expect(module.bootstrapOpenAi('different-key', 'gpt-5.4')).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    expect(await repository.getSettings()).toEqual(restored)
+    expect(validate).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not publish API credentials if Settings changes during the probe', async () => {
+    await repository.setAgentFramework('codex')
+    vi.spyOn(module, 'validateProvider').mockImplementation(async () => {
+      await repository.setAgentFramework('opencode')
+      return { ok: true, category: 'ok' }
+    })
+    await expect(module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    expect((await repository.getSettings()).providers).toEqual([])
+  })
+  it('bootstraps an app-owned CLI login without deleting authentication and restores it after restart', async () => {
+    await repository.setAgentFramework('codex')
+    const home = codexSubscriptionStorageDir(dir)
+    await mkdir(home, { recursive: true })
+    const auth = JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'synthetic-cli-token' })
+    await writeFile(join(home, 'auth.json'), auth)
+    await module.prepareBootstrapCodex()
+    expect((await repository.getSettings()).activeProviderId).toBeUndefined()
+    expect(await readFile(join(home, 'auth.json'), 'utf8')).toBe(auth)
+    await module.completeBootstrapCodex()
+    await module.prepareBootstrapCodex()
+    await module.completeBootstrapCodex()
+    const restored = await new SettingsRepository(dir).getSettings()
+    expect(restored.providers).toHaveLength(1)
+    expect(restored.activeProviderId).toBe('builtin-codex-subscription')
+    expect(restored.providers[0].lastValidatedAt).toEqual(expect.any(Number))
+    expect(await readFile(join(home, 'auth.json'), 'utf8')).toBe(auth)
+  })
+
+  it('does not activate rejected subscription credentials', async () => {
+    await repository.setAgentFramework('codex')
+    await module.prepareBootstrapCodex()
+    vi.mocked(codexAuth.getStatus).mockResolvedValue({
+      mode: 'isolated',
+      supported: true,
+      authenticated: false
+    })
+    await expect(module.completeBootstrapCodex()).rejects.toMatchObject({
+      code: 'credential_invalid'
+    })
+    expect((await repository.getSettings()).activeProviderId).toBeUndefined()
+  })
+
+  it('does not activate a login if Settings changed during validation', async () => {
+    await repository.setAgentFramework('codex')
+    await module.prepareBootstrapCodex()
+    await writeFile(
+      join(codexSubscriptionStorageDir(dir), 'auth.json'),
+      JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'synthetic' })
+    )
+    vi.mocked(codexAuth.getStatus).mockImplementation(async () => {
+      await repository.setAgentFramework('opencode')
+      return { mode: 'isolated', supported: true, authenticated: true }
+    })
+    await expect(module.completeBootstrapCodex()).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    expect((await repository.getSettings()).activeProviderId).toBeUndefined()
+  })
+
+  it('validates an API key before any provider or credential publication', async () => {
+    await repository.setAgentFramework('codex')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('invalid key', { status: 401 })))
+    await expect(module.bootstrapOpenAi('synthetic-invalid-key', 'gpt-5.4')).rejects.toMatchObject({
+      code: 'credential_invalid'
+    })
+    const restored = await new SettingsRepository(dir).getSettings()
+    expect(restored.providers).toEqual([])
+    expect(restored.activeProviderId).toBeUndefined()
+    vi.unstubAllGlobals()
+  })
   let dir: string
   let repository: InstanceType<typeof SettingsRepository>
   let codexAuth: CodexAuthControllerPort

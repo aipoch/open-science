@@ -131,6 +131,73 @@ const createCodexDeps = (
 })
 
 describe('AgentRuntimeManager', () => {
+  it('bootstraps a missing Codex runtime once and persists a usable selection', async () => {
+    const install = vi.fn(async () => {
+      inventory.codexAdapter.set(managedAdapterPath, '1.6.2')
+      inventory.codexNative.set(managedCodexPath, '0.114.0')
+      return {
+        result: { installId: 'bootstrap', ok: true },
+        adapterPath: managedAdapterPath,
+        adapterVersion: '1.6.2',
+        codexPath: managedCodexPath,
+        codexVersion: '0.114.0'
+      }
+    })
+    manager = createManager({ installManagedCodexImpl: install })
+    await manager.bootstrapCodex(vi.fn())
+    await manager.bootstrapCodex(vi.fn())
+    expect(install).toHaveBeenCalledTimes(1)
+    expect(await new SettingsRepository(storageRoot).getSettings()).toMatchObject({
+      agentFrameworkId: 'codex',
+      codex: { nativePath: managedCodexPath, resolvedPath: managedAdapterPath }
+    })
+  })
+
+  it('repairs a cached pair that reports versions but cannot initialize ACP', async () => {
+    inventory.codexAdapter.set(managedAdapterPath, '1.6.2')
+    inventory.codexNative.set(managedCodexPath, '0.114.0')
+    await repository.setCodexInfo({
+      resolvedPath: managedAdapterPath,
+      version: '1.6.2',
+      nativePath: managedCodexPath,
+      nativeVersion: '0.114.0'
+    })
+    let repaired = false
+    const smokeInitialize = vi.fn(async () => repaired)
+    const install = vi.fn(async () => {
+      repaired = true
+      return {
+        result: { installId: 'repair', ok: true },
+        adapterPath: managedAdapterPath,
+        adapterVersion: '1.6.2',
+        codexPath: managedCodexPath,
+        codexVersion: '0.114.0'
+      }
+    })
+    manager = createManager({
+      codexDetectDeps: {
+        ...createCodexDeps(inventory, managedAdapterPath, managedCodexPath),
+        smokeInitialize
+      },
+      installManagedCodexImpl: install
+    })
+    await manager.bootstrapCodex(vi.fn())
+    await manager.bootstrapCodex(vi.fn())
+    expect(install).toHaveBeenCalledOnce()
+    expect(smokeInitialize).toHaveBeenCalledWith(
+      managedAdapterPath,
+      { codexPath: managedCodexPath },
+      expect.any(AbortSignal)
+    )
+  })
+
+  it('refuses to change an existing framework during bootstrap', async () => {
+    await repository.setAgentFramework('opencode')
+    await expect(manager.bootstrapCodex(vi.fn())).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    expect((await repository.getSettings()).agentFrameworkId).toBe('opencode')
+  })
   let storageRoot: string
   let repository: Repository
   let inventory: RuntimeInventory

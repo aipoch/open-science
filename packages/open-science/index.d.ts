@@ -1,3 +1,19 @@
+export type BootstrapRequest =
+  | { action: 'status' | 'runtime' | 'codex-prepare' | 'codex-complete' }
+  | { action: 'provider'; key: string; model: string }
+  | { action: 'openalex'; key: string }
+export type BootstrapResult =
+  | { ok: true; providerId?: string; next?: { runtime?: string[]; provider?: string[] } }
+  | {
+      ok: false
+      code:
+        | 'invalid_request'
+        | 'configuration_conflict'
+        | 'runtime_unavailable'
+        | 'credential_invalid'
+        | 'bootstrap_failed'
+    }
+
 // Keep these standalone published types aligned with the safe Settings contracts.
 // connector-types.test.ts verifies complete request and response equivalence.
 export type ToolPermission = 'allow' | 'ask' | 'block'
@@ -221,6 +237,7 @@ export type DoctorReport = {
   }
   next: Array<{
     code: 'runtime_missing' | 'runtime_not_ready' | 'provider_missing' | 'provider_not_ready'
+    argv?: readonly string[]
   }>
 }
 export type AgentConfiguration = {
@@ -482,6 +499,10 @@ export class OpenScienceClient {
     requestTimeoutMs?: number
   })
   health(options?: RequestOptions): Promise<unknown>
+  bootstrap(request: BootstrapRequest, options?: RequestOptions): Promise<BootstrapResult>
+  installCli(
+    options?: RequestOptions
+  ): Promise<{ installed: boolean; onPath: boolean; target: string; pathHint?: string }>
   doctor(options?: RequestOptions): Promise<DoctorReport>
   listConnectors(options?: RequestOptions): Promise<ConnectorsSnapshot>
   getConnector(

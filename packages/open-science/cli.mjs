@@ -36,6 +36,10 @@ Commands:
   url         Print the authenticated web URL
   update      Check, download, and apply an application update
   doctor --json  Inspect headless readiness
+  runtime install codex   Prepare the app-managed Codex runtime
+  provider add --type official --vendor openai --model <id> --api-key-env <ENV>
+  connector configure literature --openalex-key-env <ENV>
+  cli install            Install the PATH launcher
   codex login [--force]
   connector list | show <id> | enable <id> | disable <id>
   connector add | update <id>      Read configuration JSON from stdin
@@ -119,6 +123,10 @@ const VALUE_OPTIONS = {
   '--app-path': 'appPath',
   '--config-root': 'configRoot',
   '--profile': 'configRoot',
+  '--type': 'providerType',
+  '--vendor': 'vendor',
+  '--api-key-env': 'apiKeyEnv',
+  '--openalex-key-env': 'openAlexKeyEnv',
   '--data-root': 'dataRoot',
   '--project': 'project',
   '--session': 'session',
@@ -158,7 +166,10 @@ const TASK_COMMANDS = new Set([
   'plan',
   'artifacts',
   'connector',
-  'credential'
+  'credential',
+  'runtime',
+  'provider',
+  'cli'
 ])
 const GROUP_COMMANDS = new Set([
   'codex',
@@ -168,12 +179,19 @@ const GROUP_COMMANDS = new Set([
   'plan',
   'artifacts',
   'connector',
-  'credential'
+  'credential',
+  'runtime',
+  'provider',
+  'cli'
 ])
 // Project create, update, and session-defaults intentionally remain unbounded because their
 // positional Project names may contain multiple unquoted words.
 const POSITIONAL_LIMITS = new Map([
   ['doctor', 0],
+  ['runtime install', 1],
+  ['provider add', 0],
+  ['connector configure', 1],
+  ['cli install', 0],
   ['connector list', 0],
   ['connector show', 1],
   ['connector enable', 1],
@@ -499,7 +517,7 @@ export const parseCliArgs = (argv) => {
   }
   const sessionOptionPresent =
     options.provider !== undefined ||
-    options.model !== undefined ||
+    (options.model !== undefined && !(command === 'provider' && subcommand === 'add')) ||
     options.providerDefaultModel ||
     options.reasoningEffort !== undefined ||
     options.approvalProfile !== undefined ||
@@ -1463,10 +1481,64 @@ const assertNoClearConflict = (clear, present, label) => {
 export const runTaskCommand = async (parsed, dependencies = {}) => {
   const deps = { ...TASK_DEPS, ...dependencies }
   const { command, subcommand, positionals = [], options } = parsed
-  const client = await deps.connect({ configRoot: options.configRoot })
+  let client
+  try {
+    client = await deps.connect({ configRoot: options.configRoot })
+  } catch (error) {
+    if (command !== 'doctor' || error?.code !== 'daemon_unavailable') throw error
+    deps.log(
+      JSON.stringify({
+        ready: false,
+        checks: { daemon: { status: 'missing' } },
+        next: [{ code: 'daemon_unavailable', argv: ['start', '--no-open'] }]
+      })
+    )
+    deps.setExitCode(3)
+    return
+  }
 
   if (command === 'doctor') {
     deps.log(JSON.stringify(await client.doctor()))
+    return
+  }
+
+  if (command === 'cli' && subcommand === 'install') {
+    outputValue(await client.installCli(), options, deps)
+    return
+  }
+  if (
+    command === 'runtime' ||
+    command === 'provider' ||
+    (command === 'connector' && subcommand === 'configure')
+  ) {
+    const readSecret = (name) => {
+      if (!name || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+        throw new CliUsageError('Name a credential environment variable.')
+      const key = (dependencies.env ?? process.env)[name]?.trim()
+      if (!key) throw new CliUsageError('The credential environment variable is empty.')
+      return key
+    }
+    let request
+    if (command === 'runtime' && subcommand === 'install' && positionals[0] === 'codex')
+      request = { action: 'runtime' }
+    else if (
+      command === 'provider' &&
+      subcommand === 'add' &&
+      options.providerType === 'official' &&
+      options.vendor === 'openai' &&
+      options.model
+    ) {
+      request = { action: 'provider', key: readSecret(options.apiKeyEnv), model: options.model }
+    } else if (command === 'connector' && positionals[0] === 'literature')
+      request = { action: 'openalex', key: readSecret(options.openAlexKeyEnv) }
+    else
+      throw new CliUsageError(
+        'Supported setup commands: runtime install codex; provider add --type official --vendor openai --model <id> --api-key-env <ENV>; connector configure literature --openalex-key-env <ENV>.'
+      )
+    const result = await client.bootstrap(request, { timeoutMs: 600_000 })
+    if (!result.ok)
+      throw Object.assign(new Error(`Setup failed: ${result.code}.`), { code: result.code })
+    outputValue(result, options, deps)
     return
   }
 

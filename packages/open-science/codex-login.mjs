@@ -6,6 +6,7 @@ import { isAbsolute, join, normalize } from 'node:path'
 
 import { resolveConfigRoot } from './config-root.mjs'
 import { locateApp } from './locate-app.mjs'
+import { connectToOpenScience } from './index.mjs'
 
 const CODEX_CONFIG_OVERRIDE = 'cli_auth_credentials_store="file"'
 const CODEX_ENV_KEYS = [
@@ -198,6 +199,7 @@ export const runCodexProcess = (codexPath, args, options = {}) =>
   })
 
 const DEFAULT_DEPS = {
+  connect: connectToOpenScience,
   locateApp: (options) => locateApp(options),
   resolveConfigRoot: (options) => resolveConfigRoot(options),
   resolveConfiguration: (configRoot) => resolveCodexLoginConfiguration(configRoot),
@@ -221,6 +223,33 @@ export const codexLoginCommand = async (options, dependencies = {}) => {
     override: options.configRoot,
     env: app.packaged ? {} : process.env
   })
+  let client
+  try {
+    client = await deps.connect({ configRoot })
+  } catch {
+    // Already-configured profiles retain offline terminal login. First-run writes need the owner.
+    try {
+      await deps.resolveConfiguration(configRoot)
+    } catch {
+      throw new CodexLoginError(
+        'Start Open Science first: open-science start --no-open; then retry codex login.',
+        'daemon_unavailable'
+      )
+    }
+  }
+  const bootstrap = async (action) => {
+    if (!client) return
+    const result = await client.bootstrap({ action }, { timeoutMs: 600_000 })
+    if (!result.ok) throw new CodexLoginError(`Codex setup failed: ${result.code}.`, result.code)
+  }
+  await bootstrap('codex-prepare')
+  const complete = async () => {
+    if (client) await bootstrap('codex-complete')
+    else
+      deps.log(
+        'Sign-in saved. Start Open Science and run codex login again to validate and activate the provider.'
+      )
+  }
   const { codexPath, networkProxy } = await deps.resolveConfiguration(configRoot)
   const codexHome = join(configRoot, 'codex-subscription')
   await deps.mkdir(codexHome)
@@ -233,6 +262,7 @@ export const codexLoginCommand = async (options, dependencies = {}) => {
       inherit: false
     })
     if (status.code === 0) {
+      await complete()
       deps.log(
         'Codex is already signed in for Open Science. Use "open-science codex login --force" to sign in again.'
       )
@@ -256,5 +286,6 @@ export const codexLoginCommand = async (options, dependencies = {}) => {
       login.code ?? 1
     )
   }
+  await complete()
   deps.log('Codex is signed in for Open Science.')
 }

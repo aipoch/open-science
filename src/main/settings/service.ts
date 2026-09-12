@@ -1,6 +1,11 @@
 import { homedir } from 'node:os'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import {
+  BootstrapError,
+  bootstrapRequestSchema,
+  type BootstrapResult
+} from '../../shared/bootstrap'
 
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type {
@@ -1115,6 +1120,69 @@ class SettingsService {
   // Computes the startup gates from a fresh or immediate startup-chain runtime probe.
   async getPreflight(): Promise<ReadinessPreflight> {
     return this.runtimeManager.getPreflight(this.providers)
+  }
+
+  async bootstrap(
+    input: unknown,
+    onEvent: (event: ClaudeInstallEvent) => void
+  ): Promise<BootstrapResult> {
+    const parsed = bootstrapRequestSchema.safeParse(input)
+    if (!parsed.success) return { ok: false, code: 'invalid_request' }
+    const request = parsed.data
+    try {
+      if (request.action === 'status') {
+        const settings = await this.repository.getSettings()
+        const canPrepareCodex =
+          settings.agentFrameworkId === 'codex' ||
+          (!settings.agentFrameworkId && settings.providers.length === 0)
+        const provider =
+          settings.providers.find(({ id }) => id === settings.activeProviderId) ??
+          settings.providers[0]
+        const providerArgv = !provider
+          ? ['codex', 'login']
+          : provider.type === 'codex-isolated' && provider.codexAuthMode === 'isolated'
+            ? ['codex', 'login', '--force']
+            : provider.id === 'cli-openai' &&
+                provider.type === 'official' &&
+                provider.vendorId === 'openai' &&
+                provider.model
+              ? [
+                  'provider',
+                  'add',
+                  '--type',
+                  'official',
+                  '--vendor',
+                  'openai',
+                  '--model',
+                  provider.model,
+                  '--api-key-env',
+                  'OPENAI_API_KEY',
+                  '--json'
+                ]
+              : undefined
+        return {
+          ok: true,
+          next: canPrepareCodex
+            ? { runtime: ['runtime', 'install', 'codex', '--json'], provider: providerArgv }
+            : {}
+        }
+      }
+      if (request.action === 'runtime' || request.action === 'codex-prepare') {
+        await this.runtimeManager.bootstrapCodex(onEvent)
+        if (request.action === 'codex-prepare') await this.providers.prepareBootstrapCodex()
+      } else if (request.action === 'codex-complete') {
+        return { ok: true, providerId: await this.providers.completeBootstrapCodex() }
+      } else if (request.action === 'provider') {
+        return {
+          ok: true,
+          providerId: await this.providers.bootstrapOpenAi(request.key, request.model)
+        }
+      } else await this.connectors.bootstrapOpenAlex(request.key)
+      return { ok: true }
+    } catch (error) {
+      // Installer/provider exceptions can contain secret inputs. Only return our closed codes.
+      return { ok: false, code: error instanceof BootstrapError ? error.code : 'bootstrap_failed' }
+    }
   }
 
   // Re-runs the complete host inspection on every app launch, for the SELECTED framework's runtime, so

@@ -1,3 +1,5 @@
+import { BootstrapError } from '../../shared/bootstrap'
+import { ensureCodexAuthHome } from './codex-auth'
 import type {
   ChatApiEndpoint,
   ProviderDraft,
@@ -116,6 +118,108 @@ class ProviderAccountsModule {
 
   async dispose(): Promise<void> {
     await Promise.all([this.auth.dispose(), Promise.resolve().then(() => this.xai.cancelLogin())])
+  }
+
+  async prepareBootstrapCodex(): Promise<void> {
+    await this.auth.serializeAccountMutation(async () => {
+      const settings = await this.repository.getSettings()
+      const identity = codexSubscriptionProviderIdentity()
+      const existing = settings.providers.find(({ id }) => id === identity.id)
+      if (
+        (settings.providers.length > 0 && !existing) ||
+        (existing &&
+          (existing.type !== 'codex-isolated' || existing.codexAuthMode !== 'isolated')) ||
+        (settings.activeProviderId && settings.activeProviderId !== identity.id)
+      )
+        throw new BootstrapError('configuration_conflict')
+      // The historical CLI may have already signed in to this app-owned home. Creating the
+      // provider through ordinary upsert would clear that authentication; never import or clear it.
+      await ensureCodexAuthHome('isolated', this.options.storageRoot, existing?.codexTransport)
+      if (!existing)
+        await this.repository.publishBootstrapProvider(
+          settings,
+          {
+            ...identity,
+            type: 'codex-isolated',
+            codexAuthMode: 'isolated',
+            apiEndpoints: ['responses']
+          },
+          false
+        )
+    })
+  }
+
+  async completeBootstrapCodex(): Promise<string> {
+    return this.auth.serializeAccountMutation(async () => {
+      const settings = await this.repository.getSettings()
+      const identity = codexSubscriptionProviderIdentity()
+      const provider = settings.providers.find(({ id }) => id === identity.id)
+      if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated')
+        throw new BootstrapError('configuration_conflict')
+      const result = await this.auth.validateProviderAuth(
+        this.resolveProvider(provider),
+        settings,
+        provider
+      )
+      if (!result?.ok || !(await this.auth.isProviderKeyUsable(provider)))
+        throw new BootstrapError('credential_invalid')
+      await this.repository.publishBootstrapProvider(
+        settings,
+        {
+          ...provider,
+          ...buildProviderValidationPatch(provider, result, undefined)
+        },
+        true
+      )
+      return provider.id
+    })
+  }
+
+  async bootstrapOpenAi(key: string, model: string): Promise<string> {
+    const settings = await this.repository.getSettings()
+    const id = 'cli-openai'
+    const existing = settings.providers.find((provider) => provider.id === id)
+    if (
+      settings.agentFrameworkId !== 'codex' ||
+      (settings.providers.length > 0 && !existing) ||
+      (settings.activeProviderId && settings.activeProviderId !== id) ||
+      (existing &&
+        (existing.type !== 'official' ||
+          existing.vendorId !== 'openai' ||
+          existing.model !== model ||
+          !existing.keyRef ||
+          tryDecryptKey(existing.keyRef) !== key))
+    )
+      throw new BootstrapError('configuration_conflict')
+    if (
+      this.resolveActiveModel(
+        existing ?? { id, type: 'official', vendorId: 'openai', name: 'OpenAI', model },
+        model
+      ) !== model
+    )
+      throw new BootstrapError('invalid_request')
+    const draft = { type: 'official' as const, vendorId: 'openai' as const, model, key }
+    const result = await this.validateProvider({ draft })
+    if (!result.ok) throw new BootstrapError('credential_invalid')
+    const provider: StoredProvider = {
+      ...existing,
+      id,
+      type: 'official',
+      vendorId: 'openai',
+      name: 'OpenAI',
+      model,
+      keyRef: existing?.keyRef ?? encryptKey(key),
+      keyMask: maskKey(key)
+    }
+    await this.repository.publishBootstrapProvider(
+      settings,
+      {
+        ...provider,
+        ...buildProviderValidationPatch(provider, result, { model, endpoint: 'responses' })
+      },
+      true
+    )
+    return id
   }
 
   // Keeps provider-before-Connector ordering in SettingsService's whole-settings migration path.

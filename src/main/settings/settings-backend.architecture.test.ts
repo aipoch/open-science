@@ -355,9 +355,12 @@ describe('Settings backend ownership architecture', () => {
       'markLegacyDataMovePromptDismissed',
       'markOnboardingComplete',
       'markPathsNormalized',
+      'publishBootstrapOpenAlex',
+      'publishBootstrapProvider',
       'rememberCodexAutoHttpsFallback',
       'removeCustomServer',
       'restoreLocalShellRuntime',
+      'selectBootstrapCodex',
       'setActiveProvider',
       'setAgentEnvironmentCreationEnabled',
       'setAgentFramework',
@@ -413,10 +416,12 @@ describe('Settings backend ownership architecture', () => {
     ])
     expect(publicOperationsOf(settingsPaths.providerAccounts, 'ProviderAccountsModule')).toEqual([
       'beginXaiOAuthLogin',
+      'bootstrapOpenAi',
       'cancelClaudeIsolatedLogin',
       'cancelClaudeLogin',
       'cancelCodexLogin',
       'cancelXaiOAuthLogin',
+      'completeBootstrapCodex',
       'deleteProvider',
       'dispose',
       'getClaudeIsolatedStatus',
@@ -432,6 +437,7 @@ describe('Settings backend ownership architecture', () => {
       'logoutIsolatedCodex',
       'logoutXaiOAuth',
       'migrateLegacyKeyRefs',
+      'prepareBootstrapCodex',
       'refreshProviderModels',
       'resolveActiveModel',
       'resolveProvider',
@@ -481,7 +487,7 @@ describe('Settings backend ownership architecture', () => {
   it('locks the SettingsService application interface', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
-        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel allowNotebookNetworkDomain authenticateCustomServer authenticateDeviceCredential buildCustomServerTemplateExport
+        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel allowNotebookNetworkDomain authenticateCustomServer authenticateDeviceCredential bootstrap buildCustomServerTemplateExport
         buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
         codexSkillDescriptorsForIds createDeviceCredential createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
         detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getActiveInstallId getAgentEnvironmentCreationEnabled getAppIconVariant getClosePreference
@@ -596,6 +602,7 @@ describe('Settings backend ownership architecture', () => {
     expect(importersOf(settingsPaths.service)).toEqual([
       'src/main/ipc.ts',
       'src/main/settings/application-commands.ts',
+      'src/main/settings/bootstrap-application-commands.ts',
       'src/main/settings/ipc.ts',
       'src/main/settings/service-capabilities.ts',
       'src/main/settings/workflows/appearance.ts',

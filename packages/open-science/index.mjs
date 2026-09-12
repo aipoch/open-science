@@ -179,6 +179,14 @@ export class OpenScienceClient {
     )
   }
 
+  bootstrap(request, options) {
+    return this.request('/api/v1/bootstrap', { ...options, method: 'POST', body: request })
+  }
+
+  installCli(options) {
+    return this.request('/api/v1/cli/install', { ...options, method: 'POST' })
+  }
+
   doctor(options) {
     return this.request('/api/v1/doctor', { ...options, method: 'GET' })
   }

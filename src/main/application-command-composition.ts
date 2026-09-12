@@ -1,4 +1,8 @@
 import {
+  bootstrapApplicationCommandGroup,
+  registerBootstrapApplicationCommands
+} from './settings/bootstrap-application-commands'
+import {
   specialistApplicationCommandGroup,
   registerSpecialistApplicationCommands,
   type SpecialistApplicationOwner
@@ -148,6 +152,7 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
 ])
 
 const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
+  'settings:bootstrap',
   'settings:test-custom-server',
   'projects:update-session-defaults',
   'reviewer:abort',
@@ -159,6 +164,8 @@ const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
 ])
 
 const TASK_COMMAND_NAMES = Object.freeze([
+  'settings:bootstrap',
+  'cli:install',
   'settings:get-preflight',
   'settings:list-skills',
   'settings:list-connectors',
@@ -222,6 +229,9 @@ const createApplicationCommandModules = (
   remoteAccess: RemoteAccessOwner
 ): readonly ApplicationCommandModuleDescriptor[] =>
   Object.freeze([
+    defineApplicationCommandModule([bootstrapApplicationCommandGroup], (registrar) =>
+      registerBootstrapApplicationCommands(registrar, dependencies.settingsCore)
+    ),
     defineApplicationCommandModule([acpApplicationCommands], (registrar) =>
       registerAcpCommands(registrar, dependencies.acp)
     ),

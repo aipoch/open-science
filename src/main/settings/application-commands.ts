@@ -60,6 +60,7 @@ import type { LocalShellSettingsWorkflows } from './workflows/local-shell'
 
 type CoreSettingsCommandStore = Pick<
   SettingsService,
+  | 'bootstrap'
   | 'cancelClaudeLogin'
   | 'cancelCodexLogin'
   | 'cancelClaudeIsolatedLogin'

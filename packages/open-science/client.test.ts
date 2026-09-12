@@ -56,6 +56,8 @@ describe('OpenScienceClient', () => {
       [
         'constructor',
         'doctor',
+        'bootstrap',
+        'installCli',
         'health',
         'listConnectors',
         'getConnector',

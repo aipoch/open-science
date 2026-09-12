@@ -4029,6 +4029,10 @@ describe('startWebHttpServer', () => {
       ((event: import('../../shared/task-api').TaskRunProgressEvent) => void) | undefined
     const tasks = {
       runWithCallerContext: runWithCapturedCallerContext,
+      bootstrap: vi.fn().mockResolvedValue({ ok: true }),
+      installCli: vi
+        .fn()
+        .mockResolvedValue({ installed: true, onPath: true, target: '/fixture/bin/open-science' }),
       doctor: vi.fn().mockResolvedValue({
         ready: false,
         checks: {
@@ -4148,6 +4152,17 @@ describe('startWebHttpServer', () => {
     servers.push(server)
     const base = `http://127.0.0.1:${server.port}`
     const headers = { authorization: 'Bearer test-token' }
+
+    const sdk = new OpenScienceClient({ baseUrl: base, token: 'test-token' })
+    expect(await sdk.bootstrap({ action: 'runtime' })).toEqual({ ok: true })
+    expect(tasks.bootstrap).toHaveBeenCalledWith({ action: 'runtime' })
+    expect(await sdk.installCli()).toMatchObject({ installed: true })
+    const unauthorizedBootstrap = await fetch(`${base}/api/v1/bootstrap`, {
+      method: 'POST',
+      body: '{}'
+    })
+    expect(unauthorizedBootstrap.status).toBe(401)
+    expect(tasks.bootstrap).toHaveBeenCalledOnce()
 
     const doctor = await fetch(`${base}/api/v1/doctor`, { headers })
     expect(doctor.status).toBe(200)
