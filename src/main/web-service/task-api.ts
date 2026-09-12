@@ -3,6 +3,7 @@ import type { CliLauncherStatus } from '../../shared/cli'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 
+import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import type {
   FinalizeRunArtifactsRequest,
@@ -151,6 +152,10 @@ class HeadlessTaskApi {
           this.withCurrentCaller(() => this.ports.agent.cancelPrompt(sessionId))
       },
       artifacts: {
+        resolveVersionDescriptors: (request) =>
+          this.invoke('artifacts:resolve-version-descriptors', request) as Promise<
+            ArtifactVersionDescriptor[]
+          >,
         finalizeRun: (request: FinalizeRunArtifactsRequest) =>
           this.invoke('artifacts:finalize-run', request) as Promise<FinalizeRunArtifactsResult>
       },
