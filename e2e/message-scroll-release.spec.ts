@@ -52,6 +52,19 @@ test('releases follow-output when the reader scrolls up mid-stream', async ({ ap
   )
   await page.mouse.wheel(0, -600)
   await page.mouse.wheel(0, -600)
+  // macOS can continue dispatching wheel momentum after Playwright returns. Establish the
+  // reader's position only after that input has settled, otherwise the remaining native scroll
+  // is mistaken for the app re-following the streaming output.
+  await expect
+    .poll(
+      async () => {
+        const before = await readScrollTop()
+        await page.waitForTimeout(120)
+        return Math.abs((await readScrollTop()) - before)
+      },
+      { timeout: 5_000 }
+    )
+    .toBeLessThan(2)
   const afterWheel = await readScrollTop()
 
   // While the reply keeps streaming, the reader's position must hold (no re-follow).
