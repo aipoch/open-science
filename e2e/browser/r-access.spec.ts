@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import zhHans from '../../src/shared/i18n/locales/zh-Hans.json'
 
 test('R verification waits for protection and recovers after recheck', async ({ page }) => {
   await page.goto('/r-access.html')
@@ -21,7 +22,11 @@ test('Chinese R access guidance fits the runtime panel', async ({ page }, testIn
   await page.setViewportSize({ width: 960, height: 1000 })
   await page.goto('/r-access.html?locale=zh-Hans')
   await expect(
-    page.getByText('验证 R 访问权限需要网络保护就绪。请检查网络设置，然后重新检查运行环境。')
+    page.getByText(
+      zhHans.renderer[
+        'R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.'
+      ]
+    )
   ).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('r-access-zh-Hans.png'), fullPage: true })
   await page.setViewportSize({ width: 375, height: 812 })
