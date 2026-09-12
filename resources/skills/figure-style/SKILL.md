@@ -244,7 +244,9 @@ The grouped plotting helpers require nonempty, one-dimensional, finite real
 observations in every supplied group. They reject empty groups and NaN/Inf before
 drawing: resolve exclusions explicitly, report the retained n, and add a missing
 category marker separately when appropriate. They do not silently drop missing
-observations. Requested SD/CI intervals require at least two observations per
+observations. Masked arrays with excluded observations are rejected before
+conversion; arrays with no masked entries remain valid.
+Requested SD/CI intervals require at least two observations per
 group; for a single observation, use points without an interval. Labels and
 data groups must align. For `strip_with_median`, nonempty color sequences cycle;
 None or an empty sequence uses default gray.

@@ -152,6 +152,9 @@ def bar_with_points(ax, x, ymat, labels, colors, jitter=0.08, show_points=True,
             colors = None
     if x.dtype.kind not in "iuf" or not np.isfinite(x).all():
         raise ValueError("bar_with_points x must contain finite real positions")
+    for i, y in enumerate(ymat):
+        if np.ma.isMaskedArray(y) and np.ma.getmaskarray(y).any():
+            raise ValueError(f"bar_with_points group {i} contains masked observations; resolve exclusions explicitly before plotting")
     ymat = [np.asarray(y) for y in ymat]
     for i, y in enumerate(ymat):
         if y.ndim != 1 or y.size == 0 or y.dtype.kind not in "iuf" or not np.isfinite(y).all():
@@ -199,6 +202,9 @@ def strip_with_median(ax, groups, values, colors=None, jitter=0.12):
     values = list(values)
     if len(labs) != len(values):
         raise ValueError("strip_with_median groups and values must have equal lengths")
+    for i, y in enumerate(values):
+        if np.ma.isMaskedArray(y) and np.ma.getmaskarray(y).any():
+            raise ValueError(f"strip_with_median group {i} contains masked observations; resolve exclusions explicitly before plotting")
     values = [np.asarray(y) for y in values]
     for i, y in enumerate(values):
         if y.ndim != 1 or y.size == 0 or y.dtype.kind not in "iuf" or not np.isfinite(y).all():

@@ -112,6 +112,37 @@ class GroupPlotTests(unittest.TestCase):
                             strip_with_median(self.ax, ["A", "B"], [[1, 3], invalid])
                     self.assert_unmodified()
 
+    def test_masked_observations_are_rejected_before_any_marks(self):
+        self.ticks = self.ax.get_xticks().copy()
+        for mask in ([False, False, True], [True, True, True]):
+            values = [[1, 3], np.ma.array([1., 3., 1000.], mask=mask)]
+            for mode in ("points", "mean", "sd", "ci95", "strip"):
+                with self.subTest(mask=mask, mode=mode):
+                    with self.assertRaisesRegex(ValueError, "group 1 contains masked observations"):
+                        if mode == "strip":
+                            strip_with_median(self.ax, ["A", "B"], values)
+                        else:
+                            bar_with_points(self.ax, [0, 1], values, ["A", "B"], None,
+                                            show_points=mode == "points",
+                                            errorbar=mode if mode in ("sd", "ci95") else None)
+                    self.assert_unmodified()
+
+    def test_unmasked_masked_arrays_remain_valid(self):
+        for mask in (np.ma.nomask, [False, False]):
+            with self.subTest(mask=mask):
+                self.ax.clear()
+                values = [np.ma.array([1., 3.], mask=mask)]
+                bar_with_points(self.ax, [0], values, ["A"], None,
+                                show_points=False, errorbar="sd")
+                self.assertEqual(self.ax.patches[0].get_height(), 2)
+                bars = next(c for c in self.ax.containers if hasattr(c, "patches"))
+                np.testing.assert_allclose(bars.errorbar.lines[2][0].get_segments()[0][:, 1],
+                                           [2 - np.sqrt(2), 2 + np.sqrt(2)])
+                self.ax.clear()
+                strip_with_median(self.ax, ["A"], values, jitter=0)
+                np.testing.assert_array_equal(self.ax.collections[0].get_offsets(), [[0, 1], [0, 3]])
+                np.testing.assert_array_equal(self.ax.lines[0].get_ydata(), [2, 2])
+
     def test_single_observation_cannot_create_an_interval(self):
         self.ticks = self.ax.get_xticks().copy()
         for interval in ("sd", "ci95"):
