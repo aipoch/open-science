@@ -100,7 +100,7 @@ const macosLaunch = (request: MacLaunchRequest): { argv: string[]; env: NodeJS.P
     ],
     env: {
       ...request.env,
-      ...proxyEnvironment(request.gatewayPort, request.gatewayCredentials)
+      ...proxyEnvironment(request.gatewayPort, request.gatewayCredentials, 'localhost')
     }
   }
 }

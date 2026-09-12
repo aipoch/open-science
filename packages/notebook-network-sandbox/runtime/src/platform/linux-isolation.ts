@@ -245,7 +245,7 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
     argv: [bwrap, ...argumentsList],
     env: {
       ...request.env,
-      ...proxyEnvironment(guestPort, request.gatewayCredentials),
+      ...proxyEnvironment(guestPort, request.gatewayCredentials, '127.0.0.1'),
       ...(guestRpcSocket ? { OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: guestRpcSocket } : {}),
       ELECTRON_RUN_AS_NODE: '1'
     },

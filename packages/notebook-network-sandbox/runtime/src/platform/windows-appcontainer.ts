@@ -651,7 +651,7 @@ const windowsLaunch = (
     ...(request.env.LOCALAPPDATA === undefined && process.env.LOCALAPPDATA
       ? { LOCALAPPDATA: process.env.LOCALAPPDATA }
       : {}),
-    ...proxyEnvironment(request.gatewayPort, request.gatewayCredentials)
+    ...proxyEnvironment(request.gatewayPort, request.gatewayCredentials, '127.0.0.1')
   }
   if (request.localRpcSocketPath) {
     env.OPEN_SCIENCE_MCP_RPC_ENDPOINT = `http://${LOCAL_RPC_BROKER_HOST}/`
@@ -691,7 +691,7 @@ const windowsStandardLaunch = (
         : [shell.path, '/d', '/s', '/c', request.command]
   const env = {
     ...request.env,
-    ...proxyEnvironment(request.gatewayPort, request.gatewayCredentials)
+    ...proxyEnvironment(request.gatewayPort, request.gatewayCredentials, '127.0.0.1')
   }
   if (request.localRpcSocketPath) {
     env.OPEN_SCIENCE_MCP_RPC_ENDPOINT = `http://${LOCAL_RPC_BROKER_HOST}/`

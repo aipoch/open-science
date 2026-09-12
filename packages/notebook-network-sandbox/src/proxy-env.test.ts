@@ -27,6 +27,13 @@ describe('Notebook network proxy environment', () => {
     expect(env).not.toHaveProperty('RSYNC_PROXY')
   })
 
+  it('keeps an explicit gateway host independent of the test machine', () => {
+    const env = proxyEnvironment(4100, credentials, '127.0.0.1')
+
+    expect(env.HTTP_PROXY).toBe('http://command%20id:random%2Fsecret@127.0.0.1:4100')
+    expect(env.CLOUDSDK_PROXY_ADDRESS).toBe('127.0.0.1')
+  })
+
   it('does not inject unrelated language or certificate settings', () => {
     const env = proxyEnvironment(4100, credentials)
 
