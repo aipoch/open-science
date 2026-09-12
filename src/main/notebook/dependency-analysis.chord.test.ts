@@ -51,6 +51,8 @@ const redrawCells = readFileSync(
 const matrixChord = readFileSync(join(__dirname, 'reported-python-matrix-chord.fixture.py'), 'utf8')
 const matrixInput =
   "import pandas as pd\ndf = pd.read_excel('inputs/edge-weights-222222222222.xlsx')"
+const analyzedPythonPath = (value: string): string =>
+  process.platform === 'win32' ? value.replaceAll('/', '\\') : value
 const neighborChords = [0, 1].map((variant) =>
   readFileSync(join(__dirname, `reported-python-neighbor-chord-${variant}.fixture.py`), 'utf8')
 )
@@ -202,7 +204,15 @@ it.each([0, 1, 2, 3, 4, 5])('analyzes reported subarc notebook cell %i', async (
     state: { state: 'clear' },
     files: { readState: 'complete', writeState: 'complete', externalState: 'complete' }
   })
-  expect(files.reads).toEqual(index === 2 ? [] : ['inputs/edge-weights-222222222222.xlsx'])
+  expect(files.reads).toEqual(
+    index === 2
+      ? []
+      : [
+          index <= 1
+            ? analyzedPythonPath('inputs/edge-weights-222222222222.xlsx')
+            : 'inputs/edge-weights-222222222222.xlsx'
+        ]
+  )
   expect(files.writes).toEqual(
     index === 4 ? ['config.json', 'sub_arcs.npy'] : index === 5 ? ['chord_diagram.png'] : []
   )

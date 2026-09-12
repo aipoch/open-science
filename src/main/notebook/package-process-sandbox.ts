@@ -24,7 +24,12 @@ import {
 
 import type { PackageMirror } from '../../shared/mirror'
 import { validateCustomAllowedDomain } from '../../shared/notebook-network'
-import { defaultSpawn, type InstallRequest, type InstallSpawn } from './package-manager'
+import {
+  defaultSpawn,
+  packageProcessTreeTerminated,
+  type InstallRequest,
+  type InstallSpawn
+} from './package-manager'
 import { assertProcessTreeSupport, terminateProcessTree } from '../process-tree'
 import { buildNotebookKernelEnvironment, PIP_TRANSPORT_ENV_KEYS } from './process-environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
@@ -317,8 +322,23 @@ export const sandboxedPackageSpawn =
       ended = true
       processesTerminated = result.processesTerminated ?? true
       return { ...result, stderr: sandboxed.annotateStderr(result.stderr) }
+    } catch (error) {
+      if (packageProcessTreeTerminated(error)) {
+        processesTerminated = true
+        if (sandboxed.confirmProcessTreeTermination) {
+          await sandboxed.confirmProcessTreeTermination().catch(() => false)
+        }
+      } else if (!ended && sandboxed.confirmProcessTreeTermination) {
+        processesTerminated = await sandboxed.confirmProcessTreeTermination().catch(() => false)
+      }
+      throw error
     } finally {
       if (!ended) endExecution?.()
-      await sandboxed.cleanup(ended ? 'exit' : 'spawn-failed', { processesTerminated })
+      await sandboxed.cleanup(ended ? 'exit' : 'spawn-failed', {
+        processesTerminated,
+        ...(sandboxed.confirmProcessTreeTermination
+          ? { confirmTermination: sandboxed.confirmProcessTreeTermination }
+          : {})
+      })
     }
   }

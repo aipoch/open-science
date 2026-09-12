@@ -17,6 +17,8 @@ import { NotebookDependencyProjector } from './dependency-projection'
 const temporaryRoots: string[] = []
 const unusedPython = { command: 'unused-python' }
 const unusedR = { command: 'unused-rscript' }
+const analyzedPythonPath = (value: string): string =>
+  process.platform === 'win32' ? value.replaceAll('/', '\\') : value
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((path) => rm(path, { recursive: true })))
@@ -1719,6 +1721,8 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         status: 'running'
       })
 
+      const expectedPath =
+        language === 'python' ? analyzedPythonPath('figures/chart.png') : 'figures/chart.png'
       await expect(
         restored.sourceFileAccessContext({
           projectId: 'default-project',
@@ -1729,7 +1733,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
           kernelEpochId: 'epoch-1'
         })
       ).resolves.toMatchObject({
-        staticStrings: expect.arrayContaining([{ name: 'output_path', value: 'figures/chart.png' }])
+        staticStrings: expect.arrayContaining([{ name: 'output_path', value: expectedPath }])
       })
 
       await expect(
@@ -1748,7 +1752,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         runs: {
           'run-2': {
             fileContext: {
-              staticStrings: [{ name: 'output_path', value: 'figures/chart.png' }]
+              staticStrings: [{ name: 'output_path', value: expectedPath }]
             }
           }
         }
@@ -1781,7 +1785,9 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
         kernelEpochId: 'epoch-1'
       })
     ).resolves.toMatchObject({
-      staticStrings: expect.arrayContaining([{ name: 'output_path', value: 'figures/chart.png' }])
+      staticStrings: expect.arrayContaining([
+        { name: 'output_path', value: analyzedPythonPath('figures/chart.png') }
+      ])
     })
   })
 

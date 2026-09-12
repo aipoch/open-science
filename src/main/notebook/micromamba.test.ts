@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, win32 } from 'node:path'
+import { join, posix, win32 } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -333,7 +333,7 @@ describe('micromambaSpawnEnv', () => {
     'confines all managed Micromamba state to the runtime on %s',
     (platform) => {
       const root = platform === 'win32' ? 'D:\\OpenScience\\runtime' : '/runtime'
-      const runtimePath = platform === 'win32' ? win32 : { join }
+      const runtimePath = platform === 'win32' ? win32 : posix
       const cache = runtimePath.join(root, 'coordinated-pkgs')
       const home = runtimePath.join(root, 'home')
       const env = micromambaSpawnEnv(root, '/ca.pem', {

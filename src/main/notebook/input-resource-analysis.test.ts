@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
+const analyzedPythonPath = (value: string): string =>
+  process.platform === 'win32' ? value.replaceAll('/', '\\') : value
+
 describe('documented input resource forms', () => {
   it.each([
     [
@@ -138,10 +141,14 @@ describe('documented input resource forms', () => {
       ['inputs/a.csv', 'inputs/b.csv']
     ]
   ] as const)('captures %s', async (_name, language, source, reads) => {
+    const expectedReads =
+      language === 'python' && /Path\(|os\.path\.join|pathlib/u.test(source)
+        ? reads.map(analyzedPythonPath)
+        : [...reads]
     await expect(analyzeNotebookSourceFileAccess(language, source)).resolves.toMatchObject({
       readState: 'complete',
       externalState: 'complete',
-      reads,
+      reads: expectedReads,
       reasonCodes: []
     })
   })

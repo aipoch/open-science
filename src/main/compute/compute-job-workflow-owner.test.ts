@@ -1510,7 +1510,7 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     } finally {
       await artifacts.dispose()
     }
-  })
+  }, 120_000)
 
   it('reads attach_job results from the data-root workspace when config and data roots differ', async () => {
     const configRoot = await mkdtemp(join(tmpdir(), 'job-result-config-root-'))

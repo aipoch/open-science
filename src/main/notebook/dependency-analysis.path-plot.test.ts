@@ -8,6 +8,9 @@ import { analyzePythonSources } from './dependency-analysis-python'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 import { reportedPathInput, reportedPathPlots } from './reported-python-path-plot.fixture'
 
+const analyzedPythonPath = (value: string): string =>
+  process.platform === 'win32' ? value.replaceAll('/', '\\') : value
+
 it.each([
   ['Path construction', 'from pathlib import Path\np = Path("inputs/data.csv")'],
   ['aliased Path', 'from pathlib import Path as FilePath\np = FilePath("inputs/data.csv")'],
@@ -68,7 +71,7 @@ it('captures the exact Path input and both reported outputs', async () => {
   expect(
     await analyzeNotebookSourceFileAccess('python', `${reportedPathInput}\n${reportedPathPlots}`)
   ).toMatchObject({
-    reads: ['inputs/sample-groups-666666666666.csv'],
+    reads: [analyzedPythonPath('inputs/sample-groups-666666666666.csv')],
     writes: ['synthetic_groups_bar.png', 'synthetic_groups_pie.png'],
     readState: 'complete',
     writeState: 'complete'

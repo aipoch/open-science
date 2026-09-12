@@ -20,7 +20,9 @@ const reproducibilityOutputUsage = async (
     throw error
   })
   if (!stat) return { sizeBytes: 0, fileCount: 0 }
-  if (!stat.isDirectory()) throw new Error('Invalid reproduced output directory.')
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error('Invalid reproduced output directory.')
+  }
   let sizeBytes = 0
   const entries = await readdir(outputs, { withFileTypes: true })
   for (const entry of entries) {
@@ -36,6 +38,11 @@ const reproducibilityOutputUsage = async (
 // Bounded, regular-file-only reads, including detection of replacement or writes
 // while a kernel's output is being captured. Never follow a final symlink.
 const readReproducibilityOutputFile = async (path: string): Promise<Buffer> => {
+  // Windows CreateFile ignores O_NOFOLLOW, so a symlink must be rejected before open.
+  const identity = await lstat(path)
+  if (identity.isSymbolicLink() || !identity.isFile() || identity.nlink !== 1) {
+    throw new Error('Reproduced output cannot be retained.')
+  }
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
   try {
     const before = await file.stat()
@@ -65,7 +72,10 @@ const writeReproducibilityOutput = async (directory: string, bytes: Buffer): Pro
   if (bytes.length > MAX_REPRODUCIBILITY_OUTPUT_BYTES) return false
   const outputs = join(directory, OUTPUT_DIRECTORY)
   await mkdir(outputs, { recursive: true })
-  if (!(await lstat(outputs)).isDirectory()) throw new Error('Invalid reproduced output directory.')
+  const outputsStat = await lstat(outputs)
+  if (outputsStat.isSymbolicLink() || !outputsStat.isDirectory()) {
+    throw new Error('Invalid reproduced output directory.')
+  }
   const checksum = sha256(bytes)
   const destination = join(outputs, `sha256-${checksum}.bin`)
   const entries = await readdir(outputs, { withFileTypes: true })
@@ -105,7 +115,10 @@ const readRetainedReproducibilityOutput = async (
 ): Promise<Buffer> => {
   if (!/^[a-f0-9]{64}$/u.test(checksum)) throw new Error('Invalid reproduced output checksum.')
   const outputs = join(directory, OUTPUT_DIRECTORY)
-  if (!(await lstat(outputs)).isDirectory()) throw new Error('Invalid reproduced output directory.')
+  const outputsStat = await lstat(outputs)
+  if (outputsStat.isSymbolicLink() || !outputsStat.isDirectory()) {
+    throw new Error('Invalid reproduced output directory.')
+  }
   const bytes = await readReproducibilityOutputFile(join(outputs, `sha256-${checksum}.bin`))
   if (bytes.length !== sizeBytes || sha256(bytes) !== checksum)
     throw new Error('Reproduced output checksum mismatch.')

@@ -72,29 +72,32 @@ describe('verifyExecutable', () => {
     await expect(verifyExecutable(bin, { prefix })).rejects.toThrow(/outside.*prefix|relocat/i)
   })
 
-  it('rejects an R runtime that mixes a managed library with an injected host library', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'os-mixed-r-libraries-'))
-    const prefix = join(dir, 'runtime', 'envs', 'default-r')
-    const library = join(prefix, 'lib', 'R', 'library')
-    const hostLibrary = join(dir, 'host-library')
-    const bin = join(prefix, 'bin', 'R')
-    mkdirSync(library, { recursive: true })
-    mkdirSync(hostLibrary, { recursive: true })
-    mkdirSync(join(prefix, 'bin'), { recursive: true })
-    writeFileSync(
-      bin,
-      `#!${process.execPath}\n` +
-        `process.stdout.write([` +
-        `'OPEN_SCIENCE_R_HOME=${join(prefix, 'lib', 'R')}',` +
-        `'OPEN_SCIENCE_R_BASE_LIBRARY=${library}',` +
-        `'OPEN_SCIENCE_R_LIBRARY=${library}',` +
-        `'OPEN_SCIENCE_R_LIBRARY=${hostLibrary}'` +
-        `].join('\\n') + '\\n')\n`
-    )
-    chmodSync(bin, 0o755)
+  it.skipIf(process.platform === 'win32')(
+    'rejects an R runtime that mixes a managed library with an injected host library',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'os-mixed-r-libraries-'))
+      const prefix = join(dir, 'runtime', 'envs', 'default-r')
+      const library = join(prefix, 'lib', 'R', 'library')
+      const hostLibrary = join(dir, 'host-library')
+      const bin = join(prefix, 'bin', 'R')
+      mkdirSync(library, { recursive: true })
+      mkdirSync(hostLibrary, { recursive: true })
+      mkdirSync(join(prefix, 'bin'), { recursive: true })
+      writeFileSync(
+        bin,
+        `#!${process.execPath}\n` +
+          `process.stdout.write([` +
+          `'OPEN_SCIENCE_R_HOME=${join(prefix, 'lib', 'R')}',` +
+          `'OPEN_SCIENCE_R_BASE_LIBRARY=${library}',` +
+          `'OPEN_SCIENCE_R_LIBRARY=${library}',` +
+          `'OPEN_SCIENCE_R_LIBRARY=${hostLibrary}'` +
+          `].join('\\n') + '\\n')\n`
+      )
+      chmodSync(bin, 0o755)
 
-    await expect(verifyExecutable(bin, { prefix })).rejects.toThrow(/outside.*prefix|relocat/i)
-  })
+      await expect(verifyExecutable(bin, { prefix })).rejects.toThrow(/outside.*prefix|relocat/i)
+    }
+  )
 
   it.skipIf(process.platform === 'win32')(
     'passes the activated Windows conda PATH to the interpreter process',

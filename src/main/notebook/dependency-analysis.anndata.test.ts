@@ -4,6 +4,9 @@ import { analyzePythonSources } from './dependency-analysis-python'
 import { projectNotebookDependencies } from './dependency-projection'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
+const analyzedPythonPath = (value: string): string =>
+  process.platform === 'win32' ? value.replaceAll('/', '\\') : value
+
 it.each(['scanpy', 'anndata', 'anndata.io'])(
   'keeps %s file provenance and object mutation knowledge aligned',
   async (module) => {
@@ -57,7 +60,10 @@ it('does not confuse a module text reader with a Path method', async () => {
       'python',
       'from pathlib import Path\nx = Path("inputs/notes.txt").read_text()'
     )
-  ).toMatchObject({ readState: 'complete', reads: ['inputs/notes.txt'] })
+  ).toMatchObject({
+    readState: 'complete',
+    reads: [analyzedPythonPath('inputs/notes.txt')]
+  })
 })
 
 it.each([

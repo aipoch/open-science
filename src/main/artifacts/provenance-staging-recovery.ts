@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
@@ -46,21 +46,41 @@ type ArtifactStagingReconciliationResult = {
   quarantinedVersionIds: string[]
 }
 
+const directoryMoveRetryCodes = new Set(['EPERM', 'EBUSY', 'EACCES', 'EXDEV', 'EAGAIN'])
+
+const errorCode = (error: unknown): string | undefined =>
+  typeof error === 'object' && error !== null && 'code' in error
+    ? typeof (error as { code?: unknown }).code === 'string'
+      ? (error as { code: string }).code
+      : undefined
+    : undefined
+
 const moveDirectoryIfPresent = async (source: string, destination: string): Promise<boolean> => {
-  try {
-    await rename(source, destination)
-    return true
-  } catch (error) {
-    if (
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      (error as { code?: unknown }).code === 'ENOENT'
-    ) {
-      return false
+  const attemptRename = async (): Promise<'moved' | 'missing' | 'retry'> => {
+    try {
+      await rename(source, destination)
+      return 'moved'
+    } catch (error) {
+      const code = errorCode(error)
+      if (code === 'ENOENT') return 'missing'
+      if (code && directoryMoveRetryCodes.has(code)) return 'retry'
+      throw error
     }
-    throw error
   }
+  const first = await attemptRename()
+  if (first === 'moved') return true
+  if (first === 'missing') return false
+  for (let attempt = 1; attempt < 8; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 25 * attempt))
+    const next = await attemptRename()
+    if (next === 'moved') return true
+    if (next === 'missing') return false
+  }
+  // Windows antivirus and open handles can keep rename(EPERM) after retries. Same-volume copy
+  // then delete is the established fallback used by managed Codex install.
+  await cp(source, destination, { recursive: true })
+  await rm(source, { recursive: true, force: true })
+  return true
 }
 
 export class ArtifactProvenanceStagingRecovery {

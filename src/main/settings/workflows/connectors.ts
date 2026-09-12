@@ -69,6 +69,19 @@ type WorkflowResult<Method extends keyof ConnectorSettingsWorkflowStore> = Promi
   Awaited<ReturnType<ConnectorSettingsWorkflowStore[Method]>>
 >
 
+const SPAWN_FAILURE_CODES = new Set(['ENOENT', 'EACCES', 'ENOEXEC'])
+
+const spawnFailureCode = (error: unknown): string | undefined => {
+  let current = error
+  for (let depth = 0; depth < 6; depth++) {
+    if (!current || typeof current !== 'object') return undefined
+    const code = (current as NodeJS.ErrnoException).code
+    if (code && SPAWN_FAILURE_CODES.has(code)) return code
+    current = (current as { cause?: unknown }).cause
+  }
+  return undefined
+}
+
 // Owns Connector mutation follow-up ordering, including the security barrier and derived projection.
 // Every safety-critical effect is required; unsupported hosts must inject an explicit no-op adapter.
 class ConnectorSettingsWorkflows {
@@ -149,7 +162,7 @@ class ConnectorSettingsWorkflows {
       if (
         server.transport === 'stdio' &&
         progress.stage === 'handshake' &&
-        ['ENOENT', 'EACCES', 'ENOEXEC'].includes((error as NodeJS.ErrnoException)?.code ?? '')
+        spawnFailureCode(error)
       ) {
         progress.stage = 'startup'
       }

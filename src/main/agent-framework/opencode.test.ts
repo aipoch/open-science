@@ -228,7 +228,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     })
 
     const plugin = config.configFiles?.find((file) =>
-      file.path.endsWith('plugins/open-science-opencode-go-session.js')
+      file.path.endsWith(join('plugins', 'open-science-opencode-go-session.js'))
     )
     expect(plugin?.content).toContain('new Set(["open-science-go-model"])')
     expect(plugin?.content).not.toContain('open-science-deepseek-model')
@@ -251,7 +251,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     )
 
     const plugin = config.configFiles?.find((file) =>
-      file.path.endsWith('plugins/open-science-opencode-go-session.js')
+      file.path.endsWith(join('plugins', 'open-science-opencode-go-session.js'))
     )
     expect(plugin?.content).toContain('new Set([])')
   })

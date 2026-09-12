@@ -70,6 +70,18 @@ import { toErrorMessage } from '../error-message'
 import { buildManagedRuntimeProcessEnvironment } from './process-environment'
 import { withPipInstallEvidence } from './pip-install-evidence'
 
+const terminatedPackageProcessErrors = new WeakSet<object>()
+
+export const packageProcessTreeTerminated = (error: unknown): boolean =>
+  Boolean(error && typeof error === 'object' && terminatedPackageProcessErrors.has(error))
+
+const markPackageProcessTreeTerminated = <T>(error: T): T => {
+  if (error && typeof error === 'object') {
+    terminatedPackageProcessErrors.add(error)
+  }
+  return error
+}
+
 export type InstallRequest = OptionalProjectIdScope & {
   language: NotebookLanguage
   packages: string[]
@@ -1197,13 +1209,17 @@ export const defaultSpawn = (
           if (!confirmed) return
           if (terminationReason === 'abort') {
             rejectOnce(
-              signal?.reason ?? new DOMException('Package operation cancelled.', 'AbortError')
+              markPackageProcessTreeTerminated(
+                signal?.reason ?? new DOMException('Package operation cancelled.', 'AbortError')
+              )
             )
           } else {
             rejectOnce(
-              Object.assign(new Error(`Package operation timed out after ${timeoutMs}ms.`), {
-                code: 'PACKAGE_OPERATION_TIMEOUT'
-              })
+              markPackageProcessTreeTerminated(
+                Object.assign(new Error(`Package operation timed out after ${timeoutMs}ms.`), {
+                  code: 'PACKAGE_OPERATION_TIMEOUT'
+                })
+              )
             )
           }
         })
@@ -1220,14 +1236,18 @@ export const defaultSpawn = (
         if (!confirmed) return
         if (terminationReason === 'abort') {
           rejectOnce(
-            signal?.reason ?? new DOMException('Package operation cancelled.', 'AbortError')
+            markPackageProcessTreeTerminated(
+              signal?.reason ?? new DOMException('Package operation cancelled.', 'AbortError')
+            )
           )
           return
         }
         rejectOnce(
-          Object.assign(new Error(`Package operation timed out after ${timeoutMs}ms.`), {
-            code: 'PACKAGE_OPERATION_TIMEOUT'
-          })
+          markPackageProcessTreeTerminated(
+            Object.assign(new Error(`Package operation timed out after ${timeoutMs}ms.`), {
+              code: 'PACKAGE_OPERATION_TIMEOUT'
+            })
+          )
         )
       })
     })

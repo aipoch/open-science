@@ -8,13 +8,14 @@ import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { ArtifactReproducibilityEnvironmentRequirement } from '../../shared/artifact-provenance'
 import type { NotebookEnvironmentLock } from '../../shared/notebook'
-import { micromambaCacheLockKey } from './micromamba-cache'
+import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
 import { withExclusiveCacheLock } from './pkgs-cache-lock'
 import type { NotebookSessionExecutor } from './session-aggregate'
 import {
   createNotebookReproductionRuntime,
   type CreateNotebookReproductionRuntimeDependencies
 } from './reproduction-runtime'
+import { pythonBin, rScriptBin } from './runtime-paths'
 
 const serializeLock = (
   platform: string = process.platform,
@@ -456,7 +457,7 @@ describe('Notebook reproduction runtime', () => {
     ])
     const argv = runMicromamba.mock.calls[0]![0]
     expect(runMicromamba.mock.calls[0]![1]?.CONDA_PKGS_DIRS).toBe(
-      join(storageRoot, 'runtime', 'pkgs')
+      selectMicromambaCache(join(storageRoot, 'runtime')).path
     )
     expect(argv).toEqual(
       expect.arrayContaining([
@@ -940,7 +941,11 @@ describe('Notebook reproduction runtime', () => {
     const requests = execute.mock.calls.map(([request]) => request)
     expect(requests.map(({ language }) => language)).toEqual(['python', 'r'])
     expect(requests[0]!.environment).not.toBe(requests[1]!.environment)
-    expect(requests[0]!.resolvedInterpreter?.command).toContain('/bin/python')
-    expect(requests[1]!.resolvedInterpreter?.command).toContain('/bin/Rscript')
+    expect(requests[0]!.resolvedInterpreter?.command).toBe(
+      pythonBin(join(attemptRoot, 'environments', requirements[0]!.lockChecksum))
+    )
+    expect(requests[1]!.resolvedInterpreter?.command).toBe(
+      rScriptBin(join(attemptRoot, 'environments', requirements[1]!.lockChecksum))
+    )
   })
 })

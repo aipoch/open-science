@@ -1512,7 +1512,7 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
     expect(argvs[0]).toEqual(expect.arrayContaining(['--file', expect.stringContaining(checksum)]))
     expect(nativeSpawn).toHaveBeenCalledOnce()
     expect(nativeWorker).toHaveBeenCalledWith(
-      expect.stringMatching(/python$/u),
+      expect.stringMatching(/python(\.exe)?$/u),
       expect.arrayContaining(['--require-hashes']),
       expect.any(Object),
       expect.any(Function),
