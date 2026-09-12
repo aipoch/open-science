@@ -1785,7 +1785,6 @@ describe('R startup authorization admission', () => {
         setExecutionActive: backend.setExecutionActive,
         annotateStderr: (stderr: string) => stderr,
         resetNetworkConnections: backend.resetNetworkConnections,
-        setExecutionActive: backend.setExecutionActive,
         confirmProcessTreeTermination: async () => true,
         cleanup: async () => {
           fixtureDirectories.push(command.cwd)

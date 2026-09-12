@@ -1,5 +1,3 @@
-import { join } from 'node:path'
-
 import { strFromU8, unzipSync } from 'fflate'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
