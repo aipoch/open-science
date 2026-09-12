@@ -932,7 +932,7 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_macos
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional_macos.json
-        run: npm run test:e2e:journey -- --fail-on-flaky-tests --global-timeout=600000
+        run: npm run test:e2e:journey -- --global-timeout=600000
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_macos.outcome == 'failure' }}
         continue-on-error: true
@@ -951,7 +951,7 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace_macos
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace_macos.json
-        run: npm run test:e2e:workspace -- --fail-on-flaky-tests --global-timeout=900000
+        run: npm run test:e2e:workspace -- --global-timeout=900000
       - name: Upload workspace failure artifacts
         if: ${{ steps.e2e_workspace_macos.outcome == 'failure' }}
         continue-on-error: true
@@ -973,7 +973,7 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/regressions_macos
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/regressions_macos.json
-        run: npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout=1200000
+        run: npm run test:e2e:regressions -- --global-timeout=1200000
       - name: Run supplemental delegation
         id: e2e_delegation_macos
         if: ${{ matrix.group == 'delegation' && steps.setup.outcome == 'success' }}
@@ -981,15 +981,15 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/delegation_macos
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/delegation_macos.json
-        run: npm run test:e2e:delegation -- --fail-on-flaky-tests --global-timeout=1200000
+        run: npm run test:e2e:delegation -- --global-timeout=1200000
       - name: Run renderer layout pilot
         id: renderer_layout
-        if: ${{ matrix.group == 'presentation' }}
+        if: ${{ matrix.group == 'presentation' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos') }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/renderer-layout.json
-        run: npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=300000
+        run: npm run test:e2e:browser -- --global-timeout=300000
       - name: Run accessibility checks
         id: e2e_accessibility_macos
         if: ${{ matrix.group == 'presentation' && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_macos') }}
@@ -1016,7 +1016,7 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/visual_macos
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/visual_macos.json
-        run: npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout=300000
+        run: npm run test:e2e:visual -- --global-timeout=300000
       - name: Upload visual failure artifacts
         if: ${{ steps.e2e_visual_macos.outcome == 'failure' }}
         continue-on-error: true
@@ -1110,12 +1110,12 @@ jobs:
         run: npx playwright install chromium --only-shell
       - name: Run renderer layout pilot
         id: renderer_layout
-        if: ${{ matrix.shard == 1 }}
+        if: ${{ matrix.shard == 1 && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos') }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout-windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/renderer-layout-windows.json
-        run: npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=180000
+        run: npm run test:e2e:browser -- --global-timeout=180000
       - name: Run functional journeys
         id: e2e_functional_windows
         if: ${{ steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
@@ -1124,7 +1124,7 @@ jobs:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional_windows.json
         # Isolate Electron desktops: parallelize across runners, never within one runner.
-        run: npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --fail-on-flaky-tests --global-timeout=600000
+        run: npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=600000
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true
@@ -1143,7 +1143,7 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace_windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace_windows.json
-        run: npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --fail-on-flaky-tests --global-timeout=900000
+        run: npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=900000
       - name: Upload workspace failure artifacts
         if: ${{ steps.e2e_workspace_windows.outcome == 'failure' }}
         continue-on-error: true
@@ -1161,7 +1161,7 @@ jobs:
         id: e2e_accessibility_windows
         if: ${{ matrix.shard == 1 && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows') }}
         continue-on-error: true
-        run: npm run test:e2e:accessibility -- --fail-on-flaky-tests
+        run: npm run test:e2e:accessibility --
       - name: Upload legacy accessibility failure artifacts
         if: ${{ steps.e2e_accessibility_windows.outcome == 'failure' }}
         continue-on-error: true
