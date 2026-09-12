@@ -57,10 +57,44 @@ jobs:
             echo "Latest successful Windows full coverage is ${last_successful_sha:-unavailable}; testing $GITHUB_SHA."
           fi
 
+  windows_dependencies:
+    name: Prepare Windows test dependencies
+    needs: plan
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'notebook-mutation') }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      node_version: ${{ steps.node.outputs.node-version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        id: node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Pack dependencies
+        run: node scripts/ci/e2e-setup-snapshot.mjs pack-dependencies "$RUNNER_TEMP/windows-dependencies"
+      - name: Upload dependencies
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-dependencies-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/windows-dependencies/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
   windows_full_test:
     name: Windows full test (${{ matrix.shard }}/5)
-    needs: plan
-    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}
+    needs: [plan, windows_dependencies]
+    if: ${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -76,12 +110,18 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: ${{ needs.windows_dependencies.outputs.node_version }}
+          package-manager-cache: false
 
-          cache: npm
+      - name: Download dependencies
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.windows_dependencies.outputs.artifact_id }}
+          path: ${{ runner.temp }}/windows-dependencies/
+          merge-multiple: true
 
-      - name: Install dependencies
-        run: node scripts/ci/npm-ci.mjs
+      - name: Restore dependencies
+        run: node scripts/ci/e2e-setup-snapshot.mjs restore-dependencies "$RUNNER_TEMP/windows-dependencies"
 
       - name: Test complete suite shard
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
@@ -182,8 +222,8 @@ jobs:
 
   notebook_mutation:
     name: Windows Notebook controlled mutations
-    needs: plan
-    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'notebook-mutation') }}
+    needs: [plan, windows_dependencies]
+    if: ${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'notebook-mutation') }}
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
@@ -194,10 +234,16 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: node scripts/ci/npm-ci.mjs
+          node-version: ${{ needs.windows_dependencies.outputs.node_version }}
+          package-manager-cache: false
+      - name: Download dependencies
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.windows_dependencies.outputs.artifact_id }}
+          path: ${{ runner.temp }}/windows-dependencies/
+          merge-multiple: true
+      - name: Restore dependencies
+        run: node scripts/ci/e2e-setup-snapshot.mjs restore-dependencies "$RUNNER_TEMP/windows-dependencies"
       - name: Build Electron application
         run: npm run build:e2e
       - name: Run controlled mutations

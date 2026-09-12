@@ -91,6 +91,7 @@ describe('post-merge Windows validation', () => {
     const build = readWorkflow('build.yml')
     const workflow = readWorkflow('windows-full-test.yml')
     const plan = workflow.jobs.plan
+    const dependencies = workflow.jobs.windows_dependencies
     const job = workflow.jobs.windows_full_test
     const sandbox = workflow.jobs.notebook_sandbox
     const dispatch = workflow.on?.workflow_dispatch
@@ -107,12 +108,23 @@ describe('post-merge Windows validation', () => {
       'event=schedule&status=success'
     )
     expect(job).toMatchObject({
-      needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
+      needs: ['plan', 'windows_dependencies'],
+      if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
       env: { VITEST_WINDOWS_FULL_TEST: '1' },
       'runs-on': 'windows-latest',
       'timeout-minutes': 60
     })
+    expect(dependencies).toMatchObject({
+      needs: 'plan',
+      'runs-on': 'windows-latest',
+      outputs: {
+        artifact_id: '${{ steps.upload.outputs.artifact-id }}',
+        node_version: '${{ steps.node.outputs.node-version }}'
+      }
+    })
+    expect(findStep(dependencies, 'Install dependencies').run).toBe('node scripts/ci/npm-ci.mjs')
+    expect(findStep(dependencies, 'Pack dependencies').run).toContain('pack-dependencies')
+    expect(findStep(job, 'Restore dependencies').run).toContain('restore-dependencies')
     expect(job['continue-on-error']).toBeUndefined()
     expect(job.strategy?.matrix).toEqual({
       shard: "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5]') }}"

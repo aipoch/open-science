@@ -76,8 +76,9 @@ it.each(['regressions', 'delegation'])(
     }
     const steps = workflow.jobs.macos_e2e.steps
     const execution = steps.find(({ id }) => id === `e2e_${group}_macos`)!
+    const executionGroup = group === 'delegation' ? 'journeys' : group
     expect(execution.if).toBe(
-      `\${{ matrix.group == '${group}' && steps.setup.outcome == 'success' }}`
+      `\${{ matrix.group == '${executionGroup}' && steps.setup.outcome == 'success' }}`
     )
     expect(execution.run).toContain(`npm run test:e2e:${group} -- --fail-on-flaky-tests`)
     const enforce = steps.find(({ name }) => name === 'Enforce selected macOS checks')!
@@ -92,7 +93,7 @@ it.each(['regressions', 'delegation'])(
               'skipped'
             ])
           ),
-          E2E_GROUP: group,
+          E2E_GROUP: executionGroup,
           [`E2E_${group.toUpperCase()}_OUTCOME`]: outcome
         }
       })
