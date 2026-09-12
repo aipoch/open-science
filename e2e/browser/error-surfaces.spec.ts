@@ -73,10 +73,35 @@ test('storage recovery and Undo share the global stack without horizontal overfl
   await expect(undo).toBeVisible()
   await undo.scrollIntoViewIfNeeded()
   expect(await stack.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
+  const undoStack = stack.getByTestId('permission-undo-stack')
+  await expect(undoStack).toHaveCSS('pointer-events', 'none')
+  await expect(undo).toHaveCSS('pointer-events', 'auto')
+  // The root is wider than its cards. Its empty left edge must hit the page below.
+  expect(
+    await undoStack.evaluate((el) => {
+      const rect = el.getBoundingClientRect()
+      const hit = document.elementFromPoint(rect.left + 1, (rect.top + rect.bottom) / 2)
+      return hit !== null && !el.contains(hit)
+    })
+  ).toBe(true)
   const close = undo.locator('button[aria-label]')
   await close.click()
   await expect(undo).toHaveCount(0)
   const recovery = stack.getByTestId('session-persistence-alert')
   await recovery.getByTestId('session-persistence-retry').click()
   await expect(page.getByTestId('retry-count')).toHaveText('1')
+})
+
+test('persistent catalog recovery leaves the Settings control reachable', async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 700 })
+  await page.goto('/error-surfaces.html?catalog')
+  const recovery = page.locator('[data-testid="session-persistence-alert"]').last()
+  await expect(recovery).toBeVisible()
+  const rect = (await recovery.boundingBox())!
+  expect(rect.y + rect.height).toBeLessThanOrEqual(700)
+  expect(rect.y).toBeGreaterThan(100)
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  await expect(page.getByTestId('retry-count')).toHaveText('1')
+  await recovery.getByTestId('session-persistence-retry').click()
+  await expect(page.getByTestId('retry-count')).toHaveText('2')
 })

@@ -50,7 +50,7 @@ const ActionToast = ({
         if (!event.currentTarget.contains(event.relatedTarget)) setFocusedWithin(false)
       }}
       className={cn(
-        'fixed right-3 top-3 z-toast flex w-[min(24rem,calc(100vw-1.5rem))] max-h-[calc(100svh-1.5rem)] flex-wrap items-start gap-3 overflow-y-auto rounded-lg border border-border bg-card p-4 text-sm text-foreground shadow-dialog',
+        'pointer-events-auto fixed right-3 top-3 z-toast flex w-[min(24rem,calc(100vw-1.5rem))] max-h-[calc(100svh-1.5rem)] flex-wrap items-start gap-3 overflow-y-auto rounded-lg border border-border bg-card p-4 text-sm text-foreground shadow-dialog',
         className
       )}
     >
@@ -90,7 +90,7 @@ const ActionToast = ({
 const ActionToastStack = ({ children }: { children: ReactNode }): React.JSX.Element => (
   <div
     data-action-toast-stack
-    className="pointer-events-none fixed right-3 top-3 z-toast flex max-h-[calc(100svh-1.5rem)] w-[min(24rem,calc(100vw-1.5rem))] flex-col gap-2 overflow-y-auto [&>div]:pointer-events-auto [&>div]:static [&>div]:w-full [&>div]:shrink-0"
+    className="pointer-events-none fixed right-3 top-3 z-toast flex max-h-[calc(100svh-1.5rem)] w-[min(24rem,calc(100vw-1.5rem))] flex-col gap-2 overflow-y-auto [&>div]:static [&>div]:w-full [&>div]:shrink-0"
   >
     {children}
   </div>

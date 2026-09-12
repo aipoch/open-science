@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { initI18n } from '@/i18n'
 import { ErrorNotice } from '@/components/error-notice'
 import { ActionToast, ActionToastStack } from '@/components/ActionToast'
+import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
@@ -121,6 +122,20 @@ export function Fixture(): React.JSX.Element {
         onCancel={() => setConfirm(false)}
         onConfirm={() => setAttempts(attempts + 1)}
       />
+      {query.has('catalog') ? (
+        <>
+          <Button className="fixed right-3 top-3" onClick={() => setRetry(retry + 1)}>
+            Open Settings
+          </Button>
+          <SessionCatalogRecoveryAlert
+            recovery={{
+              kind: 'damaged-authority',
+              affectedFiles: [{ projectId: 'research', fileName: 'conversation.json' }]
+            }}
+            onRetry={() => setRetry(retry + 1)}
+          />
+        </>
+      ) : null}
       {showToasts ? (
         <ActionToastStack>
           <ActionToast

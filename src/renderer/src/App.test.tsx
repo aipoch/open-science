@@ -1207,6 +1207,8 @@ describe('App startup routing', () => {
 
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert).not.toBeNull()
+    expect(alert?.closest('[data-action-toast-stack]')).toBeNull()
+    expect(alert?.classList.contains('bottom-3')).toBe(true)
     expect(alert?.querySelector('section')?.classList.contains('bg-card')).toBe(true)
     expect(alert?.classList.contains('bg-bg-000')).toBe(false)
     expect(alert?.classList.contains('bg-bg-100')).toBe(false)

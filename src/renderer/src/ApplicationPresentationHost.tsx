@@ -230,14 +230,15 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
             </WorkspaceMessageQueueProvider>
           </WorkspaceComposerDraftsProvider>
         </WorkspaceAgentRuntimeProvider>
+        {sessions.catalogRecovery.kind !== 'ready' ? (
+          <SessionCatalogRecoveryAlert
+            recovery={sessions.catalogRecovery}
+            onRetry={sessions.retryLoad}
+            onOpenRecoveryFolder={window.api.sessions.openRecoveryFolder}
+          />
+        ) : null}
         <ActionToastStack>
-          {sessions.catalogRecovery.kind !== 'ready' ? (
-            <SessionCatalogRecoveryAlert
-              recovery={sessions.catalogRecovery}
-              onRetry={sessions.retryLoad}
-              onOpenRecoveryFolder={window.api.sessions.openRecoveryFolder}
-            />
-          ) : sessions.loadError ? (
+          {sessions.catalogRecovery.kind !== 'ready' ? null : sessions.loadError ? (
             <SessionPersistenceAlert
               title={t('Saved conversations could not be loaded')}
               message={sessions.loadError}
