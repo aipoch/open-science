@@ -295,6 +295,14 @@ const readSkillDocument = async (
         ) {
           continue
         }
+        // Agent-facing projections may be supplied by CodeBuddy without frontmatter. Preserve the
+        // existing direct-directory contract; frontmatter is required only for namespaced lookup.
+        if (directoryName === name) {
+          skillDir = candidateDir
+          documentPath = candidatePath
+          documentMetadata = candidateMetadata
+          break
+        }
         const { fields } = parseFrontmatter(
           await readSkillCatalogFrontmatter(candidatePath, candidateMetadata.size)
         )
