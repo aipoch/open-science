@@ -988,7 +988,12 @@ describe('production delegated-work composition', () => {
           expect(sendAppContinuation).not.toHaveBeenCalled()
         }
         await prompt(nextPromptId)
-        await expect.poll(() => harness.execution.controls()).toHaveLength(receipts.length)
+        await expect
+          .poll(async () => {
+            await vi.advanceTimersByTimeAsync(50)
+            return harness.execution.controls()
+          })
+          .toHaveLength(receipts.length)
         const child = receipts.at(-1)!
         harness.execution.control(child.attemptId).accept()
         harness.execution.control(child.attemptId).complete('new result')
