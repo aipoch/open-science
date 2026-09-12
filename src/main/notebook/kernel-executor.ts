@@ -5,6 +5,7 @@ import { readFile, rm, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { kernelExecutableReadRoot } from './kernel-executable-read-root'
+import { resolveExternalRLibrary } from './external-r-library'
 import { createInterface, type Interface } from 'node:readline'
 import { Transform, type TransformCallback } from 'node:stream'
 
@@ -1000,6 +1001,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
       })
     }
     if (request.signal?.aborted) throw new NotebookExecutionCancelledError()
+    const rLibrary = kind === 'r' ? request.resolvedInterpreter?.rLibrary : undefined
+    if (rLibrary && (await resolveExternalRLibrary(rLibrary)) !== rLibrary) {
+      throw new Error('The authorized R package library changed. Select and authorize it again.')
+    }
     const sandboxed = this.processSandbox
       ? await this.processSandbox.wrap({
           executable: invocation.executable,
@@ -1020,6 +1025,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
             readOnlyRoots: presentPaths([
               request.runtimeRoot,
               request.resolvedInterpreter?.condaPrefix ?? '',
+              ...(kind === 'r' ? [request.resolvedInterpreter?.rLibrary ?? ''] : []),
               request.inputRoot ?? '',
               kernelExecutableReadRoot(invocation.executable, kind, this.platform),
               loopPath,
@@ -1193,6 +1199,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
       ...buildNotebookKernelEnvironment(this.platform),
       ...workloadCacheEnv,
       ...processOwnershipEnv,
+      ...(kind === 'r' && request.resolvedInterpreter?.rLibrary
+        ? { R_LIBS_USER: request.resolvedInterpreter.rLibrary }
+        : {}),
       // Force a non-interactive backend. Inheriting MPLBACKEND can load an arbitrary module from the
       // host environment and would bypass the environment-isolation policy below.
       MPLBACKEND: 'Agg',

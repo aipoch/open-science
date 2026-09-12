@@ -32,13 +32,20 @@ export type NotebookSessionResolvedInterpreter = {
   command: string
   args?: string[]
   condaPrefix?: string
+  /** Transient execution context from current personal-library consent, never a wire binding. */
+  rLibrary?: string
 }
 
 export const notebookInterpreterIdentity = (
   interpreter: NotebookSessionResolvedInterpreter | undefined
 ): string =>
   interpreter
-    ? [interpreter.command, ...(interpreter.args ?? []), interpreter.condaPrefix ?? ''].join('\n')
+    ? [
+        interpreter.command,
+        ...(interpreter.args ?? []),
+        interpreter.condaPrefix ?? '',
+        ...(interpreter.rLibrary ? [interpreter.rLibrary] : [])
+      ].join('\n')
     : ''
 
 const enqueueSerialTask = <T>(

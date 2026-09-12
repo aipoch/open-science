@@ -3,6 +3,7 @@ import { realpathSync } from 'node:fs'
 import type { NotebookCell, NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import { NotebookEnvironmentOperations } from './environment-operations'
+import { resolveExternalRLibrary } from './external-r-library'
 import { detectManagedRuntimeMutation } from './managed-runtime-guard'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
 import {
@@ -155,7 +156,15 @@ class NotebookDataExecutionAdmissionOwner {
     } else if (binding && (binding.status ?? 'active') !== 'active') {
       rejection = bindingUnavailableError(cell.language, binding)
     } else if (binding?.resolvedInterpreter) {
-      resolvedInterpreter = binding.resolvedInterpreter
+      try {
+        const rLibrary = await this.externalRLibrary(cell.language, binding)
+        resolvedInterpreter = {
+          ...binding.resolvedInterpreter,
+          ...(rLibrary ? { rLibrary } : {})
+        }
+      } catch (error) {
+        rejection = error
+      }
     } else {
       try {
         if (
@@ -200,7 +209,7 @@ class NotebookDataExecutionAdmissionOwner {
     return this.options.environmentOperations.runShared(
       'execution',
       admission.route.environment,
-      () => {
+      async () => {
         const currentRoute = this.route(session, admission.language)
         const currentBinding = session.runtimeBinding(admission.language)
         if (
@@ -227,6 +236,16 @@ class NotebookDataExecutionAdmissionOwner {
         if (currentBinding && (currentBinding.status ?? 'active') !== 'active') {
           return operation(bindingUnavailableError(admission.language, currentBinding))
         }
+        if (admission.rejection === undefined) {
+          try {
+            const rLibrary = await this.externalRLibrary(admission.language, currentBinding)
+            if (rLibrary !== admission.resolvedInterpreter?.rLibrary) {
+              return operation(bindingChangedError(admission.language))
+            }
+          } catch (error) {
+            return operation(error)
+          }
+        }
         return operation(
           admission.rejection instanceof NotebookRuntimeRepairRequiredError
             ? undefined
@@ -234,6 +253,23 @@ class NotebookDataExecutionAdmissionOwner {
         )
       }
     )
+  }
+
+  private async externalRLibrary(
+    language: NotebookLanguage,
+    binding: NotebookSessionRuntimeBinding | undefined
+  ): Promise<string | undefined> {
+    if (language !== 'r' || binding?.source !== 'external') return undefined
+    const enablement = await this.options.resolveRuntimeEnablement('r')
+    const library = enablement?.installAuthorized[binding.runtimeId]
+      ? enablement.installLibraries?.[binding.runtimeId]
+      : undefined
+    if (!library) return undefined
+    // Consent stores a physical path. Do not follow a subsequently substituted symlink/junction.
+    if ((await resolveExternalRLibrary(library)) !== library) {
+      throw new Error('The authorized R package library changed. Select and authorize it again.')
+    }
+    return library
   }
 
   private async isDefaultEnvironmentDisabled(

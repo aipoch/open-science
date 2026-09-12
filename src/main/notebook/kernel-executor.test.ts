@@ -2419,6 +2419,60 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
   })
 })
 
+describe.skipIf(!process.env.OPEN_SCIENCE_TEST_RSCRIPT || !process.env.OPEN_SCIENCE_TEST_R_LIBRARY)(
+  'external R personal library integration',
+  () => {
+    it('loads installed glue through a read-only library grant and replaces the kernel after revocation', async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-external-r-library-'))
+      const library = realpathSync(process.env.OPEN_SCIENCE_TEST_R_LIBRARY!)
+      const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => ({
+        executable: invocation.executable,
+        args: invocation.args,
+        env: invocation.env,
+        annotateStderr: (stderr) => stderr,
+        cleanup: async () => ({
+          processesTerminated: true,
+          networkClosed: true,
+          temporaryResourcesRemoved: true
+        })
+      }))
+      const executor = new NotebookKernelExecutor({
+        rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+        processSandbox: { wrap }
+      })
+      const request = {
+        ...baseRequest(cwdDir),
+        language: 'r' as const,
+        sessionId: 'library-session',
+        projectId: 'library-project',
+        resolvedInterpreter: { command: process.env.OPEN_SCIENCE_TEST_RSCRIPT!, rLibrary: library }
+      }
+      try {
+        const loaded = await executor.execute({
+          ...request,
+          code: 'library(glue); cat(glue::glue("loaded {1 + 1}"))'
+        })
+        expect(loaded).toMatchObject({ status: 'completed', stdout: 'loaded 2' })
+        const invocation = wrap.mock.calls[0][0]
+        expect(invocation.env.R_LIBS_USER).toBe(library)
+        expect(invocation.filesystem.readOnlyRoots).toContain(library)
+        expect(invocation.filesystem.readWriteRoots).not.toContain(library)
+        const oldChild = procFor(executor, 'r')!.child
+        const revoked = await executor.execute({
+          ...request,
+          resolvedInterpreter: { command: request.resolvedInterpreter.command },
+          code: 'cat("glue" %in% loadedNamespaces())'
+        })
+        expect(revoked).toMatchObject({ status: 'completed', stdout: 'FALSE' })
+        expect(procFor(executor, 'r')!.child).not.toBe(oldChild)
+        expect(wrap.mock.calls[1][0].filesystem.readOnlyRoots).not.toContain(library)
+      } finally {
+        await executor.shutdown()
+      }
+    })
+  }
+)
+
 describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (real R loop)', () => {
   it('bounds R output before it crosses the loop protocol', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-output-limit-'))
@@ -3486,6 +3540,27 @@ describe('NotebookKernelExecutor spawn env', () => {
     expect(env.OPEN_SCIENCE_R_ENV_PREFIX).toBeUndefined()
     expect(env.PATH).toBe(process.env.PATH)
   })
+
+  it.each(['win32', 'darwin', 'linux'] as const)(
+    'exposes the authorized personal library only to the external R kernel on %s',
+    (platform) => {
+      const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE, platform })
+      const request = {
+        ...baseRequest('/tmp/os-r-library'),
+        code: 'x',
+        resolvedInterpreter: { command: '/external/Rscript', rLibrary: '/personal/library' }
+      }
+      const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
+      vi.stubEnv('R_LIBS_USER', '/unrelated/host-library')
+      try {
+        expect(buildEnv('r', request, '/tmp/figs').R_LIBS_USER).toBe('/personal/library')
+        expect(buildEnv('python', request, '/tmp/figs').R_LIBS_USER).toBeUndefined()
+        expect(buildEnv('repl', request, '/tmp/figs').R_LIBS_USER).toBeUndefined()
+      } finally {
+        vi.unstubAllEnvs()
+      }
+    }
+  )
 
   it('activates an external Windows conda R interpreter with its own DLL paths', () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE, platform: 'win32' })
