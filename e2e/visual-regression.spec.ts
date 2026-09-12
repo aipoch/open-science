@@ -358,7 +358,8 @@ test('keeps representative conversation, project, and recovery states visually s
     await completedSessionDismiss.click()
     await expect(completedSessionDismiss).toBeHidden()
   }
-  const recoveryAction = recoveryAlert.getByRole('button', {
+  const recoveryNotice = recoveryAlert.locator('..')
+  const recoveryAction = recoveryNotice.getByRole('button', {
     name: 'View affected conversations'
   })
   const recoveryMessage = recoveryAlert.locator('p').nth(1)
