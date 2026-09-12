@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ProvisionStatus } from '../../../../shared/notebook-env'
+import type { NotebookNetworkStatus } from '../../../../shared/notebook-network'
 import type {
   DiscoveredInterpreter,
   EnvPackage,
@@ -155,6 +156,7 @@ beforeEach(() => {
   ;(window as unknown as { api: unknown }).api = {
     platform: 'linux',
     settings: {
+      getNotebookNetworkStatus: vi.fn().mockResolvedValue({ kind: 'ready', warnings: [] }),
       getWsl2BashPreviewStatus: vi.fn().mockResolvedValue({
         available: false,
         reason: 'unsupported-platform'
@@ -221,6 +223,85 @@ const click = async (el: Element | null): Promise<void> => {
 }
 
 describe('RuntimesPanel', () => {
+  it.each<NotebookNetworkStatus>([
+    { kind: 'setupRequired', platform: 'win32', reasons: ['windowsProfileMissing'] },
+    { kind: 'checking' },
+    { kind: 'error', reason: 'runtimeFailure' },
+    { kind: 'unsupported', platform: 'win32' }
+  ])('does not offer R verification while network protection is $kind', async (status) => {
+    Object.assign(window.api, { platform: 'win32' })
+    Object.assign(window.api.settings, {
+      getNotebookNetworkStatus: vi.fn().mockResolvedValue(status)
+    })
+    const managed = {
+      ...rEnvs[0],
+      provenance: 'app-managed',
+      condaEnv: 'default-r',
+      runnable: true
+    }
+    listEnvironments.mockResolvedValue({ python: pythonEnvs, r: [managed] })
+    const authorize = vi
+      .fn()
+      .mockRejectedValue(new Error('Enable protected mode before verifying R access.'))
+    Object.assign(window.api.runtime, { setSandboxAccess: authorize })
+    const openNetwork = vi.fn()
+    await render(undefined, undefined, openNetwork)
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Authorize and verify'
+    )
+    await click(button ?? null)
+    expect(container.textContent).not.toContain('Enable protected mode before verifying R access.')
+    expect(authorize).not.toHaveBeenCalled()
+    expect(button?.disabled).toBe(true)
+    expect(container.textContent).toContain(
+      'R access verification requires network protection to be ready.'
+    )
+    const remove = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Remove R access'
+    )
+    expect(remove?.disabled).toBe(false)
+    await click(
+      container.querySelector('[data-testid="notebook-network-protection-banner"] button')
+    )
+    expect(openNetwork).toHaveBeenCalledOnce()
+  })
+
+  it('enables R verification after recheck confirms that protection is ready', async () => {
+    Object.assign(window.api, { platform: 'win32' })
+    const getStatus = vi.fn().mockResolvedValue({
+      kind: 'setupRequired',
+      platform: 'win32',
+      reasons: ['windowsProfileMissing']
+    })
+    Object.assign(window.api.settings, { getNotebookNetworkStatus: getStatus })
+    listEnvironments.mockResolvedValue({
+      python: [],
+      r: [
+        {
+          ...rEnvs[0],
+          provenance: 'app-managed',
+          condaEnv: 'default-r',
+          runnable: true
+        }
+      ]
+    })
+    const authorize = vi.fn().mockResolvedValue({ cancelled: false })
+    Object.assign(window.api.runtime, { setSandboxAccess: authorize })
+    await render(undefined, undefined, vi.fn())
+    const findButton = (name: string): HTMLButtonElement =>
+      Array.from(container.querySelectorAll('button')).find(
+        (element) => element.textContent === name
+      )!
+    expect(findButton('Authorize and verify').disabled).toBe(true)
+    getStatus.mockResolvedValue({ kind: 'ready', warnings: [] })
+    await click(findButton('Recheck'))
+    expect(findButton('Authorize and verify').disabled).toBe(false)
+    expect(container.textContent).toContain('Network protection on')
+    await click(findButton('Authorize and verify'))
+    expect(authorize).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('R access verified')
+  })
+
   it('offers the existing sandbox authorization and removal controls for managed Windows R', async () => {
     Object.assign(window.api, { platform: 'win32' })
     const managed = {

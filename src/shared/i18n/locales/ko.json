@@ -104,6 +104,7 @@
     "Import Environment lock": "환경 잠금 가져오기"
   },
   "renderer": {
+    "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "R 접근 권한을 검증하려면 네트워크 보호가 준비되어 있어야 합니다. 네트워크 설정을 확인한 후 런타임을 다시 확인하세요.",
     "The source message is no longer available.": "원본 메시지를 더 이상 사용할 수 없습니다.",
     "This Notebook exceeds the 10 MB preview limit.": "이 Notebook은 10 MB 미리보기 제한을 초과합니다.",
     "Recent searches": "최근 검색",

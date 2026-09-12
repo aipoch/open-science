@@ -104,6 +104,7 @@
     "Import Environment lock": "匯入環境鎖定檔"
   },
   "renderer": {
+    "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "驗證 R 存取權限需要網路保護就緒。請檢查網路設定，然後重新檢查執行環境。",
     "The source message is no longer available.": "來源訊息已無法使用。",
     "This Notebook exceeds the 10 MB preview limit.": "此 Notebook 超過 10 MB 預覽限制。",
     "Recent searches": "最近搜尋",

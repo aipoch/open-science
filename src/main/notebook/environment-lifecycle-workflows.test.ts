@@ -23,6 +23,7 @@ vi.mock('../logger', async (importOriginal) => {
 
 import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 import { serializeProvisioner } from './environment-operation-foundation'
+import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import {
   createNotebookEnvironmentLifecycle,
   type NotebookEnvironmentLifecycle
@@ -83,6 +84,35 @@ const startLifecycle = (
   createLifecycle(provisioner, { root, projectProgress, waitForRecovery }).startup()
 
 describe('createNotebookEnvironmentLifecycle', () => {
+  it('reproduces status rejection after an interrupted Windows shell launch', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'shell-status-repro-'))
+    const registry = new ShellProcessOwnershipRegistry(root)
+    const launch = registry.beginLaunch({
+      runId: 'notebook-run-1789176064440-3',
+      projectId: 'project',
+      sessionId: 'session',
+      platform: 'win32'
+    })
+    const provisioner = fakeProvisioner()
+    const lifecycle = createLifecycle(provisioner, {
+      root,
+      waitForRecovery: () => new ShellProcessOwnershipRegistry(root).recover()
+    })
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await expect(lifecycle.status()).rejects.toThrow(
+          'SHELL_PROCESS_RECOVERY_BLOCKED: the old process tree for notebook-run-1789176064440-3 was not reaped.'
+        )
+      }
+      expect(provisioner.status).not.toHaveBeenCalled()
+      expect(registry.hasReceipts()).toBe(true)
+    } finally {
+      launch.abort()
+      const { rmSync } = await import('node:fs')
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('status returns the provisioner status', async () => {
     const provisioner = fakeProvisioner()
     const lifecycle = createLifecycle(provisioner)

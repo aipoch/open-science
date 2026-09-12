@@ -11,8 +11,8 @@ import {
   ShieldQuestion,
   type LucideIcon
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useNotebookNetworkStatus } from './use-notebook-network-status'
 
 import type { NotebookNetworkStatus } from '../../../../shared/notebook-network'
 import { Button } from '@/components/ui/button'
@@ -24,6 +24,7 @@ type NotebookNetworkProtectionBannerPreviewState =
 type NotebookNetworkProtectionBannerProps = {
   onOpen: () => void
   previewState?: NotebookNetworkProtectionBannerPreviewState
+  status?: NotebookNetworkStatus
 }
 
 type BannerPresentation = Readonly<{
@@ -50,39 +51,12 @@ const previewStatus = (
 
 const NotebookNetworkProtectionBanner = ({
   onOpen,
-  previewState
+  previewState,
+  status: suppliedStatus
 }: NotebookNetworkProtectionBannerProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const [runtimeStatus, setRuntimeStatus] = useState<NotebookNetworkStatus>({ kind: 'checking' })
-  const status = previewState ? previewStatus(previewState) : runtimeStatus
-
-  useEffect(() => {
-    if (previewState) return
-    let cancelled = false
-    let retry: number | undefined
-    const refresh = (): void => {
-      const getStatus = window.api.settings?.getNotebookNetworkStatus
-      if (typeof getStatus !== 'function') {
-        setRuntimeStatus({ kind: 'error', reason: 'runtimeFailure' })
-        return
-      }
-      void getStatus().then(
-        (next) => {
-          if (cancelled) return
-          setRuntimeStatus(next)
-          if (next.kind === 'checking') retry = window.setTimeout(refresh, 1_000)
-        },
-        () => {
-          if (!cancelled) setRuntimeStatus({ kind: 'error', reason: 'runtimeFailure' })
-        }
-      )
-    }
-    refresh()
-    return () => {
-      cancelled = true
-      if (retry !== undefined) window.clearTimeout(retry)
-    }
-  }, [previewState])
+  const runtimeStatus = useNotebookNetworkStatus(!previewState && suppliedStatus === undefined)
+  const status = previewState ? previewStatus(previewState) : (suppliedStatus ?? runtimeStatus)
 
   const presentation: BannerPresentation = (() => {
     switch (status.kind) {

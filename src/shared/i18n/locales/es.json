@@ -106,6 +106,7 @@
     "Import Environment lock": "Importar bloqueo de entorno"
   },
   "renderer": {
+    "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "La verificación del acceso a R requiere que la protección de red esté lista. Revise la configuración de red y vuelva a comprobar los entornos de ejecución.",
     "The source message is no longer available.": "El mensaje de origen ya no está disponible.",
     "This Notebook exceeds the 10 MB preview limit.": "Este Notebook supera el límite de vista previa de 10 MB.",
     "Recent searches": "Búsquedas recientes",
