@@ -331,7 +331,7 @@ describe('sandboxedPackageSpawn', () => {
       )
     ).rejects.toBe(reason)
     expect(Object.hasOwn(reason, 'processesTerminated')).toBe(false)
-    expect(confirmTermination).not.toHaveBeenCalled()
+    expect(confirmTermination).toHaveBeenCalledOnce()
     expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
       processesTerminated: true,
       confirmTermination

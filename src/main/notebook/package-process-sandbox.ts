@@ -325,6 +325,9 @@ export const sandboxedPackageSpawn =
     } catch (error) {
       if (packageProcessTreeTerminated(error)) {
         processesTerminated = true
+        if (sandboxed.confirmProcessTreeTermination) {
+          await sandboxed.confirmProcessTreeTermination().catch(() => false)
+        }
       } else if (!ended && sandboxed.confirmProcessTreeTermination) {
         processesTerminated = await sandboxed.confirmProcessTreeTermination().catch(() => false)
       }
