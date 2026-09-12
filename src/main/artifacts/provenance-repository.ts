@@ -63,7 +63,11 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ArtifactProvenanceDependencyReader } from './provenance-dependency-reader'
 import type { HostLineageDependencyRelation, HostLineageDirection } from '../../shared/host-lineage'
 import { requireAgentArtifactVersion } from './provenance-version-kind'
-import { LOCAL_RESOURCE_BUDGETS, type LocalResourceBudgetOverrides } from '../resource-budget'
+import {
+  LOCAL_RESOURCE_BUDGETS,
+  ResourceBudgetExceededError,
+  type LocalResourceBudgetOverrides
+} from '../resource-budget'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 import {
   NodeVersionFileOperator,
@@ -83,6 +87,7 @@ import {
 } from './artifact-reproducibility-receipts'
 import { ReviewerTurnFileEvidenceReader } from './reviewer-turn-file-evidence-reader'
 import { ContentRepository, type OpenedContent } from '../storage/content-repository'
+import { digestFileWithinBudget } from '../bounded-file-io'
 import {
   ArtifactLiteratureManifestOwner,
   type RecordArtifactLiteraturePdfReadRequest,
@@ -1298,14 +1303,20 @@ class ArtifactProvenanceRepository {
     }
 
     try {
-      const content = await readFile(
-        resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
+      const expectedBytes = Number(version.sizeBytes)
+      if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0)
+        return { state: 'unavailable', reason: 'checksum-mismatch' }
+      const content = await digestFileWithinBudget(
+        resolveStorageKey(this.options.storageRoot, version.contentStorageKey),
+        expectedBytes
       )
-      return BigInt(content.byteLength) === version.sizeBytes &&
-        sha256(content) === version.checksum
+      return BigInt(content.sizeBytes) === version.sizeBytes &&
+        content.checksum === version.checksum
         ? { state: 'available' }
         : { state: 'unavailable', reason: 'checksum-mismatch' }
     } catch (error) {
+      if (error instanceof ResourceBudgetExceededError)
+        return { state: 'unavailable', reason: 'checksum-mismatch' }
       if (
         typeof error === 'object' &&
         error !== null &&

@@ -24,6 +24,7 @@ import {
 } from '../shared/application-command-contract'
 import * as Artifacts from '../shared/artifacts'
 import type * as ConversationExport from '../shared/conversation-export'
+import * as SessionPackage from '../shared/session-package'
 import {
   LIFECYCLE_CHANNELS,
   MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID
@@ -129,6 +130,16 @@ type InvocationOwner<Owner> = Readonly<{
 // T2h0 injects this adapter; it resolves native window/progress targets without putting Electron
 // objects in transport-neutral application invocations.
 type ElectronDataContentApplicationCommandAdapter = InvocationOwner<{
+  exportSessionPackage: (
+    request: SessionPackage.SessionPackageRequest
+  ) => Promise<SessionPackage.SessionPackageExportResult>
+  importSessionPackage: (
+    request?: SessionPackage.SessionPackageImportRequest,
+    sourcePath?: string
+  ) => Promise<SessionPackage.SessionPackageImportResult>
+  sessionPackageOperation: (
+    request: SessionPackage.PackageOperationRequest
+  ) => Promise<SessionPackage.PackageOperationSnapshot | null>
   exportConversationFromInvokingWindow: (
     request: ConversationExport.ExportConversationRequest
   ) => Promise<ConversationExport.ExportConversationResult>
@@ -326,6 +337,21 @@ const dataContentApplicationCommands = Object.freeze({
     'sessions:export-conversation',
     'exportConversationFromInvokingWindow'
   ),
+  sessionExportPackage: electronCommand(
+    'sessions:export-package',
+    'exportSessionPackage',
+    SessionPackage.sessionPackageCommandContracts.export
+  ),
+  sessionImportPackage: electronCommand(
+    'sessions:import-package',
+    'importSessionPackage',
+    SessionPackage.sessionPackageCommandContracts.import
+  ),
+  sessionPackageOperation: electronCommand(
+    'sessions:package-operation',
+    'sessionPackageOperation',
+    SessionPackage.sessionPackageCommandContracts.operation
+  ),
   sessionList: sessionCommand('sessions:list', 'list'),
   sessionFilterPdfContextCandidates: sessionCommand(
     'sessions:filter-pdf-context-candidates',
@@ -470,6 +496,9 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionDelete,
     dataContentApplicationCommands.sessionEditDetails,
     dataContentApplicationCommands.sessionExportConversation,
+    dataContentApplicationCommands.sessionExportPackage,
+    dataContentApplicationCommands.sessionImportPackage,
+    dataContentApplicationCommands.sessionPackageOperation,
     dataContentApplicationCommands.sessionFilterPdfContextCandidates,
     dataContentApplicationCommands.sessionLinkPdfContext,
     dataContentApplicationCommands.sessionList,
@@ -727,6 +756,21 @@ const registerDataContentApplicationCommands = (
           dataContentApplicationCommands.sessionExportConversation.name
         )
         return dependencies.electron.exportConversationFromInvokingWindow(invocation)
+      },
+      'sessions:export-package': (invocation) => {
+        assertElectronCaller(invocation, dataContentApplicationCommands.sessionExportPackage.name)
+        return dependencies.electron.exportSessionPackage(invocation)
+      },
+      'sessions:import-package': (invocation) => {
+        assertElectronCaller(invocation, dataContentApplicationCommands.sessionImportPackage.name)
+        return dependencies.electron.importSessionPackage(invocation)
+      },
+      'sessions:package-operation': (invocation) => {
+        assertElectronCaller(
+          invocation,
+          dataContentApplicationCommands.sessionPackageOperation.name
+        )
+        return dependencies.electron.sessionPackageOperation(invocation)
       },
       'sessions:filter-pdf-context-candidates': ({ args }) =>
         dependencies.withDataRootWrite(() =>

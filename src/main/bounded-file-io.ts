@@ -3,6 +3,7 @@ import { createReadStream, createWriteStream, type Stats } from 'node:fs'
 import { open, rm, type FileHandle } from 'node:fs/promises'
 import { pipeline } from 'node:stream/promises'
 import { Readable, Transform } from 'node:stream'
+import { paceFileIo, pacedFileTransform } from './file-io-pacing'
 
 import { ResourceBudgetExceededError, assertWithinResourceBudget } from './resource-budget'
 
@@ -55,7 +56,8 @@ const assertFileObservation = (
 
 const countingHashTransform = (
   maxBytes: number,
-  onComplete: (digest: FileDigest) => void
+  onComplete: (digest: FileDigest) => void,
+  onProgress?: (sizeBytes: number) => void
 ): Transform => {
   const hash = createHash('sha256')
   let sizeBytes = 0
@@ -66,6 +68,7 @@ const countingHashTransform = (
       try {
         assertWithinResourceBudget('file', sizeBytes, maxBytes)
         hash.update(chunk)
+        onProgress?.(sizeBytes)
         callback(null, chunk)
       } catch (error) {
         callback(error as Error)
@@ -82,7 +85,8 @@ const copyFileWithinBudget = async (
   sourcePath: string,
   targetPath: string,
   maxBytes: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onProgress?: (sizeBytes: number) => void
 ): Promise<FileDigest> => {
   let digest: FileDigest | undefined
   let targetOpened = false
@@ -93,9 +97,14 @@ const copyFileWithinBudget = async (
   try {
     await pipeline(
       createReadStream(sourcePath),
-      countingHashTransform(maxBytes, (value) => {
-        digest = value
-      }),
+      pacedFileTransform(signal, 2),
+      countingHashTransform(
+        maxBytes,
+        (value) => {
+          digest = value
+        },
+        onProgress
+      ),
       target,
       { signal }
     )
@@ -146,6 +155,7 @@ const readOpenFileChunks = async function* (
     signal?.throwIfAborted()
     const chunk = Buffer.allocUnsafe(chunkBytes)
     const { bytesRead } = await sourceHandle.read(chunk, 0, chunk.byteLength, position)
+    await paceFileIo(bytesRead, signal)
     signal?.throwIfAborted()
     if (bytesRead === 0) return
     position += bytesRead
@@ -226,6 +236,7 @@ const digestFileWithinBudget = async (
   const hash = createHash('sha256')
   let sizeBytes = 0
   for await (const chunk of createReadStream(path, { signal })) {
+    await paceFileIo(chunk.byteLength, signal)
     sizeBytes += chunk.byteLength
     assertWithinResourceBudget('file', sizeBytes, maxBytes)
     hash.update(chunk)

@@ -182,6 +182,10 @@ const emitRecoverableDiagnostic = (
 // Session scopes. Catalog-wide reconciliation uses an exclusive barrier so unrelated Projects overlap
 // without allowing a late save to race or revive durable deletion authority.
 class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
+  private readonly exportingSessions = new Map<
+    string,
+    { projectId: string; released: Promise<void> }
+  >()
   private readonly operationScheduler = new SessionPersistenceOperationScheduler()
   private readonly deletedSessions = new Set<string>()
   private readonly deletedProjects = new Set<string>()
@@ -206,7 +210,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     private readonly computeJobs?: ComputeJobDeletionParticipant,
     onDelegatedWorkSessionUpdated?: SessionUpdatePublisher,
     onDelegationPolicyUpdated?: (session: PersistedChatSession) => void,
-    private readonly workspaceOwnership?: SessionWorkspaceOwnership
+    private readonly workspaceOwnership?: SessionWorkspaceOwnership,
+    preparePackageDeletion?: (session: PersistedChatSession) => Promise<void>
   ) {
     const publishSessionUpdate = safeSessionUpdates(onDelegatedWorkSessionUpdated, log)
     this.stateOwner = new SessionPersistenceStateOwner({
@@ -236,6 +241,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       uploads,
       computeJobs,
       workspaceOwnership,
+      preparePackageDeletion,
       log,
       assertArchiveMutable: (projectId, sessionId) => {
         if (this.deletedProjects.has(projectId)) {
@@ -785,19 +791,33 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   // Persists authoritative JSON before updating the derived index. If indexing fails, the save stays
   // durable, the caller receives the error for its normal retry path, and Files is reset to show its
   // incomplete state rather than silently presenting stale metadata as complete.
-  saveSession(
+  async saveSession(
     session: PersistedChatSession,
     options: SaveSessionOptions = {},
     authority: SessionSaveAuthority = { taskRunCommit: false }
   ): Promise<PersistedChatSession> {
-    return this.operationScheduler.runSession(session.projectId, session.id, async () => {
-      await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
-      return this.stateOwner.saveSession(
-        session,
-        sanitizeRendererSaveSessionOptions(options),
-        authority
+    // A renderer may already have a delayed projection save when another client reserves export.
+    // Wait outside the scheduler lane so browsing/global reads and unrelated Sessions stay usable.
+    for (;;) {
+      const result = await this.operationScheduler.runSession(
+        session.projectId,
+        session.id,
+        async () => {
+          const reservation = this.exportingSessions.get(sessionKey(session.projectId, session.id))
+          if (reservation) return { released: reservation.released }
+          await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
+          return {
+            saved: await this.stateOwner.saveSession(
+              session,
+              sanitizeRendererSaveSessionOptions(options),
+              authority
+            )
+          }
+        }
       )
-    })
+      if (result.saved) return result.saved
+      await result.released
+    }
   }
 
   saveSessionSpecialistBinding(
@@ -887,6 +907,26 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
   }
 
+  // Drain earlier writes in the existing persistence lane before freezing this Session.
+  reserveSessionExport(projectId: string, sessionId: string): Promise<() => void> {
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
+      this.assertMutable(projectId, sessionId, 'mutate')
+      const key = sessionKey(projectId, sessionId)
+      let release!: () => void
+      const reservation = {
+        projectId,
+        released: new Promise<void>((resolve) => {
+          release = resolve
+        })
+      }
+      this.exportingSessions.set(key, reservation)
+      return () => {
+        if (this.exportingSessions.get(key) === reservation) this.exportingSessions.delete(key)
+        release()
+      }
+    })
+  }
+
   runSessionMutation<Result>(
     projectId: string,
     sessionId: string,
@@ -953,6 +993,12 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     options: { requireExistingUploadAuthority?: boolean } = {}
   ): Promise<ProjectSessionDeletionResult> {
     return this.operationScheduler.runProject(projectId, async (scope) => {
+      if (
+        [...this.exportingSessions.values()].some(
+          (reservation) => reservation.projectId === projectId
+        )
+      )
+        throw new Error('This Project contains a Session locked for export.')
       this.deletedProjects.add(projectId)
       try {
         return await this.deletionOwner.deleteProjectSessions(
@@ -1057,6 +1103,10 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       sessionId,
       async () => {
         const key = sessionKey(projectId, sessionId)
+        // A committed deletion may need to retry its remaining cleanup. Only an active export
+        // blocks deletion; the mutation tombstone must continue to block saves, not these retries.
+        if (this.exportingSessions.has(key))
+          throw new Error('This Session is locked while its research package is being exported.')
         this.deletedSessions.add(key)
         const deletion = await this.deletionOwner
           .deleteSession(projectId, sessionId)
@@ -1097,6 +1147,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   }
 
   private assertMutable(projectId: string, sessionId: string, operation: 'save' | 'mutate'): void {
+    if (this.exportingSessions.has(sessionKey(projectId, sessionId)))
+      throw new Error('This Session is locked while its research package is being exported.')
     if (this.deletedProjects.has(projectId)) {
       throw new Error(`Cannot ${operation} a session whose project has been deleted.`)
     }

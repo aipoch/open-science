@@ -1,3 +1,5 @@
+import { useSessionStore } from '@/stores/session-store'
+import { usePackageOperationStore, sessionExportLocked } from '../../stores/package-operation-store'
 import { Tabs } from 'radix-ui'
 import {
   createEnvironmentFromLock,
@@ -742,6 +744,16 @@ const ArtifactProvenancePanel = ({
     message: string
   }>()
   const environmentLockEntries = useArtifactEnvironmentLockStore((state) => state.entries)
+  const importedSession = useSessionStore((state) =>
+    Boolean(
+      state.sessions.find(
+        (session) => session.id === item.sessionId && session.projectId === projectId
+      )?.packageOrigin
+    )
+  )
+  const exportingSession = usePackageOperationStore((state) =>
+    sessionExportLocked(state.operation, { id: item.sessionId, projectId })
+  )
   const [notebookExportFailure, setNotebookExportFailure] = useState<{
     key: string
     message: string
@@ -1982,6 +1994,7 @@ const ArtifactProvenancePanel = ({
         ) : null}
         {provenance && activeTab === 'reproducibility' && deferredSectionReady ? (
           <ArtifactReproducibilityPanel
+            readOnly={importedSession}
             key={provenanceKey}
             projection={provenance.execution?.reproducibility}
             analysisRevision={provenance.execution?.analysisRevision}
@@ -2134,7 +2147,12 @@ const ArtifactProvenancePanel = ({
                               size="sm"
                               className="max-w-full whitespace-nowrap text-xs"
                               aria-label={t('Create reusable environment')}
-                              disabled={creatingEnvironment || details === undefined}
+                              disabled={
+                                creatingEnvironment ||
+                                details === undefined ||
+                                importedSession ||
+                                exportingSession
+                              }
                               onClick={() => void createEnvironmentFromLock(lockRequest(lock))}
                             >
                               {creating ? (

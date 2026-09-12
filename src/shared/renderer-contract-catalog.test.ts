@@ -154,6 +154,10 @@ describe('renderer contract catalog', () => {
 
   it('records every intentional and known-deviating argument codec without normalizing it', () => {
     expect(
+      RENDERER_CONTRACT_CATALOG.find(({ publicPath }) => publicPath === 'sessions.importPackage')
+        ?.parameterCodec
+    ).toEqual({ electron: 'session-package-import-file', web: 'positional' })
+    expect(
       RENDERER_CONTRACT_CATALOG.find(({ publicPath }) => publicPath === 'uploads.stageLocalFile')
         ?.parameterCodec
     ).toEqual({ electron: 'native-file-upload-request', web: 'native-file-upload-request' })
@@ -467,8 +471,11 @@ describe('renderer contract catalog', () => {
       'projects.updateArchive',
       'sessions.deleteSession',
       'sessions.editDetails',
+      'sessions.exportPackage',
       'sessions.filterPdfContextCandidates',
+      'sessions.importPackage',
       'sessions.linkPdfContext',
+      'sessions.packageOperation',
       'sessions.setDelegationPolicy',
       'sessions.unlinkPdfContext',
       'sessions.updateArchive',
@@ -519,8 +526,11 @@ describe('renderer contract catalog', () => {
       'projects:update-archive',
       'sessions:delete-session',
       'sessions:edit-details',
+      'sessions:export-package',
       'sessions:filter-pdf-context-candidates',
+      'sessions:import-package',
       'sessions:link-pdf-context',
+      'sessions:package-operation',
       'sessions:set-delegation-policy',
       'sessions:unlink-pdf-context',
       'sessions:update-archive',

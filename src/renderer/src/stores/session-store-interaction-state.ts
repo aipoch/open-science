@@ -54,6 +54,7 @@ export type SessionActionabilityProjection = Readonly<{
 }>
 
 type SessionInteractionSource = Readonly<{
+  packageOrigin?: ChatSession['packageOrigin']
   status: SessionStatus
   interactionState?: SessionInteractionState
   runtimeContext?: ChatSession['runtimeContext']
@@ -192,6 +193,10 @@ export const projectSessionActionability = (
       ? 'session-running'
       : (attentionDisabledReason ?? interactionDisabledReason)
   const activity = waitReason ? 'waiting' : running ? 'running' : 'inactive'
+  const executionAvailability = (
+    reason: SessionActionDisabledReason | undefined
+  ): SessionActionAvailability =>
+    session.packageOrigin ? { allowed: false } : actionAvailability(reason)
 
   return {
     presentedStatus: waitReason ?? (running ? 'running' : status),
@@ -200,24 +205,24 @@ export const projectSessionActionability = (
     waitReason,
     blockingInteraction,
     actions: {
-      startTurn: actionAvailability(turnDisabledReason),
-      revise: actionAvailability(revisionDisabledReason),
-      branchFromMessage: actionAvailability(
+      startTurn: executionAvailability(turnDisabledReason),
+      revise: executionAvailability(revisionDisabledReason),
+      branchFromMessage: executionAvailability(
         session.isPending
           ? 'session-pending'
           : running
             ? 'session-running'
             : attentionDisabledReason
       ),
-      startSideChat: actionAvailability(replayOrPendingReason ?? attentionDisabledReason),
-      changeAgentControls: actionAvailability(
+      startSideChat: executionAvailability(replayOrPendingReason ?? attentionDisabledReason),
+      changeAgentControls: executionAvailability(
         replayOrPendingReason ??
           (running ? 'session-running' : (attentionDisabledReason ?? interactionDisabledReason))
       ),
       // Replay-independent settings may change while the provider still awaits transcript replay.
-      changeAutoReview: actionAvailability(replayIndependentChangeDisabledReason),
-      changeSpecialist: actionAvailability(replayIndependentChangeDisabledReason),
-      changeMemory: actionAvailability(replayIndependentChangeDisabledReason),
+      changeAutoReview: executionAvailability(replayIndependentChangeDisabledReason),
+      changeSpecialist: executionAvailability(replayIndependentChangeDisabledReason),
+      changeMemory: executionAvailability(replayIndependentChangeDisabledReason),
       archive: actionAvailability(running ? 'session-running' : attentionDisabledReason)
     }
   }

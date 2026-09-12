@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { usePackageOperationStore } from '../../stores/package-operation-store'
 
 import { SessionPersistenceStateOwner } from '../../../../main/session-persistence/state-owner'
 import { ARTIFACT_FINALIZATION_INVALID_PROOF } from '../../../../shared/artifacts'
@@ -730,6 +731,55 @@ describe('reconcilePendingArtifacts', () => {
 })
 
 describe('renderer session persistence bridge', () => {
+  it('flushes after discarding an exported Session save from an older hydration generation', async () => {
+    const source = createPersistedSession()
+    usePackageOperationStore.getState().receive({
+      id: 'export-old',
+      kind: 'export',
+      state: 'running',
+      progress: { phase: 'copying' },
+      session: { projectId: source.projectId, sessionId: source.id }
+    })
+    const persistence = createOrderedSessionPersistence(createApi())
+    const saving = persistence
+      .saveLatestSession(`session:${source.id}`, async () => source)
+      .catch((error) => error)
+    await flushMicrotasks()
+    persistence.seedAcknowledgedSessions([source])
+    const flushing = persistence.flush()
+    await flushMicrotasks()
+    usePackageOperationStore.getState().receive(null)
+    await expect(saving).resolves.toMatchObject({
+      name: 'SessionPersistenceGenerationChangedError'
+    })
+    await expect(flushing).resolves.toBeUndefined()
+  })
+  it('keeps another Session writable while an exported Session has a delayed save', async () => {
+    const source = createPersistedSession()
+    usePackageOperationStore.getState().receive({
+      id: 'export-1',
+      kind: 'export',
+      state: 'running',
+      progress: { phase: 'copying' },
+      session: { projectId: source.projectId, sessionId: source.id }
+    })
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const persistence = createOrderedSessionPersistence(createApi({ saveSession }))
+    const first = persistence.saveSession(source)
+    const second = persistence.saveSession(createPersistedSession({ id: 'other-session' }))
+    try {
+      await second
+      expect(saveSession.mock.calls.map(([session]) => session.id)).toEqual(['other-session'])
+    } finally {
+      usePackageOperationStore.getState().receive(null)
+      await first
+    }
+    expect(saveSession.mock.calls.map(([session]) => session.id)).toEqual([
+      'other-session',
+      source.id
+    ])
+    await expect(persistence.flush()).resolves.toBeUndefined()
+  })
   it('falls back to the existing Web load-all path when load-one is unavailable', async () => {
     const selected = createPersistedSession({ id: 'session-1', projectId: 'project-1' })
     const loadAll = vi.fn().mockResolvedValue(createLoadResult([selected]))

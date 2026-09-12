@@ -71,6 +71,24 @@ const manifest = JSON.parse(
 ) as { bundleOrder: string[]; laneBundles: Record<string, string>; laneOrder: string[] }
 
 describe('PR Gate workflow', () => {
+  it('includes portable Session journeys in both native functional lanes', () => {
+    const { scripts } = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
+      scripts: Record<string, string>
+    }
+    for (const platform of ['macos', 'windows']) {
+      const command = workflow.jobs[`${platform}_e2e`].steps?.find(
+        ({ id }) => id === `e2e_functional_${platform}`
+      )?.run
+      const script = command?.match(/^npm run (\S+)/)?.[1]
+      expect(script, `${platform} functional lane must invoke a registered script`).toBeDefined()
+      for (const spec of ['e2e/session-package.spec.ts', 'e2e/session-package-drop.spec.ts'])
+        expect(
+          scripts[script!]?.split(/\s+/),
+          `${platform} must exercise Session packages`
+        ).toContain(spec)
+    }
+  })
+
   it('keeps release certification and Linux E2E out of ordinary pull requests', () => {
     expect(workflow.jobs).not.toHaveProperty('linux_e2e')
     expect(manifest.bundleOrder).not.toContain('linux_e2e')

@@ -363,6 +363,12 @@ import type {
 } from './session-persistence-flush'
 import type { ExportConversationRequest, ExportConversationResult } from './conversation-export'
 import type {
+  SessionPackageRequest,
+  SessionPackageExportResult,
+  SessionPackageImportRequest,
+  SessionPackageImportResult
+} from './session-package'
+import type {
   ClaudeDetectResult,
   ClaudeInstallEvent,
   ClaudeInstallResult,
@@ -1788,6 +1794,40 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.exportConversation': callable<
     (request: ExportConversationRequest) => Promise<ExportConversationResult>
   >()('sessions', ['sessions:export-conversation', MAPPED_ELECTRON]),
+  'sessions.exportPackage': callable<
+    (request: SessionPackageRequest) => Promise<SessionPackageExportResult>
+  >()('sessions', [
+    'sessions:export-package',
+    MAPPED_ELECTRON,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.importPackage': callable<
+    (request?: SessionPackageImportRequest, file?: File) => Promise<SessionPackageImportResult>
+  >()('sessions', [
+    'sessions:import-package',
+    MAPPED_ELECTRON,
+    'session-package-import-file',
+    POSITIONAL,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.packageOperation': callable<
+    (
+      request: import('./session-package').PackageOperationRequest
+    ) => Promise<import('./session-package').PackageOperationSnapshot | null>
+  >()('sessions', [
+    'sessions:package-operation',
+    MAPPED_ELECTRON,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.onPackageOperation': callable<
+    (
+      listener: (snapshot: import('./session-package').PackageOperationSnapshot) => void
+    ) => RemoveListener
+  >()('sessions', ['sessions:package-operation-changed', EVENT]),
   'sessions.list': callable<() => Promise<ListSessionSummariesResult>>()('sessions', [
     'sessions:list'
   ]),

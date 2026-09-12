@@ -42,6 +42,7 @@ import type {
 } from '../../shared/artifacts'
 import { resolveDataRoot } from '../storage-root'
 import { withDataRootWrite } from '../storage/migration-state'
+import { assertResearchSessionWritable } from '../storage/session-package-state'
 import {
   readBoundedManagedFilePreviewLease,
   type ManagedFilePreviewReadLease,
@@ -341,7 +342,14 @@ const createArtifactHandlers = (
       }
       // Hold one migration lease across evidence reads, model work, and the cache commit so a data
       // root move cannot switch beneath an in-flight reconstruction.
-      return withDataRootWrite(() => codeReconstruction.generate(request))
+      return withDataRootWrite(async () => {
+        await assertResearchSessionWritable(
+          resolveDataRoot(),
+          request.projectId,
+          request.appSessionId
+        )
+        return codeReconstruction.generate(request)
+      })
     },
     resolveVersionDescriptors: (request) => {
       if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')

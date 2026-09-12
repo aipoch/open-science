@@ -213,6 +213,35 @@ const lifecycleCallbackHarness = (
 }
 
 describe('notebook runtime service', () => {
+  it('rejects export-locked execution before creating a Notebook or kernel', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const load = vi.spyOn(repository, 'loadOrCreate')
+    const executorFactory = vi.fn()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project-1',
+      repository,
+      executorFactory,
+      admitSessionWork: () => {
+        throw new Error('Session locked for export')
+      }
+    })
+    await expect(
+      service.execute({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: 'print(1)',
+        source: 'user',
+        language: 'python'
+      })
+    ).rejects.toThrow('locked for export')
+    expect(load).not.toHaveBeenCalled()
+    expect(executorFactory).not.toHaveBeenCalled()
+  })
+
   it('deletes generated prompt input copies with their Session and Project input caches', async () => {
     const root = await createStorageRoot()
     const { service } = lifecycleCallbackHarness(root)
@@ -4844,6 +4873,7 @@ describe('notebook runtime service', () => {
     it('cancels and drains a Shell Run before application disposal completes', async () => {
       const root = await createStorageRoot()
       let executionSignal: AbortSignal | undefined
+      const executionStarted = createDeferred<void>()
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
@@ -4853,6 +4883,7 @@ describe('notebook runtime service', () => {
           execute: (request) =>
             new Promise((resolve) => {
               executionSignal = request.signal
+              executionStarted.resolve()
               request.signal?.addEventListener(
                 'abort',
                 () =>
@@ -4872,15 +4903,16 @@ describe('notebook runtime service', () => {
         workspaceCwd: root,
         command: 'long-running'
       })
-      await vi.waitFor(() => expect(executionSignal).toBeInstanceOf(AbortSignal))
+      await executionStarted.promise
+      expect(executionSignal).toBeInstanceOf(AbortSignal)
 
       const disposal = service.dispose()
-      await vi.waitFor(() => expect(executionSignal?.aborted).toBe(true))
       await expect(execution).resolves.toEqual({
         stdout: '',
         stderr: 'Shell command was cancelled.',
         exitCode: null
       })
+      expect(executionSignal?.aborted).toBe(true)
       await expect(disposal).resolves.toEqual({ reaped: true })
     })
 

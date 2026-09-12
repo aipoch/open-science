@@ -1,6 +1,13 @@
 appId: com.aipoch.open-science
 productName: Open Science
 copyright: Copyright © 2026 AIPOCH
+fileAssociations:
+  - ext: science
+    name: Open Science Session package
+    description: Open Science Session package
+    mimeType: application/x-open-science-session
+    role: Viewer
+    rank: Default
 directories:
   buildResources: build
 # Apply a valid deep ad-hoc signature on macOS (no Developer ID available). Without this,

@@ -136,6 +136,49 @@ beforeEach(() => {
 afterEach(() => clearMigrationPending())
 
 describe('reviewer IPC handlers', () => {
+  it('rejects Session export conflicts before admitting a model or background review', async () => {
+    const modelRuntime = {
+      admit: vi.fn(async () => ({ model: 'reviewer', release: async () => undefined }))
+    }
+    const owner = createReviewerCommandOwner({
+      acpRuntime,
+      modelRuntime,
+      admitSessionWork: () => {
+        throw new Error('Session locked for export')
+      }
+    })
+    await expect(owner.run(createRequest())).rejects.toThrow('locked for export')
+    expect(modelRuntime.admit).not.toHaveBeenCalled()
+    expect(runReview).not.toHaveBeenCalled()
+  })
+  it('rejects manual review of imported history before resolving or admitting a model', async () => {
+    sessionLoadOne.mockResolvedValue({
+      id: 'session-1',
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: 'source-project',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+    const modelRuntime = {
+      admit: vi.fn(async () => ({ model: 'reviewer', release: async () => undefined }))
+    }
+    const resolveSessionAgentTarget = vi.fn()
+    const owner = createReviewerCommandOwner({
+      acpRuntime,
+      modelRuntime,
+      resolveSessionAgentTarget
+    })
+    await expect(owner.run({ ...createRequest(), origin: 'manual' })).resolves.toEqual({
+      started: false,
+      reason: 'run-failed'
+    })
+    expect(resolveSessionAgentTarget).not.toHaveBeenCalled()
+    expect(modelRuntime.admit).not.toHaveBeenCalled()
+    expect(runReview).not.toHaveBeenCalled()
+  })
   it('waits for startup recovery before exposing persisted reviews', async () => {
     let finishRecovery!: (count: number) => void
     recoverInterruptedReviews.mockImplementationOnce(

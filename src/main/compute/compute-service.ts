@@ -49,6 +49,7 @@ export type {
 const log = createLogger('compute')
 
 export type ComputeServiceDependencies = Readonly<{
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void
   runner: SshRunner
   repository: ComputeHostRepository
   approvalBroker?: ComputeApprovalBroker
@@ -76,7 +77,7 @@ export class ComputeService {
   private readonly credentialVault?: Pick<CredentialVault, 'credentialStatus'>
   private readonly storageRoot?: string
 
-  constructor(dependencies: ComputeServiceDependencies) {
+  constructor(private readonly dependencies: ComputeServiceDependencies) {
     const {
       runner,
       repository,
@@ -237,7 +238,12 @@ export class ComputeService {
     context: { sessionId: string; projectId: string; producerRunId?: string },
     signal?: AbortSignal
   ): Promise<SubmitJobResult> {
-    return this.jobWorkflow.submitJob(providerId, intent, command, options, context, signal)
+    const release = this.dependencies.admitSessionWork?.(context.projectId, context.sessionId)
+    try {
+      return await this.jobWorkflow.submitJob(providerId, intent, command, options, context, signal)
+    } finally {
+      release?.()
+    }
   }
 
   async getJobStatus(
