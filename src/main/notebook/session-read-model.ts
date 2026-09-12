@@ -102,7 +102,7 @@ type NotebookSessionReadModelOptions<Session extends NotebookSessionReadSource> 
   findSession: (projectId: string, sessionId: string) => Session | undefined
   runtimeBindings: (session: Session) => NotebookRuntimeBindings
   runtimeEnvironment?: (session: Session, language: NotebookLanguage) => string
-  isRestartRecommended: (processKey: string) => boolean
+  isRestartRecommended: (processKey: string, session: Session) => boolean
 }
 
 // Projects live Session Aggregate state and durable run history without owning either source.
@@ -350,7 +350,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
         kind: processKey.slice(0, separator) === 'r' ? 'r' : 'python',
         environment: processKey.slice(separator + 1),
         status,
-        restartRecommended: this.options.isRestartRecommended(processKey)
+        restartRecommended: this.options.isRestartRecommended(processKey, session)
       }
     })
   }

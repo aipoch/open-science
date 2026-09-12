@@ -531,8 +531,11 @@ class NotebookRuntimeService {
         this.sessions.get(this.sessionLifecycle.rootLane(sessionId, projectId)),
       runtimeBindings: (session) => this.runtimeBindingOwner.snapshot(session),
       runtimeEnvironment: (session, language) => this.resolveRunEnv(session, language),
-      isRestartRecommended: (processKey) =>
-        this.environmentOperations.isRestartRecommended(processKey)
+      isRestartRecommended: (processKey, session) =>
+        this.environmentOperations.isRestartRecommended(
+          processKey,
+          this.restartRecommendationScope(session, processKey)
+        )
     })
     this.sessionLifecycle = new NotebookSessionLifecycleOwner({
       storageRoot: options.dataRoot,
@@ -810,6 +813,17 @@ class NotebookRuntimeService {
     return language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
   }
 
+  private restartRecommendationScope(
+    session: RuntimeSession,
+    key: string
+  ): { sessionId: string; runtimeId: string } | undefined {
+    if (key !== dataProcessKey('r', DEFAULT_R_ENV)) return undefined
+    const binding = session.runtimeBinding('r')
+    return binding?.source === 'external'
+      ? { sessionId: session.id, runtimeId: binding.runtimeId }
+      : undefined
+  }
+
   // The Session binding picks the run's conda env. External or missing bindings use the language's
   // default env key, even when an external binding overrides the interpreter.
   private resolveRunEnv(session: RuntimeSession, language: NotebookLanguage): string {
@@ -951,6 +965,9 @@ class NotebookRuntimeService {
   ): Promise<void> {
     const processKey = dataProcessKey(language, env)
     await this.sessionLifecycle.clearPersistedKernelTermination(session, processKey)
+    const restartScope = this.restartRecommendationScope(session, processKey)
+    if (restartScope)
+      this.environmentOperations.clearRestartRecommendations([processKey], restartScope)
     session.clearProcessState(processKey)
   }
 
@@ -1888,7 +1905,10 @@ class NotebookRuntimeService {
               await this.sessionLifecycle.persistKernelStatus(session, 'idle', processKey)
             }
             session.clearKernelTerminated(processKey)
-            this.environmentOperations.clearRestartRecommendations([processKey])
+            this.environmentOperations.clearRestartRecommendations(
+              [processKey],
+              this.restartRecommendationScope(session, processKey)
+            )
           } catch (error) {
             if (hasTargetState) {
               const failureStatus =
@@ -1943,7 +1963,12 @@ class NotebookRuntimeService {
 
       try {
         await session.restartExecutor(() => this.sessionLifecycle.createExecutor(session.lane))
-        this.environmentOperations.clearRestartRecommendations(envKeys)
+        for (const key of envKeys) {
+          this.environmentOperations.clearRestartRecommendations(
+            [key],
+            this.restartRecommendationScope(session, key)
+          )
+        }
         await this.repository.clearKernelTerminations({
           projectId: session.projectId,
           sessionId: session.sessionId,

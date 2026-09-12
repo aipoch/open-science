@@ -263,7 +263,23 @@ class NotebookPackageOperations {
         signal
       )
       if (result.needsRestart && request.language === 'r') {
-        this.options.environmentOperations.recommendRestart('r', admission.target.environmentName)
+        if (admission.target.binding?.source === 'external') {
+          const runtimeId = admission.target.binding.runtimeId
+          for (const session of this.options.sessions()) {
+            const binding = session.runtimeBinding('r')
+            if (binding?.source !== 'external' || binding.runtimeId !== runtimeId) continue
+            this.options.environmentOperations.recommendRestart(
+              'r',
+              admission.target.environmentName,
+              {
+                runtimeId,
+                sessionId: session.id
+              }
+            )
+          }
+        } else {
+          this.options.environmentOperations.recommendRestart('r', admission.target.environmentName)
+        }
         for (const session of this.options.sessions()) this.options.notifyChanged(session)
       }
       const environmentName =

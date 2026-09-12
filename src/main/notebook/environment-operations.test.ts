@@ -401,6 +401,24 @@ describe('NotebookEnvironmentOperations', () => {
     expect(notifyChanged).toHaveBeenCalledTimes(2)
   })
 
+  it('isolates external restart recommendations by runtime and session', async () => {
+    const { owner } = await createOwner()
+    const first = { sessionId: 'first', runtimeId: 'external-r' }
+    const second = { sessionId: 'second', runtimeId: 'external-r' }
+    const other = { sessionId: 'first', runtimeId: 'other-r' }
+    owner.recommendRestart('r', 'default-r', first)
+    owner.recommendRestart('r', 'default-r', second)
+    expect(owner.isRestartRecommended('r:default-r', first)).toBe(true)
+    expect(owner.isRestartRecommended('r:default-r', other)).toBe(false)
+    expect(owner.isRestartRecommended('r:default-r')).toBe(false)
+    owner.clearRestartRecommendations(['r:default-r'], first)
+    expect(owner.isRestartRecommended('r:default-r', first)).toBe(false)
+    expect(owner.isRestartRecommended('r:default-r', second)).toBe(true)
+    owner.recommendRestart('r', 'default-r')
+    owner.clearRestartRecommendations(['r:default-r'], second)
+    expect(owner.isRestartRecommended('r:default-r')).toBe(true)
+  })
+
   it('keeps restart, repair, recovery, and redacted diagnostics in one snapshot', async () => {
     const { owner } = await createOwner()
 
