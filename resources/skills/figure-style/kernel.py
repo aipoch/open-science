@@ -96,8 +96,11 @@ def focal_palette(labels, focal, focal_color, other="muted", base_colors=None):
     n = len(labels)
     if not focal_set & set(labels):
         raise ValueError(f"focal {focal!r} not found in labels")
-    if base_colors is None:
+    base_colors = [] if base_colors is None else list(base_colors)
+    if not base_colors:
         base_colors = plt.rcParams["axes.prop_cycle"].by_key().get("color", ["#444444"])
+    if not base_colors:
+        base_colors = ["#444444"]
     base_colors = [base_colors[i % len(base_colors)] for i in range(n)]
     if other == "grey":
         rest = ["#BCBCBC"] * n
@@ -124,6 +127,9 @@ def bar_with_points(ax, x, ymat, labels, colors, jitter=0.08, show_points=True,
     """§6.1: bar = mean; optionally overlay raw points or draw an interval.
 
     colors   : per-label color list (e.g. from focal_palette)
+    x, ymat and labels must have equal lengths; mismatches raise before drawing.
+    Each group must be a nonempty, finite, one-dimensional real numeric array.
+    Requested SD/CI intervals require at least two observations per group.
     errorbar : None | 'sd' | 'ci95' — drawn only when show_points is False.
                'ci95' is the t-distribution 95% CI of the mean
                (half-width t_{0.975,n-1} · s/√n); correct at small n where the
@@ -136,19 +142,39 @@ def bar_with_points(ax, x, ymat, labels, colors, jitter=0.08, show_points=True,
             "bar_with_points x must be one-dimensional numeric positions; "
             "pass category names through labels"
         )
+    ymat = list(ymat)
+    labels = list(labels)
+    if len(x) != len(ymat) or len(x) != len(labels):
+        raise ValueError("bar_with_points x, ymat and labels must have equal lengths")
+    if colors is not None and not isinstance(colors, str):
+        colors = list(colors)
+        if not colors:
+            colors = None
+    if x.dtype.kind not in "iuf" or not np.isfinite(x).all():
+        raise ValueError("bar_with_points x must contain finite real positions")
+    for i, y in enumerate(ymat):
+        if np.ma.isMaskedArray(y) and np.ma.getmaskarray(y).any():
+            raise ValueError(f"bar_with_points group {i} contains masked observations; resolve exclusions explicitly before plotting")
+    ymat = [np.asarray(y) for y in ymat]
+    for i, y in enumerate(ymat):
+        if y.ndim != 1 or y.size == 0 or y.dtype.kind not in "iuf" or not np.isfinite(y).all():
+            raise ValueError(f"bar_with_points group {i} must be nonempty, one-dimensional and finite real numeric data")
+    if errorbar and not show_points:
+        if errorbar not in ("sd", "ci95"):
+            raise ValueError("errorbar must be None, 'sd', or 'ci95'")
+        if any(y.size < 2 for y in ymat):
+            raise ValueError("SD/CI cannot be estimated from one observation; use raw points without an interval")
     means = np.array([np.mean(y) for y in ymat], float)
     err = None
     if errorbar and not show_points:
         if errorbar == "sd":
-            err = np.array([np.std(y, ddof=1) if np.asarray(y).size > 1 else 0 for y in ymat])
+            err = np.array([np.std(y, ddof=1) for y in ymat])
         elif errorbar == "ci95":
             from scipy.stats import t
             def _hw(y):
                 n = np.asarray(y).size
-                return t.ppf(0.975, n - 1) * np.std(y, ddof=1) / np.sqrt(n) if n > 1 else 0
+                return t.ppf(0.975, n - 1) * np.std(y, ddof=1) / np.sqrt(n)
             err = np.array([_hw(y) for y in ymat])
-        else:
-            raise ValueError("errorbar must be None, 'sd', or 'ci95'")
     ax.bar(x, means, color=colors, width=0.7, edgecolor="none",
            yerr=err, error_kw={"elinewidth": 0.8, "capsize": 0})
     if show_points:
@@ -163,12 +189,31 @@ def bar_with_points(ax, x, ymat, labels, colors, jitter=0.08, show_points=True,
 
 
 def strip_with_median(ax, groups, values, colors=None, jitter=0.12):
-    """§6.1: jittered points + bold horizontal median tick per group."""
+    """§6.1: jittered points + bold horizontal median tick per group.
+
+    groups and values must have equal lengths. Mismatches raise before drawing.
+    colors=None or an empty color sequence supplies default gray; a nonempty
+    color sequence cycles across groups.
+    Each group must be nonempty, one-dimensional and finite real numeric data;
+    resolve missing observations explicitly before plotting.
+    """
     import numpy as np
     labs = list(groups)
-    if colors is None:
-        colors = ["#444444"] * len(labs)
-    for i, (ys, c) in enumerate(zip(values, colors)):
+    values = list(values)
+    if len(labs) != len(values):
+        raise ValueError("strip_with_median groups and values must have equal lengths")
+    for i, y in enumerate(values):
+        if np.ma.isMaskedArray(y) and np.ma.getmaskarray(y).any():
+            raise ValueError(f"strip_with_median group {i} contains masked observations; resolve exclusions explicitly before plotting")
+    values = [np.asarray(y) for y in values]
+    for i, y in enumerate(values):
+        if y.ndim != 1 or y.size == 0 or y.dtype.kind not in "iuf" or not np.isfinite(y).all():
+            raise ValueError(f"strip_with_median group {i} must be nonempty, one-dimensional and finite real numeric data")
+    colors = [] if colors is None else list(colors)
+    if not colors:
+        colors = ["#444444"]
+    for i, ys in enumerate(values):
+        c = colors[i % len(colors)]
         ys = np.asarray(ys)
         jit = (np.random.rand(ys.size) - 0.5) * 2 * jitter
         ax.scatter(np.full(ys.size, i) + jit, ys, s=10, color=c, alpha=0.6, linewidths=0, zorder=2)
@@ -198,14 +243,30 @@ def two_tier_label(name, meta):
 
 
 def end_of_line_labels(ax, xs, ys, labels, colors=None, dx=0.01, fontsize=None):
-    """§6.3 / §7.3: label each line series at its right end instead of a legend box."""
+    """§6.3 / §7.3: label each line series at its right end instead of a legend box.
+
+    Each label requires a nonempty, matched x/y series. Validate all series
+    before drawing. Nonempty colors cycle; None or empty uses default text color.
+    Inner sequences must support len() and indexing; they are not copied.
+    Nonfinite endpoints are rejected rather than producing an invisible label.
+    """
     import matplotlib.pyplot as plt
+    import math
+    xs, ys, labels = list(xs), list(ys), list(labels)
+    if len(xs) != len(ys) or len(xs) != len(labels):
+        raise ValueError("end_of_line_labels xs, ys and labels must have equal lengths")
+    if any(len(x) == 0 or len(x) != len(y) for x, y in zip(xs, ys)):
+        raise ValueError("end_of_line_labels each x/y series must be nonempty and have equal lengths")
+    if any(not math.isfinite(x[-1]) or not math.isfinite(y[-1]) for x, y in zip(xs, ys)):
+        raise ValueError("end_of_line_labels endpoints must be finite; choose valid endpoints explicitly")
     if fontsize is None:
         fontsize = plt.rcParams["font.size"]
-    if colors is None:
-        colors = [None] * len(labels)
+    colors = [] if colors is None else list(colors)
+    if not colors:
+        colors = [None]
     span = ax.get_xlim()[1] - ax.get_xlim()[0]
-    for x, y, lab, c in zip(xs, ys, labels, colors):
+    for i, (x, y, lab) in enumerate(zip(xs, ys, labels)):
+        c = colors[i % len(colors)]
         ax.text(x[-1] + dx * span, y[-1], lab, color=c, va="center", ha="left", fontsize=fontsize)
 
 
@@ -273,10 +334,14 @@ def panel_crops(fig, dpi=None, pad_px=6, bbox_inches=None, pad_inches=None):
         raise TypeError("panel_crops bbox_inches must be None, 'tight', or a matplotlib Bbox")
     W_px, H_px = int(round(W_in * dpi)), int(round(H_in * dpi))
     lettered = {}
+    seen_letters = set()
     for ax in fig.axes:
         for t in ax.findobj(matplotlib.text.Text):
             s = (t.get_text() or "").strip()
             if t.get_gid() == "figure-style-panel-letter":
+                if s in seen_letters:
+                    raise ValueError(f"Duplicate panel letter: {s!r}")
+                seen_letters.add(s)
                 lettered[ax] = s
                 break
 
