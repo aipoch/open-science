@@ -122,6 +122,42 @@ describe('Skill runtime MCP loader', () => {
       await server.close()
     }
   })
+
+  it('resolves a canonical Skill name from a namespaced Codex projection', async () => {
+    const root = await seedProjection()
+    const skillsDirectory = join(root, 'skills')
+    const canonicalName = 'crypto-research-design'
+    const projectedDirectory = 'os-personal-crypto-research-design'
+    await mkdir(join(skillsDirectory, projectedDirectory), { recursive: true })
+    await writeFile(
+      join(skillsDirectory, projectedDirectory, 'SKILL.md'),
+      `---\nname: ${canonicalName}\ndescription: Imported research design.\n---\nCANONICAL_BODY\n`
+    )
+
+    const server = await createSkillRuntimeMcpServer({
+      root,
+      skillsDirectory,
+      allowedNames: new Set([canonicalName])
+    })
+    const client = new Client({ name: 'codex-namespaced-loader-test', version: '1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      expect(JSON.stringify(await client.listTools())).toContain(canonicalName)
+      expect(
+        JSON.stringify(
+          await client.callTool({
+            name: LOAD_SKILL_TOOL_NAME,
+            arguments: { skill: canonicalName }
+          })
+        )
+      ).toContain('CANONICAL_BODY')
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
   it('advertises projected Skills to Claude without application metadata', async () => {
     const root = await seedProjection('fixture-data-summary')
     await seedSkill(root, 'fixture-diagram-renderer', 'Render synthetic diagrams for tests.')
