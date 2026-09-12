@@ -585,87 +585,93 @@ describe('Literature PDF attachment reliability', () => {
     })
   })
 
-  it('counts pages from the held bytes rather than a replacement pathname', async () => {
-    const original = textPdf('ORIGINAL')
-    const { importer, request, authority } = await setup(original)
-    const version = (await importer.import(request)).item.attachments[0].versions[0]
-    const resolved = (await authority.resolveVersion(version.id))!
-    const lease = await new NodeVersionFileOperator({ storageRoot: root }).openImmutable(
-      resolved.storageKey,
-      { checksum: version.checksum, sizeBytes: version.sizeBytes }
-    )
-    try {
-      const replacement = join(root, 'one-page.pdf')
-      await writeFile(replacement, pdf())
-      await rename(replacement, resolved.path)
-      expect(
-        await inspectPdfPageCount(lease.localPath, {
-          size: lease.sizeBytes,
-          readBytes: () => lease.readRange(0, lease.sizeBytes)
-        })
-      ).toBe(2)
-    } finally {
-      await lease.close()
+  it.skipIf(process.platform === 'win32')(
+    'counts pages from the held bytes rather than a replacement pathname',
+    async () => {
+      const original = textPdf('ORIGINAL')
+      const { importer, request, authority } = await setup(original)
+      const version = (await importer.import(request)).item.attachments[0].versions[0]
+      const resolved = (await authority.resolveVersion(version.id))!
+      const lease = await new NodeVersionFileOperator({ storageRoot: root }).openImmutable(
+        resolved.storageKey,
+        { checksum: version.checksum, sizeBytes: version.sizeBytes }
+      )
+      try {
+        const replacement = join(root, 'one-page.pdf')
+        await writeFile(replacement, pdf())
+        await rename(replacement, resolved.path)
+        expect(
+          await inspectPdfPageCount(lease.localPath, {
+            size: lease.sizeBytes,
+            readBytes: () => lease.readRange(0, lease.sizeBytes)
+          })
+        ).toBe(2)
+      } finally {
+        await lease.close()
+      }
     }
-  })
+  )
 
-  it('extracts from the held lease when its pathname is atomically replaced', async () => {
-    const original = textPdf('ORIGINAL')
-    const { importer, request, authority } = await setup(original)
-    const attachment = (await importer.import(request)).item.attachments[0]
-    const version = attachment.versions[0]
-    const sources = new SessionPdfSourceResolver({
-      literature: authority,
-      inputs: { resolveVersion: vi.fn(), openContent: vi.fn() }
-    })
-    const resolved = await authority.resolveVersion(version.id)
-    const resolve = sources.resolveVersion.bind(sources)
-    const close = vi.fn()
-    vi.spyOn(sources, 'resolveVersion').mockImplementationOnce(async (input) => ({
-      ...(await resolve(input))!,
-      openContent: async () => {
-        const lease = await new NodeVersionFileOperator({ storageRoot: root }).openImmutable(
-          resolved!.storageKey,
-          { checksum: version.checksum, sizeBytes: version.sizeBytes }
-        )
-        const replaced = join(root, 'replacement.pdf')
-        try {
-          await writeFile(replaced, textPdf('REPLACED'))
-          await rename(replaced, resolved!.path)
-        } catch (error) {
-          await lease.close()
-          throw error
-        }
-        return {
-          path: lease.localPath,
-          size: lease.sizeBytes,
-          readRange: lease.readRange,
-          verifyUnchanged: lease.verifyUnchanged,
-          close: async () => {
-            close()
+  it.skipIf(process.platform === 'win32')(
+    'extracts from the held lease when its pathname is atomically replaced',
+    async () => {
+      const original = textPdf('ORIGINAL')
+      const { importer, request, authority } = await setup(original)
+      const attachment = (await importer.import(request)).item.attachments[0]
+      const version = attachment.versions[0]
+      const sources = new SessionPdfSourceResolver({
+        literature: authority,
+        inputs: { resolveVersion: vi.fn(), openContent: vi.fn() }
+      })
+      const resolved = await authority.resolveVersion(version.id)
+      const resolve = sources.resolveVersion.bind(sources)
+      const close = vi.fn()
+      vi.spyOn(sources, 'resolveVersion').mockImplementationOnce(async (input) => ({
+        ...(await resolve(input))!,
+        openContent: async () => {
+          const lease = await new NodeVersionFileOperator({ storageRoot: root }).openImmutable(
+            resolved!.storageKey,
+            { checksum: version.checksum, sizeBytes: version.sizeBytes }
+          )
+          const replaced = join(root, 'replacement.pdf')
+          try {
+            await writeFile(replaced, textPdf('REPLACED'))
+            await rename(replaced, resolved!.path)
+          } catch (error) {
             await lease.close()
+            throw error
+          }
+          return {
+            path: lease.localPath,
+            size: lease.sizeBytes,
+            readRange: lease.readRange,
+            verifyUnchanged: lease.verifyUnchanged,
+            close: async () => {
+              close()
+              await lease.close()
+            }
           }
         }
-      }
-    }))
-    const reader = new LiteratureDocumentReader({
-      storageRoot: root,
-      sources,
-      sessions: { loadSessionForContinuation: vi.fn() }
-    })
-    expect(
-      await reader.searchAttachment({
-        projectId: 'project',
-        attachmentId: attachment.id,
-        attachmentVersionId: version.id,
-        filename: version.filename,
-        sizeBytes: version.sizeBytes,
-        checksum: version.checksum,
-        query: 'REPLACED'
+      }))
+      const reader = new LiteratureDocumentReader({
+        storageRoot: root,
+        sources,
+        sessions: { loadSessionForContinuation: vi.fn() }
       })
-    ).toMatchObject({ passages: [] })
-    expect(close).toHaveBeenCalledOnce()
-  })
+      expect(
+        await reader.searchAttachment({
+          projectId: 'project',
+          attachmentId: attachment.id,
+          attachmentVersionId: version.id,
+          filename: version.filename,
+          sizeBytes: version.sizeBytes,
+          checksum: version.checksum,
+          query: 'REPLACED'
+        })
+      ).toMatchObject({ passages: [] })
+      expect(close).toHaveBeenCalledOnce()
+    }
+  )
 
   it('refuses old preview resources after their attachment is quarantined', async () => {
     const original = textPdf('ORIGINAL')

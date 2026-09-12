@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
+const analyzedPythonPath = (value: string): string =>
+  process.platform === 'win32' ? value.replaceAll('/', '\\') : value
+
 describe('input path expressions', () => {
   it.each([
     [
@@ -55,7 +58,7 @@ describe('input path expressions', () => {
     await expect(analyzeNotebookSourceFileAccess(language, source)).resolves.toMatchObject({
       readState: 'complete',
       externalState: 'complete',
-      reads: [path],
+      reads: [language === 'python' ? analyzedPythonPath(path) : path],
       reasonCodes: []
     })
   })

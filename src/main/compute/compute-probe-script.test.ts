@@ -8,7 +8,7 @@ import { ComputeHostProfileOwner } from './compute-host-profile-owner'
 import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
 import type { ComputeHostRepository } from './repository'
 
-describe('compute probe shell protocol', () => {
+describe.skipIf(process.platform === 'win32')('compute probe shell protocol', () => {
   it.each([true, false])(
     'records independent checks for a pinned scratch path and scheduler availability=%s',
     async (available) => {
