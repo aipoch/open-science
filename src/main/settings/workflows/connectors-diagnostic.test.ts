@@ -156,7 +156,11 @@ it('bounds a stalled stdio server by the diagnostic timeout', async () => {
 }, 15_000)
 
 it('distinguishes a missing executable without exposing its path', async () => {
-  const { workflow } = makeWorkflow('/private/missing/m07-secret-command', [])
+  const missing =
+    process.platform === 'win32'
+      ? 'C:\\missing\\m07-secret-command'
+      : '/private/missing/m07-secret-command'
+  const { workflow } = makeWorkflow(missing, [])
   const result = await workflow.testCustomServer({ id: 'fixture' })
   expect(result).toMatchObject({ success: false, stage: 'startup', code: 'startup_failed' })
   expect(JSON.stringify(result)).not.toContain('m07-secret-command')
