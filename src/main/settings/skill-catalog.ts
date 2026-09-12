@@ -634,10 +634,13 @@ class SkillCatalogModule {
     request: DeleteSkillRequest,
     guard?: (skillId: string) => Promise<void>
   ): Promise<SkillView[]> {
-    if ((await this.skillRegistry.list()).some((skill) => skill.id === request.id)) {
+    if (
+      !request.source &&
+      (await this.skillRegistry.list()).some((skill) => skill.id === request.id)
+    ) {
       throw new Error('Built-in Skills cannot be deleted.')
     }
-    await this.userSkills.delete(request.id, guard)
+    await this.userSkills.delete(request.id, request.source, guard)
     await this.options.repository.setSkillEnabled(request.id, true)
     await this.refreshRegisteredHelpers()
     return this.listSkills()

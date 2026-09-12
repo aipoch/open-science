@@ -630,7 +630,10 @@ describe('SkillsPanel (list view)', () => {
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
     ).find((item) => item.textContent?.trim() === 'Delete')
     clickRadixMenuItem(remove)
-    expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith('personal-mine')
+    expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith(
+      'personal-mine',
+      'personal'
+    )
   })
 
   it('exports imported and personal Skills but never built-in Skills', async () => {

@@ -121,8 +121,14 @@ class UserSkillRepository {
   }
 
   // Deletes a personal or imported skill directory.
-  async delete(id: string, guard?: (skillId: string) => Promise<void>): Promise<void> {
-    return this.store.delete(id, guard)
+  async delete(
+    id: string,
+    sourceOrGuard?:
+      Parameters<UserSkillStore['delete']>[1] | Parameters<UserSkillStore['delete']>[2],
+    guard?: Parameters<UserSkillStore['delete']>[2]
+  ): Promise<void> {
+    if (typeof sourceOrGuard === 'function') return this.store.delete(id, undefined, sourceOrGuard)
+    return this.store.delete(id, sourceOrGuard, guard)
   }
 
   async importFromGitHub(

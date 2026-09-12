@@ -706,7 +706,7 @@ const SkillsPanel = ({
                                       className="gap-2 text-xs text-destructive"
                                       onSelect={() => {
                                         setDeleteError(undefined)
-                                        void deleteSkill(skill.id).catch((error) =>
+                                        void deleteSkill(skill.id, skill.source).catch((error) =>
                                           setDeleteError({
                                             id: skill.id,
                                             message:

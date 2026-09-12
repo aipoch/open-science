@@ -2,6 +2,7 @@ import type {
   AgentHomeSkillRef,
   AgentHomeSkillView,
   CreateSkillRequest,
+  DeleteSkillRequest,
   ImportAgentHomeSkillsResult,
   ImportSkillResult,
   ImportSkillZipBatchResult,
@@ -22,7 +23,7 @@ export type SettingsSkillsActions = {
   setSkillsEnabled: (ids: string[], enabled: boolean) => Promise<void>
   createSkill: (request: CreateSkillRequest) => Promise<void>
   updateSkill: (request: UpdateSkillRequest) => Promise<void>
-  deleteSkill: (id: string) => Promise<void>
+  deleteSkill: (id: string, source?: DeleteSkillRequest['source']) => Promise<void>
   importSkill: (url: string) => Promise<ImportSkillResult>
   importSkillZip: (
     dataBase64: string,
@@ -178,7 +179,10 @@ export const createSettingsSkillsSlice = ({
       reconcileCatalogMutation(() => getCommands().setSkillsEnabled({ ids, enabled })),
     createSkill: (request) => reconcileCatalogMutation(() => getCommands().createSkill(request)),
     updateSkill: (request) => reconcileCatalogMutation(() => getCommands().updateSkill(request)),
-    deleteSkill: (id) => reconcileCatalogMutation(() => getCommands().deleteSkill({ id })),
+    deleteSkill: (id, source) =>
+      reconcileCatalogMutation(() =>
+        getCommands().deleteSkill(source === undefined ? { id } : { id, source })
+      ),
     importSkill: (url) => reconcileImport(() => getCommands().importSkill({ url })),
     importSkillZip: (dataBase64, opts) =>
       reconcileImport(() =>

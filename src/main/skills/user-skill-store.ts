@@ -226,10 +226,13 @@ export class UserSkillStore {
     return skills
   }
 
-  async resolveSkillId(id: string): Promise<{ source: UserSkillSource; directoryName: string }> {
+  async resolveSkillId(
+    id: string,
+    sourceFilter?: UserSkillSource
+  ): Promise<{ source: UserSkillSource; directoryName: string }> {
     const conventional = parseUserSkillId(id)
-    if (conventional) return conventional
-    for (const source of USER_SOURCES) {
+    if (conventional && (!sourceFilter || conventional.source === sourceFilter)) return conventional
+    for (const source of sourceFilter ? [sourceFilter] : USER_SOURCES) {
       for (const directoryName of await this.listDirectoryNames(source)) {
         const metadata = await readSpecialistPackageSkillMetadata(
           this.skillDirectory(source, directoryName)
@@ -365,10 +368,14 @@ export class UserSkillStore {
     }, ['personal'])
   }
 
-  async delete(id: string, guard?: (skillId: string) => Promise<void>): Promise<void> {
+  async delete(
+    id: string,
+    source?: UserSkillSource,
+    guard?: (skillId: string) => Promise<void>
+  ): Promise<void> {
     return this.transactions.runMutationRecovered(async () => {
       await guard?.(id)
-      const parsed = await this.resolveSkillId(id)
+      const parsed = await this.resolveSkillId(id, source)
       const metadata = await readSpecialistPackageSkillMetadata(
         this.skillDirectory(parsed.source, parsed.directoryName)
       )

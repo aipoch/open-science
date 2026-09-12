@@ -179,7 +179,7 @@ const SkillBulkManageView = (): React.JSX.Element => {
     const failures: string[] = []
     for (const { skill } of deletableSkills) {
       try {
-        await deleteSkill(skill.id)
+        await deleteSkill(skill.id, skill.source)
         deletedIds.add(skill.id)
       } catch (error) {
         failures.push(errorMessage(error) || skill.displayName)

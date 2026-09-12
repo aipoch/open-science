@@ -1225,6 +1225,7 @@ export type UpdateSkillRequest = {
 
 export type DeleteSkillRequest = {
   id: string
+  source?: Extract<SkillSource, 'imported' | 'personal'>
 }
 
 // Import a single skill from a public GitHub URL.
