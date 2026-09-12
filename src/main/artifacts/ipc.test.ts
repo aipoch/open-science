@@ -1,4 +1,5 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { resolveDataRoot } from '../storage-root'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { ProvenanceIntegrityError } from '../../shared/provenance-read-result'
@@ -63,7 +64,7 @@ vi.mock('electron', () => ({
 // with a tempdir — so this stub doesn't affect their setup.
 const ARTIFACT_DATA_ROOT = '/tmp/open-science-artifact-data-root'
 vi.mock('../storage-root', () => ({
-  resolveDataRoot: () => ARTIFACT_DATA_ROOT,
+  resolveDataRoot: vi.fn(() => ARTIFACT_DATA_ROOT),
   resolveStorageRoot: () => '/tmp/open-science-artifact-config-root'
 }))
 
@@ -757,6 +758,7 @@ describe('artifact IPC handlers', () => {
     await Promise.resolve()
     expect(drained).toBe(false)
 
+    await vi.waitFor(() => expect(codeReconstruction.generate).toHaveBeenCalledOnce())
     releaseGeneration?.()
     await expect(generationPromise).resolves.toEqual({
       state: 'ready',
@@ -767,6 +769,33 @@ describe('artifact IPC handlers', () => {
     await drainPromise
     expect(drained).toBe(true)
     expect(codeReconstruction.generate).toHaveBeenCalledWith(request)
+  })
+
+  it('refuses code generation for imported history while keeping reconstruction reads available', async () => {
+    const root = await createStorageRoot()
+    vi.mocked(resolveDataRoot).mockReturnValueOnce(root)
+    await mkdir(join(root, 'artifacts', 'existing-project', 'session-1', '.session-package'), {
+      recursive: true
+    })
+    const codeReconstruction = {
+      get: vi.fn().mockResolvedValue({ state: 'unavailable' }),
+      generate: vi.fn()
+    }
+    const handlers = createArtifactHandlers(
+      new ArtifactRepository(root),
+      new ArtifactRunRegistry(),
+      { codeReconstruction }
+    )
+    const request = {
+      projectId: 'existing-project',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1'
+    }
+    await expect(handlers.generateCodeReconstruction(request)).rejects.toThrow('read-only')
+    expect(codeReconstruction.generate).not.toHaveBeenCalled()
+    await handlers.getCodeReconstruction(request)
+    expect(codeReconstruction.get).toHaveBeenCalledWith(request)
   })
 
   it('opens only files inside the managed artifact root', async () => {

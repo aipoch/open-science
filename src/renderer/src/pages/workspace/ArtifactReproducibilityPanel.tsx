@@ -35,6 +35,7 @@ import { useTranslation } from 'react-i18next'
 import { TransformComponent, TransformWrapper, useControls } from 'react-zoom-pan-pinch'
 
 import { Button } from '@/components/ui/button'
+import { sessionExportLocked, usePackageOperationStore } from '../../stores/package-operation-store'
 import { ReproducibilityOutput } from './ReproducibilityOutput'
 import { ReproducibilityOutputStorage } from './ReproducibilityOutputStorage'
 import { OutputComparisonSettings } from './OutputComparison'
@@ -96,6 +97,7 @@ import {
 type ArtifactReproducibilityPanelProps = {
   projection?: ArtifactReproducibilityProjection
   analysisRevision?: ArtifactAnalysisRevision
+  readOnly?: boolean
   executionAvailable?: boolean
   artifactVersion?: GetArtifactVersionProvenanceRequest
   artifactName?: string
@@ -854,6 +856,7 @@ export const ArtifactReproducibilityPanel = ({
   projection,
   analysisRevision,
   executionAvailable = false,
+  readOnly = false,
   artifactVersion,
   artifactName,
   tooltipClassName,
@@ -879,6 +882,7 @@ export const ArtifactReproducibilityPanel = ({
     latestFailedAttempt?: ArtifactReproducibilityFailedAttempt
     nextCursor?: string
     loadingMore?: boolean
+    sourceArtifactVersion?: GetArtifactVersionProvenanceRequest
     error?: boolean
   }>({ receipts: [] })
   const [persistedCheckLogs, setPersistedCheckLogs] = useState<
@@ -949,6 +953,22 @@ export const ArtifactReproducibilityPanel = ({
     receiptHistory.artifactVersionKey === artifactVersionKey
       ? receiptHistory.latestFailedAttempt
       : undefined
+  const sourceEvidence =
+    readOnly ||
+    (receiptHistory.artifactVersionKey === artifactVersionKey &&
+      Boolean(receiptHistory.sourceArtifactVersion))
+  const exportLocked = usePackageOperationStore((state) =>
+    sessionExportLocked(
+      state.operation,
+      artifactVersion
+        ? { id: artifactVersion.appSessionId, projectId: artifactVersion.projectId }
+        : undefined
+    )
+  )
+  const mutationBlocked = sourceEvidence || exportLocked
+  const mutationBlockedMessage = sourceEvidence
+    ? t('Imported Sessions are read-only.')
+    : t('This Session is being exported. Try again when export finishes.')
   const checkApiAvailable = Boolean(
     artifactVersion &&
     window.api?.artifacts.startReproducibilityCheck &&
@@ -1101,6 +1121,7 @@ export const ArtifactReproducibilityPanel = ({
           ? {
               artifactVersionKey,
               receipts: mergeReceipts(current.receipts, page.receipts),
+              sourceArtifactVersion: page.sourceArtifactVersion,
               ...(current.latestFailedAttempt
                 ? { latestFailedAttempt: current.latestFailedAttempt }
                 : {}),
@@ -1160,6 +1181,7 @@ export const ArtifactReproducibilityPanel = ({
         if (active) {
           setReceiptHistory((current) => ({
             artifactVersionKey,
+            sourceArtifactVersion: page.sourceArtifactVersion,
             receipts: mergeReceipts(
               page.receipts,
               current.artifactVersionKey === artifactVersionKey ? current.receipts : []
@@ -1294,6 +1316,7 @@ export const ArtifactReproducibilityPanel = ({
     if (
       startPendingRef.current === checkScopeRef.current ||
       checkState?.status === 'running' ||
+      mutationBlocked ||
       !artifactVersion ||
       restoringSummary ||
       pendingComparisonRules ||
@@ -1716,15 +1739,17 @@ export const ArtifactReproducibilityPanel = ({
           ).map((issue) => issue.description)}
           busy={starting || checkState?.status === 'running'}
           disabledReason={
-            restoringSummary
-              ? t('Loading…')
-              : pendingComparisonRules
-                ? t('Apply comparison rules before starting a check.')
-                : !checkApiAvailable
-                  ? t(
-                      'Execution evidence is unavailable, so safe starting points cannot be determined.'
-                    )
-                  : undefined
+            mutationBlocked
+              ? mutationBlockedMessage
+              : restoringSummary
+                ? t('Loading…')
+                : pendingComparisonRules
+                  ? t('Apply comparison rules before starting a check.')
+                  : !checkApiAvailable
+                    ? t(
+                        'Execution evidence is unavailable, so safe starting points cannot be determined.'
+                      )
+                    : undefined
           }
           error={startError}
           onStart={startCheck}
@@ -1950,6 +1975,21 @@ export const ArtifactReproducibilityPanel = ({
 
   return (
     <div ref={panelRef} className="space-y-3.5 p-4 text-sm sm:p-5">
+      {sourceEvidence ? (
+        <div className="flex items-start gap-2.5 rounded-lg border border-border-300/60 bg-bg-100 px-3.5 py-3">
+          <Info className="mt-0.5 size-4 shrink-0 text-text-300" aria-hidden="true" />
+          <div className="space-y-1">
+            <p className="text-sm font-medium">{t('Checks from the source installation')}</p>
+            <p className="text-xs leading-5 text-text-200">
+              {t('These records were imported. This installation has not rerun the checks.')}
+            </p>
+          </div>
+        </div>
+      ) : exportLocked && (summaryStatus || checkUnavailable) ? (
+        <p className="text-xs text-text-200" role="status">
+          {mutationBlockedMessage}
+        </p>
+      ) : null}
       <section aria-labelledby="reproducibility-check-title">
         <div
           data-reproducibility-check-state={checkState?.status ?? (starting ? 'starting' : 'idle')}
@@ -2019,7 +2059,9 @@ export const ArtifactReproducibilityPanel = ({
                       t('The isolated check stopped without changing the original result.')
                     ) : summaryStatus === 'failed' ? (
                       failedCheckDetail(checkState?.phase ?? visibleFailedAttempt?.phase, t)
-                    ) : checkUnavailable ? null : (
+                    ) : checkUnavailable ? null : mutationBlocked ? (
+                      mutationBlockedMessage
+                    ) : (
                       t('Runs in an isolated workspace. Original files and results stay unchanged.')
                     )}
                   </p>
@@ -2132,7 +2174,9 @@ export const ArtifactReproducibilityPanel = ({
                     }
                     size="sm"
                     className="min-h-9 shrink-0 whitespace-nowrap self-start sm:self-auto [@media(pointer:coarse)]:min-h-11"
-                    disabled={starting || restoringSummary || pendingComparisonRules}
+                    disabled={
+                      starting || restoringSummary || pendingComparisonRules || mutationBlocked
+                    }
                     aria-busy={starting || restoringSummary}
                     onClick={() => void startCheck()}
                   >
@@ -2185,10 +2229,10 @@ export const ArtifactReproducibilityPanel = ({
               ))}
             </ul>
           ) : null}
-          {selectedFrontier ? (
+          {selectedFrontier && !sourceEvidence ? (
             <fieldset
               className="min-w-0 space-y-1.5 border-t border-border-300/50 px-4 py-3"
-              disabled={starting || checkState?.status === 'running'}
+              disabled={mutationBlocked || starting || checkState?.status === 'running'}
             >
               <legend className="flex items-center gap-1.5 font-semibold text-text-000">
                 <span>
@@ -2218,7 +2262,7 @@ export const ArtifactReproducibilityPanel = ({
                 <Select
                   value={selectedFrontier?.frontierId}
                   onValueChange={setSelectedFrontierId}
-                  disabled={starting || checkState?.status === 'running'}
+                  disabled={mutationBlocked || starting || checkState?.status === 'running'}
                 >
                   <SelectTrigger
                     data-start-frontier-selector
@@ -2283,7 +2327,7 @@ export const ArtifactReproducibilityPanel = ({
                 onChange={setComparisonPolicy}
                 onPendingChange={setPendingComparisonRules}
                 overlayClassName={tooltipClassName}
-                disabled={starting || checkState?.status === 'running'}
+                disabled={mutationBlocked || starting || checkState?.status === 'running'}
               />
             </fieldset>
           ) : null}
@@ -2547,6 +2591,7 @@ export const ArtifactReproducibilityPanel = ({
             </summary>
             <div className="border-t border-border-300/50">
               <ReproducibilityOutputStorage
+                readOnly={mutationBlocked}
                 key={artifactVersionKey}
                 scope={artifactVersion}
                 receiptKey={receipts.map((receipt) => receipt.receiptChecksum).join(':')}
@@ -2764,6 +2809,7 @@ export const ArtifactReproducibilityPanel = ({
                                         </span>
                                       </div>
                                       <ReproducibilityOutput
+                                        scope={artifactVersion}
                                         receipt={receipt}
                                         comparison={comparison}
                                       />

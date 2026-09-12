@@ -260,7 +260,8 @@ const createComputeHandlers = (
   sessionCacheOwner?: SessionCacheOwner,
   operationRepository?: ComputeJobOperationRepository,
   sessionLimitPersistence?: SessionComputePolicyAuthority,
-  resultDelivery?: Pick<ComputeResultDeliveryProjection, 'hasDeliveryPath'>
+  resultDelivery?: Pick<ComputeResultDeliveryProjection, 'hasDeliveryPath'>,
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
     ? createComputePermissionGrantAdapter(permissionGrantRegistry, legacyComputeGrants)
@@ -388,6 +389,7 @@ const createComputeHandlers = (
   const service =
     injectedService ??
     new ComputeService({
+      admitSessionWork,
       runner: sshRunner,
       repository,
       approvalBroker: broker,
@@ -800,7 +802,8 @@ const createComputeIpcModule = (
   legacyComputeGrants?: LegacyComputeGrantPort,
   hostLifecycle?: ComputeHostLifecycle,
   sessionLimitPersistence?: SessionComputePolicyAuthority,
-  resultDelivery?: ComputeResultDeliveryProjection
+  resultDelivery?: ComputeResultDeliveryProjection,
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void
 ): ComputeIpcModule => {
   const operationRepository = createDefaultComputeJobOperationRepository()
   const configRoot = resolveConfigRoot()
@@ -839,7 +842,8 @@ const createComputeIpcModule = (
     sessionCacheOwner,
     operationRepository,
     sessionLimitPersistence,
-    resultDelivery
+    resultDelivery,
+    admitSessionWork
   )
   const jobDeletionOwner = handlers.jobDeletionOwner
   if (!jobDeletionOwner) throw new Error('Compute Job deletion owner is unavailable.')

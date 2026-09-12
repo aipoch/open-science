@@ -293,6 +293,48 @@ describe('ComputeService.list', () => {
 })
 
 describe('ComputeService job workflow facade', () => {
+  it('rejects export-locked submissions before reading hosts or requesting approval', async () => {
+    const { repo } = makeRepo()
+    const runner = makeFakeRunner({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+      timedOut: false
+    })
+    const service = new ComputeService({
+      runner,
+      repository: repo,
+      admitSessionWork: () => {
+        throw new Error('Session locked for export')
+      }
+    })
+    await expect(
+      service.submitJob('ssh:biowulf', 'test', 'true', {}, { projectId: 'p', sessionId: 's' })
+    ).rejects.toThrow('locked for export')
+    expect(repo.get).not.toHaveBeenCalled()
+    expect(runner.run).not.toHaveBeenCalled()
+  })
+
+  it('holds admission until submit validation settles and releases it after failure', async () => {
+    const release = vi.fn()
+    const { repo } = makeRepo()
+    const service = new ComputeService({
+      runner: makeFakeRunner({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+        timedOut: false
+      }),
+      repository: repo,
+      admitSessionWork: () => release
+    })
+    await expect(
+      service.submitJob('ssh:biowulf', 'test', 'true', {}, { projectId: 'p', sessionId: 's' })
+    ).rejects.toThrow('ComputeJobRepository')
+    expect(release).toHaveBeenCalledOnce()
+  })
   it('preserves all job workflow operations and the stable update sink', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,

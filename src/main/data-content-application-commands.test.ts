@@ -211,6 +211,9 @@ const createDependencies = () => {
     readPreview: vi.fn()
   }
   const electron = {
+    exportSessionPackage: vi.fn(async () => ({ saved: false })),
+    sessionPackageOperation: vi.fn(async () => null),
+    importSessionPackage: vi.fn(async () => null),
     exportConversationFromInvokingWindow: vi.fn(async () => ({ saved: false as const })),
     stageLocalFileWithProgress: vi.fn(async () => attachment)
   }
@@ -257,6 +260,9 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionDelete',
   'sessionEditDetails',
   'sessionExportConversation',
+  'sessionExportPackage',
+  'sessionImportPackage',
+  'sessionPackageOperation',
   'sessionFilterPdfContextCandidates',
   'sessionLinkPdfContext',
   'sessionList',
@@ -340,6 +346,9 @@ describe('Data and content application commands', () => {
         'sessions:delete-session',
         'sessions:edit-details',
         'sessions:export-conversation',
+        'sessions:export-package',
+        'sessions:import-package',
+        'sessions:package-operation',
         'sessions:filter-pdf-context-candidates',
         'sessions:link-pdf-context',
         'sessions:list',

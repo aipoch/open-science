@@ -148,6 +148,9 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'remote-access:disable',
   'remote-access:set-mode',
   'sessions:export-conversation',
+  'sessions:export-package',
+  'sessions:import-package',
+  'sessions:package-operation',
   'uploads:stage-local-file'
 ])
 

@@ -22,7 +22,10 @@ import {
   writeDurableJsonFile
 } from '../storage/durable-json-file'
 import { decodeVersionedJson } from '../storage/versioned-json-decoder'
-import { decodeRunDocumentDataPaths, encodeRunDocumentDataPaths } from './run-document-data-paths'
+import {
+  decodeRunDocumentDataPaths,
+  encodeRunDocumentDataPaths
+} from './run-document-data-path-codec'
 import {
   createFrameNotebookLane,
   createRootNotebookLane,

@@ -449,3 +449,54 @@ describe('ArtifactReproducibilityReceiptStore', () => {
     await expect(store.list(request)).rejects.toThrow('receipt checksum mismatch')
   })
 })
+
+it('reads original output through an imported source-to-local entity mapping', async () => {
+  const { root } = await createStore()
+  const {
+    bindArtifactReproducibilityExecutionEvidence,
+    readArtifactReproducibilityOriginalOutput
+  } = await import('./provenance-reproducibility-execution-evidence')
+  const { bindArtifactReproducibilityReceipts } =
+    await import('./artifact-reproducibility-receipts')
+  const owner = {}
+  const bytes = Buffer.from('retained original output')
+  await writeFile(join(root, 'original.bin'), bytes)
+  await writeFile(
+    join(root, 'reproducibility-source.json'),
+    JSON.stringify({
+      sourceScope: request,
+      entityIds: { 'file-generation:source': 'file-generation:local' },
+      omittedOutputChecksums: [],
+      lockChecksums: []
+    })
+  )
+  bindArtifactReproducibilityReceipts(
+    owner,
+    new ArtifactReproducibilityReceiptStore({ resolveVersionDirectory: async () => root })
+  )
+  bindArtifactReproducibilityExecutionEvidence(
+    owner,
+    async () =>
+      ({
+        provenanceGraph: {
+          entities: [
+            {
+              entityId: 'file-generation:local',
+              kind: 'file-generation',
+              contentStorageKey: 'original.bin',
+              checksum: sha256(bytes),
+              sizeBytes: bytes.length
+            }
+          ]
+        }
+      }) as unknown as import('../../shared/artifact-provenance').PersistedArtifactExecutionSnapshot
+  )
+  await expect(
+    readArtifactReproducibilityOriginalOutput(
+      owner,
+      root,
+      { ...request, versionId: 'local-version' },
+      'file-generation:source'
+    )
+  ).resolves.toEqual(bytes)
+})

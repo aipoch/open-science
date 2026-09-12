@@ -80,9 +80,6 @@ import { VisionEvidenceRepository } from './acp/vision-evidence-repository'
 import { ArtifactTurnOwner } from './acp/artifact-turn-owner'
 import { ArchiveCoordinator } from './archive/coordinator'
 import { ArtifactCodeReconstructionService } from './artifacts/code-reconstruction'
-import { readReproducibilityOutputFile } from './artifacts/artifact-reproducibility-outputs'
-import { resolveStorageKey } from './artifacts/provenance-storage'
-import { sha256 } from './artifacts/provenance-canonical'
 import { createArtifactReproducibilityReceiptExporter } from './artifacts/artifact-reproducibility-export'
 import { registerArtifactReproducibilityIpcHandlers } from './artifacts/artifact-reproducibility-ipc'
 import { withReproducibilityNotebookLifecycle } from './artifacts/reproducibility-notebook-lifecycle'
@@ -92,6 +89,8 @@ import {
   getArtifactReproducibilityOutput,
   retainArtifactReproducibilityOutput,
   getArtifactReproducibilityOutputStorage,
+  getArtifactReproducibilitySource,
+  getArtifactReproducibilityEnvironmentLock,
   clearArtifactReproducibilityOutputs,
   pruneArtifactReproducibilityOutputs,
   getArtifactReproducibilityCheckLog,
@@ -109,7 +108,10 @@ import {
   type ArtifactHandlers
 } from './artifacts/ipc'
 import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
-import { readArtifactReproducibilityExecutionEvidence } from './artifacts/provenance-reproducibility-execution-evidence'
+import {
+  readArtifactReproducibilityExecutionEvidence,
+  readArtifactReproducibilityOriginalOutput
+} from './artifacts/provenance-reproducibility-execution-evidence'
 import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { broadcastJobUpdated, createComputeIpcModule, toJobSummary } from './compute/ipc'
@@ -437,6 +439,11 @@ import {
   withDataRootWrite
 } from './storage/migration-state'
 import { isDataRootMissing } from './storage/path-presence'
+import { SessionPackageService } from './session-package/service'
+import createInspectionWorker from './session-package/inspection-worker-entry?nodeWorker'
+import { createPackageInspector } from './session-package/inspection-worker'
+import { SessionPackageDesktop } from './session-package/desktop'
+import { installSessionPackageQuitGuard } from './session-package/quit-guard'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import { createDataRootSourceCleanup, DataRootCleanupJournal } from './storage/data-root-cleanup'
 import {
@@ -512,6 +519,7 @@ type IpcRegistrationOptions = {
 }
 
 export type ApplicationRuntimeInterfaces = {
+  openSessionPackageFile: (path: string | null) => void
   applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
   applicationEvents: ApplicationEventSource
   permissionApprovalPresence: PermissionApprovalPresence
@@ -1166,6 +1174,38 @@ const createApplicationModules = async (
     }
   }
   const projectRepository = createDefaultProjectRepository()
+  const sessionPackageDesktopLifecycle = {
+    close: async (): Promise<void> => undefined,
+    isActive: () => false
+  }
+  let packageHandoffHeld = false
+  const sessionPackageService = await modules.add(undefined, () => {
+    const service = new SessionPackageService({
+      inspectPackage: createPackageInspector(createInspectionWorker),
+      configRoot: resolveConfigRoot(),
+      storageRoot: resolveDataRoot(),
+      getClient: () => getProjectDbClient(resolveConfigRoot()),
+      isSessionActive: (projectId, sessionId) =>
+        detectArchiveBlockingSessions().some(
+          (item) => item.projectId === projectId && item.sessionId === sessionId
+        )
+    })
+    return {
+      name: 'session-package',
+      capability: service,
+      dispose: async () => {
+        await Promise.all([service.close(), sessionPackageDesktopLifecycle.close()])
+      }
+    }
+  })
+  // Finish or roll back private imports before any renderer or background owner hydrates catalogs.
+  let beforePackageHydration = true
+  await runDataRootStartupRecovery(() =>
+    sessionPackageService.recover({ collectDeletedPackages: beforePackageHydration })
+  )
+  // Reconnecting a missing data root can replay this callback after runtimes exist. Import
+  // recovery still runs behind its write gate, but package collection waits for the next launch.
+  beforePackageHydration = false
   const previewStateRepository = createDefaultPreviewStateRepository()
 
   // One-time conversion of any legacy absolute data-root paths on disk (pre-$DATA-sentinel installs)
@@ -1474,7 +1514,8 @@ const createApplicationModules = async (
       restoreProjectActive: restoreManagedProjectWorkspacesActive,
       markRetained: markManagedWorkspaceRetained,
       restoreActive: restoreManagedWorkspaceActive
-    }
+    },
+    (session) => sessionPackageService.prepareSessionDeletion(session)
   )
   const sessionPdfContextOwner = new SessionPdfContextOwner({
     sources: sessionPdfSourceResolver,
@@ -1862,6 +1903,8 @@ const createApplicationModules = async (
   }
   const notebookApplication = await modules.add(
     {
+      admitSessionWork: (projectId: string, sessionId: string) =>
+        archiveCoordinator.admitSessionWork(projectId, sessionId),
       configRoot: resolveConfigRoot(),
       dataRoot: resolveDataRoot(),
       projectId: DEFAULT_ARTIFACT_PROJECT_ID,
@@ -1894,7 +1937,11 @@ const createApplicationModules = async (
     localRpc: notebookLocalRpc
   } = notebookApplication
   notebookPolicyLifecycle.current = notebookService
-  notebookActivityRef.current = notebookService
+  const notebookLifecycle = withReproducibilityNotebookLifecycle(
+    notebookService,
+    () => artifactReproducibilityAttemptOwnerRef.current
+  )
+  notebookActivityRef.current = notebookLifecycle
   composition.phase('notebook-runtime')
 
   // Builtins are validated once at startup from read-only repository resources. Package imports use
@@ -2449,7 +2496,8 @@ const createApplicationModules = async (
       }
     },
     sessionLimitPersistence,
-    computeJobResultDelivery
+    computeJobResultDelivery,
+    (projectId, sessionId) => archiveCoordinator.admitSessionWork(projectId, sessionId)
   )
   surfaceAdapters = beforeAcpAdapters
   const {
@@ -3746,10 +3794,6 @@ const createApplicationModules = async (
   let reviewerModelRuntimeShutdown:
     | Pick<ReviewerModelRuntimeOwner, 'hasActiveWork' | 'shutdown' | 'shutdownForUpdateGate'>
     | undefined
-  const notebookLifecycle = withReproducibilityNotebookLifecycle(
-    notebookService,
-    () => artifactReproducibilityAttemptOwnerRef.current
-  )
   const shutdownCoordinator = new BackendShutdownCoordinator({
     runtime: {
       shutdownForQuit: async () => {
@@ -3824,6 +3868,7 @@ const createApplicationModules = async (
   // quit the running app to install.
   let releaseSettingsInstallAdmission: (() => void) | undefined
   const abortUpdateHandoff = (): void => {
+    packageHandoffHeld = false
     const releaseAdmission = releaseSettingsInstallAdmission
     releaseSettingsInstallAdmission = undefined
     releaseAdmission?.()
@@ -3841,6 +3886,9 @@ const createApplicationModules = async (
   const updateStrategy = createUpdateStrategy(process.platform, {
     translate,
     installGate: async (options) => {
+      packageHandoffHeld = true
+      if (sessionPackageDesktopLifecycle.isActive())
+        throw new Error('Wait for the Session package operation to finish before updating.')
       releaseSettingsInstallAdmission = settingsService.holdInstallAdmission()
       return updateInstallGate(options)
     },
@@ -4421,6 +4469,7 @@ const createApplicationModules = async (
     releaseAdmission?.()
   }
   const storageCommandOwner = createStorageCommandOwner({
+    hasActivePackageOperation: () => sessionPackageDesktopLifecycle.isActive(),
     runtime,
     notebook: notebookLifecycle,
     getActivePromptSessions: () => runtime.getActivePromptSessions(),
@@ -4507,6 +4556,12 @@ const createApplicationModules = async (
     )
     const reproducibilityOwner = artifactReproducibilityAttemptOwnerRef.current
     const receiptExporter = createArtifactReproducibilityReceiptExporter({
+      readSourceScope: (request) =>
+        withDataRootWrite(
+          async () =>
+            (await getArtifactReproducibilitySource(artifactProvenanceRepository, request))
+              ?.sourceScope
+        ),
       readVersion: (request) =>
         withDataRootWrite(
           async () =>
@@ -4528,29 +4583,27 @@ const createApplicationModules = async (
           )
         ),
       readOriginalOutput: (request, entityId) =>
-        withDataRootWrite(async () => {
-          const execution = await readArtifactReproducibilityExecutionEvidence(
+        withDataRootWrite(() =>
+          readArtifactReproducibilityOriginalOutput(
             artifactProvenanceRepository,
-            request
+            resolveDataRoot(),
+            request,
+            entityId
           )
-          const entity = execution.provenanceGraph?.entities.find(
-            (item) => item.entityId === entityId
-          )
-          if (entity?.kind !== 'file-generation') throw new Error('Original output is unavailable.')
-          const bytes = await readReproducibilityOutputFile(
-            resolveStorageKey(resolveDataRoot(), entity.contentStorageKey)
-          )
-          if (bytes.length !== entity.sizeBytes || sha256(bytes) !== entity.checksum)
-            throw new Error('Original output checksum mismatch.')
-          return bytes
-        }),
+        ),
       readExecution: (request) =>
         withDataRootWrite(() =>
           readArtifactReproducibilityExecutionEvidence(artifactProvenanceRepository, request)
         ),
-      readEnvironmentLock: (lockChecksum) =>
-        withDataRootWrite(() =>
-          readFile(
+      readEnvironmentLock: (lockChecksum, request) =>
+        withDataRootWrite(async () => {
+          if (await getArtifactReproducibilitySource(artifactProvenanceRepository, request))
+            return getArtifactReproducibilityEnvironmentLock(
+              artifactProvenanceRepository,
+              request,
+              lockChecksum
+            )
+          return readFile(
             join(
               resolveDataRoot(),
               'runtime',
@@ -4570,7 +4623,7 @@ const createApplicationModules = async (
             }
             throw error
           })
-        ),
+        }),
       readReceipt: (request, receiptChecksum) =>
         withDataRootWrite(() =>
           getArtifactReproducibilityReceipt(artifactProvenanceRepository, request, receiptChecksum)
@@ -4665,6 +4718,8 @@ const createApplicationModules = async (
         ? owner.withSessionStopped(request.projectId, request.sessionId, operation)
         : operation()
     },
+    withAdmission: (request, work) =>
+      archiveCoordinator.withSessionDeletionAdmissionById(request.sessionId, work),
     persistence: {
       deleteSession: (request) =>
         withDataRootWrite(() =>
@@ -4708,6 +4763,72 @@ const createApplicationModules = async (
   declareElectronAdapter('conversation-export', () =>
     registerConversationExportIpcHandler(conversationExportService)
   )
+  const sessionPackageDesktop = new SessionPackageDesktop({
+    service: sessionPackageService,
+    translate,
+    withDataRootWrite,
+    assertCanStart: () => {
+      if (packageHandoffHeld || isMigrationInProgress() || isMigrationPending())
+        throw new Error('Wait for the application handoff to finish before transferring research.')
+    },
+    reserveExport: async (request) => {
+      let releasePersistence: (() => void) | undefined
+      try {
+        const releaseAdmission = await archiveCoordinator.reserveSessionExport(
+          request.projectId,
+          request.sessionId,
+          async () => {
+            releasePersistence = await sessionPersistenceCoordinator.reserveSessionExport(
+              request.projectId,
+              request.sessionId
+            )
+            await sessionPackageService.assertExportIdle(request)
+          }
+        )
+        return () => {
+          releasePersistence?.()
+          releaseAdmission()
+        }
+      } catch (error) {
+        releasePersistence?.()
+        throw error
+      }
+    },
+    reserveImport: (projectId) => archiveCoordinator.reserveProjectImport(projectId),
+    onOperationChanged: (snapshot) =>
+      applicationEvents.publish('sessions:package-operation-changed', snapshot),
+    afterImport: async (identity, originClientId, projectCreated) => {
+      const [project, importedSession] = await Promise.all([
+        projectRepository.get(identity.projectId),
+        sessionRepository.loadSession(identity.projectId, identity.sessionId)
+      ])
+      if (project && projectCreated) applicationEvents.publish('project:created', project)
+      if (importedSession)
+        applicationEvents.publish('session:created', {
+          session: importedSession,
+          originClientId: originClientId ?? 'session-package-import'
+        })
+    }
+  })
+  sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active
+  const removePackageQuitGuard = installSessionPackageQuitGuard(
+    app,
+    () => sessionPackageDesktop.hasActiveTransfer(),
+    () => {
+      dialog.showMessageBoxSync({
+        type: 'info',
+        title: translate('Session package operation in progress'),
+        message: translate(
+          'Wait for the package operation to finish, or cancel it from the progress window before quitting.'
+        ),
+        buttons: [translate('OK')]
+      })
+    }
+  )
+  sessionPackageDesktopLifecycle.close = async () => {
+    removePackageQuitGuard()
+    await sessionPackageDesktop.close()
+  }
   declareElectronAdapter('permission-grants', () =>
     registerPermissionGrantIpcAdapter(permissionGrantProjection)
   )
@@ -4762,6 +4883,8 @@ const createApplicationModules = async (
     }
   )
   const reviewerOptions = {
+    admitSessionWork: (projectId: string, sessionId: string) =>
+      archiveCoordinator.admitSessionWork(projectId, sessionId),
     acpRuntime: runtime,
     modelRuntime: reviewerModelRuntime,
     projectRuntime: reviewerProjectRuntime,
@@ -5078,6 +5201,19 @@ const createApplicationModules = async (
     dataContent: {
       artifacts: artifactHandlers,
       electron: {
+        sessionPackageOperation: async (invocation) =>
+          sessionPackageDesktop.respond(invocation.args[0]),
+        exportSessionPackage: (invocation) =>
+          sessionPackageDesktop.export(
+            invocation.args[0],
+            BrowserWindow.fromWebContents(electronSenderFor(invocation)) ?? undefined
+          ),
+        importSessionPackage: (invocation) =>
+          sessionPackageDesktop.import(
+            BrowserWindow.fromWebContents(electronSenderFor(invocation)) ?? undefined,
+            invocation.callerContext.lifecycleClientId,
+            invocation.args[0]
+          ),
         exportConversationFromInvokingWindow: (invocation) => {
           const sender = electronSenderFor(invocation)
           return conversationExportService.exportConversation(
@@ -5260,6 +5396,10 @@ const createApplicationModules = async (
   composition.phase('commands')
 
   return {
+    openSessionPackageFile: (path) => {
+      if (path === null) sessionPackageDesktop.reportOpenOverflow()
+      else sessionPackageDesktop.enqueueFile(path)
+    },
     applicationCommands: {
       localWeb: applicationCommandComposition.localWeb,
       remoteWeb: applicationCommandComposition.remoteWeb,

@@ -10,6 +10,7 @@ vi.mock('electron', () => ({
 }))
 
 import {
+  createSessionFile,
   MAX_PERSISTED_SESSION_BYTES,
   SESSION_SIZE_LIMIT_ERROR_CODE,
   type LoadAllSessionsResult,
@@ -25,6 +26,7 @@ import { ProjectRepository } from '../projects/repository'
 import { buildSessionProjection, SessionProjectionRepository } from './projection'
 import { SessionAuxiliaryTurnUsageRecorder } from './auxiliary-turn-usage'
 import { SessionRepository } from './repository'
+import { encodeSessionDataPaths } from './session-data-paths'
 import { ComputeJobOperationRepository } from '../compute/compute-job-operation-repository'
 import type { SessionLoadDiagnostic } from './repository'
 
@@ -537,6 +539,78 @@ describe('Session projection', () => {
     ).rejects.toThrow('Session projection updatedAt must be a non-negative safe integer.')
 
     expect.soft(await readFile(authorityPath, 'utf8')).toBe(originalAuthority)
+    await expect(projection.pending()).resolves.toEqual([])
+  })
+
+  it('assigns a Session number without copying large conversation graphs twice', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-prepared-write-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const candidate = session('large-metadata')
+    candidate.messages[0].content = 'research evidence '.repeat(8192)
+    candidate.conversationGraph = forkEditedConversationMessage(
+      createLinearConversationGraph({
+        sessionId: candidate.id,
+        messages: candidate.messages,
+        createdAt: candidate.createdAt,
+        updatedAt: candidate.updatedAt
+      }),
+      candidate.messages[0].id,
+      'alternative',
+      candidate.updatedAt + 1
+    )
+    candidate.messages = []
+    const original = JSON.stringify(candidate)
+    const graphBytes = Buffer.byteLength(JSON.stringify(candidate.conversationGraph))
+    let copiedBytes = 0
+    const clone = globalThis.structuredClone
+    const copies = vi.spyOn(globalThis, 'structuredClone').mockImplementation((value, options) => {
+      if (
+        value &&
+        typeof value === 'object' &&
+        'rootFrameId' in value &&
+        'messages' in value &&
+        Array.isArray(value.messages)
+      )
+        copiedBytes += Buffer.byteLength(JSON.stringify(value))
+      return clone(value, options)
+    })
+    let saved: PersistedChatSession
+    try {
+      saved = await repository.saveSession(candidate)
+    } finally {
+      copies.mockRestore()
+    }
+    expect(copiedBytes).toBeLessThan(3 * graphBytes)
+    expect(JSON.stringify(candidate)).toBe(original)
+    const contents = await readFile(
+      join(storageRoot, 'sessions', 'project-1', `${candidate.id}.json`),
+      'utf8'
+    )
+    const expected = createSessionFile(
+      encodeSessionDataPaths({ ...candidate, number: saved.number, revision: saved.revision })
+    )
+    expect(JSON.parse(contents)).toEqual(JSON.parse(JSON.stringify(expected)))
+    expect(saved.number).toBe(1)
+    expect(saved.revision).toBe(1)
+    await expect(projection.pending()).resolves.toEqual([])
+
+    // Existing SQLite numbering also wins when a caller supplies a stale or wrong number.
+    const repaired = await repository.saveSession({ ...saved, number: 999 })
+    expect(repaired).toMatchObject({ number: 1, revision: 2 })
+    const repairedContents = JSON.parse(
+      await readFile(join(storageRoot, 'sessions', 'project-1', `${candidate.id}.json`), 'utf8')
+    )
+    expect(repairedContents.session).toMatchObject({ number: 1, revision: 2 })
+    expect(repairedContents.session.conversationGraph).toEqual(
+      JSON.parse(contents).session.conversationGraph
+    )
+    expect(await client.session.findUniqueOrThrow({ where: { id: candidate.id } })).toMatchObject({
+      number: 1
+    })
     await expect(projection.pending()).resolves.toEqual([])
   })
 

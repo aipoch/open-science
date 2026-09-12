@@ -240,3 +240,18 @@ describe('electron-builder macOS icons', () => {
     ).toBe(true)
   })
 })
+
+it('registers .science as a viewable document without changing the per-user installer', () => {
+  const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
+    fileAssociations: { ext: string; role: string; mimeType: string }[]
+    nsis: { perMachine: boolean; allowElevation: boolean }
+  }
+  expect(config.fileAssociations).toContainEqual(
+    expect.objectContaining({
+      ext: 'science',
+      role: 'Viewer',
+      mimeType: 'application/x-open-science-session'
+    })
+  )
+  expect(config.nsis).toMatchObject({ perMachine: false, allowElevation: false })
+})

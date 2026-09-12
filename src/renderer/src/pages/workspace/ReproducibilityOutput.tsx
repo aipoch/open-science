@@ -3,6 +3,7 @@ import { OutputComparisonDetails } from './OutputComparison'
 import { useTranslation } from 'react-i18next'
 import type {
   ArtifactReproducibilityReceipt,
+  ArtifactReproducibilityReceiptScope,
   ArtifactReproducibilityReceiptComparison,
   ArtifactReproducibilityOutputPreview,
   ReproducibilityOutputPreview
@@ -44,12 +45,16 @@ const OutputPreview = ({
 
 const ReproducibilityOutputContent = ({
   receipt,
+  scope: requestedScope,
   comparison,
-  cleared
+  cleared,
+  omitted
 }: {
   receipt: ArtifactReproducibilityReceipt
+  scope?: ArtifactReproducibilityReceiptScope
   comparison: ArtifactReproducibilityReceiptComparison
   cleared: boolean
+  omitted: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
@@ -57,9 +62,16 @@ const ReproducibilityOutputContent = ({
   const [error, setError] = useState<string>()
   const [downloading, setDownloading] = useState(false)
   const [overlayOpacity, setOverlayOpacity] = useState(50)
-  const scope = receipt.artifactVersion
+  const scope = requestedScope ?? receipt.artifactVersion
   useEffect(() => {
-    if (cleared || !expanded || preview || !window.api.artifacts.readReproducibilityOutput) return
+    if (
+      cleared ||
+      omitted ||
+      !expanded ||
+      preview ||
+      !window.api.artifacts.readReproducibilityOutput
+    )
+      return
     let active = true
     void window.api.artifacts
       .readReproducibilityOutput({
@@ -81,7 +93,7 @@ const ReproducibilityOutputContent = ({
     return () => {
       active = false
     }
-  }, [cleared, expanded, preview, scope, receipt.receiptChecksum, comparison.entityId, t])
+  }, [cleared, omitted, expanded, preview, scope, receipt.receiptChecksum, comparison.entityId, t])
   const download = async (): Promise<void> => {
     if (!window.api.artifacts.exportReproducibilityReceipt || downloading) return
     setDownloading(true)
@@ -142,7 +154,9 @@ const ReproducibilityOutputContent = ({
           </dd>
         </div>
       </dl>
-      {cleared ? (
+      {omitted ? (
+        <p className="mt-1 text-xs text-text-300">{t('Not included in this package')}</p>
+      ) : cleared ? (
         <p className="mt-1 text-xs text-text-300">{t('Output cleared')}</p>
       ) : comparison.outputCaptured ? (
         <div className="mt-2 flex flex-wrap gap-2">
@@ -184,7 +198,7 @@ const ReproducibilityOutputContent = ({
           {error}
         </p>
       ) : null}
-      {expanded && !cleared && !error ? (
+      {expanded && !cleared && !omitted && !error ? (
         preview ? (
           <div className="mt-3 grid grid-cols-1 gap-3 @lg:grid-cols-2">
             <OutputPreview label={t('Original output')} value={preview.original} />
@@ -242,17 +256,19 @@ const ReproducibilityOutputContent = ({
 
 export const ReproducibilityOutput = (props: {
   receipt: ArtifactReproducibilityReceipt
+  scope?: ArtifactReproducibilityReceiptScope
   comparison: ArtifactReproducibilityReceiptComparison
 }): React.JSX.Element => {
-  const cleared =
-    useContext(ReproducibilityOutputStorageContext)?.clearedReceiptChecksums.includes(
-      props.receipt.receiptChecksum
-    ) ?? false
+  const storage = useContext(ReproducibilityOutputStorageContext)
+  const omitted =
+    storage?.omittedOutputChecksums?.includes(props.comparison.actualChecksum ?? '') ?? false
+  const cleared = storage?.clearedReceiptChecksums.includes(props.receipt.receiptChecksum) ?? false
   return (
     <ReproducibilityOutputContent
-      key={`${props.receipt.receiptChecksum}:${props.comparison.entityId}:${cleared}`}
+      key={`${props.scope?.projectId}:${props.scope?.appSessionId}:${props.scope?.versionId}:${props.receipt.receiptChecksum}:${props.comparison.entityId}:${cleared}:${omitted}`}
       {...props}
       cleared={cleared}
+      omitted={omitted}
     />
   )
 }

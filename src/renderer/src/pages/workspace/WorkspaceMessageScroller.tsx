@@ -28,6 +28,7 @@ import {
   type SearchMessageFocus
 } from '@/stores/search-message-focus-store'
 import { findMessageTarget } from './workspace-run-marks'
+import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import { useSessionStore, type ChatMessage, type ChatSession } from '@/stores/session-store'
 import {
   Fragment,
@@ -498,6 +499,9 @@ const WorkspaceMessageScrollerImpl = ({
   reportPresentationRevealing = false
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const packageLocked = usePackageOperationStore((state) =>
+    sessionExportLocked(state.operation, activeSession)
+  )
   const editAnnotationTargetRef = useRef<EditAnnotationTarget | undefined>(undefined)
   const handleEditAnnotationTargetChange = useCallback(
     (messageId: string, target: EditAnnotationTarget | undefined): void => {
@@ -1553,6 +1557,7 @@ const WorkspaceMessageScrollerImpl = ({
                     (message) => message.id === item.message.id
                   )
                   const activateRevision = (index: number): (() => void) | undefined => {
+                    if (packageLocked) return undefined
                     const revision = revisions[index]
                     return revision && activeSession
                       ? () =>

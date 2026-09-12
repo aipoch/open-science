@@ -68,12 +68,16 @@ export const readFileWithinLimit = async (path: string, maxBytes: number): Promi
 
     const decoder = new StringDecoder('utf8')
     const parts: string[] = []
+    // StringDecoder consumes each chunk synchronously, so subsequent reads can reuse it.
+    const buffer = Buffer.allocUnsafe(Math.min(BOUNDED_READ_CHUNK_BYTES, maxBytes + 1))
     let bytesReadTotal = 0
     while (bytesReadTotal <= maxBytes) {
-      const buffer = Buffer.allocUnsafe(
-        Math.min(BOUNDED_READ_CHUNK_BYTES, maxBytes + 1 - bytesReadTotal)
+      const { bytesRead } = await file.read(
+        buffer,
+        0,
+        Math.min(buffer.length, maxBytes + 1 - bytesReadTotal),
+        null
       )
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, null)
       if (bytesRead === 0) break
       bytesReadTotal += bytesRead
       if (bytesReadTotal > maxBytes) {

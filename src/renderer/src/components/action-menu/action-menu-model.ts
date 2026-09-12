@@ -7,7 +7,9 @@ export type ActionMenuDefinition = {
 }
 
 export type ActionMenuRecipeEntry<ActionId extends string> =
-  { kind: 'action'; action: ActionId } | { kind: 'separator' }
+  | { kind: 'action'; action: ActionId }
+  | { kind: 'separator' }
+  | { kind: 'submenu'; labelKey: string; icon: LucideIcon; actions: readonly ActionId[] }
 
 export type DynamicValue<Value, Invocation> = Value | ((invocation: Invocation) => Value)
 
@@ -31,6 +33,8 @@ export type ActionMenuSpec<ActionId extends string, Invocation> = {
 
 export type ResolvedActionMenuAction<ActionId extends string = string> = {
   kind: 'action'
+  // Presentation grouping only: the owner still resolves and executes each child action.
+  submenu?: { labelKey: string; icon: LucideIcon }
   action: ActionId
   labelKey: string
   icon: LucideIcon
@@ -64,6 +68,21 @@ export const resolveActionMenuEntries = <ActionId extends string, Invocation>(
     if (recipeEntry.kind === 'separator') {
       if (resolved.length > 0 && resolved.at(-1)?.kind !== 'separator') {
         resolved.push({ kind: 'separator' })
+      }
+      continue
+    }
+
+    if (recipeEntry.kind === 'submenu') {
+      const children = resolveActionMenuEntries(
+        {
+          ...spec,
+          recipe: recipeEntry.actions.map((action) => ({ kind: 'action' as const, action }))
+        },
+        invocation
+      )
+      const submenu = { labelKey: recipeEntry.labelKey, icon: recipeEntry.icon }
+      for (const child of children) {
+        if (child.kind === 'action') resolved.push({ ...child, submenu })
       }
       continue
     }

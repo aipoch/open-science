@@ -36,6 +36,85 @@ class ArchiveCoordinator {
   private readonly projectQueues = new Map<string, Promise<void>>()
   private markReadSessions: (sessionIds: string[]) => Promise<void> = async () => undefined
   private readonly deletingProjectIds = new Set<string>()
+  private readonly exportingSessions = new Map<string, string>()
+  private readonly importingProjects = new Set<string>()
+  private readonly pendingDispatches = new Map<string, number>()
+
+  // Independent execution owners hold this synchronous admission through their asynchronous
+  // startup/cleanup. Export observes both pending work and already-published runtime activity.
+  admitSessionWork(projectId: string, sessionId: string): () => void {
+    this.assertProjectDeletionAvailable(projectId)
+    this.assertExportAvailable(sessionId)
+    this.pendingDispatches.set(sessionId, (this.pendingDispatches.get(sessionId) ?? 0) + 1)
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      const remaining = (this.pendingDispatches.get(sessionId) ?? 1) - 1
+      if (remaining) this.pendingDispatches.set(sessionId, remaining)
+      else this.pendingDispatches.delete(sessionId)
+    }
+  }
+
+  isSessionExporting(projectId: string, sessionId: string): boolean {
+    return this.exportingSessions.get(sessionId) === projectId
+  }
+
+  reserveProjectImport(projectId: string): Promise<() => void> {
+    return this.enqueue(projectId, async () => {
+      await this.activeProject(projectId)
+      if (this.importingProjects.has(projectId))
+        throw new Error('A project import is already in progress.')
+      this.importingProjects.add(projectId)
+      return () => {
+        this.importingProjects.delete(projectId)
+      }
+    })
+  }
+
+  reserveSessionExport(
+    projectId: string,
+    sessionId: string,
+    assertIdle: () => Promise<void>
+  ): Promise<() => void> {
+    return this.enqueue(projectId, async () => {
+      await this.activeProject(projectId)
+      this.assertExportAvailable(sessionId)
+      if (this.pendingDispatches.has(sessionId))
+        throw new Error('Wait for the Session to become idle before exporting.')
+      // Fence new work before awaiting the runtime's database-backed activity check.
+      this.exportingSessions.set(sessionId, projectId)
+      try {
+        if (await this.runtime.isSessionBusy(projectId, sessionId))
+          throw new Error('Wait for the Session to become idle before exporting.')
+        await assertIdle()
+        if (await this.runtime.isSessionBusy(projectId, sessionId))
+          throw new Error('The Session is still active.')
+        return () => {
+          this.exportingSessions.delete(sessionId)
+        }
+      } catch (error) {
+        this.exportingSessions.delete(sessionId)
+        throw error
+      }
+    })
+  }
+
+  private assertExportAvailable(sessionId: string): void {
+    if (this.exportingSessions.has(sessionId))
+      throw new Error('This Session is locked while its research package is being exported.')
+  }
+
+  private assertProjectExportAvailable(projectId: string): void {
+    if (this.importingProjects.has(projectId))
+      throw new Error(
+        'Wait for the research package import to finish before changing this Project.'
+      )
+    if ([...this.exportingSessions.values()].includes(projectId))
+      throw new Error(
+        'Wait for the research package export to finish before changing this Project.'
+      )
+  }
 
   constructor(
     private readonly projects: ProjectArchiveRepository,
@@ -76,6 +155,7 @@ class ArchiveCoordinator {
 
   updateProjectArchive(request: UpdateProjectArchiveRequest): Promise<Project> {
     return this.enqueue(request.id, async () => {
+      this.assertProjectExportAvailable(request.id)
       this.assertProjectDeletionAvailable(request.id)
       const project = await this.projects.get(request.id)
       if (!project) throw new Error('Project not found.')
@@ -110,6 +190,7 @@ class ArchiveCoordinator {
 
   updateSessionArchive(request: UpdateSessionArchiveRequest): Promise<PersistedChatSession> {
     return this.enqueue(request.projectId, async () => {
+      this.assertExportAvailable(request.sessionId)
       await this.activeProject(request.projectId)
       const session = await this.sessions.updateArchive(request, () =>
         this.runtime.isSessionBusy(request.projectId, request.sessionId)
@@ -149,6 +230,7 @@ class ArchiveCoordinator {
     operation: () => Promise<Result>
   ): Promise<Result> {
     return this.enqueue(projectId, async () => {
+      this.assertProjectExportAvailable(projectId)
       // ProjectDeletionIntent is durable before this boundary. Re-entry is a recovery retry, and a
       // failed teardown must retain the fence until the coordinator completes or explicitly aborts.
       this.deletingProjectIds.add(projectId)
@@ -169,6 +251,7 @@ class ArchiveCoordinator {
   }
 
   restoreProjectDeletion(projectId: string): void {
+    this.assertProjectExportAvailable(projectId)
     this.deletingProjectIds.add(projectId)
   }
 
@@ -224,8 +307,9 @@ class ArchiveCoordinator {
     const admitted = this.resolveSessionProjectId(sessionId).then((projectId) => {
       if (!projectId) return { result: operation() }
       return this.enqueue(projectId, async () => {
-        this.assertProjectDeletionAvailable(projectId)
-        return { result: operation() }
+        const release = this.admitSessionWork(projectId, sessionId)
+        const result = Promise.resolve().then(operation).finally(release)
+        return { result }
       })
     })
     return admitted.then(({ result }) => result)
@@ -239,6 +323,7 @@ class ArchiveCoordinator {
   }
 
   private async assertSessionAvailableNow(projectId: string, sessionId: string): Promise<void> {
+    this.assertExportAvailable(sessionId)
     const ownerProjectId =
       (await this.sessions.sessionProjectId(sessionId)) ??
       this.runtime.liveSessionProjectId(sessionId)
@@ -253,6 +338,7 @@ class ArchiveCoordinator {
   }
 
   private async assertSessionAvailableByIdNow(sessionId: string, projectId: string): Promise<void> {
+    this.assertExportAvailable(sessionId)
     await this.activeProject(projectId)
     await this.sessions.assertSessionAvailable(projectId, sessionId)
   }

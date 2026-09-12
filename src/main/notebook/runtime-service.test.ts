@@ -213,6 +213,35 @@ const lifecycleCallbackHarness = (
 }
 
 describe('notebook runtime service', () => {
+  it('rejects export-locked execution before creating a Notebook or kernel', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const load = vi.spyOn(repository, 'loadOrCreate')
+    const executorFactory = vi.fn()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project-1',
+      repository,
+      executorFactory,
+      admitSessionWork: () => {
+        throw new Error('Session locked for export')
+      }
+    })
+    await expect(
+      service.execute({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: 'print(1)',
+        source: 'user',
+        language: 'python'
+      })
+    ).rejects.toThrow('locked for export')
+    expect(load).not.toHaveBeenCalled()
+    expect(executorFactory).not.toHaveBeenCalled()
+  })
+
   it('deletes generated prompt input copies with their Session and Project input caches', async () => {
     const root = await createStorageRoot()
     const { service } = lifecycleCallbackHarness(root)

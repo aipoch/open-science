@@ -49,6 +49,14 @@ const dependencyBlock = compact(
 )
 
 describe('production application command wiring', () => {
+  it('includes active reproducibility kernels in the Session export admission gate', () => {
+    expect(compact(ipcSource)).toContain(
+      'const notebookLifecycle = withReproducibilityNotebookLifecycle( notebookService, () => artifactReproducibilityAttemptOwnerRef.current )'
+    )
+    expect(compact(ipcSource)).toContain('notebookActivityRef.current = notebookLifecycle')
+    expect(occurrences(ipcSource, 'withReproducibilityNotebookLifecycle(')).toBe(1)
+  })
+
   it('routes literature mutations through the tested catalog and cleanup orchestration', () => {
     expect(compact(ipcSource)).toContain(
       'transact: (command) => transactLiterature(literatureCatalog, contentRepository, command)'
@@ -172,6 +180,8 @@ describe('production application command wiring', () => {
     expect(ipcSource).not.toContain('registerSessionDeletionIpcHandler')
     expect(ipcSource).not.toContain("declareElectronAdapter('session-deletion'")
     expect(ipcSource).not.toContain("ipcMainHandle('sessions:edit-details'")
+    expect(ipcSource).not.toContain("ipcMainHandle('sessions:export-package'")
+    expect(ipcSource).not.toContain("ipcMainHandle('sessions:import-package'")
     expect(ipcSource).not.toContain('registerProjectIpcHandlers')
     expect(legacyAdapterBlock).toContain('registerPreviewStateIpcHandlers(previewStateRepository)')
 
@@ -209,7 +219,7 @@ describe('production application command wiring', () => {
     expect(compositionSource).toContain("'uploads:stage-local-file'")
 
     const returnedViews = compact(
-      between(ipcSource, 'return {\n    applicationCommands:', '    applicationEvents,')
+      between(ipcSource, '    applicationCommands: {', '    applicationEvents,')
     )
     expect(returnedViews).toContain('localWeb: applicationCommandComposition.localWeb')
     expect(returnedViews).toContain('remoteWeb: applicationCommandComposition.remoteWeb')

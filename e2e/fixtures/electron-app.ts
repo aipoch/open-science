@@ -13,6 +13,7 @@ import {
 import { terminateProcessTree } from '../../src/main/process-tree'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
 import { RendererFailureGate } from './renderer-failure-gate'
+import type { PackageOperationSnapshot } from '../../src/shared/session-package'
 
 const APP_ROOT = resolve(process.cwd())
 const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs')
@@ -132,6 +133,10 @@ type ElectronApp = {
   configureFileBrowserFixture: () => Promise<void>
   configureFakeAgent: () => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
+  configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
+  restartWithPackage: (path: string) => Promise<Page>
+  emitPackageFileOpen: (path: string) => Promise<void>
+  emitSessionPackageProgress: (snapshot: PackageOperationSnapshot) => Promise<void>
   enableFakeRemoteIt: () => Promise<Page>
   findOverlayIsVisible: () => Promise<boolean>
   launchSecondInstance: () => Promise<Page>
@@ -201,10 +206,12 @@ const launchOpenScience = async (
   fakeRemoteItEnabled: boolean,
   fakeRemoteItRoot: string,
   windowMode: E2eWindowMode,
-  sessionPerformanceTrace: boolean
+  sessionPerformanceTrace: boolean,
+  packagePath?: string
 ): Promise<ElectronApplication> => {
   const application = await electron.launch({
     ...electronLaunchTarget(userDataRoot),
+    args: [...electronLaunchTarget(userDataRoot).args, ...(packagePath ? [packagePath] : [])],
     cwd: fakeRemoteItEnabled ? fakeRemoteItRoot : APP_ROOT,
     env: launchEnvironment(
       storageRoot,
@@ -718,6 +725,49 @@ class ElectronAppHarness implements ElectronApp {
     return path
   }
 
+  async emitSessionPackageProgress(snapshot: PackageOperationSnapshot): Promise<void> {
+    // Presentation fixtures use the existing native event boundary, without a production test seam.
+    await this.runningApplication.evaluate(({ BrowserWindow }, snapshot) => {
+      BrowserWindow.getAllWindows()[0].webContents.send(
+        'sessions:package-operation-changed',
+        snapshot
+      )
+    }, snapshot)
+  }
+
+  async restartWithPackage(path: string): Promise<Page> {
+    await this.close()
+    await this.launch(path)
+    return this.page
+  }
+
+  async emitPackageFileOpen(path: string): Promise<void> {
+    await this.runningApplication.evaluate(({ app }, path) => {
+      app.emit('open-file', { preventDefault: () => undefined }, path)
+    }, path)
+  }
+
+  async configureSessionPackageDialogs(options?: { availableBytes?: number }): Promise<string> {
+    const archive = join(this.testRoot, 'research.science')
+    if (options?.availableBytes !== undefined)
+      await this.runningApplication.evaluate((_electron, freeBytes) => {
+        const fs = process.getBuiltinModule('node:fs/promises')
+        fs.statfs = new Proxy(fs.statfs, {
+          apply: async (original, receiver, args) => {
+            const stats = await Reflect.apply(original, receiver, args)
+            stats.bavail = typeof stats.bavail === 'bigint' ? BigInt(freeBytes) : freeBytes
+            stats.bsize = typeof stats.bsize === 'bigint' ? 1n : 1
+            return stats
+          }
+        })
+      }, options.availableBytes)
+    await this.runningApplication.evaluate(({ dialog }, archive) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: archive })
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [archive] })
+    }, archive)
+    return archive
+  }
+
   async enableFakeRemoteIt(): Promise<Page> {
     this.fakeRemoteItEnabled = true
     return this.restart()
@@ -976,14 +1026,15 @@ class ElectronAppHarness implements ElectronApp {
     }
   }
 
-  private async launch(): Promise<void> {
+  private async launch(packagePath?: string): Promise<void> {
     this.application = await launchOpenScience(
       this.roots,
       this.fakeAgentEnabled,
       this.fakeRemoteItEnabled,
       this.roots.fakeRemoteItRoot,
       this.windowMode,
-      this.resourceProfiler !== undefined
+      this.resourceProfiler !== undefined,
+      packagePath
     )
     await this.resourceProfiler?.attach(this.application)
     try {

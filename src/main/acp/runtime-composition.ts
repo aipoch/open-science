@@ -279,7 +279,10 @@ const createAcpRuntime = ({
   const defaultCwd = homedir()
   const runtimeCoordinatorRef: { current?: AcpRuntimeCoordinator } = {}
   // One lazily-shared repository for Agent Context lookups; getProjectDbClient caches the client.
-  const projectRepository = new ProjectRepository(() => getProjectDbClient(resolveConfigRoot()))
+  const projectRepository = new ProjectRepository(
+    () => getProjectDbClient(resolveConfigRoot()),
+    configRoot
+  )
   const eventBroadcast = createAcpRuntimeEventBroadcastCoalescer({
     publish: (events) => broadcastToRenderers('acp:event', events)
   })

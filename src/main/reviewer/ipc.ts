@@ -125,6 +125,7 @@ type ReviewerIpcOptions = {
     >
   }>
   projectRuntime?: Pick<ReviewerProjectRuntimeOwner, 'admit'>
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void
   withProjectAvailable?: <Result>(
     projectId: string,
     operation: () => Promise<Result>
@@ -409,6 +410,11 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       return finishBeforeBackground({ started: false, reason: 'not-found' })
     }
 
+    if (session.packageOrigin) {
+      log.info('review refused: imported research history is read-only', { sessionId })
+      return finishBeforeBackground({ started: false, reason: 'run-failed' })
+    }
+
     let agentTarget
     try {
       agentTarget = await options.resolveSessionAgentTarget?.(session)
@@ -625,11 +631,26 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   const triggerReview = (request: ReviewRunRequest): Promise<ReviewRunResult> => {
     const admitReview = (): Promise<ReviewRunResult> => {
       let projectAdmission: ReviewerProjectAdmission
+      const releases: (() => void)[] = []
       try {
+        for (const sessionId of new Set(
+          [request.sessionId, request.mainSessionId].filter((id): id is string => !!id)
+        )) {
+          const release = options.admitSessionWork?.(request.projectId, sessionId)
+          if (release) releases.push(release)
+        }
         // Admission is acquired synchronously before session/repository/model work begins. Once
         // Project deletion closes it, no new Reviewer operation can slip into the quiescence snapshot.
-        projectAdmission = projectRuntime.admit(request.projectId)
+        const admitted = projectRuntime.admit(request.projectId)
+        projectAdmission = {
+          ...admitted,
+          release: () => {
+            admitted.release()
+            releases.forEach((release) => release())
+          }
+        }
       } catch (error) {
+        releases.forEach((release) => release())
         return Promise.reject(error)
       }
       return triggerAdmittedReview(request, projectAdmission).catch((error: unknown) => {

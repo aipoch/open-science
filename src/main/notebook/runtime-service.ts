@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { isImportedResearchSession } from '../storage/session-package-state'
 import type {
   NotebookCell,
   AbortNotebookCodeCellRequest,
@@ -209,6 +210,7 @@ type McpRpcConnectionBinding = {
 }
 
 type NotebookRuntimeServiceOptions = ProjectIdScope & {
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void
   // Config root: source of the app-owned claude config dir (protected from the kernel). Never relocated.
   configRoot: string
   // Data root: where notebook workspaces, data, and the runtime install live (user-relocatable).
@@ -538,6 +540,7 @@ class NotebookRuntimeService {
         )
     })
     this.sessionLifecycle = new NotebookSessionLifecycleOwner({
+      admitSessionWork: options.admitSessionWork,
       storageRoot: options.dataRoot,
       defaultProjectId,
       repository: this.repository,
@@ -1800,6 +1803,16 @@ class NotebookRuntimeService {
         throw new Error('Notebook history limit must be 1-100.')
       if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
         throw new Error('Notebook state history cursor is invalid.')
+      const projectId = resolveProjectId(request, resolveProjectId(this.options))
+      if (await isImportedResearchSession(this.options.dataRoot, projectId, request.sessionId)) {
+        return this.sessionReadModel.importedState(
+          request,
+          runIds,
+          request.historySummaryFrameId,
+          request.historyBefore,
+          historyLimit
+        )
+      }
       const session = await this.sessionLifecycle.ensure(request)
       // Project durable history only after the lane's binding commit settles, including reads
       // that arrived just before shutdown closed session creation admission.

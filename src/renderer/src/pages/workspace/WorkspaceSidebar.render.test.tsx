@@ -325,6 +325,39 @@ const waitForPreviewDwell = async (): Promise<void> => {
 }
 
 describe('WorkspaceSidebar accessible render', () => {
+  it.each([true, false])(
+    'marks imported sessions with an accessible read-only icon (details loaded: %s)',
+    async (loaded) => {
+      const html = await renderSidebar([
+        createSession({
+          id: 'import-session',
+          title: 'Literature comparison',
+          status: 'idle',
+          packageOrigin: loaded
+            ? {
+                importId: 'import-1',
+                sourceProjectId: 'source-project',
+                sourceSessionId: 'source-session',
+                importedAt: 1,
+                manifestChecksum: 'a'.repeat(64)
+              }
+            : undefined
+        }),
+        createSession({ id: 'local', title: 'New analysis', status: 'idle' })
+      ])
+      const container = document.createElement('div')
+      container.innerHTML = html
+      const imported = container.querySelector('[data-session-id="import-session"]')
+      const icon = imported?.querySelector('[role="img"][aria-label="Read-only"]')
+      expect(icon).not.toBeNull()
+      expect(icon?.textContent).toBe('')
+      expect(
+        imported?.querySelector('[data-slot="session-open-button"]')?.getAttribute('title')
+      ).toBe('Read-only')
+      expect(container.querySelector('[data-session-id="local"] [role="img"]')).toBeNull()
+    }
+  )
+
   it('keeps the sidebar card inset even on both sides', async () => {
     const html = await renderSidebar([createSession({ id: 'session-a' })])
 
@@ -647,15 +680,10 @@ describe('WorkspaceSidebar accessible render', () => {
         Array.from(menu?.querySelectorAll<HTMLElement>('[data-action-id]') ?? []).map(
           (item) => item.dataset.actionId
         )
-      ).toEqual([
-        'toggle-pin',
-        'edit',
-        'download-artifacts',
-        'view-notebook',
-        'export',
-        'archive',
-        'delete'
-      ])
+      ).toEqual(['toggle-pin', 'edit', 'download-artifacts', 'view-notebook', 'archive', 'delete'])
+      expect(menu?.querySelector('[data-slot="dropdown-menu-sub-trigger"]')?.textContent).toBe(
+        'Export'
+      )
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
       expect(onOpenSession).not.toHaveBeenCalled()
 
@@ -673,15 +701,7 @@ describe('WorkspaceSidebar accessible render', () => {
         Array.from(dropdown?.querySelectorAll<HTMLElement>('[data-action-id]') ?? []).map(
           (item) => item.dataset.actionId
         )
-      ).toEqual([
-        'toggle-pin',
-        'edit',
-        'download-artifacts',
-        'view-notebook',
-        'export',
-        'archive',
-        'delete'
-      ])
+      ).toEqual(['toggle-pin', 'edit', 'download-artifacts', 'view-notebook', 'archive', 'delete'])
       await clickRadixMenuItem(
         dropdown?.querySelector<HTMLElement>('[data-action-id="toggle-pin"]')
       )

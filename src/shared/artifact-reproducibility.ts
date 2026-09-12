@@ -21,6 +21,7 @@ export type ListArtifactReproducibilityReceiptsRequest = ArtifactReproducibility
 }
 
 export type ArtifactReproducibilityReceiptPage = {
+  sourceArtifactVersion?: ArtifactReproducibilityReceiptScope
   receipts: ArtifactReproducibilityReceipt[]
   latestFailedAttempt?: ArtifactReproducibilityFailedAttempt
   nextCursor?: string
@@ -38,6 +39,7 @@ export type ExportArtifactReproducibilityReceiptRequest = ArtifactReproducibilit
 export type ExportArtifactReproducibilityReceiptResult = { saved: boolean }
 
 export type ArtifactReproducibilityOutputStorage = {
+  omittedOutputChecksums?: string[]
   sizeBytes: number
   fileCount: number
   clearedReceiptChecksums: string[]

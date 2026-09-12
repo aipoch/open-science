@@ -43,6 +43,7 @@ import {
 } from './session-store'
 import { mergePersistedRuntimeIdentityProjection } from './session-store-persistence-merge'
 import { createStoreSaver } from '../lib/session-persistence/session-persistence'
+import { usePackageOperationStore } from './package-operation-store'
 
 const createArtifactFile = (overrides: Partial<ArtifactFile> = {}): ArtifactFile => ({
   id: 'artifact-session-1:run-1:result.txt',
@@ -135,6 +136,24 @@ const createCompletedPlanProjection = (
 })
 
 describe('session store', () => {
+  it('keeps imported research browsable and archivable without enabling execution or edits', () => {
+    const session = {
+      status: 'idle' as const,
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: 'source-project',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    }
+    const projection = projectSessionActionability(session)
+    expect(projection.activity).toBe('inactive')
+    expect(projection.actions.archive.allowed).toBe(true)
+    for (const [action, value] of Object.entries(projection.actions)) {
+      if (action !== 'archive') expect(value.allowed, action).toBe(false)
+    }
+  })
   // Reset time and state so each store assertion starts from the same baseline.
   beforeEach(() => {
     vi.useFakeTimers()
@@ -8106,6 +8125,17 @@ describe('truncateSessionFromMessage', () => {
       'agent-1 content',
       'edited user-2'
     ])
+
+    usePackageOperationStore.getState().receive({
+      id: 'package-operation',
+      kind: 'export',
+      state: 'running',
+      session: { projectId: editedSession.projectId, sessionId: 'session-1' },
+      progress: { phase: 'copying' }
+    })
+    useSessionStore.getState().activateMessageBranch('session-1', originalBranchId ?? '')
+    expect(useSessionStore.getState().sessions[0]).toBe(editedSession)
+    usePackageOperationStore.getState().receive(null)
 
     useSessionStore.getState().setBranchSwitchBlocked('session-1', true)
     useSessionStore.getState().activateMessageBranch('session-1', originalBranchId ?? '')

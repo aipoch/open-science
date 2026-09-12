@@ -3130,6 +3130,8 @@ describe('LiteratureLibraryPage', () => {
       false
     )
     expect(within(viewport).getAllByRole('button')).toHaveLength(35)
+    fireEvent.change(within(dialog).getByRole('searchbox'), { target: { value: 'project 35' } })
+    expect(within(viewport).getAllByRole('button')).toHaveLength(1)
     fireEvent.click(lastProject)
     await waitFor(() =>
       expect(startPdfReadingConversation).toHaveBeenCalledWith(

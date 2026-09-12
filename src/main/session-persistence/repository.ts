@@ -3,6 +3,8 @@ import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from
 import { constants as fsConstants } from 'node:fs'
 import { Buffer } from 'node:buffer'
 import { basename, join } from 'node:path'
+import { isSessionPackagePending } from '../storage/session-package-state'
+import { preserveImportedSession } from './imported-session'
 
 import {
   createEmptySessionManifest,
@@ -129,6 +131,7 @@ type SessionScanMetrics = {
 
 type PreparedSessionWrite = {
   sanitizedSession: PersistedChatSession
+  document: ReturnType<typeof createSessionFile>
   contents: string
 }
 
@@ -381,6 +384,7 @@ class SessionRepository {
   }
 
   private async inspectActiveProjectBoundary(projectId: string): Promise<FilesystemBoundaryState> {
+    if (await isSessionPackagePending(this.storageDir, projectId)) return 'missing'
     const sessions = await this.inspectDirectoryBoundary(this.sessionsDir)
     if (sessions !== 'valid') return sessions
     return this.inspectDirectoryBoundary(this.projectDir(projectId))
@@ -971,6 +975,14 @@ class SessionRepository {
     session: PersistedChatSession,
     expectedRevision?: number
   ): Promise<PersistedChatSession> {
+    // Imported IDs keep the readonly authority check off ordinary Session save hot paths,
+    // including when imported history belongs to an existing Project.
+    if (session.id.startsWith('import-') || session.projectId.startsWith('import-')) {
+      const current = await loadSessionMutationAuthority(this, session.projectId, session.id)
+      if (current.status === 'unreadable')
+        throw new Error('Cannot modify unreadable imported research history.')
+      if (current.status === 'found') session = preserveImportedSession(current.session, session)
+    }
     const key = `${session.projectId}:${session.id}`
     let actualRevision = Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0)
     if (
@@ -1019,12 +1031,21 @@ class SessionRepository {
       ...projectedSession,
       revision: nextRevision
     }
-    await this.writeSession(
-      durableSession,
-      projectedSession === session && !projectionWillAssignNumber
-        ? unprojectedWrite
-        : this.prepareSessionWrite(durableSession)
-    )
+    // prepareSave only assigns the authoritative number. Reuse the normalized graph instead
+    // of materializing it again; retain the final byte check before writing authority.
+    let preparedWrite = unprojectedWrite
+    if (unprojectedWrite.document.session.number !== durableSession.number) {
+      const document = {
+        ...unprojectedWrite.document,
+        session: { ...unprojectedWrite.document.session, number: durableSession.number }
+      }
+      preparedWrite = {
+        ...unprojectedWrite,
+        document,
+        contents: this.serializeJsonForWrite(document, this.dependencies.maxSessionBytes)
+      }
+    }
+    await this.writeSession(durableSession, preparedWrite)
     if (this.projectionWritesSuspended) {
       this.suspendedProjectionSessionWrites.set(key, {
         projectId: session.projectId,
@@ -1280,12 +1301,11 @@ class SessionRepository {
       )
     }
     const sanitizedSession = sanitizeSessionUploadedAttachments(session)
+    const document = createSessionFile(encodeSessionDataPaths(sanitizedSession))
     return {
       sanitizedSession,
-      contents: this.serializeJsonForWrite(
-        createSessionFile(encodeSessionDataPaths(sanitizedSession)),
-        this.dependencies.maxSessionBytes
-      )
+      document,
+      contents: this.serializeJsonForWrite(document, this.dependencies.maxSessionBytes)
     }
   }
 
@@ -1606,6 +1626,8 @@ class SessionRepository {
       scanMetrics?: SessionScanMetrics
     } = {}
   ): Promise<ProjectSessionLoadDiagnostics> {
+    if (await isSessionPackagePending(this.storageDir, projectId))
+      return { sessions: [], isComplete: true }
     const directoryBoundary = await this.inspectDirectoryBoundary(projectDir)
     if (directoryBoundary === 'invalid') {
       return { sessions: [], isComplete: false }

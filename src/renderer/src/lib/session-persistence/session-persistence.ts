@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import {
+  packageOperationActive,
+  usePackageOperationStore
+} from '../../stores/package-operation-store'
 
 import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
@@ -643,6 +647,34 @@ class SessionPersistenceGenerationChangedError extends Error {
   }
 }
 
+class SessionExportSaveDeferred extends Error {
+  constructor(readonly released: Promise<void>) {
+    super('Session save waits for package export.')
+  }
+}
+
+const deferExportedSessionSave = (target: string): void => {
+  const blocked = (): boolean => {
+    const operation = usePackageOperationStore.getState().operation
+    return (
+      operation?.kind === 'export' &&
+      packageOperationActive(operation) &&
+      target === `session:${operation.session?.sessionId}`
+    )
+  }
+  if (!blocked()) return
+  throw new SessionExportSaveDeferred(
+    new Promise<void>((resolve) => {
+      const remove = usePackageOperationStore.subscribe(() => {
+        if (!blocked()) {
+          remove()
+          resolve()
+        }
+      })
+    })
+  )
+}
+
 // Serializes every renderer-originated Session write through one ordering seam. Store snapshots at
 // the queue tail use latest-wins coalescing; explicit Session and Manifest writes remain barriers, so
 // Artifact finalization cannot be overtaken by an older store snapshot.
@@ -651,6 +683,7 @@ const createOrderedSessionPersistence = (
 ): OrderedSessionPersistence => {
   let queue: Promise<unknown> = Promise.resolve()
   let pendingWriteCount = 0
+  const deferredSaves = new Set<Promise<unknown>>()
   const acknowledgedRevisions = new Map<string, number>()
   const acknowledgedSessions = new Map<string, PersistedChatSession>()
   const pendingLatestByTarget = new Map<string, PendingLatestSessionSave>()
@@ -721,30 +754,54 @@ const createOrderedSessionPersistence = (
       failedWritesByTarget.delete(target)
       return result
     } catch (error) {
-      if (!(error instanceof SessionPersistenceGenerationChangedError)) {
+      if (
+        !(error instanceof SessionPersistenceGenerationChangedError) &&
+        !(error instanceof SessionExportSaveDeferred)
+      ) {
         failedWritesByTarget.set(target, error)
       }
       throw error
     }
   }
 
-  const enqueue = <Result>(target: string, task: () => Promise<Result>): Promise<Result> => {
-    releasePendingLatestCadence()
-    pendingLatestByTarget.clear()
+  // Exported targets wait outside the shared queue. Explicit writes for another Session and its
+  // manifest can still establish their usual durable barrier before starting a new conversation.
+  const schedule = <Result>(target: string, task: () => Promise<Result>): Promise<Result> => {
     pendingWriteCount += 1
-    const run = queue
-      .then(
-        () => trackWrite(target, task),
-        () => trackWrite(target, task)
-      )
-      .finally(() => {
-        pendingWriteCount -= 1
-      })
+    const run = queue.then(async () => {
+      try {
+        deferExportedSessionSave(target)
+        return { kind: 'completed' as const, value: await trackWrite(target, task) }
+      } catch (error) {
+        if (error instanceof SessionExportSaveDeferred)
+          return { kind: 'deferred' as const, released: error.released }
+        throw error
+      }
+    })
     queue = run.then(
       () => undefined,
       () => undefined
     )
     return run
+      .then(async (result) => {
+        if (result.kind === 'completed') return result.value
+        const resumed = result.released.then(() => schedule(target, task))
+        deferredSaves.add(resumed)
+        try {
+          return await resumed
+        } finally {
+          deferredSaves.delete(resumed)
+        }
+      })
+      .finally(() => {
+        pendingWriteCount -= 1
+      })
+  }
+
+  const enqueue = <Result>(target: string, task: () => Promise<Result>): Promise<Result> => {
+    releasePendingLatestCadence()
+    pendingLatestByTarget.clear()
+    return schedule(target, task)
   }
 
   const saveSubmittedSession = async (
@@ -793,6 +850,7 @@ const createOrderedSessionPersistence = (
       // A fast IPC/disk round-trip otherwise defeats latest-wins coalescing and rewrites the entire
       // Session at the live presentation frame rate. Keep the entry replaceable while it waits.
       await waitForLatestSessionSaveCadence(entry)
+      deferExportedSessionSave(target)
       if (pendingLatestByTarget.get(target) === entry) pendingLatestByTarget.delete(target)
       if (entry.generation !== hydrationGeneration) {
         throw new SessionPersistenceGenerationChangedError()
@@ -801,21 +859,9 @@ const createOrderedSessionPersistence = (
       acknowledgeSession(durable)
       return durable
     }
-    pendingWriteCount += 1
-    const run = queue
-      .then(
-        () => trackWrite(target, runTask),
-        () => trackWrite(target, runTask)
-      )
-      .finally(() => {
-        pendingWriteCount -= 1
-      })
+    const run = schedule(target, runTask)
     entry.promise = run
     pendingLatestByTarget.set(target, entry)
-    queue = run.then(
-      () => undefined,
-      () => undefined
-    )
     return run
   }
 
@@ -866,6 +912,8 @@ const createOrderedSessionPersistence = (
     saveManifest: (request) => enqueue('manifest', () => api.saveManifest(request)),
     flush: async () => {
       releasePendingLatestCadence()
+      await queue
+      await Promise.allSettled([...deferredSaves])
       await queue
       const failure = failedWritesByTarget.values().next()
       if (!failure.done) throw failure.value
