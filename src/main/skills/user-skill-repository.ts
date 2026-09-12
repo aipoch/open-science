@@ -22,6 +22,7 @@ import { UserSkillCompatibilityIndex } from './user-skill-compatibility-index'
 import {
   SAFE_SKILL_DIRECTORY_NAME,
   SAFE_SKILL_NAME,
+  type UserSkillSource,
   UserSkillStore,
   assertUsableSkillName,
   frontmatterBlock,
@@ -121,12 +122,17 @@ class UserSkillRepository {
   }
 
   // Deletes a personal or imported skill directory.
+  async delete(id: string, guard?: Parameters<UserSkillStore['delete']>[3]): Promise<void>
   async delete(
     id: string,
-    sourceOrGuard?:
-      Parameters<UserSkillStore['delete']>[1] | Parameters<UserSkillStore['delete']>[2],
-    directoryNameOrGuard?:
-      Parameters<UserSkillStore['delete']>[2] | Parameters<UserSkillStore['delete']>[3],
+    source?: UserSkillSource,
+    directoryName?: string,
+    guard?: Parameters<UserSkillStore['delete']>[3]
+  ): Promise<void>
+  async delete(
+    id: string,
+    sourceOrGuard?: UserSkillSource | Parameters<UserSkillStore['delete']>[3],
+    directoryNameOrGuard?: string | Parameters<UserSkillStore['delete']>[3],
     guard?: Parameters<UserSkillStore['delete']>[3]
   ): Promise<void> {
     if (typeof sourceOrGuard === 'function')
