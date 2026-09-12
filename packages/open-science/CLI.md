@@ -126,7 +126,7 @@ open-science codex login
 open-science connector configure literature --openalex-key-env OPENALEX_API_KEY --json
 open-science doctor --json
 open-science project create "First review" --json
-open-science run --project "First review" --framework codex --skill literature-review \
+open-science run --project "First review" --skill literature-review \
   --prompt "Review the evidence for the research question in the project context" --wait --jsonl
 ```
 
