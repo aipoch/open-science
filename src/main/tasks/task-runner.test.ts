@@ -20,6 +20,7 @@ import {
 import type { TaskRun } from '../../shared/task-api'
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
+import { loadManagedCodexErrorHandler } from '../settings/codex-error.test-utils'
 import { FileTaskRunJournal, type TaskRunJournalEntry } from './task-run-journal'
 import {
   TASK_RUN_DISPOSAL_BUDGET_MS,
@@ -225,6 +226,69 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
   })
 }
 describe('TaskRunner', () => {
+  it.each(['terminal-error', 'retryable-error', 'foreign-error', 'assistant-quotation'] as const)(
+    'reports the pinned Codex capacity outcome correctly for %s',
+    async (delivery) => {
+      const capacityError = 'Selected model is at capacity. Please try a different model.'
+      const root = await mkdtemp(join(tmpdir(), 'codex-capacity-'))
+      temporaryRoots.push(root)
+      const adapter = await loadManagedCodexErrorHandler(root)
+      let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+      const runner = createRunner({
+        runtimeEvents: {
+          subscribe: (listener) => {
+            emitEvent = listener
+            return () => undefined
+          }
+        },
+        agent: {
+          prompt: async ({ sessionId, promptMessageId }, observer) => {
+            await observer?.onPromptAdmitted?.()
+            observer?.onProviderPromptAccepted?.()
+            const update =
+              delivery === 'assistant-quotation'
+                ? {
+                    sessionUpdate: 'agent_message_chunk',
+                    content: { type: 'text', text: capacityError }
+                  }
+                : await adapter.createErrorEvent({
+                    turnId: delivery === 'foreign-error' ? 'old-turn' : 'turn-1',
+                    willRetry: delivery === 'retryable-error',
+                    error: {
+                      message: capacityError,
+                      codexErrorInfo: 'serverOverloaded',
+                      additionalDetails: null
+                    }
+                  })
+            // Match the adapter's prompt boundary: publish its update, then propagate getFailure().
+            emitEvent?.({
+              id: 'capacity-probe',
+              timestamp: 2,
+              sessionId,
+              promptMessageId,
+              kind: 'message',
+              level: 'info',
+              role: 'assistant',
+              text:
+                update?.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text'
+                  ? update.content.text
+                  : 'Retrieved references successfully.'
+            })
+            const failure = adapter.getFailure()
+            if (failure) throw failure
+          }
+        }
+      })
+      const started = await runner.startRun({
+        project: project.id,
+        prompt: 'Find relevant papers and write the final answer to FINAL_ANSWER.txt.'
+      })
+      const result = await runner.waitForRun(started.id)
+      expect(result.status).toBe(delivery === 'terminal-error' ? 'failed' : 'completed')
+      if (delivery === 'terminal-error') expect(result.error).toContain(capacityError)
+    }
+  )
+
   it.each([
     ['claude-sonnet-4-6', 'claude-opus-4-6'],
     ['claude-opus-4-6', 'claude-sonnet-4-6']

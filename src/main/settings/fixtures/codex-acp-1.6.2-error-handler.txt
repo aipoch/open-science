@@ -1,0 +1,126 @@
+// Extracted verbatim methods from @agentclientprotocol/codex-acp 1.6.2 (Apache-2.0).
+// npm tarball SHA-512 matches CODEX_ACP_INTEGRITY in managed-codex.ts.
+// Only the class construction scaffolding is local; the error translation is upstream code.
+function createAgentMessageChunk(content, messageId, meta3) {
+  if (messageId) {
+    return {
+      sessionUpdate: "agent_message_chunk",
+      messageId,
+      content,
+      ...meta3 ? { _meta: meta3 } : {}
+    };
+  }
+  return {
+    sessionUpdate: "agent_message_chunk",
+    content,
+    ...meta3 ? { _meta: meta3 } : {}
+  };
+}
+function createAgentTextMessageChunk(text, messageId, meta3) {
+  return createAgentMessageChunk({ type: "text", text }, messageId, meta3);
+}
+class PinnedCodexErrorHandler {
+  sessionState = { sessionId: 'session-created', currentTurnId: 'turn-1', authConfigured: true };
+  supportsTypedSessionFailures = false;
+  pendingErrors = [];
+  failure = null;
+  createCodexSessionInfoUpdate(meta) { return { sessionUpdate: 'session_info_update', _meta: { codex: meta } }; }
+  getFailure() {
+    return this.failure;
+  }
+  async createErrorEvent(params) {
+    const error51 = params.error.codexErrorInfo;
+    if (this.sessionState.currentTurnId === null) {
+      this.pendingErrors.push(params);
+      logger.log("Buffered app-server error until the active turn is known", {
+        sessionId: this.sessionState.sessionId,
+        turnId: params.turnId,
+        willRetry: params.willRetry
+      });
+      return null;
+    }
+    if (params.turnId !== this.sessionState.currentTurnId) {
+      if (this.supportsTypedSessionFailures) {
+        const failure = params.willRetry ? this.recordRetryWarning(params) : this.recordSessionFailure(
+          this.sessionFailureKind(params.error.codexErrorInfo),
+          params.turnId,
+          "error",
+          params.error.message
+        );
+        return this.createSessionFailureUpdate(failure);
+      }
+      return this.createCodexSessionInfoUpdate({
+        error: { ...params.error, turnId: params.turnId, willRetry: params.willRetry }
+      });
+    }
+    if (params.willRetry) {
+      if (this.supportsTypedSessionFailures) {
+        return this.createSessionFailureUpdate(this.recordRetryWarning(params));
+      }
+      return this.createCodexSessionInfoUpdate({
+        error: {
+          ...params.error,
+          turnId: params.turnId,
+          willRetry: true
+        }
+      });
+    }
+    if (this.supportsTypedSessionFailures) {
+      this.recordTypedSessionFailure(params);
+      return null;
+    }
+    if (error51 === "usageLimitExceeded") {
+      this.failure = RequestError.internalError(
+        this.createTurnErrorData(params.error)
+      );
+    } else if (this.isAuthenticationRequiredError(error51)) {
+      this.failure = this.sessionState.authConfigured ? RequestError.internalError(this.createTurnErrorData(params.error)) : RequestError.authRequired(this.createTurnErrorData(params.error), params.error.message);
+    }
+    return createAgentTextMessageChunk(`${params.error.message}
+
+`);
+  }
+  isAuthenticationRequiredError(error51) {
+    return error51 === "unauthorized" || this.getHttpStatusCode(error51) === 401;
+  }
+  getHttpStatusCode(error51) {
+    if (error51 === null || typeof error51 !== "object") return null;
+    const details = Object.values(error51)[0];
+    if (details === null || typeof details !== "object" || !("httpStatusCode" in details)) return null;
+    return typeof details.httpStatusCode === "number" ? details.httpStatusCode : null;
+  }
+  createTurnErrorData(error51) {
+    const data = {
+      message: error51.additionalDetails ?? error51.message
+    };
+    if (error51.codexErrorInfo !== null) {
+      data.codexErrorInfo = error51.codexErrorInfo;
+    }
+    if (error51.additionalDetails !== null) {
+      data.additionalDetails = error51.additionalDetails;
+    }
+    return data;
+  }
+}
+// Other pinned patch targets required by the existing installation normalization boundary.
+function buildPromptItems(prompt) {
+  return prompt.map((block) => {
+    switch (block.type) {
+      case "text":
+        return { type: "text", text: block.text, text_elements: [] };
+      default:
+        return null;
+    }
+  }).filter((block) => block !== null);
+}
+function startCodexConnection(codexPath, env) {
+  const spawnEnv = env ?? process.env;
+  let codex;
+  if (codexPath) {
+    codex = process.platform === "win32" ? spawn(`"${codexPath}" app-server`, { shell: true, env: spawnEnv }) : spawn(codexPath, ["app-server"], { env: spawnEnv });
+  } else {
+    const bundledCodexPath = createRequire(import.meta.url).resolve("@openai/codex/bin/codex.js");
+    codex = spawn(process.execPath, [bundledCodexPath, "app-server"], { env: spawnEnv });
+  }
+  return codex;
+}

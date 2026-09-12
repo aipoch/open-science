@@ -22,6 +22,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AcpRuntime } from './runtime.test-utils'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import { createAcpTaskAgentPort } from './task-agent-port'
+import { loadManagedCodexErrorHandler } from '../settings/codex-error.test-utils'
 import type { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
 import { composeAcpRuntimePlanWorkflow } from './runtime-plan-composition'
@@ -1187,6 +1188,104 @@ afterEach(async () => {
 })
 
 describe('ACP runtime migration write-gate', () => {
+  it('propagates a normalized Codex capacity error through the ACP wire', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acp-codex-capacity-'))
+    const capacityError = 'Selected model is at capacity. Please try a different model.'
+    const process = new FakeAgentProcess()
+    const runtime = new AcpRuntime({
+      appVersion: '0.28.0',
+      defaultCwd: root,
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {}
+      }),
+      framework: codexFramework
+    })
+    try {
+      const adapter = await loadManagedCodexErrorHandler(root)
+      startFakeAgent(process, ['capacity-session'], {
+        modes: {
+          currentModeId: 'read-only',
+          availableModes: ['read-only', 'agent', 'agent-full-access'].map((id) => ({
+            id,
+            name: id
+          }))
+        },
+        onPrompt: async () => {
+          await adapter.createErrorEvent({
+            turnId: 'turn-1',
+            willRetry: false,
+            error: {
+              message: capacityError,
+              codexErrorInfo: 'serverOverloaded',
+              additionalDetails: null
+            }
+          })
+          const failure = adapter.getFailure()
+          if (failure) throw failure
+          return { stopReason: 'end_turn' }
+        }
+      })
+      const created = await runtime.createSession({ cwd: root })
+      await expect(
+        runtime.sendPrompt({ sessionId: created.sessionId, text: 'Write FINAL_ANSWER.txt.' })
+      ).rejects.toThrow(capacityError)
+      expect(runtime.getSnapshot().events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: 'error', text: expect.stringContaining(capacityError) })
+        ])
+      )
+    } finally {
+      await runtime.disconnect()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not infer failure from a Codex assistant message quoting a capacity error', async () => {
+    // Wire shape from codex-acp v1.6.2 createErrorEvent (no AIR capability):
+    // a non-auth, non-quota terminal error becomes assistant text plus end_turn.
+    const capacityError = 'Selected model is at capacity. Please try a different model.'
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['capacity-session'], {
+      modes: {
+        currentModeId: 'read-only',
+        availableModes: ['read-only', 'agent', 'agent-full-access'].map((id) => ({ id, name: id }))
+      },
+      replyForPrompt: () => `${capacityError}\n\n`,
+      onPrompt: () => ({ stopReason: 'end_turn' })
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.28.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {}
+      }),
+      framework: codexFramework
+    })
+    try {
+      const created = await runtime.createSession({ cwd: '/workspace' })
+      await expect(
+        runtime.sendPrompt({ sessionId: created.sessionId, text: 'Write FINAL_ANSWER.txt.' })
+      ).resolves.toMatchObject({ stopReason: 'end_turn' })
+      expect(fakeAgent.initializeRequests[0].clientCapabilities?._meta).toBeUndefined()
+      expect(runtime.getSnapshot().events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'message',
+            role: 'assistant',
+            text: `${capacityError}\n\n`
+          })
+        ])
+      )
+      expect(runtime.getSnapshot().events.filter((event) => event.kind === 'error')).toEqual([])
+    } finally {
+      await runtime.disconnect()
+    }
+  })
+
   afterEach(() => {
     // migration-state is a module singleton; clear it so a pending gate can't leak between tests.
     clearMigrationPending()

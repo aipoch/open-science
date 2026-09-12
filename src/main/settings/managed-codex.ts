@@ -819,11 +819,40 @@ export const patchCodexAcpModelCatalogStartupSource = (source: string): string =
   )
 }
 
+const CODEX_ACP_PROMPT_FAILURE_SOURCE =
+  '    return createAgentTextMessageChunk(`${params.error.message}\n\n`);'
+const CODEX_ACP_PROMPT_FAILURE_REPLACEMENT = [
+  '    if (!this.failure) {',
+  '      this.failure = RequestError.internalError(',
+  '        this.createTurnErrorData(params.error), params.error.message',
+  '      );',
+  '    }',
+  CODEX_ACP_PROMPT_FAILURE_SOURCE
+].join('\n')
+
+// 1.6.2 records only auth/quota failures for clients without the AIR extension. Other terminal
+// errors become assistant prose followed by end_turn. Preserve the existing RequestError boundary
+// after the upstream current-turn/retry guards, without interpreting assistant text in the app.
+export const patchCodexAcpPromptFailureSource = (source: string): string => {
+  if (source.includes(CODEX_ACP_PROMPT_FAILURE_REPLACEMENT)) return source
+  const matches = source.split(CODEX_ACP_PROMPT_FAILURE_SOURCE).length - 1
+  if (matches === 1) {
+    return source.replace(CODEX_ACP_PROMPT_FAILURE_SOURCE, CODEX_ACP_PROMPT_FAILURE_REPLACEMENT)
+  }
+  if (matches > 1 || source.includes('createErrorEvent(params)')) {
+    throw new Error('Pinned Codex ACP prompt-failure patch no longer matches the adapter bundle')
+  }
+  // Small installation fixtures omit the error handler, like the usage-patch fixtures above.
+  return source
+}
+
 export const ensureManagedCodexContextUsage = async (adapterPath: string): Promise<void> => {
   const source = await readFile(adapterPath, 'utf8')
   const patched = patchCodexAcpModelCatalogStartupSource(
     patchCodexAcpSkillInputSource(
-      patchCodexAcpTurnUsageSource(patchCodexAcpContextUsageSource(source))
+      patchCodexAcpTurnUsageSource(
+        patchCodexAcpContextUsageSource(patchCodexAcpPromptFailureSource(source))
+      )
     )
   )
 
