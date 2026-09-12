@@ -1782,7 +1782,6 @@ describe('R startup authorization admission', () => {
       backend.wrap.mockImplementationOnce(async (command: { cwd: string }) => ({
         argv: [process.execPath, '-e', 'console.log("OPEN_SCIENCE_R_ACCESS_OK")'],
         env: process.env,
-        setExecutionActive: backend.setExecutionActive,
         annotateStderr: (stderr: string) => stderr,
         resetNetworkConnections: backend.resetNetworkConnections,
         setExecutionActive: backend.setExecutionActive,
