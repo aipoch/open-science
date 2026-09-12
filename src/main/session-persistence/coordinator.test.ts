@@ -462,6 +462,44 @@ describe('SessionPersistenceCoordinator', () => {
     expect(mutation).toHaveBeenCalledTimes(2)
   })
 
+  it('saves an imported renderer projection through Main without losing runtime evidence', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'imported-session-save-'))
+    try {
+      const repository = new SessionRepository(root)
+      await repository.saveSession(
+        createSession({
+          id: 'import-session-1',
+          runtimeContext: { version: 1, revision: 1 },
+          packageOrigin: {
+            importId: 'import-operation',
+            sourceProjectId: 'source-project',
+            sourceSessionId: 'source-session',
+            importedAt: 1,
+            manifestChecksum: 'a'.repeat(64)
+          }
+        })
+      )
+      const current = await repository.loadSession('project-1', 'import-session-1')
+      if (!current) throw new Error('Imported Session was not readable')
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+      await coordinator.saveSession({
+        ...current,
+        title: 'Renamed history',
+        runtimeContext: undefined,
+        description: current.description ?? '',
+        permissionProfile: current.permissionProfile ?? 'ask'
+      })
+      const saved = await repository.loadSession('project-1', 'import-session-1')
+      expect(saved).toMatchObject({
+        title: 'Renamed history',
+        runtimeContext: current.runtimeContext,
+        packageOrigin: current.packageOrigin
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('rejects imported research at the shared prompt and Side chat admission boundary', async () => {
     const session = createSession({
       packageOrigin: {

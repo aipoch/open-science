@@ -33,6 +33,7 @@ import {
   projectConversationMessage
 } from '../../shared/conversation-graph'
 import { SessionPackageService } from './service'
+import * as selection from './selection'
 import * as fsPromises from 'node:fs/promises'
 import * as storageUsage from '../storage/usage'
 import * as fileIo from '../bounded-file-io'
@@ -50,6 +51,57 @@ vi.mock('electron', () => ({
 }))
 
 const fixtures: Awaited<ReturnType<typeof createProvenanceTestFixture>>[] = []
+
+it('resolves a copying file name once across progress chunks', async () => {
+  const source = await createProvenanceTestFixture()
+  fixtures.push(source)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Progress' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Progress',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  })
+  await source.stagePng('progress '.repeat(128 * 1024), 'large.png')
+  await source.repository.createVersion(createArtifactVersionRequest({ filename: 'large.png' }))
+  const original = selection.selectablePackageFiles
+  let lookupCount = 0
+  const lookup = vi.spyOn(selection, 'selectablePackageFiles').mockImplementation((...args) => {
+    const files = original(...args)
+    const find = files.find.bind(files)
+    vi.spyOn(files, 'find').mockImplementation((...args) => {
+      lookupCount++
+      return find(...args)
+    })
+    return files
+  })
+  const counts: number[] = []
+  const service = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  try {
+    await service.exportTo(
+      { projectId: 'project-1', sessionId: 'session-1' },
+      join(source.storageRoot, 'progress.science'),
+      {
+        onProgress: (progress) => {
+          if (progress.phase === 'copying' && progress.currentFile === 'large.png')
+            counts.push(lookupCount)
+        }
+      }
+    )
+  } finally {
+    lookup.mockRestore()
+    await service.close()
+  }
+  expect(counts.length).toBeGreaterThan(1)
+  expect(new Set(counts).size).toBe(1)
+})
 
 it('imports a compact package with required duplicate evidence and forwards the same safe selection', async () => {
   const source = await createProvenanceTestFixture()

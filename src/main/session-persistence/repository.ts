@@ -977,12 +977,14 @@ class SessionRepository {
   ): Promise<PersistedChatSession> {
     // Imported IDs keep the readonly authority check off ordinary Session save hot paths,
     // including when imported history belongs to an existing Project.
-    if (session.id.startsWith('import-') || session.projectId.startsWith('import-')) {
-      const current = await loadSessionMutationAuthority(this, session.projectId, session.id)
-      if (current.status === 'unreadable')
-        throw new Error('Cannot modify unreadable imported research history.')
-      if (current.status === 'found') session = preserveImportedSession(current.session, session)
-    }
+    const importedAuthority =
+      session.id.startsWith('import-') || session.projectId.startsWith('import-')
+        ? await loadSessionMutationAuthority(this, session.projectId, session.id)
+        : undefined
+    if (importedAuthority?.status === 'unreadable')
+      throw new Error('Cannot modify unreadable imported research history.')
+    if (importedAuthority?.status === 'found')
+      session = preserveImportedSession(importedAuthority.session, session)
     const key = `${session.projectId}:${session.id}`
     let actualRevision = Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0)
     if (
@@ -993,7 +995,11 @@ class SessionRepository {
     }
     await this.assertExistingSessionWithinLimit(this.sessionFilePath(session.projectId, session.id))
     if (expectedRevision !== undefined) {
-      const current = await loadSessionMutationAuthority(this, session.projectId, session.id)
+      // Both checks own the same serialized save lane. Reuse this operation's authority read;
+      // the next save must load again so revision and readonly checks never use a stale cache.
+      const current =
+        importedAuthority ??
+        (await loadSessionMutationAuthority(this, session.projectId, session.id))
       if (current.status === 'unreadable') {
         throw new Error('Cannot compare Session revision because durable JSON is unreadable.')
       }

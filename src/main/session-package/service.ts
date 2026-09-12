@@ -609,6 +609,8 @@ export class SessionPackageService {
           if (totalBytes > PACKAGE_MAX_BYTES || inventory.length >= 10000)
             throw new Error('Session package exceeds the export limit.')
           const objectPath = `objects/${sha256(storageKey)}`
+          const currentFile =
+            selectable.find((file) => file.storageKey === storageKey)?.filename ?? storageKey
           const copied = await copyFileWithinBudget(
             original,
             join(directory, objectPath),
@@ -621,8 +623,7 @@ export class SessionPackageService {
                 totalBytes: selectedBytes,
                 completedFiles,
                 totalFiles: sizes.size,
-                currentFile:
-                  selectable.find((file) => file.storageKey === storageKey)?.filename ?? storageKey
+                currentFile
               })
           )
           completedBytes += copied.sizeBytes

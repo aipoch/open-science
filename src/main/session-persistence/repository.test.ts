@@ -27,7 +27,7 @@ import {
   type PersistedChatSession,
   type PersistedToolActivity
 } from '../../shared/session-persistence'
-import { DurableJsonReadLimitError } from '../storage/durable-json-file'
+import { DurableJsonReadLimitError, readFileWithinLimit } from '../storage/durable-json-file'
 import {
   DEV_SESSION_DIR_NAME,
   SessionRepository,
@@ -94,6 +94,113 @@ afterEach(async () => {
 })
 
 describe('session persistence repository (per-session files)', () => {
+  it.each([
+    { id: 'import-session-1', projectId: 'project-a' },
+    { id: 'session-1', projectId: 'import-project-a' }
+  ])('reads imported authority once per revisioned save for $id / $projectId', async (identity) => {
+    const readSessionFileWithinLimit = vi.fn(readFileWithinLimit)
+    const repository = new SessionRepository(await createStorageRoot(), {
+      readSessionFileWithinLimit
+    })
+    const source = createSession({
+      ...identity,
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: 'source',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+    source.messages[0].content = 'Evidence '.repeat(128 * 1024)
+    await repository.saveSession(source)
+    const initial = (await repository.loadSession(source.projectId, source.id))!
+    readSessionFileWithinLimit.mockClear()
+    const renamed = await repository.saveSession({ ...initial, title: 'Renamed' }, initial.revision)
+    expect(renamed.title).toBe('Renamed')
+    expect(renamed.messages).toEqual(initial.messages)
+    expect(readSessionFileWithinLimit).toHaveBeenCalledOnce()
+
+    readSessionFileWithinLimit.mockClear()
+    await expect(
+      repository.saveSession({ ...renamed, title: 'Stale' }, initial.revision)
+    ).rejects.toMatchObject({ code: 'session-revision-conflict', actualRevision: renamed.revision })
+    expect(readSessionFileWithinLimit).toHaveBeenCalledOnce()
+
+    readSessionFileWithinLimit.mockClear()
+    await expect(
+      repository.saveSession(
+        {
+          ...renamed,
+          messages: [{ ...renamed.messages[0], content: 'Changed evidence' }]
+        },
+        renamed.revision
+      )
+    ).rejects.toThrow('read-only')
+    expect(readSessionFileWithinLimit).toHaveBeenCalledOnce()
+
+    // Each queued save must read fresh authority. Reuse is local to one save, never a cross-save cache.
+    readSessionFileWithinLimit.mockClear()
+    const writes = await Promise.allSettled(
+      ['First', 'Second'].map((title) =>
+        repository.saveSession({ ...renamed, title }, renamed.revision)
+      )
+    )
+    expect(writes.map(({ status }) => status)).toEqual(['fulfilled', 'rejected'])
+    expect(readSessionFileWithinLimit).toHaveBeenCalledTimes(2)
+    expect(await repository.loadSession(source.projectId, source.id)).toMatchObject({
+      title: 'First',
+      messages: initial.messages
+    })
+  })
+
+  it('persists imported view changes without erasing runtime evidence or allowing research edits', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    await repository.saveSession(
+      createSession({
+        id: 'import-session-1',
+        runtimeContext: { version: 1, revision: 1 },
+        packageOrigin: {
+          importId: 'import-1',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        }
+      })
+    )
+    const current = await repository.loadSession('project-a', 'import-session-1')
+    if (!current) throw new Error('Imported Session was not readable')
+    const candidate = {
+      ...current,
+      title: 'Renamed imported history',
+      pinned: true,
+      runtimeContext: undefined,
+      description: current.description ?? '',
+      permissionProfile: current.permissionProfile ?? 'ask'
+    }
+    await repository.saveSession(candidate)
+    const saved = await repository.loadSession('project-a', 'import-session-1')
+    expect(saved).toMatchObject({
+      title: 'Renamed imported history',
+      pinned: true,
+      runtimeContext: current.runtimeContext,
+      packageOrigin: current.packageOrigin
+    })
+    for (const changed of [
+      { ...candidate, runtimeContext: { version: 1 as const, revision: 2 } },
+      { ...candidate, permissionProfile: 'full' as const },
+      { ...candidate, description: 'Changed research description' },
+      {
+        ...candidate,
+        messages: candidate.messages.map((message) => ({ ...message, content: 'Changed research' }))
+      }
+    ]) {
+      await expect(repository.saveSession(changed)).rejects.toThrow('read-only')
+    }
+    expect(await repository.loadSession('project-a', 'import-session-1')).toEqual(saved)
+  })
+
   it('resolves recovery folders inside the managed Session tree', async () => {
     const root = await createStorageRoot()
     const repository = new SessionRepository(root)

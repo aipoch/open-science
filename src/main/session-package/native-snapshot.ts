@@ -108,28 +108,68 @@ export const captureNativeRecords = async (
     uploadIds.add(row.id)
   if (additionalVersionIds.some((id) => !artifactIds.has(id) && !uploadIds.has(id)))
     throw new Error('Session or Notebook references missing file evidence.')
+  // Visit each dependency once per capture. Do not cache across captures: export's final
+  // consistency check must observe fresh source authority, including linked foreign Sessions.
+  const visitedArtifacts = new Set<string>()
+  const visitedUploads = new Set<string>()
+  const visitedReviews = new Set<string>()
+  const visitedFindings = new Set<string>()
+  const resolvedSources = new Set(additionalVersionIds)
+  const unvisited = (ids: Set<string>, visited: Set<string>): string[] => {
+    const next = [...ids].filter((id) => !visited.has(id))
+    for (const id of next) visited.add(id)
+    return next
+  }
   // Traverse exact upstream versions and derivations, never an entire foreign conversation or its
   // unrelated outputs. Review dispositions and their cause Reviews belong to the same closure.
   for (;;) {
     const count = artifactIds.size + uploadIds.size + reviewIds.size
     if (count > 10000)
       throw new Error('Session package dependency closure exceeds the record limit.')
-    const versions = await client.artifactVersion.findMany({
-      where: { id: { in: [...artifactIds] } }
-    })
-    const uploads = await client.uploadVersion.findMany({ where: { id: { in: [...uploadIds] } } })
-    const inputs = await client.artifactVersionInput.findMany({
-      where: { artifactVersionId: { in: [...artifactIds] } }
-    })
-    const findings = await client.finding.findMany({
-      where: {
-        OR: [{ reviewId: { in: [...reviewIds] } }, { artifactVersionId: { in: [...artifactIds] } }]
-      }
-    })
-    const dispositions = await client.reviewFindingDisposition.findMany({
-      where: { sourceFindingId: { in: findings.map((row) => row.id) } }
-    })
-    const reviews = await client.review.findMany({ where: { id: { in: [...reviewIds] } } })
+    const nextArtifacts = unvisited(artifactIds, visitedArtifacts)
+    const nextUploads = unvisited(uploadIds, visitedUploads)
+    const nextReviews = unvisited(reviewIds, visitedReviews)
+    const versions = nextArtifacts.length
+      ? await client.artifactVersion.findMany({
+          where: { id: { in: nextArtifacts } },
+          select: { basedOnVersionId: true }
+        })
+      : []
+    const uploads = nextUploads.length
+      ? await client.uploadVersion.findMany({
+          where: { id: { in: nextUploads } },
+          select: { basedOnVersionId: true }
+        })
+      : []
+    const inputs = nextArtifacts.length
+      ? await client.artifactVersionInput.findMany({
+          where: { artifactVersionId: { in: nextArtifacts } },
+          select: { sourceArtifactVersionId: true, sourceUploadVersionId: true }
+        })
+      : []
+    const findings =
+      nextArtifacts.length || nextReviews.length
+        ? await client.finding.findMany({
+            where: {
+              OR: [{ reviewId: { in: nextReviews } }, { artifactVersionId: { in: nextArtifacts } }]
+            },
+            select: { id: true, reviewId: true, artifactVersionId: true }
+          })
+        : []
+    const nextFindings = unvisited(new Set(findings.map((row) => row.id)), visitedFindings)
+    const dispositions = nextFindings.length
+      ? await client.reviewFindingDisposition.findMany({
+          where: { sourceFindingId: { in: nextFindings } },
+          select: { causeReviewId: true, assessedArtifactVersionId: true }
+        })
+      : []
+    const reviews = nextReviews.length
+      ? await client.review.findMany({
+          where: { id: { in: nextReviews } },
+          select: { scope: true }
+        })
+      : []
+    const reviewSources = new Set<string>()
     for (const review of reviews) {
       const scope = JSON.parse(review.scope)
       for (const id of scope.artifactVersionIds ?? []) {
@@ -139,6 +179,10 @@ export const captureNativeRecords = async (
       const sourceIds: string[] = scope.sourceDocumentVersionIds ?? []
       if (!Array.isArray(sourceIds) || sourceIds.some((id) => typeof id !== 'string'))
         throw new Error('Invalid Review source reference.')
+      for (const id of sourceIds) if (!resolvedSources.has(id)) reviewSources.add(id)
+    }
+    if (reviewSources.size) {
+      const sourceIds = [...reviewSources]
       for (const row of await client.artifactVersion.findMany({
         where: { id: { in: sourceIds } },
         select: { id: true }
@@ -151,6 +195,7 @@ export const captureNativeRecords = async (
         uploadIds.add(row.id)
       if (sourceIds.some((id) => !artifactIds.has(id) && !uploadIds.has(id)))
         throw new Error('Review references missing source evidence.')
+      for (const id of sourceIds) resolvedSources.add(id)
     }
     for (const row of versions) if (row.basedOnVersionId) artifactIds.add(row.basedOnVersionId)
     for (const row of uploads) if (row.basedOnVersionId) uploadIds.add(row.basedOnVersionId)
