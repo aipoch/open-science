@@ -655,25 +655,24 @@ export class AgentRuntimeManager {
 
   async bootstrapCodex(onEvent: (event: ClaudeInstallEvent) => void): Promise<void> {
     await this.repository.selectBootstrapCodex()
-    const healthy = async (): Promise<boolean> => {
-      const settings = await this.repository.getSettings()
-      const codex = settings.codex
-      if (
-        !codex?.resolvedPath ||
-        !codex.nativePath ||
-        !codexVersionsFromProbe(
-          await this.probeConfiguredCodexRuntime(codex, this.shutdownAbort.signal)
+    const healthy = (): Promise<boolean> =>
+      this.trackDetection(async (signal) => {
+        const settings = await this.repository.getSettings()
+        const codex = settings.codex
+        if (
+          !codex?.resolvedPath ||
+          !codex.nativePath ||
+          !codexVersionsFromProbe(await this.probeConfiguredCodexRuntime(codex, signal))
         )
-      )
-        return false
-      const ready = await this.codexDetectDeps.smokeInitialize(
-        codex.resolvedPath,
-        { codexPath: codex.nativePath },
-        this.shutdownAbort.signal
-      )
-      this.shutdownAbort.signal.throwIfAborted()
-      return ready
-    }
+          return false
+        const ready = await this.codexDetectDeps.smokeInitialize(
+          codex.resolvedPath,
+          { codexPath: codex.nativePath },
+          signal
+        )
+        signal.throwIfAborted()
+        return ready
+      })
     if (await healthy()) return this.repository.selectBootstrapCodex()
     await this.detectCodex()
     if (await healthy()) return this.repository.selectBootstrapCodex()

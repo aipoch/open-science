@@ -961,6 +961,47 @@ describe('AgentRuntimeManager', () => {
     })
   })
 
+  it('keeps bootstrap ACP initialization inside the runtime detection admission', async () => {
+    inventory.codexAdapter.set(managedAdapterPath, '1.6.2')
+    inventory.codexNative.set(managedCodexPath, '0.114.0')
+    await repository.setCodexInfo({
+      resolvedPath: managedAdapterPath,
+      version: '1.6.2',
+      nativePath: managedCodexPath,
+      nativeVersion: '0.114.0'
+    })
+    const started = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<boolean>()
+    const install = vi.fn(async ({ installId }: { installId: string }) => ({
+      result: { installId, ok: false, error: 'installer reached' }
+    }))
+    manager = createManager({
+      codexDetectDeps: {
+        ...createCodexDeps(inventory, managedAdapterPath, managedCodexPath),
+        smokeInitialize: async () => {
+          started.resolve()
+          return release.promise
+        }
+      },
+      installManagedCodexImpl: install
+    })
+    const bootstrap = manager.bootstrapCodex(vi.fn())
+    await started.promise
+    try {
+      await expect(manager.installCodex({ source: 'managed' }, vi.fn())).resolves.toMatchObject({
+        ok: false,
+        error: 'Runtime detection is in progress. Retry after it finishes.'
+      })
+      expect(install).not.toHaveBeenCalled()
+    } finally {
+      release.resolve(true)
+      await bootstrap
+    }
+    await expect(manager.installCodex({ source: 'managed' }, vi.fn())).resolves.toMatchObject({
+      error: 'installer reached'
+    })
+  })
+
   it('rejects independent detection during installation and admits it after failure', async () => {
     const started = Promise.withResolvers<void>()
     const release = Promise.withResolvers<void>()
