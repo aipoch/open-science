@@ -18,17 +18,18 @@ def figure_outline_schema():
 def grid_geom(outline, dpi=300, gutter_mm=4):
     """Validate panel geometry before deriving pixel positions or writing images."""
     import math
+    from numbers import Integral, Real
     for name, value in (("dpi", dpi), ("width_mm", outline["width_mm"]),
                         ("gutter_mm", gutter_mm)):
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value):
             raise ValueError(f"{name} must be a finite number")
     if dpi <= 0 or outline["width_mm"] <= 0 or gutter_mm < 0:
         raise ValueError("dpi and width_mm must be positive; gutter_mm must be nonnegative")
     ncol = outline["ncol"]
-    if isinstance(ncol, bool) or not isinstance(ncol, int) or ncol < 1:
+    if isinstance(ncol, bool) or not isinstance(ncol, Integral) or ncol < 1:
         raise ValueError("ncol must be a positive integer")
     heights = outline["row_heights_mm"]
-    if not heights or any(isinstance(h, bool) or not isinstance(h, (int, float))
+    if not heights or any(isinstance(h, bool) or not isinstance(h, Real)
                           or not math.isfinite(h) or h <= 0 for h in heights):
         raise ValueError("row_heights_mm must contain positive finite heights")
     letters, rectangles = set(), []
@@ -42,7 +43,7 @@ def grid_geom(outline, dpi=300, gutter_mm=4):
             raise ValueError(f"Duplicate panel letter: {letter!r}")
         letters.add(key)
         r, c, rs, cs = p["row"], p["col"], p.get("rowspan", 1), p["colspan"]
-        if any(isinstance(v, bool) or not isinstance(v, int) for v in (r, c, rs, cs)):
+        if any(isinstance(v, bool) or not isinstance(v, Integral) for v in (r, c, rs, cs)):
             raise ValueError("Panel row, col and spans must be integers")
         if r < 0 or c < 0 or rs < 1 or cs < 1 or r + rs > len(heights) or c + cs > ncol:
             raise ValueError(f"Panel {letter!r} is outside the grid or has an invalid span")
@@ -134,7 +135,8 @@ Publish `panel_{letter}.png` with the Artifact writer using the exact notebook `
 
 def compose_crops(outline, dpi=300, gutter_mm=4, pad_px=4):
     """Return top-left-origin pixel crop boxes for the composed PNG."""
-    if isinstance(pad_px, bool) or not isinstance(pad_px, int) or pad_px < 0:
+    from numbers import Integral
+    if isinstance(pad_px, bool) or not isinstance(pad_px, Integral) or pad_px < 0:
         raise ValueError("pad_px must be a nonnegative integer")
     W, ncol, colw, rowh, row_y, g = grid_geom(outline, dpi, gutter_mm)
     H = row_y[-1] + rowh[-1]

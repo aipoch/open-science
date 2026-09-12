@@ -12,6 +12,7 @@ import unittest
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 from PIL import Image
 
 from kernel import compose_crops, compose_figure, grid_geom, panel_px, panel_task
@@ -64,6 +65,50 @@ class ComposerTests(unittest.TestCase):
                 self.assertEqual(target.read_bytes(), b"preserve existing output")
                 with self.assertRaises(ValueError):
                     compose_crops(outline, dpi=100)
+
+    def test_numpy_scalars_preserve_composition_and_crops(self):
+        # Exactly representable dimensions isolate scalar compatibility from rounding.
+        self.outline["width_mm"] = 63.5
+        self.outline["row_heights_mm"] = [31.75]
+        paths = self.make_panels()
+        for integer, real in ((np.int64, np.float32), (np.int32, np.float64)):
+            with self.subTest(integer=integer, real=real):
+                outline = copy.deepcopy(self.outline)
+                outline["ncol"] = integer(2)
+                outline["width_mm"] = real(63.5)
+                outline["row_heights_mm"] = [real(31.75)]
+                for panel in outline["panels"]:
+                    for field in ("row", "col", "colspan"):
+                        panel[field] = integer(panel[field])
+                    panel["rowspan"] = integer(1)
+                target = self.root / "numpy.png"
+                compose_figure(outline, paths, target, dpi=integer(100), gutter_mm=real(4))
+                with Image.open(target) as result:
+                    self.assertEqual(result.size, (250, 125))
+                    self.assertEqual(result.getpixel((40, 50)), (255, 0, 0))
+                    self.assertEqual(result.getpixel((150, 50)), (0, 0, 255))
+                self.assertEqual(compose_crops(outline, dpi=integer(100), pad_px=integer(2)),
+                                 compose_crops(self.outline, dpi=100, pad_px=2))
+
+    def test_numeric_validation_still_rejects_invalid_scalars(self):
+        for value in (True, np.bool_(True), np.float64(1.5), complex(1, 0)):
+            with self.subTest(value=value):
+                outline = copy.deepcopy(self.outline)
+                outline["ncol"] = value
+                with self.assertRaises(ValueError):
+                    grid_geom(outline)
+                outline = copy.deepcopy(self.outline)
+                outline["panels"][0]["row"] = value
+                with self.assertRaises(ValueError):
+                    grid_geom(outline)
+                with self.assertRaises(ValueError):
+                    compose_crops(self.outline, pad_px=value)
+        for value in (True, np.bool_(True), np.float32("nan"), np.float64("inf"), complex(1, 0)):
+            with self.subTest(value=value):
+                outline = copy.deepcopy(self.outline)
+                outline["width_mm"] = value
+                with self.assertRaises(ValueError):
+                    grid_geom(outline)
 
     def test_mismatched_image_is_rejected_without_resizing_or_overwriting(self):
         paths = self.make_panels()
