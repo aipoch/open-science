@@ -67,6 +67,41 @@ describe('ProviderAccountsModule', () => {
     expect(validate).toHaveBeenCalledTimes(2)
   })
 
+  it('revalidates the selected model without replacing the provider default or key', async () => {
+    await repository.setAgentFramework('codex')
+    const validate = vi
+      .spyOn(module, 'validateProvider')
+      .mockResolvedValue({ ok: true, category: 'ok' })
+    await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
+    const existing = (await repository.getSettings()).providers[0]
+    const keyRef = existing.keyRef
+    await repository.upsertProvider({ ...existing, name: 'My research account' })
+    await repository.setActiveProvider('cli-openai', 'gpt-5.4-mini')
+    await expect(module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4-mini')
+    expect(validate).toHaveBeenLastCalledWith({
+      draft: { type: 'official', vendorId: 'openai', model: 'gpt-5.4-mini', key: 'synthetic-key' }
+    })
+    const saved = await new SettingsRepository(dir).getSettings()
+    expect(saved.activeModel).toBe('gpt-5.4-mini')
+    expect(saved.providers[0]).toMatchObject({
+      model: 'gpt-5.4',
+      name: 'My research account',
+      keyRef,
+      lastValidatedTarget: { model: 'gpt-5.4-mini', endpoint: 'responses' }
+    })
+    validate.mockImplementation(async () => {
+      await repository.setActiveProvider('cli-openai', 'gpt-5.4')
+      return { ok: true, category: 'ok' }
+    })
+    await expect(module.bootstrapOpenAi('synthetic-key', 'gpt-5.4-mini')).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    expect((await repository.getSettings()).activeModel).toBe('gpt-5.4')
+  })
+
   it.each([undefined, 'cli-openai'])(
     'rejects bootstrap with coexisting providers when active provider is %s',
     async (activeProviderId) => {

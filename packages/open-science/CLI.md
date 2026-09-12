@@ -143,7 +143,9 @@ open-science provider add --type official --vendor openai --model gpt-5.4 \
 
 Use a model supported by the installed application's OpenAI catalog. Setup probes that exact model
 before saving its protected credential reference and validation record. This initial command creates
-`cli-openai`; repeating it with the same key/model revalidates it. Different existing credentials,
+`cli-openai`; repeating it with the same key and currently selected model revalidates that target.
+If Settings changed the active model, Doctor suggests the selected model; revalidation preserves the
+provider default model and active selection. Different existing credentials,
 providers, or framework selections produce `configuration_conflict`, without overwriting them.
 Later account edits remain in Settings. Other runtime/provider bootstrap combinations are not yet
 supported. Existing run-time selection commands are unchanged.

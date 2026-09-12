@@ -186,7 +186,7 @@ class ProviderAccountsModule {
       (existing &&
         (existing.type !== 'official' ||
           existing.vendorId !== 'openai' ||
-          existing.model !== model ||
+          (settings.activeModel ?? existing.model) !== model ||
           !existing.keyRef ||
           tryDecryptKey(existing.keyRef) !== key))
     )
@@ -206,8 +206,8 @@ class ProviderAccountsModule {
       id,
       type: 'official',
       vendorId: 'openai',
-      name: 'OpenAI',
-      model,
+      name: existing?.name ?? 'OpenAI',
+      model: existing?.model ?? model,
       keyRef: existing?.keyRef ?? encryptKey(key),
       keyMask: maskKey(key)
     }

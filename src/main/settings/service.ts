@@ -1154,7 +1154,7 @@ class SettingsService {
                   '--vendor',
                   'openai',
                   '--model',
-                  provider.model,
+                  settings.activeModel ?? provider.model,
                   '--api-key-env',
                   'OPENAI_API_KEY',
                   '--json'
