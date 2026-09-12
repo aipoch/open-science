@@ -159,7 +159,9 @@ requires the existing explicit `start --credential-store file` option on every s
 `doctor` keeps existing readiness/reason fields. If the daemon is absent, the CLI prints a report
 with `checks.daemon.status: "missing"` and `next: [{ code: "daemon_unavailable", argv: ["start",
 "--no-open"] }]`, exiting 3. This includes a stale state file whose loopback connection is refused; HTTP health
-rejections (including authorization failures) remain errors rather than missing-daemon reports. A running-daemon report still exits 0 even when readiness is false.
+rejections (including authorization failures) remain errors rather than missing-daemon reports.
+When probing both default profiles, a later refused connection does not hide an earlier HTTP or
+configuration error; a healthy later profile can still be selected. A running-daemon report still exits 0 even when readiness is false.
 Append the same development `--profile` argument when executing a suggested argv in an isolated
 profile. Doctor reports readiness, not a live third-party authorization or research-run guarantee.
 

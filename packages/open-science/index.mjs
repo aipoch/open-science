@@ -728,14 +728,15 @@ export const connectToOpenScience = async ({
         return true
       } catch (error) {
         signal?.throwIfAborted()
-        lastError = error
+        // A stale candidate must not hide an earlier authorization or configuration failure.
+        const transportCode = error?.cause?.code ?? error?.code
+        if (transportCode !== 'ECONNREFUSED') lastError = error
         return false
       }
     }
   })
   if (!client) {
-    const transportCode = lastError?.cause?.code ?? lastError?.code
-    if (lastError && transportCode !== 'ECONNREFUSED') throw lastError
+    if (lastError) throw lastError
     throw new OpenScienceApiError(
       'Open Science is not running. Start it with "open-science start".',
       {
