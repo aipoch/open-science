@@ -275,6 +275,12 @@ export const sandboxedPackageSpawn =
     const platform = options.platform ?? process.platform
     assertProcessTreeSupport(platform)
     const projectedEnv = packageEnvironment(env ?? {}, platform)
+    const externalR = request.language === 'r' && Boolean(options.interpreter?.library)
+    // External R consent covers one library and the workload cache, never managed environments
+    // or inherited Conda/Mamba roots. Keep the default cwd readable without granting writes.
+    const cacheWriteRoots = externalR
+      ? absolutePath(projectedEnv.OPEN_SCIENCE_NOTEBOOK_CACHE_DIR, platform).filter(existsSync)
+      : packageWriteRoots(projectedEnv, platform)
     normalizeDarwinRepodataCachePermissions(projectedEnv, runtimeRoot, platform)
     const workspaceCwd =
       request.workspaceCwd && isAbsolute(request.workspaceCwd) ? request.workspaceCwd : runtimeRoot
@@ -296,6 +302,7 @@ export const sandboxedPackageSpawn =
       superviseProcessTree: platform === 'win32',
       filesystem: {
         readOnlyRoots: [
+          ...(externalR ? [runtimeRoot] : []),
           ...absolutePath(dirname(command)),
           ...absolutePath(request.workspaceCwd),
           ...(options.interpreter?.library
@@ -306,13 +313,13 @@ export const sandboxedPackageSpawn =
             : [])
         ],
         readWriteRoots: [
-          runtimeRoot,
+          ...(externalR ? [] : [runtimeRoot]),
           ...absolutePath(
             options.interpreter?.library ??
               externalEnvironmentRoot(options.interpreter, request.language, platform),
             platform
           ),
-          ...packageWriteRoots(projectedEnv, platform)
+          ...cacheWriteRoots
         ],
         deniedReadRoots: [],
         deniedWriteRoots: []

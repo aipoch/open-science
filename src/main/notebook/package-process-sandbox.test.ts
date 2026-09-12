@@ -32,19 +32,25 @@ describe('sandboxedPackageSpawn', () => {
       mkdirSync(join(root, 'library'))
       const command = join(root, ...parts)
       const library = join(tmpdir(), 'personal-r-library')
+      const runtimeRoot = join(root, 'managed-runtime')
+      const cacheRoot = join(runtimeRoot, 'workload-cache')
+      mkdirSync(cacheRoot, { recursive: true })
       const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async () => {
         throw new Error('scope captured')
       })
       const spawn = sandboxedPackageSpawn({
         processSandbox: { wrap },
         request: { language: 'r', packages: ['glue'] },
-        runtimeRoot: join(tmpdir(), 'app-runtime'),
+        runtimeRoot,
         storageRoot: join(tmpdir(), 'app-storage'),
         interpreter: { command, library }
       })
       await expect(
         spawn(command, [], {
           R_LIBS_USER: library,
+          MAMBA_ROOT_PREFIX: runtimeRoot,
+          CONDA_PKGS_DIRS: runtimeRoot,
+          OPEN_SCIENCE_NOTEBOOK_CACHE_DIR: cacheRoot,
           R_LIBS: '/unrelated/library',
           R_PROFILE_USER: '/unrelated/profile'
         })
@@ -56,6 +62,9 @@ describe('sandboxedPackageSpawn', () => {
       const filesystem = wrap.mock.calls[0]![0].filesystem!
       expect(filesystem.readWriteRoots).toContain(library)
       expect(filesystem.readWriteRoots).not.toContain(root)
+      expect(filesystem.readWriteRoots).toEqual([library, cacheRoot])
+      expect(filesystem.readWriteRoots).not.toContain(runtimeRoot)
+      expect(filesystem.readOnlyRoots).toContain(runtimeRoot)
       expect(filesystem.readOnlyRoots).toContain(root)
     }
   )
