@@ -632,7 +632,7 @@ class SkillCatalogModule {
 
   async deleteSkill(
     request: DeleteSkillRequest,
-    guard?: (skillId: string) => Promise<void>
+    guard?: (request: DeleteSkillRequest) => Promise<void>
   ): Promise<SkillView[]> {
     if (
       !request.source &&
@@ -640,10 +640,17 @@ class SkillCatalogModule {
     ) {
       throw new Error('Built-in Skills cannot be deleted.')
     }
-    await this.userSkills.delete(request.id, request.source, guard)
-    await this.options.repository.setSkillEnabled(request.id, true)
+    await this.userSkills.delete(
+      request.id,
+      request.source,
+      guard ? () => guard(request) : undefined
+    )
     await this.refreshRegisteredHelpers()
-    return this.listSkills()
+    const skills = await this.listSkills()
+    if (!skills.some((skill) => skill.id === request.id)) {
+      await this.options.repository.setSkillEnabled(request.id, true)
+    }
+    return skills
   }
 
   async importSkill(request: ImportSkillRequest, signal?: AbortSignal): Promise<ImportSkillResult> {

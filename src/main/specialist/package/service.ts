@@ -24,6 +24,7 @@ import {
   validateSpecialistSystemPrompt
 } from '../../../shared/specialist'
 import { parseSkillDocument } from '../../../shared/skill-frontmatter'
+import type { SkillSource } from '../../../shared/settings'
 import { createLogger } from '../../logger'
 import type { SpecialistOrigin, StoredSpecialist, StoredSpecialists } from '../types'
 import { SpecialistRepository } from '../repository'
@@ -308,7 +309,10 @@ export class SpecialistPackageService {
     return preview
   }
 
-  async assertSkillDeletionAllowed(skillId: string): Promise<void> {
+  async assertSkillDeletionAllowed(
+    skillId: string,
+    source?: Extract<SkillSource, 'imported' | 'personal'>
+  ): Promise<void> {
     if (typeof skillId !== 'string' || !skillId.trim()) {
       throw new Error('Skill id must be a non-empty string.')
     }
@@ -316,7 +320,12 @@ export class SpecialistPackageService {
       this.options.repository.getAll(),
       this.options.catalog()
     ])
-    const skill = catalog.skills.find((candidate) => candidate.id === skillId)
+    const skill = catalog.skills.find(
+      (candidate) =>
+        candidate.id === skillId &&
+        (source === undefined || candidate.source === source || candidate.source === undefined)
+    )
+    if (source !== undefined && (!skill || skill.builtin || skill.source === 'featured')) return
     if (!skill) return
     if (skill.builtin) throw new SpecialistSkillDeletionProtectedError(skillId, [], 'builtin')
     const owners = [...(skill.ownerIds ?? [])].sort()

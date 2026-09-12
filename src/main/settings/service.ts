@@ -287,7 +287,7 @@ class SettingsService {
   private deviceCredentialAuthenticator?: (credentialId: string) => Promise<void>
   private deviceCredentialAuthenticationCanceller?: (credentialId: string) => Promise<void>
   private deviceCredentialDisconnector?: (credentialId: string) => Promise<void>
-  private skillDeletionGuard?: (skillId: string) => Promise<void>
+  private skillDeletionGuard?: (request: DeleteSkillRequest) => Promise<void>
 
   hasActiveInstall(): boolean {
     return this.installCoordinator.getActiveId() !== undefined
@@ -1023,7 +1023,7 @@ class SettingsService {
     return this.skills.deleteSkill(request, this.skillDeletionGuard)
   }
 
-  setSkillDeletionGuard(guard: (skillId: string) => Promise<void>): void {
+  setSkillDeletionGuard(guard: (request: DeleteSkillRequest) => Promise<void>): void {
     this.skillDeletionGuard = guard
   }
 
