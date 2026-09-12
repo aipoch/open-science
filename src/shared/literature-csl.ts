@@ -266,7 +266,18 @@ const creatorsFromCsl = (
           return [{ nameMode: 'organization' as const, literalName, creatorType }]
         }
         const givenName = stringField(name, 'given')
-        const familyName = stringField(name, 'family')
+        // Library names have no separate particle fields. Keep both CSL particle
+        // categories in the surname so display and subsequent exports retain them.
+        const familyName = [
+          stringField(name, 'dropping-particle'),
+          stringField(name, 'non-dropping-particle'),
+          stringField(name, 'family')
+        ]
+          .filter(Boolean)
+          .reduce(
+            (surname, part) => `${surname}${surname && !/[-'’]$/u.test(surname) ? ' ' : ''}${part}`,
+            ''
+          )
         return givenName || familyName
           ? [{ nameMode: 'person' as const, givenName, familyName, creatorType }]
           : []
