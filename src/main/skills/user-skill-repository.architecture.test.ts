@@ -138,18 +138,18 @@ const publicOperations = (): string[] => {
   )
   if (!declaration || !isClassDeclaration(declaration)) throw new Error('facade class not found')
 
-  return declaration.members
-    .flatMap((member) => {
-      const hidden =
-        canHaveModifiers(member) &&
-        getModifiers(member)?.some((modifier) =>
-          [SyntaxKind.PrivateKeyword, SyntaxKind.ProtectedKeyword].includes(modifier.kind)
-        )
-      return !hidden && isMethodDeclaration(member) && isIdentifier(member.name)
-        ? [member.name.text]
-        : []
-    })
-    .sort()
+  const names = declaration.members.flatMap((member) => {
+    const hidden =
+      canHaveModifiers(member) &&
+      getModifiers(member)?.some((modifier) =>
+        [SyntaxKind.PrivateKeyword, SyntaxKind.ProtectedKeyword].includes(modifier.kind)
+      )
+    return !hidden && isMethodDeclaration(member) && isIdentifier(member.name)
+      ? [member.name.text]
+      : []
+  })
+  // Overload signatures are separate MethodDeclarations; inventory one name per operation.
+  return [...new Set(names)].sort()
 }
 
 type ModuleImpactManifest = {
