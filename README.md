@@ -363,10 +363,11 @@ A: Enable the **Remote Compute (SSH)** skill under **Settings → Skills**, regi
 
 ### Is there a command-line interface?
 
-A: Yes. Install it in one click from **Settings → General → Command line tool → Install command** (adds `open-science` to your PATH; no separate Node.js needed). The CLI controls the local service and submits research tasks without opening a browser:
+A: Yes. Install it in one click from **Settings → General → Command line tool → Install command** (adds `open-science` to your PATH; no separate Node.js needed). Initialize the local profile, then control the service and submit research tasks without opening a browser:
 
 ```bash
-# Start the service in the background
+# Initialize the local CLI profile and start the service in the background
+open-science init
 open-science start --no-open
 
 # Create a project and run a task by its exact name

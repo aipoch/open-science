@@ -29,6 +29,7 @@ const MAX_DOWNLOAD_SYMLINK_HOPS = 40
 const usage = `Usage: open-science <command> [options]
 
 Commands:
+  init        Create the local CLI configuration directory
   start       Start the headless backend and localhost web UI
   stop        Gracefully stop the backend
   status      Show backend status
@@ -65,6 +66,7 @@ Options:
   --port <port>          Web service port (default: 44100)
   --app-path <path>      Installed Open Science executable
   --config-root <path>   Config directory override
+  --profile <path>       Alias for --config-root (portable CLI profile)
   --data-root <path>     Current Data Root override (rollback only)
   --project <id-or-name> Project id or exact name
   --session <id>         Resume an existing session
@@ -116,6 +118,7 @@ const VALUE_OPTIONS = {
   '--port': 'port',
   '--app-path': 'appPath',
   '--config-root': 'configRoot',
+  '--profile': 'configRoot',
   '--data-root': 'dataRoot',
   '--project': 'project',
   '--session': 'session',
@@ -184,6 +187,7 @@ const POSITIONAL_LIMITS = new Map([
   ['credential update', 1],
 
   ['start', 0],
+  ['init', 0],
   ['stop', 0],
   ['status', 0],
   ['url', 0],
@@ -564,6 +568,22 @@ export const isProcessAlive = (pid) => {
   } catch (error) {
     return error.code === 'EPERM'
   }
+}
+
+export const initCommand = async (options, deps = DEFAULT_DEPS) => {
+  const app = await (deps.locateApp ?? locateApp)({ appPath: options.appPath })
+  if (app.packaged && options.configRoot) {
+    throw new Error('--config-root is only supported for development builds.')
+  }
+  const configRoot = resolveConfigRoot({
+    override: options.configRoot,
+    packaged: app.packaged,
+    env: app.packaged ? {} : process.env
+  })
+  await mkdir(configRoot, { recursive: true, mode: 0o700 })
+  const result = { configRoot, initialized: true }
+  deps.log(options.json ? JSON.stringify(result) : `Open Science is initialized at ${configRoot}.`)
+  return result
 }
 
 const authenticatedUrl = async (state, deps = DEFAULT_DEPS) => {
@@ -1903,7 +1923,8 @@ export const runCli = async (argv = process.argv.slice(2), dependencies = {}) =>
     console.log(usage)
     return
   }
-  if (command === 'start') await startCommand(options)
+  if (command === 'init') await initCommand(options)
+  else if (command === 'start') await startCommand(options)
   else if (command === 'stop') await stopCommand(options)
   else if (command === 'status') await statusCommand(options)
   else if (command === 'url') await urlCommand(options)

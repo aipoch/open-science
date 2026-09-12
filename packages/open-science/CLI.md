@@ -35,6 +35,19 @@ node packages/open-science/cli.mjs
 
 ## Service lifecycle
 
+Initialize the local configuration directory from a terminal. This is safe to repeat and does not
+start the desktop application:
+
+```bash
+open-science init
+open-science init --config-root /absolute/path/to/profile --json
+```
+
+`init` prepares the profile directory; the first `start` creates the authenticated service state and
+token. It does not migrate or modify an existing profile beyond creating the directory when needed.
+Use `--profile` as a portable alias for `--config-root`; the alias is reserved for future standalone
+CLI distributions and currently follows the same development-profile restrictions.
+
 Start the service without opening a browser, check its status, or stop it:
 
 ```bash
