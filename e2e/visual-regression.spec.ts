@@ -362,7 +362,8 @@ test('keeps representative conversation, project, and recovery states visually s
   const recoveryAction = recoveryNotice.getByRole('button', {
     name: 'View affected conversations'
   })
-  const recoveryMessage = recoveryAlert.locator('p').nth(1)
+  // ErrorNotice puts the title in a heading and the body in a single description paragraph.
+  const recoveryMessage = recoveryAlert.locator('p')
   for (const width of [320, 375, 414, 768]) {
     await setViewport(page, width)
     const [alertBox, actionBox, messageBox] = await Promise.all([
