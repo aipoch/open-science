@@ -1610,7 +1610,8 @@ const WorkspaceMessageScrollerImpl = ({
                         activeSession.status !== 'error'
                       if (runIsActive) return response ? 'responding' : 'waiting'
                       return 'failed'
-                    })()
+                    })(),
+                    disableScrollAnchor: windowFindOpen
                   }
                   if (item.message.role === 'agent') {
                     const nextConversationItem = conversationItems[itemIndex + 1]

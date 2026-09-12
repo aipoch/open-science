@@ -68,6 +68,11 @@ test('bounds history scrolling and preserves native find across the transcript',
   for (const index of [0, 200, 399]) {
     await overlay.getByRole('textbox').fill(`CAPACITYTOKEN${String(index).padStart(4, '0')}`)
     await expect(viewport.locator(`[data-message-id="capacity-${index}"]`)).toBeInViewport()
+    // Native find must keep its match visible when deferred transcript layout settles.
+    await viewport.evaluate((element) => {
+      element.style.height = `${element.clientHeight - 20}px`
+    })
+    await expect(viewport.locator(`[data-message-id="capacity-${index}"]`)).toBeInViewport()
   }
   await overlay.getByRole('button', { name: 'Close find' }).click()
   await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
