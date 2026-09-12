@@ -631,7 +631,7 @@ const SkillsPanel = ({
                                 reference={{ resourceType: 'catalog.skill', resourceId: skill.id }}
                               />
                             ) : null}
-                            {available && skill.source !== 'featured' ? (
+                            {skill.source !== 'featured' ? (
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                   <Button
@@ -647,7 +647,7 @@ const SkillsPanel = ({
                                   </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
-                                  {canExportSkills ? (
+                                  {available && canExportSkills ? (
                                     <DropdownMenuItem
                                       className="gap-2 text-xs"
                                       onSelect={() => void exportSkill(skill.id, skill.displayName)}
@@ -656,7 +656,7 @@ const SkillsPanel = ({
                                       {t('Export')}
                                     </DropdownMenuItem>
                                   ) : null}
-                                  {skill.source === 'personal' ? (
+                                  {available && skill.source === 'personal' ? (
                                     <DropdownMenuItem
                                       className="gap-2 text-xs"
                                       onSelect={() => onNavigate({ kind: 'edit', id: skill.id })}
@@ -696,8 +696,13 @@ const SkillsPanel = ({
                                     <DropdownMenuItem
                                       className="gap-2 text-xs text-destructive"
                                       onSelect={() => {
+                                        if (skill.source === 'featured') return
                                         setDeleteError(undefined)
-                                        void deleteSkill(skill.id).catch((error) =>
+                                        void deleteSkill(
+                                          skill.id,
+                                          skill.source,
+                                          skill.directoryName
+                                        ).catch((error) =>
                                           setDeleteError({
                                             id: skill.id,
                                             message:

@@ -32,7 +32,7 @@ const lineValue = (value: string): string => value.replace(/[\r\n]+/gu, ' ').tri
 const nameText = (name: CslName): string =>
   name.literal ?? `${name.family ?? ''}, ${name.given ?? ''}`
 
-// BOOK A3/editor, A4/translator and ET/edition follow Zotero's RIS mappings.
+// BOOK A3/editor, A4/translator, ET/edition and J2/journal abbreviation follow Zotero's RIS mappings.
 // Labeled N1 notes preserve identifiers without misusing DOI or accession-number tags.
 // These notes are readable by other tools; structured recovery is our explicit adapter contract.
 export const exportRisFields = (item: CslItem): string => {
@@ -52,6 +52,7 @@ export const exportRisFields = (item: CslItem): string => {
     })
   }
   if (item.edition) fields.push(['ET', item.edition])
+  if (item['container-title-short']) fields.push(['J2', item['container-title-short']])
   return fields.map(([tag, value]) => `${tag}  - ${lineValue(value)}\n`).join('')
 }
 
@@ -93,6 +94,7 @@ export const importRisFields = (
         }
       }
     } else if (tag === 'ET') result.edition = value
+    else if (tag === 'J2') result['container-title-short'] = value
     else if (tag === 'A4' || tag === 'ED' || tag === editorTag) {
       const comma = value.indexOf(',')
       const name =

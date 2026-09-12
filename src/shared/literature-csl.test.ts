@@ -249,6 +249,37 @@ describe('fromCslItem', () => {
     })
   })
 
+  it.each(['author', 'editor', 'translator'] as const)(
+    'preserves both CSL name particles for %s without changing literal names',
+    (role) => {
+      const source = fromCslItem({
+        title: 'Name preservation',
+        type: 'article-journal',
+        [role]: [
+          { given: 'Jan', family: 'Dijk', 'non-dropping-particle': 'van' },
+          { given: 'Tawfiq', family: 'Hakim', 'non-dropping-particle': 'al-' },
+          { given: 'Jean', family: 'Alembert', 'dropping-particle': "d'" },
+          {
+            given: 'Ana',
+            family: 'Cruz',
+            'dropping-particle': 'de',
+            'non-dropping-particle': 'la'
+          },
+          { literal: 'Research Group', family: 'Ignored', 'dropping-particle': 'Ignored' }
+        ]
+      })
+      expect(source.creators).toMatchObject([
+        { creatorType: role, givenName: 'Jan', familyName: 'van Dijk' },
+        { creatorType: role, givenName: 'Tawfiq', familyName: 'al-Hakim' },
+        { creatorType: role, givenName: 'Jean', familyName: "d'Alembert" },
+        { creatorType: role, givenName: 'Ana', familyName: 'de la Cruz' },
+        { creatorType: role, nameMode: 'organization', literalName: 'Research Group' }
+      ])
+      const roundTrip = fromCslItem(toCslItem('names', source))
+      expect(roundTrip.creators).toEqual(source.creators)
+    }
+  )
+
   it('rejects imported entries without a title', () => {
     expect(() => fromCslItem({ id: 'missing-title', type: 'article' })).toThrow()
   })

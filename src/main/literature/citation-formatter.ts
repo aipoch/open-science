@@ -187,7 +187,11 @@ const parseNbib = (input: string): ParsedCitationRecords | undefined => {
     const authors = nbibCreators(record)
     warnings.push(authors.uncertain.length ? ['uncertain-author-name'] : [])
     items.push({
-      itemType: publicationTypes.includes('review') ? 'review' : 'journalArticle',
+      itemType: publicationTypes.includes('preprint')
+        ? 'preprint'
+        : publicationTypes.includes('review')
+          ? 'review'
+          : 'journalArticle',
       title,
       abstract: nbibText(record, 'AB'),
       issuedText,

@@ -4380,7 +4380,7 @@ describe('SettingsService: skills', () => {
     await expect(service.deleteSkill({ id: 'personal-my-skill' })).rejects.toMatchObject({
       code: 'protected-skill'
     })
-    expect(guard).toHaveBeenCalledWith('personal-my-skill')
+    expect(guard).toHaveBeenCalledWith({ id: 'personal-my-skill' })
     await expect(service.getSkillDetail('personal-my-skill')).resolves.toBeDefined()
   })
 

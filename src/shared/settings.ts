@@ -1128,6 +1128,7 @@ export type SkillView = {
   availability?: 'identity-conflict'
   // Ephemeral row identity for conflicting packages that reuse the same durable id.
   catalogEntryKey?: string
+  directoryName?: string
   // Stable invocation name from SKILL.md.
   name: string
   // Presentation label supplied by the catalog source, falling back to name.
@@ -1225,6 +1226,8 @@ export type UpdateSkillRequest = {
 
 export type DeleteSkillRequest = {
   id: string
+  source?: Extract<SkillSource, 'imported' | 'personal'>
+  directoryName?: string
 }
 
 // Import a single skill from a public GitHub URL.
