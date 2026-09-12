@@ -320,8 +320,9 @@ const RuntimesPanel = ({
     isEnvEnabled(env, enablement[language])
 
   const isInstallAuthorized = (language: NotebookLanguage, env: DiscoveredInterpreter): boolean =>
-    (enablement[language]?.installAuthorized[env.envId] ?? false) &&
-    (language !== 'r' || Boolean(enablement.r?.installLibraries?.[env.envId]))
+    // Display persisted consent so historical R grants without a library can still be revoked.
+    // Package admission separately requires a library before an R installation can run.
+    enablement[language]?.installAuthorized[env.envId] ?? false
 
   const applyEnabled = async (
     language: NotebookLanguage,

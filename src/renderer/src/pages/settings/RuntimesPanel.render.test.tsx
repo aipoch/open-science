@@ -879,7 +879,7 @@ describe('RuntimesPanel', () => {
     expect(setInstallAuthorized).toHaveBeenCalledWith('python', '/usr/bin/python3', true)
   })
 
-  it('requires library consent even when historical external R authorization is true', async () => {
+  it('revokes historical R consent without a library and requires a library to authorize again', async () => {
     getEnablement.mockImplementation(async (language: string) =>
       language === 'r'
         ? {
@@ -888,18 +888,33 @@ describe('RuntimesPanel', () => {
           }
         : enablement
     )
+    setInstallAuthorized.mockResolvedValue({
+      enabled: { '/opt/conda/envs/bio/bin/R': true },
+      installAuthorized: { '/opt/conda/envs/bio/bin/R': false }
+    })
 
     await render()
 
     const installToggle = container.querySelector<HTMLButtonElement>(
       '[aria-label="Allow package install for R 4.4.1"]'
     )
-    expect(installToggle?.disabled).toBe(true)
-    expect(installToggle?.getAttribute('data-state')).toBe('unchecked')
+    expect(installToggle?.disabled).toBe(false)
+    expect(installToggle?.getAttribute('data-state')).toBe('checked')
     expect(container.textContent).toContain('Authorize an existing personal R library.')
     const input = container.querySelector<HTMLInputElement>(
       '[placeholder="Enter a personal library path from .libPaths()"]'
     )!
+    expect(input.disabled).toBe(true)
+    await click(installToggle)
+    expect(setInstallAuthorized).toHaveBeenCalledWith(
+      'r',
+      '/opt/conda/envs/bio/bin/R',
+      false,
+      undefined
+    )
+    expect(installToggle?.disabled).toBe(true)
+    expect(installToggle?.getAttribute('data-state')).toBe('unchecked')
+    expect(input.disabled).toBe(false)
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
         input,
