@@ -35,7 +35,7 @@ export const USER_SOURCES: ReadonlyArray<Extract<SkillSource, 'imported' | 'pers
 
 export type UserSkillSource = (typeof USER_SOURCES)[number]
 
-const assertUserSkillSource = (source: unknown): asserts source is UserSkillSource => {
+const assertUserSkillSource = (source: unknown): void => {
   if (!USER_SOURCES.includes(source as UserSkillSource)) {
     throw new Error('Invalid user Skill source.')
   }

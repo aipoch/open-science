@@ -178,6 +178,7 @@ const SkillBulkManageView = (): React.JSX.Element => {
     const deletedIds = new Set<string>()
     const failures: string[] = []
     for (const { skill } of deletableSkills) {
+      if (skill.source === 'featured') continue
       try {
         await deleteSkill(skill.id, skill.source)
         deletedIds.add(skill.id)

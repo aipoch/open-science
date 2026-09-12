@@ -705,6 +705,7 @@ const SkillsPanel = ({
                                     <DropdownMenuItem
                                       className="gap-2 text-xs text-destructive"
                                       onSelect={() => {
+                                        if (skill.source === 'featured') return
                                         setDeleteError(undefined)
                                         void deleteSkill(skill.id, skill.source).catch((error) =>
                                           setDeleteError({
