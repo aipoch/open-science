@@ -1910,6 +1910,7 @@ const WorkspaceMessageScrollerImpl = ({
               {optimisticMessage ? (
                 <WorkspaceMessageItem
                   message={optimisticMessage}
+                  disableScrollAnchor={windowFindOpen}
                   projectId={currentProjectId}
                   onPreviewArtifact={onPreviewArtifact}
                   onPreviewArtifactModal={onPreviewArtifactModal}
