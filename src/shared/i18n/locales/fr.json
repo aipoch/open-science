@@ -5782,7 +5782,12 @@
     "Messages could not be loaded.": "Les messages n’ont pas pu être chargés.",
     "Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.": "Autoriser une bibliothèque R personnelle existante. L’installation peut modifier des paquets utilisés par d’autres projets. La restauration nécessite un interpréteur correspondant.",
     "Personal R package library": "Bibliothèque personnelle de paquets R",
-    "Enter a personal library path from .libPaths()": "Saisir le chemin d’une bibliothèque personnelle de .libPaths()",
-    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "Téléchargez les fichiers de verrouillage pour restaurer les paquets avec un interpréteur correspondant. Cela ne recrée pas l’environnement complet."
+    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "Téléchargez les fichiers de verrouillage pour restaurer les paquets avec un interpréteur correspondant. Cela ne recrée pas l’environnement complet.",
+    "Could not select a folder.": "Impossible de sélectionner un dossier.",
+    "Select a personal R library": "Sélectionner une bibliothèque R personnelle",
+    "No personal R library detected. Select an existing folder in advanced options.": "Aucune bibliothèque R personnelle détectée. Sélectionnez un dossier existant dans les options avancées.",
+    "Advanced options": "Options avancées",
+    "Choose an existing personal library visible to this R runtime. No folder will be created.": "Sélectionnez une bibliothèque personnelle existante visible par cet environnement R. Aucun dossier ne sera créé.",
+    "Choose library folder…": "Sélectionner le dossier de bibliothèque…"
   }
 }

@@ -1,6 +1,48 @@
 import { access, realpath, stat } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { isAbsolute } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { rscriptFor, windowsCondaPrefixForR } from './environment-discovery'
+import { condaActivatedPath } from './runtime-paths'
+
+export const externalRLibraryProbeScript = `local({
+  normalize <- function(paths) normalizePath(paths, winslash="/", mustWork=FALSE)
+  same <- function(paths) if (.Platform$OS.type == "windows") tolower(paths) else paths
+  libraries <- unique(normalize(.libPaths()))
+  system <- same(normalize(c(.Library, .Library.site)))
+  libraries <- libraries[!(same(libraries) %in% system) & dir.exists(libraries) & file.access(libraries, 2) == 0]
+  cat("OPEN_SCIENCE_R_LIBRARIES=", jsonlite::toJSON(unname(libraries)), "\\n", sep="")
+})`
+
+/** Read the selected runtime's profile-visible libraries without creating or authorizing any. */
+export const discoverExternalRLibraries = async (
+  interpreterPath: string,
+  execute = promisify(execFile)
+): Promise<string[]> => {
+  const command = rscriptFor(interpreterPath)
+  const prefix = windowsCondaPrefixForR(command, process.platform)
+  const { stdout } = await execute(command, ['--slave', '-e', externalRLibraryProbeScript], {
+    timeout: 15_000,
+    windowsHide: true,
+    ...(prefix
+      ? { env: { ...process.env, PATH: condaActivatedPath(prefix, process.env.PATH) } }
+      : {})
+  })
+  const line = String(stdout)
+    .split(/\r?\n/)
+    .find((entry) => entry.startsWith('OPEN_SCIENCE_R_LIBRARIES='))
+  if (!line) throw new Error('Could not detect personal R package libraries.')
+  const paths: unknown = JSON.parse(line.slice('OPEN_SCIENCE_R_LIBRARIES='.length))
+  if (!Array.isArray(paths) || paths.some((path) => typeof path !== 'string'))
+    throw new Error('Invalid R package library discovery response.')
+  const libraries = await Promise.all(paths.map((path) => resolveExternalRLibrary(path)))
+  return [
+    ...new Map(
+      libraries.map((path) => [process.platform === 'win32' ? path.toLowerCase() : path, path])
+    ).values()
+  ]
+}
 
 /** Resolve consent to one existing physical directory; never create/adopt a user library. */
 export const resolveExternalRLibrary = async (library: string): Promise<string> => {

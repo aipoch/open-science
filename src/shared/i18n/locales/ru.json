@@ -5918,7 +5918,12 @@
     "Messages could not be loaded.": "Не удалось загрузить сообщения.",
     "Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.": "Разрешить использование существующей личной библиотеки R. Установка может изменить пакеты других проектов. Для восстановления требуется соответствующий интерпретатор.",
     "Personal R package library": "Личная библиотека пакетов R",
-    "Enter a personal library path from .libPaths()": "Введите путь к личной библиотеке из .libPaths()",
-    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "Скачайте набор файлов фиксации, чтобы восстановить пакеты с соответствующим интерпретатором. Это не воссоздаёт среду целиком."
+    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "Скачайте набор файлов фиксации, чтобы восстановить пакеты с соответствующим интерпретатором. Это не воссоздаёт среду целиком.",
+    "Could not select a folder.": "Не удалось выбрать папку.",
+    "Select a personal R library": "Выбрать личную библиотеку R",
+    "No personal R library detected. Select an existing folder in advanced options.": "Личная библиотека R не обнаружена. Выберите существующую папку в дополнительных параметрах.",
+    "Advanced options": "Дополнительные параметры",
+    "Choose an existing personal library visible to this R runtime. No folder will be created.": "Выберите существующую личную библиотеку, доступную этой среде R. Папка не будет создана.",
+    "Choose library folder…": "Выбрать папку библиотеки…"
   }
 }

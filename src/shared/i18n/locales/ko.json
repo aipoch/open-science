@@ -5458,7 +5458,12 @@
     "Messages could not be loaded.": "메시지를 불러올 수 없습니다.",
     "Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.": "기존 개인 R 라이브러리를 승인합니다. 설치 시 다른 프로젝트에서 사용하는 패키지가 변경될 수 있습니다. 환경 복원에는 일치하는 인터프리터가 필요합니다.",
     "Personal R package library": "개인 R 패키지 라이브러리",
-    "Enter a personal library path from .libPaths()": ".libPaths()의 개인 라이브러리 경로 입력",
-    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "잠금 파일 묶음을 다운로드하고 일치하는 인터프리터로 패키지를 복원합니다. 전체 환경을 다시 생성하지는 않습니다."
+    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "잠금 파일 묶음을 다운로드하고 일치하는 인터프리터로 패키지를 복원합니다. 전체 환경을 다시 생성하지는 않습니다.",
+    "Could not select a folder.": "폴더를 선택하지 못했습니다.",
+    "Select a personal R library": "개인 R 라이브러리 선택",
+    "No personal R library detected. Select an existing folder in advanced options.": "개인 R 라이브러리를 찾지 못했습니다. 고급 옵션에서 기존 폴더를 선택하세요.",
+    "Advanced options": "고급 옵션",
+    "Choose an existing personal library visible to this R runtime. No folder will be created.": "이 R 런타임에서 접근할 수 있는 기존 개인 라이브러리를 선택하세요. 폴더는 생성되지 않습니다.",
+    "Choose library folder…": "라이브러리 폴더 선택…"
   }
 }

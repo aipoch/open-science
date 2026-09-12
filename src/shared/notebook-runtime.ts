@@ -34,6 +34,8 @@ export type DiscoveredInterpreter = {
   runnable: boolean
   condaEnv?: string
   detail?: string
+  // Advisory discovery only; never persisted as consent. Missing means detection was unavailable.
+  personalRLibraries?: string[]
 }
 
 // One installed package in a discovered environment, surfaced by the Settings "Packages" dialog.

@@ -3,9 +3,40 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { installPackages } from './package-manager'
-import { resolveExternalRLibrary } from './external-r-library'
+import { discoverExternalRLibraries, resolveExternalRLibrary } from './external-r-library'
 
 describe('external R package installation', () => {
+  it('probes the selected R with bounded execution and canonicalizes duplicate candidates', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'r-library-probe-'))
+    try {
+      const execute = vi.fn().mockResolvedValue({
+        stdout: `profile output\nOPEN_SCIENCE_R_LIBRARIES=${JSON.stringify([directory, directory])}\n`,
+        stderr: ''
+      })
+      await expect(discoverExternalRLibraries('/external/bin/Rscript', execute)).resolves.toEqual([
+        await realpath(directory)
+      ])
+      expect(execute).toHaveBeenCalledWith(
+        '/external/bin/Rscript',
+        ['--slave', '-e', expect.stringContaining('.libPaths()')],
+        expect.objectContaining({ timeout: 15000, windowsHide: true })
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['', 'OPEN_SCIENCE_R_LIBRARIES={}', 'OPEN_SCIENCE_R_LIBRARIES=[42]'])(
+    'refuses an invalid library probe response %s',
+    async (stdout) => {
+      await expect(
+        discoverExternalRLibraries(
+          '/external/Rscript',
+          vi.fn().mockResolvedValue({ stdout, stderr: '' })
+        )
+      ).rejects.toThrow()
+    }
+  )
   it('refuses missing consent and relative destinations without spawning an installer', async () => {
     const spawn = vi.fn()
     const result = await installPackages(

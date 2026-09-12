@@ -5460,7 +5460,12 @@
     "Messages could not be loaded.": "無法載入訊息。",
     "Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.": "授權現有的個人 R 套件庫。安裝可能變更其他專案使用的套件。還原環境需要相符的解譯器。",
     "Personal R package library": "個人 R 套件庫",
-    "Enter a personal library path from .libPaths()": "輸入 .libPaths() 中的個人套件庫路徑",
-    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "下載鎖定檔案套件，使用相符的解譯器還原套件。這不會重建完整環境。"
+    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "下載鎖定檔案套件，使用相符的解譯器還原套件。這不會重建完整環境。",
+    "Could not select a folder.": "無法選擇資料夾。",
+    "Select a personal R library": "選擇個人 R 套件庫",
+    "No personal R library detected. Select an existing folder in advanced options.": "未偵測到個人 R 套件庫。請在進階選項中選擇現有資料夾。",
+    "Advanced options": "進階選項",
+    "Choose an existing personal library visible to this R runtime. No folder will be created.": "選擇此 R 執行階段可見的現有個人套件庫。不會建立資料夾。",
+    "Choose library folder…": "選擇套件庫資料夾…"
   }
 }

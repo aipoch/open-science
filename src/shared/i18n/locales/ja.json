@@ -5460,7 +5460,12 @@
     "Messages could not be loaded.": "メッセージを読み込めませんでした。",
     "Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.": "既存の個人用 R ライブラリを許可します。インストールにより、他のプロジェクトが使用するパッケージが変更される場合があります。環境の復元には一致するインタープリターが必要です。",
     "Personal R package library": "個人用 R パッケージライブラリ",
-    "Enter a personal library path from .libPaths()": ".libPaths() にある個人用ライブラリのパスを入力",
-    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "ロックファイル一式をダウンロードし、一致するインタープリターでパッケージを復元します。環境全体は再作成されません。"
+    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "ロックファイル一式をダウンロードし、一致するインタープリターでパッケージを復元します。環境全体は再作成されません。",
+    "Could not select a folder.": "フォルダーを選択できませんでした。",
+    "Select a personal R library": "個人用 R ライブラリを選択",
+    "No personal R library detected. Select an existing folder in advanced options.": "個人用 R ライブラリが検出されませんでした。詳細オプションで既存のフォルダーを選択してください。",
+    "Advanced options": "詳細オプション",
+    "Choose an existing personal library visible to this R runtime. No folder will be created.": "この R ランタイムから参照できる既存の個人用ライブラリを選択してください。フォルダーは作成されません。",
+    "Choose library folder…": "ライブラリフォルダーを選択…"
   }
 }

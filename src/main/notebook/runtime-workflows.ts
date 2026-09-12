@@ -7,7 +7,7 @@ import {
   type DiscoveredInterpreter
 } from './environment-discovery'
 import { listEnvPackages } from './package-listing'
-import { resolveExternalRLibrary } from './external-r-library'
+import { discoverExternalRLibraries, resolveExternalRLibrary } from './external-r-library'
 import type { MicromambaRunner } from './windows-micromamba-runner'
 import { isMigrationInProgress, withDataRootWrite } from '../storage/migration-state'
 
@@ -50,6 +50,7 @@ type RuntimeWorkflowDeps = {
   // Injectable for tests so the package-listing workflows never spawn micromamba/pip/Rscript;
   // production defaults to listEnvPackages against the real env.
   listPackages?: (env: DiscoveredInterpreter) => Promise<EnvPackage[]>
+  discoverRLibraries?: (interpreterPath: string) => Promise<string[]>
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   setWindowsRuntimeAccess?: (
     executable: string,
@@ -180,8 +181,30 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
         discoverInterpreters('python', discovery),
         discoverInterpreters('r', discovery)
       ])
+      const externalR = r.filter((env) => env.provenance === 'user-own' && env.runnable)
+      const libraries = new Map<string, string[]>()
+      let next = 0
+      const worker = async (): Promise<void> => {
+        for (let i = next++; i < externalR.length; i = next++) {
+          const env = externalR[i]
+          try {
+            libraries.set(
+              env.envId,
+              await (deps.discoverRLibraries ?? discoverExternalRLibraries)(env.interpreterPath)
+            )
+          } catch {
+            // A failed optional probe must not hide an otherwise usable interpreter.
+          }
+        }
+      }
+      await Promise.all(
+        Array.from({ length: Math.min(PACKAGE_COUNT_CONCURRENCY, externalR.length) }, worker)
+      )
       discoveredRuntimeRoot = currentRuntimeRoot
-      discoveredSnapshot = { python, r }
+      discoveredSnapshot = {
+        python,
+        r: r.map((env) => ({ ...env, personalRLibraries: libraries.get(env.envId) }))
+      }
       return discoveredSnapshot
     },
     // Read-only installed-package inventory for one env (Settings "Packages" dialog). The envId is
@@ -276,6 +299,13 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
         if (!runtime || runtime.provenance !== 'user-own' || !runtime.runnable)
           throw new Error('Select a runnable external R runtime.')
         library = await resolveExternalRLibrary(request.library ?? '')
+        const candidates = await (deps.discoverRLibraries ?? discoverExternalRLibraries)(
+          runtime.interpreterPath
+        )
+        const same = (path: string): string =>
+          process.platform === 'win32' ? path.toLowerCase() : path
+        if (!candidates.some((path) => same(path) === same(library!)))
+          throw new Error('Select an existing personal library visible to this R runtime.')
       }
       return deps.settingsService.setInstallAuthorized(
         request.language,

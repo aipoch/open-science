@@ -5460,7 +5460,12 @@
     "Messages could not be loaded.": "无法加载消息。",
     "Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.": "授权现有的个人 R 包库。安装可能更改其他项目使用的软件包。恢复环境需要匹配的解释器。",
     "Personal R package library": "个人 R 包库",
-    "Enter a personal library path from .libPaths()": "输入 .libPaths() 中的个人包库路径",
-    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "下载锁定文件包，使用匹配的解释器恢复软件包。这不会重建完整环境。"
+    "Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.": "下载锁定文件包，使用匹配的解释器恢复软件包。这不会重建完整环境。",
+    "Could not select a folder.": "无法选择文件夹。",
+    "Select a personal R library": "选择个人 R 包库",
+    "No personal R library detected. Select an existing folder in advanced options.": "未检测到个人 R 包库。请在高级选项中选择现有文件夹。",
+    "Advanced options": "高级选项",
+    "Choose an existing personal library visible to this R runtime. No folder will be created.": "选择此 R 运行时可见的现有个人包库。不会创建文件夹。",
+    "Choose library folder…": "选择包库文件夹…"
   }
 }

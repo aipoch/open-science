@@ -164,6 +164,7 @@ beforeEach(() => {
       getLocalShellRuntimePreference: vi.fn().mockResolvedValue(undefined)
     },
     artifacts: { importEnvironmentLock },
+    storage: { pickDirectory: vi.fn().mockResolvedValue(null) },
     runtime: {
       listEnvironments,
       listPackages,
@@ -901,10 +902,10 @@ describe('RuntimesPanel', () => {
     expect(installToggle?.disabled).toBe(false)
     expect(installToggle?.getAttribute('data-state')).toBe('checked')
     expect(container.textContent).toContain('Authorize an existing personal R library.')
-    const input = container.querySelector<HTMLInputElement>(
-      '[placeholder="Enter a personal library path from .libPaths()"]'
+    const picker = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Choose library folder…'
     )!
-    expect(input.disabled).toBe(true)
+    expect(picker.disabled).toBe(true)
     await click(installToggle)
     expect(setInstallAuthorized).toHaveBeenCalledWith(
       'r',
@@ -914,14 +915,11 @@ describe('RuntimesPanel', () => {
     )
     expect(installToggle?.disabled).toBe(true)
     expect(installToggle?.getAttribute('data-state')).toBe('unchecked')
-    expect(input.disabled).toBe(false)
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
-        input,
-        '/home/user/R/library'
-      )
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
+    expect(picker.disabled).toBe(false)
+    await click(picker)
+    expect(installToggle?.disabled).toBe(true)
+    vi.mocked(window.api.storage.pickDirectory).mockResolvedValue('/home/user/R/library')
+    await click(picker)
     expect(installToggle?.disabled).toBe(false)
     await click(installToggle)
     expect(setInstallAuthorized).toHaveBeenCalledWith(
@@ -931,6 +929,36 @@ describe('RuntimesPanel', () => {
       '/home/user/R/library'
     )
   })
+
+  it.each([['/personal/R'], ['/personal/R', '/other/R']])(
+    'uses detected personal libraries %j without requiring path entry',
+    async (...libraries) => {
+      listEnvironments.mockResolvedValue({
+        python: [],
+        r: [{ ...rEnvs[0], personalRLibraries: libraries }]
+      })
+      getEnablement.mockResolvedValue({
+        enabled: { [rEnvs[0].envId]: true },
+        installAuthorized: {}
+      })
+      await render()
+      const toggle = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Allow package install for R 4.4.1"]'
+      )!
+      if (libraries.length > 1) {
+        expect(toggle.disabled).toBe(true)
+        const select = container.querySelector('select')!
+        await act(async () => {
+          select.value = libraries[1]!
+          select.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+      }
+      expect(toggle.disabled).toBe(false)
+      await click(toggle)
+      expect(setInstallAuthorized).toHaveBeenCalledWith('r', rEnvs[0].envId, true, libraries.at(-1))
+      expect(window.api.storage.pickDirectory).not.toHaveBeenCalled()
+    }
+  )
 
   it('surfaces the "cannot disable the last enabled runtime" error inline', async () => {
     setEnvironmentEnabled.mockRejectedValueOnce(
