@@ -67,6 +67,32 @@ describe('ProviderAccountsModule', () => {
     expect(validate).toHaveBeenCalledTimes(2)
   })
 
+  it.each([undefined, 'cli-openai'])(
+    'rejects bootstrap with coexisting providers when active provider is %s',
+    async (activeProviderId) => {
+      await repository.setAgentFramework('codex')
+      const validate = vi
+        .spyOn(module, 'validateProvider')
+        .mockResolvedValue({ ok: true, category: 'ok' })
+      await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
+      await repository.upsertProvider({
+        id: 'other-openai',
+        name: 'Existing account',
+        type: 'official',
+        vendorId: 'openai',
+        model: 'gpt-5.4'
+      })
+      await repository.setActiveProvider(activeProviderId)
+      const before = await repository.getSettings()
+      validate.mockClear()
+      await expect(module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')).rejects.toMatchObject({
+        code: 'configuration_conflict'
+      })
+      expect(validate).not.toHaveBeenCalled()
+      expect(await new SettingsRepository(dir).getSettings()).toEqual(before)
+    }
+  )
+
   it('does not publish API credentials if Settings changes during the probe', async () => {
     await repository.setAgentFramework('codex')
     vi.spyOn(module, 'validateProvider').mockImplementation(async () => {

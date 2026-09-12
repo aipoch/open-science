@@ -181,7 +181,7 @@ class ProviderAccountsModule {
     const existing = settings.providers.find((provider) => provider.id === id)
     if (
       settings.agentFrameworkId !== 'codex' ||
-      (settings.providers.length > 0 && !existing) ||
+      settings.providers.some((provider) => provider.id !== id) ||
       (settings.activeProviderId && settings.activeProviderId !== id) ||
       (existing &&
         (existing.type !== 'official' ||
