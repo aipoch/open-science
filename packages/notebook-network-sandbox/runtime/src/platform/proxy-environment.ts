@@ -3,11 +3,11 @@ import type { GatewayCredentials } from '../gateway/command-gateway.js'
 const proxyEnvironment = (
   port: number,
   credentials: GatewayCredentials,
-  gatewayHost = process.platform === 'darwin' ? 'localhost' : '127.0.0.1'
+  gatewayHost = '127.0.0.1'
 ): NodeJS.ProcessEnv => {
-  // macOS seatbelt `(remote ip ...)` accepts only `localhost` or `*`. A 127.0.0.1 proxy URL is a
-  // different remote address and is denied with EPERM; curl reports that as connection refused.
-  // Windows and Linux isolation bind 127.0.0.1 and must pass that host even when tests run on Darwin.
+  // macOS seatbelt `(remote ip ...)` accepts only `localhost` or `*`. Callers that wrap curl in
+  // sandbox-exec must pass `localhost`; 127.0.0.1 is denied with EPERM. Windows and Linux bind
+  // 127.0.0.1 and keep the default.
   const authority = `${encodeURIComponent(credentials.username)}:${encodeURIComponent(credentials.password)}@${gatewayHost}:${port}`
   const http = `http://${authority}`
   const socks = `socks5h://${authority}`
