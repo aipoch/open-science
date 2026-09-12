@@ -317,6 +317,14 @@ describe('UserSkillRepository', () => {
     expect(body).not.toContain('not: a-key')
   })
 
+  it('rejects an untrusted delete source before resolving a filesystem path', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+
+    await expect(repo.delete('anything', '../../outside' as never)).rejects.toThrow(
+      'Invalid user Skill source.'
+    )
+  })
+
   it('rejects colliding personal skill names', async () => {
     const repo = new UserSkillRepository(await makeStorage())
 

@@ -35,6 +35,12 @@ export const USER_SOURCES: ReadonlyArray<Extract<SkillSource, 'imported' | 'pers
 
 export type UserSkillSource = (typeof USER_SOURCES)[number]
 
+const assertUserSkillSource = (source: unknown): asserts source is UserSkillSource => {
+  if (!USER_SOURCES.includes(source as UserSkillSource)) {
+    throw new Error('Invalid user Skill source.')
+  }
+}
+
 export const SAFE_SKILL_DIRECTORY_NAME = /^[a-z0-9-]+$/
 
 export { frontmatterBlock }
@@ -121,6 +127,7 @@ export class UserSkillStore {
   ) {}
 
   sourceDir(source: UserSkillSource): string {
+    assertUserSkillSource(source)
     return join(this.storageRoot, 'skills', source)
   }
 
@@ -230,6 +237,7 @@ export class UserSkillStore {
     id: string,
     sourceFilter?: UserSkillSource
   ): Promise<{ source: UserSkillSource; directoryName: string }> {
+    if (sourceFilter !== undefined) assertUserSkillSource(sourceFilter)
     const conventional = parseUserSkillId(id)
     if (conventional && (!sourceFilter || conventional.source === sourceFilter)) return conventional
     for (const source of sourceFilter ? [sourceFilter] : USER_SOURCES) {
