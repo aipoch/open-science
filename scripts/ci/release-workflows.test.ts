@@ -52,6 +52,7 @@ describe('release and scheduled workflow topology', () => {
       inputs?: { mode?: { default?: string; options?: string[] } }
     }
     const plan = windows.jobs.plan
+    const dependencies = windows.jobs.windows_dependencies
     const job = windows.jobs.windows_full_test
     const sandbox = windows.jobs.notebook_sandbox
     const test = step(job, 'Test complete suite shard')
@@ -60,6 +61,17 @@ describe('release and scheduled workflow topology', () => {
     expect(job.strategy?.matrix?.shard).toBe(
       "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5]') }}"
     )
+    expect(dependencies).toMatchObject({
+      needs: 'plan',
+      'runs-on': 'windows-latest',
+      outputs: {
+        artifact_id: '${{ steps.upload.outputs.artifact-id }}',
+        node_version: '${{ steps.node.outputs.node-version }}'
+      }
+    })
+    expect(step(dependencies, 'Install dependencies').run).toBe('node scripts/ci/npm-ci.mjs')
+    expect(step(dependencies, 'Pack dependencies').run).toContain('pack-dependencies')
+    expect(step(dependencies, 'Upload dependencies').with?.['compression-level']).toBe(0)
     expect(job.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
     expect(test.run).toContain('--shard=${{ matrix.shard }}/5')
     expect(test.run).toContain('--maxWorkers=1')
@@ -79,8 +91,8 @@ describe('release and scheduled workflow topology', () => {
       'actions/workflows/windows-full-test.yml/runs?branch=main&event=schedule&status=success&per_page=1'
     )
     expect(job).toMatchObject({
-      needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
+      needs: ['plan', 'windows_dependencies'],
+      if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
       'timeout-minutes': 60
     })
     expect(sandbox).toMatchObject({
