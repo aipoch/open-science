@@ -88,7 +88,9 @@ const WINDOWS_PROBE_DIRECTORY_LOCK_CODES = new Set([
   'EPERM',
   'EACCES',
   'ENOTEMPTY',
-  'EAGAIN'
+  'EAGAIN',
+  'EMFILE',
+  'ENFILE'
 ])
 
 const removeDirectoryAfterWindowsProbeLock = async (path: string): Promise<void> => {
