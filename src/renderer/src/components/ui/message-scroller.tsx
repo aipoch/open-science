@@ -40,10 +40,36 @@ function MessageScroller({
 
 function MessageScrollerViewport({
   className,
+  onKeyDown,
+  onTouchMove,
+  onWheel,
+  ref: forwardedRef,
   ...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Viewport>) {
+  const viewportRef = React.useRef<HTMLDivElement | null>(null)
+  const setViewportRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      viewportRef.current = node
+      if (typeof forwardedRef === 'function') forwardedRef(node)
+      else if (forwardedRef) forwardedRef.current = node
+    },
+    [forwardedRef]
+  )
+  React.useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    if (onWheel) viewport.addEventListener('wheel', onWheel as EventListener)
+    if (onTouchMove) viewport.addEventListener('touchmove', onTouchMove as EventListener)
+    if (onKeyDown) viewport.addEventListener('keydown', onKeyDown as EventListener)
+    return () => {
+      if (onWheel) viewport.removeEventListener('wheel', onWheel as EventListener)
+      if (onTouchMove) viewport.removeEventListener('touchmove', onTouchMove as EventListener)
+      if (onKeyDown) viewport.removeEventListener('keydown', onKeyDown as EventListener)
+    }
+  }, [onKeyDown, onTouchMove, onWheel])
   return (
     <MessageScrollerPrimitive.Viewport
+      ref={setViewportRef}
       data-slot="message-scroller-viewport"
       className={cn(
         'size-full min-h-0 min-w-0 scroll-fade-b scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain data-autoscrolling:scrollbar-thumb-transparent data-autoscrolling:scrollbar-track-transparent',

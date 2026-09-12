@@ -1452,8 +1452,19 @@ const WorkspaceMessageScrollerImpl = ({
             ref={handleMessageScrollerViewportRef}
             aria-label={t('Conversation')}
             onScroll={handleMessageScrollerScroll}
+            onWheel={transcriptWindow.recordUserScroll}
+            onTouchMove={transcriptWindow.recordUserScroll}
             onPointerDown={(event) => {
               if (event.target === event.currentTarget) transcriptWindow.recordUserScroll()
+            }}
+            onKeyDown={(event) => {
+              if (
+                ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(
+                  event.key
+                )
+              ) {
+                transcriptWindow.recordUserScroll()
+              }
             }}
           >
             {/* No wrapper div: message-scroller only measures/anchors Content's direct children. */}
