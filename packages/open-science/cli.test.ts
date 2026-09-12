@@ -39,13 +39,27 @@ describe('task CLI', () => {
   it('initializes a config root without starting the desktop app', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-cli-init-'))
     const log = vi.fn()
-    await expect(initCommand({ configRoot: root, json: true }, { log })).resolves.toEqual({
+    await expect(
+      initCommand(
+        { configRoot: root, json: true },
+        { log, locateApp: vi.fn().mockResolvedValue({ packaged: false }) }
+      )
+    ).resolves.toEqual({
       configRoot: root,
       initialized: true
     })
     expect(log).toHaveBeenCalledWith(JSON.stringify({ configRoot: root, initialized: true }))
     await expect(stat(root)).resolves.toMatchObject({ isDirectory: expect.any(Function) })
     await rm(root, { recursive: true, force: true })
+  })
+
+  it('rejects profile overrides for packaged initialization', async () => {
+    await expect(
+      initCommand(
+        { configRoot: '/tmp/profile', json: true },
+        { log: vi.fn(), locateApp: vi.fn().mockResolvedValue({ packaged: true }) }
+      )
+    ).rejects.toThrow('--config-root is only supported for development builds.')
   })
 
   it('requires JSON output for doctor', () => {

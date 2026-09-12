@@ -571,7 +571,15 @@ export const isProcessAlive = (pid) => {
 }
 
 export const initCommand = async (options, deps = DEFAULT_DEPS) => {
-  const configRoot = resolveConfigRoot({ override: options.configRoot, packaged: true })
+  const app = await (deps.locateApp ?? locateApp)({ appPath: options.appPath })
+  if (app.packaged && options.configRoot) {
+    throw new Error('--config-root is only supported for development builds.')
+  }
+  const configRoot = resolveConfigRoot({
+    override: options.configRoot,
+    packaged: app.packaged,
+    env: app.packaged ? {} : process.env
+  })
   await mkdir(configRoot, { recursive: true, mode: 0o700 })
   const result = { configRoot, initialized: true }
   deps.log(options.json ? JSON.stringify(result) : `Open Science is initialized at ${configRoot}.`)
