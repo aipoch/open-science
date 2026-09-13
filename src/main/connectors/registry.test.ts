@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest'
+import { Script } from 'node:vm'
+import { describe, it, expect, vi } from 'vitest'
 import {
   getConnectorTools,
   getDescriptor,
@@ -58,4 +59,40 @@ describe('registry + catalog', () => {
     expect(descriptor.required).toBeUndefined()
     expect(() => validateToolArguments(descriptor, {})).toThrow(/doi.*required/i)
   })
+})
+
+// Authored examples are part of the agent-facing contract, not illustrative pseudocode.
+describe('bundled tool contracts', () => {
+  const tools = ALL_CONNECTOR_IDS.flatMap(getConnectorTools)
+  it('keeps every public connector/method identity unique', () => {
+    expect(new Set(tools.map((tool) => `${tool.connector}/${tool.id}`)).size).toBe(tools.length)
+    expect(new Set(CONNECTOR_CATALOG.map((connector) => connector.id)).size).toBe(
+      CONNECTOR_CATALOG.length
+    )
+  })
+
+  it.each(tools)(
+    '$connector/$id has a runnable, schema-valid example and return documentation',
+    async (tool) => {
+      expect(tool.id).toMatch(/^[a-z][a-z0-9_]*$/)
+      expect(tool.description.trim()).not.toBe('')
+      expect(tool.returns?.trim()).toBeTruthy()
+      expect(tool.example?.trim()).toBeTruthy()
+      expect(
+        typeof tool.run === 'function' ||
+          (typeof tool.url === 'function' && typeof tool.parse === 'function')
+      ).toBe(true)
+      const mcp = vi.fn((connector: string, method: string, args: Record<string, unknown> = {}) => {
+        expect([connector, method]).toEqual([tool.connector, tool.id])
+        validateToolArguments(tool, args)
+        return {}
+      })
+      // Repository-authored code only; the stub never dispatches or accesses credentials/network.
+      await new Script(`(async () => { ${tool.example} })()`).runInNewContext(
+        { host: { mcp } },
+        { timeout: 1000 }
+      )
+      expect(mcp).toHaveBeenCalledTimes(1)
+    }
+  )
 })

@@ -5695,6 +5695,11 @@
     "Delete {{count}} Connectors_other": "커넥터 {{count}}개 삭제",
     "{{count}} protected Connectors will be kept._other": "보호된 커넥터 {{count}}개가 유지됩니다.",
     "{{count}} selected Connectors can be deleted._other": "선택한 커넥터 {{count}}개를 삭제할 수 있습니다.",
-    "Deletion or cleanup did not finish for: {{names}}. Retry cleanup; any remaining configurations require a new deletion confirmation.": "다음 커넥터의 삭제 또는 정리가 완료되지 않았습니다: {{names}}. 정리를 다시 시도하세요. 남아 있는 설정을 삭제하려면 다시 확인해야 합니다."
+    "Deletion or cleanup did not finish for: {{names}}. Retry cleanup; any remaining configurations require a new deletion confirmation.": "다음 커넥터의 삭제 또는 정리가 완료되지 않았습니다: {{names}}. 정리를 다시 시도하세요. 남아 있는 설정을 삭제하려면 다시 확인해야 합니다.",
+    "Literature and research data via OpenAlex, arXiv, Crossref and DataCite.": "OpenAlex, arXiv, Crossref 및 DataCite의 문헌과 연구 데이터.",
+    "Retrieve publisher-deposited bibliographic metadata by DOI.": "DOI로 출판사가 등록한 서지 메타데이터를 가져옵니다.",
+    "Find deposited corrections and retractions. Missing updates do not establish reliability.": "등록된 정정 및 철회 정보를 찾습니다. 업데이트가 없다고 신뢰성이 보장되지는 않습니다.",
+    "Find datasets and software by topic or related DOI.": "주제 또는 관련 DOI로 데이터셋과 소프트웨어를 찾습니다.",
+    "Retrieve dataset metadata, rights and publication relationships by DOI.": "DOI로 데이터셋 메타데이터, 권리 및 출판물 관계를 가져옵니다."
   }
 }

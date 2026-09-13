@@ -6025,6 +6025,11 @@
     "{{count}} selected Connectors can be deleted._one": "Se puede eliminar {{count}} conector seleccionado.",
     "{{count}} selected Connectors can be deleted._other": "Se pueden eliminar {{count}} conectores seleccionados.",
     "{{count}} selected Connectors can be deleted._many": "Se pueden eliminar {{count}} conectores seleccionados.",
-    "Deletion or cleanup did not finish for: {{names}}. Retry cleanup; any remaining configurations require a new deletion confirmation.": "La eliminación o limpieza no se completó para: {{names}}. Reintente la limpieza; las configuraciones restantes requieren una nueva confirmación de eliminación."
+    "Deletion or cleanup did not finish for: {{names}}. Retry cleanup; any remaining configurations require a new deletion confirmation.": "La eliminación o limpieza no se completó para: {{names}}. Reintente la limpieza; las configuraciones restantes requieren una nueva confirmación de eliminación.",
+    "Literature and research data via OpenAlex, arXiv, Crossref and DataCite.": "Bibliografía y datos de investigación mediante OpenAlex, arXiv, Crossref y DataCite.",
+    "Retrieve publisher-deposited bibliographic metadata by DOI.": "Obtener metadatos bibliográficos depositados por las editoriales mediante el DOI.",
+    "Find deposited corrections and retractions. Missing updates do not establish reliability.": "Buscar correcciones y retractaciones registradas. La ausencia de actualizaciones no garantiza la fiabilidad.",
+    "Find datasets and software by topic or related DOI.": "Buscar conjuntos de datos y software por tema o DOI relacionado.",
+    "Retrieve dataset metadata, rights and publication relationships by DOI.": "Obtener metadatos, derechos y relaciones con publicaciones de un conjunto de datos mediante el DOI."
   }
 }

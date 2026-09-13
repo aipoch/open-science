@@ -1,3 +1,4 @@
+import { connectorDescription } from './connector-copy'
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V3
  * component: Connector catalog · genre: modern-minimal · theme: project tokens
@@ -248,13 +249,13 @@ export function ConnectorsPanel({
       if (
         term &&
         !connector.displayName.toLowerCase().includes(term) &&
-        !connector.description.toLowerCase().includes(term)
+        !connectorDescription(connector, t).toLowerCase().includes(term)
       ) {
         return []
       }
       return [{ resource: connector, usages }]
     })
-  }, [connectors, query, specialistFilter, specialistItems, tagAssignments, tagFilter])
+  }, [connectors, query, specialistFilter, specialistItems, tagAssignments, tagFilter, t])
 
   const visibleCustomServers = useMemo<ConnectorResourceRow<CustomServerView>[]>(() => {
     const term = query.trim().toLowerCase()
@@ -431,7 +432,7 @@ export function ConnectorsPanel({
                           {connector.displayName}
                         </span>
                         <span className="block truncate text-xs text-muted-foreground">
-                          {connector.description}
+                          {connectorDescription(connector, t)}
                         </span>
                       </button>
                       <div

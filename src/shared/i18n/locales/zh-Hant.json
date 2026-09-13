@@ -5697,6 +5697,11 @@
     "Delete {{count}} Connectors_other": "刪除 {{count}} 個連接器",
     "{{count}} protected Connectors will be kept._other": "將保留 {{count}} 個受保護的連接器。",
     "{{count}} selected Connectors can be deleted._other": "可刪除 {{count}} 個選取的連接器。",
-    "Deletion or cleanup did not finish for: {{names}}. Retry cleanup; any remaining configurations require a new deletion confirmation.": "以下連接器的刪除或清理未完成：{{names}}。請重試清理；仍保留的設定需要重新確認刪除。"
+    "Deletion or cleanup did not finish for: {{names}}. Retry cleanup; any remaining configurations require a new deletion confirmation.": "以下連接器的刪除或清理未完成：{{names}}。請重試清理；仍保留的設定需要重新確認刪除。",
+    "Literature and research data via OpenAlex, arXiv, Crossref and DataCite.": "透過 OpenAlex、arXiv、Crossref 和 DataCite 取得文獻與研究資料。",
+    "Retrieve publisher-deposited bibliographic metadata by DOI.": "依 DOI 取得出版方提交的書目中繼資料。",
+    "Find deposited corrections and retractions. Missing updates do not establish reliability.": "查詢已登錄的更正和撤稿資訊。未查到更新不代表文獻可靠。",
+    "Find datasets and software by topic or related DOI.": "依主題或關聯 DOI 尋找資料集和軟體。",
+    "Retrieve dataset metadata, rights and publication relationships by DOI.": "依 DOI 取得資料集中繼資料、使用權利和出版物關聯資訊。"
   }
 }

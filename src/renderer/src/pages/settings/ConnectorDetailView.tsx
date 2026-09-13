@@ -1,3 +1,4 @@
+import { connectorDescription, connectorToolDescription } from './connector-copy'
 import { ErrorNotice } from '@/components/error-notice'
 import { ArrowUpRight, ChevronRight } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -183,7 +184,7 @@ const ConnectorDetailView = ({
 
       {detail.description ? (
         <p className="mt-2 text-sm text-muted-foreground [text-wrap:pretty]">
-          {detail.description}
+          {connectorDescription(detail, t)}
         </p>
       ) : null}
 
@@ -280,7 +281,8 @@ const ConnectorDetailView = ({
                   {isExpanded ? (
                     <div className="space-y-2 pb-3 pl-6 pr-2 text-xs text-muted-foreground">
                       <p className="whitespace-pre-wrap [text-wrap:pretty]">
-                        {tool.description || t('No description provided for this tool.')}
+                        {connectorToolDescription(tool.id, tool.description, t) ||
+                          t('No description provided for this tool.')}
                       </p>
                       {tool.permission === 'ask' ? (
                         <p>{t('Ask when no Session, Project, or Global permission applies.')}</p>

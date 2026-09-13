@@ -13,6 +13,35 @@ const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 
 describe('ConnectorService', () => {
+  it('routes new public literature tools without OpenAlex credentials and respects existing tool blocks', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        jsonRes({ status: 'ok', message: { DOI: '10.1038/nature12968', 'updated-by': [] } })
+      )
+    const settings = {
+      enabledIds: [] as string[],
+      autoAllowIds: [] as string[],
+      blockedToolIds: [] as string[]
+    }
+    const requestCredential = vi.fn()
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => settings,
+      resolveApiKey: () => undefined,
+      requestCredential
+    })
+    await expect(
+      svc.call('literature', 'crossref_get_updates', { doi: '10.1038/nature12968' }, internal)
+    ).resolves.toMatchObject({ updated_by: [] })
+    expect(requestCredential).not.toHaveBeenCalled()
+    settings.blockedToolIds.push('literature/crossref_get_updates')
+    await expect(
+      svc.call('literature', 'crossref_get_updates', { doi: '10.1038/nature12968' }, internal)
+    ).rejects.toThrow('tool blocked by policy: literature/crossref_get_updates')
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it('returns credential errors for all declined queued calls without aborting the session', async () => {
     let sequence = 0
     const broadcast = vi.fn()
