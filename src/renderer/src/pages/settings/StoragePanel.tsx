@@ -36,6 +36,7 @@ import type {
   DataRootRecoveryStatus,
   UsageCategoryKey
 } from '../../../../shared/storage'
+import { PdfParsingCacheAction } from './PdfParsingCacheAction'
 import { SettingsSection } from './SettingsLayout'
 import { isAgentRepairCheck } from './settings-navigation'
 import { StorageMigrationModal } from './StorageMigrationModal'
@@ -68,6 +69,8 @@ const CATEGORY_LABEL_KEYS = {
   uploads: 'Uploads',
   runtime: 'Runtime',
   notebooks: 'Notebooks',
+  models: 'Local parsing models',
+  'pdf-structure': 'PDF parsing results',
   'execution-file-evidence': 'Execution evidence',
   workspaces: 'Session workspaces'
 } as const satisfies Record<UsageCategoryKey, string>
@@ -83,6 +86,8 @@ const CATEGORY_COLORS: Record<UsageCategoryKey, string> = {
   runtime: 'bg-storage-runtime',
   uploads: 'bg-storage-uploads',
   notebooks: 'bg-storage-notebooks',
+  models: 'bg-storage-runtime',
+  'pdf-structure': 'bg-storage-artifacts',
   'execution-file-evidence': 'bg-storage-execution-evidence',
   workspaces: 'bg-storage-workspaces'
 }
@@ -965,6 +970,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
           onClose={handleMigrationClose}
         />
       ) : null}
+      <PdfParsingCacheAction />
     </div>
   )
 }

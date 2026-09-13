@@ -835,6 +835,48 @@
     animation: install-progress-indeterminate 1.2s ease-in-out infinite;
   }
 
+  @keyframes pdf-scan-sweep {
+    0%,
+    100% {
+      transform: translateY(-16px);
+    }
+    50% {
+      transform: translateY(24px);
+    }
+  }
+
+  @keyframes pdf-scan-text-reveal {
+    0%,
+    100% {
+      opacity: 0.2;
+    }
+    35%,
+    65% {
+      opacity: 0.65;
+    }
+  }
+
+  .pdf-scan-beam {
+    animation: pdf-scan-sweep 2.8s ease-in-out infinite;
+  }
+
+  .pdf-scan-text > path {
+    opacity: 0.45;
+    animation: pdf-scan-text-reveal 2.8s ease-in-out infinite;
+  }
+
+  .pdf-scan-text > path:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+
+  .pdf-scan-text > path:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+
+  .pdf-scan-text > path:nth-child(4) {
+    animation-delay: 0.6s;
+  }
+
   @keyframes open-science-thinking-spin {
     to {
       transform: rotate(360deg);
@@ -903,6 +945,11 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .pdf-scan-beam,
+    .pdf-scan-text > path {
+      animation: none;
+    }
+
     .literature-review-cta[data-attention='true'] .literature-review-cta__mark {
       animation: none;
     }

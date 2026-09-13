@@ -1,16 +1,12 @@
 import { createHash } from 'node:crypto'
 
-import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
-import type {
-  MessagePdfContextSnapshot,
-  PersistedChatSession,
-  SessionPdfBinding
-} from '../../shared/session-persistence'
+import type { MessagePdfContextSnapshot, SessionPdfBinding } from '../../shared/session-persistence'
 import { createLogger, errorLogFields } from '../logger'
 import type { SessionCatalog } from '../session-persistence/coordinator'
 import { extractPdfText, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 import { LiteratureFullTextIndex, type LiteratureIndexChunk } from './full-text-index'
 import type { LiteratureReadDocumentRequest } from './mcp-server'
+import { resolveCurrentPdfContext } from './pdf-context'
 import type {
   ResolvedSessionPdfVersion,
   SessionPdfSourceResolver
@@ -58,11 +54,6 @@ type ExtractedDocument = Readonly<{
   pageCount: number
   truncated: boolean
 }>
-
-const activeMessages = (session: PersistedChatSession): PersistedChatSession['messages'] =>
-  session.conversationGraph
-    ? resolveActiveConversationMessages(session.conversationGraph)
-    : session.messages
 
 const pageSections = (text: string): Array<{ page: number; text: string; start: number }> => {
   const markers = [...text.matchAll(PAGE_MARKER)]
@@ -185,7 +176,7 @@ class LiteratureDocumentReader {
   constructor(private readonly options: LiteratureDocumentReaderOptions) {}
 
   async readCurrent(request: ReadCurrentLiteratureRequest): Promise<unknown> {
-    const context = await this.resolveCurrentContext(request)
+    const context = await resolveCurrentPdfContext(this.options.sessions, request)
     if (request.input.query) {
       const bindings = this.selectSearchBindings(context, request.input.documentIds)
       return this.search(
@@ -221,23 +212,6 @@ class LiteratureDocumentReader {
       linkedAt: 0
     }
     return this.search([await this.resolveDocument(request.projectId, binding)], request.query)
-  }
-
-  private async resolveCurrentContext(
-    request: ReadCurrentLiteratureRequest
-  ): Promise<MessagePdfContextSnapshot> {
-    const session = await this.options.sessions.loadSessionForContinuation(
-      request.projectId,
-      request.sessionId
-    )
-    const message = activeMessages(session).find(({ id }) => id === request.promptMessageId)
-    const context = message?.role === 'user' ? message.pdfContext : undefined
-    if (!context) {
-      throw new Error(
-        'NO_LINKED_PDF_CONTEXT: The current message has no linked PDF context snapshot.'
-      )
-    }
-    return context
   }
 
   private selectSearchBindings(

@@ -89,6 +89,33 @@ describe('installWebRendererContracts', () => {
     expect(parseLiteratureDeletionError(result)).toEqual(diagnostic)
   })
 
+  it('returns a cache miss locally and installs a rejecting cache lookup remotely', async () => {
+    const channel = 'pdf-structure:read-cached'
+    const request = { attachmentVersionId: 'version-1', page: 1 }
+    const invoke = vi.fn().mockResolvedValue(undefined)
+    const local: Record<string, unknown> = {}
+    installWebRendererContracts(local, {
+      availableRpcChannels: new Set([channel]),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    await expect(methodAt(local, 'pdfStructure.readCached')?.(request)).resolves.toBeUndefined()
+    expect(invoke).toHaveBeenCalledWith(channel, [request])
+    invoke.mockClear()
+    const remote: Record<string, unknown> = {}
+    installWebRendererContracts(remote, {
+      availableRpcChannels: new Set(),
+      restrictedRpcChannels: new Set([channel]),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    await expect(methodAt(remote, 'pdfStructure.readCached')?.(request)).rejects.toThrow()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
   it('forwards the Session delegation mutation unchanged and returns the authoritative Session', async () => {
     const api: Record<string, unknown> = {}
     const authoritative = { id: 'session-1', projectId: 'project-1', delegationPolicy: 'deny' }

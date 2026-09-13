@@ -1,4 +1,8 @@
 import { transactLiterature } from './literature/transact'
+import { createPdfStructureOwner } from './literature/pdf-structure/owner'
+import { createPdfStructureEngine } from './literature/pdf-structure/engine'
+import { PdfStructureSourceAuthority } from './literature/pdf-structure/source'
+import { PdfStructureReader } from './literature/pdf-structure/reader'
 import { createSpecialistApplicationOwner } from './specialist/application-commands'
 import { basename, dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -425,6 +429,8 @@ import type {
   SessionSummary
 } from '../shared/session-persistence'
 import { registerStorageIpcHandlers } from './storage/ipc'
+import { createLocalModelOwner } from './local-models/owner'
+import { registerLocalModelIpcHandlers } from './local-models/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import {
   initializeDataRootWriteAvailability,
@@ -4452,6 +4458,37 @@ const createApplicationModules = async (
     releaseDataRootInstallAdmission = undefined
     releaseAdmission?.()
   }
+  const localModelOwner = createLocalModelOwner()
+  await modules.add({ localModelOwner }, ({ localModelOwner: owner }) => ({
+    name: 'local-models',
+    capability: undefined,
+    dispose: async () => {
+      await owner.close()
+    }
+  }))
+  declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModelOwner))
+  const pdfStructureOwner = createPdfStructureOwner({
+    models: localModelOwner,
+    sources: new PdfStructureSourceAuthority({
+      literature: literatureAttachmentAuthority,
+      sources: sessionPdfSourceResolver,
+      sessions: sessionPersistenceCoordinator
+    }),
+    engine: createPdfStructureEngine(
+      join(
+        app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'),
+        'resources',
+        'pdf-structure'
+      )
+    )
+  })
+  const pdfStructureReader = new PdfStructureReader(pdfStructureOwner)
+  await modules.add({ pdfStructureOwner }, ({ pdfStructureOwner: owner }) => ({
+    name: 'pdf-structure',
+    capability: undefined,
+    dispose: () => owner.close()
+  }))
+
   const storageCommandOwner = createStorageCommandOwner({
     hasActivePackageOperation: () => sessionPackageDesktopLifecycle.isActive(),
     runtime,
@@ -5271,6 +5308,8 @@ const createApplicationModules = async (
       withDataRootWrite
     },
     host: {
+      localModels: localModelOwner,
+      pdfStructure: pdfStructureReader,
       cli: cliCommandOwner,
       github: githubCommandOwner,
       localFs: localFsService,

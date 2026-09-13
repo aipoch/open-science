@@ -13,6 +13,22 @@ const paths = (
 ): string[] => RENDERER_CONTRACT_CATALOG.filter(predicate).map(({ publicPath }) => publicPath)
 
 describe('renderer contract catalog', () => {
+  it('registers all four local model methods across the intended surfaces', () => {
+    const group = RENDERER_CONTRACT_GROUPS.find(({ capability }) => capability === 'local-models')
+    expect(group?.contracts.map(({ publicPath }) => publicPath).sort()).toEqual([
+      'localModels.cancel',
+      'localModels.getSnapshot',
+      'localModels.install',
+      'localModels.remove'
+    ])
+    for (const contract of group!.contracts) {
+      expect(contract.surfaceInstallation).toMatchObject({
+        electron: 'preload',
+        localWeb: 'web-rpc',
+        remoteWeb: 'rejecting-stub'
+      })
+    }
+  })
   it('does not expose the retired Runtime Selection API', () => {
     expect(
       RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
@@ -461,6 +477,11 @@ describe('renderer contract catalog', () => {
       'memory.snapshot',
       'memory.updateCategory',
       'memory.updateEntry',
+      'pdfStructure.cancel',
+      'pdfStructure.clearCache',
+      'pdfStructure.parse',
+      'pdfStructure.readCached',
+      'pdfStructure.readThumbnail',
       'projects.create',
       'projects.delete',
       'projects.get',
@@ -516,6 +537,11 @@ describe('renderer contract catalog', () => {
       'memory:snapshot',
       'memory:update-category',
       'memory:update-entry',
+      'pdf-structure:cancel',
+      'pdf-structure:clear-cache',
+      'pdf-structure:parse',
+      'pdf-structure:read-cached',
+      'pdf-structure:read-thumbnail',
       'projects:create',
       'projects:delete',
       'projects:get',

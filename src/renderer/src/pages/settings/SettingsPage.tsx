@@ -68,6 +68,7 @@ import {
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
 import { ProvidersPanel } from './ProvidersPanel'
+import { ModelPanel } from './ModelPanel'
 import type { SkillsView } from './SkillsPanel'
 import type { ConnectorsView } from './ConnectorsPanel'
 import type { SpecialistsView } from './SpecialistsPanel'
@@ -691,7 +692,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         leaf
       }
     }
-    if (activePanel === 'model' && modelView.kind !== 'list') {
+    if (activePanel === 'model' && (modelView.kind === 'create' || modelView.kind === 'edit')) {
       const name =
         modelView.kind === 'edit'
           ? (providers.find((provider) => provider.id === modelView.providerId)?.name ?? '')
@@ -1839,7 +1840,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       </div>
                     </div>
                   ) : (
-                    <>
+                    <ModelPanel
+                      local={modelView.kind === 'local-models'}
+                      onChange={(local) =>
+                        navigate({
+                          panel: 'model',
+                          view: { kind: local ? 'local-models' : 'list' }
+                        })
+                      }
+                    >
                       {postSaveValidationFailed ? (
                         <p className="mx-5 mt-5 text-sm text-destructive" role="alert">
                           {t('Could not test the provider connection.')}
@@ -1858,7 +1867,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           }
                         }}
                       />
-                    </>
+                    </ModelPanel>
                   )}
                 </SettingsPanelLoadingBoundary>
               </div>
