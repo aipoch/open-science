@@ -55,7 +55,7 @@ const findMessageTarget = (viewport: HTMLDivElement, messageId: string): HTMLEle
     (element) => element.dataset.messageId === messageId
   )
 
-const resolveCurrentRunMarkIndex = (
+const resolveCurrentRunMarkPosition = (
   viewport: HTMLDivElement,
   marks: readonly RunMark[]
 ): number => {
@@ -73,14 +73,23 @@ const resolveCurrentRunMarkIndex = (
     if (targetTop !== undefined && targetTop <= boundary) currentIndex = index
   })
 
-  return currentIndex
+  const currentTop = targetTopByMessageId.get(marks[currentIndex]?.id)
+  const nextTop = targetTopByMessageId.get(marks[currentIndex + 1]?.id)
+  const progress =
+    currentTop !== undefined && nextTop !== undefined && nextTop > currentTop
+      ? Math.max(0, Math.min(1, (boundary - currentTop) / (nextTop - currentTop)))
+      : 0
+  return currentIndex + progress
 }
+
+const resolveCurrentRunMarkIndex = (viewport: HTMLDivElement, marks: readonly RunMark[]): number =>
+  Math.floor(resolveCurrentRunMarkPosition(viewport, marks))
 
 const runMarkIndicatorClassName = (highlightedIndex: number | null, markIndex: number): string => {
   const distance = highlightedIndex === null ? undefined : Math.abs(highlightedIndex - markIndex)
 
   return cn(
-    'block h-0.5 w-5 origin-left rounded-full transition-[transform,background-color] duration-100 ease-[cubic-bezier(0.16,1,0.3,1)] group-active/run-mark:translate-x-px motion-reduce:transition-none rtl:origin-right',
+    'block h-0.5 w-5 origin-left rounded-full transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-active/run-mark:translate-x-px motion-reduce:transition-none rtl:origin-right',
     distance === 0
       ? 'scale-x-100 bg-text-000'
       : distance === 1
@@ -98,6 +107,7 @@ export {
   findMessageTarget,
   normalizePreviewText,
   resolveCurrentRunMarkIndex,
+  resolveCurrentRunMarkPosition,
   runMarkIndicatorClassName
 }
 export type { RunMark }

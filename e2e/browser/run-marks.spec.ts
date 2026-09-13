@@ -1,0 +1,93 @@
+import { expect, test } from '@playwright/test'
+
+test('shows four runs, hides three, and previews the hovered message', async ({
+  page
+}, testInfo) => {
+  await page.goto('/run-marks.html?count=3')
+  await expect(page.getByRole('navigation', { name: 'Run marks' })).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('three-runs.png') })
+  await page.goto('/run-marks.html?count=4')
+  const marks = page.getByRole('button', { name: /Go to run/ })
+  await expect(marks).toHaveCount(4)
+  await marks.nth(2).hover()
+  await expect(page.getByRole('tooltip')).toContainText('3. Compare the RNA family')
+  await page.screenshot({ path: testInfo.outputPath('four-runs-hover.png') })
+})
+
+test('follows transcript reading at both edges without compressing or independently scrolling', async ({
+  page
+}, testInfo) => {
+  await page.goto('/run-marks.html')
+  const conversation = page.getByRole('region', { name: 'Conversation' })
+  const rail = page.getByRole('navigation', { name: 'Run marks' }).locator('ol')
+  const marks = rail.getByRole('button')
+  await expect(marks).toHaveCount(60)
+  const pitch = (): Promise<number> =>
+    marks.evaluateAll(
+      (buttons) => buttons[1].getBoundingClientRect().top - buttons[0].getBoundingClientRect().top
+    )
+  expect(await pitch()).toBe(20)
+  const railTop = (): Promise<number> => rail.evaluate((el) => el.scrollTop)
+  const readRun = async (index: number, extra = 0): Promise<void> => {
+    await conversation.evaluate(
+      (el, { index, extra }) => {
+        const message = el.querySelector(`[data-message-id="user-${index}"]`)!
+        el.scrollTop += message.getBoundingClientRect().top - el.getBoundingClientRect().top + extra
+      },
+      { index, extra }
+    )
+  }
+  await readRun(10)
+  await expect(marks.nth(10)).toHaveAttribute('aria-current', 'location')
+  expect(await railTop()).toBe(0)
+  await readRun(30)
+  await expect.poll(railTop).toBeGreaterThan(150)
+  const before = await railTop()
+  await readRun(30, 60)
+  await expect.poll(railTop).toBeGreaterThan(before)
+  expect((await railTop()) - before).toBeLessThan(20)
+  expect(await pitch()).toBe(20)
+  await marks.nth(30).hover()
+  await expect(page.getByRole('tooltip')).toContainText('31. Compare')
+  await page.screenshot({ path: testInfo.outputPath('long-conversation-hover.png') })
+  const stationaryTop = await railTop()
+  await page.mouse.wheel(0, 500)
+  // Wait on subsequent input processing before observing the absence of independent scrolling.
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  )
+  expect(await railTop()).toBe(stationaryTop)
+  const readingTop = await conversation.evaluate((el) => el.scrollTop)
+  await marks.last().focus()
+  await expect(marks.last()).toBeFocused()
+  await expect.poll(railTop).toBeGreaterThan(stationaryTop)
+  expect(await conversation.evaluate((el) => el.scrollTop)).toBe(readingTop)
+  await readRun(59)
+  await expect.poll(railTop).toBe(720)
+  await marks.last().focus()
+  await expect(marks.last()).toBeFocused()
+  await readRun(0)
+  await expect.poll(railTop).toBe(0)
+  expect(await pitch()).toBe(20)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await marks.nth(3).click()
+  await expect(marks.nth(3)).toHaveAttribute('aria-current', 'location')
+  await expect(marks.nth(3).locator('span')).toHaveCSS('transition-property', 'none')
+})
+
+test('keeps mark spacing when the window shrinks and hides the rail on mobile', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1100, height: 300 })
+  await page.goto('/run-marks.html')
+  const rail = page.getByRole('navigation', { name: 'Run marks' })
+  expect(await rail.locator('ol').evaluate((el) => el.clientHeight)).toBe(204)
+  expect(
+    await rail
+      .locator('li')
+      .first()
+      .evaluate((el) => el.getBoundingClientRect().height)
+  ).toBe(20)
+  await page.setViewportSize({ width: 600, height: 800 })
+  await expect(rail).toBeHidden()
+})

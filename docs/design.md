@@ -588,11 +588,15 @@ colors communicate a successful or failed probe/migration result.
   Keep the header, sidebar, preview, and composer stable; hide the decorative skeleton from assistive
   technology, and disable its pulse under reduced motion. Already-hydrated Session switches render
   directly so short in-memory transitions never flash a loading surface.
-- Desktop conversations with at least two visible human-authored runs show **Run Marks** in the
+- Desktop conversations with at least four visible human-authored runs show **Run Marks** in the
   scroller's left gutter. One mark belongs to the visible user Message that admitted the Run; model
   Turns inside that Run do not create marks. At rest, every mark is the same short gray segment.
   Pointer hover or keyboard focus emphasizes one mark and tapers nearby segments by distance; the
-  segments use a compact 10px pitch, and the rail stays fixed at the conversation panel midpoint so
+  segments use a fixed 20px pitch with 200ms transform easing and reduced-motion support. Colors
+  update immediately. The rail clips overflow at 480px (or the available window height), never
+  compresses marks, and follows transcript reading progress only when the current mark reaches a
+  visible edge. The rail does not scroll independently on wheel or touch input; keyboard focus can
+  still reveal a clipped mark. Its outer frame stays fixed at the conversation panel midpoint so
   bottom approval or permission surfaces do not shift it. The current Run remains available through
   `aria-current` without a persistent visual highlight.
   Activating a mark scrolls that Message to the top with reduced-motion support. The preview shows

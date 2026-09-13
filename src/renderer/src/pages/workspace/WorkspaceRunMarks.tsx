@@ -13,7 +13,7 @@ import {
   createRunMarks,
   findMessageTarget,
   normalizePreviewText,
-  resolveCurrentRunMarkIndex,
+  resolveCurrentRunMarkPosition,
   runMarkIndicatorClassName,
   type RunMark
 } from './workspace-run-marks'
@@ -27,7 +27,7 @@ type WorkspaceRunMarksProps = {
 const RUN_MARK_HOVER_DELAY_MS = 200
 const RUN_MARK_INLINE_OFFSET_PX = 8
 const RUN_MARK_TOP_OFFSET_PX = 8
-const RUN_MARK_ROW_SIZE_PX = 10
+const RUN_MARK_ROW_SIZE_PX = 20
 const RUN_MARK_MAX_RAIL_HEIGHT_PX = 480
 
 type RunMarkRailPosition = {
@@ -49,13 +49,31 @@ const WorkspaceRunMarks = ({
     () => new Set(marks.map((mark) => mark.id))
   )
   const [railPosition, setRailPosition] = useState<RunMarkRailPosition | null>(null)
+  const railRef = useRef<HTMLOListElement | null>(null)
   const animationFrameRef = useRef<number | undefined>(undefined)
   const layoutAnimationFrameRef = useRef<number | undefined>(undefined)
 
+  const updateRailScroll = useCallback((position: number): void => {
+    const rail = railRef.current
+    if (!rail || rail.clientHeight === 0) return
+
+    // Follow reading only after its mark reaches an edge. Fractional Run progress keeps the
+    // fixed-pitch rail moving continuously with the transcript rather than jumping per message.
+    const markTop = position * RUN_MARK_ROW_SIZE_PX
+    const inset = Math.min(RUN_MARK_ROW_SIZE_PX, rail.clientHeight / 4)
+    const nextTop = Math.max(
+      markTop + RUN_MARK_ROW_SIZE_PX + inset - rail.clientHeight,
+      Math.min(rail.scrollTop, markTop - inset)
+    )
+    rail.scrollTop = Math.max(0, Math.min(nextTop, rail.scrollHeight - rail.clientHeight))
+  }, [])
+
   const updateCurrentIndex = useCallback((): void => {
     if (!viewport || marks.length === 0) return
-    setCurrentIndex(resolveCurrentRunMarkIndex(viewport, marks))
-  }, [marks, viewport])
+    const position = resolveCurrentRunMarkPosition(viewport, marks)
+    setCurrentIndex(Math.floor(position))
+    updateRailScroll(position)
+  }, [marks, updateRailScroll, viewport])
 
   const updateRailPosition = useCallback((): void => {
     if (!viewport) return
@@ -136,6 +154,11 @@ const WorkspaceRunMarks = ({
     }
   }, [marks, updateCurrentIndex, updateRailPosition, viewport])
 
+  // The portal is mounted after its first measurement; also follow after panel/window resizing.
+  useLayoutEffect(() => {
+    if (viewport) updateRailScroll(resolveCurrentRunMarkPosition(viewport, marks))
+  }, [marks, railPosition, updateRailScroll, viewport])
+
   const scrollToRun = (mark: RunMark, index: number): void => {
     if (!viewport) return
     const target = findMessageTarget(viewport, mark.id)
@@ -157,10 +180,10 @@ const WorkspaceRunMarks = ({
     setCurrentIndex(index)
   }
 
-  if (marks.length < 2 || !railPosition || typeof document === 'undefined') return null
+  if (marks.length < 4 || !railPosition || typeof document === 'undefined') return null
 
   const railStyle: CSSProperties = {
-    gridTemplateRows: `repeat(${marks.length}, minmax(0, 1fr))`,
+    gridAutoRows: `${RUN_MARK_ROW_SIZE_PX}px`,
     height: `${Math.min(marks.length * RUN_MARK_ROW_SIZE_PX, RUN_MARK_MAX_RAIL_HEIGHT_PX)}px`,
     maxHeight: 'calc(100vh - 6rem)'
   }
@@ -177,7 +200,11 @@ const WorkspaceRunMarks = ({
         className="pointer-events-none fixed z-20 hidden w-6 -translate-y-1/2 md:block"
         style={railPosition}
       >
-        <ol className="pointer-events-auto grid w-full" style={railStyle}>
+        <ol
+          ref={railRef}
+          className="pointer-events-auto grid w-full overflow-hidden"
+          style={railStyle}
+        >
           {marks.map((mark, index) => {
             const isCurrent = index === currentIndex
             const disabled = !onRevealMessage && !availableMessageIds.has(mark.id)

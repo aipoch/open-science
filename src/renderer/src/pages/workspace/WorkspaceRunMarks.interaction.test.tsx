@@ -9,7 +9,8 @@ import type { GroupedConversationItem } from './workspace-tool-activity-groups'
 import {
   createRunMarks,
   normalizePreviewText,
-  resolveCurrentRunMarkIndex
+  resolveCurrentRunMarkIndex,
+  resolveCurrentRunMarkPosition
 } from './workspace-run-marks'
 import { WorkspaceRunMarks } from './WorkspaceRunMarks'
 
@@ -216,20 +217,22 @@ describe('WorkspaceRunMarks interaction', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders only for multiple runs and exposes native keyboard controls', () => {
+  it('renders from four runs and exposes native keyboard controls', () => {
     appendMessageTarget(viewport, 'prompt-1', 120)
     appendMessageTarget(viewport, 'prompt-2', 600)
     const items = [
       createMessageItem({ id: 'prompt-1', content: 'First prompt' }, 0),
-      createMessageItem({ id: 'prompt-2', content: 'Second prompt' }, 1)
+      createMessageItem({ id: 'prompt-2', content: 'Second prompt' }, 1),
+      createMessageItem({ id: 'prompt-3' }, 2),
+      createMessageItem({ id: 'prompt-4' }, 3)
     ]
 
-    const { rerender } = render(<WorkspaceRunMarks items={items.slice(0, 1)} viewport={viewport} />)
+    const { rerender } = render(<WorkspaceRunMarks items={items.slice(0, 3)} viewport={viewport} />)
     expect(screen.queryByRole('navigation', { name: 'Run marks' })).toBeNull()
 
     rerender(<WorkspaceRunMarks items={items} viewport={viewport} />)
     const buttons = screen.getAllByRole('button', { name: /Go to run/u })
-    expect(buttons).toHaveLength(2)
+    expect(buttons).toHaveLength(4)
     expect(buttons[0]?.getAttribute('aria-current')).toBe('location')
     buttons[1]?.focus()
     expect(document.activeElement).toBe(buttons[1])
@@ -306,7 +309,7 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(rail.className).toContain('fixed')
     expect(rail.style.left).toBe('208px')
     expect(rail.style.top).toBe('440px')
-    expect(list?.style.height).toBe('50px')
+    expect(list?.style.height).toBe('100px')
     expect(list?.style.maxHeight).toBe('calc(100vh - 6rem)')
 
     viewportHeight = 240
@@ -318,6 +321,47 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(rail.style.top).toBe('440px')
   })
 
+  it('keeps fixed spacing and follows transcript progress only beyond the visible rail edges', async () => {
+    const items = Array.from({ length: 60 }, (_, index) => {
+      const id = `prompt-${index}`
+      appendMessageTarget(viewport, id, 100 + index * 100)
+      const target = viewport.lastElementChild as HTMLElement
+      target.getBoundingClientRect = () => createRect(100 + index * 100 - viewport.scrollTop)
+      return createMessageItem({ id }, index)
+    })
+    render(<WorkspaceRunMarks items={items} viewport={viewport} />)
+    const rail = screen.getByRole('list')
+    Object.defineProperties(rail, {
+      clientHeight: { value: 480 },
+      scrollHeight: { value: 1_200 }
+    })
+    expect(rail.style.gridAutoRows).toBe('20px')
+    expect(rail.style.height).toBe('480px')
+    expect(rail.className).toContain('overflow-hidden')
+
+    const scrollTranscript = async (top: number): Promise<void> => {
+      await act(async () => {
+        viewport.scrollTop = top
+        fireEvent.scroll(viewport)
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+      })
+    }
+    await scrollTranscript(1_000)
+    expect(rail.scrollTop).toBe(0)
+    await scrollTranscript(2_300)
+    expect(rail.scrollTop).toBeCloseTo(26.4)
+    await scrollTranscript(2_350)
+    expect(rail.scrollTop).toBeCloseTo(36.4)
+    await scrollTranscript(2_300)
+    expect(rail.scrollTop).toBeCloseTo(36.4)
+    await scrollTranscript(100)
+    expect(rail.scrollTop).toBeCloseTo(6.4)
+    await scrollTranscript(0)
+    expect(rail.scrollTop).toBe(0)
+    await scrollTranscript(5_900)
+    expect(rail.scrollTop).toBe(720)
+  })
+
   it('shows the user message and first explicitly linked Agent message on keyboard focus', async () => {
     appendMessageTarget(viewport, 'prompt-1', 120)
     appendMessageTarget(viewport, 'prompt-2', 600)
@@ -327,6 +371,8 @@ describe('WorkspaceRunMarks interaction', () => {
         items={[
           createMessageItem({ id: 'prompt-1', content: 'Only the user preview' }, 0),
           createMessageItem({ id: 'prompt-2', content: 'Question with response' }, 1),
+          createMessageItem({ id: 'prompt-3' }, 3),
+          createMessageItem({ id: 'prompt-4' }, 4),
           createMessageItem(
             {
               id: 'agent-2',
@@ -363,7 +409,9 @@ describe('WorkspaceRunMarks interaction', () => {
         viewport={viewport}
         items={[
           createMessageItem({ id: 'prompt-1', content: 'First prompt' }, 0),
-          createMessageItem({ id: 'prompt-2', content: 'Second prompt' }, 1)
+          createMessageItem({ id: 'prompt-2', content: 'Second prompt' }, 1),
+          createMessageItem({ id: 'prompt-3' }, 2),
+          createMessageItem({ id: 'prompt-4' }, 3)
         ]}
       />
     )
@@ -383,5 +431,6 @@ describe('WorkspaceRunMarks interaction', () => {
     ])
 
     expect(resolveCurrentRunMarkIndex(viewport, marks)).toBe(1)
+    expect(resolveCurrentRunMarkPosition(viewport, marks)).toBeCloseTo(1.04)
   })
 })
