@@ -1551,7 +1551,10 @@ const createStoreSaver = (
   persistence.seedAcknowledgedSessions([...acknowledgedSessions.values()])
   // Keep an explicit local selection until its own receipt; a queued runtime update can coalesce
   // with that save, and an older receipt must not clear a newer navigation intent.
-  const pendingRootSelections = new Map<string, { branchId: string }>()
+  const pendingBranchSelections = new Map<
+    string,
+    NonNullable<PersistedChatSession['conversationGraph']>
+  >()
 
   const recoverRevisionConflict = async (
     error: unknown,
@@ -1686,11 +1689,24 @@ const createStoreSaver = (
       const hasUnsavedLocalTitle =
         session.unsavedTitle === true && Boolean(authority && session.title !== authority.title)
       const rootBranchId = selectedRootBranchId(session)
-      const previousRootBranchId = selectedRootBranchId(previousSession)
-      if (rootBranchId && previousRootBranchId && rootBranchId !== previousRootBranchId) {
-        pendingRootSelections.set(session.id, { branchId: rootBranchId })
+      const graph = session.conversationGraph
+      const previousGraph = previousSession?.conversationGraph
+      if (
+        graph &&
+        previousGraph &&
+        (rootBranchId !== selectedRootBranchId(previousSession) ||
+          // Hydration retains the local root selection but can adopt remote descendant choices.
+          (!authority &&
+            (graph.activeFrameId !== previousGraph.activeFrameId ||
+              previousGraph.frames.some(
+                (previousFrame) =>
+                  graph.frames.find((frame) => frame.id === previousFrame.id)?.activeBranchId !==
+                  previousFrame.activeBranchId
+              ))))
+      ) {
+        pendingBranchSelections.set(session.id, graph)
       }
-      const selectionIntent = pendingRootSelections.get(session.id)
+      const selectionIntent = pendingBranchSelections.get(session.id)
       const hasRetainedLocalRootBranch =
         !selectionIntent &&
         rootBranchId !== undefined &&
@@ -1748,7 +1764,9 @@ const createStoreSaver = (
         let submittedAuthority = sourceAuthority
         const serializeSession = (): PersistedChatSession => {
           let persisted = toPersistedSession(session, nextStreamingMessages)
-          const selected = selectionIntent?.branchId ?? selectedRootBranchId(sourceAuthority)
+          // Explicit navigation already carries all ancestor and descendant selections. Only
+          // passive saves restore the authority's root Branch over a retained window-local view.
+          const selected = selectionIntent ? undefined : selectedRootBranchId(sourceAuthority)
           const graph = persisted.conversationGraph
           if (
             selected &&
@@ -1764,9 +1782,7 @@ const createStoreSaver = (
                 projectConversationMessage
               ),
               ...resolveActiveConversationActivities(conversationGraph),
-              branchContextResetRequired: selectionIntent
-                ? persisted.branchContextResetRequired
-                : sourceAuthority?.branchContextResetRequired
+              branchContextResetRequired: sourceAuthority?.branchContextResetRequired
             }
           }
           // A passive queued snapshot can predate a remotely created Branch. Rebase its changes
@@ -1799,8 +1815,8 @@ const createStoreSaver = (
           options: SaveSessionOptions | undefined,
           recoveredRevisionConflict = false
         ): void => {
-          if (selectionIntent && pendingRootSelections.get(session.id) === selectionIntent) {
-            pendingRootSelections.delete(session.id)
+          if (selectionIntent && pendingBranchSelections.get(session.id) === selectionIntent) {
+            pendingBranchSelections.delete(session.id)
           }
           const keepLocalBranch = selectedRootBranchId(durableSession) !== rootBranchId
           useSessionStore.getState().applyDurableSessionProjection({
@@ -1925,8 +1941,8 @@ const createStoreSaver = (
       }
     }
 
-    for (const id of pendingRootSelections.keys()) {
-      if (!nextById.has(id)) pendingRootSelections.delete(id)
+    for (const id of pendingBranchSelections.keys()) {
+      if (!nextById.has(id)) pendingBranchSelections.delete(id)
     }
     previousSessions = nextSessions
     previousSelection = state.selectedSessionId

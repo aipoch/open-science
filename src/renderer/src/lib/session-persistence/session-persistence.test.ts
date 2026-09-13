@@ -1500,6 +1500,94 @@ describe('renderer session persistence bridge', () => {
     expect(durable.branchContextResetRequired).toBe(true)
   })
 
+  it('persists explicit descendant navigation after another client selects a root revision', async () => {
+    const rootPrompt = {
+      id: 'root-prompt',
+      role: 'user' as const,
+      content: 'Root prompt',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const linear = materializeSessionConversationGraph(
+      createPersistedSession({ revision: 8, messages: [rootPrompt] })
+    )
+    const childPrompt = { ...rootPrompt, id: 'child-prompt', content: 'Child prompt' }
+    const graph = structuredClone(linear.conversationGraph)
+    graph.frames.push({
+      id: 'child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: rootPrompt.id,
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-original',
+      createdAt: 1,
+      completedAt: 2
+    })
+    graph.branches.push({
+      id: 'child-original',
+      agentFrameId: 'child-frame',
+      headMessageId: childPrompt.id,
+      createdAt: 1,
+      updatedAt: 2
+    })
+    graph.messages.push({
+      ...childPrompt,
+      agentFrameId: 'child-frame',
+      introducedOnBranchId: 'child-original'
+    })
+    graph.activeFrameId = 'child-frame'
+    const childEdit = { ...childPrompt, id: 'child-edited-prompt', content: 'Edited child prompt' }
+    const childGraph = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(graph, childPrompt.id, 'child-edited', 3),
+      [childEdit],
+      3
+    )
+    const base = {
+      ...linear,
+      conversationGraph: activateConversationBranch(childGraph, 'child-original'),
+      messages: [childPrompt]
+    }
+    const rootEdit = { ...rootPrompt, id: 'root-edited-prompt', content: 'Remote root edit' }
+    const remote = {
+      ...linear,
+      revision: 9,
+      messages: [rootEdit],
+      conversationGraph: synchronizeActiveConversationMessages(
+        forkEditedConversationMessage(
+          { ...childGraph, activeFrameId: graph.rootFrameId },
+          rootPrompt.id,
+          'root-edited',
+          4
+        ),
+        [rootEdit],
+        4
+      )
+    }
+    useSessionStore.getState().hydrateSessions([base])
+    let durable: PersistedChatSession = remote
+    const api = createApi({
+      saveSession: vi.fn(async (submitted) => {
+        durable = { ...submitted, revision: (durable.revision ?? 0) + 1 }
+        return durable
+      })
+    })
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().upsertPersistedSession(remote)
+    await save(useSessionStore.getState())
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(childEdit.content)
+    expect(api.saveSession).not.toHaveBeenCalled()
+    useSessionStore.getState().activateMessageBranch(base.id, 'child-original')
+    await save(useSessionStore.getState())
+    expect(durable.messages[0].content).toBe(childPrompt.content)
+    expect(durable.conversationGraph?.activeFrameId).toBe('child-frame')
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(childPrompt.content)
+    useSessionStore.getState().hydrateSessions([durable])
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(childPrompt.content)
+  })
+
   it.each(['queued', 'in-flight'] as const)(
     'preserves a remote Branch created while a passive save is %s',
     async (phase) => {
