@@ -1235,13 +1235,13 @@ describe('renderer session persistence bridge', () => {
         useSessionStore.getState().setBranchSwitchBlocked(durable.id, true)
         await vi.advanceTimersByTimeAsync(500)
 
-        expect(saveSession).toHaveBeenCalledOnce()
+        expect(saveSession).not.toHaveBeenCalled()
         await persistence.flush()
         expect(useSessionStore.getState().sessions[0].branchSwitchBlocked).toBe(true)
 
         useSessionStore.getState().renameSession(durable.id, 'A real local edit')
         await persistence.flush()
-        expect(saveSession).toHaveBeenCalledTimes(2)
+        expect(saveSession).toHaveBeenCalledOnce()
         expect(durable.title).toBe('A real local edit')
         expect(durable.branchContextResetRequired).toBe(branchContextResetRequired)
       } finally {
@@ -1387,6 +1387,326 @@ describe('renderer session persistence bridge', () => {
     await save(useSessionStore.getState())
     expect(api.saveSession).not.toHaveBeenCalled()
   })
+
+  it.each([
+    'setBranchSwitchBlocked',
+    'setAgentPromptInFlight',
+    'setAwaitingFirstAgentOutput',
+    'finishRun'
+  ] as const)('does not republish a passive window Branch after %s', async (action) => {
+    const original = {
+      id: 'original-prompt',
+      role: 'user' as const,
+      content: 'Original prompt',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        revision: 8,
+        messages: [original],
+        branchContextResetRequired: true
+      })
+    )
+    const edited = {
+      ...original,
+      id: 'edited-prompt',
+      content: 'Edited in another window',
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const reply = {
+      ...original,
+      id: 'remote-reply',
+      role: 'agent' as const,
+      content: 'Remote result',
+      responseToMessageId: edited.id,
+      status: 'streaming' as const,
+      createdAt: 3,
+      updatedAt: 3
+    }
+    const remoteMessages = action === 'finishRun' ? [edited, reply] : [edited]
+    const remote = {
+      ...base,
+      revision: 9,
+      branchContextResetRequired: undefined,
+      messages: remoteMessages,
+      status: action === 'finishRun' ? ('running' as const) : ('idle' as const),
+      conversationGraph: synchronizeActiveConversationMessages(
+        forkEditedConversationMessage(base.conversationGraph, original.id, 'remote-branch', 2),
+        remoteMessages,
+        3
+      )
+    }
+    useSessionStore.getState().hydrateSessions([base])
+    let durable: PersistedChatSession = remote
+    let receiptGate: Promise<void> | undefined
+    const api = createApi({
+      saveSession: vi.fn(async (submitted) => {
+        await receiptGate
+        durable = { ...submitted, revision: (durable.revision ?? 0) + 1 }
+        return durable
+      })
+    })
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().upsertPersistedSession(remote)
+    // Receiving another client's edit retains this window's selected path and reset requirement.
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(original.content)
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+    await save(useSessionStore.getState())
+    // Background persistence must not replace the other client's explicit durable selection.
+    expect(durable.messages[0].content).toBe(edited.content)
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(original.content)
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+
+    // Passive windows receive both transient running indicators and terminal events.
+    if (action === 'finishRun') useSessionStore.getState().finishRun(base.id, undefined, edited.id)
+    else useSessionStore.getState()[action](base.id, true)
+    await save(useSessionStore.getState())
+    expect(durable.messages[0].content).toBe(edited.content)
+    if (action === 'finishRun') {
+      expect(durable.status).toBe('idle')
+      expect(durable.messages.find((message) => message.id === reply.id)?.status).toBe('complete')
+      expect(
+        durable.conversationGraph?.messages.find((message) => message.id === reply.id)?.status
+      ).toBe('complete')
+    } else useSessionStore.getState()[action](base.id, false)
+    await save(useSessionStore.getState())
+    expect(durable.messages[0].content).toBe(edited.content)
+
+    // An explicit navigation still saves this window's chosen Branch and its reset requirement.
+    useSessionStore.getState().activateMessageBranch(base.id, 'remote-branch')
+    await save(useSessionStore.getState())
+    const callsBeforeSelection = vi.mocked(api.saveSession).mock.calls.length
+    const earlierReceipt = createDeferred<void>()
+    receiptGate = earlierReceipt.promise
+    useSessionStore
+      .getState()
+      .activateMessageBranch(base.id, base.conversationGraph.frames[0].activeBranchId)
+    const firstSelectionSave = save(useSessionStore.getState())
+    await vi.waitFor(() => expect(api.saveSession).toHaveBeenCalledTimes(callsBeforeSelection + 1))
+    useSessionStore.getState().activateMessageBranch(base.id, 'remote-branch')
+    const latestSelectionSave = save(useSessionStore.getState())
+    receiptGate = undefined
+    earlierReceipt.resolve()
+    await Promise.all([firstSelectionSave, latestSelectionSave])
+    expect(durable.messages[0].content).toBe(edited.content)
+    // The older receipt must not clear the newer selection before a subsequent save coalesces it.
+    useSessionStore.getState().renameSession(base.id, 'Keep my latest selection')
+    await Promise.all([latestSelectionSave, save(useSessionStore.getState())])
+    expect(durable.messages[0].content).toBe(edited.content)
+    expect(durable.branchContextResetRequired).toBe(true)
+  })
+
+  it('persists explicit descendant navigation after another client selects a root revision', async () => {
+    const rootPrompt = {
+      id: 'root-prompt',
+      role: 'user' as const,
+      content: 'Root prompt',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const linear = materializeSessionConversationGraph(
+      createPersistedSession({ revision: 8, messages: [rootPrompt] })
+    )
+    const childPrompt = { ...rootPrompt, id: 'child-prompt', content: 'Child prompt' }
+    const graph = structuredClone(linear.conversationGraph)
+    graph.frames.push({
+      id: 'child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: rootPrompt.id,
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-original',
+      createdAt: 1,
+      completedAt: 2
+    })
+    graph.branches.push({
+      id: 'child-original',
+      agentFrameId: 'child-frame',
+      headMessageId: childPrompt.id,
+      createdAt: 1,
+      updatedAt: 2
+    })
+    graph.messages.push({
+      ...childPrompt,
+      agentFrameId: 'child-frame',
+      introducedOnBranchId: 'child-original'
+    })
+    graph.activeFrameId = 'child-frame'
+    const childEdit = { ...childPrompt, id: 'child-edited-prompt', content: 'Edited child prompt' }
+    const childGraph = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(graph, childPrompt.id, 'child-edited', 3),
+      [childEdit],
+      3
+    )
+    const base = {
+      ...linear,
+      conversationGraph: activateConversationBranch(childGraph, 'child-original'),
+      messages: [childPrompt]
+    }
+    const rootEdit = { ...rootPrompt, id: 'root-edited-prompt', content: 'Remote root edit' }
+    const remote = {
+      ...linear,
+      revision: 9,
+      messages: [rootEdit],
+      conversationGraph: synchronizeActiveConversationMessages(
+        forkEditedConversationMessage(
+          { ...childGraph, activeFrameId: graph.rootFrameId },
+          rootPrompt.id,
+          'root-edited',
+          4
+        ),
+        [rootEdit],
+        4
+      )
+    }
+    useSessionStore.getState().hydrateSessions([base])
+    let durable: PersistedChatSession = remote
+    const api = createApi({
+      saveSession: vi.fn(async (submitted) => {
+        durable = { ...submitted, revision: (durable.revision ?? 0) + 1 }
+        return durable
+      })
+    })
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().upsertPersistedSession(remote)
+    await save(useSessionStore.getState())
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(childEdit.content)
+    expect(api.saveSession).not.toHaveBeenCalled()
+    useSessionStore.getState().activateMessageBranch(base.id, 'child-original')
+    await save(useSessionStore.getState())
+    expect(durable.messages[0].content).toBe(childPrompt.content)
+    expect(durable.conversationGraph?.activeFrameId).toBe('child-frame')
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(childPrompt.content)
+    useSessionStore.getState().hydrateSessions([durable])
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(childPrompt.content)
+  })
+
+  it.each(['queued', 'in-flight'] as const)(
+    'preserves a remote Branch created while a passive save is %s',
+    async (phase) => {
+      const original = {
+        id: 'original-prompt',
+        role: 'user' as const,
+        content: 'Original prompt',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const base = materializeSessionConversationGraph(
+        createPersistedSession({ revision: 8, messages: [original] })
+      )
+      const edited = { ...original, id: 'remote-prompt', content: 'Latest remote edit' }
+      const remote = {
+        ...base,
+        revision: 9,
+        messages: [edited],
+        conversationGraph: synchronizeActiveConversationMessages(
+          forkEditedConversationMessage(base.conversationGraph, original.id, 'remote-branch', 2),
+          [edited],
+          2
+        )
+      }
+      useSessionStore.getState().hydrateSessions([base])
+      let durable: PersistedChatSession = base
+      const blocker = createDeferred<PersistedChatSession>()
+      const inFlight = createDeferred<void>()
+      const api = createApi({
+        loadOne: vi.fn(async () => durable),
+        saveSession: vi.fn(async (submitted) => {
+          if (phase === 'in-flight') await inFlight.promise
+          if (submitted.revision !== durable.revision) {
+            throw new SessionRevisionConflictError(submitted.revision ?? 0, durable.revision ?? 0)
+          }
+          durable = { ...submitted, revision: (durable.revision ?? 0) + 1 }
+          return durable
+        })
+      })
+      const persistence = createOrderedSessionPersistence(api)
+      const save = createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+      const blocked =
+        phase === 'queued'
+          ? persistence.saveLatestSession('session:other-session', () => blocker.promise)
+          : Promise.resolve()
+      await flushMicrotasks()
+      // A terminal runtime event queues the old graph before another client's edit arrives.
+      useSessionStore.getState().finishRun(base.id)
+      const queued = save(useSessionStore.getState())
+      await flushMicrotasks()
+      if (phase === 'in-flight') expect(api.saveSession).toHaveBeenCalledOnce()
+      durable = remote
+      useSessionStore.getState().upsertPersistedSession(remote)
+      await save(useSessionStore.getState())
+      blocker.resolve(createPersistedSession({ id: 'other-session' }))
+      inFlight.resolve()
+      await Promise.all([blocked, queued])
+      expect(durable.messages[0].content).toBe(edited.content)
+      expect(durable.conversationGraph?.messages.map((message) => message.id)).toContain(edited.id)
+      expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(original.content)
+    }
+  )
+
+  it.each(['terminal', 'archived'] as const)(
+    'retains a new run until an authoritative %s snapshot can settle it',
+    (completion) => {
+      const original = {
+        id: 'original-prompt',
+        role: 'user' as const,
+        content: 'Original prompt',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const base = materializeSessionConversationGraph(
+        createPersistedSession({ revision: 8, messages: [original] })
+      )
+      useSessionStore.getState().hydrateSessions([base])
+      useSessionStore.getState().truncateSessionFromMessage(base.id, original.id)
+      const appended = useSessionStore.getState().appendUserMessage({
+        sessionId: base.id,
+        messageId: 'edited-prompt',
+        content: 'Unsaved edit',
+        cwd: base.cwd,
+        projectId: base.projectId
+      })!
+      const source = useSessionStore.getState().sessions[0]
+      expect(source.activeRun?.promptMessageId).toBe(appended.messageId)
+      // Another window completes a save captured before this client appended the edited prompt.
+      useSessionStore.getState().upsertPersistedSession({ ...base, revision: 9 })
+      const merged = useSessionStore.getState().sessions[0]
+      expect(merged.messages[0].content).toBe('Unsaved edit')
+      expect(merged.activeRun).toBe(source.activeRun)
+      expect(merged.status).toBe('running')
+
+      // A terminal snapshot can acknowledge a prompt outside its flat selected transcript.
+      // An archive also remains authoritative even when it predates this pending prompt.
+      useSessionStore.getState().upsertPersistedSession(
+        completion === 'terminal'
+          ? {
+              ...toPersistedSession(merged),
+              conversationGraph: activateConversationBranch(
+                merged.conversationGraph!,
+                base.conversationGraph.frames[0].activeBranchId
+              ),
+              messages: base.messages,
+              revision: 10,
+              status: 'idle',
+              activeRun: undefined
+            }
+          : { ...base, revision: 10, archivedAt: Date.now() }
+      )
+      expect(useSessionStore.getState().sessions[0].activeRun).toBeUndefined()
+      expect(useSessionStore.getState().sessions[0].status).toBe('idle')
+    }
+  )
 
   it('still saves an unsaved title on an externally hydrated archive projection', async () => {
     const base = createPersistedSession({ revision: 42 })

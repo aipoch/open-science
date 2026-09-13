@@ -12,6 +12,7 @@ import {
   type ReconcilePendingArtifactsResult
 } from '../../../../shared/artifacts'
 import {
+  activateConversationBranch,
   projectConversationMessage,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages
@@ -19,6 +20,7 @@ import {
 import type { RendererFailureContext } from '../../../../shared/diagnostics'
 import {
   ConversationGraphMaterializationError,
+  SessionRevisionConflictError,
   isSessionSizeLimitError,
   isSessionRevisionConflictError,
   sessionRevision,
@@ -1503,17 +1505,27 @@ const hasStagedUploads = (session: ChatSession): boolean =>
     )
   )
 
-// These fields are persisted by Main's dedicated owners. A same-client receipt can update them
-// before the save response arrives; that receipt must not enqueue the same local snapshot again.
+// Main-owned metadata and the transient navigation guard must not enqueue a local snapshot.
+// A same-client receipt can update Main-owned fields before the save response arrives.
 // Keep branchContextResetRequired in the comparison: clearing it is a renderer-persisted change.
-const withoutMainOwnedSessionMetadata = (session: ChatSession): ChatSession => ({
+const withoutMainOwnedOrTransientSessionMetadata = (session: ChatSession): ChatSession => ({
   ...session,
+  branchSwitchBlocked: undefined,
+  agentPromptInFlight: undefined,
+  awaitingFirstAgentOutput: undefined,
   revision: undefined,
   archivedAt: undefined,
   enabledComputeHosts: undefined,
   selectedComputeHosts: undefined,
   computeConcurrencyLimit: undefined
 })
+
+const selectedRootBranchId = (
+  session: Pick<PersistedChatSession, 'conversationGraph'> | undefined
+): string | undefined =>
+  session?.conversationGraph?.frames.find(
+    (frame) => frame.id === session.conversationGraph?.rootFrameId
+  )?.activeBranchId
 
 // Builds an incremental saver: on each store change it persists only sessions whose reference changed
 // and updates the manifest when selection moves. Explicit deletion owns its durable coordinator call.
@@ -1537,15 +1549,21 @@ const createStoreSaver = (
       .map((session) => [session.id, toPersistedSession(session)])
   )
   persistence.seedAcknowledgedSessions([...acknowledgedSessions.values()])
+  // Keep an explicit local selection until its own receipt; a queued runtime update can coalesce
+  // with that save, and an older receipt must not clear a newer navigation intent.
+  const pendingBranchSelections = new Map<
+    string,
+    NonNullable<PersistedChatSession['conversationGraph']>
+  >()
 
   const recoverRevisionConflict = async (
     error: unknown,
     submitted: PersistedChatSession,
+    base: PersistedChatSession | undefined,
     options: SaveSessionOptions | undefined,
     save: SessionPersistenceApi['saveSession']
   ): Promise<PersistedChatSession> => {
     if (!isSessionRevisionConflictError(error)) throw error
-    const base = acknowledgedSessions.get(submitted.id)
     if (!base) throw error
     return saveAfterSessionRevisionConflict(
       error,
@@ -1670,9 +1688,36 @@ const createStoreSaver = (
 
       const hasUnsavedLocalTitle =
         session.unsavedTitle === true && Boolean(authority && session.title !== authority.title)
+      const rootBranchId = selectedRootBranchId(session)
+      const graph = session.conversationGraph
+      const previousGraph = previousSession?.conversationGraph
+      if (
+        graph &&
+        previousGraph &&
+        (rootBranchId !== selectedRootBranchId(previousSession) ||
+          // Hydration retains the local root selection but can adopt remote descendant choices.
+          (!authority &&
+            (graph.activeFrameId !== previousGraph.activeFrameId ||
+              previousGraph.frames.some(
+                (previousFrame) =>
+                  graph.frames.find((frame) => frame.id === previousFrame.id)?.activeBranchId !==
+                  previousFrame.activeBranchId
+              ))))
+      ) {
+        pendingBranchSelections.set(session.id, graph)
+      }
+      const selectionIntent = pendingBranchSelections.get(session.id)
+      const hasRetainedLocalRootBranch =
+        !selectionIntent &&
+        rootBranchId !== undefined &&
+        authority?.conversationGraph &&
+        rootBranchId !== selectedRootBranchId(authority)
+      // A retained local reset applies to this window's Branch. Publishing it against another
+      // client's selected Branch would also write this window's old selection back to disk.
       const hasUnsavedContextReset =
+        !hasRetainedLocalRootBranch &&
         Boolean(session.branchContextResetRequired) !==
-        Boolean(authority?.branchContextResetRequired)
+          Boolean(authority?.branchContextResetRequired)
       if (
         previousSession &&
         previousSession !== session &&
@@ -1681,8 +1726,8 @@ const createStoreSaver = (
         !(authority && hasUnsavedContextReset) &&
         !streamingDirtySessionIds.has(session.id) &&
         shallow(
-          withoutMainOwnedSessionMetadata(previousSession),
-          withoutMainOwnedSessionMetadata(session)
+          withoutMainOwnedOrTransientSessionMetadata(previousSession),
+          withoutMainOwnedOrTransientSessionMetadata(session)
         )
       ) {
         continue
@@ -1715,16 +1760,71 @@ const createStoreSaver = (
         ]
 
         const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+        const sourceAuthority = acknowledgedSessions.get(session.id)
+        let submittedAuthority = sourceAuthority
+        const serializeSession = (): PersistedChatSession => {
+          let persisted = toPersistedSession(session, nextStreamingMessages)
+          // Explicit navigation already carries all ancestor and descendant selections. Only
+          // passive saves restore the authority's root Branch over a retained window-local view.
+          const selected = selectionIntent ? undefined : selectedRootBranchId(sourceAuthority)
+          const graph = persisted.conversationGraph
+          if (
+            selected &&
+            graph &&
+            selected !== selectedRootBranchId(persisted) &&
+            graph.branches.some((branch) => branch.id === selected)
+          ) {
+            const conversationGraph = activateConversationBranch(graph, selected)
+            persisted = {
+              ...persisted,
+              conversationGraph,
+              messages: resolveActiveConversationMessages(conversationGraph).map(
+                projectConversationMessage
+              ),
+              ...resolveActiveConversationActivities(conversationGraph),
+              branchContextResetRequired: sourceAuthority?.branchContextResetRequired
+            }
+          }
+          // A passive queued snapshot can predate a remotely created Branch. Rebase its changes
+          // before using a newer revision. Explicit navigation already selects the intended Branch.
+          submittedAuthority = acknowledgedSessions.get(session.id)
+          if (
+            !selectionIntent &&
+            sourceAuthority &&
+            submittedAuthority &&
+            selectedRootBranchId(sourceAuthority) !== selectedRootBranchId(submittedAuthority)
+          ) {
+            const rebased = rebaseSessionAfterRevisionConflict(
+              sourceAuthority,
+              persisted,
+              submittedAuthority
+            )
+            if (!rebased) {
+              throw new SessionRevisionConflictError(
+                sessionRevision(sourceAuthority),
+                sessionRevision(submittedAuthority)
+              )
+            }
+            persisted = rebased
+          }
+          return persisted
+        }
+
         const applyDurableSession = (
           durableSession: PersistedChatSession,
           options: SaveSessionOptions | undefined,
           recoveredRevisionConflict = false
         ): void => {
+          if (selectionIntent && pendingBranchSelections.get(session.id) === selectionIntent) {
+            pendingBranchSelections.delete(session.id)
+          }
+          const keepLocalBranch = selectedRootBranchId(durableSession) !== rootBranchId
           useSessionStore.getState().applyDurableSessionProjection({
             source: session,
             session: durableSession,
             mode:
-              recoveredRevisionConflict || (options?.conflictRebaseFields?.length ?? 0) > 0
+              !keepLocalBranch &&
+              (recoveredRevisionConflict || (options?.conflictRebaseFields?.length ?? 0) > 0)
                 ? 'replace-persisted-if-current'
                 : 'merge-upload-identities'
           })
@@ -1735,9 +1835,7 @@ const createStoreSaver = (
           failureContext: { conflictRebaseFields },
           run: isForced
             ? async () => {
-                const persisted = observePersistencePhase('session-serialize', () =>
-                  toPersistedSession(session, nextStreamingMessages)
-                )
+                const persisted = observePersistencePhase('session-serialize', serializeSession)
                 persisted.revision =
                   acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
                 let durableSession: PersistedChatSession
@@ -1750,6 +1848,7 @@ const createStoreSaver = (
                       const recovered = await recoverRevisionConflict(
                         error,
                         submitted,
+                        submittedAuthority,
                         saveOptions,
                         retry
                       )
@@ -1771,9 +1870,7 @@ const createStoreSaver = (
                 persistence.saveLatestSession(
                   target,
                   async (coalescedOptions) => {
-                    const persisted = observePersistencePhase('session-serialize', () =>
-                      toPersistedSession(session, nextStreamingMessages)
-                    )
+                    const persisted = observePersistencePhase('session-serialize', serializeSession)
                     persisted.revision =
                       acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
                     let durableSession: PersistedChatSession
@@ -1787,6 +1884,7 @@ const createStoreSaver = (
                         durableSession = await recoverRevisionConflict(
                           error,
                           persisted,
+                          submittedAuthority,
                           coalescedOptions,
                           api.saveSession
                         )
@@ -1843,6 +1941,9 @@ const createStoreSaver = (
       }
     }
 
+    for (const id of pendingBranchSelections.keys()) {
+      if (!nextById.has(id)) pendingBranchSelections.delete(id)
+    }
     previousSessions = nextSessions
     previousSelection = state.selectedSessionId
     previousStreamingMessages = nextStreamingMessages
