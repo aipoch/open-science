@@ -26,6 +26,12 @@ const PROJECTION_VERSION = 5
 const SESSION_NUMBER_SEQUENCE_ID = 'global'
 const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
 const MAX_SQLITE_INT = 2_147_483_647
+
+// An in-process allocation receipt, never part of Session JSON or the database schema.
+export type PreparedSessionSave = {
+  session: PersistedChatSession
+  created: boolean
+}
 const PERSISTED_SESSION_STATUSES: ReadonlySet<string> = new Set([
   'idle',
   'running',
@@ -599,11 +605,11 @@ export class SessionProjectionRepository {
     return client.session.findMany({ select: { id: true, number: true } })
   }
 
-  async prepareSave(session: PersistedChatSession): Promise<PersistedChatSession> {
+  async prepareSave(session: PersistedChatSession): Promise<PreparedSessionSave> {
     const client = await this.client()
     const projection = buildSessionProjection(session)
     assertProjectionStorageShape(projection)
-    const number = await runProjectionTransaction(client, async (tx) => {
+    const allocation = await runProjectionTransaction(client, async (tx) => {
       const project = await tx.project.findFirst({
         where: { id: session.projectId, deletedAt: null },
         select: { id: true }
@@ -620,7 +626,7 @@ export class SessionProjectionRepository {
         create: { sessionId: session.id, projectId: session.projectId, operation: 'save' },
         update: { projectId: session.projectId, operation: 'save', markedAt: new Date() }
       })
-      if (existing) return existing.number
+      if (existing) return { number: existing.number, created: false }
       const preferredNumber = session.number
       let number: number
       if (preferredNumber !== undefined) {
@@ -648,9 +654,52 @@ export class SessionProjectionRepository {
         number = sequence.nextNumber - 1
       }
       const created = await tx.session.create({ data: sessionData(projection, number) })
-      return created.number
+      return { number: created.number, created: true }
     })
-    return session.number === number ? session : { ...session, number }
+    return {
+      session:
+        session.number === allocation.number ? session : { ...session, number: allocation.number },
+      created: allocation.created
+    }
+  }
+
+  // The Repository must first prove that this failed first publication left no JSON authority,
+  // including recoverable temporary files. Never reuse its number or remove an existing tombstone.
+  async abortUnpublishedSave({ session, created }: PreparedSessionSave): Promise<void> {
+    if (!created) return
+    const client = await this.client()
+    await runProjectionTransaction(client, async (tx) => {
+      const pending = await tx.pendingSessionReconciliation.findUnique({
+        where: { sessionId: session.id }
+      })
+      if (pending?.projectId !== session.projectId || pending.operation !== 'save') {
+        throw new Error('Cannot discard a Session allocation whose pending operation has changed.')
+      }
+      // Auxiliary usage has no Session foreign key; preserve its owner in the same transaction.
+      const auxiliaryUsage = await tx.sessionAuxiliaryTurnUsage.findFirst({
+        where: { sessionId: session.id },
+        select: { eventId: true }
+      })
+      if (auxiliaryUsage) {
+        throw new Error('Cannot discard a Session allocation that has changed.')
+      }
+      const removed = await tx.session.deleteMany({
+        where: {
+          id: session.id,
+          projectId: session.projectId,
+          number: session.number,
+          revision: BigInt(session.revision ?? 0),
+          deletedAtMs: null,
+          turnUsage: { none: {} },
+          runs: { none: {} },
+          artifactRefs: { none: {} }
+        }
+      })
+      if (removed.count !== 1) {
+        throw new Error('Cannot discard a Session allocation that has changed.')
+      }
+      await tx.pendingSessionReconciliation.deleteMany({ where: { sessionId: session.id } })
+    })
   }
 
   async commitSave(session: PersistedChatSession): Promise<void> {

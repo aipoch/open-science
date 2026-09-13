@@ -108,7 +108,7 @@ const save = async (id: string): Promise<PersistedChatSession> => {
       )
     )
   )
-  const prepared = await repository.prepareSave(input)
+  const { session: prepared } = await repository.prepareSave(input)
   await repository.commitSave(prepared)
   return prepared
 }
@@ -122,7 +122,7 @@ describe('usage through real store, Session codec, and SQLite', () => {
   it('does not count imported source usage as local execution', async () => {
     run('source')
     const source = await save('source')
-    const imported = await repository.prepareSave({
+    const { session: imported } = await repository.prepareSave({
       ...structuredClone(source),
       id: 'imported',
       number: undefined,
@@ -226,7 +226,7 @@ describe('usage through real store, Session codec, and SQLite', () => {
     await save('nested')
     expect(await summary()).toMatchObject({ totalSessions: 3, totalRuns: 2, totalTokens: 30 })
     // Equal message/call IDs in an independent Session remain independent execution identities.
-    const independent = await repository.prepareSave({
+    const { session: independent } = await repository.prepareSave({
       ...source,
       id: 'independent',
       number: undefined

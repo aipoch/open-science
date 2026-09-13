@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, readFile, rename, rm, truncate, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, rename, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -398,8 +398,8 @@ describe('Session projection', () => {
     })
     const repository = new SessionProjectionRepository(async () => client!)
 
-    const first = await repository.prepareSave(session('session-1', 100))
-    const second = await repository.prepareSave(session('session-2', 200))
+    const { session: first } = await repository.prepareSave(session('session-1', 100))
+    const { session: second } = await repository.prepareSave(session('session-2', 200))
     expect([first.number, second.number]).toEqual([1, 2])
 
     await repository.commitSave(first)
@@ -461,7 +461,7 @@ describe('Session projection', () => {
       data: { id: 'project-1', name: 'Project', createdAt: new Date(50) }
     })
     const repository = new SessionProjectionRepository(async () => client!)
-    const projected = await repository.prepareSave(session('auxiliary', 100))
+    const { session: projected } = await repository.prepareSave(session('auxiliary', 100))
     await repository.commitSave(projected)
     const recorder = new SessionAuxiliaryTurnUsageRecorder(async () => client!)
     const record = {
@@ -831,7 +831,7 @@ describe('Session projection', () => {
     })
     const repository = new SessionProjectionRepository(async () => client!)
 
-    const first = await repository.prepareSave(session('session-1'))
+    const { session: first } = await repository.prepareSave(session('session-1'))
     await repository.commitSave(first)
     await repository.commitDelete(first.projectId, first.id)
 
@@ -863,7 +863,7 @@ describe('Session projection', () => {
     await repository.markPending(first.projectId, first.id)
     await expect(repository.commitReconciliation(first)).resolves.toBeUndefined()
     await expect(repository.pending()).resolves.toEqual([])
-    const second = await repository.prepareSave(session('session-2'))
+    const { session: second } = await repository.prepareSave(session('session-2'))
     expect(second.number).toBe(2)
     const primaryKey = await client.$queryRaw<Array<{ name: string; pk: bigint }>>`
       PRAGMA table_info("Session")
@@ -891,7 +891,7 @@ describe('Session projection', () => {
       ]
     })
     const repository = new SessionProjectionRepository(async () => client!)
-    const owned = await repository.prepareSave({
+    const { session: owned } = await repository.prepareSave({
       ...session('session-1'),
       projectId: 'project-2'
     })
@@ -929,7 +929,7 @@ describe('Session projection', () => {
       data: { id: 'project-1', name: 'Project', createdAt: new Date(50) }
     })
     const sessions = new SessionProjectionRepository(async () => client!)
-    const saved = await sessions.prepareSave(session('session-1'))
+    const { session: saved } = await sessions.prepareSave(session('session-1'))
     await sessions.commitSave(saved)
 
     await new ProjectRepository(async () => client!).delete('project-1')
@@ -1027,6 +1027,275 @@ describe('Session projection', () => {
     await expect(repository.loadSession('project-1', 'session-1')).resolves.toMatchObject({
       title: 'Newer concurrent title'
     })
+  })
+
+  it('allows retry of a first save after recovery of a failed JSON publication', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-first-save-recovery-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    await repository.ensureSessionProjection(() => repository.loadAll())
+
+    // Introduce the filesystem failure at the existing projection boundary, after admission checks
+    // and the real SQLite reservation, but before the first JSON publication.
+    const sessionsDirectory = join(storageRoot, 'sessions')
+    const projectDirectory = join(sessionsDirectory, 'project-1')
+    await mkdir(sessionsDirectory, { recursive: true })
+    const prepareSave = projection.prepareSave.bind(projection)
+    vi.spyOn(projection, 'prepareSave').mockImplementationOnce(async (incoming) => {
+      const prepared = await prepareSave(incoming)
+      await expect(projection.pending()).resolves.toEqual([
+        { projectId: 'project-1', sessionId: 'session-1', operation: 'save' }
+      ])
+      await writeFile(projectDirectory, 'temporary directory obstacle')
+      return prepared
+    })
+    await expect(repository.saveSession(session('session-1'), 0)).rejects.toThrow()
+    await rm(projectDirectory)
+    await expect(repository.loadSession('project-1', 'session-1')).resolves.toBeUndefined()
+
+    // Restart the storage owners and connection: no previous in-memory revision or scheduler survives.
+    await client.$disconnect()
+    client = createProjectDbClient(storageRoot)
+    const restartedProjection = new SessionProjectionRepository(async () => client!)
+    const restarted = new SessionRepository(storageRoot, {}, restartedProjection)
+    await restarted.ensureSessionProjection(() => restarted.loadAll())
+    await expect(restartedProjection.pending()).resolves.toEqual([])
+    await expect(restartedProjection.list()).resolves.toEqual([])
+
+    // No user deletion occurred. Retrying the unsaved draft must remain possible.
+    await expect(restarted.saveSession(session('session-1'), 0)).resolves.toMatchObject({
+      id: 'session-1',
+      revision: 1
+    })
+  })
+
+  it.each([false, true])(
+    'recovers JSON authority after projection commit failure (existing Session: %s)',
+    async (existing) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-commit-recovery-'))
+      client = createProjectDbClient(storageRoot)
+      await migrateApplicationDatabase(client)
+      await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+      const projection = new SessionProjectionRepository(async () => client!)
+      const repository = new SessionRepository(storageRoot, {}, projection)
+      await repository.ensureSessionProjection(() => repository.loadAll())
+      const original = session('session-1')
+      const saved = existing ? await repository.saveSession(original, 0) : original
+      const failure = new Error('injected SQLite commit failure')
+      vi.spyOn(projection, 'commitSave').mockRejectedValueOnce(failure)
+      await expect(
+        repository.saveSession({ ...saved, title: 'Durable new title' }, saved.revision ?? 0)
+      ).rejects.toBe(failure)
+      await expect(projection.pending()).resolves.toEqual([
+        { projectId: 'project-1', sessionId: 'session-1', operation: 'save' }
+      ])
+      await expect(repository.loadSession('project-1', 'session-1')).resolves.toMatchObject({
+        title: 'Durable new title',
+        revision: (saved.revision ?? 0) + 1
+      })
+
+      await client.$disconnect()
+      client = createProjectDbClient(storageRoot)
+      const restartedProjection = new SessionProjectionRepository(async () => client!)
+      const restarted = new SessionRepository(storageRoot, {}, restartedProjection)
+      await restarted.ensureSessionProjection(() => restarted.loadAll())
+      await expect(restartedProjection.pending()).resolves.toEqual([])
+      await expect(restartedProjection.list()).resolves.toEqual([
+        expect.objectContaining({ id: 'session-1', title: 'Durable new title' })
+      ])
+      await expect(restarted.loadSession('project-1', 'session-1')).resolves.toMatchObject({
+        title: 'Durable new title'
+      })
+    }
+  )
+
+  it.each([
+    { existing: false, publication: 'absent' },
+    { existing: true, publication: 'absent' },
+    { existing: false, publication: 'temporary' },
+    { existing: false, publication: 'published' }
+  ] as const)(
+    'preserves the correct retry authority after rename failure ($existing, $publication)',
+    async ({ existing, publication }) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-rename-recovery-'))
+      client = createProjectDbClient(storageRoot)
+      await migrateApplicationDatabase(client)
+      await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+      const projection = new SessionProjectionRepository(async () => client!)
+      const files = new SessionRepository(storageRoot, {}, projection)
+      await files.ensureSessionProjection(() => files.loadAll())
+      const original = existing
+        ? await files.saveSession(session('session-1'))
+        : session('session-1')
+      const failure = new Error('injected Session rename failure')
+      let temporaryPath: string | undefined
+      const failing = new SessionRepository(
+        storageRoot,
+        {
+          renameFile: async (source, destination) => {
+            temporaryPath = source
+            if (publication === 'published') await rename(source, destination)
+            throw failure
+          },
+          remove: async (path, options) => {
+            if (publication === 'temporary') throw new Error('temporary cleanup failed')
+            await rm(path, options)
+          }
+        },
+        projection
+      )
+
+      // Trusted Main writes omit expectedRevision; they must get the same compensation as renderer writes.
+      await expect(failing.saveSession({ ...original, title: 'New title' })).rejects.toBe(failure)
+      const rolledBack = !existing && publication === 'absent'
+      await expect(projection.pending()).resolves.toHaveLength(rolledBack ? 0 : 1)
+      if (rolledBack) {
+        await expect(client.session.findUnique({ where: { id: original.id } })).resolves.toBeNull()
+        const retried = await files.saveSession(original, 0)
+        expect(retried.number).toBe(2)
+        expect(retried.revision).toBe(1)
+      } else {
+        await expect(
+          client.session.findUnique({ where: { id: original.id } })
+        ).resolves.toMatchObject({
+          deletedAtMs: null
+        })
+        if (publication === 'temporary') {
+          // A failed temporary cleanup is unresolved authority, not permission to discard its index.
+          // Automatic pending replay of a temp-only Session is a separate recovery contract.
+          expect(JSON.parse(await readFile(temporaryPath!, 'utf8')).session.title).toBe('New title')
+          return
+        }
+        await files.ensureSessionProjection(() => files.loadAll())
+        await expect(files.loadSession(original.projectId, original.id)).resolves.toMatchObject({
+          title: publication === 'absent' ? original.title : 'New title'
+        })
+        await expect(projection.pending()).resolves.toEqual([])
+      }
+    }
+  )
+
+  it('retains both errors and pending evidence when allocation compensation fails', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-compensation-failure-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const failure = new Error('injected Session rename failure')
+    const repository = new SessionRepository(
+      storageRoot,
+      {
+        renameFile: async () => {
+          await client!.$executeRawUnsafe('PRAGMA query_only = ON')
+          throw failure
+        }
+      },
+      projection
+    )
+    await repository.ensureSessionProjection(() => repository.loadAll())
+
+    const rejected = await repository
+      .saveSession(session('session-1'), 0)
+      .catch((error: unknown) => error)
+    await client.$executeRawUnsafe('PRAGMA query_only = OFF')
+    expect(rejected).toBeInstanceOf(AggregateError)
+    expect(rejected).toMatchObject({ cause: failure, errors: [failure, expect.any(Error)] })
+    await expect(projection.pending()).resolves.toEqual([
+      { projectId: 'project-1', sessionId: 'session-1', operation: 'save' }
+    ])
+    await expect(client.session.findUnique({ where: { id: 'session-1' } })).resolves.toMatchObject({
+      deletedAtMs: null
+    })
+    // The original draft can still retry before a catalog replay, without pretending the first save succeeded.
+    const retrying = new SessionRepository(storageRoot, {}, projection)
+    await expect(retrying.saveSession(session('session-1'), 0)).resolves.toMatchObject({
+      revision: 1
+    })
+  })
+
+  it('preserves auxiliary usage recorded before a failed first publication', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-auxiliary-usage-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const recorder = new SessionAuxiliaryTurnUsageRecorder(async () => client!)
+    const failure = new Error('injected Session rename failure')
+    const usageEvent = { timestamp: 120, inputTokens: 5, cacheTokens: 2, outputTokens: 4 }
+    const repository = new SessionRepository(
+      storageRoot,
+      {
+        renameFile: async () => {
+          await recorder.record({
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            eventId: 'side-stop-1',
+            source: 'side-chat',
+            frameworkId: 'codebuddy',
+            completedAtMs: usageEvent.timestamp,
+            usage: usageEvent
+          })
+          await expect(projection.usage()).resolves.toMatchObject({ usageEvents: [usageEvent] })
+          throw failure
+        }
+      },
+      projection
+    )
+    await repository.ensureSessionProjection(() => repository.loadAll())
+    const draft = { ...session('session-1'), messages: [] }
+
+    const rejected = await repository.saveSession(draft, 0).catch((error: unknown) => error)
+    // Durable usage must remain visible with its original owner even though no JSON was published.
+    await expect(projection.usage()).resolves.toMatchObject({ usageEvents: [usageEvent] })
+    expect(rejected).toMatchObject({ cause: failure, errors: [failure, expect.any(Error)] })
+    await expect(projection.pending()).resolves.toHaveLength(1)
+    await expect(client.session.findUnique({ where: { id: draft.id } })).resolves.toMatchObject({
+      number: 1,
+      deletedAtMs: null
+    })
+    const retrying = new SessionRepository(storageRoot, {}, projection)
+    await expect(retrying.saveSession(draft, 0)).resolves.toMatchObject({ number: 1, revision: 1 })
+    await expect(projection.usage()).resolves.toMatchObject({ usageEvents: [usageEvent] })
+    await expect(projection.pending()).resolves.toEqual([])
+  })
+
+  it('does not discard a committed deletion with a stale allocation receipt', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-receipt-delete-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const prepared = await projection.prepareSave(session('session-1'))
+    await projection.commitDelete('project-1', 'session-1')
+    await expect(projection.abortUnpublishedSave(prepared)).rejects.toThrow(
+      'pending operation has changed'
+    )
+    await expect(projection.prepareSave(session('session-1'))).rejects.toThrow('deleted Session')
+    await expect(client.session.findUnique({ where: { id: 'session-1' } })).resolves.toMatchObject({
+      deletedAtMs: expect.anything()
+    })
+  })
+
+  it('does not cascade-delete published facts through an old allocation receipt', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-receipt-facts-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const prepared = await projection.prepareSave(session('session-1'))
+    await projection.commitSave(prepared.session)
+    await projection.markPending('project-1', 'session-1')
+    await expect(projection.abortUnpublishedSave(prepared)).rejects.toThrow(
+      'allocation that has changed'
+    )
+    await expect(projection.list()).resolves.toHaveLength(1)
+    await expect(projection.usage()).resolves.toMatchObject({
+      usageEvents: [expect.objectContaining({ inputTokens: 10 })]
+    })
+    await expect(projection.pending()).resolves.toHaveLength(1)
   })
 
   it('resumes an individually deleted Session after a crash before JSON removal', async () => {

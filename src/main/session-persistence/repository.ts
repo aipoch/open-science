@@ -993,7 +993,9 @@ class SessionRepository {
     ) {
       throw new Error('Session expected revision must be a non-negative integer.')
     }
-    await this.assertExistingSessionWithinLimit(this.sessionFilePath(session.projectId, session.id))
+    const hadPrimaryAuthority = await this.assertExistingSessionWithinLimit(
+      this.sessionFilePath(session.projectId, session.id)
+    )
     if (expectedRevision !== undefined) {
       // Both checks own the same serialized save lane. Reuse this operation's authority read;
       // the next save must load again so revision and readonly checks never use a stale cache.
@@ -1029,29 +1031,46 @@ class SessionRepository {
     if (this.projection && this.projectionWritesSuspended) {
       assertSessionProjectionStorageShape(session)
     }
-    const projectedSession =
+    const preparedProjection =
       this.projection && !this.projectionWritesSuspended
         ? await this.projection.prepareSave(session)
-        : session
+        : undefined
     const durableSession: PersistedChatSession = {
-      ...projectedSession,
+      ...(preparedProjection?.session ?? session),
       revision: nextRevision
     }
     // prepareSave only assigns the authoritative number. Reuse the normalized graph instead
     // of materializing it again; retain the final byte check before writing authority.
-    let preparedWrite = unprojectedWrite
-    if (unprojectedWrite.document.session.number !== durableSession.number) {
-      const document = {
-        ...unprojectedWrite.document,
-        session: { ...unprojectedWrite.document.session, number: durableSession.number }
+    try {
+      let preparedWrite = unprojectedWrite
+      if (unprojectedWrite.document.session.number !== durableSession.number) {
+        const document = {
+          ...unprojectedWrite.document,
+          session: { ...unprojectedWrite.document.session, number: durableSession.number }
+        }
+        preparedWrite = {
+          ...unprojectedWrite,
+          document,
+          contents: this.serializeJsonForWrite(document, this.dependencies.maxSessionBytes)
+        }
       }
-      preparedWrite = {
-        ...unprojectedWrite,
-        document,
-        contents: this.serializeJsonForWrite(document, this.dependencies.maxSessionBytes)
+      await this.writeSession(durableSession, preparedWrite)
+    } catch (error) {
+      if (preparedProjection?.created && !hadPrimaryAuthority) {
+        try {
+          if (await this.hasNoSessionAuthorityFiles(session.projectId, session.id)) {
+            await this.projection!.abortUnpublishedSave(preparedProjection)
+          }
+        } catch (compensationError) {
+          throw new AggregateError(
+            [error, compensationError],
+            'Session publication and allocation cleanup failed.',
+            { cause: error }
+          )
+        }
       }
+      throw error
     }
-    await this.writeSession(durableSession, preparedWrite)
     if (this.projectionWritesSuspended) {
       this.suspendedProjectionSessionWrites.set(key, {
         projectId: session.projectId,
@@ -1341,13 +1360,27 @@ class SessionRepository {
     await this.atomicWriteContents(filePath, contents)
   }
 
-  private async assertExistingSessionWithinLimit(filePath: string): Promise<void> {
+  private async assertExistingSessionWithinLimit(filePath: string): Promise<boolean> {
     try {
       if ((await lstat(filePath)).size > this.dependencies.maxSessionBytes) {
         throw new SessionSizeLimitError(this.dependencies.maxSessionBytes)
       }
+      return true
     } catch (error) {
-      if (isMissingFileError(error)) return
+      if (isMissingFileError(error)) return false
+      throw error
+    }
+  }
+
+  private async hasNoSessionAuthorityFiles(projectId: string, sessionId: string): Promise<boolean> {
+    try {
+      const entries = await this.dependencies.readDirectoryEntries(this.projectDir(projectId))
+      const primary = `${assertSafeSegment(sessionId)}.json`
+      // Retain evidence even when only a temporary, backup, or quarantined file remains.
+      return !entries.some(({ name }) => name === primary || name.startsWith(`${primary}.`))
+    } catch (error) {
+      if (isMissingFileError(error) || (error as NodeJS.ErrnoException).code === 'ENOTDIR')
+        return true
       throw error
     }
   }
