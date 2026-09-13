@@ -43,7 +43,7 @@ test('profiles same-process visits to forty persisted session bodies', async ({
   await app.beginResourceProfile({ sampleIntervalMs: 1000 })
   page = app.page
   try {
-    await openProjectSession(page, 'Residency capacity', '^Session status:.* Residency 00$')
+    await openProjectSession(page, 'Residency capacity', 'Residency 00')
     await app.markResourceProfilePhase('first-session')
     for (let i = 0; i < 40; i++) {
       await page

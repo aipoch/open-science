@@ -2,7 +2,7 @@ import '@/assets/main.css'
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { useTranslation } from 'react-i18next'
-import { initI18n } from '@/i18n'
+import { initI18n, prepareI18nLocale } from '@/i18n'
 import { ErrorNotice } from '@/components/error-notice'
 import { ActionToast, ActionToastStack } from '@/components/ActionToast'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
@@ -15,7 +15,10 @@ import { EnvironmentSetupCard } from '@/pages/onboarding/EnvironmentSetupCard'
 import { SettingsLoadNotice } from '@/pages/settings/SettingsLayout'
 
 const query = new URLSearchParams(location.search)
-initI18n(query.get('locale') === 'zh-Hans' ? 'zh-Hans' : 'en')
+const fixtureLocale = query.get('locale') === 'zh-Hans' ? 'zh-Hans' : 'en'
+const localeReady = Promise.resolve(prepareI18nLocale(fixtureLocale)).then(() =>
+  initI18n(fixtureLocale)
+)
 document.documentElement.classList.toggle('dark', query.has('dark'))
 if (query.has('undo')) {
   window.api = { platform: 'darwin' } as typeof window.api
@@ -174,4 +177,6 @@ export function Fixture(): React.JSX.Element {
   )
 }
 
-createRoot(document.getElementById('root')!).render(<Fixture />)
+void localeReady.then(() => {
+  createRoot(document.getElementById('root')!).render(<Fixture />)
+})

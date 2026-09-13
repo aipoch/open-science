@@ -298,6 +298,10 @@ describe('PreviewFileContent', () => {
     await act(async () => {
       root.render(<PreviewFileContent item={item} {...options} />)
     })
+    // React.lazy starts imports during the first render; drain them inside act before assertions.
+    await act(async () => {
+      await vi.dynamicImportSettled()
+    })
   }
 
   it.each([

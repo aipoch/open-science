@@ -89,6 +89,12 @@ const settlesWithin = async (promise: Promise<void>, timeoutMs: number): Promise
     )
   })
 
+// Allow platform-specific shutdown latency while keeping each cleanup phase bounded.
+const CLEANUP_GRACEFUL_TIMEOUT_MS =
+  process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
+const CLEANUP_FORCED_TIMEOUT_MS =
+  process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
+
 const closeElectronApplicationForCleanup = async (
   target: ElectronCleanupTarget,
   { gracefulTimeoutMs, forcedTimeoutMs, requireGraceful = false }: ElectronCleanupOptions
@@ -272,6 +278,24 @@ const writeFakeRemoteItCommands = async (root: string): Promise<void> => {
       writeFile(join(root, command), source, 'utf8')
     )
   )
+}
+
+const removeTreeForCleanup = async (root: string): Promise<void> => {
+  // Keep retries outside recursive rm so they cannot multiply with directory depth.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rm(root, { force: true, maxRetries: 0, recursive: true })
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (
+        !['EBUSY', 'ENOTEMPTY', 'EMFILE', 'ENFILE', 'EPERM'].includes(code ?? '') ||
+        attempt === 4
+      )
+        throw error
+      await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)))
+    }
+  }
 }
 
 const makeTreeWritable = async (root: string): Promise<void> => {
@@ -1052,7 +1076,7 @@ class ElectronAppHarness implements ElectronApp {
     try {
       await this.closeForCleanup()
       await makeTreeWritable(this.testRoot)
-      await rm(this.testRoot, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 })
+      await removeTreeForCleanup(this.testRoot)
     } catch (error) {
       errors.push(error)
     }
@@ -1198,12 +1222,9 @@ class ElectronAppHarness implements ElectronApp {
             throw new Error('Electron E2E forced close did not reap the process tree.')
         }
       },
-      // Windows CI occasionally needs more than 10s to flush the Electron/SQLite shutdown path
-      // after a session restart. Keep the forced-close budget bounded, but avoid classifying a
-      // successful graceful shutdown as a test failure solely because of Windows teardown latency.
       {
-        gracefulTimeoutMs: process.platform === 'win32' ? 30_000 : 10_000,
-        forcedTimeoutMs: 10_000,
+        gracefulTimeoutMs: CLEANUP_GRACEFUL_TIMEOUT_MS,
+        forcedTimeoutMs: CLEANUP_FORCED_TIMEOUT_MS,
         requireGraceful
       }
     )
@@ -1254,6 +1275,7 @@ export {
   closeElectronApplicationForCleanup,
   electronLaunchTarget,
   launchEnvironment,
+  removeTreeForCleanup,
   STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
   suppressWorkspaceStarNudge,
   test

@@ -1,11 +1,15 @@
 import '@/assets/main.css'
 import { createRoot } from 'react-dom/client'
 import { useTranslation } from 'react-i18next'
-import { initI18n } from '@/i18n'
+import { initI18n, prepareI18nLocale } from '@/i18n'
 import { RuntimesPanel } from '@/pages/settings/RuntimesPanel'
 import type { NotebookNetworkStatus } from '../../../src/shared/notebook-network'
 
-initI18n(new URLSearchParams(location.search).get('locale') === 'zh-Hans' ? 'zh-Hans' : 'en')
+const fixtureLocale =
+  new URLSearchParams(location.search).get('locale') === 'zh-Hans' ? 'zh-Hans' : 'en'
+const localeReady = Promise.resolve(prepareI18nLocale(fixtureLocale)).then(() =>
+  initI18n(fixtureLocale)
+)
 let protection: NotebookNetworkStatus = {
   kind: 'setupRequired',
   platform: 'win32',
@@ -68,4 +72,6 @@ export function Fixture(): React.JSX.Element {
     </main>
   )
 }
-createRoot(document.getElementById('root')!).render(<Fixture />)
+void localeReady.then(() => {
+  createRoot(document.getElementById('root')!).render(<Fixture />)
+})
