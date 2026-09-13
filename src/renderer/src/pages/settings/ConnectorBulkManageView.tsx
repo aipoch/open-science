@@ -345,6 +345,18 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
       }
       filters={
         <>
+          <SettingsSearchInput
+            aria-label={t('Search manageable connectors')}
+            placeholder={t('Search connectors…')}
+            value={query}
+            disabled={busy || deleteOpen}
+            onChange={(event) => {
+              setQuery(event.target.value)
+              setShowSelectedOnly(false)
+            }}
+            containerClassName="min-w-0 flex-[2] @max-[30rem]:[&>span]:hidden!"
+            className="@max-[30rem]:[&:placeholder-shown:not(:focus)]:pr-2.5"
+          />
           <Select
             value={groupFilter}
             disabled={busy || deleteOpen}
@@ -353,7 +365,10 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
               setShowSelectedOnly(false)
             }}
           >
-            <SelectTrigger aria-label={t('Filter manageable connectors by group')} className="w-36">
+            <SelectTrigger
+              aria-label={t('Filter manageable connectors by group')}
+              className="min-w-0 flex-1 @min-[30rem]:flex-none w-36"
+            >
               <span>{t(GROUP_LABEL_KEYS[groupFilter])}</span>
             </SelectTrigger>
             <SelectContent>
@@ -373,7 +388,7 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
           >
             <SelectTrigger
               aria-label={t('Filter manageable connectors by status')}
-              className="w-32"
+              className="min-w-0 flex-1 @min-[30rem]:flex-none w-32"
             >
               <span>{t(STATUS_LABEL_KEYS[statusFilter])}</span>
             </SelectTrigger>
@@ -383,17 +398,6 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
               <SelectItem value="disabled">{t('Disabled')}</SelectItem>
             </SelectContent>
           </Select>
-          <SettingsSearchInput
-            aria-label={t('Search manageable connectors')}
-            placeholder={t('Search connectors…')}
-            value={query}
-            disabled={busy || deleteOpen}
-            onChange={(event) => {
-              setQuery(event.target.value)
-              setShowSelectedOnly(false)
-            }}
-            containerClassName="min-w-0 basis-full"
-          />
         </>
       }
       controlsLabel={t('Bulk Connector controls')}

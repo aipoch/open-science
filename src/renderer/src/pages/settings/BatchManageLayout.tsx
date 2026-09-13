@@ -99,9 +99,7 @@ export function BatchManageLayout({
         data-slot="batch-manage-scroll"
       >
         <p className="text-[13px] leading-5 text-muted-foreground">{description}</p>
-        <div className="mt-4 flex min-w-0 flex-wrap items-center gap-2 [&>[role=combobox]]:min-w-0 [&>[role=combobox]]:flex-1">
-          {filters}
-        </div>
+        <div className="@container mt-4 flex min-w-0 items-center gap-2">{filters}</div>
         <label className="mt-3 flex min-h-9 w-fit items-center gap-2 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11">
           <input
             ref={selectAll}
