@@ -3970,3 +3970,33 @@ describe('unreaped delegated execution lifecycle', () => {
     }
   )
 })
+
+it.each(['deleteSession', 'deleteProject'] as const)(
+  'retains unreaped workspace evidence after reopening composition before %s',
+  async (operation) => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-unreaped-reopen-'))
+    const harness = await createCompositionHarness(root, 'codex')
+    const receipt = await harness.composition.host.delegate(
+      harness.caller,
+      { task: 'Retain evidence', name: 'Retain evidence' },
+      { wait: false }
+    )
+    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    const control = harness.execution.controls()[0]
+    control.accept()
+    control.fail(new DelegateExecutionCleanupError('process cleanup could not be confirmed'))
+    await expect(
+      harness.composition.host.collect(harness.caller, [receipt.children[0].frameId])
+    ).resolves.toMatchObject([{ status: 'error' }])
+    const workspace = join(root, 'delegation', harness.session.projectId, harness.session.id)
+    const evidence = join(workspace, 'keep.txt')
+    await writeFile(evidence, 'process-owned evidence')
+    const reopened = harness.reopen()
+    const deletion =
+      operation === 'deleteSession'
+        ? reopened.root.deleteSession(harness.session.id)
+        : reopened.root.deleteProject(harness.session.projectId)
+    await expect.soft(deletion).rejects.toThrow()
+    await expect.soft(readFile(evidence, 'utf8')).resolves.toBe('process-owned evidence')
+  }
+)

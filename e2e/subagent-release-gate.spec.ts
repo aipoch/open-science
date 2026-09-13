@@ -1,4 +1,5 @@
-import { writeFile } from 'node:fs/promises'
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { expect } from '@playwright/test'
@@ -1156,4 +1157,92 @@ test('ships one durable, scalable, keyboard-operable persisted Subagent surface'
   await expect(page.getByRole('combobox', { name: 'Subagent Frame' })).toContainText(
     'Release Child 05'
   )
+})
+
+test('preserves a quarantined delegated workspace after restart when Project deletion is retried', async ({
+  app
+}, testInfo) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  const name = 'Protected delegated evidence'
+  const projectId = await createProject(page, name)
+  await sendPrompt(
+    page,
+    TERMINAL_PROMPT,
+    'Production delegation reached a terminal result.',
+    120_000
+  )
+  await expectDurableChildStatus(page, TERMINAL_CHILD, 'completed')
+  const persisted = await page.evaluate(async (projectId) => {
+    const session = (await window.api.sessions.loadAll()).sessions.find(
+      (candidate) => candidate.projectId === projectId
+    )!
+    const record = session.runtimeContext!.delegatedWork!.records[0]
+    return {
+      dataRoot: (await window.api.storage.getInfo()).dataRoot,
+      sessionId: session.id,
+      frameId: record.agentFrameId,
+      attemptId: record.attempts.at(-1)!.id,
+      frameworkId: session.agentFrameworkId!
+    }
+  }, projectId)
+  const receiptId = randomUUID()
+  const receiptDirectory = join(
+    persisted.dataRoot,
+    'delegation-process-ownership',
+    projectId,
+    persisted.sessionId
+  )
+  const receiptPath = join(receiptDirectory, `${receiptId}.json`)
+  const evidence = join(
+    persisted.dataRoot,
+    'delegation',
+    projectId,
+    persisted.sessionId,
+    'frames',
+    persisted.frameId,
+    'protected-evidence.txt'
+  )
+  await writeFile(evidence, 'preserve this evidence')
+  await mkdir(receiptDirectory, { recursive: true })
+  // Seed the persisted cleanup-failure boundary. This UI test does not manufacture a live orphan;
+  // production-composition regressions independently exercise receipt creation from cleanup failure.
+  await writeFile(
+    receiptPath,
+    JSON.stringify({
+      version: 1,
+      receiptId,
+      projectId,
+      sessionId: persisted.sessionId,
+      frameId: persisted.frameId,
+      attemptId: persisted.attemptId,
+      frameworkId: persisted.frameworkId,
+      phase: 'cleanup-pending',
+      createdAt: Date.now()
+    })
+  )
+  try {
+    page = await app.restartAfterCrash()
+    const projects = page.getByRole('region', { name: 'Projects' })
+    await projects.getByRole('button', { name, exact: true }).hover()
+    await projects.getByRole('button', { name: `Open actions for ${name}` }).click()
+    await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+    const dialog = page.getByRole('alertdialog', { name: 'Delete project?' })
+    for (let retry = 0; retry < 2; retry++) {
+      await dialog.getByRole('button', { name: 'Delete', exact: true }).click()
+      await expect(dialog).toContainText('Could not delete the project. Please try again.')
+      expect(await readFile(evidence, 'utf8')).toBe('preserve this evidence')
+      await expect(dialog.getByRole('button', { name: 'Delete', exact: true })).toBeEnabled()
+    }
+    await page.screenshot({
+      path: testInfo.outputPath('quarantined-project-after-restart.png'),
+      animations: 'disabled'
+    })
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(projects.getByRole('button', { name, exact: true })).toBeVisible()
+  } finally {
+    // Only this test-generated identity-less fixture is removed; it never represented a live tree.
+    await unlink(receiptPath)
+  }
 })

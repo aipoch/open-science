@@ -383,3 +383,32 @@ describe('codebuddy framework', () => {
     expect(setup.promptPrefix).toContain('report that external retrieval is unavailable')
   })
 })
+
+it('prevents physical launch when delegated ownership admission fails', () => {
+  const ordinarySpawn = vi.fn(() => ({}) as ChildProcessWithoutNullStreams)
+  const ownedSpawn = vi.fn(() => {
+    throw new Error('ownership receipt write failed')
+  })
+  const framework = createCodeBuddyFramework({
+    platform: 'win32',
+    sourceEnv: { PATH: 'C:\\bin' },
+    spawnProcess: ordinarySpawn
+  })
+  const input = {
+    executablePath: 'C:\\runtime\\codebuddy.exe',
+    args: ['--trace'],
+    env: { OWNED: 'yes' },
+    spawnProcess: ownedSpawn
+  }
+  expect(() => framework.spawn(input)).toThrow('ownership receipt write failed')
+  expect(ordinarySpawn).not.toHaveBeenCalled()
+  expect(ownedSpawn).toHaveBeenCalledWith(
+    input.executablePath,
+    ['--acp', '--trace'],
+    expect.objectContaining({
+      env: expect.objectContaining({ OWNED: 'yes' }),
+      stdio: 'pipe',
+      windowsHide: true
+    })
+  )
+})

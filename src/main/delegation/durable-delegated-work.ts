@@ -76,6 +76,7 @@ const createDurableDelegatedWork = (
   const stoppingSessions = new Set<string>()
   // Terminal history does not prove that the process owning its workspace exited.
   const cleanupFailures = new Map<string, DelegateExecutionCleanupError>()
+  const retainedBackendClaims = new Map<string, Set<DelegateExecutionBackendClaim>>()
   // A completed Stop also invalidates requests that have not committed their admission yet.
   let stopGeneration = 0
   const sessionStops = new Map<string, number>()
@@ -320,7 +321,14 @@ const createDurableDelegatedWork = (
       } catch (error) {
         retainBackendClaim = error instanceof DelegateExecutionCleanupError
         if (error instanceof DelegateExecutionCleanupError) {
-          cleanupFailures.set(sessionIdentityOf(session), error)
+          const identity = sessionIdentityOf(session)
+          cleanupFailures.set(identity, error)
+          if (executionBackendClaim) {
+            const claims =
+              retainedBackendClaims.get(identity) ?? new Set<DelegateExecutionBackendClaim>()
+            claims.add(executionBackendClaim)
+            retainedBackendClaims.set(identity, claims)
+          }
         }
         rejectHandle(
           handle ? error : new DelegateMessagePreAcceptanceError(toErrorMessage(error), error)
@@ -628,7 +636,16 @@ const createDurableDelegatedWork = (
       const failure = settled.find((result) => result.status === 'rejected')
       if (failure?.status === 'rejected') throw failure.reason
       const cleanupFailure = cleanupFailures.get(sessionIdentity)
-      if (cleanupFailure) throw cleanupFailure
+      if (cleanupFailure) {
+        if (!options.execution.recoverCleanup) throw cleanupFailure
+        await options.execution.recoverCleanup()
+        for (const claim of retainedBackendClaims.get(sessionIdentity) ?? []) {
+          await claim.release()
+          retainedBackendClaims.get(sessionIdentity)?.delete(claim)
+        }
+        retainedBackendClaims.delete(sessionIdentity)
+        cleanupFailures.delete(sessionIdentity)
+      }
       return settled.map((result) => (result as PromiseFulfilledResult<StopOutcome>).value)
     } finally {
       stoppingSessions.delete(sessionIdentity)

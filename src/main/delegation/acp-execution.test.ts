@@ -1394,9 +1394,10 @@ it('preserves provider cancellation without a local cancel request', async () =>
   harness.controls.get('audit-cancel')!.complete({ stopReason: 'cancelled' })
   await expect(run.completion).resolves.toMatchObject({ status: 'cancelled' })
 })
-it.each(['unreaped', 'throws'] as const)(
+it.each(['unreaped', 'throws', 'recoverable'] as const)(
   'does not reuse resources when shutdown %s',
   async (mode) => {
+    let cleanupProven = false
     const disposeResources = vi.fn()
     const shutdownForQuit = vi
       .fn(async () => ({ reaped: true }))
@@ -1419,7 +1420,14 @@ it.each(['unreaped', 'throws'] as const)(
         runtimeHome: '/audit/home',
         frameworkId: 'test',
         capability: { revoke },
-        disposeResources
+        disposeResources,
+        ...(mode === 'recoverable'
+          ? {
+              confirmProcessCleanup: async () => {
+                if (!cleanupProven) throw new Error('owned process tree is still unconfirmed')
+              }
+            }
+          : {})
       }),
       assertFrameworkNativeDelegationDisabled: async () => undefined,
       createRuntime: () => ({
@@ -1444,5 +1452,12 @@ it.each(['unreaped', 'throws'] as const)(
     await reservation.releaseAll()
     const next = await execution.reserve(1).catch((error: unknown) => error)
     expect(next).toBeInstanceOf(Error)
+    if (mode === 'recoverable') {
+      cleanupProven = true
+      await execution.recoverCleanup!()
+      expect(disposeResources).toHaveBeenCalledOnce()
+      expect(shutdownForQuit).toHaveBeenCalledOnce()
+      await expect(execution.reserve(1)).resolves.toHaveProperty('slotIds')
+    }
   }
 )
