@@ -16,6 +16,7 @@ on:
           - full
           - runtime-source
           - macos-x64
+          - linux-cli
 
 # Build and publication preparation run without write access. Only the separate workflow_run
 # publisher receives contents:write, and it never checks out or executes the triggering revision.
@@ -24,7 +25,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nightly-build
+  group: nightly-build${{ inputs.dry_run == 'linux-cli' && '-linux-cli' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -55,16 +56,17 @@ jobs:
     with:
       nightly: true
       # A manual `macos-x64` dispatch runs only the Intel packaging job (the heap-sensitive Vite
-      # renderer build) and skips verify. Smoke, certification, and publish stay skipped below.
-      skip_verify: ${{ inputs.dry_run == 'macos-x64' }}
-      platform_name: ${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || '' }}
+      # renderer build) and skips verify. The linux-cli dry-run builds and smoke-tests Linux only;
+      # unrelated certification and publication preparation stay skipped.
+      skip_verify: ${{ inputs.dry_run == 'macos-x64' || inputs.dry_run == 'linux-cli' }}
+      platform_name: ${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}
 
   # Scheduled coverage remains advisory during burn-in and is deliberately absent from prepare.needs.
   # A manual `runtime-source` dispatch runs this exact reusable job as a blocking focused dry-run while
   # build/package/publish preparation stay skipped.
   runtime-certification:
     needs: plan
-    if: needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'macos-x64'
+    if: needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'macos-x64' && inputs.dry_run != 'linux-cli'
     uses: ./.github/workflows/runtime-certification.yml
     with:
       allow_failure: ${{ github.event_name != 'workflow_dispatch' }}
@@ -73,11 +75,14 @@ jobs:
     needs: build
     if: inputs.dry_run != 'macos-x64'
     uses: ./.github/workflows/package-smoke.yml
+    with:
+      platform_name: ${{ inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}
 
   # Run advisory desktop behavior checks inside the same read-only Nightly run. Failures remain
   # visible and independently rerunnable, but do not gate preparation or publication.
   regression:
     needs: [build, package-smoke]
+    if: inputs.dry_run != 'linux-cli'
     uses: ./.github/workflows/desktop-regression.yml
     with:
       allow_failure: true
@@ -88,7 +93,7 @@ jobs:
   prepare:
     name: Prepare nightly publish artifact
     needs: [plan, build, package-smoke]
-    if: needs.build.result == 'success' && needs.package-smoke.result == 'success'
+    if: needs.build.result == 'success' && needs.package-smoke.result == 'success' && inputs.dry_run != 'linux-cli'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

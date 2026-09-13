@@ -211,7 +211,7 @@ describe('release and scheduled workflow topology', () => {
     expect(nightly.on).toHaveProperty('workflow_dispatch')
     expect(nightly.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(nightly.concurrency).toEqual({
-      group: 'nightly-build',
+      group: "nightly-build${{ inputs.dry_run == 'linux-cli' && '-linux-cli' || '' }}",
       'cancel-in-progress': true
     })
     expect(nightly.jobs.build).toMatchObject({
@@ -220,8 +220,9 @@ describe('release and scheduled workflow topology', () => {
       uses: './.github/workflows/build.yml',
       with: {
         nightly: true,
-        skip_verify: "${{ inputs.dry_run == 'macos-x64' }}",
-        platform_name: "${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || '' }}"
+        skip_verify: "${{ inputs.dry_run == 'macos-x64' || inputs.dry_run == 'linux-cli' }}",
+        platform_name:
+          "${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}"
       }
     })
     expect(step(nightly.jobs.plan, 'Compare main with the rolling nightly tag').run).toContain(
@@ -233,13 +234,17 @@ describe('release and scheduled workflow topology', () => {
     }
     expect(dispatch.inputs?.dry_run).toMatchObject({
       default: 'full',
-      options: ['full', 'runtime-source', 'macos-x64']
+      options: ['full', 'runtime-source', 'macos-x64', 'linux-cli']
     })
     expect(nightly.jobs['package-smoke'].if).toBe("inputs.dry_run != 'macos-x64'")
+    expect(nightly.jobs['package-smoke'].with).toEqual({
+      platform_name: "${{ inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}"
+    })
+    expect(nightly.jobs.regression.if).toBe("inputs.dry_run != 'linux-cli'")
     expect(nightly.jobs['runtime-certification'].if).toContain("inputs.dry_run != 'macos-x64'")
     expect(prepare).toMatchObject({
       needs: ['plan', 'build', 'package-smoke'],
-      if: "needs.build.result == 'success' && needs.package-smoke.result == 'success'",
+      if: "needs.build.result == 'success' && needs.package-smoke.result == 'success' && inputs.dry_run != 'linux-cli'",
       'runs-on': 'ubuntu-latest'
     })
     expect(step(prepare, 'Aggregate release certification evidence').run).toContain(

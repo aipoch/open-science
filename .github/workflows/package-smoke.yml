@@ -113,11 +113,14 @@ jobs:
         timeout-minutes: 10
         shell: bash
         run: |
-          sudo apt-get install --yes ./dist/*.deb
+          npx vitest run scripts/deb-cli-launcher.test.ts
           trap 'sudo apt-get remove --yes open-science || true' EXIT
+          sudo "$(command -v node)" scripts/deb-package-lifecycle-smoke.mjs ./dist/*.deb
+          sudo apt-get install --yes ./dist/*.deb
           xvfb-run -a node scripts/linux-package-smoke.mjs \
             --artifact-dir dist \
-            --installed-executable /usr/bin/open-science
+            --installed-executable "/opt/Open Science/open-science" \
+            --installed-cli /usr/bin/open-science
 
       - name: Record platform certification evidence
         if: ${{ !inputs.install_only }}

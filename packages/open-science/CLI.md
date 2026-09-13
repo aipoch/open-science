@@ -5,7 +5,26 @@ requiring browser interaction.
 
 ## Installation
 
-### From the installed application
+### From a Debian package (including WSL)
+
+Installing the `.deb` package registers `/usr/bin/open-science` automatically. No separate
+Node.js, desktop Settings interaction, or `cli install` command is needed:
+
+```bash
+sudo apt install ./open-science.deb  # Use the downloaded package's actual filename.
+open-science init
+open-science start --no-open
+open-science url
+```
+
+The desktop shortcut continues to launch the application directly. Debian maintains the CLI entry
+through upgrades and removal. Upgrades migrate only the old package-owned system alternative;
+existing user launchers and unrelated manually selected alternatives are preserved. The installer
+reports a conflict instead of overwriting an unmanaged `/usr/bin/open-science` file or symlink.
+The Settings and `cli install`/`cli uninstall` controls manage the optional user launcher, not the
+Debian-owned system entry; remove the Debian package to remove that entry.
+
+### From other application packages
 
 Open **Settings > General > Command line tool** in Open Science and choose **Install command**. This
 adds an `open-science` launcher to your PATH (`~/.local/bin` on macOS and Linux, or a per-user
@@ -173,7 +192,8 @@ profile. Doctor reports readiness, not a live third-party authorization or resea
 include the submitted secret or raw upstream error. Bootstrap/launcher writes require an
 authenticated local connection and are not exposed as research-agent tools.
 
-Install the PATH launcher with `open-science cli install --json`. Before a launcher exists, invoke
+For packages without an automatically registered command, install the optional user PATH launcher
+with `cli install --json`. Before a launcher exists, invoke
 the bundled CLI by absolute path using the application's Electron executable in Node mode (for
 example on macOS):
 
