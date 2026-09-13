@@ -279,6 +279,19 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       }
     }
   },
+  mudata: {
+    kind: 'module',
+    methods: {
+      MuData: { effect: 'read', returnType: 'mudata.MuData' }
+    }
+  },
+  'mudata.MuData': {
+    kind: 'type',
+    methods: {
+      write: { effect: 'read', file: { kind: 'write', position: 0, keywords: ['filename'] } },
+      write_h5mu: { effect: 'read', file: { kind: 'write', position: 0, keywords: ['filename'] } }
+    }
+  },
   'muon.MuData': {
     kind: 'type',
     methods: {

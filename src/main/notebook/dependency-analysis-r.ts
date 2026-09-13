@@ -7221,7 +7221,10 @@ const rLocalFileWrappers = (
         'Spectra',
         'read.FCS',
         'read.flowSet',
-        'write.FCS'
+        'write.FCS',
+        'createArrowFiles',
+        'ArchRProject',
+        'saveArchRProject'
       ].includes(name ?? '') ||
       parameterIndex < 0 ||
       (effect.kind === 'write' &&
@@ -7354,6 +7357,9 @@ const analyzeRFileAccessTree = (
       const called = rCalledName(node) ?? ''
       const effect = R_FILE_CALL_EFFECTS.get(called)
       if (effect) effects.add(effect.kind)
+      // A single-path wrapper summary cannot preserve mixed I/O or directory scope.
+      if (called === 'createArrowFiles') effects.add('write')
+      if (called === 'ArchRProject' || called === 'saveArchRProject') effects.add('read')
       const helper = localDefinitions.get(called)
       if (helper && !visited.has(called)) {
         visited.add(called)
@@ -7804,7 +7810,14 @@ const analyzeRFileAccessTree = (
     ) {
       call = undefined
     }
-    if (call && (name === 'ArchRProject' || name === 'saveArchRProject')) {
+    const archRCall = Boolean(
+      call &&
+      name &&
+      ['ArchRProject', 'saveArchRProject', 'createArrowFiles'].includes(name) &&
+      call === R_FILE_CALL_EFFECTS.get(name) &&
+      (qualified?.package === 'ArchR' || (!qualified && !shadowedQuotationNames.has(name)))
+    )
+    if (archRCall && (name === 'ArchRProject' || name === 'saveArchRProject')) {
       fileArgumentOverride = {
         value: connectionArgument(
           expr,
@@ -8003,7 +8016,7 @@ const analyzeRFileAccessTree = (
       const commandIndex = libraryFread
         ? expr.names.findIndex((candidate) => candidate === 'cmd')
         : -1
-      if (name === 'createArrowFiles') {
+      if (archRCall && name === 'createArrowFiles') {
         // Arrow generation and QC/log companions remain incomplete even when
         // fragment inputs resolve to a bounded collection below.
         unresolvedWrites = true
@@ -8151,10 +8164,12 @@ const analyzeRFileAccessTree = (
       if (call.kind === 'read' && (name === 'Read10X' || name === 'Load10X_Spatial') && path) {
         unresolvedReads = true
       }
-      // ArchRProject consumes ArrowFiles and writes a project directory. Object
-      // inputs retain dependency lineage; file completeness remains uncertain.
-      if (name === 'ArchRProject') {
+      // Project creation and saving can read ArrowFiles referenced by the object.
+      // Their input file coverage remains incomplete without runtime evidence.
+      if (archRCall && (name === 'ArchRProject' || name === 'saveArchRProject')) {
         unresolvedReads = true
+      }
+      if (archRCall && name === 'ArchRProject') {
         const arrowArgument = connectionArgument(
           expr,
           ['ArrowFiles', 'outputDirectory'],
@@ -8223,7 +8238,7 @@ const analyzeRFileAccessTree = (
           else unresolvedWrites = true
         } else if (call.kind === 'write') {
           const target =
-            name === 'ArchRProject' || name === 'saveArchRProject'
+            archRCall && (name === 'ArchRProject' || name === 'saveArchRProject')
               ? 'directory'
               : rScientificWriteTarget(qualified, path)
           if (target === 'unsupported') {

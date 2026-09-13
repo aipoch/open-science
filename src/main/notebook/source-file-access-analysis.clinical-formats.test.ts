@@ -2,8 +2,107 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { analyzeRNotebookSource } from './dependency-analysis-r'
 
 describe('clinical statistical file readers', () => {
+  it.each([
+    'ArchR::saveArchRProject(project, "outputs/project")',
+    'saveArchRProject(ArchRProj=project, outputDirectory="outputs/project")'
+  ])('preserves project input uncertainty when saving: %s', async (source) => {
+    const { fileAccess } = await analyzeRNotebookSource(source)
+    expect(fileAccess?.unresolvedReads).toBe(true)
+    const result = await analyzeNotebookSourceFileAccess('r', source, {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      resolvedKernelNames: ['project']
+    })
+    expect(result).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writes: ['outputs/project'],
+      writeScopes: [{ kind: 'directory', path: 'outputs/project' }]
+    })
+  })
+
+  it.each([
+    'ArchR::createArrowFiles(inputFiles=path, outputNames="outputs/arrows", QCDir="outputs/qc")',
+    'ArchR::ArchRProject(ArrowFiles=path, outputDirectory="outputs/project")'
+  ])('does not summarize mixed file effects as a single path: %s', async (call) => {
+    const { fileAccess } = await analyzeRNotebookSource(
+      `build <- function(path) ${call}\nbuild("inputs/fragments.tsv.gz")`
+    )
+    expect(fileAccess).toMatchObject({
+      unresolvedReads: true,
+      unresolvedWrites: true,
+      localFileWrappersComplete: false,
+      context: { localFileWrappers: [] }
+    })
+  })
+
+  it('preserves directory-output uncertainty through a project-saving wrapper', async () => {
+    const { fileAccess } = await analyzeRNotebookSource(
+      'save_project <- function(path) ArchR::saveArchRProject(project, path)\nsave_project("outputs/project")'
+    )
+    expect(fileAccess).toMatchObject({
+      unresolvedReads: true,
+      unresolvedWrites: true,
+      localFileWrappersComplete: false,
+      context: { localFileWrappers: [] }
+    })
+  })
+
+  it.each(['ArchRProject', 'saveArchRProject', 'createArrowFiles'])(
+    'preserves local and contextual file wrappers named %s',
+    async (name) => {
+      const call = `${name}("outputs/value.rds", "outputs/not-a-directory")`
+      const local = await analyzeNotebookSourceFileAccess(
+        'r',
+        `${name} <- function(path, unused) saveRDS(1, path)\n${call}`
+      )
+      const contextual = await analyzeNotebookSourceFileAccess('r', call, {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [
+          { name, kind: 'write', position: 0, keywords: ['path'], dependencyNames: ['saveRDS'] }
+        ]
+      })
+      for (const result of [local, contextual]) {
+        expect(result.writes).toEqual(['outputs/value.rds'])
+        expect(result.writeScopes ?? []).toEqual([])
+      }
+    }
+  )
+
+  it.each(['write', 'write_h5mu'])(
+    'captures direct multimodal constructor %s outputs',
+    async (method) => {
+      for (const constructor of [
+        'from mudata import MuData\nvalue = MuData({})',
+        'import mudata as md\nvalue = md.MuData({})'
+      ]) {
+        expect(
+          await analyzeNotebookSourceFileAccess(
+            'python',
+            `${constructor}\nvalue.${method}(filename="outputs/modalities.h5mu")`
+          )
+        ).toMatchObject({ writes: ['outputs/modalities.h5mu'] })
+      }
+    }
+  )
+
+  it.each([
+    'from mudata import MuData\nMuData = custom\nvalue = MuData({})',
+    'import mudata as md\nmd.MuData = custom\nvalue = md.MuData({})'
+  ])('does not trust replaced multimodal constructors: %s', async (source) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        `${source}\nvalue.write("outputs/modalities.h5mu")`
+      )
+    ).toMatchObject({ writes: [] })
+  })
+
   it.each([
     ['"inputs/partitions"', 'inputs/partitions'],
     ['source="inputs/cohort.parquet"', 'inputs/cohort.parquet'],
