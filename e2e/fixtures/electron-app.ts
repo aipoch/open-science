@@ -90,7 +90,8 @@ const settlesWithin = async (promise: Promise<void>, timeoutMs: number): Promise
   })
 
 const CLEANUP_GRACEFUL_TIMEOUT_MS = process.platform === 'linux' ? 10_000 : 20_000
-const CLEANUP_FORCED_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
+const CLEANUP_FORCED_TIMEOUT_MS =
+  process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
 
 const closeElectronApplicationForCleanup = async (
   target: ElectronCleanupTarget,
@@ -1221,8 +1222,6 @@ class ElectronAppHarness implements ElectronApp {
       {
         gracefulTimeoutMs: CLEANUP_GRACEFUL_TIMEOUT_MS,
         forcedTimeoutMs: CLEANUP_FORCED_TIMEOUT_MS,
-        requireGraceful
-      }
         requireGraceful
       }
     )
