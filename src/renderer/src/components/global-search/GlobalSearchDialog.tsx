@@ -35,7 +35,6 @@ import { SearchDetails } from './SearchDetails'
 import { SearchResultFilters } from './SearchResultFilters'
 import { ErrorNotice } from '@/components/error-notice'
 import { useSearchSummaryCounts } from './use-search-summary-counts'
-import { useRecentSearches } from './use-recent-searches'
 import { SearchHighlight } from './SearchHighlight'
 import {
   emptySearchPage,
@@ -108,7 +107,6 @@ export const GlobalSearchDialog = ({
     updateStickyHeadings(listRef.current)
   })
   const [query, setQuery] = useState('')
-  const { recentSearches, rememberSearch } = useRecentSearches()
   const [category, setCategory] = useState<SearchCategory | 'all'>('all')
   const [currentProjectOnly, setCurrentProjectOnly] = useState(false)
   const [sort, setSort] = useState<SearchSort>('relevance')
@@ -298,7 +296,6 @@ export const GlobalSearchDialog = ({
     onOpenChange(false)
   }
   const openResult = (result: SearchResult): void => {
-    rememberSearch(query)
     const nav = useNavigationStore.getState()
     if (result.kind === 'uploads' || result.kind === 'generated') {
       const show = (): void => {
@@ -755,23 +752,6 @@ export const GlobalSearchDialog = ({
                 onScroll={scrollMore}
                 onWheel={scrollMore}
               >
-                {!query.trim() && recentSearches.length > 0 && (
-                  <div className="search-recent-queries" aria-label={t('Recent searches')}>
-                    {recentSearches.map((value) => (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() => {
-                          setQuery(value)
-                          resetSelection()
-                          inputRef.current?.focus()
-                        }}
-                      >
-                        {value}
-                      </button>
-                    ))}
-                  </div>
-                )}
                 <div id={listboxId} role="listbox" aria-label={t('Search results')}>
                   {shownCategories.map((key) => {
                     const group = groups[key]

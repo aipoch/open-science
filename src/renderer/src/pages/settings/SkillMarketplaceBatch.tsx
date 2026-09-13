@@ -439,9 +439,24 @@ export function SkillMarketplaceBatchControls({
                         ? t('Batch stopped')
                         : t('Batch complete')}
                   </h4>
-                  <span role="status" className="text-xs tabular-nums">
-                    {finished}/{batch.items.length}
-                  </span>
+                  <div className="ml-auto flex items-center gap-3">
+                    <span role="status" className="text-xs tabular-nums">
+                      {finished}/{batch.items.length}
+                    </span>
+                    {!active ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0"
+                        onClick={() => {
+                          setDismissedBatchId(batch.id)
+                          selectAll.current?.focus({ preventScroll: true })
+                        }}
+                      >
+                        {t('Done')}
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
                 <progress
                   className="h-1.5 w-full accent-primary"
@@ -461,53 +476,44 @@ export function SkillMarketplaceBatchControls({
                     )}
                   </p>
                 ) : null}
-                <div className="flex flex-wrap items-center gap-2">
-                  {active ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="ml-auto"
-                      disabled={pending || batch.status === 'stopping'}
-                      onClick={() => void stop()}
-                    >
-                      {batch.status === 'stopping' ? t('Stopping…') : t('Stop after current item')}
-                    </Button>
-                  ) : null}
-                  {!active && batch.items.some(({ status }) => status === 'failed') ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={disabled || !ready || pending}
-                      onClick={() =>
-                        confirm({
-                          snapshotId: batch.snapshotId,
-                          items: batch.items
-                            .filter(({ status }) => status === 'failed')
-                            .map(({ id, version, expectedVersion }) => ({
-                              id,
-                              version,
-                              expectedVersion
-                            }))
-                        })
-                      }
-                    >
-                      {t('Retry failed items')}
-                    </Button>
-                  ) : null}
-                  {!active ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="ml-auto"
-                      onClick={() => {
-                        setDismissedBatchId(batch.id)
-                        selectAll.current?.focus({ preventScroll: true })
-                      }}
-                    >
-                      {t('Done')}
-                    </Button>
-                  ) : null}
-                </div>
+                {active || failed ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {active ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="ml-auto"
+                        disabled={pending || batch.status === 'stopping'}
+                        onClick={() => void stop()}
+                      >
+                        {batch.status === 'stopping'
+                          ? t('Stopping…')
+                          : t('Stop after current item')}
+                      </Button>
+                    ) : null}
+                    {!active && batch.items.some(({ status }) => status === 'failed') ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={disabled || !ready || pending}
+                        onClick={() =>
+                          confirm({
+                            snapshotId: batch.snapshotId,
+                            items: batch.items
+                              .filter(({ status }) => status === 'failed')
+                              .map(({ id, version, expectedVersion }) => ({
+                                id,
+                                version,
+                                expectedVersion
+                              }))
+                          })
+                        }
+                      >
+                        {t('Retry failed items')}
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
                 {batch.refreshFailed ? (
                   <ErrorNotice
                     tone="amber"

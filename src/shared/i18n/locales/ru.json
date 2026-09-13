@@ -178,7 +178,6 @@
     "Author: {{name}}": "Автор: {{name}}",
     "The source message is no longer available.": "Исходное сообщение больше недоступно.",
     "This Notebook exceeds the 10 MB preview limit.": "Этот Notebook превышает ограничение предпросмотра в 10 МБ.",
-    "Recent searches": "Недавние поиски",
     "Cancellation request failed": "Не удалось запросить отмену",
     "Skills are loading. Paste again shortly.": "Навыки загружаются. Повторите вставку через некоторое время.",
     "Could not load Skills. Try pasting again.": "Не удалось загрузить Навыки. Повторите вставку.",

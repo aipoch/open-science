@@ -609,21 +609,6 @@
   font-size: 9px;
   color: var(--text-300);
 }
-.search-recent-queries {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  padding: 8px 17px 14px;
-}
-.search-recent-queries button {
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  color: var(--text-300);
-  font-size: 10px;
-}
 .search-file-preview [data-pdf-preview-root] {
   background: transparent;
 }

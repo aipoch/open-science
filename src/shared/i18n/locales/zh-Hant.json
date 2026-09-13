@@ -175,7 +175,6 @@
     "Author: {{name}}": "作者：{{name}}",
     "The source message is no longer available.": "來源訊息已無法使用。",
     "This Notebook exceeds the 10 MB preview limit.": "此 Notebook 超過 10 MB 預覽限制。",
-    "Recent searches": "最近搜尋",
     "Cancellation request failed": "取消請求失敗",
     "Skills are loading. Paste again shortly.": "正在載入技能，請稍後再次貼上。",
     "Could not load Skills. Try pasting again.": "無法載入技能，請嘗試再次貼上。",

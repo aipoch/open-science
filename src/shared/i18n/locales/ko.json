@@ -175,7 +175,6 @@
     "Author: {{name}}": "저자: {{name}}",
     "The source message is no longer available.": "원본 메시지를 더 이상 사용할 수 없습니다.",
     "This Notebook exceeds the 10 MB preview limit.": "이 Notebook은 10 MB 미리보기 제한을 초과합니다.",
-    "Recent searches": "최근 검색",
     "Cancellation request failed": "취소 요청에 실패했습니다",
     "Skills are loading. Paste again shortly.": "스킬을 불러오는 중입니다. 잠시 후 다시 붙여넣으세요.",
     "Could not load Skills. Try pasting again.": "스킬을 불러오지 못했습니다. 다시 붙여넣으세요.",

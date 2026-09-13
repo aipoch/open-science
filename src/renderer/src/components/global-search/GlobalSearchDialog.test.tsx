@@ -67,6 +67,22 @@ vi.mock('@/pages/workspace/FilePreviewDialog', () => ({
 beforeEach(setupSearch)
 afterEach(teardownSearch)
 
+it('ignores saved search history and no longer records queries when opening a result', async () => {
+  const history = JSON.stringify(['previous search'])
+  localStorage.setItem('open-science-recent-searches', history)
+  const read = vi.spyOn(Storage.prototype, 'getItem')
+  const write = vi.spyOn(Storage.prototype, 'setItem')
+  await renderSearch()
+  expect(document.querySelector('.search-recent-queries')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'previous search' })).toBeNull()
+  expect(read).not.toHaveBeenCalledWith('open-science-recent-searches')
+  await search('Alpha')
+  await waitFor(() => expect(rows('projects').length).toBeGreaterThan(0))
+  act(() => fireEvent.doubleClick(rows('projects')[0]))
+  expect(write.mock.calls.some(([key]) => key === 'open-science-recent-searches')).toBe(false)
+  expect(localStorage.getItem('open-science-recent-searches')).toBe(history)
+})
+
 it('toggles filters, retains effective values while collapsed, and collapses on reopen', async () => {
   await renderSearch()
   const toggle = screen.getByRole('button', { name: 'Filters' })

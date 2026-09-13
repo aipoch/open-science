@@ -264,7 +264,9 @@ describe('Marketplace batch progress projection', () => {
     const done = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === 'Done'
     )
-    expect(done?.classList.contains('ml-auto')).toBe(true)
+    expect(done?.parentElement?.parentElement?.querySelector('h4')?.textContent).toBe(
+      'Batch complete'
+    )
     await click('Done')
     expect(container.querySelector('[data-slot="skill-marketplace-batch-dock"]')).toBeNull()
     await act(async () => vi.advanceTimersByTimeAsync(10000))

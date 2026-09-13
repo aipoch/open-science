@@ -36,3 +36,14 @@ test('keeps the filter toggle fixed while categories scroll and supports keyboar
   await toggle.click()
   await expect(scope).toContainText('Current project')
 })
+
+test('starts with result groups even when old search history exists', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('open-science-recent-searches', JSON.stringify(['session']))
+  })
+  await page.goto('/global-search-filters.html')
+  await expect(page.getByRole('listbox', { name: 'Search results' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'session', exact: true })).toHaveCount(0)
+  await expect(page.locator('.search-recent-queries')).toHaveCount(0)
+  await expect(page.locator('[data-search-group="projects"]')).toBeVisible()
+})

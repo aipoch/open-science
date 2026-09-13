@@ -177,7 +177,6 @@
     "Author: {{name}}": "Autor: {{name}}",
     "The source message is no longer available.": "El mensaje de origen ya no está disponible.",
     "This Notebook exceeds the 10 MB preview limit.": "Este Notebook supera el límite de vista previa de 10 MB.",
-    "Recent searches": "Búsquedas recientes",
     "Cancellation request failed": "Error al solicitar la cancelación",
     "Skills are loading. Paste again shortly.": "Se están cargando las Habilidades. Vuelva a pegar el contenido en breve.",
     "Could not load Skills. Try pasting again.": "No se pudieron cargar las Habilidades. Intente pegar el contenido de nuevo.",

@@ -175,7 +175,6 @@
     "Author: {{name}}": "作者：{{name}}",
     "The source message is no longer available.": "元のメッセージは利用できなくなりました。",
     "This Notebook exceeds the 10 MB preview limit.": "この Notebook はプレビューの上限 10 MB を超えています。",
-    "Recent searches": "最近の検索",
     "Cancellation request failed": "キャンセル要求に失敗しました",
     "Skills are loading. Paste again shortly.": "スキルを読み込んでいます。少し待ってから再度貼り付けてください。",
     "Could not load Skills. Try pasting again.": "スキルを読み込めませんでした。もう一度貼り付けてください。",

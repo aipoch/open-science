@@ -119,47 +119,47 @@ export function BatchManageLayout({
       {selectedCount > 0 || busy || review || feedback ? (
         <BatchActionDock ref={dock} data-slot="batch-manage-dock">
           <div className="space-y-3">
-            {feedback}
-            {review || (
-              <div className="space-y-3">
-                {selectedCount > 0 ? (
-                  <BatchSelectionActions
-                    selectedCount={selectedCount}
+            {feedback ? (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0 flex-1 basis-64 space-y-3">{feedback}</div>
+                {onDone && !review ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="ml-auto shrink-0"
                     disabled={busy}
-                    onClear={clear}
+                    data-batch-done
+                    onClick={() => {
+                      restoreSelectionFocus.current = true
+                      onDone()
+                    }}
                   >
-                    <Button
-                      type="button"
-                      variant={selectedOnly ? 'secondary' : 'ghost'}
-                      size="sm"
-                      aria-pressed={selectedOnly}
-                      onClick={onToggleSelectedOnly}
-                      disabled={busy}
-                    >
-                      {t('Show selected')}
-                    </Button>
-                    <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div>
-                  </BatchSelectionActions>
-                ) : null}
-                {onDone ? (
-                  <div className="flex justify-end">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={busy}
-                      data-batch-done
-                      onClick={() => {
-                        restoreSelectionFocus.current = true
-                        onDone()
-                      }}
-                    >
-                      {t('Done')}
-                    </Button>
-                  </div>
+                    {t('Done')}
+                  </Button>
                 ) : null}
               </div>
-            )}
+            ) : null}
+            {review ||
+              (selectedCount > 0 ? (
+                <BatchSelectionActions
+                  selectedCount={selectedCount}
+                  disabled={busy}
+                  onClear={clear}
+                >
+                  <Button
+                    type="button"
+                    variant={selectedOnly ? 'secondary' : 'ghost'}
+                    size="sm"
+                    aria-pressed={selectedOnly}
+                    onClick={onToggleSelectedOnly}
+                    disabled={busy}
+                  >
+                    {t('Show selected')}
+                  </Button>
+                  <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div>
+                </BatchSelectionActions>
+              ) : null)}
           </div>
         </BatchActionDock>
       ) : null}
