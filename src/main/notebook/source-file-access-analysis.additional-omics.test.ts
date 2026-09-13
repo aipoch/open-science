@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
@@ -16,7 +17,7 @@ peaks.merge(counts, on="peak_id").to_csv("results/differential-peaks.csv", index
 Path("results/qc-report.html").write_text("<html>qc</html>")`
   expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
     reads: ['inputs/atac-samples.csv', 'inputs/consensus-peaks.bed', 'work/peak-counts.tsv'],
-    writes: ['results/differential-peaks.csv', 'results/qc-report.html'],
+    writes: ['results/differential-peaks.csv', join('results', 'qc-report.html')],
     readState: 'partial',
     writeState: 'partial',
     externalState: 'partial'
@@ -36,7 +37,7 @@ pd.concat(tables).to_parquet("results/taxon-abundance.parquet")
 Path("results/metagenome-report.html").write_text("<html>report</html>")`
   expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
     reads: ['inputs/metagenome-manifest.csv'],
-    writes: ['results/metagenome-report.html', 'results/taxon-abundance.parquet'],
+    writes: [join('results', 'metagenome-report.html'), 'results/taxon-abundance.parquet'].sort(),
     readState: 'partial',
     writeState: 'complete',
     externalState: 'partial'
@@ -97,7 +98,7 @@ burden = pd.DataFrame(rows).groupby(["sample", "gene"]).size().reset_index(name=
 burden.to_parquet("results/gene-burden.parquet")
 Path("results/variant-qc.json").write_text("{}")`
   const access = await analyzeNotebookSourceFileAccess('python', source)
-  expect(access.writes).toEqual(['results/gene-burden.parquet', 'results/variant-qc.json'])
+  expect(access.writes).toEqual(['results/gene-burden.parquet', join('results', 'variant-qc.json')])
   expect(access.reads).toContain('inputs/variant-manifest.csv')
   expect(access.externalState).toBe('partial')
 })
@@ -176,7 +177,7 @@ CoxPHFitter().fit(frame, duration_col="time", event_col="event").print_summary()
 Path("results/radiomics-report.html").write_text("<html>report</html>")`
   expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
     reads: ['inputs/outcomes.csv', 'inputs/radiomics-manifest.csv', 'inputs/radiomics.yaml'],
-    writes: ['results/radiomics-features.parquet', 'results/radiomics-report.html'],
+    writes: ['results/radiomics-features.parquet', join('results', 'radiomics-report.html')],
     readState: 'partial',
     writeState: 'complete',
     externalState: 'partial'

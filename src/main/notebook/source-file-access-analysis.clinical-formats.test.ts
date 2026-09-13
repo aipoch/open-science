@@ -915,7 +915,7 @@ Path("outputs").joinpath("qc-complete.flag").write_text("ok")`
     writes: [
       'outputs/annotated-metabolites.csv',
       'outputs/batch-corrected-metabolomics.parquet',
-      'outputs/qc-complete.flag'
+      join('outputs', 'qc-complete.flag')
     ],
     readState: 'complete',
     writeState: 'complete'
@@ -978,9 +978,9 @@ pred = cross_val_predict(LogisticRegression(max_iter=2000), X, y, cv=StratifiedK
 pd.DataFrame({"patient": cohort["bcr_patient_barcode"], "death_probability": pred}).to_csv("outputs/validation-predictions.csv", index=False)`
   expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
     reads: [
-      'inputs/TCGA-CDR-SupplementalTable.xlsx',
-      'inputs/brca-expression.csv',
-      'inputs/risk-signature.csv'
+      join('inputs', 'TCGA-CDR-SupplementalTable.xlsx'),
+      join('inputs', 'brca-expression.csv'),
+      join('inputs', 'risk-signature.csv')
     ],
     writes: [
       'outputs/brca-risk-cohort.parquet',
@@ -1165,16 +1165,16 @@ external[["patient_id", "prediction"]].to_csv("outputs/external-validation.csv",
 Path("outputs/metrics.json").write_text(str({"oof_auc": roc_auc_score(train[target], oof)}))`
   expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
     reads: [
-      'inputs/development-cohort.parquet',
-      'inputs/external-validation.parquet',
-      'inputs/feature-schema.json'
+      join('inputs', 'development-cohort.parquet'),
+      join('inputs', 'external-validation.parquet'),
+      join('inputs', 'feature-schema.json')
     ],
     writes: [
       'outputs/clinical-risk-model.joblib',
       'outputs/external-validation.csv',
-      'outputs/metrics.json',
+      join('outputs', 'metrics.json'),
       'outputs/oof-predictions.csv'
-    ],
+    ].sort(),
     readState: 'partial',
     writeState: 'partial'
   })
@@ -1203,9 +1203,9 @@ model.summary.to_csv("outputs/time-varying-cox.csv")
 long.to_csv("outputs/longitudinal-feature-table.csv", index=False)`
   expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
     reads: [
-      'inputs/laboratory-results.csv',
-      'inputs/medication-exposure.parquet',
-      'inputs/patient-visits.csv'
+      join('inputs', 'laboratory-results.csv'),
+      join('inputs', 'medication-exposure.parquet'),
+      join('inputs', 'patient-visits.csv')
     ],
     writes: ['outputs/longitudinal-feature-table.csv', 'outputs/time-varying-cox.csv'],
     readState: 'partial',
@@ -1266,8 +1266,16 @@ embedding = model(torch.as_tensor(test.X)).detach().numpy()
 pd.DataFrame(embedding).to_csv(results / "test-embedding.csv", index=False)
 pd.DataFrame({"metric": [float(embedding.mean())]}).to_csv(results / "evaluation.csv", index=False)`
   expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
-    reads: ['data/layer-labels.csv', 'data/slice-test.h5ad', 'data/slice-train.h5ad'],
-    writes: ['results/evaluation.csv', 'results/spatial-model.pt', 'results/test-embedding.csv'],
+    reads: [
+      join('data', 'layer-labels.csv'),
+      join('data', 'slice-test.h5ad'),
+      join('data', 'slice-train.h5ad')
+    ],
+    writes: [
+      join('results', 'evaluation.csv'),
+      join('results', 'spatial-model.pt'),
+      join('results', 'test-embedding.csv')
+    ],
     readState: 'partial',
     writeState: 'partial'
   })
@@ -1329,11 +1337,11 @@ combined.to_parquet(out / "registered-embeddings.parquet")
 combined.to_csv(out / "figure-data.csv", index=False)
 (out / "run-manifest.json").write_text(json.dumps({"parameters": cfg, "samples": len(embeddings)}))`
   expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
-    reads: ['inputs/params.json', 'inputs/samples.csv'],
+    reads: [join('inputs', 'params.json'), join('inputs', 'samples.csv')],
     writes: [
-      'results/figure-data.csv',
-      'results/registered-embeddings.parquet',
-      'results/run-manifest.json'
+      join('results', 'figure-data.csv'),
+      join('results', 'registered-embeddings.parquet'),
+      join('results', 'run-manifest.json')
     ],
     readState: 'partial',
     writeState: 'partial',
@@ -1362,11 +1370,11 @@ qc.to_csv(out / "proteomics-qc.csv", index=False)
 qc.to_parquet(out / "proteomics-qc.parquet")
 qc.describe(include="all").to_json(out / "proteomics-qc-summary.json")`
   expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
-    reads: ['inputs/sample-metadata.csv'],
+    reads: [join('inputs', 'sample-metadata.csv')],
     writes: [
-      'outputs/proteomics-qc-summary.json',
-      'outputs/proteomics-qc.csv',
-      'outputs/proteomics-qc.parquet'
+      join('outputs', 'proteomics-qc-summary.json'),
+      join('outputs', 'proteomics-qc.csv'),
+      join('outputs', 'proteomics-qc.parquet')
     ],
     readState: 'partial',
     writeState: 'partial',

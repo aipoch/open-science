@@ -58,6 +58,8 @@ it.each(['base-256', 'pax'])(
   async (encoding) => {
     const directory = await mkdtemp(join(tmpdir(), 'science-package-large-header-'))
     directories.push(directory)
+    // Exercise header decoding and truncation independently of the runner's free disk space.
+    vi.spyOn(storageUsage, 'availableBytes').mockResolvedValue(64 * 1024 ** 3)
     const entry = { path: `objects/${'a'.repeat(64)}`, type: 'File' as const, size: 32 * 1024 ** 3 }
     const header = Buffer.alloc(512)
     new Header({ ...entry, size: encoding === 'pax' ? 0 : entry.size }).encode(header)

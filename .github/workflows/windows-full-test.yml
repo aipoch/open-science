@@ -150,6 +150,11 @@ jobs:
           src/main/database/migration-service.test.ts
           src/main/notebook/runtime-service.test.ts
           src/main/notebook/source-file-access-analysis.test.ts
+          src/main/notebook/source-file-access-analysis.additional-omics.test.ts
+          src/main/notebook/source-file-access-analysis.clinical-formats.test.ts
+          src/main/notebook/source-file-access-analysis.workflow-orchestration.test.ts
+          src/main/session-package/archive.test.ts
+          src/main/session-package/service.test.ts
           src/main/notebook/package-manager.test.ts
           src/main/notebook/package-process-sandbox.test.ts
           src/main/notebook/network-sandbox-owner.test.ts

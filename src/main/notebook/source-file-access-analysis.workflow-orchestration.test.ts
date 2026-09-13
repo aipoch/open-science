@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
@@ -30,8 +31,12 @@ summary.to_csv(results / "survival-summary.csv", index=False)
 Path("reports").mkdir(exist_ok=True)
 (Path("reports") / "survival.html").write_text("<html>report</html>")`
   expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
-    reads: ['inputs/cohorts.csv', 'inputs/workflow.json', 'work/normalized.tsv'],
-    writes: ['reports/survival.html', 'results/run-manifest.json', 'results/survival-summary.csv'],
+    reads: [join('inputs', 'cohorts.csv'), join('inputs', 'workflow.json'), 'work/normalized.tsv'],
+    writes: [
+      join('reports', 'survival.html'),
+      join('results', 'run-manifest.json'),
+      join('results', 'survival-summary.csv')
+    ],
     readState: 'partial',
     writeState: 'partial',
     externalState: 'partial'
