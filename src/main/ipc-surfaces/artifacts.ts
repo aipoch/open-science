@@ -22,7 +22,6 @@ import {
 import type { NativeTranslator } from '../locale/main-process-messages'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
 import type { NamedElectronSurfaceAdapter } from '../runtime-electron-wiring'
-import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { withDataRootWrite } from '../storage/migration-state'
 import { resolveDataRoot } from '../storage-root'
 import { publishUserFile } from '../user-file-publisher'
@@ -47,7 +46,9 @@ type ArtifactOwners = {
     >
   }
   archiveCoordinator: Pick<ArchiveCoordinator, 'withSessionAvailable'>
-  sessionPersistenceCoordinator: Pick<SessionPersistenceCoordinator, 'runSessionMutation'>
+  sessionPersistenceCoordinator: {
+    runSessionMutation: NonNullable<Parameters<typeof registerArtifactIpcHandlers>[3]>
+  }
   notebookService: Pick<NotebookRuntimeService, 'importEnvironmentLock'>
   translate: NativeTranslator
 }

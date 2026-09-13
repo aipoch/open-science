@@ -1061,6 +1061,7 @@
           "src/main/artifacts/ipc.test.ts",
           "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
           "src/main/artifacts/artifact-reproducibility-export.test.ts",
+          "src/main/session-persistence/coordinator.architecture.test.ts",
           "src/main/settings/ipc.test.ts",
           "src/main/settings/workflows.test.ts",
           "src/main/settings/connector-template.test.ts",
