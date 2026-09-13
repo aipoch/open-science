@@ -1,5 +1,11 @@
 import type { MessageSearchRequest, MessageSearchPage } from './message-search'
 import type {
+  SkillMarketplaceCatalog,
+  SkillMarketplaceDetail,
+  SkillMarketplaceDetailRequest,
+  SkillMarketplaceResult
+} from './skill-marketplace'
+import type {
   LiteratureExportRecordRequest,
   LiteratureExportRecordResult
 } from './literature-export'
@@ -2004,6 +2010,14 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.getSettings': callable<() => Promise<SettingsSnapshot>>()('settings', [
     'settings:get-settings'
   ]),
+  'settings.listSkillMarketplace': callable<
+    () => Promise<SkillMarketplaceResult<SkillMarketplaceCatalog>>
+  >()('settings', ['settings:list-skill-marketplace']),
+  'settings.getSkillMarketplaceDetail': callable<
+    (
+      request: SkillMarketplaceDetailRequest
+    ) => Promise<SkillMarketplaceResult<SkillMarketplaceDetail>>
+  >()('settings', ['settings:get-skill-marketplace-detail']),
   'settings.getSkillDetail': callable<(id: string) => Promise<SkillDetailView>>()('settings', [
     'settings:get-skill-detail'
   ]),

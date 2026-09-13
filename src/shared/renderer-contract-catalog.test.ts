@@ -29,6 +29,19 @@ describe('renderer contract catalog', () => {
       })
     }
   })
+
+  it('exposes both read-only Skill Marketplace commands on Electron, local Web and remote Web', () => {
+    for (const publicPath of [
+      'settings.listSkillMarketplace',
+      'settings.getSkillMarketplaceDetail'
+    ]) {
+      expect(
+        RENDERER_CONTRACT_CATALOG.find((contract) => contract.publicPath === publicPath)
+      ).toMatchObject({
+        surfaceInstallation: { electron: 'preload', localWeb: 'web-rpc', remoteWeb: 'web-rpc' }
+      })
+    }
+  })
   it('does not expose the retired Runtime Selection API', () => {
     expect(
       RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>

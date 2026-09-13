@@ -261,7 +261,21 @@ describe('renderer argument-shape characterization', () => {
     expect(actualPaths).toEqual(expectedPaths)
   })
 
-  it('keeps Runtime request arguments equivalent across Electron and Web', async () => {
+  it('keeps Skill Marketplace request arguments equivalent across Electron and Web', async () => {
+    for (const [path, channel, args] of [
+      ['settings.listSkillMarketplace', 'settings:list-skill-marketplace', []],
+      [
+        'settings.getSkillMarketplaceDetail',
+        'settings:get-skill-marketplace-detail',
+        [{ snapshotId: 'a'.repeat(40), id: 'abstract-trimmer' }]
+      ]
+    ] as const) {
+      expect(await invokeElectron(electronApi, path, [...args])).toEqual({ channel, args })
+      expect(await invokeWeb(webApi, path, [...args])).toEqual({ channel, args })
+    }
+  })
+
+  it('keeps Runtime package request arguments equivalent across Electron and Web', async () => {
     const cases = [
       {
         path: 'runtime.listPackages',

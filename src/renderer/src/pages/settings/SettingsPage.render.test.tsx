@@ -71,6 +71,11 @@ beforeAll(async () => {
   ])
 })
 
+import {
+  marketplaceCatalog,
+  marketplaceDetail
+} from '../../../../shared/__fixtures__/skill-marketplace'
+
 // Minimal window.api surface the settings store touches when the dialog opens. Attached onto the
 // real jsdom window so DOM globals radix relies on (getComputedStyle, etc.) stay intact.
 const installApi = (): void => {
@@ -117,6 +122,8 @@ const installApi = (): void => {
       isNpmAvailable: vi.fn().mockResolvedValue(true),
       listAppIcons: vi.fn().mockResolvedValue([]),
       setAppIconVariant: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
+      listSkillMarketplace: vi.fn().mockResolvedValue({ ok: true, value: marketplaceCatalog }),
+      getSkillMarketplaceDetail: vi.fn().mockResolvedValue({ ok: true, value: marketplaceDetail }),
       listSkills: vi.fn().mockResolvedValue([
         {
           id: 'alpha',
@@ -3623,6 +3630,35 @@ describe('SettingsPage layout', () => {
     await act(async () => crumb?.click())
     expect(document.body.querySelector('[aria-label="Bulk Connector controls"]')).toBeNull()
     expect(document.body.querySelector('[data-slot="connectors-action-bar"]')).not.toBeNull()
+  })
+
+  it('navigates Skill Marketplace and detail through shared breadcrumbs', async () => {
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Skills')?.click())
+    const browse = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Browse Marketplace'
+    )
+    expect(browse).toBeDefined()
+    await act(async () => browse?.click())
+    expect(document.body.querySelectorAll('[data-slot="skill-marketplace-card"]')).toHaveLength(1)
+    const title = document.body.querySelector<HTMLButtonElement>(
+      '[data-slot="skill-marketplace-card"] button'
+    )!
+    const name = title.textContent
+    await act(async () => title.click())
+    expect(
+      document.body.querySelector('[data-slot="skill-marketplace-detail"]')?.textContent
+    ).toContain(name)
+    const marketplaceCrumb = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Back to Marketplace"]'
+    )
+    expect(marketplaceCrumb).not.toBeNull()
+    await act(async () => marketplaceCrumb?.click())
+    expect(document.body.querySelectorAll('[data-slot="skill-marketplace-card"]')).toHaveLength(1)
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back to skills"]')?.click()
+    )
+    expect(document.body.querySelector('[data-slot="skill-marketplace"]')).toBeNull()
   })
 
   it('opens bulk Skill management as a breadcrumb sub-page without Featured Skills', async () => {

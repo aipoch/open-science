@@ -45,6 +45,7 @@ import {
 } from './specialist-resource-scope'
 import { SkillUsageAgents } from './SkillUsageAgents'
 import { RequiredSkillToggle } from './RequiredSkillToggle'
+import { SkillMarketplace, type SkillMarketplaceView } from './SkillMarketplace'
 import {
   ResourceTagBadges,
   ResourceTagMenu,
@@ -54,6 +55,7 @@ import {
 
 // The skills panel sub-view, driven by the settings navigation history so each is a breadcrumb page.
 export type SkillsView =
+  | SkillMarketplaceView
   | { kind: 'list' }
   | { kind: 'manage' }
   | { kind: 'detail'; id: string }
@@ -263,6 +265,9 @@ const SkillsPanel = ({
       return [{ skill, usages, owners }]
     })
   }, [filter, query, skills, specialistFilter, specialistItems, tagAssignments, tagFilter])
+  if (view.kind === 'marketplace' || view.kind === 'marketplace-detail') {
+    return <SkillMarketplace view={view} onNavigate={onNavigate} />
+  }
   if (view.kind === 'detail') {
     return (
       <div>
@@ -434,6 +439,9 @@ const SkillsPanel = ({
           />
         </div>
         <div data-slot="skills-action-bar" className="flex items-center justify-end gap-2">
+          <Button variant="outline" onClick={() => onNavigate({ kind: 'marketplace' })}>
+            {t('Browse Marketplace')}
+          </Button>
           <Button type="button" variant="outline" onClick={() => onNavigate({ kind: 'manage' })}>
             <ListChecks data-icon="inline-start" aria-hidden="true" />
             {t('Manage')}

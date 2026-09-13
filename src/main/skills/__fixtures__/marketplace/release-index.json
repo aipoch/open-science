@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "releases": [
+    {
+      "path": "releases/abstract-trimmer/1.0.0.json",
+      "sha256": "d9b854785d267477571e3f5bc29bffe68652605706e10b1abbe1c4da3a1e96e2"
+    }
+  ]
+}

@@ -40,6 +40,7 @@ import {
 } from '../application-command-router'
 import type { CallerContext } from '../caller-context'
 import type { SettingsService } from './service'
+import type { SkillMarketplaceDetailRequest } from '../../shared/skill-marketplace'
 import type { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
 import {
   readAppIconVariant,
@@ -92,6 +93,8 @@ type CoreSettingsCommandStore = Pick<
   | 'isNpmAvailable'
   | 'listConnectors'
   | 'listSkills'
+  | 'listSkillMarketplace'
+  | 'getSkillMarketplaceDetail'
   | 'markOnboardingComplete'
   | 'createWslSupportHandoff'
   | 'openWslTerminal'
@@ -130,6 +133,16 @@ type SwitchToPowerShellResult = Awaited<
 type UseWsl2BashResult = Awaited<ReturnType<LocalShellSettingsWorkflows['useWsl2Bash']>>
 
 const settingsCoreApplicationCommands = Object.freeze({
+  listSkillMarketplace: defineApplicationCommand<
+    'settings:list-skill-marketplace',
+    readonly [],
+    StoreResult<'listSkillMarketplace'>
+  >('settings:list-skill-marketplace'),
+  getSkillMarketplaceDetail: defineApplicationCommand<
+    'settings:get-skill-marketplace-detail',
+    readonly [request: SkillMarketplaceDetailRequest],
+    StoreResult<'getSkillMarketplaceDetail'>
+  >('settings:get-skill-marketplace-detail'),
   cancelClaudeLogin: defineApplicationCommand<
     'settings:cancel-claude-login',
     readonly [],
@@ -458,6 +471,8 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.listAppIcons,
   settingsCoreApplicationCommands.listConnectors,
   settingsCoreApplicationCommands.listSkills,
+  settingsCoreApplicationCommands.listSkillMarketplace,
+  settingsCoreApplicationCommands.getSkillMarketplaceDetail,
   settingsCoreApplicationCommands.markOnboardingComplete,
   settingsCoreApplicationCommands.previewAgentHomeSkill,
   settingsCoreApplicationCommands.previewGitHubSkill,
@@ -597,6 +612,9 @@ const registerCoreSettingsApplicationCommands = (
       'settings:list-app-icons': () => dependencies.listAppIconPreviews?.() ?? [],
       'settings:list-connectors': () => dependencies.service.listConnectors(),
       'settings:list-skills': () => dependencies.service.listSkills(),
+      'settings:list-skill-marketplace': () => dependencies.service.listSkillMarketplace(),
+      'settings:get-skill-marketplace-detail': ({ args }) =>
+        dependencies.service.getSkillMarketplaceDetail(args[0]),
       'settings:mark-onboarding-complete': () =>
         dependencies.snapshotCommits.currentSnapshotAfter(
           dependencies.service.markOnboardingComplete()

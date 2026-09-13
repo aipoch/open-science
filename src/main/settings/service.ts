@@ -1,4 +1,11 @@
 import { homedir } from 'node:os'
+import { SkillMarketplaceService } from '../skills/marketplace-service'
+import type {
+  SkillMarketplaceCatalog,
+  SkillMarketplaceDetail,
+  SkillMarketplaceDetailRequest,
+  SkillMarketplaceResult
+} from '../../shared/skill-marketplace'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -263,6 +270,18 @@ export type SettingsServiceOptions = {
 // object shared by the settings IPC handlers and the ACP runtime. Secrets are decrypted here only
 // transiently; nothing that leaves this object (views, spawn config aside) carries plaintext.
 class SettingsService {
+  private readonly skillMarketplace = new SkillMarketplaceService()
+
+  listSkillMarketplace(): Promise<SkillMarketplaceResult<SkillMarketplaceCatalog>> {
+    return this.skillMarketplace.list()
+  }
+
+  getSkillMarketplaceDetail(
+    request: SkillMarketplaceDetailRequest
+  ): Promise<SkillMarketplaceResult<SkillMarketplaceDetail>> {
+    return this.skillMarketplace.detail(request)
+  }
+
   private readonly repository: SettingsRepository
   private readonly preferences: SettingsPreferencesModule
   private readonly notebookRuntimeSettings: NotebookRuntimeSettingsModule

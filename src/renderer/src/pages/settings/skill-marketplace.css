@@ -1,0 +1,37 @@
+.skill-marketplace-tooltip {
+  transform-origin: var(--radix-tooltip-content-transform-origin);
+  --skill-tooltip-offset: 4px;
+}
+.skill-marketplace-tooltip[data-side='bottom'] {
+  --skill-tooltip-offset: -4px;
+}
+.skill-marketplace-tooltip[data-state='delayed-open'],
+.skill-marketplace-tooltip[data-state='instant-open'] {
+  animation: skill-tooltip-in 160ms ease-out;
+}
+.skill-marketplace-tooltip[data-state='closed'] {
+  animation: skill-tooltip-out 100ms ease-in;
+}
+@keyframes skill-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--skill-tooltip-offset)) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes skill-tooltip-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skill-marketplace-tooltip[data-state] {
+    animation: none;
+  }
+}

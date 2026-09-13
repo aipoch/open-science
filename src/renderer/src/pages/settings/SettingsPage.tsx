@@ -672,6 +672,24 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     leaf: string
   } | null => {
     if (activePanel === 'skills' && skillsView.kind !== 'list') {
+      if (skillsView.kind === 'marketplace' || skillsView.kind === 'marketplace-detail') {
+        return {
+          rootLabelKey: 'Skills',
+          rootTo: { panel: 'skills', view: { kind: 'list' } },
+          ...(skillsView.kind === 'marketplace-detail'
+            ? {
+                parents: [
+                  {
+                    label: t('Marketplace'),
+                    to: { panel: 'skills', view: { kind: 'marketplace' } },
+                    ariaLabel: t('Back to {{panel}}', { panel: t('Marketplace') })
+                  }
+                ]
+              }
+            : {}),
+          leaf: skillsView.kind === 'marketplace-detail' ? skillsView.displayName : t('Marketplace')
+        }
+      }
       const leaf =
         skillsView.kind === 'create'
           ? t('New skill')
