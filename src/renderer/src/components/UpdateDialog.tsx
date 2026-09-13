@@ -91,7 +91,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
           <Dialog.Content
             onInteractOutside={(event) => event.preventDefault()}
             className={dialogPanelClassName(
-              'z-[60] flex max-h-[calc(100svh-2rem)] flex-col w-[min(560px,calc(100vw-2rem))] p-0'
+              'z-[60] flex max-h-[calc(100svh-2rem)] flex-col w-[min(560px,calc(100vw-2rem))] overflow-hidden p-0'
             )}
           >
             <div className={cn(dialogHeaderClassName, 'shrink-0')}>
@@ -149,23 +149,6 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                     </ExternalTextLink>
                   </div>
                 )}
-
-                {isDownloading ? (
-                  <div className="mt-4">
-                    <DownloadProgressLine
-                      progress={
-                        dialogStatus.downloadProgress ?? {
-                          phase: 'downloading',
-                          transferred: dialogStatus.downloadedBytes ?? 0,
-                          total: dialogStatus.totalBytes,
-                          percent: dialogStatus.progress ?? 0,
-                          bytesPerSecond: 0,
-                          attempt: 0
-                        }
-                      }
-                    />
-                  </div>
-                ) : null}
 
                 {isApplying ? (
                   <div className="mt-4 rounded-lg border border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
@@ -251,6 +234,22 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                 ) : null}
               </div>
             </ScrollArea>
+            {isDownloading ? (
+              <div className="shrink-0 px-5 pb-5">
+                <DownloadProgressLine
+                  progress={
+                    dialogStatus.downloadProgress ?? {
+                      phase: 'downloading',
+                      transferred: dialogStatus.downloadedBytes ?? 0,
+                      total: dialogStatus.totalBytes,
+                      percent: dialogStatus.progress ?? 0,
+                      bytesPerSecond: 0,
+                      attempt: 0
+                    }
+                  }
+                />
+              </div>
+            ) : null}
             <div className={cn(dialogFooterClassName, 'shrink-0 flex-wrap')}>
               <button
                 type="button"
