@@ -1216,6 +1216,52 @@ describe('Session projection', () => {
     })
   })
 
+  it('preserves auxiliary usage recorded before a failed first publication', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-auxiliary-usage-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const recorder = new SessionAuxiliaryTurnUsageRecorder(async () => client!)
+    const failure = new Error('injected Session rename failure')
+    const usageEvent = { timestamp: 120, inputTokens: 5, cacheTokens: 2, outputTokens: 4 }
+    const repository = new SessionRepository(
+      storageRoot,
+      {
+        renameFile: async () => {
+          await recorder.record({
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            eventId: 'side-stop-1',
+            source: 'side-chat',
+            frameworkId: 'codebuddy',
+            completedAtMs: usageEvent.timestamp,
+            usage: usageEvent
+          })
+          await expect(projection.usage()).resolves.toMatchObject({ usageEvents: [usageEvent] })
+          throw failure
+        }
+      },
+      projection
+    )
+    await repository.ensureSessionProjection(() => repository.loadAll())
+    const draft = { ...session('session-1'), messages: [] }
+
+    const rejected = await repository.saveSession(draft, 0).catch((error: unknown) => error)
+    // Durable usage must remain visible with its original owner even though no JSON was published.
+    await expect(projection.usage()).resolves.toMatchObject({ usageEvents: [usageEvent] })
+    expect(rejected).toMatchObject({ cause: failure, errors: [failure, expect.any(Error)] })
+    await expect(projection.pending()).resolves.toHaveLength(1)
+    await expect(client.session.findUnique({ where: { id: draft.id } })).resolves.toMatchObject({
+      number: 1,
+      deletedAtMs: null
+    })
+    const retrying = new SessionRepository(storageRoot, {}, projection)
+    await expect(retrying.saveSession(draft, 0)).resolves.toMatchObject({ number: 1, revision: 1 })
+    await expect(projection.usage()).resolves.toMatchObject({ usageEvents: [usageEvent] })
+    await expect(projection.pending()).resolves.toEqual([])
+  })
+
   it('does not discard a committed deletion with a stale allocation receipt', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-receipt-delete-'))
     client = createProjectDbClient(storageRoot)

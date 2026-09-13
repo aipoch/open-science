@@ -675,6 +675,14 @@ export class SessionProjectionRepository {
       if (pending?.projectId !== session.projectId || pending.operation !== 'save') {
         throw new Error('Cannot discard a Session allocation whose pending operation has changed.')
       }
+      // Auxiliary usage has no Session foreign key; preserve its owner in the same transaction.
+      const auxiliaryUsage = await tx.sessionAuxiliaryTurnUsage.findFirst({
+        where: { sessionId: session.id },
+        select: { eventId: true }
+      })
+      if (auxiliaryUsage) {
+        throw new Error('Cannot discard a Session allocation that has changed.')
+      }
       const removed = await tx.session.deleteMany({
         where: {
           id: session.id,
