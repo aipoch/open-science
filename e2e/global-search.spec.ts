@@ -359,6 +359,7 @@ test('searches projects, sessions, message bodies and Library with paged disclos
   const target = page.locator('[data-message-id="search-message-8"]').first()
   await expect(target).toBeVisible()
   await expect(target).toBeInViewport()
+  await page.screenshot({ path: testInfo.outputPath('global-search-message-revealed.png') })
   expect(
     await page.evaluate(
       async (id) =>

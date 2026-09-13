@@ -243,10 +243,12 @@ const VisibleMessageSnapshotCommit = ({
 
 const SearchMessageReveal = ({
   target,
-  viewport
+  viewport,
+  onRevealed
 }: {
   target?: SearchMessageFocus
   viewport: HTMLDivElement | null
+  onRevealed: () => void
 }): null => {
   const { scrollToMessage } = useMessageScroller()
   useEffect(() => {
@@ -260,10 +262,13 @@ const SearchMessageReveal = ({
           { duration: 1800 }
         )
       }
+      // Save the explicit position before consuming focus causes another layout pass.
+      // The browser's scroll event can arrive after transcript window restoration.
+      onRevealed()
       useSearchMessageFocusStore.getState().consume(target)
     })
     return () => cancelAnimationFrame(frame)
-  }, [target, viewport, scrollToMessage])
+  }, [target, viewport, scrollToMessage, onRevealed])
   return null
 }
 
@@ -1444,6 +1449,7 @@ const WorkspaceMessageScrollerImpl = ({
                 : undefined
             }
             viewport={messageScrollerViewport}
+            onRevealed={handleMessageScrollerScroll}
           />
           <WorkspaceRunMarks
             items={presentedConversationItems}
