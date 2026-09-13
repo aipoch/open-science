@@ -36,6 +36,7 @@ Commands:
   url         Print the authenticated web URL
   update      Check, download, and apply an application update
   doctor --json  Inspect headless readiness
+  runtime list          List detected Agent runtimes
   runtime install codex   Prepare the app-managed Codex runtime
   provider add --type official --vendor openai --model <id> --api-key-env <ENV>
   connector configure literature --openalex-key-env <ENV>
@@ -159,6 +160,7 @@ const VALUE_OPTIONS = {
 
 const TASK_COMMANDS = new Set([
   'doctor',
+  'runtime',
   'project',
   'run',
   'session',
@@ -173,6 +175,7 @@ const TASK_COMMANDS = new Set([
 ])
 const GROUP_COMMANDS = new Set([
   'codex',
+  'runtime',
   'project',
   'session',
   'settings',
@@ -188,6 +191,7 @@ const GROUP_COMMANDS = new Set([
 // positional Project names may contain multiple unquoted words.
 const POSITIONAL_LIMITS = new Map([
   ['doctor', 0],
+  ['runtime list', 0],
   ['runtime install', 1],
   ['provider add', 0],
   ['connector configure', 1],
@@ -406,6 +410,9 @@ export const parseCliArgs = (argv) => {
   }
   if (command === 'doctor' && !options.json) {
     throw new CliUsageError('doctor requires --json.')
+  }
+  if (command === 'runtime' && subcommand !== 'list' && subcommand !== 'install') {
+    throw new CliUsageError(`Unknown command: runtime ${subcommand ?? ''}`.trimEnd())
   }
   if (options.json && (command === 'start' || command === 'url')) {
     throw new CliUsageError(`--json is not supported for ${command}.`)
@@ -1500,6 +1507,21 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
 
   if (command === 'doctor') {
     deps.log(JSON.stringify(await client.doctor()))
+    return
+  }
+
+  if (command === 'runtime' && subcommand === 'list') {
+    const runtimes = await client.listRuntimes()
+    if (options.json) {
+      deps.log(JSON.stringify(runtimes))
+    } else {
+      deps.log('FRAMEWORK\tSTATUS\tVERSION\tSOURCE')
+      for (const runtime of runtimes) {
+        deps.log(
+          `${runtime.framework}\t${runtime.status}\t${runtime.version ?? '-'}\t${runtime.source ?? '-'}`
+        )
+      }
+    }
     return
   }
 

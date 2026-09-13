@@ -46,7 +46,7 @@ const taskSettings = {
   codexManaged: false,
   providers: [],
   agentFrameworkId: 'claude-code',
-  agentFrameworks: [],
+  agentFrameworks: [] as { id: string; displayName: string }[],
   reasoningEffort: 'default',
   notificationsEnabled: true,
   conversationSkillImportEnabled: true,
@@ -76,14 +76,15 @@ const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => (
 })
 
 const commandsFrom = (
-  invoke: (channel: string, callerContext: CallerContext, args: unknown[]) => Promise<unknown>
+  invoke: (channel: string, callerContext: CallerContext, args: unknown[]) => Promise<unknown>,
+  settings = taskSettings
 ): ApplicationCommandByNameDispatcher => {
   const sessions = new Map<string, PersistedChatSession>()
   return {
     commandNames: () => [],
     invoke: async (channel, invocation) => {
       const args = [...invocation.args]
-      if (channel === 'settings:get-settings') return taskSettings
+      if (channel === 'settings:get-settings') return settings
       if (channel === 'settings:bootstrap' && (args[0] as { action: string }).action === 'status')
         return {
           ok: true,
@@ -242,6 +243,52 @@ const createComputePreferenceHarness = (
 }
 
 describe('HeadlessTaskApi adapter', () => {
+  it('projects the registered Agent runtimes without exposing executable paths', async () => {
+    const settings = {
+      ...taskSettings,
+      claude: { resolvedPath: '/private/claude', version: '2.1.0' },
+      opencode: { resolvedPath: '/private/opencode', version: '1.0.200' },
+      codex: { resolvedPath: '/private/codex-acp', version: '1.6.2', nativeVersion: '0.145.0' },
+      claudeManaged: true,
+      codexManaged: true,
+      agentFrameworkId: 'codex',
+      agentFrameworks: [
+        { id: 'claude-code', displayName: 'Claude Code' },
+        { id: 'opencode', displayName: 'OpenCode' },
+        { id: 'codex', displayName: 'Codex' },
+        { id: 'codebuddy', displayName: 'CodeBuddy' }
+      ]
+    }
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'settings:get-preflight') {
+        return {
+          claudeReady: true,
+          opencodeReady: false,
+          codebuddyReady: false,
+          codexReady: true,
+          agentFrameworkId: 'codex',
+          agentReady: true,
+          activeProviderReady: true,
+          runtimeReadiness: { status: 'ready' },
+          providerReadiness: { status: 'ready' }
+        }
+      }
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({
+      commands: commandsFrom(invoke, settings),
+      agent: createAgent()
+    })
+
+    await expect(api.listRuntimes()).resolves.toEqual([
+      { framework: 'claude-code', status: 'ready', version: '2.1.0', source: 'managed' },
+      { framework: 'opencode', status: 'not_ready', version: '1.0.200', source: 'external' },
+      { framework: 'codex', status: 'ready', version: '0.145.0', source: 'external' },
+      { framework: 'codebuddy', status: 'missing' }
+    ])
+    expect(JSON.stringify(await api.listRuntimes())).not.toContain('/private/')
+  })
+
   it('projects read-only readiness checks and stable next-action codes', async () => {
     const invoke = vi.fn(async (channel: string) => {
       if (channel === 'settings:get-preflight') {

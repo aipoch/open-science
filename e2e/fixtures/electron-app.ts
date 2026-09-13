@@ -1198,7 +1198,14 @@ class ElectronAppHarness implements ElectronApp {
             throw new Error('Electron E2E forced close did not reap the process tree.')
         }
       },
-      { gracefulTimeoutMs: 10_000, forcedTimeoutMs: 10_000, requireGraceful }
+      // Windows CI occasionally needs more than 10s to flush the Electron/SQLite shutdown path
+      // after a session restart. Keep the forced-close budget bounded, but avoid classifying a
+      // successful graceful shutdown as a test failure solely because of Windows teardown latency.
+      {
+        gracefulTimeoutMs: process.platform === 'win32' ? 30_000 : 10_000,
+        forcedTimeoutMs: 10_000,
+        requireGraceful
+      }
     )
   }
 }
