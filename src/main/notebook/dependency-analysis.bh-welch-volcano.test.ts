@@ -9,6 +9,8 @@ import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 import historicalCells from './reported-r-welch-volcano.fixture.json'
 import correctedCells from './bh-r-welch-volcano.fixture.json'
 
+// Test-only companion to the reported execution: exercise dependency tracking for a
+// bounded BH/Welch example without changing the historical fixture or agent instructions.
 const replacements: Record<string, string> = { '4': 'compute', '6': 'classify', '7': 'plot' }
 const cells = historicalCells.map((cell) => ({
   ...cell,
