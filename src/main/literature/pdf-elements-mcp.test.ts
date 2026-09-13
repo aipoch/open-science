@@ -55,9 +55,32 @@ it('registers two minimal tools and injects business JSON once with a typed imag
   expect(JSON.stringify(result.content).match(/Figure 3/g)).toHaveLength(1)
 })
 
+it('publishes distinct prose, discovery and evidence boundaries through tools/list', async () => {
+  const { client } = await setup()
+  const { tools } = await client.listTools()
+  const descriptions = Object.fromEntries(tools.map((tool) => [tool.name, tool.description]))
+  expect(descriptions.read_document).toContain('Read prose passages')
+  expect(descriptions.read_document).toContain(
+    'Combine prose and element evidence when both are needed'
+  )
+  expect(descriptions.list_pdf_elements).toContain('not chapters or arbitrary Structure nodes')
+  expect(descriptions.list_pdf_elements).toContain('Captions and previews are for selection')
+  expect(descriptions.list_pdf_elements).toContain(
+    'Does not parse pages or access Library-only PDFs'
+  )
+  expect(descriptions.list_pdf_elements).toContain('Library itemId is not documentId')
+  expect(descriptions.read_pdf_element).toContain('Pass its exact elementRef')
+  expect(descriptions.read_pdf_element).toContain('Follow nextCursor as needed')
+  expect(descriptions.read_pdf_element).toContain(
+    'prose can report author claims but cannot replace visual evidence'
+  )
+})
+
 it.each([
   ['list_pdf_elements', { documentId: 'paper', cursor: 'cursor' }],
   ['list_pdf_elements', { query: 'figure' }],
+  ['list_pdf_elements', { itemId: 'library-record' }],
+  ['read_pdf_element', { documentId: 'linked-pdf' }],
   ['list_pdf_elements', { documentId: '' }],
   ['list_pdf_elements', { cursor: null }],
   ['read_pdf_element', {}],

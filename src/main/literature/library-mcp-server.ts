@@ -661,7 +661,7 @@ const createLiteratureLibraryMcpServer = (
     {
       title: 'Read literature PDF evidence',
       description:
-        'Retrieve relevant passages with page numbers from one PDF attached to a Literature Library record. Use this only when the PDF could materially affect the answer, after finding the item with search_library. Each call reads one item on demand and reuses extraction and search data for the same immutable file version; it does not index the whole Library. Scope defaults to the trusted current Project.',
+        'Retrieve relevant passages with page numbers from one PDF attached to a Literature Library record. Use this only when the PDF could materially affect the answer, after finding the item with search_library. Each call reads one item on demand and reuses extraction and search data for the same immutable file version; it does not index the whole Library. Scope defaults to the trusted current Project. Returns prose, not verified table cells or images. Do not infer visual evidence from these passages. itemId is a Library record identifier, not a linked-PDF documentId for list_pdf_elements.',
       inputSchema: {
         itemId: z.string().trim().min(1).max(512),
         attachmentId: z.string().trim().min(1).max(512).optional(),

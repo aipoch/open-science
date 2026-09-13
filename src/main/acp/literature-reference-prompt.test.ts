@@ -88,6 +88,15 @@ describe('buildLiteratureReferencePrompt', () => {
     expect(prompt).toContain('do not batch-read every search result')
     expect(prompt).toContain('read_library_pdf')
     expect(prompt).toContain('bounded passages with page numbers')
+    expect(prompt).toContain('Library itemId and linked-PDF documentId are not interchangeable')
+    expect(prompt).toContain('not every Library search result or attachment')
+    expect(prompt).toContain(
+      'Call list_pdf_elements with a linked documentId, or {} for a single linked PDF'
+    )
+    expect(prompt).toContain('call read_pdf_element with the exact elementRef returned by listing')
+    expect(prompt).toContain(
+      'read_library_pdf provides prose evidence, not verified table cells or images'
+    )
     expect(prompt).toContain('{{cite:itemId}}')
     expect(prompt).toContain('{{bibliography}}')
     expect(prompt).toContain('format_citation_document')
