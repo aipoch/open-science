@@ -4,7 +4,7 @@ import { createPdfStructureEngine } from './literature/pdf-structure/engine'
 import { PdfStructureSourceAuthority } from './literature/pdf-structure/source'
 import { PdfStructureReader } from './literature/pdf-structure/reader'
 import { createSpecialistApplicationOwner } from './specialist/application-commands'
-import { basename, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 
@@ -170,6 +170,7 @@ import {
 import { createLogsCommandOwner } from './logs-ipc'
 import { TaskNotificationService } from './notifications/task-notifications'
 import { createNotificationInboxController } from './notifications/notification-inbox-controller'
+import { createSettingsElectronSurface } from './ipc-surfaces/settings'
 import { createDesktopUtilitiesElectronSurface } from './ipc-surfaces/desktop-utilities'
 import { createConnectorApprovalElectronSurface } from './ipc-surfaces/connector-approvals'
 import { createNotificationElectronSurface } from './ipc-surfaces/notifications'
@@ -328,7 +329,7 @@ import { LiteratureDocumentReader } from './literature/document-reader'
 import { SessionDeletionOwner } from './session-deletion/owner'
 import { buildSessionDetailsUserPrompt, createSessionDetailsOwner } from './session-details/owner'
 import { tryDecryptKey } from './settings/crypto'
-import { SETTINGS_INSTALL_LOG_CHANNEL, registerSettingsIpcHandlers } from './settings/ipc'
+import { SETTINGS_INSTALL_LOG_CHANNEL } from './settings/ipc'
 import { createCoreElectronSurfaces } from './ipc-surfaces/core'
 import { createElectronSurfaceAdapter } from './ipc-surfaces/adapter'
 import { GrantedLocalRootsRepository } from './local-fs/granted-roots-repository'
@@ -360,7 +361,6 @@ import {
 } from './delegation/execution-port'
 import { createDelegationSettlementContinuationDispatch } from './delegation/settlement-continuation-dispatch'
 import { createSettingsWorkflows } from './settings/workflows'
-import { showSettingsSaveDialog } from './settings/save-dialog'
 import { SpecialistService } from './specialist/service'
 import { SpecialistRepository } from './specialist/repository'
 import { BuiltinSpecialistRegistry } from './specialist/builtin-registry'
@@ -376,7 +376,6 @@ import {
   selectSpecialistArchive
 } from './specialist/package/electron-adapter'
 import { UserSkillSpecialistPackageAdapter } from './skills/specialist-package-adapter'
-import { saveSkillExport } from './skills/export'
 import { netFetchStandard } from './skills/net-fetch'
 import { AgentsService } from './agents/agents-service'
 import {
@@ -413,7 +412,6 @@ import {
 } from './specialist/session-reconfiguration'
 import { SPECIALIST_IPC } from '../shared/specialist'
 import {
-  CONNECTOR_TEMPLATE_MAX_BYTES,
   type AppIconPreview,
   type AppIconVariant,
   type SessionAgentConfiguration
@@ -3942,54 +3940,13 @@ const createApplicationModules = async (
       .catch((error) => createLogger('wsl-setup').warn('PowerShell fallback failed', { error }))
   }
   wslRuntimeReconciliation.current(wslSetup.getStatus())
-  declareElectronAdapter('settings', () =>
-    registerSettingsIpcHandlers({
+  surfaceAdapters.push(
+    createSettingsElectronSurface({
       service: settingsService,
       workflows: settingsWorkflows,
       snapshotCommits: settingsSnapshotCommits,
       listAppIconPreviews,
-      connectorTemplateFiles: {
-        select: async () => {
-          const selected = await dialog.showOpenDialog({
-            title: translate('Import Connector configuration'),
-            properties: ['openFile'],
-            filters: [{ name: translate('Connector configuration'), extensions: ['json'] }]
-          })
-          const filePath = selected.filePaths[0]
-          if (selected.canceled || !filePath) return { cancelled: true as const }
-          if ((await stat(filePath)).size > CONNECTOR_TEMPLATE_MAX_BYTES) {
-            throw new Error('Connector configuration files must be 256 KiB or smaller')
-          }
-          return {
-            cancelled: false as const,
-            fileName: basename(filePath),
-            contents: await readFile(filePath, 'utf8')
-          }
-        },
-        save: async (suggestedFileName, contents, sender) => {
-          const selected = await showSettingsSaveDialog(sender, {
-            title: translate('Export Connector configuration'),
-            defaultPath: suggestedFileName,
-            filters: [{ name: translate('Connector configuration'), extensions: ['json'] }]
-          })
-          if (selected.canceled || !selected.filePath) return false
-          await publishUserFile(selected.filePath, (temporaryPath) =>
-            writeFile(temporaryPath, contents, 'utf8')
-          )
-          return true
-        }
-      },
-      skillExportFiles: {
-        save: (archive, sender) =>
-          saveSkillExport(
-            {
-              showSaveDialog: (options) => showSettingsSaveDialog(sender, options),
-              writeFile: (filePath, bytes) => writeFile(filePath, bytes)
-            },
-            archive,
-            translate
-          )
-      }
+      translate
     })
   )
   declareElectronAdapter('notebook', () => registerNotebookIpcHandlers(notebookCommands))

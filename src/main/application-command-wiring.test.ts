@@ -44,6 +44,25 @@ const dependencyBlock = compact(
 )
 
 describe('production application command wiring', () => {
+  it('installs Settings once with shared owners before Notebook in afterAcp', () => {
+    const phase = compact(
+      between(
+        ipcSource,
+        'surfaceAdapters = afterAcpAdapters',
+        "declareElectronAdapter('background-result-delivery'"
+      )
+    )
+    expect(phase).toContain(
+      'createSettingsElectronSurface({ service: settingsService, workflows: settingsWorkflows, snapshotCommits: settingsSnapshotCommits, listAppIconPreviews, translate })'
+    )
+    expect(phase.indexOf('createSettingsElectronSurface(')).toBeLessThan(
+      phase.indexOf("declareElectronAdapter('notebook',")
+    )
+    expect(occurrences(ipcSource, 'createSettingsElectronSurface(')).toBe(1)
+    expect(ipcSource).not.toContain('registerSettingsIpcHandlers')
+    expect(ipcSource).not.toContain('showSettingsSaveDialog')
+  })
+
   it('installs desktop utilities with shared owners and retains find-event cleanup', () => {
     const desktop = compact(
       between(ipcSource, 'createDesktopUtilitiesElectronSurface({', '// ACP identity resolution')

@@ -1029,7 +1029,8 @@
         "src/main/ipc-surfaces/notifications.ts",
         "src/main/ipc-surfaces/connector-approvals.ts",
         "src/main/window-find-ipc.ts",
-        "src/main/ipc-surfaces/desktop-utilities.ts"
+        "src/main/ipc-surfaces/desktop-utilities.ts",
+        "src/main/ipc-surfaces/settings.ts"
       ],
       "interfacePaths": [
         "src/main/ipc-surfaces/adapter.ts",
@@ -1038,7 +1039,8 @@
         "src/main/ipc-surfaces/notifications.ts",
         "src/main/ipc-surfaces/connector-approvals.ts",
         "src/main/window-find-ipc.ts",
-        "src/main/ipc-surfaces/desktop-utilities.ts"
+        "src/main/ipc-surfaces/desktop-utilities.ts",
+        "src/main/ipc-surfaces/settings.ts"
       ],
       "consumerModules": [],
       "testFiles": {
@@ -1049,9 +1051,15 @@
           "src/main/ipc-surfaces/notifications.test.ts",
           "src/main/ipc-surfaces/connector-approvals.test.ts",
           "src/main/window-find-ipc.test.ts",
-          "src/main/ipc-surfaces/desktop-utilities.test.ts"
+          "src/main/ipc-surfaces/desktop-utilities.test.ts",
+          "src/main/ipc-surfaces/settings.test.ts"
         ],
         "contract": [
+          "src/main/settings/ipc.test.ts",
+          "src/main/settings/workflows.test.ts",
+          "src/main/settings/connector-template.test.ts",
+          "src/main/settings/save-dialog.test.ts",
+          "src/main/skills/export.test.ts",
           "src/main/connectors/approval-broker.test.ts",
           "src/main/connectors/credential-request-broker.test.ts",
           "src/main/skills/conversation-import.test.ts",
