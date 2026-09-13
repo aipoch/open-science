@@ -214,6 +214,7 @@ const createCompositionHarness = async (
     assertSessionIdentityOwnership: async () => undefined,
     saveSession: async (next) => {
       durable = structuredClone(next)
+      return structuredClone(durable)
     },
     saveCommittedProjectSession: async () => undefined,
     deleteSession: async () => undefined,
@@ -2327,6 +2328,7 @@ describe('production delegated-work composition', () => {
       assertSessionIdentityOwnership: async () => undefined,
       saveSession: async (next) => {
         durable = structuredClone(next)
+        return structuredClone(durable)
       },
       saveCommittedProjectSession: async () => undefined,
       deleteSession: async () => undefined,

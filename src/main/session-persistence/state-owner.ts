@@ -82,7 +82,7 @@ type SessionStateRepository = {
   saveSession(
     session: PersistedChatSession,
     expectedRevision?: number
-  ): Promise<PersistedChatSession | void>
+  ): Promise<PersistedChatSession>
 }
 
 type SessionStateFileIndex = {

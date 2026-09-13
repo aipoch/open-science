@@ -53,7 +53,7 @@ type SideChatStateRepository = Readonly<{
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
-  saveSession(session: PersistedChatSession): Promise<PersistedChatSession | void>
+  saveSession(session: PersistedChatSession): Promise<PersistedChatSession>
 }>
 
 type SessionSideChatPersistenceOwnerOptions = Readonly<{

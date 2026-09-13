@@ -59,7 +59,9 @@ const createSessionRepository = (): SessionMutationRepository & {
     })),
     loadSessionWithDiagnostics: vi.fn(async () => ({ status: 'missing' as const })),
     assertSessionIdentityOwnership: vi.fn(async () => undefined),
-    saveSession: vi.fn(async () => undefined),
+    saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) =>
+      structuredClone(session)
+    ),
     saveCommittedProjectSession: vi.fn(async () => undefined),
     deleteSession: vi.fn(async () => {
       repository.authorityCommitted = true

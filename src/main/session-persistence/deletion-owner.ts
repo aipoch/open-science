@@ -88,7 +88,7 @@ type SessionDeletionRepository = {
   saveSession(
     session: PersistedChatSession,
     expectedRevision?: number
-  ): Promise<PersistedChatSession | void>
+  ): Promise<PersistedChatSession>
   saveCommittedProjectSession(session: PersistedChatSession): Promise<void>
   deleteSession(projectId: string, sessionId: string): Promise<void>
   deleteProjectSessions(projectId: string): Promise<void>

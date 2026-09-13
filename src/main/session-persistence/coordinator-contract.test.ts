@@ -89,8 +89,9 @@ const createRepository = (
         : { status: 'missing' as const }
     }),
     assertSessionIdentityOwnership: vi.fn(async () => undefined),
-    saveSession: vi.fn(async (session) => {
+    saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
       sessions.set(session.id, structuredClone(session))
+      return structuredClone(session)
     }),
     saveCommittedProjectSession: vi.fn(async () => undefined),
     deleteSession: vi.fn(async (_projectId, sessionId) => {
@@ -315,12 +316,13 @@ describe('SessionPersistenceCoordinator contracts', () => {
     const firstWriteGate = createDeferred()
     const firstWriteStarted = createDeferred()
     const { repository, sessions } = createRepository([])
-    repository.saveSession = vi.fn(async (session) => {
+    repository.saveSession = vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
       if (session.projectId === 'project-1') {
         firstWriteStarted.resolve()
         await firstWriteGate.promise
       }
       sessions.set(session.id, structuredClone(session))
+      return structuredClone(session)
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
     const first = coordinator.saveSession(
@@ -344,9 +346,10 @@ describe('SessionPersistenceCoordinator contracts', () => {
     const { repository, sessions } = createRepository([
       createSession({ id: 'shared-session', projectId: 'project-1' })
     ])
-    repository.saveSession = vi.fn(async (session) => {
+    repository.saveSession = vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
       reusedSessionSaveStarted.resolve()
       sessions.set(session.id, structuredClone(session))
+      return structuredClone(session)
     })
     const coordinator = new SessionPersistenceCoordinator(
       repository,
@@ -398,9 +401,10 @@ describe('SessionPersistenceCoordinator contracts', () => {
         isComplete: true
       }))
     })
-    repository.saveSession = vi.fn(async (session) => {
+    repository.saveSession = vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
       reusedSessionSaveStarted.resolve()
       sessions.set(session.id, structuredClone(session))
+      return structuredClone(session)
     })
     const coordinator = new SessionPersistenceCoordinator(
       repository,
@@ -444,9 +448,10 @@ describe('SessionPersistenceCoordinator contracts', () => {
     const { repository, sessions } = createRepository([
       createSession({ id: 'deleted-session', projectId: 'project-1' })
     ])
-    repository.saveSession = vi.fn(async (session) => {
+    repository.saveSession = vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
       independentSaveStarted.resolve()
       sessions.set(session.id, structuredClone(session))
+      return structuredClone(session)
     })
     const coordinator = new SessionPersistenceCoordinator(
       repository,
@@ -546,7 +551,7 @@ describe('SessionPersistenceCoordinator contracts', () => {
 
   it('applies optimistic archive checks before changing durable Session visibility', async () => {
     const { repository, sessions } = createRepository()
-    repository.saveSession = vi.fn(async (session) => {
+    repository.saveSession = vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
       const next = { ...session, revision: (sessions.get(session.id)?.revision ?? 0) + 1 }
       sessions.set(session.id, next)
       return next
@@ -822,7 +827,7 @@ const createArchiveHarness = (
 } => {
   const { repository, sessions } = createRepository([createSession({ revision: 1 })])
   // Model the repository's existing durable revision advancement, including archive writes.
-  repository.saveSession = vi.fn(async (next) => {
+  repository.saveSession = vi.fn<SessionMutationRepository['saveSession']>(async (next) => {
     const persisted = { ...next, revision: (sessions.get(next.id)?.revision ?? 0) + 1 }
     sessions.set(next.id, structuredClone(persisted))
     return persisted
