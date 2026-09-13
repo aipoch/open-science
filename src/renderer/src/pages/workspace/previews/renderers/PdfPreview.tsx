@@ -4,6 +4,7 @@ import {
   ChevronUp,
   Hand,
   ListTree,
+  LoaderCircle,
   MousePointer2,
   Scan,
   Search,
@@ -1199,6 +1200,7 @@ export const PdfPreviewContent = ({
   const [panning, setPanning] = useState(false)
   const [readingMode, setReadingMode] = useState<'original' | 'figures'>('original')
   const [figuresVisited, setFiguresVisited] = useState(false)
+  const [figuresBusy, setFiguresBusy] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [outlineWidth, setOutlineWidth] = useState(OUTLINE_DEFAULT_WIDTH)
   const [currentPage, setCurrentPage] = useState(1)
@@ -1808,7 +1810,7 @@ export const PdfPreviewContent = ({
         {attachmentVersionId && presentation !== 'search' ? (
           <Tabs.List
             aria-label={t('PDF reading mode')}
-            className="flex h-9 shrink-0 justify-center gap-4 border-b border-border bg-bg-000 px-2"
+            className="flex h-8 shrink-0 justify-center gap-4 border-b border-border bg-bg-000 px-2"
           >
             <Tabs.Trigger
               value="original"
@@ -1821,6 +1823,14 @@ export const PdfPreviewContent = ({
               className="flex h-full items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-1 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
             >
               {t('Figures and tables')}
+              {figuresBusy ? (
+                <span role="status" aria-label={t('Analyzing PDF…')} title={t('Analyzing PDF…')}>
+                  <LoaderCircle
+                    className="size-3.5 animate-spin text-primary motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                </span>
+              ) : null}
             </Tabs.Trigger>
           </Tabs.List>
         ) : null}
@@ -2012,6 +2022,7 @@ export const PdfPreviewContent = ({
                   active={readingMode === 'figures'}
                   attachmentVersionId={attachmentVersionId}
                   pageCount={pageCount}
+                  onBusyChange={setFiguresBusy}
                   onNavigate={(page) => {
                     setReadingMode('original')
                     requestAnimationFrame(() => navigateToPage(page))

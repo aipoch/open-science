@@ -63,11 +63,49 @@ afterEach(() => {
   vi.useRealTimers()
 })
 describe('model settings A tabs', () => {
+  it('uses the shared update progress display for speed, percentage and reconnecting', async () => {
+    vi.useFakeTimers()
+    snapshot = {
+      ...snapshot,
+      availability: 'installing',
+      transferredBytes: 50,
+      downloadProgress: {
+        phase: 'downloading',
+        transferred: 50,
+        total: 100,
+        percent: 50,
+        bytesPerSecond: 2 * 1024 * 1024,
+        attempt: 1
+      }
+    }
+    await act(async () => root.render(<Harness />))
+    expect(container.textContent).toContain('2.0 MB/s')
+    expect(container.textContent).toContain('50%')
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe(
+      '50'
+    )
+    snapshot = {
+      ...snapshot,
+      downloadProgress: {
+        ...snapshot.downloadProgress!,
+        phase: 'reconnecting',
+        bytesPerSecond: 0,
+        attempt: 2
+      }
+    }
+    await act(async () => vi.advanceTimersByTimeAsync(750))
+    expect(container.textContent).toContain('Connection lost, resuming… (attempt 2)')
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe(
+      '50'
+    )
+    await click('Cancel download')
+    expect(container.querySelector('[role="progressbar"]')).toBeNull()
+  })
   it('prevents removal while in use and updates an already-open confirmation', async () => {
     vi.useFakeTimers()
     snapshot = { ...snapshot, availability: 'ready', installedRevision: 'v1', hasFiles: true }
     await act(async () => root.render(<Harness />))
-    await click('Remove model')
+    await click('Uninstall')
     snapshot = { ...snapshot, inUse: true }
     // Remounting is unnecessary: exercise the panel's existing polling subscription.
     await act(async () => {
@@ -76,7 +114,7 @@ describe('model settings A tabs', () => {
     expect(container.textContent).toContain(
       'Model in use. Removal is available when parsing finishes.'
     )
-    for (const label of ['Remove model', 'Remove']) {
+    for (const label of ['Uninstall', 'Remove']) {
       const button = [...document.querySelectorAll('button')].find(
         (entry) => entry.textContent === label
       )!
@@ -116,15 +154,15 @@ describe('model settings A tabs', () => {
     ])
     await click('Install')
     expect(api.install).toHaveBeenCalledOnce()
-    expect(container.querySelector('progress')).not.toBeNull()
+    expect(container.querySelector('[role="progressbar"]')).not.toBeNull()
     await click('Cancel download')
     expect(api.cancel).toHaveBeenCalledOnce()
-    await click('Remove model')
+    await click('Uninstall')
     expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
     expect(api.remove).not.toHaveBeenCalled()
     await click('Remove')
     expect(api.remove).toHaveBeenCalledOnce()
-    expect(container.textContent).not.toContain('Remove model')
+    expect(container.textContent).not.toContain('Uninstall')
   })
   it('offers a compatible update in its card and preserves the installed version on cancellation', async () => {
     snapshot = {
@@ -165,7 +203,7 @@ describe('model settings A tabs', () => {
       [...container.querySelectorAll('dd')].filter((entry) => entry.textContent === 'v1')
     ).toHaveLength(1)
     expect([...container.querySelectorAll('button')].map((button) => button.textContent)).toContain(
-      'Remove model'
+      'Uninstall'
     )
     expect(
       [...container.querySelectorAll('button')].map((button) => button.textContent)

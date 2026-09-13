@@ -5762,10 +5762,8 @@
     "Download size": "Downloadgröße",
     "Installed version": "Installierte Version",
     "Installed size": "Installierte Größe",
-    "Model download progress": "Fortschritt des Modelldownloads",
     "The installed version remains available while the update downloads.": "Während das Update heruntergeladen wird, bleibt die installierte Version verfügbar.",
     "Cancel download": "Download abbrechen",
-    "Remove model": "Modell entfernen",
     "Remove local model files?": "Lokale Modelldateien entfernen?",
     "Source documents and existing parsing results are kept. New parsing tasks may require reinstalling the model.": "Quelldokumente und vorhandene Analyseergebnisse bleiben erhalten. Neue Analysen können eine erneute Installation erfordern.",
     "Removing models keeps your documents and existing parsing results.": "Beim Entfernen von Modellen bleiben Dokumente und vorhandene Analyseergebnisse erhalten.",
@@ -5774,10 +5772,7 @@
     "Check local model installation and try again.": "Prüfen Sie die Installation des lokalen Modells und versuchen Sie es erneut.",
     "Clear all PDF parsing results": "Alle PDF-Analyseergebnisse löschen",
     "Clear all PDF parsing results?": "Alle PDF-Analyseergebnisse löschen?",
-    "Copy Markdown": "Markdown kopieren",
     "Table notes": "Tabellenanmerkungen",
-    "Copy formatted table": "Formatierte Tabelle kopieren",
-    "Copy TSV": "TSV kopieren",
     "Could not copy the table. Try again.": "Die Tabelle konnte nicht kopiert werden. Versuchen Sie es erneut.",
     "Could not extract pages: {{pages}}": "Seiten konnten nicht extrahiert werden: {{pages}}",
     "Download and continue": "Herunterladen und fortfahren",
@@ -5828,6 +5823,12 @@
     "Previous figure or table": "Vorherige Abbildung oder Tabelle",
     "Next figure or table": "Nächste Abbildung oder Tabelle",
     "Enlarge image": "Bild vergrößern",
-    "Image preview": "Bildvorschau"
+    "Image preview": "Bildvorschau",
+    "Estimating time remaining…": "Verbleibende Zeit wird geschätzt…",
+    "About {{duration}} remaining": "Noch etwa {{duration}}",
+    "Table export format": "Tabellenexportformat",
+    "Could not save the table. Try again.": "Die Tabelle konnte nicht gespeichert werden. Versuchen Sie es erneut.",
+    "HTML": "HTML",
+    "TSV": "TSV"
   }
 }

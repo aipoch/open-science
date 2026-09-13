@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { AlertDialog, Tabs } from 'radix-ui'
-import { Brain, Cpu, Download, ShieldCheck, Table2 } from 'lucide-react'
+import { Brain, Cpu, Download, ShieldCheck, Table2, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
+import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import {
   dialogOverlayClassName,
   dialogPanelClassName,
@@ -12,7 +13,10 @@ import {
   dialogDescriptionClassName,
   dialogFooterClassName
 } from '@/components/ui/dialog-chrome'
-import type { LocalModelSnapshot } from '../../../../shared/local-models'
+import {
+  localModelDownloadProgress,
+  type LocalModelSnapshot
+} from '../../../../shared/local-models'
 import { SettingsSection } from './SettingsLayout'
 
 const size = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MiB`
@@ -96,8 +100,8 @@ const LocalModelsPanel = (): React.JSX.Element => {
             {t('Loading…')}
           </p>
         ) : (
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-lg border border-border bg-card p-4">
-            <div className="flex items-start gap-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4 rounded-lg border border-border bg-card p-4">
+            <div className="flex min-w-0 items-start gap-3">
               <Table2 className="mt-1 size-5 shrink-0 text-primary" aria-hidden="true" />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -109,56 +113,48 @@ const LocalModelsPanel = (): React.JSX.Element => {
                     {status}
                   </span>
                 </div>
-                <p className="mt-1 text-[13px] text-muted-foreground">
-                  {t('Find candidate figures, captions and copyable tables in Literature PDFs.')}
-                </p>
-                <dl className="mt-4 grid gap-2 text-xs sm:grid-cols-2">
-                  <div>
-                    <dt className="text-muted-foreground">
-                      {snapshot.installedRevision ? t('Installed version') : t('Version')}
-                    </dt>
-                    <dd className="mt-1 break-all">
-                      {snapshot.installedRevision ?? snapshot.recommendedRevision}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">
-                      {snapshot.installedRevision ? t('Installed size') : t('Download size')}
-                    </dt>
-                    <dd className="mt-1">
-                      {size(
-                        snapshot.installedRevision
-                          ? snapshot.installedBytes
-                          : snapshot.downloadBytes
-                      )}
-                    </dd>
-                  </div>
-                  {snapshot.installedRevision && snapshot.updateAvailable ? (
-                    <>
-                      <div>
-                        <dt className="text-muted-foreground">{t('New version')}</dt>
-                        <dd className="mt-1 break-all">{snapshot.recommendedRevision}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted-foreground">{t('Download size')}</dt>
-                        <dd className="mt-1">{size(snapshot.downloadBytes)}</dd>
-                      </div>
-                    </>
-                  ) : null}
-                </dl>
               </div>
+            </div>
+            <div className="col-span-full min-w-0 sm:pl-8">
+              <p className="text-[13px] text-muted-foreground">
+                {t('Find candidate figures, captions and copyable tables in Literature PDFs.')}
+              </p>
+              <dl className="mt-4 grid gap-2 text-xs sm:grid-cols-2">
+                <div>
+                  <dt className="text-muted-foreground">
+                    {snapshot.installedRevision ? t('Installed version') : t('Version')}
+                  </dt>
+                  <dd className="mt-1 break-all">
+                    {snapshot.installedRevision ?? snapshot.recommendedRevision}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">
+                    {snapshot.installedRevision ? t('Installed size') : t('Download size')}
+                  </dt>
+                  <dd className="mt-1">
+                    {size(
+                      snapshot.installedRevision ? snapshot.installedBytes : snapshot.downloadBytes
+                    )}
+                  </dd>
+                </div>
+                {snapshot.installedRevision && snapshot.updateAvailable ? (
+                  <>
+                    <div>
+                      <dt className="text-muted-foreground">{t('New version')}</dt>
+                      <dd className="mt-1 break-all">{snapshot.recommendedRevision}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">{t('Download size')}</dt>
+                      <dd className="mt-1">{size(snapshot.downloadBytes)}</dd>
+                    </div>
+                  </>
+                ) : null}
+              </dl>
             </div>
             {installing ? (
               <div className="col-span-full space-y-2">
-                <progress
-                  className="h-1.5 w-full appearance-none overflow-hidden rounded-full bg-bg-300 [&::-webkit-progress-bar]:bg-bg-300 [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary"
-                  aria-label={t('Model download progress')}
-                  value={snapshot.transferredBytes}
-                  max={snapshot.downloadBytes}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {size(snapshot.transferredBytes)} / {size(snapshot.downloadBytes)}
-                </p>
+                <DownloadProgressLine progress={localModelDownloadProgress(snapshot)} />
                 {snapshot.installedRevision ? (
                   <p className="text-xs text-muted-foreground">
                     {t('The installed version remains available while the update downloads.')}
@@ -171,9 +167,14 @@ const LocalModelsPanel = (): React.JSX.Element => {
                 {t('Model in use. Removal is available when parsing finishes.')}
               </p>
             ) : null}
-            <div className="col-start-2 row-start-1 flex flex-col items-end gap-2">
+            <div className="col-start-2 row-start-1 flex flex-col items-end gap-2 self-start">
               {installing ? (
-                <Button variant="outline" disabled={pending} onClick={() => void run('cancel')}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() => void run('cancel')}
+                >
                   {t('Cancel download')}
                 </Button>
               ) : (
@@ -181,8 +182,13 @@ const LocalModelsPanel = (): React.JSX.Element => {
                   {snapshot.hasFiles ? (
                     <AlertDialog.Root>
                       <AlertDialog.Trigger asChild>
-                        <Button variant="outline" disabled={pending || snapshot.inUse}>
-                          {t('Remove model')}
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          disabled={pending || snapshot.inUse}
+                        >
+                          <Trash2 className="size-3.5" aria-hidden="true" />
+                          {t('Uninstall')}
                         </Button>
                       </AlertDialog.Trigger>
                       <AlertDialog.Portal>
@@ -222,6 +228,7 @@ const LocalModelsPanel = (): React.JSX.Element => {
                   ) : null}
                   {!snapshot.installedRevision || snapshot.updateAvailable || error ? (
                     <Button
+                      size="sm"
                       disabled={pending || error === 'incompatible' || requestFailed}
                       onClick={() => void run('install')}
                     >

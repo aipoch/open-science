@@ -6063,10 +6063,8 @@
     "Download size": "Размер загрузки",
     "Installed version": "Установленная версия",
     "Installed size": "Размер после установки",
-    "Model download progress": "Ход загрузки модели",
     "The installed version remains available while the update downloads.": "Установленная версия остаётся доступной во время загрузки обновления.",
     "Cancel download": "Отменить загрузку",
-    "Remove model": "Удалить модель",
     "Remove local model files?": "Удалить локальные файлы модели?",
     "Source documents and existing parsing results are kept. New parsing tasks may require reinstalling the model.": "Исходные документы и результаты разбора сохраняются. Для новых задач может потребоваться повторная установка модели.",
     "Removing models keeps your documents and existing parsing results.": "При удалении моделей документы и существующие результаты разбора сохраняются.",
@@ -6075,10 +6073,7 @@
     "Check local model installation and try again.": "Проверьте установку локальной модели и повторите попытку.",
     "Clear all PDF parsing results": "Удалить все результаты разбора PDF",
     "Clear all PDF parsing results?": "Удалить все результаты разбора PDF?",
-    "Copy Markdown": "Копировать Markdown",
     "Table notes": "Примечания к таблице",
-    "Copy formatted table": "Копировать таблицу с форматированием",
-    "Copy TSV": "Копировать TSV",
     "Could not copy the table. Try again.": "Не удалось скопировать таблицу. Повторите попытку.",
     "Could not extract pages: {{pages}}": "Не удалось извлечь страницы: {{pages}}",
     "Download and continue": "Скачать и продолжить",
@@ -6129,6 +6124,12 @@
     "Previous figure or table": "Предыдущий рисунок или таблица",
     "Next figure or table": "Следующий рисунок или таблица",
     "Enlarge image": "Увеличить изображение",
-    "Image preview": "Предпросмотр изображения"
+    "Image preview": "Предпросмотр изображения",
+    "Estimating time remaining…": "Оценка оставшегося времени…",
+    "About {{duration}} remaining": "Осталось примерно {{duration}}",
+    "Table export format": "Формат экспорта таблицы",
+    "Could not save the table. Try again.": "Не удалось сохранить таблицу. Повторите попытку.",
+    "HTML": "HTML",
+    "TSV": "TSV"
   }
 }

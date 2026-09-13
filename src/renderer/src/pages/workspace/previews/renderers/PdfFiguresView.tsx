@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import './pdf-research-table.css'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import * as Dialog from '@/components/ui/dialog'
@@ -13,6 +14,7 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { ErrorNotice } from '@/components/error-notice'
+import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import {
   ImageIcon,
   Table2,
@@ -34,6 +36,7 @@ import { cn } from '@/lib/utils'
 import {
   LOCAL_MODEL_NOT_INSTALLED,
   PDF_MODEL_CHANGED,
+  localModelDownloadProgress,
   type LocalModelSnapshot
 } from '../../../../../../shared/local-models'
 import type { PdfStructureResult } from '../../../../../../shared/pdf-structure'
@@ -47,15 +50,20 @@ type TableData = NonNullable<PdfStructureResult['elements'][number]['table']>
 const TableDetails = ({
   table,
   title,
-  sharedNotes
+  sharedNotes,
+  downloadName
 }: {
   table: TableData
   title?: string
   sharedNotes?: TableData['notes']
+  downloadName: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [reviewed, setReviewed] = useState(false)
   const [copyStatus, setCopyStatus] = useState<string>()
+  const [format, setFormat] = useState<'html' | 'tsv' | 'markdown'>('tsv')
+  const [action, setAction] = useState<'copy' | 'download' | null>(null)
+  const actionPending = useRef(false)
   const missing = t('[Missing]')
   const grid = useMemo(
     () =>
@@ -64,10 +72,32 @@ const TableDetails = ({
         : undefined,
     [table]
   )
-  const copy = async (format: 'tsv' | 'markdown' | 'html'): Promise<void> => {
-    if (!table || !reviewed) return
+  const exportTable = async (requestedAction: 'copy' | 'download'): Promise<void> => {
+    if (!table || !reviewed || actionPending.current) return
+    actionPending.current = true
+    setAction(requestedAction)
+    setCopyStatus(undefined)
     const copyTable = { ...table, notes: [...(table.notes ?? []), ...(sharedNotes ?? [])] }
     try {
+      if (requestedAction === 'download') {
+        let content = copyPdfTable(copyTable, format, missing, true)
+        if (format === 'html')
+          content = content.replace(
+            '<html><body>',
+            '<!doctype html><html><head><meta charset="utf-8"></head><body>'
+          )
+        const { saved } = await window.api.saveBlobFile({
+          suggestedName: `${downloadName}.${format === 'markdown' ? 'md' : format}`,
+          mimeType: {
+            html: 'text/html',
+            tsv: 'text/tab-separated-values',
+            markdown: 'text/markdown'
+          }[format],
+          data: new TextEncoder().encode(content).buffer
+        })
+        if (saved) setCopyStatus(t('Saved'))
+        return
+      }
       if (format === 'html') {
         await navigator.clipboard.write([
           new ClipboardItem({
@@ -82,7 +112,14 @@ const TableDetails = ({
       } else await navigator.clipboard.writeText(copyPdfTable(copyTable, format, missing))
       setCopyStatus(t('Copied'))
     } catch {
-      setCopyStatus(t('Could not copy the table. Try again.'))
+      setCopyStatus(
+        requestedAction === 'copy'
+          ? t('Could not copy the table. Try again.')
+          : t('Could not save the table. Try again.')
+      )
+    } finally {
+      actionPending.current = false
+      setAction(null)
     }
   }
   return (
@@ -90,11 +127,13 @@ const TableDetails = ({
       {title ? <h3 className="font-medium">{title}</h3> : null}
       {grid ? (
         <>
-          <div className="overflow-x-auto rounded-md border border-border-200">
-            <table
-              className="w-full border-collapse text-sm tabular-nums"
-              aria-label={t('Candidate table')}
-            >
+          <div
+            className="pdf-research-table-scroll"
+            tabIndex={0}
+            role="region"
+            aria-label={t('Candidate table')}
+          >
+            <table className="pdf-research-table" aria-label={t('Candidate table')}>
               <tbody>
                 {grid.map((row, index) => (
                   <tr key={index}>
@@ -104,7 +143,15 @@ const TableDetails = ({
                           key={column}
                           rowSpan={cell?.rowSpan}
                           colSpan={cell?.columnSpan}
-                          className="min-w-24 border border-border-200 px-3 py-2 align-top"
+                          data-numeric={
+                            cell &&
+                            column > 0 &&
+                            cell.columnSpan === 1 &&
+                            /\d/.test(cell.text) &&
+                            /^[\s\d.,%‰+−–—\-±×/():;<>=≤≥∞*†‡eE]+$/.test(cell.text)
+                              ? true
+                              : undefined
+                          }
                         >
                           {cell?.textRuns
                             ? cell.textRuns.map((run, index) =>
@@ -160,30 +207,60 @@ const TableDetails = ({
               />
               {t('I checked the table against the PDF.')}
             </label>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid w-full grid-cols-2 items-center gap-2 @min-[480px]:flex @min-[480px]:w-auto">
+              <Select
+                value={format}
+                disabled={action !== null}
+                onValueChange={(value) => {
+                  if (value === 'html' || value === 'tsv' || value === 'markdown') {
+                    setFormat(value)
+                    setCopyStatus(undefined)
+                  }
+                }}
+              >
+                <SelectTrigger
+                  className="col-span-2 w-full @min-[480px]:w-32"
+                  aria-label={t('Table export format')}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="z-[70]">
+                  <SelectItem value="tsv">{t('TSV')}</SelectItem>
+                  <SelectItem value="html">{t('HTML')}</SelectItem>
+                  <SelectItem value="markdown">{t('Markdown', { ns: 'common' })}</SelectItem>
+                </SelectContent>
+              </Select>
               <Button
                 size="sm"
                 variant="outline"
-                disabled={!reviewed}
-                onClick={() => void copy('html')}
+                disabled={!reviewed || action !== null}
+                onClick={() => void exportTable('copy')}
               >
-                {t('Copy formatted table')}
+                {action === 'copy' ? (
+                  <LoaderCircle
+                    className="size-4 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Copy className="size-4" aria-hidden="true" />
+                )}
+                {t('Copy')}
               </Button>
               <Button
                 size="sm"
                 variant="outline"
-                disabled={!reviewed}
-                onClick={() => void copy('tsv')}
+                disabled={!reviewed || action !== null}
+                onClick={() => void exportTable('download')}
               >
-                {t('Copy TSV')}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!reviewed}
-                onClick={() => void copy('markdown')}
-              >
-                {t('Copy Markdown')}
+                {action === 'download' ? (
+                  <LoaderCircle
+                    className="size-4 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Download className="size-4" aria-hidden="true" />
+                )}
+                {t('Download')}
               </Button>
             </div>
           </div>
@@ -541,10 +618,16 @@ const CandidateDetails = ({
                 table={part.table}
                 title={part.title}
                 sharedNotes={element.tableNotes}
+                downloadName={`pdf-${element.id}-page-${element.regions[0].page}-part-${index + 1}`}
               />
             ))
           ) : table ? (
-            <TableDetails key={selected.continuations?.length ?? 0} table={table} />
+            <TableDetails
+              key={selected.continuations?.length ?? 0}
+              table={table}
+              sharedNotes={element.tableNotes}
+              downloadName={`pdf-${element.id}-page-${element.regions[0].page}`}
+            />
           ) : null}
           {element.tableNotes?.length ? (
             <section className="space-y-1 text-xs text-text-200">
@@ -568,17 +651,20 @@ export const PdfFiguresView = ({
   attachmentVersionId,
   pageCount,
   active: visible = true,
+  onBusyChange,
   onNavigate
 }: {
   attachmentVersionId: string
   pageCount: number
   active?: boolean
+  onBusyChange?: (busy: boolean) => void
   onNavigate: (page: number) => void
 }): React.JSX.Element => {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [model, setModel] = useState<LocalModelSnapshot>()
   const [busy, setBusy] = useState(false)
   const [completed, setCompleted] = useState(0)
+  const [remainingSeconds, setRemainingSeconds] = useState<number>()
   const [results, setResults] = useState<PdfStructureResult[]>([])
   const [failed, setFailed] = useState<number[]>([])
   const [error, setError] = useState(false)
@@ -591,6 +677,10 @@ export const PdfFiguresView = ({
   const requestId = useRef<string | undefined>(undefined)
   const installation = useRef<Promise<void> | undefined>(undefined)
   const mounted = useRef(true)
+  useEffect(() => {
+    onBusyChange?.(busy)
+  }, [busy, onBusyChange])
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange])
   useEffect(() => {
     if (!visible || cacheChecked) return
     let live = true
@@ -688,10 +778,12 @@ export const PdfFiguresView = ({
     setResults([])
     setFailed([])
     setCompleted(0)
+    setRemainingSeconds(undefined)
     setSelected(undefined)
     setLimited(false)
     let totalBytes = 0
     let totalElements = 0
+    let parsingMs = 0
     try {
       // Join cancellation of an earlier install before starting a new one.
       await installation.current
@@ -728,6 +820,7 @@ export const PdfFiguresView = ({
         }
       }
       for (let page = 1; page <= pageCount && own === generation.current; page++) {
+        let pageStartedAt = performance.now()
         const id = crypto.randomUUID()
         requestId.current = id
         try {
@@ -743,6 +836,8 @@ export const PdfFiguresView = ({
               throw error
             await install()
             if (own !== generation.current) throw error
+            // Model download time is not representative of page parsing throughput.
+            pageStartedAt = performance.now()
             return window.api.pdfStructure.parse(request)
           })
           if (own !== generation.current) return
@@ -757,7 +852,11 @@ export const PdfFiguresView = ({
           if (own !== generation.current) return
           setFailed((current) => [...current, page])
         }
-        if (own === generation.current) setCompleted(page)
+        if (own === generation.current) {
+          parsingMs += performance.now() - pageStartedAt
+          setCompleted(page)
+          if (page >= 2) setRemainingSeconds((parsingMs / page / 1000) * (pageCount - page))
+        }
       }
     } catch {
       if (own === generation.current) setError(true)
@@ -791,15 +890,26 @@ export const PdfFiguresView = ({
         ? t('Figure')
         : t('Table'))
   const downloading = model?.availability === 'installing'
-  const progressValue = downloading ? model.transferredBytes : completed
-  const progressTotal = downloading ? model.downloadBytes : pageCount
-  const percent =
-    progressTotal > 0 ? Math.min(100, Math.round((progressValue / progressTotal) * 100)) : 0
+  const percent = pageCount > 0 ? Math.min(100, Math.round((completed / pageCount) * 100)) : 0
   const busyLabel = downloading ? t('Downloading and verifying…') : t('Analyzing PDF…')
+  const remainingLabel =
+    remainingSeconds === undefined
+      ? t('Estimating time remaining…')
+      : t('About {{duration}} remaining', {
+          duration: new Intl.NumberFormat(i18n.language, {
+            style: 'unit',
+            unit: remainingSeconds >= 60 ? 'minute' : 'second',
+            unitDisplay: 'short'
+          }).format(
+            remainingSeconds >= 60
+              ? Math.ceil(remainingSeconds / 60)
+              : Math.max(10, Math.ceil(remainingSeconds / 10) * 10)
+          )
+        })
   const progressTrack = (
     <div
       role="progressbar"
-      aria-label={downloading ? t('Model download progress') : t('PDF extraction progress')}
+      aria-label={t('PDF extraction progress')}
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={percent}
@@ -811,14 +921,19 @@ export const PdfFiguresView = ({
       />
     </div>
   )
-  const progress = (
+  const progress = downloading ? (
+    <div className="w-full text-left">
+      <DownloadProgressLine progress={localModelDownloadProgress(model)} />
+    </div>
+  ) : (
     <div className="w-full space-y-2 text-left">
       {progressTrack}
       <div className="flex items-start justify-between gap-4 text-xs text-text-200 tabular-nums">
-        <span>
-          {downloading
-            ? `${formatBytes(model.transferredBytes)} / ${formatBytes(model.downloadBytes)}`
-            : t('Processed {{completed}} / {{total}} pages', { completed, total: pageCount })}
+        <span className="flex min-w-0 flex-1 flex-wrap gap-x-3 gap-y-1">
+          <span>
+            {t('Processed {{completed}} / {{total}} pages', { completed, total: pageCount })}
+          </span>
+          <span>{remainingLabel}</span>
         </span>
         <span className="shrink-0">{percent}%</span>
       </div>
@@ -833,7 +948,7 @@ export const PdfFiguresView = ({
         <header
           className={cn(
             'shrink-0 space-y-2 border-b border-border-200 px-3 @min-[640px]:px-4',
-            busy ? 'py-3' : 'py-1.5'
+            busy ? 'py-2' : 'py-1.5'
           )}
         >
           <div className="flex items-center justify-between gap-4">
@@ -1077,10 +1192,42 @@ export const PdfFiguresView = ({
       ) : busy ? (
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6">
           <div className="w-full max-w-sm space-y-5 text-center">
-            <LoaderCircle
-              className="mx-auto size-8 animate-spin text-primary motion-reduce:animate-none"
-              aria-hidden="true"
-            />
+            {downloading ? (
+              <LoaderCircle
+                className="mx-auto size-8 animate-spin text-primary motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : (
+              <svg
+                viewBox="0 0 80 80"
+                className="mx-auto size-20 text-primary"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  d="M23 8h25l12 12v48a4 4 0 0 1-4 4H23a4 4 0 0 1-4-4V12a4 4 0 0 1 4-4Z"
+                  fill="currentColor"
+                  fillOpacity="0.04"
+                  strokeOpacity="0.45"
+                />
+                <path d="M48 8v12h12" strokeOpacity="0.45" />
+                <g className="pdf-scan-text">
+                  <path d="M28 30h23" />
+                  <path d="M28 39h18" />
+                  <path d="M28 48h23" />
+                  <path d="M28 57h14" />
+                </g>
+                <g className="pdf-scan-beam">
+                  <path d="M15 40h50" strokeWidth="8" strokeOpacity="0.08" />
+                  <path d="M14 40h52" />
+                </g>
+              </svg>
+            )}
             <h3 role="status" className="text-base font-medium">
               {busyLabel}
             </h3>

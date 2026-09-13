@@ -130,6 +130,7 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
       installedRevision: revision?.revision,
       installedBytes: revision ? bytes(revision) : 0,
       updateAvailable: Boolean(revision && revision.revision !== recommended.revision),
+      downloadProgress: undefined,
       error: undefined
     }
   }
@@ -137,6 +138,7 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
     snapshot = {
       ...snapshot,
       availability: snapshot.installedRevision ? 'ready' : 'error',
+      downloadProgress: undefined,
       error:
         error instanceof IncompatibleReceiptError
           ? 'incompatible'
@@ -251,7 +253,13 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
       fail(error)
       return currentSnapshot()
     }
-    snapshot = { ...snapshot, availability: 'installing', error: undefined, transferredBytes: 0 }
+    snapshot = {
+      ...snapshot,
+      availability: 'installing',
+      error: undefined,
+      transferredBytes: 0,
+      downloadProgress: undefined
+    }
     const run = async (): Promise<void> => {
       try {
         // Re-read the receipt before mutation. A newer app's receipt is never overwritten.
@@ -284,14 +292,29 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
               signal: controller.signal,
               deps: { fetchImpl: netFetchStandard },
               onProgress: (progress) => {
-                snapshot = { ...snapshot, transferredBytes: completed + progress.transferred }
+                const transferred = completed + progress.transferred
+                const total = snapshot.downloadBytes
+                snapshot = {
+                  ...snapshot,
+                  transferredBytes: transferred,
+                  downloadProgress: {
+                    ...progress,
+                    transferred,
+                    total,
+                    percent: Math.min(100, Math.round((transferred / total) * 100)),
+                    etaSeconds:
+                      progress.bytesPerSecond > 0
+                        ? Math.ceil(Math.max(0, total - transferred) / progress.bytesPerSecond)
+                        : undefined
+                  }
+                }
               }
             })
           }
           if (controller.signal.aborted) return
           if (!(await validAsset(target, asset))) throw new DownloadChecksumError()
           completed += asset.size
-          snapshot = { ...snapshot, transferredBytes: completed }
+          snapshot = { ...snapshot, transferredBytes: completed, downloadProgress: undefined }
         }
         const destination = (await directory(['revisions', recommended.revision], true))!
         for (const asset of recommended.assets) {
@@ -316,6 +339,7 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
         if (snapshot.availability === 'installing') {
           snapshot = {
             ...snapshot,
+            downloadProgress: undefined,
             availability: snapshot.installedRevision ? 'ready' : 'notInstalled'
           }
         }

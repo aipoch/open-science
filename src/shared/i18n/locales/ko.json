@@ -5603,10 +5603,8 @@
     "Download size": "다운로드 크기",
     "Installed version": "설치된 버전",
     "Installed size": "설치 크기",
-    "Model download progress": "모델 다운로드 진행률",
     "The installed version remains available while the update downloads.": "업데이트 다운로드 중에도 설치된 버전을 사용할 수 있습니다.",
     "Cancel download": "다운로드 취소",
-    "Remove model": "모델 제거",
     "Remove local model files?": "로컬 모델 파일을 제거할까요?",
     "Source documents and existing parsing results are kept. New parsing tasks may require reinstalling the model.": "원본 문서와 기존 분석 결과는 유지됩니다. 새 분석 작업에는 모델을 다시 설치해야 할 수 있습니다.",
     "Removing models keeps your documents and existing parsing results.": "모델을 제거해도 문서와 기존 분석 결과는 유지됩니다.",
@@ -5615,10 +5613,7 @@
     "Check local model installation and try again.": "로컬 모델 설치를 확인하고 다시 시도하세요.",
     "Clear all PDF parsing results": "모든 PDF 분석 결과 지우기",
     "Clear all PDF parsing results?": "모든 PDF 분석 결과를 지울까요?",
-    "Copy Markdown": "Markdown 복사",
     "Table notes": "표 주석",
-    "Copy formatted table": "서식 있는 표 복사",
-    "Copy TSV": "TSV 복사",
     "Could not copy the table. Try again.": "표를 복사하지 못했습니다. 다시 시도하세요.",
     "Could not extract pages: {{pages}}": "추출하지 못한 페이지: {{pages}}",
     "Download and continue": "다운로드 후 계속",
@@ -5669,6 +5664,12 @@
     "Previous figure or table": "이전 그림 또는 표",
     "Next figure or table": "다음 그림 또는 표",
     "Enlarge image": "이미지 확대",
-    "Image preview": "이미지 미리보기"
+    "Image preview": "이미지 미리보기",
+    "Estimating time remaining…": "남은 시간 예상 중…",
+    "About {{duration}} remaining": "약 {{duration}} 남음",
+    "Table export format": "표 내보내기 형식",
+    "Could not save the table. Try again.": "표를 저장하지 못했습니다. 다시 시도해 주세요.",
+    "HTML": "HTML",
+    "TSV": "TSV"
   }
 }

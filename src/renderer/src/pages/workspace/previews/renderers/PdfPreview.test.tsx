@@ -333,6 +333,11 @@ describe('PdfPreviewContent', () => {
   })
 
   it('switches Literature reading modes without releasing or resetting the original PDF', async () => {
+    window.api.pdfStructure = {
+      readCached: vi.fn().mockResolvedValue(undefined),
+      parse: vi.fn(() => new Promise(() => {})),
+      cancel: vi.fn().mockResolvedValue(undefined)
+    } as unknown as Window['api']['pdfStructure']
     window.api.localModels = {
       getSnapshot: vi.fn().mockResolvedValue({
         availability: 'ready',
@@ -382,12 +387,26 @@ describe('PdfPreviewContent', () => {
     expect(original.hasAttribute('inert')).toBe(true)
     const figures = container.querySelector('[data-pdf-figures-content]')
     expect(figures).not.toBeNull()
+    await act(async () => {
+      ;[...container.querySelectorAll('button')]
+        .find((node) => node.textContent === 'Analyze PDF')!
+        .click()
+    })
+    expect(activeTab.querySelector('[role="status"]')).not.toBeNull()
     await clickMode('Original PDF')
+    expect(activeTab.querySelector('[role="status"]')).not.toBeNull()
+    expect(window.api.pdfStructure.cancel).not.toHaveBeenCalled()
     expect(container.querySelector('[data-pdf-original-view]')).toBe(original)
     expect(scroller.scrollTop).toBe(275)
     expect(original.hasAttribute('inert')).toBe(false)
     await clickMode('Figures and tables')
     expect(container.querySelector('[data-pdf-figures-content]')).toBe(figures)
+    await act(async () => {
+      ;[...container.querySelectorAll('button')]
+        .find((node) => node.textContent === 'Cancel')!
+        .click()
+    })
+    expect(activeTab.querySelector('[role="status"]')).toBeNull()
     await act(async () =>
       document.dispatchEvent(
         new CustomEvent('pdf-reading-reveal', {

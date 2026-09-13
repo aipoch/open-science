@@ -98,5 +98,13 @@ export const copyPdfTable = (
           .replace(/[\r\n]+/g, '<br>')
       )
       .join(' | ')} |`
-  return [row(grid[0]), row(grid[0].map(() => '---')), ...grid.slice(1).map(row)].join('\n')
+  return (
+    [row(grid[0]), row(grid[0].map(() => '---')), ...grid.slice(1).map(row)].join('\n') +
+    (includeNotes && table.notes?.length
+      ? '\n\n' +
+        table.notes
+          .map((note) => note.text.replace(/[\\`*_{}[\]()<>#+.!|~-]/g, '\\$&'))
+          .join('\n\n')
+      : '')
+  )
 }

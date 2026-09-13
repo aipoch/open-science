@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, Profiler } from 'react'
+import { fireEvent } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { i18next } from '@/i18n'
@@ -128,6 +129,8 @@ const click = async (text: string): Promise<void> => {
   await act(async () => button!.click())
 }
 beforeEach(async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => undefined
   vi.clearAllMocks()
   api.localModels.getSnapshot.mockReset().mockImplementation(async () => model)
   api.pdfStructure.readCached.mockReset().mockResolvedValue(undefined)
@@ -274,9 +277,7 @@ it('shows one cached table with independently copyable parts, shared notes and o
   const section = container.querySelector('section[aria-label="B. Dewa data"]')!
   await act(async () => section.querySelector<HTMLInputElement>('input')!.click())
   await act(async () =>
-    [...section.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Copy TSV')!
-      .click()
+    [...section.querySelectorAll('button')].find((button) => button.textContent === 'Copy')!.click()
   )
   expect(clipboard).toHaveBeenLastCalledWith('B0\tB1\tB2\tB3\tB4\tB5\tB6')
   expect(
@@ -558,7 +559,7 @@ it('shows algorithms as original images with titles and source navigation', asyn
   )
   expect(container.querySelector('[data-pdf-caption]')?.textContent).toBe('Algorithm 1 Search')
   expect(container.querySelector('table')).toBeNull()
-  expect(container.textContent).not.toContain('Copy TSV')
+  expect(container.textContent).not.toContain('Copy')
   expect(container.textContent).not.toContain('Unplaced table text')
   expect(api.pdfStructure.readThumbnail).toHaveBeenCalledOnce()
   await click('Show in PDF')
@@ -818,7 +819,7 @@ it('shows download activity and byte progress, then switches to PDF processing',
   )
   await click('Download and continue')
   expect(container.textContent).toContain('Downloading and verifying…')
-  expect(container.textContent).toContain('44.0 MiB / 100.0 MiB')
+  expect(container.textContent).toContain('44.0 MB / 100.0 MB')
   expect(container.textContent).not.toContain('Browse figures, captions and copyable tables.')
   expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('44')
   model = { ...model, availability: 'ready', installedRevision: 'v1' }
@@ -919,12 +920,12 @@ it('shows partial coverage, original caption, merged cells and review-gated copy
   expect(container.querySelector('td[colspan="2"]')?.textContent).toBe('Merged header')
   expect(container.textContent).toContain('[Missing]')
   expect(container.textContent).toContain('Table 1. Original caption.')
-  const copy = [...container.querySelectorAll('button')].find((b) => b.textContent === 'Copy TSV')!
+  const copy = [...container.querySelectorAll('button')].find((b) => b.textContent === 'Copy')!
   expect(copy.disabled).toBe(true)
   await act(async () =>
     container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click()
   )
-  await click('Copy TSV')
+  await click('Copy')
   expect(clipboard).toHaveBeenCalledWith('Merged header\t\nValue\t[Missing]')
   await click('Show in PDF')
   expect(navigate).toHaveBeenCalledWith(1)
@@ -933,6 +934,132 @@ it('shows partial coverage, original caption, merged cells and review-gated copy
   expect(container.querySelector('img')).not.toBeNull()
   await click('Table')
   expect(container.querySelector('td[colspan="2"]')).not.toBeNull()
+})
+
+it('aligns numeric values without changing source text or merged cells', async () => {
+  const texts = ['Grade 2', '0', '12 (34.5)', '−0.21 ± 0.58', 'HER2', '0.001†']
+  api.pdfStructure.readCached.mockResolvedValue({
+    ...result,
+    elements: [
+      {
+        ...result.elements[0],
+        table: {
+          rowCount: 2,
+          columnCount: texts.length,
+          cells: [
+            {
+              row: 0,
+              column: 0,
+              rowSpan: 1,
+              columnSpan: texts.length,
+              text: 'Outcomes',
+              regions: []
+            },
+            ...texts.map((text, column) => ({
+              row: 1,
+              column,
+              rowSpan: 1,
+              columnSpan: 1,
+              text,
+              regions: []
+            }))
+          ],
+          unassignedText: [],
+          issues: []
+        }
+      }
+    ]
+  })
+  await act(async () =>
+    root.render(
+      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+    )
+  )
+  expect(
+    [...container.querySelectorAll('td[data-numeric]')].map((cell) => cell.textContent)
+  ).toEqual(['0', '12 (34.5)', '−0.21 ± 0.58', '0.001†'])
+  expect(container.querySelector('td[colspan="6"]')?.textContent).toBe('Outcomes')
+  expect(container.querySelector('.pdf-research-table-scroll')?.getAttribute('tabindex')).toBe('0')
+})
+
+const selectExportFormat = async (value: string): Promise<void> => {
+  await act(async () =>
+    fireEvent.keyDown(container.querySelector('[aria-label="Table export format"]')!, {
+      key: 'ArrowDown'
+    })
+  )
+  const option = [...document.querySelectorAll('[role="option"]')].find(
+    (el) => el.textContent === value
+  )!
+  expect(option).toBeDefined()
+  await act(async () => fireEvent.click(option))
+}
+
+it('downloads the selected format with notes and handles cancellation, failure and pending actions', async () => {
+  api.pdfStructure.readCached.mockResolvedValue({
+    ...result,
+    elements: [
+      {
+        ...result.elements[0],
+        table: {
+          ...result.elements[0].table!,
+          notes: [{ text: 'Units: µg', regions: result.elements[0].regions }]
+        }
+      }
+    ]
+  })
+  await act(async () =>
+    root.render(
+      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+    )
+  )
+  await click('Download')
+  expect(api.saveBlobFile).not.toHaveBeenCalled()
+  await act(async () =>
+    container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click()
+  )
+  for (const [format, extension, mimeType] of [
+    ['TSV', 'tsv', 'text/tab-separated-values'],
+    ['HTML', 'html', 'text/html'],
+    ['Markdown', 'md', 'text/markdown']
+  ]) {
+    await selectExportFormat(format)
+    await click('Download')
+    const request = vi.mocked(window.api.saveBlobFile).mock.calls.at(-1)![0]
+    expect(request.suggestedName).toBe(`pdf-table-1-page-1.${extension}`)
+    expect(request.mimeType).toBe(mimeType)
+    const content = new TextDecoder().decode(request.data)
+    expect(content).toContain('Units: µg')
+    if (format === 'HTML') {
+      expect(content).toContain('charset="utf-8"')
+      expect(content).toContain('colspan="2"')
+    }
+    expect(container.textContent).toContain('Saved')
+  }
+  api.saveBlobFile.mockResolvedValueOnce({ saved: false })
+  await click('Download')
+  expect(container.textContent).not.toContain('Saved')
+  api.saveBlobFile.mockRejectedValueOnce(new Error('Disk full'))
+  await click('Download')
+  expect(container.textContent).toContain('Could not save the table. Try again.')
+  let finish!: (result: { saved: boolean }) => void
+  api.saveBlobFile.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  await click('Download')
+  const calls = api.saveBlobFile.mock.calls.length
+  await click('Download')
+  await click('Copy')
+  expect(api.saveBlobFile).toHaveBeenCalledTimes(calls)
+  expect(clipboard).not.toHaveBeenCalled()
+  expect(
+    container.querySelector('[aria-label="Table export format"]')?.hasAttribute('disabled')
+  ).toBe(true)
+  await act(async () => finish({ saved: true }))
+  expect(container.textContent).toContain('Saved')
 })
 
 it('copies an HTML table and plain text together with separate notes after review', async () => {
@@ -966,12 +1093,13 @@ it('copies an HTML table and plain text together with separate notes after revie
   await click('Analyze PDF')
   expect(container.textContent).toContain('Table notes')
   expect(container.textContent).toContain('* Original note.²³')
-  await click('Copy formatted table')
+  await selectExportFormat('HTML')
+  await click('Copy')
   expect(write).not.toHaveBeenCalled()
   await act(async () =>
     container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click()
   )
-  await click('Copy formatted table')
+  await click('Copy')
   expect(write).toHaveBeenCalledOnce()
   const item = write.mock.calls[0][0][0]
   expect(item.data['text/html'].type).toBe('text/html')
@@ -1034,7 +1162,7 @@ it('explains unplaced text and excludes it from copying without repeating the wa
   await act(async () =>
     container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click()
   )
-  await click('Copy TSV')
+  await click('Copy')
   expect(clipboard).toHaveBeenCalledWith('Merged header\t\nValue\t[Missing]')
   await click('Image')
   expect(container.textContent).not.toContain('Review it below')
@@ -1206,7 +1334,7 @@ it('renders and copies one continued table while retaining the next page image a
   expect(container.textContent).toContain('Shared table note.')
   const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement
   await act(async () => checkbox.click())
-  await click('Copy TSV')
+  await click('Copy')
   expect(clipboard).toHaveBeenLastCalledWith('Variable\tCount\nLetrozole\t11\nAnastrozole\t3')
   expect(api.pdfStructure.readThumbnail).toHaveBeenCalledWith(
     expect.objectContaining({ page: 5, extractionId: 'result-5', thumbnailId: 'table-5' })
@@ -1219,4 +1347,51 @@ it('renders and copies one continued table while retaining the next page image a
   )!
   await act(async () => open.click())
   expect(navigate).toHaveBeenLastCalledWith(5)
+})
+
+it('estimates remaining time from completed pages and reports work across tab switches', async () => {
+  let now = 0
+  const clock = vi.spyOn(performance, 'now').mockImplementation(() => now)
+  const pending: Array<(value: PdfStructureResult) => void> = []
+  api.pdfStructure.parse.mockImplementation(
+    () => new Promise<PdfStructureResult>((resolve) => pending.push(resolve))
+  )
+  const onBusyChange = vi.fn()
+  const render = (active: boolean): void =>
+    root.render(
+      <PdfFiguresView
+        attachmentVersionId="version-1"
+        pageCount={5}
+        active={active}
+        onBusyChange={onBusyChange}
+        onNavigate={navigate}
+      />
+    )
+  try {
+    await act(async () => render(true))
+    await click('Analyze PDF')
+    expect(onBusyChange).toHaveBeenLastCalledWith(true)
+    expect(container.textContent).toContain('Estimating time remaining…')
+    now = 10_000
+    await act(async () => pending.shift()!({ ...result, elements: [] }))
+    expect(container.textContent).toContain('Estimating time remaining…')
+    now = 20_000
+    await act(async () => pending.shift()!({ ...result, elements: [] }))
+    expect(container.textContent).toContain('Processed 2 / 5 pages')
+    expect(container.textContent).toContain('About 30 sec remaining')
+    await act(async () => render(false))
+    expect(onBusyChange).toHaveBeenLastCalledWith(true)
+    expect(api.pdfStructure.cancel).not.toHaveBeenCalled()
+    await act(async () => render(true))
+    await click('Cancel')
+    expect(onBusyChange).toHaveBeenLastCalledWith(false)
+    expect(container.textContent).not.toContain('remaining')
+    await click('Analyze again')
+    expect(container.textContent).toContain('Estimating time remaining…')
+    expect(container.textContent).not.toContain('About 30 sec remaining')
+    await act(async () => root.render(null))
+    expect(onBusyChange).toHaveBeenLastCalledWith(false)
+  } finally {
+    clock.mockRestore()
+  }
 })

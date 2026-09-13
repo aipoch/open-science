@@ -5605,10 +5605,8 @@
     "Download size": "下载大小",
     "Installed version": "已安装版本",
     "Installed size": "安装后大小",
-    "Model download progress": "模型下载进度",
     "The installed version remains available while the update downloads.": "下载更新期间，已安装版本仍可使用。",
     "Cancel download": "取消下载",
-    "Remove model": "移除模型",
     "Remove local model files?": "移除本地模型文件？",
     "Source documents and existing parsing results are kept. New parsing tasks may require reinstalling the model.": "原文献和已有解析结果会保留。新的解析任务可能需要重新安装模型。",
     "Removing models keeps your documents and existing parsing results.": "移除模型会保留文献和已有解析结果。",
@@ -5617,10 +5615,7 @@
     "Check local model installation and try again.": "请检查本地模型安装后重试。",
     "Clear all PDF parsing results": "清除所有 PDF 解析结果",
     "Clear all PDF parsing results?": "清除所有 PDF 解析结果？",
-    "Copy Markdown": "复制 Markdown",
     "Table notes": "表格注释",
-    "Copy formatted table": "复制格式化表格",
-    "Copy TSV": "复制 TSV",
     "Could not copy the table. Try again.": "无法复制表格，请重试。",
     "Could not extract pages: {{pages}}": "无法提取的页码：{{pages}}",
     "Download and continue": "下载并继续",
@@ -5671,6 +5666,12 @@
     "Previous figure or table": "上一个图表",
     "Next figure or table": "下一个图表",
     "Enlarge image": "放大图片",
-    "Image preview": "图片预览"
+    "Image preview": "图片预览",
+    "Estimating time remaining…": "正在估算剩余时间…",
+    "About {{duration}} remaining": "预计还需 {{duration}}",
+    "Table export format": "表格导出格式",
+    "Could not save the table. Try again.": "无法保存表格。请重试。",
+    "HTML": "HTML",
+    "TSV": "TSV"
   }
 }

@@ -5605,10 +5605,8 @@
     "Download size": "ダウンロードサイズ",
     "Installed version": "インストール済みバージョン",
     "Installed size": "インストール後のサイズ",
-    "Model download progress": "モデルのダウンロード進捗",
     "The installed version remains available while the update downloads.": "更新のダウンロード中もインストール済みバージョンを使用できます。",
     "Cancel download": "ダウンロードをキャンセル",
-    "Remove model": "モデルを削除",
     "Remove local model files?": "ローカルモデルファイルを削除しますか？",
     "Source documents and existing parsing results are kept. New parsing tasks may require reinstalling the model.": "元の文書と既存の解析結果は保持されます。新しい解析にはモデルの再インストールが必要になる場合があります。",
     "Removing models keeps your documents and existing parsing results.": "モデルを削除しても文書と既存の解析結果は保持されます。",
@@ -5617,10 +5615,7 @@
     "Check local model installation and try again.": "ローカルモデルのインストールを確認して再試行してください。",
     "Clear all PDF parsing results": "PDFの解析結果をすべて消去",
     "Clear all PDF parsing results?": "PDFの解析結果をすべて消去しますか？",
-    "Copy Markdown": "Markdownをコピー",
     "Table notes": "表の注記",
-    "Copy formatted table": "書式付きの表をコピー",
-    "Copy TSV": "TSVをコピー",
     "Could not copy the table. Try again.": "表をコピーできませんでした。再試行してください。",
     "Could not extract pages: {{pages}}": "抽出できなかったページ：{{pages}}",
     "Download and continue": "ダウンロードして続行",
@@ -5671,6 +5666,12 @@
     "Previous figure or table": "前の図または表",
     "Next figure or table": "次の図または表",
     "Enlarge image": "画像を拡大",
-    "Image preview": "画像プレビュー"
+    "Image preview": "画像プレビュー",
+    "Estimating time remaining…": "残り時間を推定中…",
+    "About {{duration}} remaining": "残り約{{duration}}",
+    "Table export format": "表のエクスポート形式",
+    "Could not save the table. Try again.": "表を保存できませんでした。もう一度お試しください。",
+    "HTML": "HTML",
+    "TSV": "TSV"
   }
 }

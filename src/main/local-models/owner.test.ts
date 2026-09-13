@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DownloadChecksumError } from '../net/resilient-download'
 import { createLocalModelOwner } from './owner'
 import type { LocalModelRevision } from './catalog'
+import type { DownloadProgress } from '../../shared/download-progress'
 import {
   acquireDataRootWriter,
   beginMigration,
@@ -404,6 +405,73 @@ describe('local model use leases', () => {
 })
 
 describe('local model lifecycle', () => {
+  it('reports package-wide progress and live transfer speed across model files', async () => {
+    const root = await prepare()
+    const seen: DownloadProgress[] = []
+    const owner = createLocalModelOwner({
+      dataRoot: () => root,
+      revisions: [revision('v1')],
+      acquireWriter: () => () => undefined,
+      download: async (_url, path, options = {}) => {
+        for (const phase of ['reconnecting', 'downloading'] as const) {
+          options.onProgress?.({
+            phase,
+            transferred: 6,
+            total: content.length,
+            percent: 46,
+            bytesPerSecond: phase === 'reconnecting' ? 0 : 2,
+            etaSeconds: 4,
+            attempt: 2
+          })
+          seen.push((await owner.getSnapshot()).downloadProgress!)
+        }
+        await writeFile(path, content)
+        return path
+      }
+    })
+    await owner.install()
+    await waitForIdle(owner)
+    expect(seen).toEqual([
+      {
+        phase: 'reconnecting',
+        transferred: 6,
+        total: 26,
+        percent: 23,
+        bytesPerSecond: 0,
+        etaSeconds: undefined,
+        attempt: 2
+      },
+      {
+        phase: 'downloading',
+        transferred: 6,
+        total: 26,
+        percent: 23,
+        bytesPerSecond: 2,
+        etaSeconds: 10,
+        attempt: 2
+      },
+      {
+        phase: 'reconnecting',
+        transferred: 19,
+        total: 26,
+        percent: 73,
+        bytesPerSecond: 0,
+        etaSeconds: undefined,
+        attempt: 2
+      },
+      {
+        phase: 'downloading',
+        transferred: 19,
+        total: 26,
+        percent: 73,
+        bytesPerSecond: 2,
+        etaSeconds: 4,
+        attempt: 2
+      }
+    ])
+    expect((await owner.getSnapshot()).downloadProgress).toBeUndefined()
+    await owner.close()
+  })
   it('blocks an installation racing with application shutdown', async () => {
     const root = await prepare()
     const owner = createLocalModelOwner({
