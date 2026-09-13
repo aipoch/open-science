@@ -410,7 +410,7 @@ describe('settings IPC handlers', () => {
   it('forwards catalog refresh and local reconciliation options unchanged', async () => {
     const fake = createFakeService()
     registerTestSettingsIpcHandlers({ service: asService(fake) })
-    for (const request of [undefined, { forceRefresh: true }, { snapshotId: 'a'.repeat(40) }]) {
+    for (const request of [undefined, { forceRefresh: true }, { snapshotId: 'a'.repeat(64) }]) {
       await invoke('settings:list-skill-marketplace', request)
       expect(fake.listSkillMarketplace).toHaveBeenLastCalledWith(request)
     }
@@ -419,7 +419,7 @@ describe('settings IPC handlers', () => {
     const fake = createFakeService()
     registerTestSettingsIpcHandlers({ service: asService(fake) })
     const request = {
-      snapshotId: 'a'.repeat(40),
+      snapshotId: 'a'.repeat(64),
       items: [{ id: 'one', version: '1.0.0', expectedVersion: null }]
     }
     await expect(

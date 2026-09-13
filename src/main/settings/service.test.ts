@@ -358,7 +358,7 @@ describe('SettingsService: Marketplace installation projection', () => {
       )
       download.mockResolvedValueOnce({ ok: false, error: 'integrity' })
       const request = {
-        snapshotId: 'a'.repeat(40),
+        snapshotId: 'a'.repeat(64),
         items: [
           { id: 'one', version: '1.0.0', expectedVersion: null },
           { id: 'two', version: '1.0.0', expectedVersion: null }

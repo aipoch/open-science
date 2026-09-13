@@ -195,7 +195,7 @@ describe('Settings core application commands', () => {
     const router = createApplicationCommandRouter()
     registerCoreSettingsApplicationCommands(router.registrar, dependencies)
     const result = { ok: true, value: { entries: [] } }
-    const request = { snapshotId: 'a'.repeat(40), id: 'abstract-trimmer' }
+    const request = { snapshotId: 'a'.repeat(64), id: 'abstract-trimmer' }
     serviceMethod('listSkillMarketplace').mockResolvedValue(result)
     serviceMethod('getSkillMarketplaceDetail').mockResolvedValue(result)
     for (const location of ['local', 'remote'] as const) {

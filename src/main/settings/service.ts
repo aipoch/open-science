@@ -342,7 +342,7 @@ class SettingsService {
   ): Promise<SkillMarketplaceInstallResult> {
     const parsed = z
       .strictObject({
-        snapshotId: z.string().regex(/^[a-f0-9]{40}$/),
+        snapshotId: z.string().regex(/^[a-f0-9]{64}$/),
         id: z
           .string()
           .max(128)

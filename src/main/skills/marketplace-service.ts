@@ -22,8 +22,8 @@ import {
   type MarketplaceRoot
 } from './marketplace-protocol'
 import { sha256 } from './marketplace-protocol'
+import { OFFICIAL_SKILL_MARKETPLACE_SOURCE as source } from './marketplace-source'
 
-const REPOSITORY = 'aipoch/openscience-skill-marketplace'
 const CATALOG_TTL_MS = 5 * 60 * 1000
 const DETAIL_CACHE_LIMIT = 128
 const catalogRequest = z
@@ -31,12 +31,12 @@ const catalogRequest = z
     forceRefresh: z.boolean().optional(),
     snapshotId: z
       .string()
-      .regex(/^[a-f0-9]{40}$/)
+      .regex(/^[a-f0-9]{64}$/)
       .optional()
   })
   .refine((value) => !value.snapshotId || value.forceRefresh === undefined)
 const detailRequest = z.strictObject({
-  snapshotId: z.string().regex(/^[a-f0-9]{40}$/),
+  snapshotId: z.string().regex(/^[a-f0-9]{64}$/),
   id: z
     .string()
     .max(128)
@@ -91,18 +91,21 @@ export class SkillMarketplaceService {
     url: string,
     limit: number,
     signal = AbortSignal.timeout(15000),
-    artifact = false
+    githubAsset = false
   ): Promise<Uint8Array> {
     try {
+      // Leave time within the operation deadline for the other mirror to answer.
+      const binary = githubAsset || url.endsWith('.zip')
+      signal = AbortSignal.any([signal, AbortSignal.timeout(binary ? 10000 : 5000)])
       let response = await this.fetch(url, {
         signal,
         credentials: 'omit',
-        redirect: artifact ? 'manual' : 'error',
-        headers: { Accept: artifact ? 'application/octet-stream' : 'application/json' }
+        redirect: githubAsset ? 'manual' : 'error',
+        headers: { Accept: binary ? 'application/octet-stream' : 'application/json' }
       })
       // GitHub Release downloads redirect to its asset host. Never forward credentials or follow
       // publisher-controlled hosts, local addresses, or a redirect chain beyond this single hop.
-      if (artifact && [301, 302, 303, 307, 308].includes(response.status)) {
+      if (githubAsset && [301, 302, 303, 307, 308].includes(response.status)) {
         const location = new URL(response.headers.get('location') ?? '', url)
         await response.body?.cancel()
         if (
@@ -152,8 +155,50 @@ export class SkillMarketplaceService {
     }
   }
 
-  private rawUrl(commit: string, path: string): string {
-    return `https://raw.githubusercontent.com/${REPOSITORY}/${commit}/${path.split('/').map(encodeURIComponent).join('/')}`
+  private assetUrl(revision: string, path: string): string {
+    const extension = path.endsWith('.zip') ? '.zip' : '.json'
+    return `https://github.com/${source.repository}/releases/download/catalog-${revision}/${sha256(Buffer.from(path))}${extension}`
+  }
+
+  private async readObject<T>(
+    root: MarketplaceRoot,
+    path: string,
+    limit: number,
+    verify: (bytes: Uint8Array) => T,
+    signal = AbortSignal.timeout(25000)
+  ): Promise<T> {
+    let failure: unknown
+    const urls = [new URL(path, source.cdnBaseUrl).href, this.assetUrl(root.revision, path)]
+    for (const [index, url] of urls.entries()) {
+      try {
+        // GitHub metadata assets redirect too; CDN requests never follow redirects.
+        return verify(await this.read(url, limit, signal, index === 1))
+      } catch (error) {
+        // Preserve an integrity failure when the other mirror is merely unavailable.
+        if (!failure || !(error instanceof NetworkError)) failure = error
+        if (signal.aborted) break
+      }
+    }
+    throw failure
+  }
+
+  private async readRoot(baseUrl: string, signal: AbortSignal): Promise<MarketplaceRoot> {
+    // Keep each root/signature pair on one mirror. Never mix independently promoted pairs.
+    const [bytes, signature] = await Promise.all([
+      this.read(new URL('marketplace.json', baseUrl).href, 4 * 1024 * 1024, signal),
+      this.read(new URL('marketplace.json.sig', baseUrl).href, 4096, signal)
+    ])
+    const root = verifyMarketplaceRoot(bytes, signature)
+    if (!this.snapshots.has(root.revision)) {
+      await this.readObject(
+        root,
+        root.release_index.path,
+        8 * 1024 * 1024,
+        (bytes) => verifyMarketplaceIndex(bytes, root),
+        signal
+      )
+    }
+    return root
   }
 
   list(
@@ -198,39 +243,41 @@ export class SkillMarketplaceService {
     try {
       // One deadline covers discovery and streamed bodies, below the Web RPC's 30s deadline.
       const signal = AbortSignal.timeout(25000)
-      const refBytes = await this.read(
-        `https://api.github.com/repos/${REPOSITORY}/git/ref/heads/published`,
-        16384,
-        signal
-      )
-      const ref = z
-        .object({
-          object: z.object({ type: z.literal('commit'), sha: z.string().regex(/^[a-f0-9]{40}$/) })
-        })
-        .parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(refBytes)))
-      const commit = ref.object.sha
-      const previous = this.snapshots.get(commit)
-      if (previous) return this.remember(commit, previous)
-      const [bytes, signature] = await Promise.all([
-        this.read(this.rawUrl(commit, 'marketplace.json'), 4 * 1024 * 1024, signal),
-        this.read(this.rawUrl(commit, 'marketplace.json.sig'), 4096, signal)
-      ])
-      const root = verifyMarketplaceRoot(bytes, signature)
-      verifyMarketplaceIndex(
-        await this.read(this.rawUrl(commit, root.release_index.path), 8 * 1024 * 1024, signal),
-        root
-      )
-      return this.remember(commit, root)
+      let cdnFailure: unknown
+      try {
+        return this.remember(await this.readRoot(source.cdnBaseUrl, signal))
+      } catch (error) {
+        cdnFailure = error
+      }
+      try {
+        const refBytes = await this.read(
+          `https://api.github.com/repos/${source.repository}/git/ref/heads/${source.ref}`,
+          16384,
+          signal
+        )
+        const ref = z
+          .object({
+            object: z.object({ type: z.literal('commit'), sha: z.string().regex(/^[a-f0-9]{40}$/) })
+          })
+          .parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(refBytes)))
+        const commit = ref.object.sha
+        return this.remember(
+          await this.readRoot(
+            `https://raw.githubusercontent.com/${source.repository}/${commit}/`,
+            signal
+          )
+        )
+      } catch (error) {
+        throw cdnFailure instanceof NetworkError ? error : cdnFailure
+      }
     } catch (error) {
       this.current = undefined
       return { ok: false, error: error instanceof NetworkError ? 'network' : 'integrity' }
     }
   }
 
-  private remember(
-    snapshotId: string,
-    root: MarketplaceRoot
-  ): SkillMarketplaceResult<SkillMarketplaceCatalog> {
+  private remember(root: MarketplaceRoot): SkillMarketplaceResult<SkillMarketplaceCatalog> {
+    const snapshotId = root.revision
     this.snapshots.delete(snapshotId)
     this.snapshots.set(snapshotId, root)
     // Bounded, memory-only history lets an open detail survive a catalog refresh.
@@ -272,8 +319,10 @@ export class SkillMarketplaceService {
     listing: MarketplaceRoot['skills'][number]
   ): Promise<SkillMarketplaceResult<SkillMarketplaceDetail>> {
     try {
-      const bytes = await this.read(this.rawUrl(snapshotId, listing.release.path), 1024 * 1024)
-      const value = verifyMarketplaceDetail(bytes, listing)
+      const root = this.snapshots.get(snapshotId)!
+      const value = await this.readObject(root, listing.release.path, 1024 * 1024, (bytes) =>
+        verifyMarketplaceDetail(bytes, listing)
+      )
       if (this.snapshots.has(snapshotId)) {
         this.details.set(`${snapshotId}/${listing.id}`, value)
         while (this.details.size > DETAIL_CACHE_LIMIT)
@@ -296,9 +345,12 @@ export class SkillMarketplaceService {
     if (!root || !listing) return { ok: false, error: 'snapshot-unavailable' }
     try {
       const signal = AbortSignal.timeout(25000)
-      const descriptor = verifyMarketplaceDetail(
-        await this.read(this.rawUrl(snapshotId, listing.release.path), 1024 * 1024, signal),
-        listing
+      const descriptor = await this.readObject(
+        root,
+        listing.release.path,
+        1024 * 1024,
+        (bytes) => verifyMarketplaceDetail(bytes, listing),
+        signal
       )
       const receipt = marketplaceReceiptSchema.omit({ installedContentSha256: true }).parse({
         marketplace: 'openscience-skills',
@@ -310,23 +362,19 @@ export class SkillMarketplaceService {
         artifactSha256: listing.artifact.sha256,
         contentSha256: listing.content_sha256
       })
-      const assetName = `${sha256(Buffer.from(listing.artifact.path))}.zip`
-      const bytes = await this.read(
-        `https://github.com/${REPOSITORY}/releases/download/catalog-${root.revision}/${assetName}`,
+      const files = await this.readObject(
+        root,
+        listing.artifact.path,
         Math.min(listing.artifact.bytes, 64 * 1024 * 1024),
-        signal,
-        true
+        (bytes) =>
+          verifyMarketplacePackage(Buffer.from(bytes), id, listing.artifact, descriptor.package),
+        signal
       )
       return {
         ok: true,
         value: {
           receipt,
-          files: verifyMarketplacePackage(
-            Buffer.from(bytes),
-            id,
-            listing.artifact,
-            descriptor.package
-          )
+          files
         }
       }
     } catch (error) {

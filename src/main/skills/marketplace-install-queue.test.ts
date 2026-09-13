@@ -6,7 +6,7 @@ import type {
 } from '../../shared/skill-marketplace'
 
 const request: SkillMarketplaceBatchRequest = {
-  snapshotId: 'a'.repeat(40),
+  snapshotId: 'a'.repeat(64),
   items: [
     { id: 'one', version: '1.0.0', expectedVersion: null },
     { id: 'two', version: '1.0.0', expectedVersion: null }
@@ -44,6 +44,10 @@ const setup = (): {
 describe('Marketplace main-process batch queue', () => {
   it('validates before retaining a snapshot or writing and admits only one batch', async () => {
     const s = setup()
+    expect(s.queue.start({ ...request, snapshotId: 'a'.repeat(40) }, s.notify)).toEqual({
+      ok: false,
+      error: 'invalid-request'
+    })
     expect(s.queue.start({ ...request, items: [] }, s.notify)).toEqual({
       ok: false,
       error: 'invalid-request'

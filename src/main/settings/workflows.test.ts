@@ -438,7 +438,7 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
       capability,
       testEffects({ notifySkillCatalogChanged })
     ).skills
-    const request = { id: 'example', snapshotId: 'a'.repeat(40), expectedVersion: null }
+    const request = { id: 'example', snapshotId: 'a'.repeat(64), expectedVersion: null }
     await workflows.installSkillMarketplace(request)
     store.installSkillMarketplace.mockResolvedValueOnce({ ok: false, error: 'conflict' })
     await workflows.installSkillMarketplace(request)
@@ -458,7 +458,7 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
       testEffects({ notifySkillCatalogChanged })
     ).skills
     const request = {
-      snapshotId: 'a'.repeat(40),
+      snapshotId: 'a'.repeat(64),
       items: [{ id: 'example', version: '1.0.0', expectedVersion: null }]
     }
     await workflows.startSkillMarketplaceBatch(request)

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { UserSkillRepository } from './user-skill-repository'
 import {
   marketplaceContentDigest,
+  marketplaceReceiptSchema,
   verifyMarketplacePackage,
   type MarketplacePackage
 } from './marketplace-package'
@@ -34,7 +35,7 @@ function pkg(version = '1.0.0'): MarketplacePackage {
       marketplace: 'openscience-skills',
       id: 'example',
       version,
-      snapshotId: 'a'.repeat(40),
+      snapshotId: 'a'.repeat(64),
       revision: 'b'.repeat(64),
       descriptorSha256: sha256(Buffer.from(version)),
       artifactSha256: 'c'.repeat(64),
@@ -61,6 +62,13 @@ function verify(bytes: Buffer, files = pkg().files): ReturnType<typeof verifyMar
 }
 
 describe('Marketplace package boundary', () => {
+  it('accepts revision receipts and rejects obsolete Git-commit snapshot identities', () => {
+    const receipt = { ...pkg().receipt, installedContentSha256: 'd'.repeat(64) }
+    expect(marketplaceReceiptSchema.safeParse(receipt).success).toBe(true)
+    expect(
+      marketplaceReceiptSchema.safeParse({ ...receipt, snapshotId: 'a'.repeat(40) }).success
+    ).toBe(false)
+  })
   it('verifies publisher-format ZIP and the exact Unicode path/content digest', () => {
     expect(verify(zip())).toEqual(pkg().files)
     expect(marketplaceContentDigest([...pkg().files].reverse())).toBe(pkg().receipt.contentSha256)

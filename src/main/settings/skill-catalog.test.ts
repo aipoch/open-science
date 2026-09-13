@@ -129,7 +129,7 @@ describe('SkillCatalogModule', () => {
           marketplace: 'openscience-skills',
           id: 'market-example',
           version,
-          snapshotId: 'a'.repeat(40),
+          snapshotId: 'a'.repeat(64),
           revision: 'b'.repeat(64),
           descriptorSha256: sha256(Buffer.from(version)),
           artifactSha256: 'c'.repeat(64),

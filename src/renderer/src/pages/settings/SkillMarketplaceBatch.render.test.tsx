@@ -7,7 +7,7 @@ import type { SkillMarketplaceBatch } from '../../../../shared/skill-marketplace
 
 const running: SkillMarketplaceBatch = {
   id: 'batch',
-  snapshotId: 'a'.repeat(40),
+  snapshotId: 'a'.repeat(64),
   status: 'running',
   items: [
     { id: 'one', version: '1.0.0', expectedVersion: null, status: 'installing' },

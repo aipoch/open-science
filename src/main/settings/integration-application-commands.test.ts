@@ -159,7 +159,7 @@ describe('Settings integration application commands', () => {
     const router = createApplicationCommandRouter()
     registerIntegrationSettingsApplicationCommands(router.registrar, dependencies)
     const request = {
-      snapshotId: 'a'.repeat(40),
+      snapshotId: 'a'.repeat(64),
       items: [{ id: 'one', version: '1.0.0', expectedVersion: null }]
     }
     const result = { ok: false, error: 'busy' }

@@ -29,7 +29,7 @@ export const marketplaceEntry: SkillMarketplaceEntry = {
   }
 }
 export const marketplaceCatalog: SkillMarketplaceCatalog = {
-  snapshotId: 'b'.repeat(40),
+  snapshotId: 'b'.repeat(64),
   revision: 'c'.repeat(64),
   entries: [marketplaceEntry]
 }

@@ -34,6 +34,7 @@ export type SkillMarketplaceEntry = {
 export type SkillMarketplaceCatalog = {
   // Transient cache hint; never part of the signed catalog or installed receipts.
   revalidate?: boolean
+  // The verified 64-hex catalog revision, independent of CDN/GitHub transport.
   snapshotId: string
   revision: string
   entries: SkillMarketplaceEntry[]

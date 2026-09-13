@@ -272,7 +272,7 @@ describe('renderer argument-shape characterization', () => {
       [
         'settings.listSkillMarketplace',
         'settings:list-skill-marketplace',
-        [{ snapshotId: 'a'.repeat(40) }]
+        [{ snapshotId: 'a'.repeat(64) }]
       ],
       ['settings.getSkillMarketplaceBatch', 'settings:get-skill-marketplace-batch', []],
       ['settings.stopSkillMarketplaceBatch', 'settings:stop-skill-marketplace-batch', ['batch-id']],
@@ -281,7 +281,7 @@ describe('renderer argument-shape characterization', () => {
         'settings:start-skill-marketplace-batch',
         [
           {
-            snapshotId: 'a'.repeat(40),
+            snapshotId: 'a'.repeat(64),
             items: [{ id: 'abstract-trimmer', version: '1.1.0', expectedVersion: '1.0.0' }]
           }
         ]
@@ -289,12 +289,12 @@ describe('renderer argument-shape characterization', () => {
       [
         'settings.getSkillMarketplaceDetail',
         'settings:get-skill-marketplace-detail',
-        [{ snapshotId: 'a'.repeat(40), id: 'abstract-trimmer' }]
+        [{ snapshotId: 'a'.repeat(64), id: 'abstract-trimmer' }]
       ],
       [
         'settings.installSkillMarketplace',
         'settings:install-skill-marketplace',
-        [{ snapshotId: 'a'.repeat(40), id: 'abstract-trimmer', expectedVersion: '1.0.0' }]
+        [{ snapshotId: 'a'.repeat(64), id: 'abstract-trimmer', expectedVersion: '1.0.0' }]
       ]
     ] as const) {
       expect(await invokeElectron(electronApi, path, [...args])).toEqual({ channel, args })

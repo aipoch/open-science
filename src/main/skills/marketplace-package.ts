@@ -22,7 +22,8 @@ export const marketplaceReceiptSchema = z.strictObject({
     .regex(
       /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
     ),
-  snapshotId: z.string().regex(/^[a-f0-9]{40}$/),
+  // Signed catalog revision, not a transport-specific Git commit.
+  snapshotId: hash,
   revision: hash,
   descriptorSha256: hash,
   artifactSha256: hash,

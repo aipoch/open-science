@@ -10,7 +10,7 @@ import type {
 
 const batchRequest = z
   .strictObject({
-    snapshotId: z.string().regex(/^[a-f0-9]{40}$/),
+    snapshotId: z.string().regex(/^[a-f0-9]{64}$/),
     items: z
       .array(
         z.strictObject({
