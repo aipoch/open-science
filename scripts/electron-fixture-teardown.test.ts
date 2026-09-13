@@ -336,21 +336,18 @@ it('restarts without passing the timing label as a package file argument', async
 })
 
 // Fault injection checks the retry bound without depending on OS-specific file locks or ACLs.
-it.each(['EPERM', 'EACCES', 'EIO'])(
-  'does not retry non-transient removal error %s',
-  async (code) => {
-    const error = Object.assign(new Error('cannot remove fixture'), { code })
-    const remove = vi.mocked(filesystem.rm).mockRejectedValue(error)
-    await expect(removeTreeForCleanup('owned-fixture')).rejects.toBe(error)
-    expect(remove).toHaveBeenCalledExactlyOnceWith('owned-fixture', {
-      force: true,
-      recursive: true,
-      maxRetries: 0
-    })
-  }
-)
+it.each(['EACCES', 'EIO'])('does not retry non-transient removal error %s', async (code) => {
+  const error = Object.assign(new Error('cannot remove fixture'), { code })
+  const remove = vi.mocked(filesystem.rm).mockRejectedValue(error)
+  await expect(removeTreeForCleanup('owned-fixture')).rejects.toBe(error)
+  expect(remove).toHaveBeenCalledExactlyOnceWith('owned-fixture', {
+    force: true,
+    recursive: true,
+    maxRetries: 0
+  })
+})
 
-it.each(['EBUSY', 'ENOTEMPTY', 'EMFILE', 'ENFILE'])(
+it.each(['EBUSY', 'ENOTEMPTY', 'EMFILE', 'ENFILE', 'EPERM'])(
   'recovers from a transient removal error %s',
   async (code) => {
     vi.useFakeTimers()
@@ -366,13 +363,16 @@ it.each(['EBUSY', 'ENOTEMPTY', 'EMFILE', 'ENFILE'])(
   }
 )
 
-it('stops transient removal retries after five attempts and leaves no retry timer', async () => {
-  vi.useFakeTimers()
-  const error = Object.assign(new Error('still locked'), { code: 'EBUSY' })
-  const remove = vi.mocked(filesystem.rm).mockRejectedValue(error)
-  const rejected = expect(removeTreeForCleanup('owned-fixture')).rejects.toBe(error)
-  await vi.advanceTimersByTimeAsync(200 + 400 + 600 + 800)
-  await rejected
-  expect(remove).toHaveBeenCalledTimes(5)
-  expect(vi.getTimerCount()).toBe(0)
-})
+it.each(['EBUSY', 'EPERM'])(
+  'stops %s removal retries after five attempts and leaves no retry timer',
+  async (code) => {
+    vi.useFakeTimers()
+    const error = Object.assign(new Error('still locked'), { code })
+    const remove = vi.mocked(filesystem.rm).mockRejectedValue(error)
+    const rejected = expect(removeTreeForCleanup('owned-fixture')).rejects.toBe(error)
+    await vi.advanceTimersByTimeAsync(200 + 400 + 600 + 800)
+    await rejected
+    expect(remove).toHaveBeenCalledTimes(5)
+    expect(vi.getTimerCount()).toBe(0)
+  }
+)

@@ -288,7 +288,10 @@ const removeTreeForCleanup = async (root: string): Promise<void> => {
       return
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
-      if (!['EBUSY', 'ENOTEMPTY', 'EMFILE', 'ENFILE'].includes(code ?? '') || attempt === 4)
+      if (
+        !['EBUSY', 'ENOTEMPTY', 'EMFILE', 'ENFILE', 'EPERM'].includes(code ?? '') ||
+        attempt === 4
+      )
         throw error
       await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)))
     }
