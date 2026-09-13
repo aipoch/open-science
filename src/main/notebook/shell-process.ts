@@ -356,6 +356,9 @@ const prepareShellLaunchOptions = async (
           sessionId: options.sessionId,
           projectId: options.projectId,
           runtime: 'bash',
+          ...(platform === 'win32' && runtimeBinding.kind === 'powershell'
+            ? { superviseProcessTree: true }
+            : {}),
           filesystem: {
             readOnlyRoots: [
               options.runtimeRoot,
@@ -585,39 +588,53 @@ const runShellCommand = (
           ? launchOwnership.claim(child, platform)
           : options.claimProcess?.(child, platform)
       } catch (error) {
-        // spawn can emit its error asynchronously after the missing PID made claim fail.
-        child.once('error', () => undefined)
-        let reaped = false
-        // A failed spawn has no process to signal; a no-PID handle must never reach POSIX kill.
-        const termination =
-          child.pid === undefined ? Promise.resolve({ reaped: true }) : terminateProcessTree(child)
-        void termination
-          .then((result) => {
-            reaped = result.reaped
-            if (reaped) launchOwnership?.abort()
-          })
-          .catch(() => {
-            // Retain the ownership receipt when cleanup cannot prove that the child tree is gone.
-          })
-          .finally(async () => {
-            endSandboxExecution?.()
-            try {
-              if (reaped)
-                reaped = cleanupCompleted(
-                  await cleanupSandboxWithRetry('spawn-failed', { processesTerminated: reaped })
-                )
-            } catch {
-              reaped = false
-            }
-            const result: NotebookShellResult = {
-              stdout: '',
-              stderr: error instanceof Error ? error.message : String(error),
-              exitCode: null
-            }
-            if (!reaped) Object.defineProperty(result, 'ownedTreeReaped', { value: false })
-            resolve(result)
-          })
-        return
+        if (
+          platform === 'win32' &&
+          child.pid !== undefined &&
+          launchOwnership &&
+          sandboxed?.confirmProcessTreeTermination
+        ) {
+          // A short-lived supervisor can exit before the separate start-identity query. Keep the
+          // durable launch intent and collect its real result; only proven tree cleanup releases it.
+          releaseProcessOwnership = launchOwnership.abort
+        } else {
+          // spawn can emit its error asynchronously after the missing PID made claim fail.
+          child.once('error', () => undefined)
+          let reaped = false
+          // A failed spawn has no process to signal; a no-PID handle must never reach POSIX kill.
+          const termination =
+            child.pid === undefined
+              ? Promise.resolve({ reaped: true })
+              : terminateProcessTree(child)
+          void termination
+            .then((result) => {
+              reaped = result.reaped
+              if (reaped) launchOwnership?.abort()
+            })
+            .catch(() => {
+              // Retain the ownership receipt when cleanup cannot prove that the child tree is gone.
+            })
+            .finally(async () => {
+              endSandboxExecution?.()
+              try {
+                if (reaped)
+                  reaped = cleanupCompleted(
+                    await cleanupSandboxWithRetry('spawn-failed', { processesTerminated: reaped })
+                  )
+              } catch {
+                reaped = false
+              }
+              const result: NotebookShellResult = {
+                stdout: '',
+                stderr: error instanceof Error ? error.message : String(error),
+                exitCode: null
+              }
+              const completed = reaped ? result : withIncompleteCleanup(result, 'may-have-run')
+              if (!reaped) Object.defineProperty(completed, 'ownedTreeReaped', { value: false })
+              resolve(completed)
+            })
+          return
+        }
       }
       let stdout = ''
       let stderr = ''
@@ -650,10 +667,14 @@ const runShellCommand = (
         const stderr = sandboxed ? sandboxed.annotateStderr(normalized) : normalized
         let complete = false
         try {
+          const processesTerminated = sandboxed?.confirmProcessTreeTermination
+            ? (await sandboxed.confirmProcessTreeTermination().catch(() => false)) ||
+              processOutcome.processesTerminated
+            : processOutcome.processesTerminated
           complete = cleanupCompleted(
             await cleanupSandboxWithRetry(cleanupReason, {
-              ...processOutcome,
-              ...(!processOutcome.processesTerminated && runtimeBinding.kind === 'native-posix'
+              processesTerminated,
+              ...(!processesTerminated && runtimeBinding.kind === 'native-posix'
                 ? {
                     confirmTermination: async () => {
                       const { reaped } = await terminateShellOnTimeout(
@@ -676,8 +697,7 @@ const runShellCommand = (
         const completed = complete
           ? normalizedResult
           : withIncompleteCleanup(normalizedResult, 'may-have-run')
-        if (!processOutcome.processesTerminated || !complete)
-          Object.defineProperty(completed, 'ownedTreeReaped', { value: false })
+        if (!complete) Object.defineProperty(completed, 'ownedTreeReaped', { value: false })
         resolve(completed)
       }
 
@@ -778,6 +798,16 @@ const runShellCommand = (
         if (timedOut || cancelled || exited || failed) return
         exited = true
         clearTimeout(timeoutTimer)
+        if (sandboxed?.confirmProcessTreeTermination) {
+          // The helper has already stopped its Job Object. Its proof, not an absent/reused PID or
+          // a successful leader exit, establishes full-tree termination in finish().
+          void finish(
+            { stdout, stderr, exitCode: code, ...(truncated ? { truncated: true } : {}) },
+            'exit',
+            { processesTerminated: false }
+          )
+          return
+        }
         void terminateShellOnTimeout(child, platform, options.terminateTree).then(({ reaped }) => {
           // On Windows, taskkill runs after Node observes the PowerShell exit and can report that
           // the PID no longer exists. A numeric exit code is authoritative for this normal native
