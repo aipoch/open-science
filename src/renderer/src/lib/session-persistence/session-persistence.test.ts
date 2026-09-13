@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePackageOperationStore } from '../../stores/package-operation-store'
 
 import { SessionPersistenceStateOwner } from '../../../../main/session-persistence/state-owner'
+import { preserveImportedSession } from '../../../../main/session-persistence/imported-session'
 import { ARTIFACT_FINALIZATION_INVALID_PROOF } from '../../../../shared/artifacts'
 import {
   activateConversationBranch,
@@ -1187,6 +1188,71 @@ describe('renderer session persistence bridge', () => {
     )
   })
 
+  it.each([undefined, true])(
+    'does not resave a same-client metadata receipt (context reset: %s)',
+    async (branchContextResetRequired) => {
+      vi.useFakeTimers()
+      let durable = createPersistedSession({
+        revision: 1,
+        selectedComputeHosts: [],
+        branchContextResetRequired,
+        conversationGraph: createLinearConversationGraph({
+          sessionId: 'session-1',
+          messages: [],
+          createdAt: 1710000000000,
+          updatedAt: 1710000000000
+        }),
+        runtimeContext: { version: 1, revision: 1 },
+        packageOrigin: {
+          importId: 'import-1',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        }
+      })
+      useSessionStore.getState().upsertPersistedSession(durable)
+      const saveSession = vi.fn(async (submitted: PersistedChatSession) => {
+        durable = {
+          ...preserveImportedSession(durable, submitted),
+          revision: (durable.revision ?? 0) + 1
+        }
+        // The same-client lifecycle event arrives before the invoke response, as in Electron.
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: useSessionStore.getState().sessions[0],
+          session: durable,
+          mode: 'archive-authority'
+        })
+        return durable
+      })
+      const api = createApi({ saveSession })
+      const persistence = createOrderedSessionPersistence(api)
+      const save = createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+      const unsubscribe = useSessionStore.subscribe((state) => {
+        void save(state)
+      })
+      try {
+        useSessionStore.getState().setBranchSwitchBlocked(durable.id, true)
+        await vi.advanceTimersByTimeAsync(500)
+
+        expect(saveSession).toHaveBeenCalledOnce()
+        await persistence.flush()
+        expect(useSessionStore.getState().sessions[0].branchSwitchBlocked).toBe(true)
+
+        useSessionStore.getState().renameSession(durable.id, 'A real local edit')
+        await persistence.flush()
+        expect(saveSession).toHaveBeenCalledTimes(2)
+        expect(durable.title).toBe('A real local edit')
+        expect(durable.branchContextResetRequired).toBe(branchContextResetRequired)
+      } finally {
+        unsubscribe()
+        await vi.runAllTimersAsync()
+        await persistence.flush()
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it('does not echo an externally hydrated session back to persistence', async () => {
     const api = createApi()
     const save = createStoreSaver(api)
@@ -2186,6 +2252,112 @@ describe('renderer session persistence bridge', () => {
       vi.useRealTimers()
     }
   })
+
+  it('flushes snapshots admitted during an in-flight write without waiting for cadence', async () => {
+    vi.useFakeTimers()
+    const firstWrite = createDeferred<PersistedChatSession>()
+    const session = createPersistedSession()
+    let flushing: Promise<void> | undefined
+    try {
+      const persistence = createOrderedSessionPersistence(createApi())
+      const saving = persistence.saveLatestSession('session:session-1', () => firstWrite.promise)
+      await vi.advanceTimersByTimeAsync(0)
+
+      let flushed = false
+      flushing = persistence.flush().then(() => {
+        flushed = true
+      })
+      const writeLatest = vi.fn(async () => session)
+      const savingLatest = persistence.saveLatestSession('session:session-1', writeLatest)
+      firstWrite.resolve(session)
+      await saving
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(writeLatest).toHaveBeenCalledOnce()
+      expect(flushed).toBe(true)
+      await savingLatest
+    } finally {
+      firstWrite.resolve(session)
+      await vi.runAllTimersAsync()
+      await flushing
+      vi.useRealTimers()
+    }
+  })
+
+  it('waits for a snapshot enqueued by the final in-flight save before completing flush', async () => {
+    vi.useFakeTimers()
+    const session = createPersistedSession()
+    const firstWrite = createDeferred<PersistedChatSession>()
+    const secondWrite = createDeferred<PersistedChatSession>()
+    const finalWrite = createDeferred<PersistedChatSession>()
+    let flushing: Promise<void> | undefined
+    try {
+      const persistence = createOrderedSessionPersistence(createApi())
+      void persistence.saveLatestSession('session:session-1', () => firstWrite.promise)
+      await vi.advanceTimersByTimeAsync(0)
+
+      let flushed = false
+      flushing = persistence.flush().then(() => {
+        flushed = true
+      })
+      void persistence.saveLatestSession('session:session-1', async () => {
+        await secondWrite.promise
+        void persistence.saveLatestSession('session:session-1', () => finalWrite.promise)
+        return session
+      })
+      firstWrite.resolve(session)
+      // Start B even on the original cadence implementation, isolating the queue-tail race.
+      await vi.advanceTimersByTimeAsync(500)
+      secondWrite.resolve(session)
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(flushed).toBe(false)
+      finalWrite.resolve(session)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(flushed).toBe(true)
+    } finally {
+      firstWrite.resolve(session)
+      secondWrite.resolve(session)
+      finalWrite.resolve(session)
+      await vi.runAllTimersAsync()
+      await flushing
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([false, true])(
+    'restores save cadence after flush settles (failed: %s)',
+    async (failed) => {
+      vi.useFakeTimers()
+      try {
+        const session = createPersistedSession()
+        const persistence = createOrderedSessionPersistence(createApi())
+        const failure = new Error('Disk write failed')
+        const saving = persistence.saveLatestSession('session:session-1', async () => {
+          if (failed) throw failure
+          return session
+        })
+        if (failed) {
+          await expect(saving).rejects.toBe(failure)
+          await expect(persistence.flush()).rejects.toBe(failure)
+        } else {
+          await saving
+          await persistence.flush()
+        }
+
+        const writeLatest = vi.fn(async () => session)
+        const nextSave = persistence.saveLatestSession('session:session-1', writeLatest)
+        await vi.advanceTimersByTimeAsync(499)
+        expect(writeLatest).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(1)
+        await nextSave
+        expect(writeLatest).toHaveBeenCalledOnce()
+      } finally {
+        await vi.runAllTimersAsync()
+        vi.useRealTimers()
+      }
+    }
+  )
 
   it('relaxes the flush cadence while streaming and flushes the terminal commit promptly', async () => {
     vi.useFakeTimers()

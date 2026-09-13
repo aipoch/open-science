@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { shallow } from 'zustand/vanilla/shallow'
 import {
   packageOperationActive,
   usePackageOperationStore
@@ -711,6 +712,7 @@ const createOrderedSessionPersistence = (
 ): OrderedSessionPersistence => {
   let queue: Promise<unknown> = Promise.resolve()
   let pendingWriteCount = 0
+  let activeFlushes = 0
   const deferredSaves = new Set<Promise<unknown>>()
   const acknowledgedRevisions = new Map<string, number>()
   const acknowledgedSessions = new Map<string, PersistedChatSession>()
@@ -730,7 +732,7 @@ const createOrderedSessionPersistence = (
         ? STREAMING_SESSION_SAVE_INTERVAL_MS
         : LATEST_SESSION_SAVE_INTERVAL_MS
       const waitMs = latestSessionSaveStartedAt + intervalMs - performance.now()
-      if (waitMs <= 0 || entry.bypassCadence) break
+      if (waitMs <= 0 || entry.bypassCadence || activeFlushes > 0) break
       const recheck = await new Promise<boolean>((resolve) => {
         const timeout = setTimeout(() => resolve(false), waitMs)
         entry.releaseCadence = () => {
@@ -939,12 +941,22 @@ const createOrderedSessionPersistence = (
       }),
     saveManifest: (request) => enqueue('manifest', () => api.saveManifest(request)),
     flush: async () => {
-      releasePendingLatestCadence()
-      await queue
-      await Promise.allSettled([...deferredSaves])
-      await queue
-      const failure = failedWritesByTarget.values().next()
-      if (!failure.done) throw failure.value
+      // Runtime/store updates can admit new snapshots while earlier writes are in flight.
+      // Keep cadence disabled until every overlapping flush has finished.
+      activeFlushes += 1
+      try {
+        releasePendingLatestCadence()
+        for (;;) {
+          const draining = queue
+          await draining
+          await Promise.allSettled([...deferredSaves])
+          if (queue === draining && deferredSaves.size === 0) break
+        }
+        const failure = failedWritesByTarget.values().next()
+        if (!failure.done) throw failure.value
+      } finally {
+        activeFlushes -= 1
+      }
     }
   }
 }
@@ -1491,6 +1503,18 @@ const hasStagedUploads = (session: ChatSession): boolean =>
     )
   )
 
+// These fields are persisted by Main's dedicated owners. A same-client receipt can update them
+// before the save response arrives; that receipt must not enqueue the same local snapshot again.
+// Keep branchContextResetRequired in the comparison: clearing it is a renderer-persisted change.
+const withoutMainOwnedSessionMetadata = (session: ChatSession): ChatSession => ({
+  ...session,
+  revision: undefined,
+  archivedAt: undefined,
+  enabledComputeHosts: undefined,
+  selectedComputeHosts: undefined,
+  computeConcurrencyLimit: undefined
+})
+
 // Builds an incremental saver: on each store change it persists only sessions whose reference changed
 // and updates the manifest when selection moves. Explicit deletion owns its durable coordinator call.
 const createStoreSaver = (
@@ -1649,6 +1673,20 @@ const createStoreSaver = (
       const hasUnsavedContextReset =
         Boolean(session.branchContextResetRequired) !==
         Boolean(authority?.branchContextResetRequired)
+      if (
+        previousSession &&
+        previousSession !== session &&
+        !isForced &&
+        !hasUnsavedLocalTitle &&
+        !(authority && hasUnsavedContextReset) &&
+        !streamingDirtySessionIds.has(session.id) &&
+        shallow(
+          withoutMainOwnedSessionMetadata(previousSession),
+          withoutMainOwnedSessionMetadata(session)
+        )
+      ) {
+        continue
+      }
       if (
         (previousById.get(session.id) !== session ||
           isForced ||
