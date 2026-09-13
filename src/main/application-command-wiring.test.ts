@@ -44,6 +44,13 @@ const dependencyBlock = compact(
 )
 
 describe('production application command wiring', () => {
+  it('hands window-find event cleanup to the desktop surface installation', () => {
+    const desktop = compact(
+      between(ipcSource, "declareElectronAdapter('desktop-utilities'", '// ACP identity resolution')
+    )
+    expect(desktop).toContain('return registerWindowFindIpcHandlers()')
+  })
+
   it('installs approval handlers with the shared connector brokers in beforeAcp', () => {
     const phase = compact(
       between(

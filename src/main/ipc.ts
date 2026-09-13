@@ -3206,7 +3206,7 @@ const createApplicationModules = async (
     registerGithubIpcHandlers({}, githubCommandOwner)
     registerCliInstallIpcHandlers(cliCommandOwner)
     registerWindowIpcHandlers()
-    registerWindowFindIpcHandlers()
+    return registerWindowFindIpcHandlers()
   })
   // ACP identity resolution and the Specialist settings IPC must use the same service instance.
   // Creating it only for settings leaves create-session unable to resolve a selected UUID.

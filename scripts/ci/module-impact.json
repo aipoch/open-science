@@ -1027,14 +1027,16 @@
         "src/main/ipc-surfaces/core.ts",
         "src/main/ipc-surfaces/uploads.ts",
         "src/main/ipc-surfaces/notifications.ts",
-        "src/main/ipc-surfaces/connector-approvals.ts"
+        "src/main/ipc-surfaces/connector-approvals.ts",
+        "src/main/window-find-ipc.ts"
       ],
       "interfacePaths": [
         "src/main/ipc-surfaces/adapter.ts",
         "src/main/ipc-surfaces/core.ts",
         "src/main/ipc-surfaces/uploads.ts",
         "src/main/ipc-surfaces/notifications.ts",
-        "src/main/ipc-surfaces/connector-approvals.ts"
+        "src/main/ipc-surfaces/connector-approvals.ts",
+        "src/main/window-find-ipc.ts"
       ],
       "consumerModules": [],
       "testFiles": {
@@ -1043,7 +1045,8 @@
           "src/main/ipc-surfaces/core.test.ts",
           "src/main/ipc-surfaces/uploads.test.ts",
           "src/main/ipc-surfaces/notifications.test.ts",
-          "src/main/ipc-surfaces/connector-approvals.test.ts"
+          "src/main/ipc-surfaces/connector-approvals.test.ts",
+          "src/main/window-find-ipc.test.ts"
         ],
         "contract": [
           "src/main/connectors/approval-broker.test.ts",
@@ -1074,7 +1077,12 @@
           "src/main/index-startup-failure.test.ts",
           "src/main/application-command-composition.test.ts",
           "src/main/application-command-electron-adapter.test.ts",
-          "src/main/runtime-state-ownership.architecture.test.ts"
+          "src/main/runtime-state-ownership.architecture.test.ts",
+          "src/main/find-overlay.test.ts",
+          "src/main/window-shortcuts.test.ts",
+          "src/preload/find-overlay.test.ts",
+          "src/shared/window-controls.test.ts",
+          "resources/find-overlay/findOverlay.test.js"
         ]
       },
       "capabilityOverlays": [],
