@@ -17,6 +17,22 @@ if [ -n "$alternative_state" ] && ! printf '%s\n' "$alternative_state" | grep -F
   echo 'Open Science cannot repurpose an unrelated alternatives link group.' >&2
   exit 1
 fi
+# Protect a manually replaced alternatives link too, not only the public command.
+alternative_link='/etc/alternatives/${executable}'
+if [ -e "$alternative_link" ] || [ -L "$alternative_link" ]; then
+  if [ ! -L "$alternative_link" ]; then
+    echo "Open Science cannot modify an unmanaged $alternative_link." >&2
+    exit 1
+  fi
+  selected_target=$(readlink "$alternative_link")
+  if [ "$selected_target" != '/opt/${sanitizedProductName}/resources/open-science-cli' ] &&
+     [ "$selected_target" != '/opt/${sanitizedProductName}/${executable}' ] &&
+     ! printf '%s\n' "$alternative_state" | grep -Fxq "Alternative: $selected_target"; then
+    echo "Open Science cannot modify an unregistered target at $alternative_link." >&2
+    exit 1
+  fi
+fi
+
 update-alternatives --install "$cli_link" '${executable}' "$cli_target" 100 || exit "$?"
 # Register the replacement before removing the exact legacy candidate. Unrelated manual choices stay.
 if printf '%s\n' "$alternative_state" | grep -Fxq "Alternative: $legacy_target"; then

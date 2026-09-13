@@ -19,6 +19,22 @@ if [ -n "$alternative_state" ] && ! printf '%s\n' "$alternative_state" | grep -F
   exit 1
 fi
 
+# Protect a manually replaced alternatives link too, not only the public command.
+alternative_link='/etc/alternatives/${executable}'
+if [ -e "$alternative_link" ] || [ -L "$alternative_link" ]; then
+  if [ ! -L "$alternative_link" ]; then
+    echo "Open Science cannot modify an unmanaged $alternative_link." >&2
+    exit 1
+  fi
+  selected_target=$(readlink "$alternative_link")
+  if [ "$selected_target" != '/opt/${sanitizedProductName}/resources/open-science-cli' ] &&
+     [ "$selected_target" != '/opt/${sanitizedProductName}/${executable}' ] &&
+     ! printf '%s\n' "$alternative_state" | grep -Fxq "Alternative: $selected_target"; then
+    echo "Open Science cannot modify an unregistered target at $alternative_link." >&2
+    exit 1
+  fi
+fi
+
 # Debian records the exact candidate. Do not remove the group or any other installation's entry.
 update-alternatives --remove '${executable}' '/opt/${sanitizedProductName}/resources/open-science-cli' || exit "$?"
 

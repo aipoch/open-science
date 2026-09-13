@@ -85,6 +85,7 @@ describe('Debian packaging contract', () => {
 describe.skipIf(process.platform !== 'linux')('Debian alternatives lifecycle', () => {
   const fixture = async (): Promise<{
     root: string
+    alternativeLink: string
     target: string
     legacy: string
     command: string
@@ -137,7 +138,15 @@ describe.skipIf(process.platform !== 'linux')('Debian alternatives lifecycle', (
     }
     const hook = (kind: string, argument: string): SpawnSyncReturns<string> =>
       spawnSync('/bin/bash', [scripts[kind], argument], { env, encoding: 'utf8' })
-    return { root, target, legacy, command, run, hook }
+    return {
+      root,
+      alternativeLink: join(alternatives, 'open-science'),
+      target,
+      legacy,
+      command,
+      run,
+      hook
+    }
   }
 
   it('supports fresh install, reinstall, upgrade postrm, remove and repeated purge', async () => {
@@ -187,6 +196,18 @@ describe.skipIf(process.platform !== 'linux')('Debian alternatives lifecycle', (
       expect(f.hook('remove', phase).status).toBe(1)
       expect(await realpath(f.command)).toBe(f.legacy)
     }
+  })
+
+  it('preserves an unregistered replacement of the alternatives link itself', async () => {
+    const f = await fixture()
+    expect(f.hook('install', 'configure').status).toBe(0)
+    const other = join(f.root, 'unregistered-cli')
+    await writeFile(other, 'user command')
+    await rm(f.alternativeLink)
+    await symlink(other, f.alternativeLink)
+    expect(f.hook('install', 'configure').status).toBe(1)
+    expect(f.hook('remove', 'remove').status).toBe(1)
+    expect(await realpath(f.command)).toBe(other)
   })
 
   it.each(['file', 'symlink'])('refuses to replace an unmanaged %s', async (kind) => {
