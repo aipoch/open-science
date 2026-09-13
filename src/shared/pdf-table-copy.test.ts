@@ -16,6 +16,43 @@ const table: Table = {
   issues: []
 }
 describe('PDF table copy', () => {
+  it('preserves script formatting in HTML while keeping plain text and escaping intact', () => {
+    const value: Table = {
+      ...table,
+      rowCount: 1,
+      columnCount: 1,
+      cells: [
+        {
+          row: 0,
+          column: 0,
+          rowSpan: 1,
+          columnSpan: 1,
+          regions: [],
+          text: 'DPB1*01:01 <0.01*',
+          textRuns: [
+            { text: 'DPB1*01:01 <0.01', position: 'normal' },
+            { text: '*', position: 'superscript' }
+          ]
+        }
+      ]
+    }
+    expect(copyPdfTable(value, 'html', '')).toContain('DPB1*01:01 &lt;0.01<sup>*</sup>')
+    expect(copyPdfTable(value, 'tsv', '')).toBe('DPB1*01:01 <0.01*')
+    const formula: Table = {
+      ...value,
+      cells: [
+        {
+          ...value.cells[0],
+          text: '=x2',
+          textRuns: [
+            { text: '=x', position: 'normal' },
+            { text: '2', position: 'superscript' }
+          ]
+        }
+      ]
+    }
+    expect(copyPdfTable(formula, 'html', '')).toContain('&#39;=x<sup>2</sup>')
+  })
   it('exports merged HTML cells without interpreting PDF text as markup or formulas', () => {
     const value = {
       ...table,

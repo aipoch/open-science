@@ -144,6 +144,7 @@ export const WEB_INVOKE_CHANNELS = {
   'pdfStructure.cancel': 'pdf-structure:cancel',
   'pdfStructure.clearCache': 'pdf-structure:clear-cache',
   'pdfStructure.parse': 'pdf-structure:parse',
+  'pdfStructure.readCached': 'pdf-structure:read-cached',
   'pdfStructure.readThumbnail': 'pdf-structure:read-thumbnail',
   'permissions.extendUndo': 'permissions:extend-undo',
   'permissions.list': 'permissions:list',

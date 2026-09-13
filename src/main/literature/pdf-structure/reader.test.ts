@@ -11,11 +11,53 @@ const request = {
   requestId: '00000000-0000-4000-8000-000000000001'
 }
 describe('PDF reading authority', () => {
+  it('authorizes read-only cache lookup before and after awaiting the owner', async () => {
+    let finish!: () => void
+    const owner: PdfStructureOwner = {
+      acquire: vi.fn(),
+      readThumbnail: vi.fn(),
+      close: vi.fn(),
+      clearCache: vi.fn(),
+      readCached: vi.fn(
+        () =>
+          new Promise<undefined>((resolve) => {
+            finish = () => resolve(undefined)
+          })
+      )
+    }
+    const reader = new PdfStructureReader(owner)
+    const registry = new ApplicationCallerLeaseRegistry()
+    const current = registry.acquire({ leaseId: 'reader', surface: 'web' })
+    const caller = createWebCallerContext('reader')
+    const lookup = { attachmentVersionId: 'version-1', page: 1 }
+    const malformed = { ...lookup, path: '/private/user.pdf' }
+    await expect(reader.readCached(malformed, caller, current.lease)).rejects.toThrow()
+    await expect(
+      reader.readCached(
+        lookup,
+        createWebCallerContext('reader', { location: 'remote' }),
+        current.lease
+      )
+    ).rejects.toThrow('Local PDF access')
+    expect(owner.readCached).not.toHaveBeenCalled()
+    const pending = reader.readCached(lookup, caller, current.lease)
+    expect(owner.readCached).toHaveBeenCalledWith(
+      { kind: 'literature', attachmentVersionId: 'version-1' },
+      [1],
+      current.lease.signal
+    )
+    current.release()
+    finish()
+    await expect(pending).rejects.toThrow('Local PDF access')
+    expect(owner.acquire).not.toHaveBeenCalled()
+  })
+
   it('accepts a page after 100 through the actual request boundary', async () => {
     const failure = new Error('reached owner')
     const owner: PdfStructureOwner = {
       acquire: vi.fn(() => ({ result: Promise.reject(failure), release: vi.fn() })),
       readThumbnail: vi.fn(),
+      readCached: vi.fn(),
       close: vi.fn(),
       clearCache: vi.fn()
     }
@@ -47,6 +89,7 @@ describe('PDF reading authority', () => {
         release
       })),
       readThumbnail: vi.fn(),
+      readCached: vi.fn(),
       close: vi.fn(),
       clearCache: vi.fn()
     }
@@ -99,6 +142,7 @@ describe('PDF reading authority', () => {
     const owner: PdfStructureOwner = {
       acquire: vi.fn(),
       readThumbnail: vi.fn(),
+      readCached: vi.fn(),
       close: vi.fn(),
       clearCache: vi.fn(async () => ({
         removedBytes: 10,

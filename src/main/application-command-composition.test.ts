@@ -263,6 +263,7 @@ describe('application command composition', () => {
       'pdf-structure:cancel',
       'pdf-structure:clear-cache',
       'pdf-structure:parse',
+      'pdf-structure:read-cached',
       'pdf-structure:read-thumbnail',
       'projects:create',
       'projects:delete',

@@ -1808,17 +1808,17 @@ export const PdfPreviewContent = ({
         {attachmentVersionId && presentation !== 'search' ? (
           <Tabs.List
             aria-label={t('PDF reading mode')}
-            className="flex shrink-0 justify-center gap-6 border-b border-border bg-bg-000 px-5"
+            className="flex h-9 shrink-0 justify-center gap-4 border-b border-border bg-bg-000 px-2"
           >
             <Tabs.Trigger
               value="original"
-              className="flex items-center gap-2 border-b-2 border-transparent px-1 py-3 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
+              className="flex h-full items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-1 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
             >
               {t('Original PDF')}
             </Tabs.Trigger>
             <Tabs.Trigger
               value="figures"
-              className="flex items-center gap-2 border-b-2 border-transparent px-1 py-3 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
+              className="flex h-full items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-1 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
             >
               {t('Figures and tables')}
             </Tabs.Trigger>
@@ -2009,6 +2009,7 @@ export const PdfPreviewContent = ({
               >
                 <PdfFiguresView
                   key={requestKey}
+                  active={readingMode === 'figures'}
                   attachmentVersionId={attachmentVersionId}
                   pageCount={pageCount}
                   onNavigate={(page) => {

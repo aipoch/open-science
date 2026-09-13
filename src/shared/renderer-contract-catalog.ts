@@ -6,6 +6,7 @@ import type {
 import type { LiteratureChangedEvent } from './literature'
 import type {
   ParsePdfStructureRequest,
+  ReadCachedPdfStructureRequest,
   ReadPdfStructureThumbnailRequest,
   PdfStructureResult
 } from './pdf-structure'
@@ -2621,6 +2622,15 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'update.download': callable<() => Promise<UpdateStatus>>()('update', ['update:download', LOCAL]),
   'update.getAppInfo': callable<() => Promise<AppInfo>>()('update', ['update:get-app-info']),
   'update.getStatus': callable<() => Promise<UpdateStatus>>()('update', ['update:get-status']),
+  'pdfStructure.readCached': callable<
+    (request: ReadCachedPdfStructureRequest) => Promise<PdfStructureResult | undefined>
+  >()('pdf-structure', [
+    'pdf-structure:read-cached',
+    LOCAL,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
   'pdfStructure.parse': callable<
     (request: ParsePdfStructureRequest) => Promise<PdfStructureResult>
   >()('pdf-structure', ['pdf-structure:parse', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),

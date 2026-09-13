@@ -11,8 +11,12 @@ import { pathToFileURL } from 'node:url'
 import { createCanvas } from '@napi-rs/canvas'
 import { getDocument, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import sharp from 'sharp'
+import { collectTableRules, findCaptionedNumericTableRegions } from './literature-pdf-graphics.mjs'
+import { repairPdfSymbolText } from './literature-pdf-symbol-text.mjs'
+import { readingRotation, isUprightText } from './literature-pdf-orientation.mjs'
 
-const [pdfPath, assetDirectory, runtimeDirectory, pageList, outputDirectory] = process.argv.slice(2)
+const [pdfPath, assetDirectory, runtimeDirectory, pageList, outputDirectory, mode] =
+  process.argv.slice(2)
 assert(
   pdfPath && assetDirectory && runtimeDirectory && pageList && outputDirectory,
   'Supply PDF, model asset directory, onnxruntime-web package directory, comma-separated pages, output directory.'
@@ -60,6 +64,7 @@ const task = getDocument({
   cMapUrl: `${join(assetRoot, 'cmaps')}/`,
   cMapPacked: true,
   isEvalSupported: false,
+  fontExtraProperties: true,
   useSystemFonts: false,
   verbosity: 0
 })
@@ -150,15 +155,15 @@ try {
     assert(pageNumber <= document.numPages)
     const page = await document.getPage(pageNumber)
     try {
-      assert.equal(page.rotate, 0, 'Rotated PDF pages are outside this probe.')
-      const viewport = page.getViewport({ scale: 1.5 })
+      const content = await repairPdfSymbolText(page, await page.getTextContent())
+      const rotation = readingRotation(page, content)
+      const viewport = page.getViewport({ scale: 1.5, rotation })
       assert(viewport.width * viewport.height <= 4_000_000)
       const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
       const context = canvas.getContext('2d')
       await page.render({ canvas, canvasContext: context, viewport }).promise
       const png = await canvas.encode('png')
       const detection = await infer('detection', png, canvas.width, canvas.height)
-      const content = await page.getTextContent()
       const textItems = content.items
         .filter((item) => 'str' in item && item.str.trim())
         .map((item) => {
@@ -172,12 +177,17 @@ try {
             baseline,
             width: item.width * 1.5,
             height: item.height * 1.5,
-            horizontal:
-              item.dir === 'ltr' &&
-              Math.abs(item.transform[1]) < 0.001 &&
-              Math.abs(item.transform[2]) < 0.001
+            horizontal: isUprightText(item, rotation)
           }
         })
+      const rules = collectTableRules(await page.getOperatorList(), viewport)
+      for (const rect of findCaptionedNumericTableRegions(
+        textItems,
+        rules,
+        detection.objects.map((o) => o.rect)
+      )) {
+        detection.objects.push({ label: 'table', rect, origin: 'captioned-numeric-region' })
+      }
       const tables = []
       for (const [index, object] of detection.objects.entries()) {
         if (object.label !== 'table') continue
@@ -191,7 +201,7 @@ try {
           .extract({ left, top, width: right - left, height: bottom - top })
           .png()
           .toBuffer()
-        await writeFile(join(outputDirectory, `${id}.png`), crop)
+        if (mode !== 'production') await writeFile(join(outputDirectory, `${id}.png`), crop)
         const structure = await infer('structure', crop, right - left, bottom - top)
         const rows = structure.objects
           .filter((item) => item.label === 'table row')
@@ -204,13 +214,13 @@ try {
         const unassigned = []
         // ponytail: raw row/column intersections omit official refinement and merged-cell resolution.
         for (const item of textItems) {
+          // Margin notices and diagonal watermarks can overlap a detector crop.
+          // Their advance boxes are not horizontal cell coordinates. The page's
+          // reading rotation has already been applied to genuine rotated tables.
+          if (!item.horizontal) continue
           const x = item.x + item.width / 2 - left
           const y = item.baseline - item.height / 2 - top
           if (!inside([0, 0, right - left, bottom - top], x, y)) continue
-          assert(
-            item.horizontal,
-            'Detected region contains unsupported non-horizontal or non-LTR text.'
-          )
           const row = rows.findIndex(({ rect }) => y >= rect[1] && y <= rect[3])
           const column = columns.findIndex(({ rect }) => x >= rect[0] && x <= rect[2])
           if (row < 0 || column < 0) unassigned.push(item.text)
@@ -232,10 +242,11 @@ try {
               .replace(/\s+/g, ' ')
           )
         )
-        await writeFile(
-          join(outputDirectory, `${id}.tsv`),
-          grid.map((row) => row.join('\t')).join('\n') + '\n'
-        )
+        if (mode !== 'production')
+          await writeFile(
+            join(outputDirectory, `${id}.tsv`),
+            grid.map((row) => row.join('\t')).join('\n') + '\n'
+          )
         tables.push({
           id,
           detection: object,
@@ -247,28 +258,31 @@ try {
           grid,
           unassigned
         })
-        context.strokeStyle = '#d50070'
-        context.lineWidth = 3
-        context.strokeRect(
-          ...[
-            object.rect[0],
-            object.rect[1],
-            object.rect[2] - object.rect[0],
-            object.rect[3] - object.rect[1]
-          ]
-        )
-        context.font = '18px sans-serif'
-        context.fillStyle = '#d50070'
-        context.fillText(
-          `${index + 1}: ${rows.length} x ${columns.length}`,
-          left,
-          Math.max(20, top)
-        )
+        if (mode !== 'production') {
+          context.strokeStyle = '#d50070'
+          context.lineWidth = 3
+          context.strokeRect(
+            ...[
+              object.rect[0],
+              object.rect[1],
+              object.rect[2] - object.rect[0],
+              object.rect[3] - object.rect[1]
+            ]
+          )
+          context.font = '18px sans-serif'
+          context.fillStyle = '#d50070'
+          context.fillText(
+            `${index + 1}: ${rows.length} x ${columns.length}`,
+            left,
+            Math.max(20, top)
+          )
+        }
       }
-      await writeFile(
-        join(outputDirectory, `page-${pageNumber}-detected.png`),
-        await canvas.encode('png')
-      )
+      if (mode !== 'production')
+        await writeFile(
+          join(outputDirectory, `page-${pageNumber}-detected.png`),
+          await canvas.encode('png')
+        )
       results.push({
         page: pageNumber,
         coordinateSystem: 'PDF.js scale-1.5 viewport pixels',

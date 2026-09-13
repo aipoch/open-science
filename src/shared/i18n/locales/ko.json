@@ -5628,7 +5628,6 @@
     "PDF extraction is unavailable": "PDF 추출을 사용할 수 없음",
     "PDF extraction progress": "PDF 추출 진행률",
     "PDF parsing results cleared.": "PDF 분석 결과를 지웠습니다.",
-    "Preview unavailable. Open the original page.": "미리보기를 사용할 수 없습니다. 원본 페이지를 여세요.",
     "Processed {{completed}} / {{total}} pages": "{{completed}} / {{total}}페이지 처리됨",
     "Show in PDF": "PDF에서 보기",
     "Some unrecognized files were retained.": "인식할 수 없는 일부 파일을 보존했습니다.",
@@ -5658,6 +5657,18 @@
     "Some text could not be placed in the table. Review it below before copying.": "일부 텍스트를 표에 배치하지 못했습니다. 복사하기 전에 아래에서 확인하세요.",
     "Unplaced table text": "셀에 배치되지 않은 텍스트",
     "Found in the table region, but its cell could not be determined. This text is not included when copying the table.": "표 영역에서 발견되었지만 해당 셀을 확인할 수 없습니다. 이 텍스트는 표를 복사할 때 포함되지 않습니다.",
-    "I checked the table against the PDF.": "표를 원본 PDF와 대조했습니다."
+    "I checked the table against the PDF.": "표를 원본 PDF와 대조했습니다.",
+    "Download image": "이미지 다운로드",
+    "Copy image": "이미지 복사",
+    "Could not copy the image. Try again.": "이미지를 복사하지 못했습니다. 다시 시도하세요.",
+    "Could not save the image. Try again.": "이미지를 저장하지 못했습니다. 다시 시도하세요.",
+    "Algorithm": "알고리즘",
+    "Image unavailable": "이미지를 사용할 수 없습니다",
+    "Reload image": "이미지 다시 불러오기",
+    "Loading image…": "이미지 불러오는 중…",
+    "Previous figure or table": "이전 그림 또는 표",
+    "Next figure or table": "다음 그림 또는 표",
+    "Enlarge image": "이미지 확대",
+    "Image preview": "이미지 미리보기"
   }
 }

@@ -246,7 +246,7 @@ describe('PDF structure result cache', () => {
       const data = images()
       if (kind === 'hash') data.set('image-1', Buffer.alloc(png.length))
       if (kind === 'inventory') data.set('unreferenced', png)
-      if (kind === 'dimensions') original.thumbnails[0].width = 1201
+      if (kind === 'dimensions') original.thumbnails[0].width = 2401
       if (kind === 'png') {
         data.set('image-1', Buffer.alloc(png.length))
         original.thumbnails[0].sha256 = hash(data.get('image-1')!)

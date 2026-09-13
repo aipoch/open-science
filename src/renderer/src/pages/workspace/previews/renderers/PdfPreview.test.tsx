@@ -865,6 +865,35 @@ describe('PdfPreviewContent', () => {
     expect(thumbnails.length).toBeLessThanOrEqual(24)
   })
 
+  it('keeps search presentation in document flow without reader controls or intercepted shortcuts', async () => {
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent
+          path="literature-attachment-version:version-1"
+          name="paper.pdf"
+          source="literature"
+          presentation="search"
+        />
+      )
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
+    const original = container.querySelector<HTMLElement>('[data-pdf-original-view]')!
+    const scroll = original.querySelector<HTMLElement>('[role="region"]')!
+    expect(original.classList.contains('absolute')).toBe(false)
+    expect(scroll.classList.contains('overflow-auto')).toBe(false)
+    expect(container.querySelector('[aria-label="PDF reading mode"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Zoom in"]')).toBeNull()
+    const shortcut = new KeyboardEvent('keydown', {
+      key: 'f',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    await act(async () => scroll.dispatchEvent(shortcut))
+    expect(shortcut.defaultPrevented).toBe(false)
+    expect(container.querySelector('[aria-label="Search document"]')).toBeNull()
+  })
+
   it('scopes Cmd+F to the PDF and searches every page without opening a global search', async () => {
     await act(async () => {
       root.render(<PdfPreviewContent path="/workspace/search.pdf" name="search.pdf" />)

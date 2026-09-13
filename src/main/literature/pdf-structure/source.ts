@@ -151,10 +151,20 @@ export class PdfStructureSourceAuthority {
       let position = 0
       while (true) {
         signal.throwIfAborted()
+        if (lease && position === source.sizeBytes) break
         const length = Math.min(buffer.length, source.sizeBytes + 1 - position)
-        const { bytesRead } = lease
-          ? await lease.read(buffer, 0, length, position)
-          : await file!.read(buffer, 0, length, position)
+        let bytesRead: number
+        if (lease) {
+          const bytes = await lease.readRange(
+            position,
+            Math.min(position + length, source.sizeBytes)
+          )
+          bytesRead = bytes.byteLength
+          if (bytesRead > length) throw unavailable()
+          buffer.set(bytes)
+        } else {
+          bytesRead = (await file!.read(buffer, 0, length, position)).bytesRead
+        }
         if (!bytesRead) break
         position += bytesRead
         if (position > source.sizeBytes) throw unavailable()

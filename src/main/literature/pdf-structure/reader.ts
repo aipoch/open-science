@@ -1,5 +1,6 @@
 import {
   parsePdfStructureRequest,
+  readCachedPdfStructureRequest,
   readPdfStructureThumbnailRequest
 } from '../../../shared/pdf-structure'
 import { z } from 'zod'
@@ -8,6 +9,7 @@ import type { CallerContext } from '../../caller-context'
 import { callerLeaseOwnershipKey } from '../../caller-lifecycle'
 import type {
   ParsePdfStructureRequest,
+  ReadCachedPdfStructureRequest,
   ReadPdfStructureThumbnailRequest,
   PdfStructureResult
 } from '../../../shared/pdf-structure'
@@ -26,6 +28,22 @@ const authorize = (caller: CallerContext, lease: ApplicationCallerLease): void =
 export class PdfStructureReader {
   private readonly active = new Map<string, () => void>()
   constructor(private readonly owner: PdfStructureOwner) {}
+
+  async readCached(
+    input: ReadCachedPdfStructureRequest,
+    caller: CallerContext,
+    lease: ApplicationCallerLease
+  ): Promise<PdfStructureResult | undefined> {
+    authorize(caller, lease)
+    const request = readCachedPdfStructureRequest.parse(input)
+    const result = await this.owner.readCached(
+      { kind: 'literature', attachmentVersionId: request.attachmentVersionId },
+      [request.page],
+      lease.signal
+    )
+    authorize(caller, lease)
+    return result
+  }
 
   async parse(
     input: ParsePdfStructureRequest,

@@ -237,6 +237,37 @@ const started = async (test: Setup, count = 1): Promise<Run> => {
 }
 
 describe('shared PDF parsing lifecycle', () => {
+  it('reads persisted results without starting inference on either cache hit or miss', async () => {
+    const test = setup()
+    expect(await test.owner.readCached(reading, [1])).toBeUndefined()
+    expect(test.engine.start).not.toHaveBeenCalled()
+    expect(test.acquireUse).not.toHaveBeenCalled()
+    const task = test.owner.acquire(reading, [1])
+    const run = await started(test)
+    run.output.resolve(resultFor(run.request.identity))
+    const parsed = await task.result
+    task.release()
+    const reopened = setup()
+    expect(await reopened.owner.readCached(reading, [1])).toEqual(parsed)
+    expect(await reopened.owner.readCached(reading, [2])).toBeUndefined()
+    vi.mocked(reopened.engine.describe).mockResolvedValue({
+      fingerprint: 'c'.repeat(64),
+      modelRevision: 'revision-2'
+    })
+    expect(await reopened.owner.readCached(reading, [1])).toBeUndefined()
+    expect(reopened.engine.start).not.toHaveBeenCalled()
+    expect(reopened.acquireUse).not.toHaveBeenCalled()
+    expect(reopened.writers()).toBe(0)
+  })
+
+  it('rechecks source authorization and releases the writer after a cache read', async () => {
+    const test = setup()
+    vi.spyOn(authority, 'reauthorize').mockRejectedValue(new Error('source revoked'))
+    await expect(test.owner.readCached(reading, [1])).rejects.toThrow('source revoked')
+    expect(test.engine.start).not.toHaveBeenCalled()
+    expect(test.writers()).toBe(0)
+  })
+
   it('shares canonical pages across Reading and Agent while cancellation stays consumer-local', async () => {
     const test = setup()
     const first = test.owner.acquire(reading, [2, 1, 2])
@@ -623,7 +654,11 @@ describe('shared PDF parsing lifecycle', () => {
       versionToken: 1,
       snapshot: { dev: 1n, ino: 1n, size: BigInt(content.length), mtimeNs: 1n },
       read: (buffer, offset, length, position) => file.read(buffer, offset, length, position),
-      readRange: vi.fn(),
+      readRange: vi.fn(async (begin: number, end: number) => {
+        const buffer = Buffer.alloc(end - begin)
+        const { bytesRead } = await file.read(buffer, 0, buffer.length, begin)
+        return buffer.subarray(0, bytesRead)
+      }),
       copyTo: vi.fn(),
       verifyUnchanged: vi.fn(async () => undefined),
       close
@@ -781,7 +816,11 @@ describe('immutable PDF staging', () => {
         versionToken: 1,
         snapshot: { dev: 1n, ino: 1n, size: BigInt(content.length), mtimeNs: 1n },
         read: (buffer, offset, length, position) => file.read(buffer, offset, length, position),
-        readRange: vi.fn(),
+        readRange: vi.fn(async (begin: number, end: number) => {
+          const buffer = Buffer.alloc(end - begin)
+          const { bytesRead } = await file.read(buffer, 0, buffer.length, begin)
+          return buffer.subarray(0, bytesRead)
+        }),
         copyTo: vi.fn(),
         verifyUnchanged: vi.fn(async () => undefined),
         close

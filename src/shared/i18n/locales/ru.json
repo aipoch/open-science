@@ -6088,7 +6088,6 @@
     "PDF extraction is unavailable": "Извлечение из PDF недоступно",
     "PDF extraction progress": "Ход извлечения из PDF",
     "PDF parsing results cleared.": "Результаты разбора PDF удалены.",
-    "Preview unavailable. Open the original page.": "Предпросмотр недоступен. Откройте исходную страницу.",
     "Processed {{completed}} / {{total}} pages": "Обработано страниц: {{completed}} / {{total}}",
     "Show in PDF": "Показать в PDF",
     "Some unrecognized files were retained.": "Некоторые неопознанные файлы сохранены.",
@@ -6118,6 +6117,18 @@
     "Some text could not be placed in the table. Review it below before copying.": "Часть текста не удалось разместить в таблице. Проверьте его ниже перед копированием.",
     "Unplaced table text": "Нераспределённый текст таблицы",
     "Found in the table region, but its cell could not be determined. This text is not included when copying the table.": "Текст найден в области таблицы, но его ячейку определить не удалось. Этот текст не включается при копировании таблицы.",
-    "I checked the table against the PDF.": "Я сверил(а) таблицу с PDF."
+    "I checked the table against the PDF.": "Я сверил(а) таблицу с PDF.",
+    "Download image": "Скачать изображение",
+    "Copy image": "Копировать изображение",
+    "Could not copy the image. Try again.": "Не удалось скопировать изображение. Повторите попытку.",
+    "Could not save the image. Try again.": "Не удалось сохранить изображение. Повторите попытку.",
+    "Algorithm": "Алгоритм",
+    "Image unavailable": "Изображение недоступно",
+    "Reload image": "Загрузить изображение повторно",
+    "Loading image…": "Загрузка изображения…",
+    "Previous figure or table": "Предыдущий рисунок или таблица",
+    "Next figure or table": "Следующий рисунок или таблица",
+    "Enlarge image": "Увеличить изображение",
+    "Image preview": "Предпросмотр изображения"
   }
 }

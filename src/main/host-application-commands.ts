@@ -1,6 +1,7 @@
 import { pdfStructureCommandContracts } from '../shared/pdf-structure'
 import type {
   ParsePdfStructureRequest,
+  ReadCachedPdfStructureRequest,
   ReadPdfStructureThumbnailRequest,
   PdfStructureResult
 } from '../shared/pdf-structure'
@@ -344,6 +345,11 @@ const updateCommands = Object.freeze({
 })
 
 const pdfStructureCommands = {
+  readCached: defineApplicationCommand<
+    'pdf-structure:read-cached',
+    readonly [ReadCachedPdfStructureRequest],
+    PdfStructureResult | undefined
+  >('pdf-structure:read-cached', pdfStructureCommandContracts.readCached),
   parse: defineApplicationCommand<
     'pdf-structure:parse',
     readonly [ParsePdfStructureRequest],
@@ -411,7 +417,10 @@ const hostApplicationCommandGroups = Object.freeze([
 ] as const)
 
 type HostApplicationCommandDependencies = Readonly<{
-  pdfStructure: Pick<PdfStructureReader, 'parse' | 'cancel' | 'readThumbnail' | 'clearCache'>
+  pdfStructure: Pick<
+    PdfStructureReader,
+    'parse' | 'cancel' | 'readThumbnail' | 'clearCache' | 'readCached'
+  >
   localModels: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>
   cli: CliCommandOwner
   github: GithubCommandOwner
@@ -712,6 +721,10 @@ const registerHostApplicationCommands = (
         localCommand(callerContext, 'local-models:remove', () => dependencies.localModels.remove())
     })
     scope.registerGroup(hostApplicationCommandGroups[10], {
+      'pdf-structure:read-cached': ({ callerContext, callerLease, args: [request] }) =>
+        localCommand(callerContext, 'pdf-structure:read-cached', () =>
+          dependencies.pdfStructure.readCached(request, callerContext, callerLease)
+        ),
       'pdf-structure:parse': ({ callerContext, callerLease, args: [request] }) =>
         localCommand(callerContext, 'pdf-structure:parse', () =>
           dependencies.pdfStructure.parse(request, callerContext, callerLease)

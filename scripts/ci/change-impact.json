@@ -152,6 +152,7 @@
         "src/main/index.ts",
         "src/main/ipc.ts",
         "src/main/lifecycle-shutdown.ts",
+        "src/main/literature/pdf-structure/engine.ts",
         "src/main/local-rpc-transport.ts",
         "src/main/notebook/dependency-analysis-python.ts",
         "src/main/notebook/conditional-restore-script.ts",

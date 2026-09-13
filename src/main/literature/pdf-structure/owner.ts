@@ -76,6 +76,11 @@ export type PdfStructureOwner = {
   ): { result: Promise<PdfStructureResult>; release(): void }
   close(): Promise<void>
   clearCache(): Promise<PdfStructureCacheClearResult>
+  readCached(
+    request: PdfStructureSourceRequest,
+    pages: readonly number[],
+    signal?: AbortSignal
+  ): Promise<PdfStructureResult | undefined>
   readThumbnail(
     request: PdfStructureSourceRequest,
     pages: readonly number[],
@@ -473,13 +478,12 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
     clearing = operation
     return operation
   }
-  const readThumbnail: PdfStructureOwner['readThumbnail'] = (
-    request,
-    pages,
-    extractionId,
-    thumbnailId,
-    signal
-  ) => {
+  const readFromCache = <T>(
+    request: PdfStructureSourceRequest,
+    pages: readonly number[],
+    read: (key: Parameters<PdfStructureCache['read']>[0]) => Promise<T>,
+    signal?: AbortSignal
+  ): Promise<T> => {
     const sourceRequest = structuredClone(request)
     const requestedPages = [...new Set(pages)].sort((a, b) => a - b)
     const operation = (async () => {
@@ -490,20 +494,16 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
         admit()
         signal?.throwIfAborted()
         const source = await dependencies.sources.resolve(sourceRequest)
-        const bytes = await cache.readThumbnail(
-          {
-            sourceChecksum: source.checksum,
-            sourceSizeBytes: source.sizeBytes,
-            engineFingerprint: recipe.fingerprint,
-            requestedPages
-          },
-          extractionId,
-          thumbnailId
-        )
+        const value = await read({
+          sourceChecksum: source.checksum,
+          sourceSizeBytes: source.sizeBytes,
+          engineFingerprint: recipe.fingerprint,
+          requestedPages
+        })
         await dependencies.sources.reauthorize(sourceRequest, source)
         signal?.throwIfAborted()
         if (closed) throw new Error('PDF structure owner is closed.')
-        return bytes
+        return value
       })
     })()
     const finished = operation
@@ -517,6 +517,21 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
     reads.add(finished)
     return operation
   }
+  const readCached: PdfStructureOwner['readCached'] = (request, pages, signal) =>
+    readFromCache(request, pages, (key) => cache.read(key), signal)
+  const readThumbnail: PdfStructureOwner['readThumbnail'] = (
+    request,
+    pages,
+    extractionId,
+    thumbnailId,
+    signal
+  ) =>
+    readFromCache(
+      request,
+      pages,
+      (key) => cache.readThumbnail(key, extractionId, thumbnailId),
+      signal
+    )
   const close = (): Promise<void> => {
     closed = true
     if (closing) return closing
@@ -532,6 +547,6 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
     })
     return closing
   }
-  return { acquire, close, clearCache, readThumbnail }
+  return { acquire, close, clearCache, readThumbnail, readCached }
 }
 import { PDF_MODEL_CHANGED } from '../../../shared/local-models'

@@ -331,6 +331,16 @@ describe('renderer argument-shape characterization', () => {
     }
   })
 
+  it('installs read-only PDF cache lookup with identical Electron and local Web arguments', async () => {
+    const request = { attachmentVersionId: 'version-1', page: 1 }
+    const expected = { channel: 'pdf-structure:read-cached', args: [request] }
+    electronMocks.invoke.mockResolvedValueOnce({ ok: true, result: undefined })
+    expect(await invokeElectron(electronApi, 'pdfStructure.readCached', [request])).toEqual(
+      expected
+    )
+    expect(await invokeWeb(webApi, 'pdfStructure.readCached', [request])).toEqual(expected)
+  })
+
   it('records equivalent session-save calls and the explicit-undefined JSON deviation', async () => {
     const session = { id: 'session-1', projectId: 'project-1', title: 'Characterization' }
     const options = { conflictRebaseFields: ['title'] }

@@ -5787,7 +5787,6 @@
     "PDF extraction is unavailable": "PDF-Extraktion nicht verfügbar",
     "PDF extraction progress": "Fortschritt der PDF-Extraktion",
     "PDF parsing results cleared.": "PDF-Analyseergebnisse gelöscht.",
-    "Preview unavailable. Open the original page.": "Vorschau nicht verfügbar. Öffnen Sie die Originalseite.",
     "Processed {{completed}} / {{total}} pages": "{{completed}} / {{total}} Seiten verarbeitet",
     "Show in PDF": "Im PDF anzeigen",
     "Some unrecognized files were retained.": "Einige nicht erkannte Dateien wurden beibehalten.",
@@ -5817,6 +5816,18 @@
     "Some text could not be placed in the table. Review it below before copying.": "Einige Texte konnten nicht in der Tabelle platziert werden. Prüfen Sie sie unten vor dem Kopieren.",
     "Unplaced table text": "Nicht zugeordneter Tabellentext",
     "Found in the table region, but its cell could not be determined. This text is not included when copying the table.": "Im Tabellenbereich gefunden, konnte aber keiner Zelle zugeordnet werden. Dieser Text wird beim Kopieren der Tabelle nicht übernommen.",
-    "I checked the table against the PDF.": "Ich habe die Tabelle mit dem PDF abgeglichen."
+    "I checked the table against the PDF.": "Ich habe die Tabelle mit dem PDF abgeglichen.",
+    "Download image": "Bild herunterladen",
+    "Copy image": "Bild kopieren",
+    "Could not copy the image. Try again.": "Das Bild konnte nicht kopiert werden. Versuchen Sie es erneut.",
+    "Could not save the image. Try again.": "Das Bild konnte nicht gespeichert werden. Versuchen Sie es erneut.",
+    "Algorithm": "Algorithmus",
+    "Image unavailable": "Bild nicht verfügbar",
+    "Reload image": "Bild neu laden",
+    "Loading image…": "Bild wird geladen…",
+    "Previous figure or table": "Vorherige Abbildung oder Tabelle",
+    "Next figure or table": "Nächste Abbildung oder Tabelle",
+    "Enlarge image": "Bild vergrößern",
+    "Image preview": "Bildvorschau"
   }
 }

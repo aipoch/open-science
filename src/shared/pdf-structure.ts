@@ -3,6 +3,17 @@ import { defineApplicationCommandContract } from './application-command-contract
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
 const MAX_TABLE_CELLS = 2048
+export const pdfTextRunsSchema = z
+  .array(
+    z
+      .object({
+        text: z.string(),
+        position: z.enum(['normal', 'superscript', 'subscript'])
+      })
+      .strict()
+  )
+  .min(1)
+  .max(2048)
 const id = z.string().regex(/^[a-z0-9-]{1,80}$/)
 const pageNumber = z.number().int().positive()
 const issue = z.object({ code: z.string().min(1), detail: z.string() }).strict()
@@ -23,9 +34,15 @@ const cell = z
     rowSpan: z.number().int().positive(),
     columnSpan: z.number().int().positive(),
     text: z.string(),
+    textRuns: pdfTextRunsSchema.optional(),
     regions: z.array(region)
   })
   .strict()
+  .refine(
+    (value) => !value.textRuns || value.textRuns.map((run) => run.text).join('') === value.text,
+    'Formatted cell text differs from plain text.'
+  )
+const tableNotes = z.array(z.object({ text: z.string(), regions: z.array(region).min(1) }).strict())
 const table = z
   .object({
     rowCount: z.number().int().positive(),
@@ -33,9 +50,7 @@ const table = z
     cells: z.array(cell).max(MAX_TABLE_CELLS),
     unassignedText: z.array(z.object({ text: z.string(), regions: z.array(region) }).strict()),
     issues: z.array(issue),
-    notes: z
-      .array(z.object({ text: z.string(), regions: z.array(region).min(1) }).strict())
-      .optional()
+    notes: tableNotes.optional()
   })
   .strict()
   .superRefine((value, context) => {
@@ -65,18 +80,31 @@ const table = z
 const element = z
   .object({
     id,
-    kind: z.enum(['figure', 'table']),
+    kind: z.enum(['figure', 'table', 'algorithm']),
     regions: z.array(region).min(1),
     caption: z
       .object({ text: z.string(), regions: z.array(region).min(1) })
       .strict()
       .optional(),
     table: table.optional(),
+    tableParts: z
+      .array(z.object({ title: z.string().min(1), table }).strict())
+      .min(2)
+      .max(8)
+      .optional(),
+    tableNotes: tableNotes.optional(),
     thumbnailId: id.optional(),
     issues: z.array(issue)
   })
   .strict()
-  .refine((value) => value.kind === 'table' || !value.table, 'Figure has table data.')
+  .refine(
+    (value) => value.kind === 'table' || (!value.table && !value.tableParts && !value.tableNotes),
+    'Non-table element has table data.'
+  )
+  .refine(
+    (value) => !value.tableParts || (!value.table && !!value.caption),
+    'Grouped tables require a shared caption and separate parts.'
+  )
 
 // This is the production contract, independent of the throwaway spike's JSON. Paths and source
 // access grants are deliberately absent. Coordinates refer to the displayed, rotated CropBox.
@@ -90,6 +118,8 @@ const manifest = z
     pageCount: pageNumber,
     requestedPages: z.array(pageNumber).min(1),
     processedPages: z.array(pageNumber).min(1),
+    // Adjacent pages read for caption provenance; never count as requested extraction progress.
+    auxiliaryPages: z.array(pageNumber).optional(),
     pages: z.array(
       z
         .object({
@@ -184,12 +214,27 @@ export const parsePdfStructureResult = (
   }
   const samePages = (left: number[], right: readonly number[]): boolean =>
     left.length === right.length && left.every((page, index) => page === right[index])
+  const auxiliary = result.auxiliaryPages ?? []
+  const requested = new Set(expected.requestedPages)
+  const figureCaptionPages = new Set(
+    result.elements
+      .filter((e) => e.kind === 'figure')
+      .flatMap((e) => e.caption?.regions.map((r) => r.page) ?? [])
+  )
+  const coveredPages = [...result.requestedPages, ...auxiliary].sort((a, b) => a - b)
   if (
     !samePages(result.requestedPages, expected.requestedPages) ||
     !samePages(result.processedPages, expected.requestedPages) ||
     !samePages(
       result.pages.map(({ page }) => page),
-      expected.requestedPages
+      coveredPages
+    ) ||
+    auxiliary.some(
+      (page, index) =>
+        page > result.pageCount ||
+        requested.has(page) ||
+        (index > 0 && page <= auxiliary[index - 1]) ||
+        (!requested.has(page - 1) && !requested.has(page + 1) && !figureCaptionPages.has(page))
     ) ||
     result.requestedPages.some(
       (page, index, pages) => page > result.pageCount || (index > 0 && page <= pages[index - 1])
@@ -213,15 +258,25 @@ export const parsePdfStructureResult = (
   }
   const processed = new Set(result.processedPages)
   for (const element of result.elements) {
+    const tables =
+      element.tableParts?.map((part) => part.table) ?? (element.table ? [element.table] : [])
     const regions = [
       ...element.regions,
-      ...(element.caption?.regions ?? []),
-      ...(element.table?.cells.flatMap(({ regions }) => regions) ?? []),
-      ...(element.table?.unassignedText.flatMap(({ regions }) => regions) ?? []),
-      ...(element.table?.notes?.flatMap(({ regions }) => regions) ?? [])
+      ...tables.flatMap((table) => table.cells.flatMap(({ regions }) => regions)),
+      ...tables.flatMap((table) => table.unassignedText.flatMap(({ regions }) => regions)),
+      ...tables.flatMap((table) => table.notes?.flatMap(({ regions }) => regions) ?? []),
+      ...(element.tableNotes?.flatMap(({ regions }) => regions) ?? [])
     ]
     if (regions.some(({ page }) => !processed.has(page)))
       throw new Error('PDF element refers to an unprocessed page.')
+    if (
+      element.caption?.regions.some(
+        ({ page }) =>
+          !coveredPages.includes(page) ||
+          (element.kind !== 'figure' && !element.regions.some((r) => Math.abs(r.page - page) <= 1))
+      )
+    )
+      throw new Error('PDF caption refers to an unread or unsupported source page.')
   }
   if (result.navigation.some(({ page }) => page > result.pageCount)) {
     throw new Error('PDF navigation refers to a nonexistent page.')
@@ -240,11 +295,16 @@ export type ReadPdfStructureThumbnailRequest = Readonly<{
   extractionId: string
   thumbnailId: string
 }>
+export type ReadCachedPdfStructureRequest = Pick<
+  ParsePdfStructureRequest,
+  'attachmentVersionId' | 'page'
+>
 
 const sourceRequest = z.object({
   attachmentVersionId: z.string().min(1).max(200),
   page: z.number().int().positive()
 })
+export const readCachedPdfStructureRequest = sourceRequest.strict()
 export const parsePdfStructureRequest = sourceRequest
   .extend({ requestId: z.string().uuid() })
   .strict()
@@ -252,6 +312,14 @@ export const readPdfStructureThumbnailRequest = sourceRequest
   .extend({ extractionId: z.string().uuid(), thumbnailId: id })
   .strict()
 export const pdfStructureCommandContracts = {
+  readCached: defineApplicationCommandContract(z.tuple([readCachedPdfStructureRequest]), {
+    parse(value: unknown): PdfStructureResult | undefined {
+      if (value === undefined) return undefined
+      checkPdfStructureDecodingBudget(value)
+      const result = manifest.parse(value)
+      return parsePdfStructureResult(result, result)
+    }
+  }),
   parse: defineApplicationCommandContract(z.tuple([parsePdfStructureRequest]), {
     parse(value: unknown): PdfStructureResult {
       checkPdfStructureDecodingBudget(value)

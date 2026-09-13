@@ -9,9 +9,18 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { createCanvas } from '@napi-rs/canvas'
+import {
+  captionKind,
+  joinPdfSmallCapsLine,
+  startsDetachedTableCaption,
+  startsDetachedTextColumn
+} from './literature-pdf-caption-group.mjs'
+import { collectGraphicsBounds } from './literature-pdf-graphics.mjs'
 import { getDocument, OPS, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { repairPdfSymbolText } from './literature-pdf-symbol-text.mjs'
+import { readingRotation } from './literature-pdf-orientation.mjs'
 
-const [inputPath, outputDirectory, renderPageList] = process.argv.slice(2)
+const [inputPath, outputDirectory, renderPageList, adjacent, mode] = process.argv.slice(2)
 assert(inputPath && outputDirectory, 'Supply a local PDF and an output directory.')
 const renderPages = renderPageList?.split(',').map(Number)
 if (renderPages)
@@ -28,6 +37,7 @@ const task = getDocument({
   cMapUrl: `${join(assetRoot, 'cmaps')}/`,
   cMapPacked: true,
   isEvalSupported: false,
+  fontExtraProperties: true,
   useSystemFonts: false,
   verbosity: 0
 })
@@ -39,16 +49,27 @@ try {
   // Production requests are bounded page batches, independent of document length.
   if (!renderPages) assert(document.numPages <= 100, 'Supply explicit pages for long documents.')
   if (renderPages) assert(renderPages.every((page) => page <= document.numPages))
+  const geometryPages =
+    renderPages && adjacent === 'adjacent'
+      ? [...new Set(renderPages.flatMap((page) => [page - 1, page, page + 1]))]
+          .filter((page) => page > 0 && page <= document.numPages)
+          .sort((a, b) => a - b)
+      : renderPages
   const outline = await document.getOutline()
   await mkdir(outputDirectory, { recursive: true })
-  for (const pageNumber of renderPages ??
+  for (const pageNumber of geometryPages ??
     Array.from({ length: document.numPages }, (_, i) => i + 1)) {
-    const page = await document.getPage(pageNumber)
+    let page
+    let canvas
+    const auxiliary = renderPages && !renderPages.includes(pageNumber)
     try {
-      const viewport = page.getViewport({ scale: 1 })
-      const content = await page.getTextContent({ includeMarkedContent: true })
+      page = await document.getPage(pageNumber)
+      let content = await page.getTextContent({ includeMarkedContent: true })
+      const renderRotation = readingRotation(page, content)
+      const viewport = page.getViewport({ scale: 1, rotation: renderRotation })
       const structure = await page.getStructTree()
       const operators = await page.getOperatorList()
+      content = await repairPdfSymbolText(page, content, operators)
       const roles = {}
       const visit = (node) => {
         if (node?.role) roles[node.role] = (roles[node.role] ?? 0) + 1
@@ -59,10 +80,7 @@ try {
       let pending = []
       const flush = () => {
         if (!pending.length) return
-        const text = pending
-          .map((item) => item.str)
-          .join('')
-          .trim()
+        const text = joinPdfSmallCapsLine(pending)
         if (text) {
           // PDF.js synthetic spacing items can have zero height and oversized widths.
           // Preserve their text above, but do not treat invisible whitespace as painted bounds.
@@ -108,15 +126,22 @@ try {
       }
       for (const item of content.items) {
         if (!('str' in item)) continue
-        if (pending.length && Math.abs(pending.at(-1).transform[5] - item.transform[5]) > 2) flush()
+        if (startsDetachedTableCaption(pending, item) || startsDetachedTextColumn(pending, item))
+          flush()
+        if (
+          pending.length &&
+          Math.abs(
+            viewport.convertToViewportPoint(...pending.at(-1).transform.slice(4))[1] -
+              viewport.convertToViewportPoint(...item.transform.slice(4))[1]
+          ) > 2
+        )
+          flush()
         pending.push(item)
         if (item.hasEOL) flush()
       }
       flush()
       // Deliberately expose false positives instead of claiming caption association.
-      const captionStarts = lines.filter(({ text }) =>
-        /^(?:Figure|Fig\.?|Table)\s+\d+[.:]?\s/i.test(text)
-      )
+      const captionStarts = lines.filter(({ text }) => captionKind(text))
       const headingCandidates = lines.filter(
         ({ text, fontSize }) =>
           text.length < 110 &&
@@ -135,71 +160,53 @@ try {
         width: viewport.width,
         height: viewport.height,
         rotation: page.rotate,
+        renderRotation,
         structureRoles: roles,
         graphicsOperators: counts,
         captionStarts,
         headingCandidates,
         lines
       })
-      if (renderPages ? renderPages.includes(pageNumber) : captionStarts.length && rendered < 2) {
-        const scaled = page.getViewport({ scale: 1.5 })
+      if (
+        geometryPages ? geometryPages.includes(pageNumber) : captionStarts.length && rendered < 2
+      ) {
+        const scaled = page.getViewport({ scale: 1.5, rotation: renderRotation })
         if (Math.ceil(scaled.width) * Math.ceil(scaled.height) > 4_000_000)
           throw new Error('PDF render pixel budget exceeded')
-        const canvas = createCanvas(Math.ceil(scaled.width), Math.ceil(scaled.height))
+        canvas = createCanvas(Math.ceil(scaled.width), Math.ceil(scaled.height))
         const context = canvas.getContext('2d')
-        await page.render({
+        const rendering = page.render({
           canvas,
           canvasContext: context,
           viewport: scaled,
           recordOperations: true
-        }).promise
-        // PDF.js 5.4.624 records quantized normalized operation boxes, not semantic figure boxes.
-        // The reader is typed as `any` upstream; validate this diagnostic on each PDF.js upgrade.
-        const boxes = page.recordedBBoxes
-        const graphicsBounds = []
-        let invalidGraphicsBounds = 0
-        for (let index = 0; index < operators.fnArray.length; index++) {
-          const operation = operators.fnArray[index]
-          if (
-            (operation === OPS.constructPath || operation === OPS.paintImageXObject) &&
-            !boxes.isEmpty(index)
-          ) {
-            const normalizedRect = [
-              boxes.minX(index),
-              boxes.minY(index),
-              boxes.maxX(index),
-              boxes.maxY(index)
-            ]
-            if (
-              !normalizedRect.every(Number.isFinite) ||
-              normalizedRect[2] <= normalizedRect[0] ||
-              normalizedRect[3] <= normalizedRect[1]
-            ) {
-              invalidGraphicsBounds++
-              continue
-            }
-            graphicsBounds.push({
-              operationIndex: index,
-              kind: operation === OPS.constructPath ? 'path' : 'image',
-              normalizedRect
-            })
-          }
+        })
+        await rendering.promise
+        Object.assign(pages.at(-1), collectGraphicsBounds(rendering, page.recordedBBoxes))
+        if (mode !== 'production') {
+          await writeFile(
+            join(outputDirectory, `page-${pageNumber}.png`),
+            await canvas.encode('png')
+          )
+          context.strokeStyle = '#c026d3'
+          context.lineWidth = 2
+          for (const rect of captionStarts)
+            context.strokeRect(rect.x * 1.5, rect.y * 1.5, rect.width * 1.5, rect.height * 1.5)
+          await writeFile(
+            join(outputDirectory, `page-${pageNumber}-candidates.png`),
+            await canvas.encode('png')
+          )
         }
-        pages.at(-1).graphicsBounds = graphicsBounds
-        pages.at(-1).invalidGraphicsBounds = invalidGraphicsBounds
-        await writeFile(join(outputDirectory, `page-${pageNumber}.png`), await canvas.encode('png'))
-        context.strokeStyle = '#c026d3'
-        context.lineWidth = 2
-        for (const rect of captionStarts)
-          context.strokeRect(rect.x * 1.5, rect.y * 1.5, rect.width * 1.5, rect.height * 1.5)
-        await writeFile(
-          join(outputDirectory, `page-${pageNumber}-candidates.png`),
-          await canvas.encode('png')
-        )
         rendered++
       }
+    } catch (error) {
+      if (!auxiliary) throw error
+      // Optional geometry must not turn a valid requested page into a failed extraction.
+      const index = pages.findIndex((entry) => entry.pageNumber === pageNumber)
+      if (index !== -1) pages.splice(index, 1)
     } finally {
-      page.cleanup()
+      if (canvas) canvas.width = canvas.height = 1
+      page?.cleanup()
     }
   }
   const summary = {

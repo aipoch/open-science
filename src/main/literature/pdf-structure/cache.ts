@@ -47,8 +47,8 @@ const validPngHeader = (bytes: Uint8Array, image: Thumbnail): boolean => {
     header.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')) &&
     header.readUInt32BE(8) === 13 &&
     header.toString('ascii', 12, 16) === 'IHDR' &&
-    image.width <= 1200 &&
-    image.height <= 1200 &&
+    image.width <= 2400 &&
+    image.height <= 2400 &&
     header.readUInt32BE(16) === image.width &&
     header.readUInt32BE(20) === image.height
   )
@@ -57,7 +57,7 @@ const validPng = async (bytes: Uint8Array, image: Thumbnail): Promise<boolean> =
   if (!validPngHeader(bytes, image)) return false
   const { default: sharp } = await import('sharp')
   try {
-    const { info } = await sharp(bytes, { limitInputPixels: 1200 * 1200, failOn: 'warning' })
+    const { info } = await sharp(bytes, { limitInputPixels: 2400 * 2400, failOn: 'warning' })
       .raw()
       .toBuffer({ resolveWithObject: true })
     return info.width === image.width && info.height === image.height

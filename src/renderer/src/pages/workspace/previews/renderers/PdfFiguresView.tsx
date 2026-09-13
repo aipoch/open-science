@@ -1,15 +1,34 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import * as Dialog from '@/components/ui/dialog'
+import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import { ZoomablePreview } from './ZoomablePreview'
+import { PdfPreviewImageCache } from './pdf-preview-image-cache'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { ErrorNotice } from '@/components/error-notice'
 import {
   ImageIcon,
   Table2,
+  ListOrdered,
   ArrowUpRight,
   ScanSearch,
   RefreshCw,
   LoaderCircle,
-  CircleCheck
+  CircleCheck,
+  ImageOff,
+  ChevronLeft,
+  ChevronRight,
+  Expand,
+  Copy,
+  Download,
+  X
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -21,134 +40,55 @@ import type { PdfStructureResult } from '../../../../../../shared/pdf-structure'
 import { copyPdfTable, pdfTableLayout } from '../../../../../../shared/pdf-table-copy'
 
 const formatBytes = (bytes: number): string => `${(bytes / 1024 ** 2).toFixed(1)} MiB`
-type Selection = { result: PdfStructureResult; element: PdfStructureResult['elements'][number] }
+import { groupPdfFigureSelections, type Selection } from './pdf-figure-selections'
 
-const CandidateDetails = ({
-  selected,
-  attachmentVersionId,
-  onNavigate
+type TableData = NonNullable<PdfStructureResult['elements'][number]['table']>
+
+const TableDetails = ({
+  table,
+  title,
+  sharedNotes
 }: {
-  selected: Selection
-  attachmentVersionId: string
-  onNavigate: (page: number) => void
+  table: TableData
+  title?: string
+  sharedNotes?: TableData['notes']
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const { result, element } = selected
-  const [image, setImage] = useState<string>()
-  const [imageFailed, setImageFailed] = useState(false)
   const [reviewed, setReviewed] = useState(false)
   const [copyStatus, setCopyStatus] = useState<string>()
-  const [showImage, setShowImage] = useState(false)
-  const table = element.table
   const missing = t('[Missing]')
-  const grid =
-    table && table.rowCount <= 256 && table.columnCount <= 128 ? pdfTableLayout(table) : undefined
-  useEffect(() => {
-    let live = true
-    if (element.thumbnailId)
-      void window.api.pdfStructure
-        .readThumbnail({
-          attachmentVersionId,
-          page: element.regions[0].page,
-          extractionId: result.extractionId,
-          thumbnailId: element.thumbnailId
-        })
-        .then((url) => {
-          if (live) {
-            setImage(url)
-            setImageFailed(!url)
-          }
-        })
-        .catch(() => {
-          if (live) setImageFailed(true)
-        })
-    return () => {
-      live = false
-    }
-  }, [attachmentVersionId, element, result.extractionId])
+  const grid = useMemo(
+    () =>
+      table && table.rowCount <= 256 && table.columnCount <= 128
+        ? pdfTableLayout(table)
+        : undefined,
+    [table]
+  )
   const copy = async (format: 'tsv' | 'markdown' | 'html'): Promise<void> => {
     if (!table || !reviewed) return
+    const copyTable = { ...table, notes: [...(table.notes ?? []), ...(sharedNotes ?? [])] }
     try {
       if (format === 'html') {
         await navigator.clipboard.write([
           new ClipboardItem({
-            'text/html': new Blob([copyPdfTable(table, 'html', missing)], { type: 'text/html' }),
-            'text/plain': new Blob([copyPdfTable(table, 'tsv', missing, true)], {
+            'text/html': new Blob([copyPdfTable(copyTable, 'html', missing)], {
+              type: 'text/html'
+            }),
+            'text/plain': new Blob([copyPdfTable(copyTable, 'tsv', missing, true)], {
               type: 'text/plain'
             })
           })
         ])
-      } else await navigator.clipboard.writeText(copyPdfTable(table, format, missing))
+      } else await navigator.clipboard.writeText(copyPdfTable(copyTable, format, missing))
       setCopyStatus(t('Copied'))
     } catch {
       setCopyStatus(t('Could not copy the table. Try again.'))
     }
   }
   return (
-    <article className="space-y-3 text-sm">
-      <div className="flex flex-wrap items-center gap-3 border-b border-border-200 pb-2">
-        <div className="flex items-center gap-3">
-          <span className="font-medium">
-            {element.kind === 'figure' ? t('Figure') : t('Table')}
-          </span>
-          <span className="text-xs text-text-300">
-            {t('Page {{page}}', { page: element.regions[0].page })}
-          </span>
-        </div>
-        {grid ? (
-          <div role="group" aria-label={t('Table preview')} className="flex gap-1">
-            <Button
-              size="sm"
-              variant={!showImage ? 'secondary' : 'ghost'}
-              aria-pressed={!showImage}
-              onClick={() => setShowImage(false)}
-            >
-              {t('Table')}
-            </Button>
-            <Button
-              size="sm"
-              variant={showImage ? 'secondary' : 'ghost'}
-              aria-pressed={showImage}
-              onClick={() => setShowImage(true)}
-            >
-              {t('Image')}
-            </Button>
-          </div>
-        ) : null}
-        <Button
-          className="ml-auto"
-          variant="ghost"
-          size="sm"
-          onClick={() => onNavigate(element.regions[0].page)}
-        >
-          {t('Show in PDF')}
-          <ArrowUpRight className="size-3.5" aria-hidden="true" />
-        </Button>
-      </div>
-      {!grid || showImage ? (
-        image ? (
-          <img
-            src={image}
-            alt={t('Extracted region preview')}
-            className="mx-auto max-h-[55vh] max-w-full rounded object-contain bg-white"
-          />
-        ) : (
-          <p className="text-muted-foreground">
-            {imageFailed ? t('Preview unavailable. Open the original page.') : t('Loading…')}
-          </p>
-        )
-      ) : null}
-      <p className="whitespace-normal break-words leading-6 text-text-100" data-pdf-caption>
-        {element.caption?.text ?? t('No reliable caption association.')}
-      </p>
-      {element.issues.length > 0 ? (
-        <p className="text-xs text-status-warning-foreground">
-          {grid && !showImage && table?.unassignedText.length
-            ? t('Some text could not be placed in the table. Review it below before copying.')
-            : t('Check extracted content against the original PDF.')}
-        </p>
-      ) : null}
-      {grid && !showImage ? (
+    <section className="space-y-3" aria-label={title}>
+      {title ? <h3 className="font-medium">{title}</h3> : null}
+      {grid ? (
         <>
           <div className="overflow-x-auto rounded-md border border-border-200">
             <table
@@ -166,7 +106,19 @@ const CandidateDetails = ({
                           colSpan={cell?.columnSpan}
                           className="min-w-24 border border-border-200 px-3 py-2 align-top"
                         >
-                          {cell ? cell.text || '\u00a0' : missing}
+                          {cell?.textRuns
+                            ? cell.textRuns.map((run, index) =>
+                                run.position === 'superscript' ? (
+                                  <sup key={index}>{run.text}</sup>
+                                ) : run.position === 'subscript' ? (
+                                  <sub key={index}>{run.text}</sub>
+                                ) : (
+                                  run.text
+                                )
+                              )
+                            : cell
+                              ? cell.text || '\u00a0'
+                              : missing}
                         </td>
                       )
                     )}
@@ -241,7 +193,371 @@ const CandidateDetails = ({
             </p>
           ) : null}
         </>
-      ) : element.kind === 'table' && !grid ? (
+      ) : (
+        <p>{t('Structured cells are unavailable for this candidate.')}</p>
+      )}
+    </section>
+  )
+}
+
+const CandidateDetails = ({
+  selected,
+  attachmentVersionId,
+  imageCache,
+  onNavigate,
+  hideCaption = false,
+  showPage = false,
+  imageOnly = false
+}: {
+  selected: Selection
+  attachmentVersionId: string
+  imageCache: PdfPreviewImageCache
+  onNavigate: (page: number) => void
+  hideCaption?: boolean
+  showPage?: boolean
+  imageOnly?: boolean
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const { result, element } = selected
+  const table = selected.combinedTable ?? element.table
+  const imageRequest = {
+    attachmentVersionId,
+    page: element.regions[0].page,
+    extractionId: result.extractionId,
+    thumbnailId: element.thumbnailId ?? ''
+  }
+  const [image, setImage] = useState(() => imageCache.peek(imageRequest)?.url)
+  const [imageFailed, setImageFailed] = useState(!element.thumbnailId)
+  const [imageReady, setImageReady] = useState(() => imageCache.peek(imageRequest)?.ready ?? false)
+  const [imageAttempt, setImageAttempt] = useState(0)
+  const [showImage, setShowImage] = useState(false)
+  const [imageAction, setImageAction] = useState<'copy' | 'download' | null>(null)
+  const imageActionPending = useRef(false)
+  const [imageActionStatus, setImageActionStatus] = useState('')
+  const exportImage = async (action: 'copy' | 'download'): Promise<void> => {
+    if (!image || imageActionPending.current) return
+    imageActionPending.current = true
+    setImageAction(action)
+    setImageActionStatus('')
+    try {
+      // readThumbnail returns PNG data URLs; decode locally because the renderer CSP
+      // deliberately disallows fetching data: URLs through connect-src.
+      const prefix = 'data:image/png;base64,'
+      if (!image.startsWith(prefix)) throw new Error('Expected a PNG image')
+      const bytes = Uint8Array.from(atob(image.slice(prefix.length)), (char) => char.charCodeAt(0))
+      if (action === 'copy') {
+        await navigator.clipboard.write([
+          new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })
+        ])
+        setImageActionStatus(t('Copied'))
+      } else {
+        const { saved } = await window.api.saveBlobFile({
+          suggestedName: `pdf-${element.id}-page-${element.regions[0].page}.png`,
+          mimeType: 'image/png',
+          data: bytes.buffer
+        })
+        if (saved) setImageActionStatus(t('Saved'))
+      }
+    } catch {
+      setImageActionStatus(
+        action === 'copy'
+          ? t('Could not copy the image. Try again.')
+          : t('Could not save the image. Try again.')
+      )
+    } finally {
+      imageActionPending.current = false
+      setImageAction(null)
+    }
+  }
+  const hasTable =
+    !imageOnly &&
+    (element.tableParts?.map((part) => part.table) ?? (table ? [table] : [])).some(
+      (table) => table.rowCount <= 256 && table.columnCount <= 128
+    )
+  const hasUnassigned =
+    table?.unassignedText.length ||
+    element.tableParts?.some((part) => part.table.unassignedText.length)
+  const needsImage = !hasTable || showImage
+  const thumbnail = result.thumbnails.find(({ id }) => id === element.thumbnailId)
+  const region = element.regions[0]
+  const page = result.pages.find(({ page }) => page === region.page)
+  const aspectRatio = thumbnail
+    ? thumbnail.width / thumbnail.height
+    : (region.width * (page?.width ?? 1)) / (region.height * (page?.height ?? 1))
+  useEffect(() => {
+    let live = true
+    if (element.thumbnailId && needsImage)
+      void imageCache
+        .load({
+          attachmentVersionId,
+          page: element.regions[0].page,
+          extractionId: result.extractionId,
+          thumbnailId: element.thumbnailId
+        })
+        .then((url) => {
+          if (live) {
+            setImage(url)
+            setImageFailed(!url)
+          }
+        })
+        .catch(() => {
+          if (live) setImageFailed(true)
+        })
+    return () => {
+      live = false
+    }
+  }, [attachmentVersionId, element, result.extractionId, imageAttempt, imageCache, needsImage])
+  return (
+    <article className="space-y-3 text-sm">
+      <div
+        className={cn(
+          'flex-wrap items-center gap-3 border-b border-border-200 pb-2 @min-[640px]:flex',
+          hasTable || showPage ? 'flex' : 'hidden'
+        )}
+      >
+        <div className={cn('items-center gap-3 @min-[640px]:flex', showPage ? 'flex' : 'hidden')}>
+          <span className="font-medium">
+            {element.kind === 'algorithm'
+              ? t('Algorithm')
+              : element.kind === 'figure'
+                ? t('Figure')
+                : t('Table')}
+          </span>
+          <span className="text-xs text-text-300">
+            {selected.combinedTable && selected.continuations?.length
+              ? t('Pages {{start}}–{{end}}', {
+                  start: element.regions[0].page,
+                  end: selected.continuations.at(-1)!.element.regions.at(-1)!.page
+                })
+              : t('Page {{page}}', { page: element.regions[0].page })}
+          </span>
+        </div>
+        {hasTable ? (
+          <div role="group" aria-label={t('Table preview')} className="flex gap-1">
+            <Button
+              size="sm"
+              variant={!showImage ? 'secondary' : 'ghost'}
+              aria-pressed={!showImage}
+              onClick={() => setShowImage(false)}
+            >
+              {t('Table')}
+            </Button>
+            <Button
+              size="sm"
+              variant={showImage ? 'secondary' : 'ghost'}
+              aria-pressed={showImage}
+              onClick={() => setShowImage(true)}
+            >
+              {t('Image')}
+            </Button>
+          </div>
+        ) : null}
+        <Button
+          className="ml-auto hidden @min-[640px]:inline-flex"
+          variant="ghost"
+          size="sm"
+          onClick={() => onNavigate(element.regions[0].page)}
+        >
+          {t('Show in PDF')}
+          <ArrowUpRight className="size-3.5" aria-hidden="true" />
+        </Button>
+      </div>
+      {!hasTable || showImage ? (
+        <div
+          data-pdf-image-frame
+          aria-busy={!imageReady && !imageFailed}
+          className="relative mx-auto min-h-24 max-h-[55vh] max-w-full overflow-hidden rounded bg-bg-200"
+          style={{
+            aspectRatio,
+            width: `min(100%, ${55 * aspectRatio}vh)`,
+            minWidth: 'min(100%, 10rem)'
+          }}
+        >
+          {image && !imageFailed ? (
+            <img
+              key={imageAttempt}
+              src={image}
+              alt={t('Extracted region preview')}
+              onLoad={() => {
+                imageCache.markReady(imageRequest)
+                setImageReady(true)
+              }}
+              onError={() => {
+                imageCache.invalidate(imageRequest)
+                setImageFailed(true)
+              }}
+              className={cn(
+                'absolute inset-0 size-full bg-white object-contain',
+                !imageReady && 'invisible'
+              )}
+            />
+          ) : null}
+          {image && imageReady && !imageFailed ? (
+            <Dialog.Root onOpenChange={() => setImageActionStatus('')}>
+              <Dialog.Trigger asChild>
+                <button
+                  type="button"
+                  aria-label={t('Enlarge image')}
+                  className="group absolute inset-0 cursor-zoom-in rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                >
+                  <span className="absolute right-2 bottom-2 flex size-8 items-center justify-center rounded-md border border-border bg-bg-000/90 text-text-100 shadow-sm opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none">
+                    <Expand className="size-4" aria-hidden="true" />
+                  </span>
+                </button>
+              </Dialog.Trigger>
+              <Dialog.Portal>
+                <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[70]')} />
+                <Dialog.Content
+                  aria-describedby={undefined}
+                  className={dialogPanelClassName(
+                    'z-[71] flex h-[90vh] w-[94vw] max-w-[1600px] flex-col p-0'
+                  )}
+                >
+                  <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2">
+                    <Dialog.Title className="min-w-0 truncate text-sm font-medium">
+                      {t('Image preview')}
+                    </Dialog.Title>
+                    <span
+                      className="min-w-0 flex-1 truncate text-xs text-text-200"
+                      title={element.caption?.text}
+                    >
+                      {element.caption?.text}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0"
+                      aria-label={t('Download image')}
+                      title={t('Download image')}
+                      disabled={imageAction !== null}
+                      onClick={() => void exportImage('download')}
+                    >
+                      {imageAction === 'download' ? (
+                        <LoaderCircle
+                          className="size-4 animate-spin motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <Download className="size-4" aria-hidden="true" />
+                      )}
+                      <span className="hidden sm:inline">{t('Download image')}</span>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0"
+                      aria-label={t('Copy image')}
+                      title={t('Copy image')}
+                      disabled={imageAction !== null}
+                      onClick={() => void exportImage('copy')}
+                    >
+                      {imageAction === 'copy' ? (
+                        <LoaderCircle
+                          className="size-4 animate-spin motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <Copy className="size-4" aria-hidden="true" />
+                      )}
+                      <span className="hidden sm:inline">{t('Copy image')}</span>
+                    </Button>
+                    <Dialog.Close asChild>
+                      <Button variant="ghost" size="icon-sm" aria-label={t('Close')}>
+                        <X className="size-4" aria-hidden="true" />
+                      </Button>
+                    </Dialog.Close>
+                  </div>
+                  <p
+                    role="status"
+                    className={cn(
+                      'shrink-0 px-4 py-2 text-xs text-text-200',
+                      !imageActionStatus && 'sr-only'
+                    )}
+                  >
+                    {imageActionStatus}
+                  </p>
+                  <div className="relative min-h-0 flex-1 overflow-hidden bg-bg-200">
+                    <ZoomablePreview tooltipClassName="z-[80]">
+                      <img
+                        src={image}
+                        alt={element.caption?.text ?? t('Extracted region preview')}
+                        className="size-full object-contain"
+                        draggable={false}
+                      />
+                    </ZoomablePreview>
+                  </div>
+                </Dialog.Content>
+              </Dialog.Portal>
+            </Dialog.Root>
+          ) : null}
+          {imageFailed ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2">
+              <ImageOff className="size-7 text-text-300" aria-hidden="true" />
+              <span className="sr-only">{t('Image unavailable')}</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  if (!element.thumbnailId) return onNavigate(region.page)
+                  imageCache.invalidate(imageRequest)
+                  setImage(undefined)
+                  setImageReady(false)
+                  setImageFailed(false)
+                  setImageAttempt((attempt) => attempt + 1)
+                }}
+              >
+                {element.thumbnailId ? t('Reload image') : t('Show in PDF')}
+              </Button>
+            </div>
+          ) : !imageReady ? (
+            <div
+              role="status"
+              aria-label={t('Loading image…')}
+              className="absolute inset-0 flex animate-pulse items-center justify-center bg-bg-200 motion-reduce:animate-none"
+            >
+              <ImageIcon className="size-7 text-text-300" aria-hidden="true" />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {!hideCaption ? (
+        <p className="whitespace-normal break-words leading-6 text-text-100" data-pdf-caption>
+          {element.caption?.text ?? t('No reliable caption association.')}
+        </p>
+      ) : null}
+      {element.issues.length > 0 ? (
+        <p className="text-xs text-status-warning-foreground">
+          {hasTable && !showImage && hasUnassigned
+            ? t('Some text could not be placed in the table. Review it below before copying.')
+            : t('Check extracted content against the original PDF.')}
+        </p>
+      ) : null}
+      {hasTable ? (
+        <div hidden={showImage} className="space-y-3">
+          {element.tableParts ? (
+            element.tableParts.map((part, index) => (
+              <TableDetails
+                key={index}
+                table={part.table}
+                title={part.title}
+                sharedNotes={element.tableNotes}
+              />
+            ))
+          ) : table ? (
+            <TableDetails key={selected.continuations?.length ?? 0} table={table} />
+          ) : null}
+          {element.tableNotes?.length ? (
+            <section className="space-y-1 text-xs text-text-200">
+              <h4 className="font-medium">{t('Table notes')}</h4>
+              {element.tableNotes.map((note, index) => (
+                <p key={index} className="whitespace-normal leading-5">
+                  {note.text}
+                </p>
+              ))}
+            </section>
+          ) : null}
+        </div>
+      ) : element.kind === 'table' && !hasTable && !imageOnly ? (
         <p>{t('Structured cells are unavailable for this candidate.')}</p>
       ) : null}
     </article>
@@ -251,10 +567,12 @@ const CandidateDetails = ({
 export const PdfFiguresView = ({
   attachmentVersionId,
   pageCount,
+  active: visible = true,
   onNavigate
 }: {
   attachmentVersionId: string
   pageCount: number
+  active?: boolean
   onNavigate: (page: number) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -266,10 +584,58 @@ export const PdfFiguresView = ({
   const [error, setError] = useState(false)
   const [selected, setSelected] = useState<Selection>()
   const [limited, setLimited] = useState(false)
+  const [imageCache] = useState(() => new PdfPreviewImageCache())
+  const [restoring, setRestoring] = useState(true)
+  const [cacheChecked, setCacheChecked] = useState(false)
   const generation = useRef(0)
   const requestId = useRef<string | undefined>(undefined)
   const installation = useRef<Promise<void> | undefined>(undefined)
   const mounted = useRef(true)
+  useEffect(() => {
+    if (!visible || cacheChecked) return
+    let live = true
+    const own = generation.current
+    const restore = async (): Promise<void> => {
+      const cached: PdfStructureResult[] = []
+      let bytes = 0,
+        elements = 0
+      try {
+        for (let page = 1; page <= pageCount; page += 4) {
+          // Bound disk/RPC work while preserving physical page order and display limits.
+          const batch = await Promise.all(
+            Array.from({ length: Math.min(4, pageCount - page + 1) }, (_, offset) =>
+              window.api.pdfStructure.readCached({ attachmentVersionId, page: page + offset })
+            )
+          )
+          if (!live || own !== generation.current) return
+          for (const result of batch) {
+            if (!result) continue
+            bytes += JSON.stringify(result).length * 2
+            elements += result.elements.length
+            if (bytes > 32 * 1024 ** 2 || elements > 512) break
+            cached.push(result)
+          }
+          setResults([...cached])
+          setCompleted(cached.length)
+          if (bytes > 32 * 1024 ** 2 || elements > 512) {
+            setLimited(true)
+            break
+          }
+        }
+      } catch {
+        if (live && own === generation.current) setError(true)
+      } finally {
+        if (live && own === generation.current) {
+          setRestoring(false)
+          setCacheChecked(true)
+        }
+      }
+    }
+    void restore()
+    return () => {
+      live = false
+    }
+  }, [visible, cacheChecked, attachmentVersionId, pageCount])
   const cancel = (): void => {
     generation.current++
     if (requestId.current)
@@ -280,30 +646,43 @@ export const PdfFiguresView = ({
   useEffect(() => {
     mounted.current = true
     const taskGeneration = generation
-    let live = true
-    const poll = (): void => {
-      void window.api.localModels
-        .getSnapshot()
-        .then((next) => {
-          if (live) setModel(next)
-        })
-        .catch(() => {
-          if (live) setError(true)
-        })
-    }
-    poll()
-    const timer = setInterval(poll, 1000)
     return () => {
-      live = false
       mounted.current = false
-      clearInterval(timer)
+      imageCache.clear()
       taskGeneration.current++
       if (requestId.current)
         void window.api.pdfStructure.cancel(requestId.current).catch(() => undefined)
     }
-  }, [])
+  }, [imageCache])
+  useEffect(() => {
+    if (!visible || busy) return
+    let live = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const poll = (): void => {
+      void window.api.localModels
+        .getSnapshot()
+        .then((next) => {
+          if (live)
+            setModel((current) =>
+              JSON.stringify(current) === JSON.stringify(next) ? current : next
+            )
+        })
+        .catch(() => {
+          if (live) setError(true)
+        })
+        .finally(() => {
+          if (live) timer = setTimeout(poll, 1000)
+        })
+    }
+    poll()
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [visible, busy])
   const extract = async (): Promise<void> => {
     const own = ++generation.current
+    imageCache.clear()
     setBusy(true)
     setError(false)
     setResults([])
@@ -389,42 +768,59 @@ export const PdfFiguresView = ({
       }
     }
   }
-  const entries = results.flatMap((result) =>
-    result.elements.map((element) => ({ result, element }))
-  )
+  const entries = useMemo(() => groupPdfFigureSelections(results), [results])
   const analysisComplete =
-    !busy && !error && !limited && failed.length === 0 && results.length === pageCount
+    !restoring && !busy && !error && !limited && failed.length === 0 && results.length === pageCount
   const analysisIncomplete = !busy && (completed > 0 || error || limited)
   const needsDownload = model && (!model.installedRevision || model.updateAvailable)
-  const active = selected ?? entries[0]
+  const active = entries.find((entry) => entry.element === selected?.element) ?? entries[0]
+  const activeIndex = entries.findIndex((entry) => entry.element === active?.element)
+  const entryKey = (entry: Selection): string => `${entry.result.extractionId}:${entry.element.id}`
+  const entryPageLabel = (entry: Selection): string =>
+    entry.continuations?.length
+      ? t('Pages {{start}}–{{end}}', {
+          start: entry.element.regions[0].page,
+          end: entry.continuations.at(-1)!.element.regions.at(-1)!.page
+        })
+      : t('Page {{page}}', { page: entry.element.regions[0].page })
+  const entryLabel = (entry: Selection): string =>
+    entry.element.caption?.text ??
+    (entry.element.kind === 'algorithm'
+      ? t('Algorithm')
+      : entry.element.kind === 'figure'
+        ? t('Figure')
+        : t('Table'))
   const downloading = model?.availability === 'installing'
   const progressValue = downloading ? model.transferredBytes : completed
   const progressTotal = downloading ? model.downloadBytes : pageCount
   const percent =
     progressTotal > 0 ? Math.min(100, Math.round((progressValue / progressTotal) * 100)) : 0
   const busyLabel = downloading ? t('Downloading and verifying…') : t('Analyzing PDF…')
+  const progressTrack = (
+    <div
+      role="progressbar"
+      aria-label={downloading ? t('Model download progress') : t('PDF extraction progress')}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent}
+      className="h-1 w-full overflow-hidden rounded-full bg-bg-300"
+    >
+      <div
+        className="h-full origin-left rounded-full bg-primary transition-transform duration-150 ease-out motion-reduce:transition-none"
+        style={{ transform: `scaleX(${percent / 100})` }}
+      />
+    </div>
+  )
   const progress = (
     <div className="w-full space-y-2 text-left">
-      <div className="flex flex-wrap justify-between gap-2 text-xs text-text-200 tabular-nums">
+      {progressTrack}
+      <div className="flex items-start justify-between gap-4 text-xs text-text-200 tabular-nums">
         <span>
           {downloading
             ? `${formatBytes(model.transferredBytes)} / ${formatBytes(model.downloadBytes)}`
             : t('Processed {{completed}} / {{total}} pages', { completed, total: pageCount })}
         </span>
-        <span>{percent}%</span>
-      </div>
-      <div
-        role="progressbar"
-        aria-label={downloading ? t('Model download progress') : t('PDF extraction progress')}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={percent}
-        className="h-1.5 w-full overflow-hidden rounded-full bg-bg-300"
-      >
-        <div
-          className="h-full origin-left rounded-full bg-primary transition-transform duration-150 ease-out motion-reduce:transition-none"
-          style={{ transform: `scaleX(${percent / 100})` }}
-        />
+        <span className="shrink-0">{percent}%</span>
       </div>
     </div>
   )
@@ -434,28 +830,64 @@ export const PdfFiguresView = ({
       data-pdf-figures-content
     >
       {completed > 0 && (analysisComplete || entries.length > 0) ? (
-        <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border-200 px-4 py-1.5">
-          <p className="text-xs text-text-200">
-            {busy
-              ? busyLabel
-              : completed > 0
-                ? t('Processed {{completed}} / {{total}} pages', { completed, total: pageCount })
-                : t('Browse figures, captions and copyable tables.')}
-          </p>
-          {busy ? (
-            <Button size="sm" variant="outline" onClick={cancel}>
-              {model?.availability === 'installing' ? t('Cancel download') : t('Cancel')}
-            </Button>
-          ) : completed > 0 ? (
-            <Button size="sm" variant="ghost" disabled={!model} onClick={() => void extract()}>
-              <RefreshCw className="size-3.5" aria-hidden="true" />
-              {t('Analyze again')}
-            </Button>
-          ) : null}
+        <header
+          className={cn(
+            'shrink-0 space-y-2 border-b border-border-200 px-3 @min-[640px]:px-4',
+            busy ? 'py-3' : 'py-1.5'
+          )}
+        >
+          <div className="flex items-center justify-between gap-4">
+            <p
+              role="status"
+              aria-atomic="true"
+              className="min-w-0 text-xs text-text-200 @min-[640px]:text-sm"
+              title={t('Processed {{completed}} / {{total}} pages', {
+                completed,
+                total: pageCount
+              })}
+            >
+              <span className="inline-flex items-center gap-2 font-medium text-text-000">
+                {busy || restoring ? (
+                  <LoaderCircle
+                    className="size-4 shrink-0 animate-spin text-primary motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                ) : analysisComplete ? (
+                  <CircleCheck className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                ) : null}
+                {restoring
+                  ? t('Loading…')
+                  : busy
+                    ? busyLabel
+                    : analysisComplete
+                      ? t('Analysis complete')
+                      : t('Processed {{completed}} / {{total}} pages', {
+                          completed,
+                          total: pageCount
+                        })}
+              </span>
+            </p>
+            {busy ? (
+              <Button size="sm" variant="outline" onClick={cancel}>
+                {model?.availability === 'installing' ? t('Cancel download') : t('Cancel')}
+              </Button>
+            ) : completed > 0 ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={t('Analyze again')}
+                title={t('Analyze again')}
+                className="max-w-7 @min-[640px]:max-w-none"
+                disabled={!model || restoring}
+                onClick={() => void extract()}
+              >
+                <RefreshCw className="size-3.5" aria-hidden="true" />
+                <span className="hidden @min-[640px]:inline">{t('Analyze again')}</span>
+              </Button>
+            ) : null}
+          </div>
+          {busy && !restoring ? progress : null}
         </header>
-      ) : null}
-      {busy && entries.length > 0 ? (
-        <div className="shrink-0 border-b border-border-200 px-5 py-3">{progress}</div>
       ) : null}
       {error ? (
         <ErrorNotice
@@ -477,14 +909,117 @@ export const PdfFiguresView = ({
           {t('Display limit reached. Remaining pages were not processed.')}
         </p>
       ) : null}
-      {entries.length ? (
+      {restoring && !entries.length ? (
+        <div
+          className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-text-200"
+          role="status"
+        >
+          <LoaderCircle
+            className="size-4 animate-spin motion-reduce:animate-none"
+            aria-hidden="true"
+          />
+          {t('Loading…')}
+        </div>
+      ) : entries.length ? (
         <div className="flex min-h-0 flex-1 flex-col @min-[640px]:flex-row">
+          <div className="flex shrink-0 items-center gap-1 border-b border-border-200 px-3 py-1.5 @min-[640px]:hidden">
+            <Select
+              value={active ? entryKey(active) : undefined}
+              onValueChange={(value) =>
+                setSelected(entries.find((entry) => entryKey(entry) === value))
+              }
+            >
+              <SelectTrigger className="min-w-0 flex-1" aria-label={t('Figure and table index')}>
+                <SelectValue>
+                  {active ? (
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate">{entryLabel(active)}</span>
+                      <span className="shrink-0 text-xs text-text-300">
+                        {entryPageLabel(active)}
+                      </span>
+                    </span>
+                  ) : null}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent className="z-[70] max-w-[var(--radix-select-trigger-width)]">
+                {entries.map((entry) => (
+                  <SelectItem
+                    key={entryKey(entry)}
+                    value={entryKey(entry)}
+                    textValue={entryLabel(entry)}
+                    className="[&>span:first-child]:min-w-0 [&>span:first-child]:flex-1"
+                  >
+                    <span className="flex min-w-0 items-center gap-3">
+                      <span className="min-w-0 flex-1 truncate">{entryLabel(entry)}</span>
+                      <span className="shrink-0 text-xs text-text-300">
+                        {entryPageLabel(entry)}
+                      </span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={t('Previous figure or table')}
+              disabled={activeIndex <= 0}
+              onClick={() => setSelected(entries[activeIndex - 1])}
+            >
+              <ChevronLeft className="size-4" aria-hidden="true" />
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={t('Next figure or table')}
+              disabled={activeIndex >= entries.length - 1}
+              onClick={() => setSelected(entries[activeIndex + 1])}
+            >
+              <ChevronRight className="size-4" aria-hidden="true" />
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={t('Show in PDF')}
+              title={t('Show in PDF')}
+              disabled={!active}
+              onClick={() => active && onNavigate(active.element.regions[0].page)}
+            >
+              <ArrowUpRight className="size-4" aria-hidden="true" />
+            </Button>
+          </div>
           <nav
-            className="max-h-40 shrink-0 overflow-y-auto border-b border-border-200 bg-bg-20 p-2 @min-[640px]:max-h-none @min-[640px]:w-60 @min-[640px]:border-r @min-[640px]:border-b-0"
+            className="hidden shrink-0 overflow-y-auto border-r border-border-200 bg-bg-20 p-2 @min-[640px]:block @min-[640px]:w-60"
             aria-label={t('Figure and table index')}
+            onKeyDown={(event) => {
+              if (
+                event.defaultPrevented ||
+                event.altKey ||
+                event.ctrlKey ||
+                event.metaKey ||
+                event.shiftKey ||
+                (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')
+              )
+                return
+              const buttons = Array.from(event.currentTarget.querySelectorAll('button'))
+              const current = buttons.indexOf((event.target as HTMLElement).closest('button')!)
+              if (current < 0) return
+              event.preventDefault()
+              const next = Math.max(
+                0,
+                Math.min(entries.length - 1, current + (event.key === 'ArrowDown' ? 1 : -1))
+              )
+              setSelected(entries[next])
+              buttons[next]?.focus()
+            }}
           >
             {entries.map((entry) => {
-              const Icon = entry.element.kind === 'figure' ? ImageIcon : Table2
+              const Icon =
+                entry.element.kind === 'algorithm'
+                  ? ListOrdered
+                  : entry.element.kind === 'figure'
+                    ? ImageIcon
+                    : Table2
               return (
                 <button
                   key={`${entry.result.extractionId}:${entry.element.id}`}
@@ -499,9 +1034,15 @@ export const PdfFiguresView = ({
                   <Icon className="mt-0.5 size-4 shrink-0 text-text-300" aria-hidden="true" />
                   <span className="min-w-0 flex-1">
                     <span className="flex justify-between gap-2 font-medium">
-                      <span>{entry.element.kind === 'figure' ? t('Figure') : t('Table')}</span>
+                      <span>
+                        {entry.element.kind === 'algorithm'
+                          ? t('Algorithm')
+                          : entry.element.kind === 'figure'
+                            ? t('Figure')
+                            : t('Table')}
+                      </span>
                       <span className="shrink-0 font-normal text-text-300">
-                        {t('Page {{page}}', { page: entry.element.regions[0].page })}
+                        {entryPageLabel(entry)}
                       </span>
                     </span>
                     <span className="mt-1 line-clamp-2 leading-4 text-text-200">
@@ -514,17 +1055,23 @@ export const PdfFiguresView = ({
           </nav>
           <div
             key={active ? `${active.result.extractionId}:${active.element.id}` : undefined}
-            className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-bg-000 p-4"
+            className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-bg-000 p-3 @min-[640px]:p-4"
             data-pdf-figure-detail
           >
-            {active ? (
-              <CandidateDetails
-                key={`${active.result.extractionId}:${active.element.id}`}
-                selected={active}
-                attachmentVersionId={attachmentVersionId}
-                onNavigate={onNavigate}
-              />
-            ) : null}
+            {active
+              ? [active, ...(active.continuations ?? [])].map((part, index, parts) => (
+                  <CandidateDetails
+                    key={`${part.result.extractionId}:${part.element.id}`}
+                    selected={part}
+                    imageCache={imageCache}
+                    attachmentVersionId={attachmentVersionId}
+                    onNavigate={onNavigate}
+                    showPage={parts.length > 1}
+                    hideCaption={active.combinedTable ? index > 0 : index < parts.length - 1}
+                    imageOnly={!!active.combinedTable && index > 0}
+                  />
+                ))
+              : null}
           </div>
         </div>
       ) : busy ? (

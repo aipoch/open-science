@@ -5630,7 +5630,6 @@
     "PDF extraction is unavailable": "PDF 擷取暫不可用",
     "PDF extraction progress": "PDF 擷取進度",
     "PDF parsing results cleared.": "已清除 PDF 解析結果。",
-    "Preview unavailable. Open the original page.": "預覽不可用，請開啟原文頁面。",
     "Processed {{completed}} / {{total}} pages": "已處理 {{completed}} / {{total}} 頁",
     "Show in PDF": "在 PDF 中查看",
     "Some unrecognized files were retained.": "已保留部分無法識別的檔案。",
@@ -5660,6 +5659,18 @@
     "Some text could not be placed in the table. Review it below before copying.": "部分文字未能歸入表格，請在複製前查看下方內容。",
     "Unplaced table text": "未歸入儲存格的文字",
     "Found in the table region, but its cell could not be determined. This text is not included when copying the table.": "這些文字位於表格區域內，但無法確定所屬儲存格。複製表格時不會包含這些文字。",
-    "I checked the table against the PDF.": "我已對照 PDF 核對表格。"
+    "I checked the table against the PDF.": "我已對照 PDF 核對表格。",
+    "Download image": "下載圖片",
+    "Copy image": "複製圖片",
+    "Could not copy the image. Try again.": "無法複製圖片，請再試一次。",
+    "Could not save the image. Try again.": "無法儲存圖片，請再試一次。",
+    "Algorithm": "演算法",
+    "Image unavailable": "圖片無法使用",
+    "Reload image": "重新載入圖片",
+    "Loading image…": "正在載入圖片…",
+    "Previous figure or table": "上一個圖表",
+    "Next figure or table": "下一個圖表",
+    "Enlarge image": "放大圖片",
+    "Image preview": "圖片預覽"
   }
 }

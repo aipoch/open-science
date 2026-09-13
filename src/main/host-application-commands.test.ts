@@ -59,6 +59,7 @@ const updateStatus: UpdateStatus = { state: 'idle', current: '1.0.0' }
 
 const createDependencies = (): HostApplicationCommandDependencies => ({
   pdfStructure: {
+    readCached: vi.fn(async () => undefined),
     parse: vi.fn(async () => ({
       schemaVersion: 1 as const,
       extractionId: '00000000-0000-4000-8000-000000000001',
@@ -224,7 +225,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 64 Electron request channels in their existing capability groups', () => {
+  it('defines the exact 65 Electron request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
@@ -244,7 +245,7 @@ describe('Host application commands', () => {
       }
     })
 
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(64)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(65)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -260,7 +261,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(64)
+    expect(router.dispatcher.commandNames()).toHaveLength(65)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -473,6 +474,10 @@ describe('Host application commands', () => {
       extractionId: '00000000-0000-4000-8000-000000000001',
       thumbnailId: 'image-1'
     }
+    await router.dispatcher.invoke(
+      hostApplicationCommands.pdfStructure.readCached,
+      invocation([{ attachmentVersionId: 'version-1', page: 1 }])
+    )
     const parseInvocation = invocation([pdfRequest] as const)
     await router.dispatcher.invoke(hostApplicationCommands.pdfStructure.parse, parseInvocation)
     await router.dispatcher.invoke(
@@ -539,6 +544,7 @@ describe('Host application commands', () => {
     const previewRequest = { path: '/data/result.txt', encoding: 'utf8' as const }
     const parent = { parent: '/target' }
     const argsByChannel: Readonly<Record<string, readonly unknown[]>> = {
+      'pdf-structure:read-cached': [{ attachmentVersionId: 'v1', page: 1 }],
       'pdf-structure:parse': [
         { attachmentVersionId: 'v1', page: 1, requestId: '00000000-0000-4000-8000-000000000001' }
       ],
@@ -580,7 +586,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(38)
+    expect(localOnlyChannels).toHaveLength(39)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(

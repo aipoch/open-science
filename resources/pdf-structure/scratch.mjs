@@ -6,7 +6,7 @@ const names = {
   '': /^(structure(?:\.pending)?\.json)$/,
   geometry: /^(probe\.json|page-\d+(?:-candidates)?\.png)$/,
   inference: /^(onnx-probe\.json|page-\d+-detected\.png|page-\d+-table-\d+\.(?:png|tsv))$/,
-  thumbnails: /^(?:p\d+-figure-\d+|page-\d+-table-\d+)\.png$/
+  thumbnails: /^(?:p\d+-(?:figure|algorithm)-\d+|page-\d+-table-\d+)\.png$/
 }
 
 // Only paths produced by this extractor are owned. Unexpected entries remain a cleanup barrier.

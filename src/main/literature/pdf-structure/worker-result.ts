@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import sharp from 'sharp'
 import { z } from 'zod'
 import { readFileWithinLimit } from '../../storage/durable-json-file'
-import { checkPdfStructureDecodingBudget } from '../../../shared/pdf-structure'
+import { checkPdfStructureDecodingBudget, pdfTextRunsSchema } from '../../../shared/pdf-structure'
 import {
   parsePdfStructureResult,
   type PdfStructureIdentity,
@@ -17,7 +17,9 @@ const rect = z.tuple([
   z.number().finite(),
   z.number().finite()
 ])
-const caption = z.object({ text: z.string(), rect }).optional()
+const caption = z
+  .object({ text: z.string(), rect, page: z.number().int().positive().optional() })
+  .optional()
 const candidate = z.object({
   id: z.string().regex(/^[a-z0-9-]{1,80}$/),
   page: z.number().int().positive(),
@@ -26,42 +28,54 @@ const candidate = z.object({
   caption,
   issue: z.string().optional()
 })
+const rawTableData = z.object({
+  sourceViewport: z.object({ width: z.number().positive(), height: z.number().positive() }),
+  grid: z.array(z.array(z.string()).max(128)).max(256),
+  cells: z
+    .array(
+      z.object({
+        row: z.number(),
+        column: z.number(),
+        rowSpan: z.number(),
+        colSpan: z.number(),
+        text: z.string(),
+        textRuns: pdfTextRunsSchema.optional(),
+        sourceRects: z.array(rect)
+      })
+    )
+    .max(2048),
+  unassigned: z.array(z.string()),
+  notes: z.array(z.object({ text: z.string(), rect })).optional(),
+  issues: z.array(z.string())
+})
 const rawSchema = z.object({
   sourceSha256: z.string(),
   pageCount: z.number().int().positive(),
   requestedPages: z.array(z.number()),
   processedPages: z.array(z.number()),
+  auxiliaryPages: z.array(z.number().int().positive()).optional(),
   pages: z.array(
     z.object({
       page: z.number(),
       width: z.number().positive(),
       height: z.number().positive(),
-      rotation: z.literal(0)
+      rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)])
     })
   ),
   figures: z.array(candidate).max(128),
+  algorithms: z.array(candidate).max(32).default([]),
   tables: z
     .array(
-      candidate.extend({
-        captionIssue: z.string().optional(),
-        sourceViewport: z.object({ width: z.number().positive(), height: z.number().positive() }),
-        grid: z.array(z.array(z.string()).max(128)).max(256),
-        cells: z
-          .array(
-            z.object({
-              row: z.number(),
-              column: z.number(),
-              rowSpan: z.number(),
-              colSpan: z.number(),
-              text: z.string(),
-              sourceRects: z.array(rect)
-            })
-          )
-          .max(2048),
-        unassigned: z.array(z.string()),
-        notes: z.array(z.object({ text: z.string(), rect })).optional(),
-        issues: z.array(z.string())
-      })
+      z.union([
+        candidate.extend({ captionIssue: z.string().optional(), ...rawTableData.shape }),
+        candidate.extend({
+          parts: z
+            .array(rawTableData.extend({ title: z.string().min(1) }))
+            .min(2)
+            .max(8),
+          notes: z.array(z.object({ text: z.string(), rect })).optional()
+        })
+      ])
     )
     .max(32),
   navigation: z.object({
@@ -89,12 +103,15 @@ export const readWorkerResult = async (
   checkPdfStructureDecodingBudget(input)
   const raw = rawSchema.parse(input)
   if (raw.sourceSha256 !== identity.sourceChecksum) throw new Error('PDF worker source changed.')
-  for (const pages of [raw.requestedPages, raw.processedPages, raw.pages.map(({ page }) => page)]) {
+  for (const pages of [raw.requestedPages, raw.processedPages]) {
     if (JSON.stringify(pages) !== JSON.stringify(identity.requestedPages))
       throw new Error('PDF worker coverage mismatch.')
   }
+  const covered = [...identity.requestedPages, ...(raw.auxiliaryPages ?? [])].sort((a, b) => a - b)
+  if (JSON.stringify(raw.pages.map(({ page }) => page)) !== JSON.stringify(covered))
+    throw new Error('PDF worker auxiliary coverage mismatch.')
   let thumbnailBytes = 0
-  for (const item of [...raw.figures, ...raw.tables]) {
+  for (const item of [...raw.figures, ...raw.tables, ...raw.algorithms]) {
     if (!item.region || !item.thumbnail) continue
     if (item.thumbnail !== `thumbnails/${item.id}.png`)
       throw new Error('PDF worker thumbnail identity mismatch.')
@@ -132,6 +149,7 @@ export const readWorkerResult = async (
   }
   for (const [kind, candidates] of [
     ['figure', raw.figures],
+    ['algorithm', raw.algorithms],
     ['table', raw.tables]
   ] as const) {
     for (const item of candidates) {
@@ -145,13 +163,22 @@ export const readWorkerResult = async (
       const page = raw.pages.find((p) => p.page === item.page)
       if (!page || item.thumbnail !== `thumbnails/${item.id}.png`)
         throw new Error('PDF worker thumbnail identity mismatch.')
+      const captionPage =
+        item.caption && raw.pages.find((p) => p.page === (item.caption?.page ?? item.page))
+      if (item.caption && !captionPage) throw new Error('PDF worker caption page is missing.')
       const path = join(root, 'thumbnails', `${item.id}.png`)
       const stat = await lstat(path)
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4 * 1024 ** 2)
         throw new Error('Invalid PDF worker thumbnail.')
       const bytes = await readFile(path)
-      const image = await sharp(bytes, { limitInputPixels: 1200 * 1200 }).metadata()
-      if (!image.width || !image.height || image.format !== 'png')
+      const image = await sharp(bytes, { limitInputPixels: 2400 * 2400 }).metadata()
+      if (
+        !image.width ||
+        !image.height ||
+        image.width > 2400 ||
+        image.height > 2400 ||
+        image.format !== 'png'
+      )
         throw new Error('Invalid PDF worker image.')
       thumbnails.set(item.id, bytes)
       inventory.push({
@@ -171,42 +198,66 @@ export const readWorkerResult = async (
           ? {
               caption: {
                 text: item.caption.text,
-                regions: [region(item.page, item.caption.rect, page.width, page.height)]
+                regions: [
+                  region(
+                    captionPage!.page,
+                    item.caption.rect,
+                    captionPage!.width,
+                    captionPage!.height
+                  )
+                ]
               }
             }
           : {}),
         issues: []
       }
-      if ('cells' in item) {
+      const convertTable = (
+        data: z.infer<typeof rawTableData>
+      ): NonNullable<typeof element.table> => {
+        return {
+          rowCount: data.grid.length,
+          columnCount: data.grid[0].length,
+          cells: data.cells.map((cell) => ({
+            row: cell.row,
+            column: cell.column,
+            rowSpan: cell.rowSpan,
+            columnSpan: cell.colSpan,
+            text: cell.text,
+            ...(cell.textRuns ? { textRuns: cell.textRuns } : {}),
+            regions: cell.sourceRects.map((box) =>
+              region(item.page, box, data.sourceViewport.width, data.sourceViewport.height)
+            )
+          })),
+          unassignedText: data.unassigned.map((text) => ({ text, regions: [] })),
+          ...(data.notes?.length
+            ? {
+                notes: data.notes.map((note) => ({
+                  text: note.text,
+                  regions: [region(item.page, note.rect, page.width, page.height)]
+                }))
+              }
+            : {}),
+          issues: data.issues.map((code) => ({ code, detail: code }))
+        }
+      }
+      if ('parts' in item) {
+        element.tableParts = item.parts.map((part) => ({
+          title: part.title,
+          table: convertTable(part)
+        }))
+        element.tableNotes = item.notes?.map((note) => ({
+          text: note.text,
+          regions: [region(item.page, note.rect, page.width, page.height)]
+        }))
+        element.issues = element.tableParts.flatMap((part) =>
+          part.table.issues.map((issue) => ({ ...issue }))
+        )
+      } else if ('cells' in item) {
         element.issues = item.issues.map((code) => ({ code, detail: code }))
         if (item.captionIssue)
           element.issues.push({ code: item.captionIssue, detail: item.captionIssue })
-        if (item.grid.length && item.grid[0].length && item.cells.length) {
-          element.table = {
-            rowCount: item.grid.length,
-            columnCount: item.grid[0].length,
-            cells: item.cells.map((cell) => ({
-              row: cell.row,
-              column: cell.column,
-              rowSpan: cell.rowSpan,
-              columnSpan: cell.colSpan,
-              text: cell.text,
-              regions: cell.sourceRects.map((box) =>
-                region(item.page, box, item.sourceViewport.width, item.sourceViewport.height)
-              )
-            })),
-            unassignedText: item.unassigned.map((text) => ({ text, regions: [] })),
-            ...(item.notes?.length
-              ? {
-                  notes: item.notes.map((note) => ({
-                    text: note.text,
-                    regions: [region(item.page, note.rect, page.width, page.height)]
-                  }))
-                }
-              : {}),
-            issues: item.issues.map((code) => ({ code, detail: code }))
-          }
-        }
+        if (item.grid.length && item.grid[0].length && item.cells.length)
+          element.table = convertTable(item)
       }
       elements.push(element)
     }
@@ -218,6 +269,7 @@ export const readWorkerResult = async (
       pageCount: raw.pageCount,
       requestedPages: raw.requestedPages,
       processedPages: raw.processedPages,
+      ...(raw.auxiliaryPages ? { auxiliaryPages: raw.auxiliaryPages } : {}),
       pages: raw.pages,
       elements,
       thumbnails: inventory,

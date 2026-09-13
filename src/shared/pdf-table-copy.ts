@@ -57,7 +57,20 @@ export const copyPdfTable = (
                 if (cell === null) return ''
                 const text = cell?.text ?? missing
                 const safe = spreadsheetText(text)
-                return `<td rowspan="${cell?.rowSpan ?? 1}" colspan="${cell?.columnSpan ?? 1}" style="white-space:pre-wrap;mso-number-format:'\\@'">${escape(safe)}</td>`
+                const formatted = cell?.textRuns
+                  ? (safe !== text ? '&#39;' : '') +
+                    cell.textRuns
+                      .map((run) => {
+                        const value = escape(run.text)
+                        return run.position === 'superscript'
+                          ? `<sup>${value}</sup>`
+                          : run.position === 'subscript'
+                            ? `<sub>${value}</sub>`
+                            : value
+                      })
+                      .join('')
+                  : escape(safe)
+                return `<td rowspan="${cell?.rowSpan ?? 1}" colspan="${cell?.columnSpan ?? 1}" style="white-space:pre-wrap;mso-number-format:'\\@'">${formatted}</td>`
               })
               .join('') +
             '</tr>'
