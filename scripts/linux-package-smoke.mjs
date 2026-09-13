@@ -234,6 +234,7 @@ const smokeInstalledCli = async ({ executable, expectedVersion, root, env }) => 
   if (initialized.configRoot !== join(cliEnv.HOME, '.open-science')) {
     throw new Error('Installed CLI did not initialize the isolated production profile.')
   }
+  let failure
   try {
     const started = await invoke([
       'start',
@@ -277,8 +278,23 @@ const smokeInstalledCli = async ({ executable, expectedVersion, root, env }) => 
     console.log(
       'Installed CLI: init, headless start, custom port, daemon reuse and authenticated URL passed (token redacted).'
     )
+  } catch (error) {
+    failure = error
   } finally {
-    await invoke(['stop'])
+    try {
+      await invoke(['stop'])
+    } catch (error) {
+      failure ??= error
+    }
+  }
+  if (failure) {
+    const token = await readFile(join(initialized.configRoot, 'web-token'), 'utf8')
+      .then((text) => text.trim())
+      .catch(() => '')
+    const logs = await readFile(join(initialized.configRoot, 'cli-daemon.log'), 'utf8')
+      .catch(() => '(daemon log unavailable)')
+    const diagnostic = `${failure.message}\n${logs}`
+    throw new Error(token ? diagnostic.replaceAll(token, '<REDACTED>') : diagnostic)
   }
   const stoppedUrl = await invoke(['url']).then(
     () => false,
