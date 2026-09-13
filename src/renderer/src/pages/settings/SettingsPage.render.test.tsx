@@ -124,6 +124,9 @@ const installApi = (): void => {
       setAppIconVariant: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
       listSkillMarketplace: vi.fn().mockResolvedValue({ ok: true, value: marketplaceCatalog }),
       getSkillMarketplaceDetail: vi.fn().mockResolvedValue({ ok: true, value: marketplaceDetail }),
+      getSkillMarketplaceBatch: vi.fn().mockResolvedValue(null),
+      startSkillMarketplaceBatch: vi.fn(),
+      stopSkillMarketplaceBatch: vi.fn(),
       listSkills: vi.fn().mockResolvedValue([
         {
           id: 'alpha',
@@ -3630,6 +3633,153 @@ describe('SettingsPage layout', () => {
     await act(async () => crumb?.click())
     expect(document.body.querySelector('[aria-label="Bulk Connector controls"]')).toBeNull()
     expect(document.body.querySelector('[data-slot="connectors-action-bar"]')).not.toBeNull()
+  })
+
+  it('integrates batch mode with Marketplace breadcrumbs and shared Back/Forward history', async () => {
+    const clickText = async (label: string): Promise<void> => {
+      const button = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (item) => item.textContent?.trim() === label
+      )
+      expect(button).toBeDefined()
+      await act(async () => button!.click())
+    }
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Skills')?.click())
+    await clickText('Browse Marketplace')
+    const setQuery = async (value: string): Promise<void> => {
+      const input = document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')!
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+          input,
+          value
+        )
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    await setQuery('abstract')
+    await clickText('Batch manage')
+    const crumb = (): HTMLButtonElement | null =>
+      document.body.querySelector('[aria-label="Back to Marketplace"]')
+    expect(crumb()?.closest('div')?.textContent).toContain('Skills›Marketplace›Batch manage')
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')?.value
+    ).toBe('abstract')
+    await setQuery('no-such-skill')
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click()
+    )
+    expect(crumb()).toBeNull()
+    expect(document.body.querySelector('h3')?.textContent).toBe('Browse Marketplace')
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')?.value
+    ).toBe('abstract')
+    expect(window.api.settings.listSkillMarketplace).toHaveBeenCalledOnce()
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')!.click()
+    )
+    expect(crumb()).not.toBeNull()
+    expect(document.body.querySelector('h3')?.textContent).toBe('Batch manage')
+    await act(async () => crumb()!.click())
+    expect(crumb()).toBeNull()
+    expect(document.body.querySelector('h3')?.textContent).toBe('Browse Marketplace')
+  })
+
+  it.each(['install', 'update'] as const)(
+    'preserves batch %s selection when returning from a card detail',
+    async (mode) => {
+      vi.mocked(window.api.settings.listSkillMarketplace).mockResolvedValue({
+        ok: true,
+        value: {
+          ...marketplaceCatalog,
+          installations:
+            mode === 'update'
+              ? {
+                  'abstract-trimmer': {
+                    kind: 'installed',
+                    localSkillId: 'alpha',
+                    version: '0.9.0',
+                    canUpdate: true
+                  }
+                }
+              : {}
+        }
+      })
+      const clickText = async (text: string): Promise<void> => {
+        const button = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+          (item) => item.textContent?.trim() === text
+        )!
+        expect(button).toBeDefined()
+        await act(async () => button.click())
+      }
+      await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+      await act(async () => navButton('Skills')?.click())
+      await clickText('Browse Marketplace')
+      await clickText('Batch manage')
+      if (mode === 'update') await clickText('Updates1')
+      const query = (): HTMLInputElement | null =>
+        document.body.querySelector('[aria-label="Search skills"]')
+      await act(async () => fireEvent.change(query()!, { target: { value: 'trimmer' } }))
+      const checkbox = (): HTMLInputElement | null =>
+        document.body.querySelector('[data-slot="skill-marketplace-card"] input[type="checkbox"]')
+      await act(async () => checkbox()!.click())
+      expect(checkbox()?.checked).toBe(true)
+      await clickText('Abstract Trimmer')
+      expect(document.body.querySelector('[data-slot="skill-marketplace-detail"]')).not.toBeNull()
+      await act(async () =>
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click()
+      )
+      expect(checkbox()?.checked).toBe(true)
+      expect(query()?.value).toBe('trimmer')
+      expect(
+        document.body.querySelector('[data-slot="skill-marketplace-batch-dock"]')?.textContent
+      ).toContain(mode === 'update' ? 'Update selected' : 'Install selected')
+      await act(async () =>
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')!.click()
+      )
+      expect(document.body.querySelector('[data-slot="skill-marketplace-detail"]')).not.toBeNull()
+      await act(async () =>
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click()
+      )
+      expect(checkbox()?.checked).toBe(true)
+      await clickText('Back to Marketplace')
+      expect(query()?.value).toBe('')
+      await clickText('Batch manage')
+      expect(document.body.querySelector('[data-slot="skill-marketplace-batch-dock"]')).toBeNull()
+      expect(window.api.settings.listSkillMarketplace).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('cancels inline batch review with Escape without closing Settings', async () => {
+    const onClose = vi.fn()
+    vi.mocked(window.api.settings.listSkillMarketplace).mockResolvedValue({
+      ok: true,
+      value: { ...marketplaceCatalog, installations: {} }
+    })
+    const clickText = async (label: string): Promise<void> => {
+      const button = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (item) => item.textContent?.trim() === label
+      )
+      expect(button).toBeDefined()
+      await act(async () => button!.click())
+    }
+    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+    await act(async () => navButton('Skills')?.click())
+    await clickText('Browse Marketplace')
+    await clickText('Batch manage')
+    const checkbox = document.body.querySelector<HTMLInputElement>(
+      '[data-slot="skill-marketplace-card"] input[type="checkbox"]'
+    )!
+    expect(checkbox).not.toBeNull()
+    await act(async () => checkbox.click())
+    await clickText('Install selected')
+    const review = document.body.querySelector('[data-slot="skill-marketplace-batch-review"]')!
+    expect(review).not.toBeNull()
+    await act(async () => fireEvent.keyDown(review.querySelector('h4')!, { key: 'Escape' }))
+    expect(document.body.querySelector('[data-slot="skill-marketplace-batch-review"]')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.activeElement?.textContent).toBe('Install selected')
+    await act(async () => fireEvent.keyDown(document.activeElement!, { key: 'Escape' }))
+    expect(onClose).toHaveBeenCalledOnce()
   })
 
   it('navigates Skill Marketplace and detail through shared breadcrumbs', async () => {

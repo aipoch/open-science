@@ -2,8 +2,11 @@ import { homedir } from 'node:os'
 import { z } from 'zod'
 import { MarketplaceInstallConflict } from '../skills/user-skill-repository'
 import { SkillMarketplaceService } from '../skills/marketplace-service'
+import { SkillMarketplaceInstallQueue } from '../skills/marketplace-install-queue'
 import type {
   SkillMarketplaceCatalog,
+  SkillMarketplaceCatalogRequest,
+  SkillMarketplaceBatchRequest,
   SkillMarketplaceDetail,
   SkillMarketplaceDetailRequest,
   SkillMarketplaceInstallRequest,
@@ -275,9 +278,39 @@ export type SettingsServiceOptions = {
 // transiently; nothing that leaves this object (views, spawn config aside) carries plaintext.
 class SettingsService {
   private readonly skillMarketplace = new SkillMarketplaceService()
+  private readonly skillMarketplaceQueue = new SkillMarketplaceInstallQueue({
+    retainSnapshot: (request) => this.skillMarketplace.retainSnapshot(request),
+    install: (request) => this.performSkillMarketplaceInstall(request, false),
+    refresh: () => this.skills.refreshMarketplace()
+  })
 
-  listSkillMarketplace(): Promise<SkillMarketplaceResult<SkillMarketplaceCatalog>> {
-    return this.skillMarketplace.list()
+  startSkillMarketplaceBatch(
+    request: SkillMarketplaceBatchRequest,
+    notifyChanged: () => void
+  ): ReturnType<SkillMarketplaceInstallQueue['start']> {
+    return this.skillMarketplaceQueue.start(request, notifyChanged)
+  }
+
+  getSkillMarketplaceBatch(): ReturnType<SkillMarketplaceInstallQueue['get']> {
+    return this.skillMarketplaceQueue.get()
+  }
+
+  stopSkillMarketplaceBatch(id: string): boolean {
+    return this.skillMarketplaceQueue.stop(id)
+  }
+
+  async listSkillMarketplace(
+    request?: SkillMarketplaceCatalogRequest
+  ): Promise<SkillMarketplaceResult<SkillMarketplaceCatalog>> {
+    const result = await this.skillMarketplace.list(request)
+    if (!result.ok) return result
+    return {
+      ok: true,
+      value: {
+        ...result.value,
+        installations: await this.skills.marketplaceInstallations(result.value.entries)
+      }
+    }
   }
 
   async getSkillMarketplaceDetail(
@@ -300,6 +333,13 @@ class SettingsService {
   async installSkillMarketplace(
     request: SkillMarketplaceInstallRequest
   ): Promise<SkillMarketplaceInstallResult> {
+    return this.performSkillMarketplaceInstall(request, true)
+  }
+
+  private async performSkillMarketplaceInstall(
+    request: SkillMarketplaceInstallRequest,
+    refresh: boolean
+  ): Promise<SkillMarketplaceInstallResult> {
     const parsed = z
       .strictObject({
         snapshotId: z.string().regex(/^[a-f0-9]{40}$/),
@@ -315,7 +355,9 @@ class SettingsService {
     const downloaded = await this.skillMarketplace.download(identity)
     if (!downloaded.ok) return downloaded
     try {
-      const result = await this.skills.installMarketplace(downloaded.value, expectedVersion)
+      const result = refresh
+        ? await this.skills.installMarketplace(downloaded.value, expectedVersion)
+        : await this.skills.installMarketplacePackage(downloaded.value, expectedVersion)
       return {
         ok: true,
         value: { id: result.id, status: result.status, version: downloaded.value.receipt.version }

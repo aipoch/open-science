@@ -282,7 +282,7 @@ describe('SkillsPanel (list view)', () => {
     )
   })
 
-  it('keeps filters and search above right-aligned list actions', () => {
+  it('promotes the Marketplace entry alongside installed Skills above the filters', () => {
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
@@ -305,8 +305,16 @@ describe('SkillsPanel (list view)', () => {
     expect(filters?.contains(addSkill ?? null)).toBe(false)
     expect(actions?.contains(manage ?? null)).toBe(true)
     expect(actions?.contains(addSkill ?? null)).toBe(true)
-    expect(actions?.className).toContain('justify-end')
-    expect(filters?.compareDocumentPosition(actions!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(actions?.className).toContain('flex-wrap')
+    expect(actions?.compareDocumentPosition(filters!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    const marketplace = [...actions!.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Browse Marketplace'
+    )!
+    expect(marketplace.dataset.variant).toBe('default')
+    expect(marketplace.querySelector('svg')?.getAttribute('data-icon')).toBe('inline-start')
+    expect(document.querySelector('[data-slot="skills-header"] h3')?.textContent).toContain(
+      'Installed'
+    )
   })
 
   it('keeps matching import menus in Add skill and the Imported group', () => {
@@ -381,7 +389,10 @@ describe('SkillsPanel (list view)', () => {
       '[data-slot="settings-section"][aria-label="Conversation imports"]'
     )
     const row = section?.querySelector<HTMLElement>('[data-slot="settings-row"]')
-    expect(section?.className).toContain('mb-4')
+    expect(section?.className).toContain('border-t')
+    expect(
+      document.querySelector('[data-slot="skills-source-group"]')?.compareDocumentPosition(section!)
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(row?.className).toContain('min-h-0')
     expect(row?.querySelector('.line-clamp-2')).not.toBeNull()
     const toggle = document.body.querySelector<HTMLButtonElement>(

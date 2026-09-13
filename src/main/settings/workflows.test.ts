@@ -123,6 +123,7 @@ const fakeStore = () => {
     importSkill: vi.fn().mockResolvedValue({ skills: [] }),
     importSkillZip: vi.fn().mockResolvedValue({ skills: [] }),
     installSkillMarketplace: vi.fn().mockResolvedValue({ ok: true, value: { status: 'imported' } }),
+    startSkillMarketplaceBatch: vi.fn(),
     importSkillZipBatch: vi.fn().mockResolvedValue({ results: [], skills: [] }),
     importAgentHomeSkills: vi.fn().mockResolvedValue({ results: [], skills: [] }),
     setConnectorEnabled: vi.fn().mockResolvedValue({ connectors: [] }),
@@ -446,6 +447,24 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
       value: { status: 'unchanged' }
     })
     await workflows.installSkillMarketplace(request)
+    expect(notifySkillCatalogChanged).toHaveBeenCalledOnce()
+  })
+
+  it('leaves batch notification with the queue instead of emitting on admission', async () => {
+    const { store, capability } = fakeStore()
+    const notifySkillCatalogChanged = vi.fn()
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({ notifySkillCatalogChanged })
+    ).skills
+    const request = {
+      snapshotId: 'a'.repeat(40),
+      items: [{ id: 'example', version: '1.0.0', expectedVersion: null }]
+    }
+    await workflows.startSkillMarketplaceBatch(request)
+    expect(notifySkillCatalogChanged).not.toHaveBeenCalled()
+    expect(store.startSkillMarketplaceBatch).toHaveBeenCalledWith(request, expect.any(Function))
+    store.startSkillMarketplaceBatch.mock.calls[0][1]()
     expect(notifySkillCatalogChanged).toHaveBeenCalledOnce()
   })
 

@@ -34,7 +34,10 @@ describe('renderer contract catalog', () => {
     for (const publicPath of [
       'settings.listSkillMarketplace',
       'settings.getSkillMarketplaceDetail',
-      'settings.installSkillMarketplace'
+      'settings.installSkillMarketplace',
+      'settings.startSkillMarketplaceBatch',
+      'settings.getSkillMarketplaceBatch',
+      'settings.stopSkillMarketplaceBatch'
     ]) {
       expect(
         RENDERER_CONTRACT_CATALOG.find((contract) => contract.publicPath === publicPath)

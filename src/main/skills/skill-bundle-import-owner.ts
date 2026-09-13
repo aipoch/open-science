@@ -34,7 +34,12 @@ import {
   type MarketplacePackage,
   type MarketplaceReceipt
 } from './marketplace-package'
-import { UserSkillStore, normalizeSkillName, parseUserSkillId } from './user-skill-store'
+import {
+  UserSkillStore,
+  isUsableSkillName,
+  normalizeSkillName,
+  parseUserSkillId
+} from './user-skill-store'
 
 type SkillRoot = { subPath: string; files: FetchedSkillFile[] }
 type SkillDiscovery = { roots: SkillRoot[]; skipped: SkippedSkill[] }
@@ -376,6 +381,7 @@ export class SkillBundleImportOwner {
     offeredVersion: string,
     reservedNames: readonly string[]
   ): Promise<SkillMarketplaceInstallation> {
+    if (!isUsableSkillName(id)) return { kind: 'conflict' }
     return this.transactions.runRecovered(async () => {
       const existing = await this.transactions.readImportedSource(id)
       if (existing?.marketplace?.id === id) {
@@ -402,6 +408,11 @@ export class SkillBundleImportOwner {
     expectedVersion: string | null,
     reservedNames: readonly string[]
   ): Promise<ImportOutcome> {
+    if (!isUsableSkillName(pkg.receipt.id)) {
+      throw new MarketplaceInstallConflict(
+        'Marketplace installation conflicts with local name rules'
+      )
+    }
     return this.transactions.runMutationRecovered(async () => {
       const receipt = marketplaceReceiptSchema
         .omit({ installedContentSha256: true })

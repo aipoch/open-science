@@ -27,6 +27,7 @@ type SkillIntegrationWorkflows = Pick<
   | 'importSkill'
   | 'importSkillZip'
   | 'installSkillMarketplace'
+  | 'startSkillMarketplaceBatch'
   | 'importSkillZipBatch'
 >
 
@@ -161,6 +162,11 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     OwnerArgs<SkillIntegrationWorkflows, 'installSkillMarketplace'>,
     OwnerResult<SkillIntegrationWorkflows, 'installSkillMarketplace'>
   >('settings:install-skill-marketplace'),
+  startSkillMarketplaceBatch: defineApplicationCommand<
+    'settings:start-skill-marketplace-batch',
+    OwnerArgs<SkillIntegrationWorkflows, 'startSkillMarketplaceBatch'>,
+    OwnerResult<SkillIntegrationWorkflows, 'startSkillMarketplaceBatch'>
+  >('settings:start-skill-marketplace-batch'),
   importSkillZipBatch: defineApplicationCommand<
     'settings:import-skill-zip-batch',
     OwnerArgs<SkillIntegrationWorkflows, 'importSkillZipBatch'>,
@@ -278,6 +284,7 @@ const settingsSkillApplicationCommandGroup = defineApplicationCommandGroup('sett
   settingsIntegrationApplicationCommands.importSkill,
   settingsIntegrationApplicationCommands.importSkillZip,
   settingsIntegrationApplicationCommands.installSkillMarketplace,
+  settingsIntegrationApplicationCommands.startSkillMarketplaceBatch,
   settingsIntegrationApplicationCommands.importSkillZipBatch
 ] as const)
 
@@ -352,6 +359,8 @@ const registerIntegrationSettingsApplicationCommands = (
       'settings:import-skill-zip': ({ args }) => dependencies.skills.importSkillZip(args[0]),
       'settings:install-skill-marketplace': ({ args }) =>
         dependencies.skills.installSkillMarketplace(args[0]),
+      'settings:start-skill-marketplace-batch': ({ args }) =>
+        dependencies.skills.startSkillMarketplaceBatch(args[0]),
       'settings:import-skill-zip-batch': ({ args }) =>
         dependencies.skills.importSkillZipBatch(args[0])
     })

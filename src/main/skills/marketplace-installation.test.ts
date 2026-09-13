@@ -100,6 +100,18 @@ describe('Marketplace package boundary', () => {
 })
 
 describe('Marketplace installation transactions', () => {
+  it.each(['a'.repeat(65), 'os-example', 'mcp-example'])(
+    'rejects names that cannot appear in the local Skill catalog: %s',
+    async (id) => {
+      const { repo, root } = await repository()
+      const invalid = pkg()
+      invalid.receipt.id = id
+      expect(await repo.marketplaceInstallation(id, '1.0.0', [])).toEqual({ kind: 'conflict' })
+      await expect(repo.installMarketplace(invalid, null, [])).rejects.toThrow('local name rules')
+      await expect(readFile(join(root, 'skills', 'imported', id, '.source.json'))).rejects.toThrow()
+      expect(await repo.list()).toEqual([])
+    }
+  )
   it('installs, survives restart, updates in place and deduplicates repeated delivery', async () => {
     const { repo, root } = await repository()
     expect(await repo.marketplaceInstallation('example', '1.0.0', [])).toEqual({

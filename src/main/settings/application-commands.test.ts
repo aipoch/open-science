@@ -61,6 +61,8 @@ const expectedChannels = [
   'settings:list-connectors',
   'settings:list-skills',
   'settings:list-skill-marketplace',
+  'settings:get-skill-marketplace-batch',
+  'settings:stop-skill-marketplace-batch',
   'settings:get-skill-marketplace-detail',
   'settings:mark-onboarding-complete',
   'settings:preview-agent-home-skill',
@@ -166,6 +168,28 @@ const createDependencies = (
 }
 
 describe('Settings core application commands', () => {
+  it('dispatches queue progress and identity-bound stop from local and remote callers', async () => {
+    const { dependencies, serviceMethod } = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+    serviceMethod('getSkillMarketplaceBatch').mockReturnValue(null)
+    serviceMethod('stopSkillMarketplaceBatch').mockReturnValue(true)
+    for (const location of ['local', 'remote'] as const) {
+      await expect(
+        router.dispatcher.invoke(
+          settingsCoreApplicationCommands.getSkillMarketplaceBatch,
+          invocation([] as const, location)
+        )
+      ).resolves.toBeNull()
+      await expect(
+        router.dispatcher.invoke(
+          settingsCoreApplicationCommands.stopSkillMarketplaceBatch,
+          invocation(['current-batch'] as const, location)
+        )
+      ).resolves.toBe(true)
+    }
+    expect(serviceMethod('stopSkillMarketplaceBatch')).toHaveBeenCalledWith('current-batch')
+  })
   it('dispatches read-only Skill Marketplace browsing from local and remote callers', async () => {
     const { dependencies, serviceMethod } = createDependencies()
     const router = createApplicationCommandRouter()
@@ -178,7 +202,7 @@ describe('Settings core application commands', () => {
       await expect(
         router.dispatcher.invoke(
           settingsCoreApplicationCommands.listSkillMarketplace,
-          invocation([] as const, location)
+          invocation([{ snapshotId: request.snapshotId }] as const, location)
         )
       ).resolves.toBe(result)
       await expect(
@@ -189,6 +213,9 @@ describe('Settings core application commands', () => {
       ).resolves.toBe(result)
     }
     expect(serviceMethod('getSkillMarketplaceDetail')).toHaveBeenCalledWith(request)
+    expect(serviceMethod('listSkillMarketplace')).toHaveBeenCalledWith({
+      snapshotId: request.snapshotId
+    })
   })
   it('routes model refresh through the runtime workflow before publishing the snapshot', async () => {
     const { dependencies, serviceMethod } = createDependencies()

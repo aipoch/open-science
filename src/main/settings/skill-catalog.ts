@@ -1,7 +1,10 @@
 import { lstat, readdir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import type { MarketplacePackage } from '../skills/marketplace-package'
-import type { SkillMarketplaceInstallation } from '../../shared/skill-marketplace'
+import type {
+  SkillMarketplaceEntry,
+  SkillMarketplaceInstallation
+} from '../../shared/skill-marketplace'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
@@ -57,6 +60,7 @@ import { readSkillFile } from '../skills/skill-files'
 import { buildSkillExportArchive, type SkillExportArchive } from '../skills/export'
 import {
   SAFE_SKILL_DIRECTORY_NAME,
+  SAFE_SKILL_NAME,
   UserSkillRepository,
   isReservedSkillName
 } from '../skills/user-skill-repository'
@@ -672,22 +676,68 @@ class SkillCatalogModule {
 
   async marketplaceInstallation(
     id: string,
-    version: string
+    version: string,
+    reservedNames?: string[]
   ): Promise<SkillMarketplaceInstallation> {
-    return this.userSkills.marketplaceInstallation(id, version, await this.bundledSkillNames())
+    const installation = await this.userSkills.marketplaceInstallation(
+      id,
+      version,
+      reservedNames ?? (await this.bundledSkillNames())
+    )
+    return installation.kind === 'installed'
+      ? { ...installation, localSkillId: `imported-${id}` }
+      : installation
+  }
+
+  async marketplaceInstallations(
+    entries: SkillMarketplaceEntry[]
+  ): Promise<Record<string, SkillMarketplaceInstallation>> {
+    const localSkills = await this.userSkills.list()
+    const localIds = new Set(localSkills.map((skill) => skill.id))
+    const reservedNames = await this.bundledSkillNames()
+    const takenNames = new Set(
+      [...reservedNames, ...localSkills.map((skill) => skill.name)].map((name) =>
+        name.toLowerCase()
+      )
+    )
+    const installations: Record<string, SkillMarketplaceInstallation> = {}
+    // Only local candidates need content hashing; catalog size must not multiply full disk scans.
+    for (const entry of entries) {
+      if (!SAFE_SKILL_NAME.test(entry.id) || isReservedSkillName(entry.id)) {
+        installations[entry.id] = { kind: 'conflict' }
+      } else if (localIds.has(`imported-${entry.id}`)) {
+        installations[entry.id] = await this.marketplaceInstallation(
+          entry.id,
+          entry.version,
+          reservedNames
+        )
+      } else if (takenNames.has(entry.id)) {
+        installations[entry.id] = { kind: 'conflict' }
+      }
+    }
+    return installations
   }
 
   async installMarketplace(
     pkg: MarketplacePackage,
     expectedVersion: string | null
   ): Promise<ImportSkillResult> {
-    const outcome = await this.userSkills.installMarketplace(
-      pkg,
-      expectedVersion,
-      await this.bundledSkillNames()
-    )
-    await this.refreshRegisteredHelpers()
+    const outcome = await this.installMarketplacePackage(pkg, expectedVersion)
+    await this.refreshMarketplace()
     return { ...outcome, skills: await this.listSkills() }
+  }
+
+  installMarketplacePackage(
+    pkg: MarketplacePackage,
+    expectedVersion: string | null
+  ): ReturnType<UserSkillRepository['installMarketplace']> {
+    return this.bundledSkillNames().then((reservedNames) =>
+      this.userSkills.installMarketplace(pkg, expectedVersion, reservedNames)
+    )
+  }
+
+  async refreshMarketplace(): Promise<void> {
+    await this.refreshRegisteredHelpers()
   }
 
   async importSkillZip(request: ImportSkillZipRequest): Promise<ImportSkillResult> {

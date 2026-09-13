@@ -265,6 +265,28 @@ describe('renderer argument-shape characterization', () => {
     for (const [path, channel, args] of [
       ['settings.listSkillMarketplace', 'settings:list-skill-marketplace', []],
       [
+        'settings.listSkillMarketplace',
+        'settings:list-skill-marketplace',
+        [{ forceRefresh: true }]
+      ],
+      [
+        'settings.listSkillMarketplace',
+        'settings:list-skill-marketplace',
+        [{ snapshotId: 'a'.repeat(40) }]
+      ],
+      ['settings.getSkillMarketplaceBatch', 'settings:get-skill-marketplace-batch', []],
+      ['settings.stopSkillMarketplaceBatch', 'settings:stop-skill-marketplace-batch', ['batch-id']],
+      [
+        'settings.startSkillMarketplaceBatch',
+        'settings:start-skill-marketplace-batch',
+        [
+          {
+            snapshotId: 'a'.repeat(40),
+            items: [{ id: 'abstract-trimmer', version: '1.1.0', expectedVersion: '1.0.0' }]
+          }
+        ]
+      ],
+      [
         'settings.getSkillMarketplaceDetail',
         'settings:get-skill-marketplace-detail',
         [{ snapshotId: 'a'.repeat(40), id: 'abstract-trimmer' }]

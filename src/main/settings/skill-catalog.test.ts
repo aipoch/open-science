@@ -22,6 +22,7 @@ import { SettingsRepository } from './repository'
 import { SkillCatalogModule } from './skill-catalog'
 import { marketplaceContentDigest, type MarketplacePackage } from '../skills/marketplace-package'
 import { sha256 } from '../skills/marketplace-protocol'
+import { marketplaceEntry } from '../../shared/__fixtures__/skill-marketplace'
 
 const roots: string[] = []
 const catalogStorageRoots = new WeakMap<SkillCatalogModule, string>()
@@ -83,6 +84,36 @@ const userSkillSourceDir = (catalog: SkillCatalogModule, source: 'personal' | 'i
   join(catalogStorageRoots.get(catalog)!, 'skills', source)
 
 describe('SkillCatalogModule', () => {
+  it('projects name conflicts without hashing absent Marketplace entries', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({ name: 'personal-example', description: 'Mine', body: 'Keep me' })
+    const imported = join(userSkillSourceDir(catalog, 'imported'), 'different-directory')
+    await mkdir(imported, { recursive: true })
+    await writeFile(
+      join(imported, 'SKILL.md'),
+      '---\nname: imported-example\ndescription: Mine\n---\nKeep me'
+    )
+    const conflicts = [
+      'demo',
+      'personal-example',
+      'different-directory',
+      'a'.repeat(65),
+      'os-example',
+      'mcp-example'
+    ]
+    const verify = vi.spyOn(catalog, 'marketplaceInstallation')
+    expect(
+      await catalog.marketplaceInstallations(
+        [...conflicts, 'absent', 'imported-example'].map((id) => ({ ...marketplaceEntry, id }))
+      )
+    ).toEqual(Object.fromEntries(conflicts.map((id) => [id, { kind: 'conflict' }])))
+    // Legacy frontmatter is display metadata; the directory is the invocation name.
+    expect(verify).toHaveBeenCalledExactlyOnceWith(
+      'different-directory',
+      marketplaceEntry.version,
+      ['demo']
+    )
+  })
   it('preserves disabled status and stable references when a Marketplace Skill updates', async () => {
     const catalog = await createCatalog()
     const packageFor = (version: string): MarketplacePackage => {
@@ -118,8 +149,32 @@ describe('SkillCatalogModule', () => {
     expect(await catalog.marketplaceInstallation('market-example', '1.1.0')).toEqual({
       kind: 'installed',
       version: '1.1.0',
-      canUpdate: false
+      canUpdate: false,
+      localSkillId: installed.id
     })
+    const entries = [
+      { ...marketplaceEntry, id: 'market-example', version: '1.2.0' },
+      ...Array.from({ length: 584 }, (_, index) => ({ ...marketplaceEntry, id: `absent-${index}` }))
+    ]
+    const verify = vi.spyOn(catalog, 'marketplaceInstallation')
+    expect(await catalog.marketplaceInstallations(entries)).toEqual({
+      'market-example': {
+        kind: 'installed',
+        version: '1.1.0',
+        canUpdate: true,
+        localSkillId: installed.id
+      }
+    })
+    expect(verify).toHaveBeenCalledTimes(1)
+    await writeFile(
+      join(userSkillSourceDir(catalog, 'imported'), 'market-example', 'SKILL.md'),
+      'local edit'
+    )
+    expect(await catalog.marketplaceInstallations(entries)).toEqual({
+      'market-example': { kind: 'conflict' }
+    })
+    await catalog.deleteSkill({ id: installed.id })
+    expect(await catalog.marketplaceInstallations(entries)).toEqual({})
   })
   it('lists bundled Specialist dependencies without consulting user Skills', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))

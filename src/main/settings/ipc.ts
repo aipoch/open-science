@@ -76,6 +76,8 @@ import type {
 import { SettingsService } from './service'
 import type {
   SkillMarketplaceDetailRequest,
+  SkillMarketplaceCatalogRequest,
+  SkillMarketplaceBatchRequest,
   SkillMarketplaceInstallRequest
 } from '../../shared/skill-marketplace'
 import { connectorTemplateExportSelection } from './connector-template'
@@ -393,7 +395,19 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:remove-notebook-network', () => service.removeNotebookNetwork())
 
   ipcMainHandle('settings:list-skills', () => service.listSkills())
-  ipcMainHandle('settings:list-skill-marketplace', () => service.listSkillMarketplace())
+  ipcMainHandle(
+    'settings:list-skill-marketplace',
+    (_event, request?: SkillMarketplaceCatalogRequest) => service.listSkillMarketplace(request)
+  )
+  ipcMainHandle('settings:get-skill-marketplace-batch', () => service.getSkillMarketplaceBatch())
+  ipcMainHandle('settings:stop-skill-marketplace-batch', (_event, id: string) =>
+    service.stopSkillMarketplaceBatch(id)
+  )
+  ipcMainHandle(
+    'settings:start-skill-marketplace-batch',
+    (_event, request: SkillMarketplaceBatchRequest) =>
+      workflows.skills.startSkillMarketplaceBatch(request)
+  )
   ipcMainHandle(
     'settings:install-skill-marketplace',
     (_event, request: SkillMarketplaceInstallRequest) =>

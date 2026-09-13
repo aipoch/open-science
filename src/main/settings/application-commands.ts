@@ -40,7 +40,10 @@ import {
 } from '../application-command-router'
 import type { CallerContext } from '../caller-context'
 import type { SettingsService } from './service'
-import type { SkillMarketplaceDetailRequest } from '../../shared/skill-marketplace'
+import type {
+  SkillMarketplaceCatalogRequest,
+  SkillMarketplaceDetailRequest
+} from '../../shared/skill-marketplace'
 import type { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
 import {
   readAppIconVariant,
@@ -95,6 +98,8 @@ type CoreSettingsCommandStore = Pick<
   | 'listSkills'
   | 'listSkillMarketplace'
   | 'getSkillMarketplaceDetail'
+  | 'getSkillMarketplaceBatch'
+  | 'stopSkillMarketplaceBatch'
   | 'markOnboardingComplete'
   | 'createWslSupportHandoff'
   | 'openWslTerminal'
@@ -133,9 +138,19 @@ type SwitchToPowerShellResult = Awaited<
 type UseWsl2BashResult = Awaited<ReturnType<LocalShellSettingsWorkflows['useWsl2Bash']>>
 
 const settingsCoreApplicationCommands = Object.freeze({
+  getSkillMarketplaceBatch: defineApplicationCommand<
+    'settings:get-skill-marketplace-batch',
+    readonly [],
+    StoreResult<'getSkillMarketplaceBatch'>
+  >('settings:get-skill-marketplace-batch'),
+  stopSkillMarketplaceBatch: defineApplicationCommand<
+    'settings:stop-skill-marketplace-batch',
+    readonly [id: string],
+    StoreResult<'stopSkillMarketplaceBatch'>
+  >('settings:stop-skill-marketplace-batch'),
   listSkillMarketplace: defineApplicationCommand<
     'settings:list-skill-marketplace',
-    readonly [],
+    readonly [request?: SkillMarketplaceCatalogRequest],
     StoreResult<'listSkillMarketplace'>
   >('settings:list-skill-marketplace'),
   getSkillMarketplaceDetail: defineApplicationCommand<
@@ -472,6 +487,8 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.listConnectors,
   settingsCoreApplicationCommands.listSkills,
   settingsCoreApplicationCommands.listSkillMarketplace,
+  settingsCoreApplicationCommands.getSkillMarketplaceBatch,
+  settingsCoreApplicationCommands.stopSkillMarketplaceBatch,
   settingsCoreApplicationCommands.getSkillMarketplaceDetail,
   settingsCoreApplicationCommands.markOnboardingComplete,
   settingsCoreApplicationCommands.previewAgentHomeSkill,
@@ -612,7 +629,11 @@ const registerCoreSettingsApplicationCommands = (
       'settings:list-app-icons': () => dependencies.listAppIconPreviews?.() ?? [],
       'settings:list-connectors': () => dependencies.service.listConnectors(),
       'settings:list-skills': () => dependencies.service.listSkills(),
-      'settings:list-skill-marketplace': () => dependencies.service.listSkillMarketplace(),
+      'settings:list-skill-marketplace': ({ args }) =>
+        dependencies.service.listSkillMarketplace(args[0]),
+      'settings:get-skill-marketplace-batch': () => dependencies.service.getSkillMarketplaceBatch(),
+      'settings:stop-skill-marketplace-batch': ({ args }) =>
+        dependencies.service.stopSkillMarketplaceBatch(args[0]),
       'settings:get-skill-marketplace-detail': ({ args }) =>
         dependencies.service.getSkillMarketplaceDetail(args[0]),
       'settings:mark-onboarding-complete': () =>

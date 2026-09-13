@@ -46,6 +46,107 @@ afterEach(() => {
 })
 
 describe('verified Skill Marketplace browsing', () => {
+  it('reuses verified metadata for five minutes and checks only the ref for an unchanged commit', async () => {
+    vi.useFakeTimers()
+    const fetch = transport()
+    const service = new SkillMarketplaceService(fetch)
+    const first = await service.list()
+    expect(fetch).toHaveBeenCalledTimes(4)
+    if (!first.ok) throw new Error('fixture failed')
+    first.value.entries.length = 0
+    expect(await service.list()).toMatchObject({
+      ok: true,
+      value: { revalidate: false, entries: [expect.anything()] }
+    })
+    expect(fetch).toHaveBeenCalledTimes(4)
+    vi.advanceTimersByTime(5 * 60 * 1000)
+    expect(await service.list()).toMatchObject({ ok: true, value: { revalidate: true } })
+    expect(fetch).toHaveBeenCalledTimes(4)
+    const forced = service.list({ forceRefresh: true })
+    expect(service.list({ forceRefresh: true })).toBe(forced)
+    expect(await forced).toMatchObject({ ok: true })
+    expect(fetch).toHaveBeenCalledTimes(5)
+    expect(await service.list()).toMatchObject({ ok: true, value: { revalidate: false } })
+  })
+
+  it('reconciles a known snapshot without remote discovery and rejects ambiguous requests', async () => {
+    const fetch = transport()
+    const service = new SkillMarketplaceService(fetch)
+    await service.list()
+    fetch.mockRejectedValue(new Error('offline'))
+    expect(await service.list({ snapshotId: commit })).toMatchObject({ ok: true })
+    expect(await service.list({ snapshotId: 'f'.repeat(40) })).toEqual({
+      ok: false,
+      error: 'snapshot-unavailable'
+    })
+    expect(await service.list({ snapshotId: commit, forceRefresh: true })).toEqual({
+      ok: false,
+      error: 'integrity'
+    })
+    expect(fetch).toHaveBeenCalledTimes(4)
+  })
+
+  it('coalesces and caches verified details without exposing mutable cache values', async () => {
+    const fetch = transport()
+    const service = new SkillMarketplaceService(fetch)
+    await service.list()
+    const request = { snapshotId: commit, id: 'abstract-trimmer' }
+    const [first, second] = await Promise.all([service.detail(request), service.detail(request)])
+    expect(fetch).toHaveBeenCalledTimes(5)
+    expect(first).toEqual(second)
+    if (!first.ok) throw new Error('fixture failed')
+    first.value.entry.displayName = 'mutated'
+    expect(await service.detail(request)).toEqual(second)
+    expect(fetch).toHaveBeenCalledTimes(5)
+  })
+
+  it('does not cache a failed detail read', async () => {
+    const fetch = transport()
+    const service = new SkillMarketplaceService(fetch)
+    await service.list()
+    fetch.mockRejectedValueOnce(new Error('offline'))
+    const request = { snapshotId: commit, id: 'abstract-trimmer' }
+    expect(await service.detail(request)).toEqual({ ok: false, error: 'network' })
+    expect(await service.detail(request)).toMatchObject({ ok: true })
+    expect(fetch).toHaveBeenCalledTimes(6)
+  })
+  it('retains the confirmed batch snapshot across catalog refreshes and releases it afterward', async () => {
+    let currentCommit = commit
+    const metadata = transport()
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
+      if (String(url).endsWith('/git/ref/heads/published'))
+        return Response.json({ object: { sha: currentCommit, type: 'commit' } })
+      return metadata(String(url).replace(currentCommit, commit), init)
+    })
+    const service = new SkillMarketplaceService(fetch)
+    const request = {
+      snapshotId: commit,
+      items: [{ id: 'abstract-trimmer', version: '1.0.0', expectedVersion: null }]
+    }
+    expect(service.retainSnapshot(request)).toBeUndefined()
+    await service.list()
+    expect(
+      service.retainSnapshot({ ...request, items: [{ ...request.items[0], version: '2.0.0' }] })
+    ).toBeUndefined()
+    expect(
+      service.retainSnapshot({ ...request, items: [{ ...request.items[0], id: 'unknown' }] })
+    ).toBeUndefined()
+    const release = service.retainSnapshot(request)!
+    for (let i = 1; i <= 6; i++) {
+      currentCommit = i.toString(16).padStart(40, '0')
+      expect((await service.list({ forceRefresh: true })).ok).toBe(true)
+    }
+    expect((await service.detail({ snapshotId: commit, id: 'abstract-trimmer' })).ok).toBe(true)
+    release()
+    release()
+    currentCommit = 'f'.repeat(40)
+    await service.list({ forceRefresh: true })
+    expect(await service.detail({ snapshotId: commit, id: 'abstract-trimmer' })).toEqual({
+      ok: false,
+      error: 'snapshot-unavailable'
+    })
+  })
+
   it('downloads the root-selected Release asset, follows only the GitHub asset hop, and verifies package contents', async () => {
     const files = [
       {
@@ -109,6 +210,7 @@ describe('verified Skill Marketplace browsing', () => {
     // This synthetic package is confined to the transport test. Production has no key override.
     vi.mocked(verify).mockImplementationOnce(() => true)
     expect((await service.list()).ok).toBe(true)
+    expect((await service.detail({ id: listing.id, snapshotId: commit })).ok).toBe(true)
     expect(await service.download({ id: listing.id, snapshotId: commit })).toMatchObject({
       ok: true,
       value: {
@@ -116,6 +218,9 @@ describe('verified Skill Marketplace browsing', () => {
         receipt: { id: listing.id, version: '1.0.0', contentSha256: listing.content_sha256 }
       }
     })
+    expect(
+      fetch.mock.calls.filter(([url]) => String(url).endsWith(listing.release.path))
+    ).toHaveLength(2)
   })
 
   it.each([
@@ -291,7 +396,7 @@ describe('verified Skill Marketplace browsing', () => {
     const service = new SkillMarketplaceService(fetch)
     await service.list()
     fetch.mockResolvedValueOnce(new Response('', { status: 503 }))
-    expect(await service.list()).toEqual({ ok: false, error: 'network' })
+    expect(await service.list({ forceRefresh: true })).toEqual({ ok: false, error: 'network' })
     expect(await service.detail({ snapshotId: commit, id: 'abstract-trimmer' })).toMatchObject({
       ok: true
     })

@@ -1,8 +1,10 @@
 import { z } from 'zod'
 import type {
   SkillMarketplaceCatalog,
+  SkillMarketplaceCatalogRequest,
   SkillMarketplaceDetail,
   SkillMarketplaceDetailRequest,
+  SkillMarketplaceBatchRequest,
   SkillMarketplaceResult
 } from '../../shared/skill-marketplace'
 import { netFetchWithManualRedirect } from './net-fetch'
@@ -22,6 +24,17 @@ import {
 import { sha256 } from './marketplace-protocol'
 
 const REPOSITORY = 'aipoch/openscience-skill-marketplace'
+const CATALOG_TTL_MS = 5 * 60 * 1000
+const DETAIL_CACHE_LIMIT = 128
+const catalogRequest = z
+  .strictObject({
+    forceRefresh: z.boolean().optional(),
+    snapshotId: z
+      .string()
+      .regex(/^[a-f0-9]{40}$/)
+      .optional()
+  })
+  .refine((value) => !value.snapshotId || value.forceRefresh === undefined)
 const detailRequest = z.strictObject({
   snapshotId: z.string().regex(/^[a-f0-9]{40}$/),
   id: z
@@ -34,9 +47,45 @@ class NetworkError extends Error {}
 // Owns remote verification; package writes remain in the existing UserSkillRepository transaction.
 export class SkillMarketplaceService {
   private readonly snapshots = new Map<string, MarketplaceRoot>()
+  private readonly retainedSnapshots = new Map<string, number>()
   private pending?: Promise<SkillMarketplaceResult<SkillMarketplaceCatalog>>
+  private current?: { catalog: SkillMarketplaceCatalog; checkedAt: number }
+  private readonly details = new Map<string, SkillMarketplaceDetail>()
+  private readonly pendingDetails = new Map<
+    string,
+    Promise<SkillMarketplaceResult<SkillMarketplaceDetail>>
+  >()
 
   constructor(private readonly fetch: typeof globalThis.fetch = netFetchWithManualRedirect) {}
+
+  retainSnapshot(request: SkillMarketplaceBatchRequest): (() => void) | undefined {
+    const root = this.snapshots.get(request.snapshotId)
+    if (!root) return
+    const versions = new Map(root.skills.map(({ id, version }) => [id, version]))
+    if (request.items.some(({ id, version }) => versions.get(id) !== version)) return
+    const { snapshotId } = request
+    this.retainedSnapshots.set(snapshotId, (this.retainedSnapshots.get(snapshotId) ?? 0) + 1)
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      const count = (this.retainedSnapshots.get(snapshotId) ?? 1) - 1
+      if (count) this.retainedSnapshots.set(snapshotId, count)
+      else this.retainedSnapshots.delete(snapshotId)
+      this.pruneSnapshots()
+    }
+  }
+
+  private pruneSnapshots(): void {
+    for (const id of this.snapshots.keys()) {
+      if (this.snapshots.size <= 4) break
+      if (!this.retainedSnapshots.has(id)) {
+        this.snapshots.delete(id)
+        for (const key of this.details.keys())
+          if (key.startsWith(`${id}/`)) this.details.delete(key)
+      }
+    }
+  }
 
   private async read(
     url: string,
@@ -107,8 +156,36 @@ export class SkillMarketplaceService {
     return `https://raw.githubusercontent.com/${REPOSITORY}/${commit}/${path.split('/').map(encodeURIComponent).join('/')}`
   }
 
-  list(): Promise<SkillMarketplaceResult<SkillMarketplaceCatalog>> {
-    // Coalesce concurrent callers; explicit subsequent calls always refresh discovery.
+  list(
+    request?: SkillMarketplaceCatalogRequest
+  ): Promise<SkillMarketplaceResult<SkillMarketplaceCatalog>> {
+    const parsed = catalogRequest.safeParse(request ?? {})
+    if (!parsed.success) return Promise.resolve({ ok: false, error: 'integrity' })
+    if (parsed.data.snapshotId) {
+      const root = this.snapshots.get(parsed.data.snapshotId)
+      return Promise.resolve(
+        root
+          ? {
+              ok: true,
+              value: {
+                snapshotId: parsed.data.snapshotId,
+                revision: root.revision,
+                entries: root.skills.map(toMarketplaceEntry)
+              }
+            }
+          : { ok: false, error: 'snapshot-unavailable' }
+      )
+    }
+    if (!parsed.data.forceRefresh && this.current) {
+      return Promise.resolve({
+        ok: true,
+        value: {
+          ...structuredClone(this.current.catalog),
+          revalidate: Date.now() - this.current.checkedAt >= CATALOG_TTL_MS
+        }
+      })
+    }
+    // Only remote discovery is coalesced; local installation state is projected by Settings.
     if (!this.pending) {
       this.pending = this.load().finally(() => {
         this.pending = undefined
@@ -132,6 +209,8 @@ export class SkillMarketplaceService {
         })
         .parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(refBytes)))
       const commit = ref.object.sha
+      const previous = this.snapshots.get(commit)
+      if (previous) return this.remember(commit, previous)
       const [bytes, signature] = await Promise.all([
         this.read(this.rawUrl(commit, 'marketplace.json'), 4 * 1024 * 1024, signal),
         this.read(this.rawUrl(commit, 'marketplace.json.sig'), 4096, signal)
@@ -141,21 +220,28 @@ export class SkillMarketplaceService {
         await this.read(this.rawUrl(commit, root.release_index.path), 8 * 1024 * 1024, signal),
         root
       )
-      this.snapshots.delete(commit)
-      this.snapshots.set(commit, root)
-      // Bounded, memory-only history lets an open detail survive a catalog refresh.
-      if (this.snapshots.size > 4) this.snapshots.delete(this.snapshots.keys().next().value!)
-      return {
-        ok: true,
-        value: {
-          snapshotId: commit,
-          revision: root.revision,
-          entries: root.skills.map(toMarketplaceEntry)
-        }
-      }
+      return this.remember(commit, root)
     } catch (error) {
+      this.current = undefined
       return { ok: false, error: error instanceof NetworkError ? 'network' : 'integrity' }
     }
+  }
+
+  private remember(
+    snapshotId: string,
+    root: MarketplaceRoot
+  ): SkillMarketplaceResult<SkillMarketplaceCatalog> {
+    this.snapshots.delete(snapshotId)
+    this.snapshots.set(snapshotId, root)
+    // Bounded, memory-only history lets an open detail survive a catalog refresh.
+    this.pruneSnapshots()
+    const catalog = {
+      snapshotId,
+      revision: root.revision,
+      entries: root.skills.map(toMarketplaceEntry)
+    }
+    this.current = { catalog, checkedAt: Date.now() }
+    return { ok: true, value: structuredClone(catalog) }
   }
 
   async detail(
@@ -166,9 +252,34 @@ export class SkillMarketplaceService {
     const { snapshotId, id } = parsed.data
     const listing = this.snapshots.get(snapshotId)?.skills.find((entry) => entry.id === id)
     if (!listing) return { ok: false, error: 'snapshot-unavailable' }
+    const key = `${snapshotId}/${id}`
+    const cached = this.details.get(key)
+    if (cached) {
+      this.details.delete(key)
+      this.details.set(key, cached)
+      return { ok: true, value: structuredClone(cached) }
+    }
+    let pending = this.pendingDetails.get(key)
+    if (!pending) {
+      pending = this.loadDetail(snapshotId, listing).finally(() => this.pendingDetails.delete(key))
+      this.pendingDetails.set(key, pending)
+    }
+    return structuredClone(await pending)
+  }
+
+  private async loadDetail(
+    snapshotId: string,
+    listing: MarketplaceRoot['skills'][number]
+  ): Promise<SkillMarketplaceResult<SkillMarketplaceDetail>> {
     try {
       const bytes = await this.read(this.rawUrl(snapshotId, listing.release.path), 1024 * 1024)
-      return { ok: true, value: verifyMarketplaceDetail(bytes, listing) }
+      const value = verifyMarketplaceDetail(bytes, listing)
+      if (this.snapshots.has(snapshotId)) {
+        this.details.set(`${snapshotId}/${listing.id}`, value)
+        while (this.details.size > DETAIL_CACHE_LIMIT)
+          this.details.delete(this.details.keys().next().value!)
+      }
+      return { ok: true, value }
     } catch (error) {
       return { ok: false, error: error instanceof NetworkError ? 'network' : 'integrity' }
     }

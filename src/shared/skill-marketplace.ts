@@ -32,16 +32,26 @@ export type SkillMarketplaceEntry = {
 }
 
 export type SkillMarketplaceCatalog = {
+  // Transient cache hint; never part of the signed catalog or installed receipts.
+  revalidate?: boolean
   snapshotId: string
   revision: string
   entries: SkillMarketplaceEntry[]
+  // App-local projection, never part of the signed publisher catalog.
+  installations?: Record<string, SkillMarketplaceInstallation>
+}
+
+export type SkillMarketplaceCatalogRequest = {
+  forceRefresh?: boolean
+  // Reconcile local installations against this verified snapshot without remote discovery.
+  snapshotId?: string
 }
 
 export type SkillMarketplaceDetailRequest = { snapshotId: string; id: string }
 export type SkillMarketplaceInstallation =
   | { kind: 'not-installed' }
   | { kind: 'conflict' }
-  | { kind: 'installed'; version: string; canUpdate: boolean }
+  | { kind: 'installed'; version: string; canUpdate: boolean; localSkillId?: string }
 export type SkillMarketplaceInstallRequest = SkillMarketplaceDetailRequest & {
   // null is an explicit first install, a version is an optimistic update precondition.
   expectedVersion: string | null
@@ -55,6 +65,24 @@ export type SkillMarketplaceInstallResult =
       ok: false
       error: 'network' | 'integrity' | 'snapshot-unavailable' | 'conflict' | 'installation-failed'
     }
+
+// Memory-only installation jobs; these states are not persisted Skill states.
+export type SkillMarketplaceBatchRequest = {
+  snapshotId: string
+  items: { id: string; version: string; expectedVersion: string | null }[]
+}
+export type SkillMarketplaceBatch = Omit<SkillMarketplaceBatchRequest, 'items'> & {
+  id: string
+  status: 'running' | 'stopping' | 'completed' | 'stopped'
+  items: (SkillMarketplaceBatchRequest['items'][number] & {
+    status: 'queued' | 'installing' | 'succeeded' | 'failed' | 'skipped' | 'stopped'
+    result?: SkillMarketplaceInstallResult
+  })[]
+  refreshFailed?: boolean
+}
+export type SkillMarketplaceBatchStartResult =
+  | { ok: true; value: SkillMarketplaceBatch }
+  | { ok: false; error: 'invalid-request' | 'busy' | 'snapshot-unavailable' }
 export type SkillMarketplaceDetail = {
   entry: SkillMarketplaceEntry
   licenseEvidence: { url: string; sha256: string }[]
