@@ -19,6 +19,66 @@ const items = Array.from(
 )
 
 describe('useTranscriptWindow', () => {
+  it('keeps the latest reading position when scrolling during a presentation barrier', () => {
+    const viewport = document.createElement('div')
+    document.body.appendChild(viewport)
+    const root = createRoot(viewport)
+    const rows = items.slice(0, 20)
+    Object.defineProperties(viewport, {
+      clientHeight: { value: 400 },
+      scrollHeight: { value: 2000 }
+    })
+    viewport.getBoundingClientRect = () => ({ top: 0, bottom: 400 }) as DOMRect
+    viewport.scrollTo = (options) => {
+      viewport.scrollTop = (options as ScrollToOptions).top ?? 0
+    }
+    let current!: ReturnType<typeof useTranscriptWindow>
+    const Harness = ({
+      barrier,
+      timeline = rows
+    }: {
+      barrier: number
+      timeline?: typeof rows
+    }): React.JSX.Element => {
+      current = useTranscriptWindow('streaming', timeline, barrier, { current: viewport })
+      return (
+        <>
+          {current.entries.map(({ item, itemIndex }) => (
+            <div
+              key={item.id}
+              data-message-id={item.id}
+              ref={(node) => {
+                if (node)
+                  node.getBoundingClientRect = () => {
+                    const top = itemIndex * 100 - viewport.scrollTop
+                    return { top, bottom: top + 100 } as DOMRect
+                  }
+              }}
+            >
+              {item.id}
+            </div>
+          ))}
+        </>
+      )
+    }
+    try {
+      act(() => root.render(<Harness barrier={-1} />))
+      viewport.scrollTop = 600
+      act(() => current.expandAtScrollEdge(1200))
+      act(() => root.render(<Harness barrier={19} />))
+      viewport.scrollTop = 0
+      act(() => current.expandAtScrollEdge(600))
+      // Streaming updates change the timeline while the presentation barrier remains active.
+      act(() => root.render(<Harness barrier={19} timeline={[...rows]} />))
+      expect(viewport.scrollTop).toBe(0)
+      act(() => root.render(<Harness barrier={-1} timeline={[...rows]} />))
+      expect(viewport.scrollTop).toBe(0)
+    } finally {
+      act(() => root.unmount())
+      viewport.remove()
+    }
+  })
+
   it.each(['none', 'selection', 'focus'] as const)(
     'PERF-03 bounds reading after releasing %s without moving the reading anchor',
     (pin) => {
