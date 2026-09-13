@@ -165,11 +165,40 @@ describe('createAppTray', () => {
     emptyPaths = []
     // Default the shared cases to a non-darwin platform (full-color icon path).
     setPlatform('linux')
+    vi.stubEnv('DISPLAY', ':99')
+    vi.stubEnv('WAYLAND_DISPLAY', undefined)
   })
 
   afterEach(() => {
     setPlatform(originalPlatform)
+    vi.unstubAllEnvs()
   })
+
+  it.each([
+    ['linux', undefined, undefined, false],
+    ['linux', ':99', undefined, true],
+    ['linux', undefined, 'wayland-0', true],
+    ['darwin', undefined, undefined, true],
+    ['win32', undefined, undefined, true]
+  ])(
+    'handles tray availability on %s with X11=%s and Wayland=%s',
+    (platform, x11, wayland, available) => {
+      setPlatform(platform)
+      vi.stubEnv('DISPLAY', x11)
+      vi.stubEnv('WAYLAND_DISPLAY', wayland)
+      const tray = createAppTray({
+        iconPath: '/icons/tray.png',
+        onShow: vi.fn(),
+        onHide: vi.fn(),
+        onQuit: vi.fn()
+      })
+      expect(Boolean(tray)).toBe(available)
+      if (!available) {
+        expect(lastTray).toBeUndefined()
+        expect(createdFromPaths).toEqual([])
+      }
+    }
+  )
 
   it('builds a tray with tooltip and a Show/Hide/Quit context menu', () => {
     const tray = createAppTray({

@@ -105,6 +105,10 @@ const createAppTray = (opts: {
   onCopyWebUrl?: () => void | Promise<void>
   translate?: NativeTranslator
 }): Tray | undefined => {
+  // GTK tray initialization can abort the process without a display, outside JS error handling.
+  if (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+    return undefined
+  }
   try {
     // macOS gets a monochrome template glyph that follows the menu-bar appearance; other platforms use
     // the full-color icon. An empty image is tolerated so the tray still appears with a blank glyph.

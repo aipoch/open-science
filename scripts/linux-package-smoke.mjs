@@ -291,8 +291,9 @@ const smokeInstalledCli = async ({ executable, expectedVersion, root, env }) => 
     const token = await readFile(join(initialized.configRoot, 'web-token'), 'utf8')
       .then((text) => text.trim())
       .catch(() => '')
-    const logs = await readFile(join(initialized.configRoot, 'cli-daemon.log'), 'utf8')
-      .catch(() => '(daemon log unavailable)')
+    const logs = await readFile(join(initialized.configRoot, 'cli-daemon.log'), 'utf8').catch(
+      () => '(daemon log unavailable)'
+    )
     const diagnostic = `${failure.message}\n${logs}`
     throw new Error(token ? diagnostic.replaceAll(token, '<REDACTED>') : diagnostic)
   }
