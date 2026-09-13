@@ -37,12 +37,14 @@ test('releases follow-output when the reader scrolls up mid-stream', async ({ ap
       () => document.querySelector('[data-slot="message-scroller-viewport"]')?.scrollTop ?? -1
     )
 
-  // Wait until follow-output is clearly engaged.
-  let scrollTop = await readScrollTop()
-  for (let attempt = 0; attempt < 40 && scrollTop < 1100; attempt += 1) {
-    await page.waitForTimeout(100)
-    scrollTop = await readScrollTop()
-  }
+  // Historical turns can already exceed 1100px before this reply starts.
+  // Wait for the current reply's presented text before scrolling.
+  const paragraphs = conversation.getByText(/^Segment \d+ paragraph \d+\./)
+  await expect(
+    conversation.getByText('Segment 1 paragraph 3. The quick brown fox jumps over the lazy dog.', {
+      exact: true
+    })
+  ).toBeVisible()
 
   // Reader scrolls up inside the transcript viewport.
   const viewportBox = await conversation.boundingBox()
@@ -66,9 +68,11 @@ test('releases follow-output when the reader scrolls up mid-stream', async ({ ap
     )
     .toBeLessThan(2)
   const afterWheel = await readScrollTop()
+  const textAfterWheel = await paragraphs.allTextContents()
 
   // While the reply keeps streaming, the reader's position must hold (no re-follow).
   await page.waitForTimeout(900)
   const later = await readScrollTop()
   expect(later - afterWheel).toBeLessThan(120)
+  expect(await paragraphs.allTextContents()).not.toEqual(textAfterWheel)
 })
