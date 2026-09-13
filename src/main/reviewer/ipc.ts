@@ -15,7 +15,7 @@ import type {
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { REVIEWER_IPC } from '../../shared/reviewer'
 import { createLogger } from '../logger'
-import { runReview } from './orchestrator'
+import type { runReview as RunReview } from './orchestrator'
 import { flagStaleReviews } from './stale-reviews'
 import { ReviewRepository } from './repository'
 import type { ReviewerAcpRuntime } from './acp-runtime'
@@ -39,6 +39,8 @@ import type { ReviewerPagedContentResolver } from './host-sdk'
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 
 const log = createLogger('reviewer:ipc')
+// Share first-use module loading across concurrent review commands; allow retry on load failure.
+let reviewerExecutor: Promise<typeof RunReview> | undefined
 
 // Sends a review update event to every open renderer window.
 const broadcastReviewUpdate = (event: ReviewUpdateEvent): void => {
@@ -438,6 +440,19 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     }
 
     log.info('review triggered', { sessionId, turnMessageId })
+
+    let runReview: typeof RunReview
+    try {
+      runReview = await (reviewerExecutor ??= import('./orchestrator')
+        .then((module) => module.runReview)
+        .catch((error) => {
+          reviewerExecutor = undefined
+          throw error
+        }))
+    } catch (error) {
+      log.error('review start failed: could not load executor', { error: toErrorMessage(error) })
+      return finishBeforeBackground({ started: false, reason: 'run-failed' })
+    }
 
     let modelAdmission: Awaited<
       ReturnType<NonNullable<ReviewerIpcOptions['modelRuntime']>['admit']>

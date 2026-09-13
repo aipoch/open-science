@@ -177,7 +177,9 @@ export const projectToolActivity = (
   const now = Date.now()
   const eventTimestamp = input.timestamp ?? now
   const activities = session.activities ?? []
-  const existingActivity = activities.find((activity) => activity.id === input.toolCallId)
+  const existingActivityIndex = activities.findIndex((activity) => activity.id === input.toolCallId)
+  const existingActivity =
+    existingActivityIndex === -1 ? undefined : activities[existingActivityIndex]
 
   if (existingActivity) {
     if (existingActivity.eventIds.includes(input.eventId)) return session
@@ -193,33 +195,31 @@ export const projectToolActivity = (
       delete editDrafts[input.toolCallId]
     }
     const activityWasTerminal = isTerminalToolActivityStatus(existingActivity.status)
+    const nextActivities = activities.slice()
+    nextActivities[existingActivityIndex] = {
+      ...existingActivity,
+      promptMessageId: input.promptMessageId ?? existingActivity.promptMessageId,
+      title: input.title?.trim() || existingActivity.title,
+      status: mergeToolActivityStatus(existingActivity.status, nextStatus),
+      toolDisposition: input.toolDisposition ?? existingActivity.toolDisposition,
+      executionInvocationId: input.executionInvocationId ?? existingActivity.executionInvocationId,
+      providerToolName: input.providerToolName ?? existingActivity.providerToolName,
+      toolKind: input.toolKind ?? existingActivity.toolKind,
+      toolContent: input.toolContent ?? existingActivity.toolContent,
+      toolLocations: input.toolLocations ?? existingActivity.toolLocations,
+      rawInput: input.rawInput ?? existingActivity.rawInput,
+      rawOutput: input.rawOutput ?? existingActivity.rawOutput,
+      terminalOutput: input.terminalOutput ?? existingActivity.terminalOutput,
+      terminalExitCode: input.terminalExitCode ?? existingActivity.terminalExitCode,
+      elicitation: input.elicitation ?? existingActivity.elicitation,
+      eventIds: [...existingActivity.eventIds, input.eventId],
+      updatedAt: activityWasTerminal ? existingActivity.updatedAt : eventTimestamp
+    }
     return {
       ...session,
       elicitationEditDrafts: editDrafts,
       status: getToolActivitySessionStatus(session),
-      activities: activities.map((activity) =>
-        activity.id === input.toolCallId
-          ? {
-              ...activity,
-              promptMessageId: input.promptMessageId ?? activity.promptMessageId,
-              title: input.title?.trim() || activity.title,
-              status: mergeToolActivityStatus(activity.status, nextStatus),
-              toolDisposition: input.toolDisposition ?? activity.toolDisposition,
-              executionInvocationId: input.executionInvocationId ?? activity.executionInvocationId,
-              providerToolName: input.providerToolName ?? activity.providerToolName,
-              toolKind: input.toolKind ?? activity.toolKind,
-              toolContent: input.toolContent ?? activity.toolContent,
-              toolLocations: input.toolLocations ?? activity.toolLocations,
-              rawInput: input.rawInput ?? activity.rawInput,
-              rawOutput: input.rawOutput ?? activity.rawOutput,
-              terminalOutput: input.terminalOutput ?? activity.terminalOutput,
-              terminalExitCode: input.terminalExitCode ?? activity.terminalExitCode,
-              elicitation: input.elicitation ?? activity.elicitation,
-              eventIds: [...activity.eventIds, input.eventId],
-              updatedAt: activityWasTerminal ? activity.updatedAt : eventTimestamp
-            }
-          : activity
-      ),
+      activities: nextActivities,
       updatedAt: now
     }
   }
@@ -253,17 +253,28 @@ export const projectToolActivity = (
     createdAt: eventTimestamp,
     updatedAt: eventTimestamp
   }
+  const nextActivityGroups = activeGroup
+    ? (() => {
+        const activeGroupIndex = session.activityGroups?.findIndex(
+          (group) => group.id === activeGroup.id
+        )
+        if (activeGroupIndex === undefined || activeGroupIndex < 0) return session.activityGroups
+        const existingGroups = session.activityGroups
+        if (!existingGroups) return undefined
+        const groups = existingGroups.slice()
+        groups[activeGroupIndex] = {
+          ...activeGroup,
+          activityIds: [...activeGroup.activityIds, activity.id],
+          updatedAt: now
+        }
+        return groups
+      })()
+    : session.activityGroups
   return {
     ...session,
     status: getToolActivitySessionStatus(session),
     activities: [...activities, activity],
-    activityGroups: activeGroup
-      ? session.activityGroups?.map((group) =>
-          group.id === activeGroup.id
-            ? { ...group, activityIds: [...group.activityIds, activity.id], updatedAt: now }
-            : group
-        )
-      : session.activityGroups,
+    activityGroups: nextActivityGroups,
     updatedAt: now
   }
 }

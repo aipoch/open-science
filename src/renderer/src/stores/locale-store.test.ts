@@ -2,9 +2,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { setI18nLocale } = vi.hoisted(() => ({ setI18nLocale: vi.fn() }))
+const { setI18nLocale, prepareI18nLocale } = vi.hoisted(() => ({
+  setI18nLocale: vi.fn(),
+  prepareI18nLocale: vi.fn()
+}))
 
-vi.mock('@/i18n', () => ({ setI18nLocale }))
+vi.mock('@/i18n', () => ({ setI18nLocale, prepareI18nLocale }))
 
 import { startLocalePreferenceSync, useLocaleStore } from './locale-store'
 
@@ -18,6 +21,7 @@ describe('locale store desktop synchronization', () => {
   beforeEach(() => {
     localStorage.clear()
     setI18nLocale.mockClear()
+    prepareI18nLocale.mockReset()
     initialize.mockReset()
     setPreference.mockReset()
     unsubscribe.mockClear()
@@ -37,6 +41,92 @@ describe('locale store desktop synchronization', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it('retains the current language and skips persistence when a catalog fails, then permits retry', async () => {
+    prepareI18nLocale.mockRejectedValueOnce(new Error('chunk unavailable'))
+    useLocaleStore.getState().setPreference('ja')
+    await vi.waitFor(() => expect(useLocaleStore.getState().saveFailed).toBe(true))
+    expect(useLocaleStore.getState().locale).toBe('en')
+    expect(setPreference).not.toHaveBeenCalled()
+    expect(localStorage.getItem('open-science-language')).not.toBe('ja')
+    setPreference.mockResolvedValue({ preference: 'ja', locale: 'ja' })
+    useLocaleStore.getState().setPreference('ja')
+    await vi.waitFor(() => expect(useLocaleStore.getState().locale).toBe('ja'))
+    expect(setPreference).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not commit a slower catalog after a newer selection', async () => {
+    let finish!: () => void
+    prepareI18nLocale.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    setPreference.mockResolvedValue({ preference: 'fr', locale: 'fr' })
+    useLocaleStore.getState().setPreference('ja')
+    expect(setPreference).not.toHaveBeenCalled()
+    useLocaleStore.getState().setPreference('fr')
+    finish()
+    await vi.waitFor(() => expect(useLocaleStore.getState().locale).toBe('fr'))
+    expect(setPreference).toHaveBeenCalledExactlyOnceWith({ preference: 'fr' })
+  })
+
+  it('ignores late catalog completion after a newer broadcast or unsubscribe', async () => {
+    initialize.mockReturnValue(new Promise(() => {}))
+    const stop = startLocalePreferenceSync()
+    let finish!: () => void
+    prepareI18nLocale.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    changed?.({ preference: 'ja', locale: 'ja' })
+    changed?.({ preference: 'system', locale: 'en' })
+    finish()
+    await Promise.resolve()
+    expect(useLocaleStore.getState().locale).toBe('en')
+    prepareI18nLocale.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    changed?.({ preference: 'ja', locale: 'ja' })
+    stop()
+    finish()
+    await Promise.resolve()
+    expect(useLocaleStore.getState().locale).toBe('en')
+  })
+
+  it('lets a newer browser storage event supersede a pending local catalog load', async () => {
+    ;(window as unknown as { api: unknown }).api = {}
+    let finish!: () => void
+    prepareI18nLocale.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const stop = startLocalePreferenceSync()
+    useLocaleStore.getState().setPreference('ja')
+    localStorage.setItem('open-science-language', 'fr')
+    window.dispatchEvent(
+      Object.defineProperty(
+        new StorageEvent('storage', {
+          key: 'open-science-language'
+        }),
+        'storageArea',
+        { value: localStorage }
+      )
+    )
+    finish()
+    await Promise.resolve()
+    expect(useLocaleStore.getState().locale).toBe('fr')
+    expect(localStorage.getItem('open-science-language')).toBe('fr')
+    stop()
   })
 
   it('loads the persisted main preference and refreshes the renderer cache', async () => {

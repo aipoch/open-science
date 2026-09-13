@@ -1,5 +1,5 @@
 import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-composer-drafts'
-import { memo, useCallback, useRef } from 'react'
+import { lazy, memo, Suspense, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
@@ -24,21 +24,54 @@ import { useApplicationStartup } from '@/hooks/useApplicationStartup'
 import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { WorkspaceComputeRecoveryBridge } from '@/lib/compute/WorkspaceComputeRecoveryBridge'
 import { HomePage } from '@/pages/home/HomePage'
-import { LiteratureLibraryPage } from '@/pages/literature/LiteratureLibraryPage'
-import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
-import { ComputeApprovalDialog } from '@/pages/settings/ComputeApprovalDialog'
-import { ConnectorApprovalDialog } from '@/pages/settings/ConnectorApprovalDialog'
-import { ConnectorCredentialDialog } from '@/pages/settings/ConnectorCredentialDialog'
-import { SettingsPage, type SettingsPageHandle } from '@/pages/settings/SettingsPage'
-import { SkillImportApprovalDialog } from '@/pages/settings/SkillImportApprovalDialog'
+import type { SettingsPageHandle } from '@/pages/settings/SettingsPage'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
-import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
 import {
   WorkspaceMessageQueueProvider,
   WorkspaceMessageQueueRuntimeBridge
 } from '@/pages/workspace/workspace-message-queue-controller'
 
+const WorkspacePage = lazy(() =>
+  import('@/pages/workspace/WorkspacePage').then(({ WorkspacePage }) => ({
+    default: WorkspacePage
+  }))
+)
+const LiteratureLibraryPage = lazy(() =>
+  import('@/pages/literature/LiteratureLibraryPage').then(({ LiteratureLibraryPage }) => ({
+    default: LiteratureLibraryPage
+  }))
+)
+
 const StableLiteratureLibraryPage = memo(LiteratureLibraryPage)
+
+const OnboardingWizard = lazy(() =>
+  import('@/pages/onboarding/OnboardingWizard').then(({ OnboardingWizard }) => ({
+    default: OnboardingWizard
+  }))
+)
+const SettingsPage = lazy(() =>
+  import('@/pages/settings/SettingsPage').then(({ SettingsPage }) => ({ default: SettingsPage }))
+)
+const ComputeApprovalDialog = lazy(() =>
+  import('@/pages/settings/ComputeApprovalDialog').then(({ ComputeApprovalDialog }) => ({
+    default: ComputeApprovalDialog
+  }))
+)
+const ConnectorApprovalDialog = lazy(() =>
+  import('@/pages/settings/ConnectorApprovalDialog').then(({ ConnectorApprovalDialog }) => ({
+    default: ConnectorApprovalDialog
+  }))
+)
+const ConnectorCredentialDialog = lazy(() =>
+  import('@/pages/settings/ConnectorCredentialDialog').then(({ ConnectorCredentialDialog }) => ({
+    default: ConnectorCredentialDialog
+  }))
+)
+const SkillImportApprovalDialog = lazy(() =>
+  import('@/pages/settings/SkillImportApprovalDialog').then(({ SkillImportApprovalDialog }) => ({
+    default: SkillImportApprovalDialog
+  }))
+)
 
 const ApplicationPresentationHost = (): React.JSX.Element => {
   const { t } = useTranslation()
@@ -100,7 +133,9 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           ui={startup.environment.ui}
           onRetry={() => void startup.environment.retry()}
         />
-        <OnboardingWizard loadStorageInfo={startup.storageRecovery.loadInfo} />
+        <Suspense fallback={<OpenScienceLogoLoader />}>
+          <OnboardingWizard loadStorageInfo={startup.storageRecovery.loadInfo} />
+        </Suspense>
       </>
     )
   }
@@ -208,25 +243,27 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
               <WorkspaceMessageQueueRuntimeBridge
                 persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
               />
-              {events.navigation.view === 'home' ? (
-                <HomePage
-                  canDeleteProjects={sessions.canDeleteSessionsAndProjects}
-                  hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
-                  catalogRecovery={sessions.catalogRecovery}
-                  onOpenGlobalSearch={events.globalSearch.open}
-                />
-              ) : events.navigation.view === 'library' ? (
-                <StableLiteratureLibraryPage />
-              ) : (
-                <WorkspacePage
-                  isSessionPersistenceHydrated={sessions.isHydrated}
-                  isSessionPersistenceReady={sessions.isReady}
-                  persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
-                  onSessionSizeLimit={sessions.reportSessionSizeLimit}
-                  canDeleteConversations={sessions.canDeleteSessionsAndProjects}
-                  isPreviewPresentationActive={isBasePresentationActive}
-                />
-              )}
+              <Suspense fallback={null}>
+                {events.navigation.view === 'home' ? (
+                  <HomePage
+                    canDeleteProjects={sessions.canDeleteSessionsAndProjects}
+                    hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
+                    catalogRecovery={sessions.catalogRecovery}
+                    onOpenGlobalSearch={events.globalSearch.open}
+                  />
+                ) : events.navigation.view === 'library' ? (
+                  <StableLiteratureLibraryPage />
+                ) : (
+                  <WorkspacePage
+                    isSessionPersistenceHydrated={sessions.isHydrated}
+                    isSessionPersistenceReady={sessions.isReady}
+                    persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
+                    onSessionSizeLimit={sessions.reportSessionSizeLimit}
+                    canDeleteConversations={sessions.canDeleteSessionsAndProjects}
+                    isPreviewPresentationActive={isBasePresentationActive}
+                  />
+                )}
+              </Suspense>
             </WorkspaceMessageQueueProvider>
           </WorkspaceComposerDraftsProvider>
         </WorkspaceAgentRuntimeProvider>
@@ -284,29 +321,33 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
         active={activePresentation === 'webEventRecovery'}
         phase={events.webEventConnectionPhase}
       />
-      <SettingsPage
-        ref={settingsPageRef}
-        open={activePresentation === 'settings'}
-        onClose={events.settings.close}
-        onOpenSession={events.settings.openSession}
-        canDeleteProjects={sessions.canDeleteSessionsAndProjects}
-        hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
-        catalogRecovery={sessions.catalogRecovery}
-        onRetryCatalogRecovery={sessions.retryLoad}
-      />
-      <ConnectorApprovalDialog
-        active={activePresentation === 'connectorApproval'}
-        blockedSessionIds={events.blockedApprovalSessionIds}
-      />
-      <ConnectorCredentialDialog active={activePresentation === 'credentialRequest'} />
-      <SkillImportApprovalDialog
-        active={activePresentation === 'skillImportApproval'}
-        blockedSessionIds={events.blockedApprovalSessionIds}
-      />
-      <ComputeApprovalDialog
-        active={activePresentation === 'computeApproval'}
-        blockedSessionIds={events.blockedApprovalSessionIds}
-      />
+      <Suspense fallback={null}>
+        <SettingsPage
+          ref={settingsPageRef}
+          open={activePresentation === 'settings'}
+          onClose={events.settings.close}
+          onOpenSession={events.settings.openSession}
+          canDeleteProjects={sessions.canDeleteSessionsAndProjects}
+          hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
+          catalogRecovery={sessions.catalogRecovery}
+          onRetryCatalogRecovery={sessions.retryLoad}
+        />
+      </Suspense>
+      <Suspense fallback={null}>
+        <ConnectorApprovalDialog
+          active={activePresentation === 'connectorApproval'}
+          blockedSessionIds={events.blockedApprovalSessionIds}
+        />
+        <ConnectorCredentialDialog active={activePresentation === 'credentialRequest'} />
+        <SkillImportApprovalDialog
+          active={activePresentation === 'skillImportApproval'}
+          blockedSessionIds={events.blockedApprovalSessionIds}
+        />
+        <ComputeApprovalDialog
+          active={activePresentation === 'computeApproval'}
+          blockedSessionIds={events.blockedApprovalSessionIds}
+        />
+      </Suspense>
       <UpdateDialog active={activePresentation === 'update'} />
       <CloseConfirmModal
         active={activePresentation === 'closeConfirmation'}

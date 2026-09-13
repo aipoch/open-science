@@ -193,7 +193,7 @@ export const initializeI18nInstance = (
   instance: i18n,
   options: {
     locale: Locale
-    resources: Resource
+    resources?: Resource
     namespaces: readonly string[]
     defaultNamespace: string
     fallbackNamespaces?: readonly string[]
