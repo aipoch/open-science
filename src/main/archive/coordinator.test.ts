@@ -788,34 +788,41 @@ describe('ArchiveCoordinator', () => {
     expect(wasAdmittedDuringDeletion).toBe(true)
   })
 
-  it('releases admission after prompt dispatch starts without awaiting prompt completion', async () => {
-    const prompt = createDeferred<string>()
-    const projects = {
-      get: vi.fn().mockResolvedValue(project),
-      updateArchive: vi.fn()
-    }
-    const sessions = {
-      assertProjectArchivable: vi.fn(),
-      assertSessionAvailable: vi.fn().mockResolvedValue(undefined),
-      updateArchive: vi.fn(),
-      sessionProjectId: vi.fn().mockResolvedValue(project.id)
-    }
-    const coordinator = new ArchiveCoordinator(projects, sessions, {
-      isSessionBusy: vi.fn(),
-      isProjectBusy: vi.fn(),
-      liveSessionProjectId: vi.fn()
-    })
-    const dispatch = vi.fn(() => prompt.promise)
-    const quiesce = vi.fn().mockResolvedValue(undefined)
+  it.each([false, true])(
+    'releases admission without awaiting prompt completion (requireAvailable: %s)',
+    async (requireAvailable) => {
+      const prompt = createDeferred<string>()
+      const projects = {
+        get: vi.fn().mockResolvedValue(project),
+        updateArchive: vi.fn()
+      }
+      const sessions = {
+        assertProjectArchivable: vi.fn(),
+        assertSessionAvailable: vi.fn().mockResolvedValue(undefined),
+        updateArchive: vi.fn(),
+        sessionProjectId: vi.fn().mockResolvedValue(project.id)
+      }
+      const coordinator = new ArchiveCoordinator(projects, sessions, {
+        isSessionBusy: vi.fn(),
+        isProjectBusy: vi.fn(),
+        liveSessionProjectId: vi.fn()
+      })
+      const dispatch = vi.fn(() => prompt.promise)
+      const quiesce = vi.fn().mockResolvedValue(undefined)
 
-    const prompting = coordinator.withSessionDeletionAdmissionById(session.id, dispatch)
-    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
-    await coordinator.withProjectDeletion(project.id, quiesce)
+      const prompting = coordinator.withSessionDeletionAdmissionById(
+        session.id,
+        dispatch,
+        requireAvailable
+      )
+      await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+      await coordinator.withProjectDeletion(project.id, quiesce)
 
-    expect(quiesce).toHaveBeenCalledOnce()
-    prompt.resolve('complete')
-    await expect(prompting).resolves.toBe('complete')
-  })
+      expect(quiesce).toHaveBeenCalledOnce()
+      prompt.resolve('complete')
+      await expect(prompting).resolves.toBe('complete')
+    }
+  )
 
   it('drains an admitted Project continuation before establishing its deletion fence', async () => {
     const continuation = createDeferred<string>()

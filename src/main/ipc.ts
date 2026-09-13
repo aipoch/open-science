@@ -3578,8 +3578,8 @@ const createApplicationModules = async (
       throw new Error('Close Side chat before sending a message to Main.')
     }
   })
-  runtime.setPromptDispatchAdmissionGuard((sessionId, dispatch) =>
-    archiveCoordinator.withSessionDeletionAdmissionById(sessionId, dispatch)
+  runtime.setPromptDispatchAdmissionGuard((sessionId, dispatch, requireAvailable) =>
+    archiveCoordinator.withSessionDeletionAdmissionById(sessionId, dispatch, requireAvailable)
   )
   const codeReconstructionLog = createLogger('artifacts:code-reconstruction')
   const codeReconstructionRunner = await modules.add(

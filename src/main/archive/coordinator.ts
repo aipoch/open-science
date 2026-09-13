@@ -38,21 +38,27 @@ class ArchiveCoordinator {
   private readonly deletingProjectIds = new Set<string>()
   private readonly exportingSessions = new Map<string, string>()
   private readonly importingProjects = new Set<string>()
-  private readonly pendingDispatches = new Map<string, number>()
+  private readonly pendingDispatches = new Map<
+    string,
+    { projectId: string; count: number; userPrompts: number }
+  >()
 
   // Independent execution owners hold this synchronous admission through their asynchronous
   // startup/cleanup. Export observes both pending work and already-published runtime activity.
-  admitSessionWork(projectId: string, sessionId: string): () => void {
+  admitSessionWork(projectId: string, sessionId: string, userPrompt = false): () => void {
     this.assertProjectDeletionAvailable(projectId)
     this.assertExportAvailable(sessionId)
-    this.pendingDispatches.set(sessionId, (this.pendingDispatches.get(sessionId) ?? 0) + 1)
+    const pending = this.pendingDispatches.get(sessionId) ?? { projectId, count: 0, userPrompts: 0 }
+    pending.count += 1
+    if (userPrompt) pending.userPrompts += 1
+    this.pendingDispatches.set(sessionId, pending)
     let released = false
     return () => {
       if (released) return
       released = true
-      const remaining = (this.pendingDispatches.get(sessionId) ?? 1) - 1
-      if (remaining) this.pendingDispatches.set(sessionId, remaining)
-      else this.pendingDispatches.delete(sessionId)
+      pending.count -= 1
+      if (userPrompt) pending.userPrompts -= 1
+      if (!pending.count) this.pendingDispatches.delete(sessionId)
     }
   }
 
@@ -196,7 +202,13 @@ class ArchiveCoordinator {
         return project
       }
 
-      if (request.archived && (await this.runtime.isProjectBusy(request.id))) {
+      if (
+        request.archived &&
+        ([...this.pendingDispatches.values()].some(
+          (pending) => pending.projectId === request.id && pending.userPrompts > 0
+        ) ||
+          (await this.runtime.isProjectBusy(request.id)))
+      ) {
         throw new Error('Finish or stop active sessions before archiving this project.')
       }
       const sessionIds = request.archived
@@ -220,8 +232,11 @@ class ArchiveCoordinator {
     return this.enqueue(request.projectId, async () => {
       this.assertExportAvailable(request.sessionId)
       await this.activeProject(request.projectId)
-      const session = await this.sessions.updateArchive(request, () =>
-        this.runtime.isSessionBusy(request.projectId, request.sessionId)
+      const session = await this.sessions.updateArchive(
+        request,
+        () =>
+          (this.pendingDispatches.get(request.sessionId)?.userPrompts ?? 0) > 0 ||
+          this.runtime.isSessionBusy(request.projectId, request.sessionId)
       )
       if (request.archived) {
         await this.backgroundWork?.cancelSession(request.projectId, request.sessionId)
@@ -330,12 +345,20 @@ class ArchiveCoordinator {
 
   withSessionDeletionAdmissionById<Result>(
     sessionId: string,
-    operation: () => Promise<Result>
+    operation: () => Promise<Result>,
+    requireAvailable = false
   ): Promise<Result> {
     const admitted = this.resolveSessionProjectId(sessionId).then((projectId) => {
-      if (!projectId) return { result: operation() }
+      if (!projectId) {
+        if (requireAvailable)
+          throw new Error('Cannot use a Session whose Project owner is unavailable.')
+        return { result: operation() }
+      }
       return this.enqueue(projectId, async () => {
-        const release = this.admitSessionWork(projectId, sessionId)
+        // New user work and archive must agree on one active state, including asynchronous startup.
+        // Application continuations retain deletion-only admission so existing cleanup can finish.
+        if (requireAvailable) await this.assertSessionAvailableByIdNow(sessionId, projectId)
+        const release = this.admitSessionWork(projectId, sessionId, requireAvailable)
         const result = Promise.resolve().then(operation).finally(release)
         return { result }
       })

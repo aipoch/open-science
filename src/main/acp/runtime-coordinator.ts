@@ -131,7 +131,8 @@ type RootAdmissionLease = {
 
 type PromptAdmissionGuard = <Result>(
   sessionId: string,
-  dispatch: () => Promise<Result>
+  dispatch: () => Promise<Result>,
+  requireAvailable?: boolean
 ) => Promise<Result>
 
 // Keeps each framework generation in its own AcpRuntime. Framework changes preserve active turns, then
@@ -1072,7 +1073,11 @@ class AcpRuntimeCoordinator {
       )
     }
     if (!this.promptDispatchAdmissionGuard) return dispatch()
-    return this.promptDispatchAdmissionGuard(request.sessionId, dispatch).catch((error) => {
+    return this.promptDispatchAdmissionGuard(
+      request.sessionId,
+      dispatch,
+      operation === 'sendPrompt'
+    ).catch((error) => {
       if (dispatchStarted || error instanceof DelegateMessagePreAcceptanceError) throw error
       throw new DelegateMessagePreAcceptanceError(
         error instanceof Error ? error.message : String(error),
@@ -1225,7 +1230,7 @@ class AcpRuntimeCoordinator {
       return runtime.steerFollowUp(request, isCurrent)
     }
     return this.promptDispatchAdmissionGuard
-      ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
+      ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch, true)
       : dispatch()
   }
 
