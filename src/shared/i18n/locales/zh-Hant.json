@@ -116,6 +116,7 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原套件檔案無法使用，可能已移動、刪除或無法讀取。請選擇其他套件檔案。"
   },
   "renderer": {
+    "Click to enter a page number": "點擊輸入頁碼",
     "Only stable releases can be installed.": "僅可安裝穩定版本。",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "驗證 R 存取權限需要網路保護就緒。請檢查網路設定，然後重新檢查執行環境。",
     "Batch operation": "批次操作",
@@ -127,7 +128,6 @@
     "Stopped": "已停止",
     "Batch manage": "批次管理",
     "Select all filtered results ({{total}})": "全選篩選結果（{{total}}）",
-    "Selected: {{selected}}": "已選擇：{{selected}}",
     "Update selected": "更新所選",
     "Install selected": "安裝所選",
     "Batch installation": "批次安裝",
@@ -3406,11 +3406,9 @@
     "Could not validate the configuration.": "無法驗證設定。",
     "Couldn't load bookmarks.": "無法載入書籤。",
     "Couldn't update bookmarks.": "無法更新書籤。",
-    "Disable selected ({{selectedCount}})": "停用所選項目（{{selectedCount}}）",
     "Disabling…": "正在停用…",
     "Downloading": "下載中",
     "Enable or disable imported and personal Skills in bulk. Featured Skills are not changed.": "批次啟用或停用已匯入和個人技能。精選技能不受影響。",
-    "Enable selected ({{selectedCount}})": "啟用所選項目（{{selectedCount}}）",
     "Enabled": "已啟用",
     "Enabling…": "正在啟用…",
     "Enter locally: {{names}}": "在本機輸入：{{names}}",
@@ -3436,7 +3434,6 @@
     "Resize question panel": "調整問題面板大小",
     "Search manageable skills": "搜尋可管理的技能",
     "Select all results": "選取所有結果",
-    "Selected ({{selectedCount}})": "已選取（{{selectedCount}}）",
     "Show all manageable Skills": "顯示所有可管理的技能",
     "SSE": "SSE",
     "Streamable HTTP": "串流 HTTP",
@@ -4048,7 +4045,6 @@
     "View Skill availability for {{count}} agents_other": "查看 {{count}} 個智能體的技能可用性",
     "View Connector availability for {{count}} agents_other": "查看 {{count}} 個智能體的連接器可用性",
     "Open {{name}} in Specialist Settings": "在專家設定中開啟 {{name}}",
-    "Delete selected ({{selectedCount}})": "刪除所選技能（{{selectedCount}}）",
     "Delete selected Skills?": "刪除所選技能？",
     "Deleted Skills are removed from this device and cannot be recovered.": "刪除後，技能將從此裝置移除且無法復原。",
     "{{count}} selected Skills can be deleted._other": "可以刪除 {{count}} 個所選技能。",
@@ -5763,6 +5759,11 @@
     "Elements: {{total}}": "元素：{{total}}",
     "Parsed pages: {{parsed}} / {{checked}}": "已解析頁面：{{parsed}} / {{checked}}",
     "Image delivered": "已提供圖片",
-    "Some evidence is unavailable or incomplete.": "部分證據無法使用或不完整。"
+    "Some evidence is unavailable or incomplete.": "部分證據無法使用或不完整。",
+    "Show selected": "僅看已選",
+    "Disable": "停用",
+    "Delete…": "刪除…",
+    "Install…": "安裝…",
+    "Update…": "更新…"
   }
 }

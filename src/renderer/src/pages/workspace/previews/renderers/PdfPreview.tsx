@@ -3,9 +3,9 @@ import {
   ChevronDown,
   ChevronUp,
   Hand,
-  ListTree,
   LoaderCircle,
   MousePointer2,
+  PanelLeft,
   Scan,
   Search,
   Shrink,
@@ -314,7 +314,7 @@ const PdfInteractionControls = ({
   ]
 
   return (
-    <TooltipProvider delayDuration={800}>
+    <TooltipProvider delayDuration={250} skipDelayDuration={300}>
       <div
         data-pdf-controls="interaction"
         role="group"
@@ -323,7 +323,7 @@ const PdfInteractionControls = ({
       >
         {navigationAvailable ? (
           <>
-            <Tooltip delayDuration={300}>
+            <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   type="button"
@@ -333,13 +333,14 @@ const PdfInteractionControls = ({
                   aria-label={navigationOpen ? t('Hide navigation') : t('Show navigation')}
                   aria-controls="pdf-navigation-sidebar"
                   aria-expanded={navigationOpen}
-                  title={t('Navigation')}
                   onClick={onNavigationToggle}
                 >
-                  <ListTree aria-hidden="true" />
+                  <PanelLeft aria-hidden="true" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{t('Navigation')}</TooltipContent>
+              <TooltipContent>
+                {navigationOpen ? t('Hide navigation') : t('Show navigation')}
+              </TooltipContent>
             </Tooltip>
             <span className="mx-0.5 h-4 w-px bg-border-300/60" aria-hidden="true" />
           </>
@@ -369,6 +370,7 @@ const PdfInteractionControls = ({
               type="button"
               variant={searchOpen ? 'secondary' : 'ghost'}
               size="icon-sm"
+              className="text-text-100 hover:text-text-000"
               aria-label={t('Search')}
               aria-pressed={searchOpen}
               onClick={onSearchToggle}
@@ -400,54 +402,74 @@ const PdfSearchControls = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
-    <div className="absolute top-3 right-3 z-40 flex h-8 items-center gap-0.5 rounded-md border border-border-300/50 bg-bg-000/95 p-0.5 shadow-sm backdrop-blur">
-      <Search className="ml-1 size-3.5 shrink-0 text-text-300" aria-hidden="true" />
-      <input
-        autoFocus
-        type="search"
-        value={query}
-        aria-label={t('Search document')}
-        placeholder={t('Search document')}
-        className="h-7 w-44 bg-transparent px-1 text-xs text-text-000 outline-none placeholder:text-text-400"
-        onChange={(event) => onQueryChange(event.currentTarget.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') onFindAgain(event.shiftKey)
-          if (event.key === 'Escape') onClose()
-        }}
-      />
-      <span className="min-w-10 px-1 text-center text-[11px] tabular-nums text-text-300">
-        {query ? `${current}/${total}` : ''}
-      </span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-label={t('Previous match')}
-        disabled={total === 0}
-        onClick={() => onFindAgain(true)}
-      >
-        <ChevronUp aria-hidden="true" />
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-label={t('Next match')}
-        disabled={total === 0}
-        onClick={() => onFindAgain(false)}
-      >
-        <ChevronDown aria-hidden="true" />
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-label={t('Close search')}
-        onClick={onClose}
-      >
-        <X aria-hidden="true" />
-      </Button>
-    </div>
+    <TooltipProvider delayDuration={250} skipDelayDuration={300}>
+      <div className="absolute top-3 right-3 z-40 flex h-8 items-center gap-0.5 rounded-md border border-border-300/50 bg-bg-000/95 p-0.5 shadow-sm backdrop-blur">
+        <Search className="ml-1 size-3.5 shrink-0 text-text-300" aria-hidden="true" />
+        <input
+          autoFocus
+          type="search"
+          value={query}
+          aria-label={t('Search document')}
+          placeholder={t('Search document')}
+          className="h-7 w-44 bg-transparent px-1 text-xs text-text-000 outline-none placeholder:text-text-400"
+          onChange={(event) => onQueryChange(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') onFindAgain(event.shiftKey)
+            if (event.key === 'Escape') onClose()
+          }}
+        />
+        <span className="min-w-10 px-1 text-center text-[11px] tabular-nums text-text-300">
+          {query ? `${current}/${total}` : ''}
+        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="text-text-100 hover:text-text-000"
+              aria-label={t('Previous match')}
+              disabled={total === 0}
+              onClick={() => onFindAgain(true)}
+            >
+              <ChevronUp aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('Previous match')}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="text-text-100 hover:text-text-000"
+              aria-label={t('Next match')}
+              disabled={total === 0}
+              onClick={() => onFindAgain(false)}
+            >
+              <ChevronDown aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('Next match')}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="text-text-100 hover:text-text-000"
+              aria-label={t('Close search')}
+              onClick={onClose}
+            >
+              <X aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('Close search')}</TooltipContent>
+        </Tooltip>
+      </div>
+    </TooltipProvider>
   )
 }
 
@@ -487,7 +509,7 @@ const PdfZoomControls = ({
   }
 
   return (
-    <TooltipProvider delayDuration={800}>
+    <TooltipProvider delayDuration={250} skipDelayDuration={300}>
       <div
         data-pdf-controls="view"
         role="group"
@@ -517,20 +539,24 @@ const PdfZoomControls = ({
               }}
             />
           ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="w-auto min-w-7 cursor-text px-1 text-[11px] text-text-200 hover:text-text-000"
-              aria-label={pageLabel}
-              title={pageLabel}
-              onClick={() => {
-                setPageDraft(String(currentPage))
-                setEditingPage(true)
-              }}
-            >
-              {currentPage}
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="w-auto min-w-7 cursor-text px-1 text-[11px] text-text-200 hover:text-text-000"
+                  aria-label={pageLabel}
+                  onClick={() => {
+                    setPageDraft(String(currentPage))
+                    setEditingPage(true)
+                  }}
+                >
+                  {currentPage}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('Click to enter a page number')}</TooltipContent>
+            </Tooltip>
           )}
           <span aria-hidden="true">/</span>
           <span className="min-w-4 px-0.5 text-center" aria-hidden="true">

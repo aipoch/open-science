@@ -119,6 +119,7 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Исходный пакет недоступен. Возможно, он перемещён, удалён или больше не читается. Выберите другой пакет."
   },
   "renderer": {
+    "Click to enter a page number": "Нажмите, чтобы ввести номер страницы",
     "Only stable releases can be installed.": "Можно устанавливать только стабильные версии.",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "Для проверки доступа к R защита сети должна быть готова. Проверьте настройки сети, затем повторно проверьте среды выполнения.",
     "Batch operation": "Пакетная операция",
@@ -130,7 +131,6 @@
     "Stopped": "Остановлено",
     "Batch manage": "Пакетное управление",
     "Select all filtered results ({{total}})": "Выбрать все отфильтрованные результаты ({{total}})",
-    "Selected: {{selected}}": "Выбрано: {{selected}}",
     "Update selected": "Обновить выбранное",
     "Install selected": "Установить выбранное",
     "Batch installation": "Пакетная установка",
@@ -3683,11 +3683,9 @@
     "Could not validate the configuration.": "Не удалось проверить конфигурацию.",
     "Couldn't load bookmarks.": "Не удалось загрузить закладки.",
     "Couldn't update bookmarks.": "Не удалось обновить закладки.",
-    "Disable selected ({{selectedCount}})": "Отключить выбранное ({{selectedCount}})",
     "Disabling…": "Отключение…",
     "Downloading": "Скачивание",
     "Enable or disable imported and personal Skills in bulk. Featured Skills are not changed.": "Включайте и отключайте сразу несколько импортированных и личных навыков. Рекомендуемые навыки не изменяются.",
-    "Enable selected ({{selectedCount}})": "Включить выбранное ({{selectedCount}})",
     "Enabled": "Включено",
     "Enabling…": "Включение…",
     "Enter locally: {{names}}": "Ввести локально: {{names}}",
@@ -3713,7 +3711,6 @@
     "Resize question panel": "Изменить размер панели вопросов",
     "Search manageable skills": "Поиск навыков, которые можно управлять",
     "Select all results": "Выбрать все результаты",
-    "Selected ({{selectedCount}})": "Выбрано ({{selectedCount}})",
     "Show all manageable Skills": "Показать все управляемые навыки",
     "SSE": "SSE",
     "Streamable HTTP": "Потоковый HTTP",
@@ -4439,7 +4436,6 @@
     "Deleted {{count}} Skills._many": "Удалено {{count}} навыков.",
     "Deleted {{count}} Skills._other": "Удалено {{count}} навыка.",
     "Some selected Skills could not be deleted. They remain selected.": "Не удалось удалить некоторые выбранные навыки. Они остались выбранными.",
-    "Delete selected ({{selectedCount}})": "Удалить выбранные ({{selectedCount}})",
     "Delete selected Skills?": "Удалить выбранные навыки?",
     "Deleted Skills are removed from this device and cannot be recovered.": "Навыки будут удалены с этого устройства без возможности восстановления.",
     "{{count}} selected Skills can be deleted._one": "Можно удалить {{count}} выбранный навык.",
@@ -6230,6 +6226,11 @@
     "Elements: {{total}}": "Элементы: {{total}}",
     "Parsed pages: {{parsed}} / {{checked}}": "Обработано страниц: {{parsed}} / {{checked}}",
     "Image delivered": "Изображение предоставлено",
-    "Some evidence is unavailable or incomplete.": "Некоторые подтверждающие данные недоступны или неполны."
+    "Some evidence is unavailable or incomplete.": "Некоторые подтверждающие данные недоступны или неполны.",
+    "Show selected": "Показать выбранное",
+    "Disable": "Отключить",
+    "Delete…": "Удалить…",
+    "Install…": "Установить…",
+    "Update…": "Обновить…"
   }
 }

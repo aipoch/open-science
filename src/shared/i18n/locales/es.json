@@ -118,6 +118,7 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "El paquete original no está disponible. Puede que se haya movido, eliminado o que ya no se pueda leer. Seleccione otro paquete."
   },
   "renderer": {
+    "Click to enter a page number": "Hacer clic para introducir un número de página",
     "Only stable releases can be installed.": "Solo se pueden instalar versiones estables.",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "La verificación del acceso a R requiere que la protección de red esté lista. Revise la configuración de red y vuelva a comprobar los entornos de ejecución.",
     "Batch operation": "Operación por lotes",
@@ -129,7 +130,6 @@
     "Stopped": "Detenido",
     "Batch manage": "Gestión por lotes",
     "Select all filtered results ({{total}})": "Seleccionar todos los resultados filtrados ({{total}})",
-    "Selected: {{selected}}": "Selección: {{selected}}",
     "Update selected": "Actualizar selección",
     "Install selected": "Instalar selección",
     "Batch installation": "Instalación por lotes",
@@ -3583,11 +3583,9 @@
     "Could not validate the configuration.": "No se pudo validar la configuración.",
     "Couldn't load bookmarks.": "No se pudieron cargar los marcadores.",
     "Couldn't update bookmarks.": "No se pudieron actualizar los marcadores.",
-    "Disable selected ({{selectedCount}})": "Desactivar la selección ({{selectedCount}})",
     "Disabling…": "Deshabilitando…",
     "Downloading": "Descargando",
     "Enable or disable imported and personal Skills in bulk. Featured Skills are not changed.": "Habilite o deshabilite habilidades importadas y personales de forma masiva. Las habilidades destacadas no cambian.",
-    "Enable selected ({{selectedCount}})": "Habilitar la selección ({{selectedCount}})",
     "Enabled": "Habilitado",
     "Enabling…": "Habilitando…",
     "Enter locally: {{names}}": "Introducir localmente: {{names}}",
@@ -3613,7 +3611,6 @@
     "Resize question panel": "Cambiar tamaño del panel de preguntas",
     "Search manageable skills": "Buscar habilidades gestionables",
     "Select all results": "Seleccionar todos los resultados",
-    "Selected ({{selectedCount}})": "Selección ({{selectedCount}})",
     "Show all manageable Skills": "Mostrar todas las habilidades gestionables",
     "SSE": "SSE",
     "Streamable HTTP": "Streamable HTTP",
@@ -4328,7 +4325,6 @@
     "View Connector availability for {{count}} agents_other": "Ver disponibilidad del conector para {{count}} agentes",
     "View Connector availability for {{count}} agents_many": "Ver disponibilidad del conector para {{count}} agentes",
     "Open {{name}} in Specialist Settings": "Abrir {{name}} en Configuración de especialistas",
-    "Delete selected ({{selectedCount}})": "Eliminar la selección ({{selectedCount}})",
     "Delete selected Skills?": "¿Eliminar las habilidades seleccionadas?",
     "Deleted Skills are removed from this device and cannot be recovered.": "Las habilidades eliminadas se eliminan de este dispositivo y no se pueden recuperar.",
     "{{count}} selected Skills can be deleted._one": "Se puede eliminar {{count}} habilidad seleccionada.",
@@ -6091,6 +6087,11 @@
     "Elements: {{total}}": "Elementos: {{total}}",
     "Parsed pages: {{parsed}} / {{checked}}": "Páginas analizadas: {{parsed}} / {{checked}}",
     "Image delivered": "Imagen proporcionada",
-    "Some evidence is unavailable or incomplete.": "Algunas evidencias no están disponibles o están incompletas."
+    "Some evidence is unavailable or incomplete.": "Algunas evidencias no están disponibles o están incompletas.",
+    "Show selected": "Mostrar selección",
+    "Disable": "Desactivar",
+    "Delete…": "Eliminar…",
+    "Install…": "Instalar…",
+    "Update…": "Actualizar…"
   }
 }

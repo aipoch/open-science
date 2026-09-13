@@ -147,15 +147,15 @@ describe('SkillBulkManageView', () => {
     )
     expect(document.body.textContent).toContain('2 selected')
 
-    await act(async () => button('Enable selected (2)')?.click())
+    await act(async () => button('Enable')?.click())
     expect(useSettingsStore.getState().setSkillsEnabled).toHaveBeenCalledWith(
       ['imported-team', 'personal-mine'],
       true
     )
-    expect(button('Selected (2)')?.getAttribute('aria-pressed')).toBe('true')
+    expect(button('Show selected')?.getAttribute('aria-pressed')).toBe('true')
     expect(document.body.querySelectorAll('[data-skill-status="enabled"]')).toHaveLength(2)
 
-    await act(async () => button('Disable selected (2)')?.click())
+    await act(async () => button('Disable')?.click())
     expect(useSettingsStore.getState().setSkillsEnabled).toHaveBeenLastCalledWith(
       ['imported-team', 'personal-mine'],
       false
@@ -177,7 +177,7 @@ describe('SkillBulkManageView', () => {
 
     expect(document.body.textContent).not.toContain('Team')
     expect(document.body.textContent).toContain('Mine')
-    act(() => button('Selected (2)')?.click())
+    act(() => button('Show selected')?.click())
     expect(document.body.textContent).toContain('Team')
     expect(document.body.textContent).toContain('Mine')
 
@@ -196,7 +196,7 @@ describe('SkillBulkManageView', () => {
     act(() => root.render(<SkillBulkManageView />))
     act(() => document.body.querySelector<HTMLInputElement>('[aria-label="Select Team"]')?.click())
 
-    await act(async () => button('Enable selected (1)')?.click())
+    await act(async () => button('Enable')?.click())
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
       'Could not update selected Skills.'
@@ -227,7 +227,7 @@ describe('SkillBulkManageView', () => {
       document.body.querySelector<HTMLInputElement>('[aria-label="Select all results"]')
         ?.indeterminate
     ).toBe(true)
-    const enable = button('Enable selected (1)')!
+    const enable = button('Enable')!
     await act(async () => {
       enable.click()
       enable.click()
@@ -252,7 +252,7 @@ describe('SkillBulkManageView', () => {
       document.body.querySelector<HTMLInputElement>('[aria-label="Select all results"]')?.click()
     )
 
-    act(() => button('Delete selected (2)')?.click())
+    act(() => button('Delete…')?.click())
     expect(document.body.querySelector('[data-slot="batch-manage-review"]')?.textContent).toContain(
       '2 selected Skills can be deleted.'
     )
@@ -305,7 +305,7 @@ describe('SkillBulkManageView', () => {
       document.body.querySelector<HTMLInputElement>('[aria-label="Select all results"]')?.click()
     )
 
-    act(() => button('Delete selected (2)')?.click())
+    act(() => button('Delete…')?.click())
     const dialog = document.body.querySelector('[data-slot="batch-manage-review"]')
     expect(dialog?.textContent).toContain('1 selected Skill can be deleted.')
     expect(dialog?.textContent).toContain('1 protected Skill will be kept.')
@@ -350,7 +350,7 @@ describe('SkillBulkManageView', () => {
     })
     act(() => root.render(<SkillBulkManageView />))
     act(() => document.body.querySelector<HTMLInputElement>('[aria-label="Select Mine"]')?.click())
-    act(() => button('Delete selected (1)')?.click())
+    act(() => button('Delete…')?.click())
 
     const dialog = document.body.querySelector<HTMLElement>('[data-slot="batch-manage-review"]')
     const header = dialog?.querySelector<HTMLElement>('[data-slot="batch-review-title"]')

@@ -220,6 +220,18 @@ const SkillBulkManageView = (): React.JSX.Element => {
       }
       filters={
         <>
+          <SettingsSearchInput
+            disabled={busy || deleteOpen}
+            aria-label={t('Search manageable skills')}
+            placeholder={t('Search skills…')}
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value)
+              setShowSelectedOnly(false)
+            }}
+            containerClassName="min-w-0 flex-[2] @max-[30rem]:[&>span]:hidden!"
+            className="@max-[30rem]:[&:placeholder-shown:not(:focus)]:pr-2.5"
+          />
           <Select
             disabled={busy || deleteOpen}
             value={sourceFilter}
@@ -228,7 +240,10 @@ const SkillBulkManageView = (): React.JSX.Element => {
               setShowSelectedOnly(false)
             }}
           >
-            <SelectTrigger aria-label={t('Filter manageable skills by source')} className="w-36">
+            <SelectTrigger
+              aria-label={t('Filter manageable skills by source')}
+              className="min-w-0 flex-1 @min-[30rem]:flex-none w-36"
+            >
               <span>{t(SOURCE_LABEL_KEYS[sourceFilter])}</span>
             </SelectTrigger>
             <SelectContent>
@@ -245,7 +260,10 @@ const SkillBulkManageView = (): React.JSX.Element => {
               setShowSelectedOnly(false)
             }}
           >
-            <SelectTrigger aria-label={t('Filter manageable skills by status')} className="w-32">
+            <SelectTrigger
+              aria-label={t('Filter manageable skills by status')}
+              className="min-w-0 flex-1 @min-[30rem]:flex-none w-32"
+            >
               <span>{t(STATUS_LABEL_KEYS[statusFilter])}</span>
             </SelectTrigger>
             <SelectContent>
@@ -254,17 +272,6 @@ const SkillBulkManageView = (): React.JSX.Element => {
               <SelectItem value="disabled">{t('Disabled')}</SelectItem>
             </SelectContent>
           </Select>
-          <SettingsSearchInput
-            disabled={busy || deleteOpen}
-            aria-label={t('Search manageable skills')}
-            placeholder={t('Search skills…')}
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value)
-              setShowSelectedOnly(false)
-            }}
-            containerClassName="min-w-0 basis-full"
-          />
         </>
       }
       controlsLabel={t('Bulk Skill controls')}
@@ -291,9 +298,7 @@ const SkillBulkManageView = (): React.JSX.Element => {
                 {t('Enabling…')}
               </>
             ) : (
-              t('Enable selected ({{selectedCount}})', {
-                selectedCount: validSelectedIds.size
-              })
+              t('Enable')
             )}
           </Button>
           <Button
@@ -309,14 +314,12 @@ const SkillBulkManageView = (): React.JSX.Element => {
                 {t('Disabling…')}
               </>
             ) : (
-              t('Disable selected ({{selectedCount}})', {
-                selectedCount: validSelectedIds.size
-              })
+              t('Disable')
             )}
           </Button>
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             data-batch-delete-trigger
             className="text-destructive hover:text-destructive"
             size="sm"
@@ -329,9 +332,7 @@ const SkillBulkManageView = (): React.JSX.Element => {
             disabled={busy || validSelectedIds.size === 0}
           >
             <Trash2 aria-hidden="true" />
-            {t('Delete selected ({{selectedCount}})', {
-              selectedCount: validSelectedIds.size
-            })}
+            {t('Delete…')}
           </Button>
         </>
       }

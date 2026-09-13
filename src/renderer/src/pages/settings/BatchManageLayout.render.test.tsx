@@ -79,6 +79,18 @@ describe('BatchManageLayout', () => {
     expect(document.activeElement).toBe(screen.getByRole('textbox'))
   })
 
+  it('announces selection once and gives its icon-only clear control an accessible name', () => {
+    render(<Harness />)
+    expect(screen.getByRole('status').textContent).toBe('1 selected')
+    expect(screen.getByRole('button', { name: 'Show selected' }).getAttribute('aria-pressed')).toBe(
+      'false'
+    )
+    expect(screen.getByRole('button', { name: 'Clear selection' }).textContent).toBe('')
+    expect(
+      document.querySelector('[data-slot="batch-dock-fade"]')?.getAttribute('aria-hidden')
+    ).toBe('true')
+  })
+
   it('focuses review, locks the list, and cancels Escape without propagating it', () => {
     const onEscape = vi.fn()
     render(

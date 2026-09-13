@@ -5,6 +5,7 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown } from 'lucide-react'
+import { BatchActionDock, BatchSelectionActions } from './BatchActionDock'
 import { Button } from '@/components/ui/button'
 
 export function BatchManageLayout({
@@ -94,13 +95,11 @@ export function BatchManageLayout({
     >
       <fieldset
         disabled={locked}
-        className="min-h-0 min-w-0 flex-1 overflow-y-auto p-5 [scrollbar-gutter:stable]"
+        className="min-h-0 min-w-0 flex-1 overflow-y-auto p-5 pb-10 [scroll-padding-block:2rem] [scrollbar-gutter:stable]"
         data-slot="batch-manage-scroll"
       >
         <p className="text-[13px] leading-5 text-muted-foreground">{description}</p>
-        <div className="mt-4 flex min-w-0 flex-wrap items-center gap-2 [&>[role=combobox]]:min-w-0 [&>[role=combobox]]:flex-1">
-          {filters}
-        </div>
+        <div className="@container mt-4 flex min-w-0 items-center gap-2">{filters}</div>
         <label className="mt-3 flex min-h-9 w-fit items-center gap-2 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11">
           <input
             ref={selectAll}
@@ -118,20 +117,17 @@ export function BatchManageLayout({
         {children}
       </fieldset>
       {selectedCount > 0 || busy || review || feedback ? (
-        <div
-          ref={dock}
-          data-slot="batch-manage-dock"
-          className="mx-5 mb-5 max-h-[50%] shrink-0 space-y-3 overflow-y-auto rounded-lg border border-border bg-background p-3 shadow-sm sm:p-4"
-        >
-          {feedback}
-          {review || (
-            <div className="space-y-3">
-              {selectedCount > 0 ? (
-                <>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="mr-auto text-sm font-medium tabular-nums">
-                      {t('{{selectedCount}} selected', { selectedCount })}
-                    </span>
+        <BatchActionDock ref={dock} data-slot="batch-manage-dock">
+          <div className="space-y-3">
+            {feedback}
+            {review || (
+              <div className="space-y-3">
+                {selectedCount > 0 ? (
+                  <BatchSelectionActions
+                    selectedCount={selectedCount}
+                    disabled={busy}
+                    onClear={clear}
+                  >
                     <Button
                       type="button"
                       variant={selectedOnly ? 'secondary' : 'ghost'}
@@ -140,35 +136,32 @@ export function BatchManageLayout({
                       onClick={onToggleSelectedOnly}
                       disabled={busy}
                     >
-                      {t('Selected ({{selectedCount}})', { selectedCount })}
+                      {t('Show selected')}
                     </Button>
-                    <Button type="button" variant="ghost" size="sm" onClick={clear} disabled={busy}>
-                      {t('Clear selection')}
+                    <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div>
+                  </BatchSelectionActions>
+                ) : null}
+                {onDone ? (
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={busy}
+                      data-batch-done
+                      onClick={() => {
+                        restoreSelectionFocus.current = true
+                        onDone()
+                      }}
+                    >
+                      {t('Done')}
                     </Button>
                   </div>
-                  <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div>
-                </>
-              ) : null}
-              {onDone ? (
-                <div className="flex justify-end">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={busy}
-                    data-batch-done
-                    onClick={() => {
-                      restoreSelectionFocus.current = true
-                      onDone()
-                    }}
-                  >
-                    {t('Done')}
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          )}
-        </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        </BatchActionDock>
       ) : null}
     </div>
   )
@@ -208,7 +201,7 @@ export function BatchManageReview({
         <h3 tabIndex={-1} data-slot="batch-review-title" className="text-sm font-semibold">
           {title}
         </h3>
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onCancel}>
             {t('Cancel', { ns: 'common' })}
           </Button>
