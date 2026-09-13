@@ -332,6 +332,95 @@ describe('PdfPreviewContent', () => {
     ])
   })
 
+  it('switches Literature reading modes without releasing or resetting the original PDF', async () => {
+    window.api.localModels = {
+      getSnapshot: vi.fn().mockResolvedValue({
+        availability: 'ready',
+        installedRevision: 'v1',
+        updateAvailable: false
+      })
+    } as unknown as Window['api']['localModels']
+    await act(async () =>
+      root.render(
+        <PdfPreviewContent
+          path="literature-attachment-version:version-1"
+          name="paper.pdf"
+          source="literature"
+          annotationProps={{
+            item: {
+              id: 'literature:version-1',
+              sessionId: 'literature-library',
+              type: 'file',
+              format: 'pdf',
+              source: 'literature',
+              path: 'literature-attachment-version:version-1',
+              name: 'paper.pdf',
+              title: 'paper.pdf'
+            }
+          }}
+        />
+      )
+    )
+    const original = container.querySelector<HTMLElement>('[data-pdf-original-view]')!
+    const scroller = original.querySelector<HTMLElement>('[role="region"]')!
+    scroller.scrollTop = 275
+    const clickMode = async (label: string): Promise<void> => {
+      const button = [...container.querySelectorAll('button')].find(
+        (node) => node.textContent === label
+      )!
+      await act(async () =>
+        button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+      )
+    }
+    await clickMode('Figures and tables')
+    const activeTab = container.querySelector('[role="tab"][aria-selected="true"]')!
+    expect(activeTab.textContent).toBe('Figures and tables')
+    expect(container.querySelector('[data-pdf-figures-view]')?.id).toBe(
+      activeTab.getAttribute('aria-controls')
+    )
+    expect(original.getAttribute('aria-hidden')).toBe('true')
+    expect(original.hasAttribute('inert')).toBe(true)
+    const figures = container.querySelector('[data-pdf-figures-content]')
+    expect(figures).not.toBeNull()
+    await clickMode('Original PDF')
+    expect(container.querySelector('[data-pdf-original-view]')).toBe(original)
+    expect(scroller.scrollTop).toBe(275)
+    expect(original.hasAttribute('inert')).toBe(false)
+    await clickMode('Figures and tables')
+    expect(container.querySelector('[data-pdf-figures-content]')).toBe(figures)
+    await act(async () =>
+      document.dispatchEvent(
+        new CustomEvent('pdf-reading-reveal', {
+          detail: { path: 'literature-attachment-version:version-1', pageNumber: 1 }
+        })
+      )
+    )
+    expect(original.getAttribute('aria-hidden')).toBe('false')
+    await clickMode('Figures and tables')
+    await act(async () =>
+      document.dispatchEvent(
+        new CustomEvent('annotation-reveal-prepare', {
+          detail: {
+            kind: 'pdf',
+            source: { path: 'literature-attachment-version:version-1' },
+            selector: { pageNumber: 1 }
+          }
+        })
+      )
+    )
+    expect(original.getAttribute('aria-hidden')).toBe('false')
+    await clickMode('Figures and tables')
+    expect(window.api.previewResources.acquire).toHaveBeenCalledOnce()
+    expect(window.api.previewResources.release).not.toHaveBeenCalled()
+    await act(async () =>
+      root.render(<PdfPreviewContent path="/workspace/other.pdf" name="other.pdf" source="local" />)
+    )
+    expect(container.querySelector('[data-pdf-figures-content]')).toBeNull()
+    expect(container.querySelector('[data-pdf-original-view]')?.getAttribute('aria-hidden')).toBe(
+      'false'
+    )
+  })
+
   it('renders through the managed range resource and releases it on unmount', async () => {
     await act(async () => {
       root.render(
@@ -2363,6 +2452,8 @@ describe('PdfPreviewContent', () => {
       root.render(<PdfPreviewContent path="/workspace/wheel.pdf" name="wheel.pdf" source="local" />)
     })
     await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBe(400))
+    // Radix tab panels use one frame to suppress their initial enter animation.
+    await act(async () => flushFrame())
 
     // The scroll container owns the wheel listener; it is the parent of the measurement probe.
     const scroll = container.querySelector<HTMLElement>('[aria-hidden="true"]')?.parentElement

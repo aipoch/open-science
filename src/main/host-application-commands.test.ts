@@ -30,7 +30,9 @@ const HOST_CAPABILITIES = [
   'remote-access',
   'reviewer',
   'storage',
-  'update'
+  'update',
+  'local-models',
+  'pdf-structure'
 ] as const
 
 const remoteSnapshot: RemoteAccessSnapshot = {
@@ -56,6 +58,32 @@ const remoteSnapshot: RemoteAccessSnapshot = {
 const updateStatus: UpdateStatus = { state: 'idle', current: '1.0.0' }
 
 const createDependencies = (): HostApplicationCommandDependencies => ({
+  pdfStructure: {
+    parse: vi.fn(async () => ({
+      schemaVersion: 1 as const,
+      extractionId: '00000000-0000-4000-8000-000000000001',
+      engineFingerprint: 'a'.repeat(64),
+      sourceChecksum: 'b'.repeat(64),
+      sourceSizeBytes: 10,
+      requestedPages: [1],
+      processedPages: [1],
+      pageCount: 1,
+      pages: [{ page: 1, width: 10, height: 10, rotation: 0 as const }],
+      elements: [],
+      thumbnails: [],
+      navigation: [],
+      issues: []
+    })),
+    cancel: vi.fn(),
+    readThumbnail: vi.fn(),
+    clearCache: vi.fn(async () => ({ removedBytes: 0, retainedEntries: 0 }))
+  },
+  localModels: {
+    getSnapshot: vi.fn(),
+    install: vi.fn(),
+    cancel: vi.fn(),
+    remove: vi.fn()
+  },
   cli: {
     getStatus: vi.fn(async () => ({
       installed: false,
@@ -196,7 +224,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 56 Electron request channels in their existing capability groups', () => {
+  it('defines the exact 64 Electron request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
@@ -216,7 +244,7 @@ describe('Host application commands', () => {
       }
     })
 
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(56)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(64)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -232,7 +260,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(56)
+    expect(router.dispatcher.commandNames()).toHaveLength(64)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -397,6 +425,9 @@ describe('Host application commands', () => {
     await router.dispatcher.invoke(hostApplicationCommands.update.getAppInfo, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.update.getStatus, invocation([]))
 
+    for (const command of Object.values(hostApplicationCommands.localModels)) {
+      await router.dispatcher.invoke(command, invocation([]))
+    }
     expect(dependencies.localFs.listDir).toHaveBeenCalledWith('/data')
     expect(dependencies.localFs.readPreview).toHaveBeenCalledWith(previewRequest)
     expect(dependencies.notifications.takePendingOpenSession).toHaveBeenCalledWith(7)
@@ -431,6 +462,33 @@ describe('Host application commands', () => {
     expect(dependencies.update.apply).toHaveBeenCalledWith({ relaunch: false })
     expect(dependencies.update.download).toHaveBeenCalledWith({ nonInteractive: true })
 
+    const pdfRequest = {
+      attachmentVersionId: 'version-1',
+      page: 1,
+      requestId: '00000000-0000-4000-8000-000000000001'
+    }
+    const imageRequest = {
+      attachmentVersionId: 'version-1',
+      page: 1,
+      extractionId: '00000000-0000-4000-8000-000000000001',
+      thumbnailId: 'image-1'
+    }
+    const parseInvocation = invocation([pdfRequest] as const)
+    await router.dispatcher.invoke(hostApplicationCommands.pdfStructure.parse, parseInvocation)
+    await router.dispatcher.invoke(
+      hostApplicationCommands.pdfStructure.cancel,
+      invocation(['00000000-0000-4000-8000-000000000001'])
+    )
+    await router.dispatcher.invoke(
+      hostApplicationCommands.pdfStructure.readThumbnail,
+      invocation([imageRequest])
+    )
+    await router.dispatcher.invoke(hostApplicationCommands.pdfStructure.clearCache, invocation([]))
+    expect(dependencies.pdfStructure.parse).toHaveBeenCalledWith(
+      pdfRequest,
+      parseInvocation.callerContext,
+      parseInvocation.callerLease
+    )
     const ownerMethods = Object.values(dependencies).flatMap((owner) => Object.values(owner))
     expect(
       ownerMethods.filter(vi.isMockFunction).every((method) => method.mock.calls.length === 1)
@@ -481,6 +539,18 @@ describe('Host application commands', () => {
     const previewRequest = { path: '/data/result.txt', encoding: 'utf8' as const }
     const parent = { parent: '/target' }
     const argsByChannel: Readonly<Record<string, readonly unknown[]>> = {
+      'pdf-structure:parse': [
+        { attachmentVersionId: 'v1', page: 1, requestId: '00000000-0000-4000-8000-000000000001' }
+      ],
+      'pdf-structure:cancel': ['00000000-0000-4000-8000-000000000001'],
+      'pdf-structure:read-thumbnail': [
+        {
+          attachmentVersionId: 'v1',
+          page: 1,
+          extractionId: '00000000-0000-4000-8000-000000000001',
+          thumbnailId: 'image-1'
+        }
+      ],
       'storage:accept-missing-data-root': [],
       'storage:ack-data-root-handoff-flush': [{ requestId: 'flush-1', status: 'completed' }],
       'local-fs:grant-root': [{ path: '/data', access: 'ro' }],
@@ -510,7 +580,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(30)
+    expect(localOnlyChannels).toHaveLength(38)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(

@@ -4,9 +4,15 @@ import type {
   LiteratureExportRecordResult
 } from './literature-export'
 import type { LiteratureChangedEvent } from './literature'
+import type {
+  ParsePdfStructureRequest,
+  ReadPdfStructureThumbnailRequest,
+  PdfStructureResult
+} from './pdf-structure'
 import type { ProvenanceReadResult } from './provenance-read-result'
 import type { LiteratureJobRequest, LiteratureJobsResult } from './literature-jobs'
 import type { LiteratureFullTextRequest, LiteratureFullTextResult } from './literature'
+import type { LocalModelSnapshot } from './local-models'
 import type {
   AcpCancelPromptRequest,
   AcpAgentRuntimeUpdate,
@@ -2615,6 +2621,50 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'update.download': callable<() => Promise<UpdateStatus>>()('update', ['update:download', LOCAL]),
   'update.getAppInfo': callable<() => Promise<AppInfo>>()('update', ['update:get-app-info']),
   'update.getStatus': callable<() => Promise<UpdateStatus>>()('update', ['update:get-status']),
+  'pdfStructure.parse': callable<
+    (request: ParsePdfStructureRequest) => Promise<PdfStructureResult>
+  >()('pdf-structure', ['pdf-structure:parse', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
+  'pdfStructure.cancel': callable<(requestId: string) => Promise<void>>()('pdf-structure', [
+    'pdf-structure:cancel',
+    LOCAL,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'pdfStructure.readThumbnail': callable<
+    (request: ReadPdfStructureThumbnailRequest) => Promise<string | undefined>
+  >()('pdf-structure', [
+    'pdf-structure:read-thumbnail',
+    LOCAL,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'pdfStructure.clearCache': callable<
+    () => Promise<{ removedBytes: number; retainedEntries: number }>
+  >()('pdf-structure', [
+    'pdf-structure:clear-cache',
+    LOCAL,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'localModels.getSnapshot': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
+    'local-models:get-snapshot',
+    LOCAL
+  ]),
+  'localModels.install': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
+    'local-models:install',
+    LOCAL
+  ]),
+  'localModels.cancel': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
+    'local-models:cancel',
+    LOCAL
+  ]),
+  'localModels.remove': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
+    'local-models:remove',
+    LOCAL
+  ]),
   'update.onProgress': callable<
     (listener: (progress: DownloadProgress) => void) => RemoveListener
   >()('update', ['update:progress', EVENT]),
@@ -2790,6 +2840,8 @@ const RENDERER_CAPABILITY_ORDER = Object.freeze([
   'specialist',
   'storage',
   'update',
+  'local-models',
+  'pdf-structure',
   'uploads',
   'window'
 ] as const)

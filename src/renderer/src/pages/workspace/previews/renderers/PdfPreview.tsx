@@ -12,6 +12,7 @@ import {
   ZoomIn,
   ZoomOut
 } from 'lucide-react'
+import { Tabs } from 'radix-ui'
 import type { TextLayerBuilder as PdfTextLayerBuilder } from 'pdfjs-dist/web/pdf_viewer.mjs'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -27,6 +28,7 @@ import {
   type Annotation,
   type PdfAnnotation
 } from '../../../../../../shared/annotations'
+import { parseLiteratureAttachmentVersionReference } from '../../../../../../shared/literature'
 import { joinPdfTextItems } from '../../../../../../shared/pdf-text'
 
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
@@ -59,6 +61,7 @@ import {
   textInPdfRect
 } from '../pdf-region-evidence'
 import { PdfOutlineSidebar, type PdfOutlineItem } from './PdfOutlineSidebar'
+import { PdfFiguresView } from './PdfFiguresView'
 import {
   countPdfSearchOccurrences,
   resolvePdfSearchMatch,
@@ -1170,6 +1173,10 @@ export const PdfPreviewContent = ({
   presentation?: PreviewFileRendererProps['presentation']
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const attachmentVersionId =
+    source === 'literature'
+      ? (parseLiteratureAttachmentVersionReference(path) ?? undefined)
+      : undefined
   const requestKey = createPreviewResourceKey({
     projectId,
     sessionId,
@@ -1190,6 +1197,8 @@ export const PdfPreviewContent = ({
   const [zoom, setZoom] = useState(1)
   const [cursorMode, setCursorMode] = useState<PdfCursorMode>('select')
   const [panning, setPanning] = useState(false)
+  const [readingMode, setReadingMode] = useState<'original' | 'figures'>('original')
+  const [figuresVisited, setFiguresVisited] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [outlineWidth, setOutlineWidth] = useState(OUTLINE_DEFAULT_WIDTH)
   const [currentPage, setCurrentPage] = useState(1)
@@ -1225,6 +1234,8 @@ export const PdfPreviewContent = ({
     setZoom(1)
     setCursorMode('select')
     setPanning(false)
+    setReadingMode('original')
+    setFiguresVisited(false)
     setOutlineOpen(false)
     setOutlineWidth(OUTLINE_DEFAULT_WIDTH)
     setCurrentPage(1)
@@ -1481,6 +1492,7 @@ export const PdfPreviewContent = ({
     () =>
       subscribePdfReadingReveal((target) => {
         if (target.projectId !== projectId || target.path !== path || !document) return false
+        setReadingMode('original')
         scrollToPage(Math.min(document.numPages, Math.max(1, target.pageNumber)))
         return true
       }),
@@ -1684,6 +1696,7 @@ export const PdfPreviewContent = ({
       ) {
         return
       }
+      setReadingMode('original')
       scroll
         .querySelector<HTMLElement>(`[data-page-number="${annotation.selector.pageNumber}"]`)
         ?.scrollIntoView({
@@ -1740,203 +1753,275 @@ export const PdfPreviewContent = ({
     : undefined
 
   return (
-    <div
-      className={
-        presentation === 'search'
-          ? 'flex min-h-64 w-full'
-          : 'flex size-full overflow-hidden bg-bg-20'
-      }
-      data-pdf-preview-root
-      onKeyDownCapture={(event) => {
-        if (presentation === 'search') return
-        const primaryModifier = event.metaKey || event.ctrlKey
-        if (primaryModifier && event.key.toLowerCase() === 'f') {
-          event.preventDefault()
-          event.stopPropagation()
-          setSearchOpen(true)
-          return
-        }
-        if (
-          !primaryModifier &&
-          !event.altKey &&
-          (event.key === 'Delete' || event.key === 'Backspace') &&
-          effectiveSelectedEvidenceId &&
-          !isEditableTarget(event.target)
-        ) {
-          annotationProps?.onRemoveAnnotation?.(effectiveSelectedEvidenceId)
-          setSelectedEvidenceId(undefined)
-          event.preventDefault()
-          event.stopPropagation()
-          return
-        }
-        const key = event.key.toLowerCase()
-        const isUndo = primaryModifier && key === 'z' && !event.shiftKey
-        const isRedo = primaryModifier && ((key === 'z' && event.shiftKey) || key === 'y')
-        if ((!isUndo && !isRedo) || event.altKey || isEditableTarget(event.target)) {
-          return
-        }
-        const handled = isRedo
-          ? annotationProps?.onRedoAnnotation?.()
-          : annotationProps?.onUndoAnnotation?.()
-        if (handled) {
-          event.preventDefault()
-          event.stopPropagation()
-        }
+    <Tabs.Root
+      value={readingMode}
+      onValueChange={(value) => {
+        setReadingMode(value === 'figures' ? 'figures' : 'original')
+        if (value === 'figures') setFiguresVisited(true)
       }}
+      asChild
     >
-      {document && outlineOpen && pageCount > 1 ? (
-        <PdfOutlineSidebar
-          key={requestKey}
-          document={document}
-          items={outlineItems}
-          pageCount={pageCount}
-          pageLabels={resolvedPageLabels}
-          currentPage={currentPage}
-          width={outlineWidth}
-          onWidthChange={setOutlineWidth}
-          onClose={() => setOutlineOpen(false)}
-          onNavigate={navigateToPage}
-        />
-      ) : null}
       <div
-        className={cn('relative min-w-0 flex-1', presentation !== 'search' && 'overflow-hidden')}
-      >
-        {/* The inner element is the real scroller (the outer div holds fixed controls), so it must
-            be keyboard-focusable or PageUp/Down, Space, and arrows never reach the PDF. */}
-        <div
-          ref={scrollRef}
-          data-pdf-cursor-mode={cursorMode}
-          className={cn(
-            'outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50',
-            presentation === 'search' ? 'w-full' : 'size-full overflow-auto p-4',
-            cursorMode === 'hand' &&
-              `touch-none select-none [&_*]:cursor-inherit [&_*]:select-none ${panning ? 'cursor-grabbing' : 'cursor-grab'}`
-          )}
-          tabIndex={0}
-          role="region"
-          aria-label={t('{{name}} scrollable preview', { name })}
-          onPointerDown={(event) => {
-            if (cursorMode !== 'hand' || event.button !== 0 || !event.isPrimary) return
+        className={
+          presentation === 'search'
+            ? 'flex min-h-64 w-full flex-col'
+            : 'flex size-full flex-col overflow-hidden bg-bg-20'
+        }
+        data-pdf-preview-root
+        onKeyDownCapture={(event) => {
+          if (presentation === 'search' || readingMode !== 'original') return
+          const primaryModifier = event.metaKey || event.ctrlKey
+          if (primaryModifier && event.key.toLowerCase() === 'f') {
             event.preventDefault()
-            event.currentTarget.setPointerCapture(event.pointerId)
-            panGestureRef.current = {
-              pointerId: event.pointerId,
-              clientX: event.clientX,
-              clientY: event.clientY,
-              scrollLeft: event.currentTarget.scrollLeft,
-              scrollTop: event.currentTarget.scrollTop
-            }
-            setPanning(true)
-          }}
-          onPointerMove={(event) => {
-            const gesture = panGestureRef.current
-            if (cursorMode !== 'hand' || gesture?.pointerId !== event.pointerId) return
-            event.currentTarget.scrollLeft = gesture.scrollLeft - (event.clientX - gesture.clientX)
-            event.currentTarget.scrollTop = gesture.scrollTop - (event.clientY - gesture.clientY)
-          }}
-          onPointerUp={(event) => {
-            if (panGestureRef.current?.pointerId !== event.pointerId) return
-            panGestureRef.current = undefined
-            setPanning(false)
-            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-              event.currentTarget.releasePointerCapture(event.pointerId)
-            }
-          }}
-          onPointerCancel={() => {
-            panGestureRef.current = undefined
-            setPanning(false)
-          }}
-          onLostPointerCapture={() => {
-            panGestureRef.current = undefined
-            setPanning(false)
-          }}
-        >
-          {/* Zero-height probe: reports the content-box width even when pages overflow horizontally. */}
-          <div ref={measureRef} className="h-0 w-full" aria-hidden="true" />
-          {!document ? (
-            <div className="absolute inset-0">
-              <PreviewLoadingContent />
-            </div>
-          ) : null}
-          {document ? (
-            // Center pages while they fit the real viewport, but left-align once a zoomed page
-            // overflows it: a centered overflow puts the left margin before scrollLeft=0, making it
-            // unreachable. Compared against the uncapped viewport width, not the reading-width cap,
-            // so a page still fitting a wide/full-screen pane stays centered.
+            event.stopPropagation()
+            setSearchOpen(true)
+            return
+          }
+          if (
+            !primaryModifier &&
+            !event.altKey &&
+            (event.key === 'Delete' || event.key === 'Backspace') &&
+            effectiveSelectedEvidenceId &&
+            !isEditableTarget(event.target)
+          ) {
+            annotationProps?.onRemoveAnnotation?.(effectiveSelectedEvidenceId)
+            setSelectedEvidenceId(undefined)
+            event.preventDefault()
+            event.stopPropagation()
+            return
+          }
+          const key = event.key.toLowerCase()
+          const isUndo = primaryModifier && key === 'z' && !event.shiftKey
+          const isRedo = primaryModifier && ((key === 'z' && event.shiftKey) || key === 'y')
+          if ((!isUndo && !isRedo) || event.altKey || isEditableTarget(event.target)) {
+            return
+          }
+          const handled = isRedo
+            ? annotationProps?.onRedoAnnotation?.()
+            : annotationProps?.onUndoAnnotation?.()
+          if (handled) {
+            event.preventDefault()
+            event.stopPropagation()
+          }
+        }}
+      >
+        {attachmentVersionId && presentation !== 'search' ? (
+          <Tabs.List
+            aria-label={t('PDF reading mode')}
+            className="flex shrink-0 justify-center gap-6 border-b border-border bg-bg-000 px-5"
+          >
+            <Tabs.Trigger
+              value="original"
+              className="flex items-center gap-2 border-b-2 border-transparent px-1 py-3 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
+            >
+              {t('Original PDF')}
+            </Tabs.Trigger>
+            <Tabs.Trigger
+              value="figures"
+              className="flex items-center gap-2 border-b-2 border-transparent px-1 py-3 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
+            >
+              {t('Figures and tables')}
+            </Tabs.Trigger>
+          </Tabs.List>
+        ) : null}
+        <div className="relative min-h-0 flex-1">
+          <Tabs.Content value="original" forceMount asChild>
             <div
               className={cn(
-                'flex min-w-full flex-col',
-                presentation === 'search' ? 'gap-[17px]' : 'gap-3',
-                viewportWidth > 0 && pageWidth > viewportWidth ? 'items-start' : 'items-center'
+                presentation === 'search' ? 'flex' : 'absolute inset-0 flex',
+                readingMode !== 'original' && 'invisible pointer-events-none'
               )}
+              inert={readingMode !== 'original'}
+              aria-hidden={readingMode !== 'original'}
+              data-pdf-original-view
             >
-              {Array.from({ length: pageCount }, (_, index) => (
-                // Each page mounts its canvas only inside the viewport overscan window.
-                <PdfPageCanvas
-                  key={index + 1}
+              {document && outlineOpen && (pageCount > 1 || attachmentVersionId) ? (
+                <PdfOutlineSidebar
+                  key={requestKey}
                   document={document}
-                  pageNumber={index + 1}
-                  pageWidth={pageWidth}
-                  registerDisposer={registerPageDisposer}
-                  annotationProps={annotationProps}
-                  pdfEvidenceSource={pdfEvidenceSource}
-                  pdfRevealSource={pdfRevealSource}
-                  selectedEvidenceId={effectiveSelectedEvidenceId}
-                  onSelectEvidence={(id) => {
-                    setSelectedEvidenceId(id)
-                    focusPdfView()
+                  items={outlineItems}
+                  pageCount={pageCount}
+                  pageLabels={resolvedPageLabels}
+                  currentPage={currentPage}
+                  width={outlineWidth}
+                  onWidthChange={setOutlineWidth}
+                  onClose={() => setOutlineOpen(false)}
+                  onNavigate={navigateToPage}
+                />
+              ) : null}
+              <div
+                className={cn(
+                  'relative min-w-0 flex-1',
+                  presentation !== 'search' && 'overflow-hidden'
+                )}
+              >
+                {/* The inner element is the real scroller (the outer div holds fixed controls), so it must
+            be keyboard-focusable or PageUp/Down, Space, and arrows never reach the PDF. */}
+                <div
+                  ref={scrollRef}
+                  data-pdf-cursor-mode={cursorMode}
+                  className={cn(
+                    'outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50',
+                    presentation === 'search' ? 'w-full' : 'size-full overflow-auto p-4',
+                    cursorMode === 'hand' &&
+                      `touch-none select-none [&_*]:cursor-inherit [&_*]:select-none ${panning ? 'cursor-grabbing' : 'cursor-grab'}`
+                  )}
+                  tabIndex={0}
+                  role="region"
+                  aria-label={t('{{name}} scrollable preview', { name })}
+                  onPointerDown={(event) => {
+                    if (cursorMode !== 'hand' || event.button !== 0 || !event.isPrimary) return
+                    event.preventDefault()
+                    event.currentTarget.setPointerCapture(event.pointerId)
+                    panGestureRef.current = {
+                      pointerId: event.pointerId,
+                      clientX: event.clientX,
+                      clientY: event.clientY,
+                      scrollLeft: event.currentTarget.scrollLeft,
+                      scrollTop: event.currentTarget.scrollTop
+                    }
+                    setPanning(true)
                   }}
-                  onTextLayerRendered={handleTextLayerRendered}
-                  regionSelectionActive={cursorMode === 'area'}
-                  onRegionSelected={() => {
-                    changeCursorMode('select')
-                    focusPdfView()
+                  onPointerMove={(event) => {
+                    const gesture = panGestureRef.current
+                    if (cursorMode !== 'hand' || gesture?.pointerId !== event.pointerId) return
+                    event.currentTarget.scrollLeft =
+                      gesture.scrollLeft - (event.clientX - gesture.clientX)
+                    event.currentTarget.scrollTop =
+                      gesture.scrollTop - (event.clientY - gesture.clientY)
+                  }}
+                  onPointerUp={(event) => {
+                    if (panGestureRef.current?.pointerId !== event.pointerId) return
+                    panGestureRef.current = undefined
+                    setPanning(false)
+                    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                      event.currentTarget.releasePointerCapture(event.pointerId)
+                    }
+                  }}
+                  onPointerCancel={() => {
+                    panGestureRef.current = undefined
+                    setPanning(false)
+                  }}
+                  onLostPointerCapture={() => {
+                    panGestureRef.current = undefined
+                    setPanning(false)
+                  }}
+                >
+                  {/* Zero-height probe: reports the content-box width even when pages overflow horizontally. */}
+                  <div ref={measureRef} className="h-0 w-full" aria-hidden="true" />
+                  {!document ? (
+                    <div className="absolute inset-0">
+                      <PreviewLoadingContent />
+                    </div>
+                  ) : null}
+                  {document ? (
+                    // Center pages while they fit the real viewport, but left-align once a zoomed page
+                    // overflows it: a centered overflow puts the left margin before scrollLeft=0, making it
+                    // unreachable. Compared against the uncapped viewport width, not the reading-width cap,
+                    // so a page still fitting a wide/full-screen pane stays centered.
+                    <div
+                      className={cn(
+                        'flex min-w-full flex-col',
+                        presentation === 'search' ? 'gap-[17px]' : 'gap-3',
+                        viewportWidth > 0 && pageWidth > viewportWidth
+                          ? 'items-start'
+                          : 'items-center'
+                      )}
+                    >
+                      {Array.from({ length: pageCount }, (_, index) => (
+                        // Each page mounts its canvas only inside the viewport overscan window.
+                        <PdfPageCanvas
+                          key={index + 1}
+                          document={document}
+                          pageNumber={index + 1}
+                          pageWidth={pageWidth}
+                          registerDisposer={registerPageDisposer}
+                          annotationProps={annotationProps}
+                          pdfEvidenceSource={pdfEvidenceSource}
+                          pdfRevealSource={pdfRevealSource}
+                          selectedEvidenceId={effectiveSelectedEvidenceId}
+                          onSelectEvidence={(id) => {
+                            setSelectedEvidenceId(id)
+                            focusPdfView()
+                          }}
+                          onTextLayerRendered={handleTextLayerRendered}
+                          regionSelectionActive={cursorMode === 'area'}
+                          onRegionSelected={() => {
+                            changeCursorMode('select')
+                            focusPdfView()
+                          }}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                {document && presentation !== 'search' ? (
+                  <>
+                    <PdfInteractionControls
+                      mode={cursorMode}
+                      canSelectArea={canSelectArea}
+                      navigationAvailable={pageCount > 1 || Boolean(attachmentVersionId)}
+                      navigationOpen={outlineOpen}
+                      searchOpen={searchOpen}
+                      onNavigationToggle={() => setOutlineOpen((open) => !open)}
+                      onSearchToggle={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+                      onModeChange={changeCursorMode}
+                    />
+                    {searchOpen ? (
+                      <PdfSearchControls
+                        query={searchQuery}
+                        current={searchResultCount > 0 ? selectedSearchIndex + 1 : 0}
+                        total={searchResultCount}
+                        onQueryChange={(query) => {
+                          setSearchQuery(query)
+                          setSearchResults([])
+                          setSearchResultCount(0)
+                          setSelectedSearchIndex(0)
+                        }}
+                        onFindAgain={findAgain}
+                        onClose={closeSearch}
+                      />
+                    ) : null}
+                    <PdfZoomControls
+                      zoom={zoom}
+                      currentPage={currentPage}
+                      pageCount={pageCount}
+                      onNavigate={navigateToPage}
+                      onZoomIn={() => zoomBy(ZOOM_BUTTON_STEP)}
+                      onZoomOut={() => zoomBy(-ZOOM_BUTTON_STEP)}
+                      onReset={() => updateZoom(() => 1)}
+                    />
+                  </>
+                ) : null}
+              </div>
+            </div>
+          </Tabs.Content>
+          {attachmentVersionId && figuresVisited && document ? (
+            <Tabs.Content value="figures" forceMount asChild>
+              <div
+                className={cn(
+                  'absolute inset-0',
+                  readingMode !== 'figures' && 'invisible pointer-events-none'
+                )}
+                inert={readingMode !== 'figures'}
+                aria-hidden={readingMode !== 'figures'}
+                data-pdf-figures-view
+              >
+                <PdfFiguresView
+                  key={requestKey}
+                  attachmentVersionId={attachmentVersionId}
+                  pageCount={pageCount}
+                  onNavigate={(page) => {
+                    setReadingMode('original')
+                    requestAnimationFrame(() => navigateToPage(page))
                   }}
                 />
-              ))}
-            </div>
+              </div>
+            </Tabs.Content>
           ) : null}
         </div>
-        {document && presentation !== 'search' ? (
-          <>
-            <PdfInteractionControls
-              mode={cursorMode}
-              canSelectArea={canSelectArea}
-              navigationAvailable={pageCount > 1}
-              navigationOpen={outlineOpen}
-              searchOpen={searchOpen}
-              onNavigationToggle={() => setOutlineOpen((open) => !open)}
-              onSearchToggle={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
-              onModeChange={changeCursorMode}
-            />
-            {searchOpen ? (
-              <PdfSearchControls
-                query={searchQuery}
-                current={searchResultCount > 0 ? selectedSearchIndex + 1 : 0}
-                total={searchResultCount}
-                onQueryChange={(query) => {
-                  setSearchQuery(query)
-                  setSearchResults([])
-                  setSearchResultCount(0)
-                  setSelectedSearchIndex(0)
-                }}
-                onFindAgain={findAgain}
-                onClose={closeSearch}
-              />
-            ) : null}
-            <PdfZoomControls
-              zoom={zoom}
-              currentPage={currentPage}
-              pageCount={pageCount}
-              onNavigate={navigateToPage}
-              onZoomIn={() => zoomBy(ZOOM_BUTTON_STEP)}
-              onZoomOut={() => zoomBy(-ZOOM_BUTTON_STEP)}
-              onReset={() => updateZoom(() => 1)}
-            />
-          </>
-        ) : null}
       </div>
-    </div>
+    </Tabs.Root>
   )
 }
 

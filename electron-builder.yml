@@ -61,6 +61,10 @@ asarUnpack:
   - node_modules/@aipoch/process-tree-native/build/Release/*.node
   - node_modules/@aipoch/safe-file-publisher-native/build/Release/*.node
   # sharp loads its platform N-API binding and libvips shared libraries by physical path.
+  - node_modules/pdfjs-dist/**
+  - node_modules/@napi-rs/**
+  - node_modules/detect-libc/**
+  - node_modules/semver/**
   - node_modules/sharp/**
   - node_modules/@img/**
   # The ACP agent runs as a spawned child process, so its entry must live outside the asar.

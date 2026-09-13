@@ -96,12 +96,32 @@ const loadElectronApi = async (): Promise<ApiRoot> => {
   return exposure[1] as ApiRoot
 }
 
-const loadWebApi = async (): Promise<ApiRoot> => {
-  const bootstrapImport = import('./bootstrap')
-  await vi.waitFor(() => expect((window as unknown as { api?: ApiRoot }).api).toBeDefined())
+const loadWebApi = async (startBootstrap = () => import('./bootstrap')): Promise<ApiRoot> => {
+  // Observe the real registration rather than putting a one-second deadline on module I/O.
+  const registered = new Promise<ApiRoot>((resolve) => {
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      set(value: ApiRoot) {
+        Object.defineProperty(window, 'api', {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value
+        })
+        resolve(value)
+      }
+    })
+  })
+  const bootstrapImport = startBootstrap()
+  const api = await Promise.race([
+    registered,
+    bootstrapImport.then(() => {
+      throw new Error('Web bootstrap completed without registering its API.')
+    })
+  ])
   window.dispatchEvent(new Event(WEB_EVENT_CONSUMERS_READY_EVENT))
   await bootstrapImport
-  return (window as unknown as { api: ApiRoot }).api
+  return api
 }
 
 const invokeElectron = async (
@@ -193,6 +213,29 @@ afterEach(() => {
 })
 
 describe('renderer argument-shape characterization', () => {
+  it('waits for actual API registration when module loading outlasts the polling deadline', async () => {
+    vi.resetModules()
+    delete (window as unknown as { api?: unknown }).api
+    let releaseImport!: () => void
+    const importGate = new Promise<void>((resolve) => {
+      releaseImport = resolve
+    })
+    let failure: unknown
+    const loading = loadWebApi(async () => {
+      await importGate
+      return import('./bootstrap')
+    }).catch((error: unknown) => {
+      failure = error
+      return undefined
+    })
+    // Module loading uses wall-clock I/O even though bootstrap owns fake request timers.
+    await (await import('node:timers/promises')).setTimeout(1500)
+    releaseImport()
+    const api = await loading
+    expect(failure).toBeUndefined()
+    expect(api).toBeDefined()
+    expect(collectFunctionPaths(api)).toContain('localModels.getSnapshot')
+  })
   it('exposes the read-only DOI lookup with identical arguments on Electron and Web', async () => {
     const args = ['10.1007/s11914-026-00956-3']
     const expected = { channel: 'literature:lookup-metadata', args }
