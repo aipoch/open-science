@@ -1456,6 +1456,7 @@ const analyzeRSource = (
     'arrow',
     'Biobase',
     'Biostrings',
+    'rtracklayer',
     'Cairo',
     'data.table',
     'dplyr',
@@ -1486,6 +1487,7 @@ const analyzeRSource = (
     'SingleCellExperiment',
     'SummarizedExperiment',
     'svglite',
+    'targets',
     'terra',
     'tibble',
     'tidyr',
@@ -2464,7 +2466,7 @@ const analyzeRSource = (
     (pkg === 'base' && name === 'requireNamespace') ||
     (pkg === 'flowCore' && ['read.FCS', 'read.flowSet', 'write.FCS'].includes(name)) ||
     (pkg === 'tximport' && name === 'tximport') ||
-    (pkg === 'Seurat' && name === 'Read10X_h5') ||
+    (pkg === 'Seurat' && ['Read10X', 'Read10X_h5', 'Load10X_Spatial'].includes(name)) ||
     (pkg === 'GEOquery' && name === 'getGEO') ||
     (pkg === 'base' &&
       (pureSafe.has(name) ||
@@ -3986,6 +3988,15 @@ const analyzeRSource = (
       }
       return
     }
+    const targetOptions = rTargetDefinitionOptions(expr)
+    if (targetOptions) {
+      const dependency = isSymbol(expr.callee) ? expr.callee.name : R_TARGET_FUNCTION.name
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      unknown.push('opaque-call')
+      targetOptions.forEach((argument) => walk(argument))
+      return
+    }
     const quoted = quotedDataCall(expr)
     if (quoted) {
       used.push(quoted.dependency)
@@ -4413,6 +4424,15 @@ const analyzeRSource = (
       if (contractAvailable('%>%', undefined, 'magrittr')) safeCallNames.push('%>%')
       else unknown.push('opaque-call')
       recordPackageRead('%>%')
+    }
+    const targetOptions = rTargetDefinitionOptions(expr)
+    if (targetOptions) {
+      const dependency = isSymbol(expr.callee) ? expr.callee.name : R_TARGET_FUNCTION.name
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      unknown.push('opaque-call')
+      targetOptions.forEach((argument) => walk(argument))
+      return
     }
     const quoted = quotedDataCall(expr)
     if (quoted) {
@@ -5372,6 +5392,15 @@ const analyzeRSource = (
           typeSummaries.push(R_GLUE_FUNCTION)
           typeBindings.push({ target: 'glue', typeName: R_GLUE_FUNCTION.name, argumentNames: [] })
         }
+        if (expr.resolvedFunction === 'targets::attach' && controlDepth === 0) {
+          defined.push('tar_target')
+          typeSummaries.push(R_TARGET_FUNCTION)
+          typeBindings.push({
+            target: 'tar_target',
+            typeName: R_TARGET_FUNCTION.name,
+            argumentNames: []
+          })
+        }
         used.push(op)
         if (!defined.includes(op)) priorUsed.push(op)
         safeCallNames.push(op)
@@ -6303,15 +6332,51 @@ const R_GLUE_FUNCTION: NotebookDependencyTypeSummary = {
   methods: [{ name: '__call__', effect: 'unknown', unknownScope: 'namespace' }]
 }
 
-// Track shadowed static helpers and attached glue in statement order, reusing the
+const R_TARGET_FUNCTION: NotebookDependencyTypeSummary = {
+  ...R_GLUE_FUNCTION,
+  name: 'targets::tar_target'
+}
+
+// Task commands are quoted; only configuration options are evaluated at definition time.
+// Tidy injection and scheduler execution still require external-state evidence.
+const rTargetDefinitionOptions = (expr: RExpr): RExpr[] | undefined => {
+  if (!isCall(expr)) return undefined
+  const qualified = rQualifiedCall(expr)
+  if (
+    expr.resolvedFunction !== R_TARGET_FUNCTION.name &&
+    !(qualified?.package === 'targets' && qualified.name === 'tar_target')
+  )
+    return undefined
+  const quotedParameters = ['name', 'command', 'pattern']
+  const namedQuoted = new Set(
+    quotedParameters.map((parameter) => rOptionArgumentIndex(expr.names, parameter))
+  )
+  let remainingQuoted = quotedParameters.filter(
+    (parameter) => rOptionArgumentIndex(expr.names, parameter) < 0
+  ).length
+  return expr.args.filter((_argument, index) => {
+    if (namedQuoted.has(index)) return false
+    if (!expr.names[index] && remainingQuoted > 0) {
+      remainingQuoted -= 1
+      return false
+    }
+    return true
+  })
+}
+
+// Track shadowed static helpers and attached functions in statement order, reusing the
 // existing R bindings. No new persistent import/package registry is needed.
 const resolveRStaticCallIdentities = (
   expressions: RExpr[],
   functions: NotebookSourceFileAccessContext['rFunctions'] = [],
   kernelNames: readonly string[] = []
 ): void => {
-  const known = new Set(
-    functions.filter(({ summary }) => summary.name === R_GLUE_FUNCTION.name).map(({ name }) => name)
+  const known = new Map(
+    functions
+      .filter(({ summary }) =>
+        [R_GLUE_FUNCTION.name, R_TARGET_FUNCTION.name].includes(summary.name)
+      )
+      .map(({ name, summary }) => [name, summary.name])
   )
   const assigned = new Set(
     [...kernelNames, ...functions.map(({ name }) => name)].filter((name) => !known.has(name))
@@ -6328,8 +6393,14 @@ const resolveRStaticCallIdentities = (
     if (exported && isSymbol(exported.callee))
       expr.staticDeviceShadowed = dynamicBindings || assigned.has(exported.callee.name)
     if (['function', 'quote', 'expression', '~'].includes(name ?? '')) return
+    if (!qualified && name && known.has(name)) expr.resolvedFunction = known.get(name)
+    const targetOptions = rTargetDefinitionOptions(expr)
+    if (targetOptions) {
+      for (const argument of targetOptions) visit(argument, false)
+      return
+    }
     if (['if', 'for', 'while', 'repeat', 'switch'].includes(name ?? '')) {
-      const before = new Set(known)
+      const before = new Map(known)
       if (name === 'for' && isSymbol(expr.args[0])) {
         known.delete(expr.args[0].name)
         assigned.add(expr.args[0].name)
@@ -6337,7 +6408,8 @@ const resolveRStaticCallIdentities = (
       for (const argument of expr.args) visit(argument, false)
       // Preserve existing identities only if every visited branch left them intact;
       // a conditional alias/import cannot establish a new identity after the branch.
-      for (const binding of known) if (!before.has(binding)) known.delete(binding)
+      for (const [binding, identity] of known)
+        if (before.get(binding) !== identity) known.delete(binding)
       return
     }
     if (['<-', '=', '->', '<<-', '->>'].includes(name ?? '')) {
@@ -6346,10 +6418,10 @@ const resolveRStaticCallIdentities = (
       const value = expr.args[rightward ? 0 : 1]
       if (value) visit(value, false)
       if (isSymbol(target)) {
-        const alias = isSymbol(value) && known.has(value.name)
+        const alias = isSymbol(value) && known.get(value.name)
         known.delete(target.name)
         assigned.add(target.name)
-        if (alias) known.add(target.name)
+        if (alias) known.set(target.name, alias)
       }
       return
     }
@@ -6360,17 +6432,18 @@ const resolveRStaticCallIdentities = (
         : isCharacter(argument)
           ? argument.value
           : undefined
+      const callable = pkg === 'glue' ? 'glue' : pkg === 'targets' ? 'tar_target' : undefined
       if (
         attachAllowed &&
         (!qualified || qualified.package === 'base') &&
         !assigned.has(name) &&
-        pkg === 'glue' &&
-        !assigned.has('glue') &&
+        callable &&
+        !assigned.has(callable) &&
         expr.args.length === 1 &&
         !expr.names.some(Boolean)
       ) {
-        known.add('glue')
-        expr.resolvedFunction = 'glue::attach'
+        known.set(callable, `${pkg}::${callable}`)
+        expr.resolvedFunction = `${pkg}::attach`
       } else known.clear()
       return
     }
@@ -6383,7 +6456,6 @@ const resolveRStaticCallIdentities = (
       dynamicBindings = true
       return
     }
-    if (!qualified && name && known.has(name)) expr.resolvedFunction = R_GLUE_FUNCTION.name
     const transparent = name === '{' || name === 'suppressPackageStartupMessages'
     for (const argument of expr.args) visit(argument, attachAllowed && transparent)
   }
@@ -6986,7 +7058,8 @@ const R_FILE_MAP_READERS = new Map([
   ),
   ...['read_csv', 'read_csv2', 'read_tsv', 'read_delim'].map((name) => [name, 'readr'] as const),
   ['readLines', 'base'],
-  ['read_json', 'jsonlite']
+  ['read_json', 'jsonlite'],
+  ['import', 'rtracklayer']
 ])
 
 const rLiteralNamedKeys = (expr: RExpr | null | undefined): string[] | undefined => {
@@ -7148,7 +7221,10 @@ const rLocalFileWrappers = (
         'Spectra',
         'read.FCS',
         'read.flowSet',
-        'write.FCS'
+        'write.FCS',
+        'createArrowFiles',
+        'ArchRProject',
+        'saveArchRProject'
       ].includes(name ?? '') ||
       parameterIndex < 0 ||
       (effect.kind === 'write' &&
@@ -7281,6 +7357,9 @@ const analyzeRFileAccessTree = (
       const called = rCalledName(node) ?? ''
       const effect = R_FILE_CALL_EFFECTS.get(called)
       if (effect) effects.add(effect.kind)
+      // A single-path wrapper summary cannot preserve mixed I/O or directory scope.
+      if (called === 'createArrowFiles') effects.add('write')
+      if (called === 'ArchRProject' || called === 'saveArchRProject') effects.add('read')
       const helper = localDefinitions.get(called)
       if (helper && !visited.has(called)) {
         visited.add(called)
@@ -7457,6 +7536,14 @@ const analyzeRFileAccessTree = (
       unresolvedWrites = true
       unsupportedExternalState = true
       expr.args.forEach((argument) => visit(argument))
+      return
+    }
+    const targetOptions = rTargetDefinitionOptions(expr)
+    if (targetOptions) {
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      targetOptions.forEach((argument) => visit(argument))
       return
     }
     const quoted = rQuotedDataCall(expr)
@@ -7710,6 +7797,35 @@ const analyzeRFileAccessTree = (
       qualified.package !== 'grDevices'
     )
       call = undefined
+    if (
+      call &&
+      name &&
+      qualified &&
+      ((['Read10X', 'Read10X_h5', 'Load10X_Spatial'].includes(name) &&
+        qualified.package !== 'Seurat') ||
+        (['ArchRProject', 'saveArchRProject', 'createArrowFiles'].includes(name) &&
+          qualified.package !== 'ArchR') ||
+        (name === 'readVcf' && qualified.package !== 'VariantAnnotation') ||
+        (name === 'read.vcfR' && qualified.package !== 'vcfR'))
+    ) {
+      call = undefined
+    }
+    const archRCall = Boolean(
+      call &&
+      name &&
+      ['ArchRProject', 'saveArchRProject', 'createArrowFiles'].includes(name) &&
+      call === R_FILE_CALL_EFFECTS.get(name) &&
+      (qualified?.package === 'ArchR' || (!qualified && !shadowedQuotationNames.has(name)))
+    )
+    if (archRCall && (name === 'ArchRProject' || name === 'saveArchRProject')) {
+      fileArgumentOverride = {
+        value: connectionArgument(
+          expr,
+          [name === 'ArchRProject' ? 'ArrowFiles' : 'ArchRProj', 'outputDirectory'],
+          'outputDirectory'
+        )
+      }
+    }
     if (call && ['read.FCS', 'read.flowSet', 'write.FCS'].includes(name ?? '')) {
       if (qualified && qualified.package !== 'flowCore') call = undefined
       else if (qualified || !localWrappers.names.has(name!)) {
@@ -7900,6 +8016,71 @@ const analyzeRFileAccessTree = (
       const commandIndex = libraryFread
         ? expr.names.findIndex((candidate) => candidate === 'cmd')
         : -1
+      if (archRCall && name === 'createArrowFiles') {
+        // Arrow generation and QC/log companions remain incomplete even when
+        // fragment inputs resolve to a bounded collection below.
+        unresolvedWrites = true
+        const parameters = [
+          'inputFiles',
+          'sampleNames',
+          'outputNames',
+          'validBarcodes',
+          'geneAnnotation',
+          'genomeAnnotation',
+          'minTSS',
+          'minFrags',
+          'maxFrags',
+          'minFragSize',
+          'maxFragSize',
+          'QCDir',
+          'nucLength',
+          'promoterRegion',
+          'TSSParams',
+          'excludeChr',
+          'nChunk',
+          'bcTag',
+          'gsubExpression',
+          'bamFlag',
+          'offsetPlus',
+          'offsetMinus',
+          'addTileMat',
+          'TileMatParams',
+          'addGeneScoreMat',
+          'GeneScoreMatParams',
+          'force',
+          'threads',
+          'parallelParam',
+          'subThreading',
+          'verbose',
+          'cleanTmp',
+          'logFile',
+          'filterFrags',
+          'filterTSS'
+        ]
+        const validNames = expr.names.every(
+          (parameter) =>
+            !parameter ||
+            parameters.includes(parameter) ||
+            parameters.filter((formal) => formal.startsWith(parameter)).length === 1
+        )
+        const outputNames = validNames
+          ? connectionArgument(expr, parameters, 'outputNames')
+          : undefined
+        const prefix = rStaticString(outputNames, bindings, collections)
+        const prefixes =
+          rStaticStringCollection(outputNames, bindings, collections)?.values ??
+          (prefix ? [prefix] : undefined)
+        if (prefixes && prefixes.length <= MAX_STATIC_FILE_LOOP_ITERATIONS) {
+          for (const prefix of prefixes) writes.add(`${prefix}.arrow`)
+        }
+        const qcPath = validNames
+          ? rStaticString(connectionArgument(expr, parameters, 'QCDir'), bindings, collections)
+          : undefined
+        if (qcPath) {
+          writes.add(qcPath)
+          writeScopes.set(`directory\0${qcPath}`, { kind: 'directory', path: qcPath })
+        }
+      }
       // Match all required formals together: named arguments consume their slots
       // before unnamed arguments, regardless of the order used at the call site.
       const pathEffects = [call, ...(call.additionalPaths ?? [])]
@@ -7978,6 +8159,28 @@ const analyzeRFileAccessTree = (
       const path = inMemoryRead
         ? undefined
         : (fileConnectionPath(argument) ?? rStaticString(argument, bindings, collections))
+      // These readers expand a directory into companion files at runtime. Keep
+      // the proven root path but do not claim complete input coverage.
+      if (call.kind === 'read' && (name === 'Read10X' || name === 'Load10X_Spatial') && path) {
+        unresolvedReads = true
+      }
+      // Project creation and saving can read ArrowFiles referenced by the object.
+      // Their input file coverage remains incomplete without runtime evidence.
+      if (archRCall && (name === 'ArchRProject' || name === 'saveArchRProject')) {
+        unresolvedReads = true
+      }
+      if (archRCall && name === 'ArchRProject') {
+        const arrowArgument = connectionArgument(
+          expr,
+          ['ArrowFiles', 'outputDirectory'],
+          'ArrowFiles'
+        )
+        const arrowPaths = rStaticStringCollection(arrowArgument, bindings, collections)?.values
+        if (arrowPaths) {
+          for (const arrowPath of arrowPaths)
+            if (!definitelyWritten.has(arrowPath)) reads.add(arrowPath)
+        }
+      }
       // A device path may be a printf page template or a shell pipe, not an
       // exact output filename. Do not publish either as confirmed file evidence.
       const graphicsFileDevice = Boolean(
@@ -8034,7 +8237,10 @@ const analyzeRFileAccessTree = (
           if (call.kind === 'read') unresolvedReads = true
           else unresolvedWrites = true
         } else if (call.kind === 'write') {
-          const target = rScientificWriteTarget(qualified, path)
+          const target =
+            archRCall && (name === 'ArchRProject' || name === 'saveArchRProject')
+              ? 'directory'
+              : rScientificWriteTarget(qualified, path)
           if (target === 'unsupported') {
             unresolvedWrites = true
           } else {

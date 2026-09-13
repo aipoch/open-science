@@ -230,7 +230,99 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   torch: {
     kind: 'module',
     methods: {
-      load: { effect: 'read', unsafeNamespace: true }
+      load: { effect: 'read', unsafeNamespace: true },
+      save: { effect: 'read', file: { kind: 'write', position: 1, keywords: ['f'] } }
+    }
+  },
+  h5py: {
+    kind: 'module',
+    methods: {
+      File: {
+        effect: 'read',
+        returnType: 'h5py.File',
+        file: { kind: 'read', position: 0, keywords: ['name'] }
+      }
+    }
+  },
+  'dask.dataframe': {
+    kind: 'module',
+    methods: {
+      read_csv: {
+        effect: 'read',
+        returnType: 'dask.DataFrame',
+        file: { kind: 'read', position: 0, keywords: ['urlpath'] }
+      },
+      read_parquet: {
+        effect: 'read',
+        returnType: 'dask.DataFrame',
+        file: { kind: 'read', position: 0, keywords: ['path'] }
+      }
+    }
+  },
+  muon: {
+    kind: 'module',
+    methods: {
+      read_10x_h5: {
+        effect: 'read',
+        returnType: 'muon.MuData',
+        file: { kind: 'read', position: 0, keywords: ['filename'] }
+      },
+      read_h5mu: {
+        effect: 'read',
+        returnType: 'muon.MuData',
+        file: { kind: 'read', position: 0, keywords: ['filename'] }
+      },
+      read_10x_mtx: {
+        effect: 'read',
+        returnType: 'muon.MuData',
+        file: { kind: 'read', position: 0, keywords: ['path'] }
+      }
+    }
+  },
+  mudata: {
+    kind: 'module',
+    methods: {
+      MuData: { effect: 'read', returnType: 'mudata.MuData' }
+    }
+  },
+  'mudata.MuData': {
+    kind: 'type',
+    methods: {
+      write: { effect: 'read', file: { kind: 'write', position: 0, keywords: ['filename'] } },
+      write_h5mu: { effect: 'read', file: { kind: 'write', position: 0, keywords: ['filename'] } }
+    }
+  },
+  'muon.MuData': {
+    kind: 'type',
+    methods: {
+      write: { effect: 'read', file: { kind: 'write', position: 0, keywords: ['filename'] } },
+      write_h5mu: { effect: 'read', file: { kind: 'write', position: 0, keywords: ['filename'] } }
+    }
+  },
+  wfdb: {
+    kind: 'module',
+    methods: {
+      rdrecord: {
+        effect: 'read',
+        externalState: true,
+        file: { kind: 'read', position: 0, keywords: ['record_name'] }
+      },
+      rdann: {
+        effect: 'read',
+        externalState: true,
+        file: { kind: 'read', position: 0, keywords: ['record_name'] }
+      },
+      wrsamp: {
+        effect: 'read',
+        externalState: true,
+        file: { kind: 'write', position: 0, keywords: ['record_name'] }
+      }
+    }
+  },
+  'dask.DataFrame': {
+    kind: 'type',
+    methods: {
+      to_parquet: { effect: 'read', file: { kind: 'write', position: 0, keywords: ['path'] } }
     }
   },
   collections: {
@@ -735,6 +827,55 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         firstArgumentKeyword: 'data',
         returnsPossibleAliasOf: 'firstArgument'
       }
+    }
+  },
+  pyreadstat: {
+    kind: 'module',
+    methods: {
+      // Readers return (data, metadata); output_format can change the data type.
+      ...Object.fromEntries(
+        ['read_dta', 'read_sas7bdat', 'read_sav', 'read_xport'].map((name) => [
+          name,
+          {
+            effect: 'read' as const,
+            file: { kind: 'read' as const, position: 0, keywords: ['filename_path'] }
+          }
+        ])
+      ),
+      write_sav: { effect: 'read', file: { kind: 'write', position: 1, keywords: ['dst_path'] } },
+      write_dta: { effect: 'read', file: { kind: 'write', position: 1, keywords: ['dst_path'] } },
+      write_xport: { effect: 'read', file: { kind: 'write', position: 1, keywords: ['dst_path'] } }
+    }
+  },
+  'pyarrow.parquet': {
+    kind: 'module',
+    methods: {
+      read_table: {
+        effect: 'read',
+        returnType: 'pyarrow.Table',
+        file: { kind: 'read', position: 0, keywords: ['source'] }
+      },
+      write_table: {
+        effect: 'read',
+        file: { kind: 'write', position: 1, keywords: ['where'] }
+      }
+    }
+  },
+  pyfaidx: {
+    kind: 'module',
+    methods: {
+      Fasta: {
+        effect: 'read',
+        returnType: 'pyfaidx.Fasta',
+        file: { kind: 'read', position: 0, keywords: ['filename'] }
+      }
+    }
+  },
+  pyranges: {
+    kind: 'module',
+    methods: {
+      read_bed: { effect: 'read', file: { kind: 'read', position: 0, keywords: ['f'] } },
+      read_gtf: { effect: 'read', file: { kind: 'read', position: 0, keywords: ['f'] } }
     }
   },
   'scipy.stats': {
@@ -1438,7 +1579,17 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
     methods: {
       // File mode and explicit index/reference paths are handled together by
       // file analysis. Implicit HTS indexes, reference caches and options remain external.
-      AlignmentFile: { effect: 'read', externalState: true }
+      AlignmentFile: { effect: 'read', externalState: true },
+      VariantFile: {
+        effect: 'read',
+        externalState: true,
+        file: { kind: 'read', position: 0, keywords: ['filename'] }
+      },
+      TabixFile: {
+        effect: 'read',
+        externalState: true,
+        file: { kind: 'read', position: 0, keywords: ['filename'] }
+      }
     }
   },
   'pyteomics.mgf': {
@@ -1541,6 +1692,10 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
           inputForm: 'paths',
           singleFileSuffixes: medicalSingleFileSuffixes
         }
+      },
+      WriteTransform: {
+        effect: 'read',
+        file: { kind: 'write', position: 1, keywords: ['transformFileName'] }
       },
       WriteImage: {
         effect: 'read',
