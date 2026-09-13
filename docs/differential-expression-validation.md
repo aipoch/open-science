@@ -33,7 +33,9 @@ Welch test still requires checking the study design and model assumptions.
   cannot produce an A-only or B-only label. Top labels rank by adjusted p-values.
 - The `plot` cell labels the figure as an effect comparison, names the BH threshold, and
   distinguishes untestable genes with a cross when coordinates are finite. The
-  complete result table is exported before loading plotting packages or saving
+  previous PNG is removed before updating results, preventing a failed rerun in
+  a writable output directory from leaving an old image beside a new table.
+  The complete result table is exported before loading plotting packages or saving
   the image, retaining genes that cannot be plotted. Only finite paired effects
   enter the plot; axes have a positive minimum range and an empty panel explicitly
   states when no finite paired effects are available. Neither a threshold
@@ -105,7 +107,8 @@ R prefix or plotting dependency fails instead of skipping. It renders five PNGs
 (normal, no discoveries, all missing effects, nonfinite effects, and all zero
 effects), checks the plotted rows and labels, and reads back every exported column
 using the declared table schema. Injected dependency-loading and graphics-device
-failures must still leave the complete CSV. PNG headers and dimensions are checked
+failures during a rerun must still leave the complete new CSV and no previous PNG.
+PNG headers and dimensions are checked
 in addition to building the actual ggplot. This test certifies R rendering and
 export behavior, not the full application kernel/provenance replay.
 

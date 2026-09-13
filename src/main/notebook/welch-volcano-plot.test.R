@@ -81,12 +81,16 @@ for (case in c("ordinary", "no_hits", "all_missing", "nonfinite", "all_zero")) {
   setwd(root)
 }
 # Simulate both an unavailable plotting dependency and a graphics-device failure.
-# The actual plot cell must have saved the complete table before either failure.
+# Rerun in the same directory: new CSV evidence must not accompany an old PNG.
 for (failure in c("dependency", "device")) {
   dir.create(file.path(root, failure))
   setwd(file.path(root, failure))
   scope <- new.env(parent = globalenv())
   scope$diff_df <- computed
+  sys.source(args[2], envir = scope)
+  sys.source(args[3], envir = scope)
+  stopifnot(file.exists("diagonal_volcano.png"))
+  scope$diff_df$CohortA_log2FoldChange[1] <- scope$diff_df$CohortA_log2FoldChange[1] + 2
   sys.source(args[2], envir = scope)
   if (failure == "dependency") scope$library <- function(...) stop("injected dependency failure")
   if (failure == "device") scope$ggsave <- function(...) stop("injected device failure")
