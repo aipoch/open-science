@@ -1,6 +1,14 @@
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { withDataRootWrite } from '../storage/migration-state'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
+import {
+  listPdfElementsInput,
+  readPdfElementInput,
+  type ListPdfElementsInput,
+  type ReadPdfElementInput,
+  type PdfElementOutput
+} from './pdf-structure/agent-reader'
 
 const LITERATURE_MCP_SERVER_NAME = 'open-science-literature'
 const LITERATURE_READ_DOCUMENT_TOOL_NAME = 'read_document'
@@ -14,6 +22,10 @@ type LiteratureReadDocumentRequest = Readonly<{
 
 type LiteratureMcpHandler = Readonly<{
   readDocument: (request: LiteratureReadDocumentRequest) => Promise<unknown>
+  elements?: {
+    list: (request: ListPdfElementsInput, signal: AbortSignal) => Promise<PdfElementOutput>
+    read: (request: ReadPdfElementInput, signal: AbortSignal) => Promise<PdfElementOutput>
+  }
 }>
 
 type UnknownRecord = Record<string, unknown>
@@ -78,7 +90,7 @@ const createLiteratureMcpServer = (handler: LiteratureMcpHandler): ModelContextP
     {
       title: 'Read linked literature',
       description:
-        'Read one to three multi-page PDFs explicitly linked to the current Open Science message. Omit query and provide documentId to read one document in bounded sequential batches, following nextCursor until null. Provide query to retrieve relevant passages across documentIds, or all linked documents when documentIds is omitted. Search requests must not include documentId or cursor; sequential requests must not include documentIds. Use this instead of Notebook, shell, filesystem, or Python for linked-PDF reading.',
+        'Read prose passages from one to three multi-page PDFs explicitly linked to the current Open Science message. Omit query and provide documentId to read one document in bounded sequential batches, following nextCursor until null. Provide query to retrieve relevant passages across documentIds, or all linked documents when documentIds is omitted. Search requests must not include documentId or cursor; sequential requests must not include documentIds. Use this instead of Notebook, shell, filesystem, or Python for linked-PDF reading. For figures, tables or algorithms, use list_pdf_elements and then read_pdf_element instead of inferring visual evidence from prose.',
       inputSchema: z
         .object({
           documentId: z.string().trim().min(1).max(512).optional(),
@@ -134,6 +146,65 @@ const createLiteratureMcpServer = (handler: LiteratureMcpHandler): ModelContextP
         }
       })
   )
+  if (handler.elements) {
+    const output = async (run: () => Promise<PdfElementOutput>): Promise<CallToolResult> =>
+      withDataRootWrite(async () => {
+        try {
+          const result = await run()
+          // Exactly one business representation reaches the model. Base64 belongs only in the
+          // typed image block, never in JSON text or a duplicated structuredContent fallback.
+          return {
+            content: [
+              { type: 'text' as const, text: JSON.stringify(result.data) },
+              ...(result.image
+                ? [
+                    {
+                      type: 'image' as const,
+                      data: result.image.data,
+                      mimeType: result.image.mimeType
+                    }
+                  ]
+                : [])
+            ]
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          const known = /^([A-Z][A-Z_]+):\s*(.+)$/.exec(message)
+          if (!known) throw error
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify({ error: { code: known[1], message: known[2] } })
+              }
+            ]
+          }
+        }
+      })
+    server.registerTool(
+      'list_pdf_elements',
+      {
+        title: 'List linked PDF figures and tables',
+        description:
+          'Discover figures, tables and algorithms in existing Structure caches for PDFs explicitly linked to this message. Returns native captions, pages, available evidence and parse coverage, not detailed evidence. Use {} for one linked PDF, {documentId} to select one, or {cursor} to continue. Copy nextCursor until null before concluding discovery is complete; unavailable pages are not proof of absence. Does not parse pages. Use read_document for prose passages; use read_pdf_element with a returned elementRef for specific evidence.',
+        inputSchema: listPdfElementsInput,
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+      },
+      (request, extra) => output(() => handler.elements!.list(request, extra.signal))
+    )
+    server.registerTool(
+      'read_pdf_element',
+      {
+        title: 'Read linked PDF figure or table',
+        description:
+          'Read specific cached evidence selected by list_pdf_elements. Pass its exact elementRef; include cursor only to continue that same element. Returns source caption and physical PDF pages, raw table cells with spans/notes or an actual image for figures, algorithms and table fallback. Read all table batches until nextCursor is null; heed missing or omitted evidence warnings. Does not search prose or run Structure parsing. Image delivery is not proof of visual comprehension.',
+        inputSchema: readPdfElementInput,
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+      },
+      (request, extra) => output(() => handler.elements!.read(request, extra.signal))
+    )
+  }
   return server
 }
 

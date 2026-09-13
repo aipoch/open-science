@@ -5757,6 +5757,10 @@
     "Find deposited corrections and retractions. Missing updates do not establish reliability.": "등록된 정정 및 철회 정보를 찾습니다. 업데이트가 없다고 신뢰성이 보장되지는 않습니다.",
     "Find datasets and software by topic or related DOI.": "주제 또는 관련 DOI로 데이터셋과 소프트웨어를 찾습니다.",
     "Retrieve dataset metadata, rights and publication relationships by DOI.": "DOI로 데이터셋 메타데이터, 권리 및 출판물 관계를 가져옵니다.",
-    "Search RNA/DNA against Rfam models. Cancelling stops polling; the service retains results for one week.": "Rfam 모델을 대상으로 RNA/DNA를 검색합니다. 취소하면 결과 확인이 중단되며 서비스는 결과를 일주일 동안 보관합니다."
+    "Search RNA/DNA against Rfam models. Cancelling stops polling; the service retains results for one week.": "Rfam 모델을 대상으로 RNA/DNA를 검색합니다. 취소하면 결과 확인이 중단되며 서비스는 결과를 일주일 동안 보관합니다.",
+    "Elements: {{total}}": "요소: {{total}}",
+    "Parsed pages: {{parsed}} / {{checked}}": "분석된 페이지: {{parsed}} / {{checked}}",
+    "Image delivered": "이미지 제공됨",
+    "Some evidence is unavailable or incomplete.": "일부 근거를 사용할 수 없거나 근거가 불완전합니다."
   }
 }

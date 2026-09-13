@@ -1,3 +1,4 @@
+import { PdfElementAgentReader } from './literature/pdf-structure/agent-reader'
 import { transactLiterature } from './literature/transact'
 import { createPdfStructureOwner } from './literature/pdf-structure/owner'
 import { createPdfStructureEngine } from './literature/pdf-structure/engine'
@@ -1528,6 +1529,44 @@ const createApplicationModules = async (
     },
     dispose: () => stopLiteratureIndexRetention?.()
   }))
+  const localModelOwner = createLocalModelOwner()
+  await modules.add({ localModelOwner }, ({ localModelOwner: owner }) => ({
+    name: 'local-models',
+    capability: undefined,
+    dispose: async () => {
+      await owner.close()
+    }
+  }))
+  declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModelOwner))
+  const pdfStructureSources = new PdfStructureSourceAuthority({
+    literature: literatureAttachmentAuthority,
+    sources: sessionPdfSourceResolver,
+    sessions: sessionPersistenceCoordinator
+  })
+  const pdfStructureOwner = createPdfStructureOwner({
+    models: localModelOwner,
+    sources: pdfStructureSources,
+    engine: createPdfStructureEngine(
+      join(
+        app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'),
+        'resources',
+        'pdf-structure'
+      )
+    )
+  })
+  const pdfStructureReader = new PdfStructureReader(pdfStructureOwner)
+  await modules.add({ pdfStructureOwner }, ({ pdfStructureOwner: owner }) => ({
+    name: 'pdf-structure',
+    capability: undefined,
+    dispose: () => owner.close()
+  }))
+
+  const pdfElementReader = new PdfElementAgentReader({
+    owner: pdfStructureOwner,
+    sources: pdfStructureSources,
+    sessions: sessionPersistenceCoordinator
+  })
+
   const literatureDocumentReader = new LiteratureDocumentReader({
     storageRoot: resolveDataRoot(),
     sources: sessionPdfSourceResolver,
@@ -3262,6 +3301,7 @@ const createApplicationModules = async (
       specialistService,
       sessionPersistenceCoordinator,
       literatureReader: literatureDocumentReader,
+      pdfElementReader,
       literatureAttachments: literatureAttachmentAuthority,
       literatureCatalog,
       literaturePdfAcquisition,
@@ -4412,36 +4452,6 @@ const createApplicationModules = async (
     releaseDataRootInstallAdmission = undefined
     releaseAdmission?.()
   }
-  const localModelOwner = createLocalModelOwner()
-  await modules.add({ localModelOwner }, ({ localModelOwner: owner }) => ({
-    name: 'local-models',
-    capability: undefined,
-    dispose: async () => {
-      await owner.close()
-    }
-  }))
-  declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModelOwner))
-  const pdfStructureOwner = createPdfStructureOwner({
-    models: localModelOwner,
-    sources: new PdfStructureSourceAuthority({
-      literature: literatureAttachmentAuthority,
-      sources: sessionPdfSourceResolver,
-      sessions: sessionPersistenceCoordinator
-    }),
-    engine: createPdfStructureEngine(
-      join(
-        app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'),
-        'resources',
-        'pdf-structure'
-      )
-    )
-  })
-  const pdfStructureReader = new PdfStructureReader(pdfStructureOwner)
-  await modules.add({ pdfStructureOwner }, ({ pdfStructureOwner: owner }) => ({
-    name: 'pdf-structure',
-    capability: undefined,
-    dispose: () => owner.close()
-  }))
 
   const storageCommandOwner = createStorageCommandOwner({
     hasActivePackageOperation: () => sessionPackageDesktopLifecycle.isActive(),

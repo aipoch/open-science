@@ -5919,6 +5919,10 @@
     "Find deposited corrections and retractions. Missing updates do not establish reliability.": "Hinterlegte Korrekturen und Rücknahmen finden. Fehlende Aktualisierungen belegen keine Zuverlässigkeit.",
     "Find datasets and software by topic or related DOI.": "Datensätze und Software nach Thema oder zugehöriger DOI finden.",
     "Retrieve dataset metadata, rights and publication relationships by DOI.": "Metadaten, Rechte und Publikationsbeziehungen eines Datensatzes per DOI abrufen.",
-    "Search RNA/DNA against Rfam models. Cancelling stops polling; the service retains results for one week.": "RNA/DNA mit Rfam-Modellen durchsuchen. Abbrechen beendet die Abfrage; der Dienst speichert die Ergebnisse eine Woche lang."
+    "Search RNA/DNA against Rfam models. Cancelling stops polling; the service retains results for one week.": "RNA/DNA mit Rfam-Modellen durchsuchen. Abbrechen beendet die Abfrage; der Dienst speichert die Ergebnisse eine Woche lang.",
+    "Elements: {{total}}": "Elemente: {{total}}",
+    "Parsed pages: {{parsed}} / {{checked}}": "Analysierte Seiten: {{parsed}} / {{checked}}",
+    "Image delivered": "Bild bereitgestellt",
+    "Some evidence is unavailable or incomplete.": "Einige Belege sind nicht verfügbar oder unvollständig."
   }
 }

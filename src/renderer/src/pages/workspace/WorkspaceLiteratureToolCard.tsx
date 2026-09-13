@@ -27,8 +27,9 @@ const WorkspaceLiteratureToolCard = ({
         : summary.action === 'format'
           ? FileText
           : BookOpenText
-  const title =
-    summary.action === 'save'
+  const title = summary.pdfElements
+    ? t('PDF figures and tables')
+    : summary.action === 'save'
       ? t('Save')
       : summary.action === 'search'
         ? t('Search')
@@ -141,6 +142,33 @@ const WorkspaceLiteratureToolCard = ({
         </div>
       </div>
 
+      {summary.pdfElements ? (
+        <div className="space-y-2 text-[12px] leading-5 text-text-200">
+          {summary.pdfElements.elementCount !== undefined ? (
+            <p>{t('Elements: {{total}}', { total: summary.pdfElements.elementCount })}</p>
+          ) : null}
+          {summary.pdfElements.checkedPages !== undefined ? (
+            <p>
+              {t('Parsed pages: {{parsed}} / {{checked}}', {
+                parsed: summary.pdfElements.parsedPages ?? 0,
+                checked: summary.pdfElements.checkedPages
+              })}
+            </p>
+          ) : null}
+          {summary.pdfElements.caption ? (
+            <p className="line-clamp-4 break-words text-text-100">{summary.pdfElements.caption}</p>
+          ) : null}
+          {summary.pdfElements.imageIncluded ? <p>{t('Image delivered')}</p> : null}
+          {summary.pdfElements.incomplete ? (
+            <ErrorNotice
+              icon={TriangleAlert}
+              tone="amber"
+              description={t('Some evidence is unavailable or incomplete.')}
+            />
+          ) : null}
+        </div>
+      ) : null}
+
       {summary.action === 'save' ? (
         <>
           {summary.duplicateCount ? (
@@ -242,7 +270,9 @@ const WorkspaceLiteratureToolCard = ({
 
       {summary.hasMore && !(isLibrary && summary.action === 'search') ? (
         <div className="text-[11px] text-text-300">
-          {isLibrary ? t('More results are available') : t('More pages are available')}
+          {isLibrary || summary.pdfElements
+            ? t('More results are available')
+            : t('More pages are available')}
         </div>
       ) : null}
       {summary.error ? (

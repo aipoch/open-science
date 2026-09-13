@@ -5759,6 +5759,10 @@
     "Find deposited corrections and retractions. Missing updates do not establish reliability.": "查詢已登錄的更正和撤稿資訊。未查到更新不代表文獻可靠。",
     "Find datasets and software by topic or related DOI.": "依主題或關聯 DOI 尋找資料集和軟體。",
     "Retrieve dataset metadata, rights and publication relationships by DOI.": "依 DOI 取得資料集中繼資料、使用權利和出版物關聯資訊。",
-    "Search RNA/DNA against Rfam models. Cancelling stops polling; the service retains results for one week.": "使用 Rfam 模型搜尋 RNA/DNA。取消會停止輪詢；服務會保留結果一週。"
+    "Search RNA/DNA against Rfam models. Cancelling stops polling; the service retains results for one week.": "使用 Rfam 模型搜尋 RNA/DNA。取消會停止輪詢；服務會保留結果一週。",
+    "Elements: {{total}}": "元素：{{total}}",
+    "Parsed pages: {{parsed}} / {{checked}}": "已解析頁面：{{parsed}} / {{checked}}",
+    "Image delivered": "已提供圖片",
+    "Some evidence is unavailable or incomplete.": "部分證據無法使用或不完整。"
   }
 }

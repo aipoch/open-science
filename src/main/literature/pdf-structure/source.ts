@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { lstat, open, unlink } from 'node:fs/promises'
+import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../../uploads/attachment-media'
 
 import type { SessionCatalog } from '../../session-persistence/coordinator'
 import type { LiteratureAttachmentAuthority } from '../attachment-authority'
@@ -98,6 +99,67 @@ export class PdfStructureSourceAuthority {
     const current = await this.resolve(request)
     if (!sameSource(current, expected)) throw unavailable()
     return current
+  }
+
+  // Metadata inspection only: no layout worker, model use, or persisted derivative. The exact
+  // bounded bytes are verified before PDF.js sees them, including for managed content leases.
+  async pageCount(
+    request: PdfStructureSourceRequest,
+    expected: ResolvedSessionPdfVersion,
+    signal: AbortSignal
+  ): Promise<number> {
+    signal.throwIfAborted()
+    const source = await this.reauthorize(request, expected)
+    if (source.sizeBytes > MAX_AUTO_EXTRACT_PDF_BYTES) throw unavailable()
+    const lease = await source.openContent?.()
+    let file: Awaited<ReturnType<typeof open>> | undefined
+    try {
+      signal.throwIfAborted()
+      if (!lease) {
+        if (source.sourceKind !== 'literature-attachment-version') throw unavailable()
+        const before = await lstat(source.path)
+        if (!before.isFile() || before.isSymbolicLink()) throw unavailable()
+        file = await open(source.path, 'r')
+        const opened = await file.stat()
+        if (
+          opened.dev !== before.dev ||
+          opened.ino !== before.ino ||
+          opened.size !== source.sizeBytes
+        )
+          throw unavailable()
+      }
+      const count = await inspectPdfPageCount(source.path, {
+        size: source.sizeBytes,
+        readBytes: async () => {
+          const bytes = lease
+            ? Buffer.from(await lease.readRange(0, source.sizeBytes))
+            : Buffer.alloc(source.sizeBytes)
+          if (file) {
+            let offset = 0
+            while (offset < bytes.length) {
+              signal.throwIfAborted()
+              const { bytesRead } = await file.read(bytes, offset, bytes.length - offset, offset)
+              if (!bytesRead) throw unavailable()
+              offset += bytesRead
+            }
+          }
+          signal.throwIfAborted()
+          if (
+            bytes.length !== source.sizeBytes ||
+            createHash('sha256').update(bytes).digest('hex') !== source.checksum
+          )
+            throw unavailable()
+          return bytes
+        }
+      })
+      await lease?.verifyUnchanged()
+      await this.reauthorize(request, expected)
+      signal.throwIfAborted()
+      return count
+    } finally {
+      await file?.close()
+      await lease?.close()
+    }
   }
 
   // destination is an owner-created staging path, not a renderer/tool argument. The caller holds

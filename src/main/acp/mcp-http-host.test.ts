@@ -125,6 +125,91 @@ describe('AgentMcpHttpHost', () => {
     expect(files.map((file) => file.name)).toContain('report.md')
   })
 
+  it('delivers PDF image blocks once and isolates cancellation by server kind as well as route', async () => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const signals = new Map<string, AbortSignal>()
+    host.registerLiterature('same-route', {
+      readDocument: vi.fn(),
+      elements: {
+        list: async () => ({ data: { elements: [], nextCursor: null } }),
+        read: async (_input, signal) => {
+          signals.set('literature', signal)
+          await blocked
+          signal.throwIfAborted()
+          return {
+            data: { caption: 'Figure 3. Survival.', imageIncluded: true },
+            image: { data: 'aW1hZ2U=', mimeType: 'image/png' }
+          }
+        }
+      }
+    })
+    host.registerLiteratureLibrary('same-route', {
+      searchLibrary: vi.fn(),
+      readAbstract: vi.fn(),
+      readPdf: vi.fn(),
+      saveToInbox: vi.fn(async () => ({ results: [] })),
+      resolveSaveReferences: async (_refs, signal) => {
+        signals.set('library', signal!)
+        await blocked
+        return []
+      }
+    })
+    const clients: Client[] = []
+    const connect = async (kind: 'library' | 'literature'): Promise<Client> => {
+      const client = new Client({ name: 'pdf-http', version: '1' })
+      clients.push(client)
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(host!.urlFor(kind, 'same-route')), {
+          requestInit: { headers: { authorization: `Bearer ${token}` } }
+        })
+      )
+      return client
+    }
+    try {
+      const pdf = await connect('literature'),
+        library = await connect('library')
+      const reading = pdf
+        .callTool({ name: 'read_pdf_element', arguments: { elementRef: 'ref' } })
+        .catch((error: unknown) => error)
+      const saving = library
+        .callTool({ name: 'save_to_inbox', arguments: { refs: ['doi:10.1234/paper'] } })
+        .catch((error: unknown) => error)
+      await vi.waitFor(() => expect(signals.size).toBe(2))
+      const duplicate = await connect('literature')
+      await expect(
+        duplicate.callTool({ name: 'read_pdf_element', arguments: { elementRef: 'ref' } })
+      ).rejects.toMatchObject({ code: 409 })
+      await library.notification({ method: 'notifications/cancelled', params: { requestId: 1 } })
+      expect(signals.get('library')!.aborted).toBe(true)
+      expect(signals.get('literature')!.aborted).toBe(false)
+      await pdf.notification({ method: 'notifications/cancelled', params: { requestId: 1 } })
+      expect(signals.get('literature')!.aborted).toBe(true)
+      release()
+      await pdf.close()
+      await library.close()
+      await Promise.all([reading, saving])
+      const reopened = await connect('literature')
+      const result = await reopened.callTool({
+        name: 'read_pdf_element',
+        arguments: { elementRef: 'ref' }
+      })
+      expect(result.structuredContent).toBeUndefined()
+      expect(result.content).toEqual([
+        { type: 'text', text: '{"caption":"Figure 3. Survival.","imageIncluded":true}' },
+        { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' }
+      ])
+      expect(signals.get('literature')!.aborted).toBe(false)
+    } finally {
+      release()
+      await Promise.all(clients.map((client) => client.close()))
+    }
+  })
+
   it('serves the conversation Skill import tool over http', async () => {
     const routingId = 'skill-import-session-1'
     const rpcRequest: { authorization?: string; body?: unknown } = {}

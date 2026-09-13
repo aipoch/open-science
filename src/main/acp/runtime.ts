@@ -275,6 +275,7 @@ type AcpRuntimeOptions = {
     ) => Promise<SideChatSendMessageResult>
   }>
   literature?: Readonly<{
+    elements?: import('../literature/pdf-structure/agent-reader').PdfElementTools
     isEnabled: (appSessionId: string, projectId: string) => Promise<boolean>
     resolveAttachmentVersion?: (versionId: string) => Promise<
       | Readonly<{

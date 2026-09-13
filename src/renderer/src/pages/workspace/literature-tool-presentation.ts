@@ -5,6 +5,14 @@ type LiteratureToolAction = 'format' | 'read' | 'search' | 'save'
 
 type LiteratureToolSummary = Readonly<{
   action: LiteratureToolAction
+  pdfElements?: Readonly<{
+    caption?: string
+    elementCount?: number
+    parsedPages?: number
+    checkedPages?: number
+    imageIncluded?: boolean
+    incomplete: boolean
+  }>
   query?: string
   documentNames: readonly string[]
   documentCount: number
@@ -87,6 +95,58 @@ const isLiteratureReadDocumentTool = (...identities: Array<string | undefined>):
       normalized === 'open-science-literature-read-document'
     )
   })
+
+const pdfElementToolAction = (
+  ...identities: Array<string | undefined>
+): 'search' | 'read' | undefined => {
+  for (const identity of identities) {
+    if (!identity) continue
+    const name = normalizeIdentity(identity)
+    for (const separator of ['/', '-']) {
+      if (name === `open-science-literature${separator}list-pdf-elements`) return 'search'
+      if (name === `open-science-literature${separator}read-pdf-element`) return 'read'
+    }
+  }
+  return undefined
+}
+
+const buildPdfElementToolSummary = (
+  action: 'search' | 'read',
+  outputValue: unknown
+): LiteratureToolSummary => {
+  const outputs = collectOutputRecords(outputValue)
+  const output = outputs.find(isLiteratureOutputRecord)
+  const documentNames = documentNamesFromOutput(output)
+  const elements = Array.isArray(output?.elements) ? output.elements.filter(isRecord) : undefined
+  const pages = elements ?? (output ? [output] : [])
+  const starts = pages
+    .map((item) => asPositiveInteger(item.pageStart))
+    .filter((page): page is number => page !== undefined)
+  const ends = pages
+    .map((item) => asPositiveInteger(item.pageEnd))
+    .filter((page): page is number => page !== undefined)
+  const coverage = isRecord(output?.coverage) ? output.coverage : undefined
+  return {
+    action,
+    documentNames,
+    documentCount: documentNames.length,
+    ...(starts.length ? { pageStart: Math.min(...starts), pageEnd: Math.max(...ends) } : {}),
+    ...(output && 'nextCursor' in output ? { hasMore: output.nextCursor !== null } : {}),
+    ...(isRecord(output?.error) ? { error: asString(output.error.message) } : {}),
+    pdfElements: {
+      caption: asString(output?.caption),
+      elementCount: elements?.length,
+      parsedPages: Array.isArray(coverage?.parsedPages) ? coverage.parsedPages.length : undefined,
+      checkedPages: Array.isArray(coverage?.checkedPages)
+        ? coverage.checkedPages.length
+        : undefined,
+      imageIncluded: typeof output?.imageIncluded === 'boolean' ? output.imageIncluded : undefined,
+      incomplete: [output, ...pages].some(
+        (item) => Array.isArray(item?.warnings) && item.warnings.length > 0
+      )
+    }
+  }
+}
 
 const isLiteratureLibraryPdfReadTool = (...identities: Array<string | undefined>): boolean =>
   identities.some((identity) => {
@@ -474,6 +534,8 @@ const buildLiteratureLibraryToolSummary = (
 }
 
 export {
+  pdfElementToolAction,
+  buildPdfElementToolSummary,
   buildLiteratureLibraryToolSummary,
   buildLiteratureToolSummary,
   getLiteratureLibraryToolAction,

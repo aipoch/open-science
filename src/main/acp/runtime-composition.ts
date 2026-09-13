@@ -1,3 +1,4 @@
+import type { PdfElementTools } from '../literature/pdf-structure/agent-reader'
 import { homedir } from 'node:os'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -173,6 +174,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   specialistService?: SpecialistService
   sessionPersistenceCoordinator?: SessionRuntimeContextCommands & SessionMutation & SessionCatalog
   literatureReader?: Pick<LiteratureDocumentReader, 'readCurrent' | 'searchAttachment'>
+  pdfElementReader?: PdfElementTools
   literatureAttachments?: Pick<LiteratureAttachmentAuthority, 'resolveVersion'>
   literatureCatalog?: Pick<LiteratureCatalog, 'getMany' | 'searchForAgent' | 'transact'>
   literaturePdfAcquisition?: Pick<
@@ -249,6 +251,7 @@ const createAcpRuntime = ({
   specialistService,
   sessionPersistenceCoordinator,
   literatureReader,
+  pdfElementReader,
   literatureAttachments,
   literatureCatalog,
   literaturePdfAcquisition,
@@ -406,7 +409,8 @@ const createAcpRuntime = ({
                 },
                 resolveAttachmentVersion: (versionId) =>
                   literatureAttachments.resolveVersion(versionId),
-                readDocument: (request) => literatureReader.readCurrent(request)
+                readDocument: (request) => literatureReader.readCurrent(request),
+                ...(pdfElementReader ? { elements: pdfElementReader } : {})
               }
             }
           : {}),

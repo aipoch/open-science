@@ -6226,6 +6226,10 @@
     "Find deposited corrections and retractions. Missing updates do not establish reliability.": "Найти зарегистрированные исправления и отзывы публикаций. Отсутствие обновлений не подтверждает достоверность.",
     "Find datasets and software by topic or related DOI.": "Найти наборы данных и программное обеспечение по теме или связанному DOI.",
     "Retrieve dataset metadata, rights and publication relationships by DOI.": "Получить метаданные, права и связи набора данных с публикациями по DOI.",
-    "Search RNA/DNA against Rfam models. Cancelling stops polling; the service retains results for one week.": "Поиск РНК/ДНК по моделям Rfam. Отмена прекращает опрос; сервис хранит результаты одну неделю."
+    "Search RNA/DNA against Rfam models. Cancelling stops polling; the service retains results for one week.": "Поиск РНК/ДНК по моделям Rfam. Отмена прекращает опрос; сервис хранит результаты одну неделю.",
+    "Elements: {{total}}": "Элементы: {{total}}",
+    "Parsed pages: {{parsed}} / {{checked}}": "Обработано страниц: {{parsed}} / {{checked}}",
+    "Image delivered": "Изображение предоставлено",
+    "Some evidence is unavailable or incomplete.": "Некоторые подтверждающие данные недоступны или неполны."
   }
 }
