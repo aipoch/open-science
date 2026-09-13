@@ -11,6 +11,7 @@ type WorkflowStep = {
   if?: string
   name?: string
   run?: string
+  shell?: string
   'timeout-minutes'?: number
   uses?: string
   with?: Record<string, unknown>
@@ -124,7 +125,10 @@ describe('post-merge Windows validation', () => {
     })
     expect(findStep(dependencies, 'Install dependencies').run).toBe('node scripts/ci/npm-ci.mjs')
     expect(findStep(dependencies, 'Pack dependencies').run).toContain('pack-dependencies')
+    expect(findStep(dependencies, 'Pack dependencies').shell).toBe('bash')
     expect(findStep(job, 'Restore dependencies').run).toContain('restore-dependencies')
+    expect(findStep(job, 'Restore dependencies').shell).toBe('bash')
+    expect(findStep(workflow.jobs.notebook_mutation, 'Restore dependencies').shell).toBe('bash')
     expect(job['continue-on-error']).toBeUndefined()
     expect(job.strategy?.matrix).toEqual({
       shard: "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5]') }}"

@@ -1814,6 +1814,53 @@ describe('App startup routing', () => {
     expect(mocks.openSessionById).toHaveBeenCalledWith('s-9', 'notification')
   })
 
+  it('retries a notification peek after the desktop handler is installed', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessions = [{ id: 's-late' }]
+    mocks.notifications.peekPendingOpenSession
+      .mockRejectedValueOnce(
+        new Error("No handler registered for 'notifications:peek-pending-open-session'")
+      )
+      .mockResolvedValue({ sessionId: 's-late', token: 5 })
+    mocks.notifications.takePendingOpenSession.mockResolvedValue({
+      sessionId: 's-late',
+      token: 5
+    })
+
+    await render()
+    expect(mocks.openSessionById).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    })
+
+    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledTimes(2)
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith(5)
+    expect(mocks.openSessionById).toHaveBeenCalledWith('s-late', 'notification')
+  })
+
+  it('does not retry a notification peek after unmount', async () => {
+    let rejectPeek: ((error: Error) => void) | undefined
+    mocks.settings.isLoaded = true
+    mocks.notifications.peekPendingOpenSession.mockImplementation(
+      () =>
+        new Promise<null>((_resolve, reject) => {
+          rejectPeek = reject
+        })
+    )
+
+    await render()
+    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledOnce()
+
+    await act(async () => root.unmount())
+    await act(async () => {
+      rejectPeek?.(new Error("No handler registered for 'notifications:peek-pending-open-session'"))
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    })
+
+    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledOnce()
+  })
+
   it('opens an already-hydrated notification target during partial recovery', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isReady = false
