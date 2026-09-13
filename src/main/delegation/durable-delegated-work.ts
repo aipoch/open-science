@@ -74,6 +74,8 @@ const createDurableDelegatedWork = (
   const createId = options.createId ?? ((kind: string) => `${kind}-${randomUUID()}`)
   const invocationOutcomes = new Map<string, Promise<DurableDelegateOutcome>>()
   const stoppingSessions = new Set<string>()
+  // Terminal history does not prove that the process owning its workspace exited.
+  const cleanupFailures = new Map<string, DelegateExecutionCleanupError>()
   // A completed Stop also invalidates requests that have not committed their admission yet.
   let stopGeneration = 0
   const sessionStops = new Map<string, number>()
@@ -317,6 +319,9 @@ const createDurableDelegatedWork = (
         }
       } catch (error) {
         retainBackendClaim = error instanceof DelegateExecutionCleanupError
+        if (error instanceof DelegateExecutionCleanupError) {
+          cleanupFailures.set(sessionIdentityOf(session), error)
+        }
         rejectHandle(
           handle ? error : new DelegateMessagePreAcceptanceError(toErrorMessage(error), error)
         )
@@ -622,6 +627,8 @@ const createDurableDelegatedWork = (
       )
       const failure = settled.find((result) => result.status === 'rejected')
       if (failure?.status === 'rejected') throw failure.reason
+      const cleanupFailure = cleanupFailures.get(sessionIdentity)
+      if (cleanupFailure) throw cleanupFailure
       return settled.map((result) => (result as PromiseFulfilledResult<StopOutcome>).value)
     } finally {
       stoppingSessions.delete(sessionIdentity)

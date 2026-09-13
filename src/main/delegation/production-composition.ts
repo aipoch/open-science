@@ -613,9 +613,14 @@ const createProductionDelegatedWorkComposition = (
       const workDeletion = await Promise.allSettled(
         scoped.map(({ key, work }) => work.deleteSession(key))
       )
-      // Workspace deletion is an independent durable cleanup boundary. Repeat it for every Session
-      // identity so a restart (with an empty work cache) and a failed work teardown both remove the
-      // stable Frame subtree.
+      const workFailures = workDeletion.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : []
+      )
+      if (workFailures.length > 0) {
+        throw new AggregateError(workFailures, `Delegated Session cleanup failed: ${sessionId}`)
+      }
+      // Cover dormant workspaces only after every live owner has stopped successfully.
+      // Retain failed owners so a retry cannot forget an unconfirmed process teardown.
       const workspaceDeletion = await Promise.allSettled(
         [...keys.values()].map((key) => workspace.deleteSession(key))
       )
@@ -637,6 +642,12 @@ const createProductionDelegatedWorkComposition = (
       const workDeletion = await Promise.allSettled(
         scoped.map(({ key, work }) => work.deleteSession(key))
       )
+      const workFailures = workDeletion.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : []
+      )
+      if (workFailures.length > 0) {
+        throw new AggregateError(workFailures, `Delegated Project cleanup failed: ${projectId}`)
+      }
       // The stable Project directory is authoritative for dormant workspaces. Removing it directly
       // covers Sessions that have no in-memory work after restart as well as every cached Session
       // settled above.

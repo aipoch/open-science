@@ -23,7 +23,7 @@ import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
 import { DELEGATION_DISABLED_MESSAGE } from './durable-delegated-work-error'
-import { DelegateMessageParkedError } from './execution-port'
+import { DelegateExecutionCleanupError, DelegateMessageParkedError } from './execution-port'
 import { createArtifactHandlers } from '../artifacts/ipc'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
@@ -3895,4 +3895,78 @@ describe('reported production admission Stop regression', () => {
     await expect.poll(() => harness.execution.controls()).toHaveLength(1)
     await harness.composition.root.stopSession(harness.session.id)
   })
+})
+
+describe('unreaped delegated execution lifecycle', () => {
+  it.each([
+    'deleteSession',
+    'deleteProject',
+    'shutdown',
+    'stopAll',
+    'shutdownForQuit',
+    'shutdownForUpdateGate'
+  ] as const)(
+    'keeps the cleanup failure visible to %s after terminal history is written',
+    async (operation) => {
+      root = await mkdtemp(join(tmpdir(), 'delegated-unreaped-lifecycle-'))
+      const harness = await createCompositionHarness(root, 'codex')
+      const receipt = await harness.composition.host.delegate(
+        harness.caller,
+        { task: 'Retain process-owned evidence', name: 'Retain evidence' },
+        { wait: false }
+      )
+      await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+      const control = harness.execution.controls()[0]
+      control.accept()
+      control.fail(new DelegateExecutionCleanupError('process cleanup could not be confirmed'))
+      await expect(
+        harness.composition.host.collect(harness.caller, [receipt.children[0].frameId])
+      ).resolves.toMatchObject([{ status: 'error' }])
+      const workspace = join(root, 'delegation', harness.session.projectId, harness.session.id)
+      const evidence = join(workspace, 'keep.txt')
+      await writeFile(evidence, 'process-owned evidence')
+      const snapshot: AcpStateSnapshot = {
+        status: 'closed',
+        cwd: root,
+        sessionIds: [],
+        events: [],
+        pendingPermissions: [],
+        permissionProfiles: {},
+        permissionGrants: {},
+        contextUsageBySession: {},
+        promptInFlight: false,
+        promptInFlightSessionIds: []
+      }
+      const runtime = {
+        getState: () => snapshot,
+        getSnapshot: () => snapshot,
+        shutdownForQuit: async () => ({ reaped: true }),
+        shutdownForUpdateGate: async () => ({ reaped: true })
+      } as unknown as AcpRuntime
+      const coordinator = new AcpRuntimeCoordinator(
+        () => runtime,
+        {},
+        '',
+        undefined,
+        undefined,
+        undefined,
+        {},
+        undefined,
+        harness.composition.root
+      )
+      const run = (): Promise<void | { reaped: boolean }> =>
+        operation === 'shutdownForQuit' || operation === 'shutdownForUpdateGate'
+          ? coordinator[operation]()
+          : operation === 'deleteSession'
+            ? harness.composition.root.deleteSession(harness.session.id)
+            : operation === 'deleteProject'
+              ? harness.composition.root.deleteProject(harness.session.projectId)
+              : harness.composition.root[operation]()
+      await expect.soft(run()).rejects.toThrow()
+      await expect.soft(readFile(evidence, 'utf8')).resolves.toBe('process-owned evidence')
+      // Retrying a lifecycle operation must not forget the quarantined owner.
+      await expect.soft(run()).rejects.toThrow()
+      await expect.soft(readFile(evidence, 'utf8')).resolves.toBe('process-owned evidence')
+    }
+  )
 })
