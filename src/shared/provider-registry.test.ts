@@ -4,6 +4,7 @@ import {
   OFFICIAL_VENDORS,
   defaultVendorModel,
   getOfficialVendor,
+  getOfficialVendorModelIds,
   isOfficialVendorId,
   isVendorModelMultimodal,
   isVendorModelResponsesSupported,
@@ -428,11 +429,31 @@ describe('provider registry', () => {
     expect(resolveVendorApiEndpoints('sensenova')).toEqual(['anthropic', 'openai'])
     expect(resolveVendorBaseUrl('sensenova')).toBe('https://token.sensenova.cn')
     expect(resolveVendorOpenAiBaseUrl('sensenova')).toBe('https://token.sensenova.cn/v1')
-    expect(resolveVendorApiKeyUrl('sensenova')).toBe('https://platform.sensenova.cn/token-plan')
+    expect(resolveVendorApiKeyUrl('sensenova')).toBe('https://platform.sensenova.cn/console/keys')
     // The live list also serves the image-generation-only sensenova-u1-fast, which the refresh
     // cannot filter out — so refresh-from-vendor is hidden and the chat catalog stays curated.
     expect(resolveVendorModelsUrl('sensenova')).toBeUndefined()
-    expect(defaultVendorModel('sensenova')).toBe('sensenova-6.7-flash-lite')
+    expect(defaultVendorModel('sensenova')).toBe('sensenova-6.8-flash-lite')
+    expect(getOfficialVendorModelIds('sensenova')).toEqual([
+      'sensenova-6.8-flash-lite',
+      'deepseek-v4-pro',
+      'deepseek-v4-flash',
+      'glm-5.2',
+      'kimi-k3',
+      'sensenova-6.7-flash-lite'
+    ])
+    expect(resolveModelContextWindow('sensenova', 'sensenova-6.8-flash-lite')).toBe(262_144)
+    for (const model of ['deepseek-v4-pro', 'glm-5.2', 'kimi-k3']) {
+      expect(resolveVendorModelApiEndpoints('sensenova', model)).toEqual(['openai'])
+      expect(resolveModelContextWindow('sensenova', model)).toBe(1_000_000)
+    }
+    for (const model of [
+      'sensenova-6.8-flash-lite',
+      'deepseek-v4-flash',
+      'sensenova-6.7-flash-lite'
+    ]) {
+      expect(resolveVendorModelApiEndpoints('sensenova', model)).toEqual(['anthropic', 'openai'])
+    }
   })
 
   it('routes Volcengine Ark through all three APIs with a curated Doubao Seed catalog', () => {
@@ -853,7 +874,11 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal('xiaomimimo', 'mimo-v2.5')).toBe(false)
     })
 
-    it('returns true only for the SenseNova vision model', () => {
+    it('enables SenseNova Flash Lite and hosted Kimi vision without enabling text-only models', () => {
+      expect(isVendorModelMultimodal('sensenova', 'sensenova-6.8-flash-lite')).toBe(true)
+      expect(isVendorModelMultimodal('sensenova', 'kimi-k3')).toBe(true)
+      expect(isVendorModelMultimodal('sensenova', 'deepseek-v4-pro')).toBe(false)
+      expect(isVendorModelMultimodal('sensenova', 'glm-5.2')).toBe(false)
       expect(isVendorModelMultimodal('sensenova', 'sensenova-6.7-flash-lite')).toBe(true)
       expect(isVendorModelMultimodal('sensenova', 'deepseek-v4-flash')).toBe(false)
     })

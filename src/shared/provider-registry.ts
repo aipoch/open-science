@@ -597,20 +597,27 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     label: 'SenseNova',
     reasoningEffort: 'unsupported',
     // SenseTime's SenseNova serves both routes on one host: the Anthropic-compatible /v1/messages
-    // at the bare root and the OpenAI-compatible /v1/chat/completions under /v1. The same model ids
-    // work on both. No modelsListUrl: the live /v1/models list also serves the image-generation-only
-    // sensenova-u1-fast (POST /v1/images/generations, not a chat model), and the refresh has no
-    // modality filter — so the catalog stays curated to the two chat ids.
+    // at the bare root and the OpenAI-compatible /v1/chat/completions under /v1.
+    // https://platform.sensenova.cn/docs documents the newer hosted models on Chat Completions;
+    // do not infer Messages support (including Kimi vision) from their original vendors.
+    // Keep the catalog curated: /v1/models also includes image-only U1 models and refresh does
+    // not filter output modalities.
     apiEndpoints: ['anthropic', 'openai'],
     baseUrl: 'https://token.sensenova.cn',
     openaiBaseUrl: 'https://token.sensenova.cn/v1',
-    apiKeyUrl: 'https://platform.sensenova.cn/token-plan',
+    apiKeyUrl: 'https://platform.sensenova.cn/console/keys',
     models: [
-      { id: 'sensenova-6.7-flash-lite', contextWindow: 256_000 },
-      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 }
+      { id: 'sensenova-6.8-flash-lite', contextWindow: 262_144 },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000, apiEndpoint: 'openai' },
+      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
+      { id: 'glm-5.2', contextWindow: 1_000_000, apiEndpoint: 'openai' },
+      { id: 'kimi-k3', contextWindow: 1_000_000, apiEndpoint: 'openai' },
+      // Preserve pinned selections without silently migrating them to a different model.
+      { id: 'sensenova-6.7-flash-lite', contextWindow: 256_000 }
     ],
-    // Only sensenova-6.7-flash-lite accepts image input; deepseek-v4-flash is text-only.
-    multimodal: { multimodalModels: ['sensenova-6.7-flash-lite'] }
+    multimodal: {
+      multimodalModels: ['sensenova-6.8-flash-lite', 'kimi-k3', 'sensenova-6.7-flash-lite']
+    }
   },
   {
     id: 'volcengine',

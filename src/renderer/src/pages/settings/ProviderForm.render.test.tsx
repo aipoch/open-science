@@ -61,6 +61,26 @@ const render = (
 }
 
 describe('ProviderForm field switching', () => {
+  it('shows the expanded SenseNova chat catalog and links directly to API keys', () => {
+    render(createEmptyProviderFormValue({ type: 'official', vendorId: 'sensenova' }))
+
+    for (const model of [
+      'sensenova-6.8-flash-lite',
+      'deepseek-v4-pro',
+      'deepseek-v4-flash',
+      'glm-5.2',
+      'kimi-k3',
+      'sensenova-6.7-flash-lite'
+    ]) {
+      expect(container.textContent).toContain(model)
+    }
+    expect(container.textContent).not.toContain('sensenova-u1')
+    expect(container.textContent).not.toContain('Refresh from vendor')
+    expect(
+      container.querySelector('a[href="https://platform.sensenova.cn/console/keys"]')?.textContent
+    ).toBe('Get an API key')
+  })
+
   it('describes unencrypted file storage without claiming OS protection', () => {
     useSettingsStore.setState({ credentialStore: 'file' })
     render(createEmptyProviderFormValue({ type: 'custom' }))

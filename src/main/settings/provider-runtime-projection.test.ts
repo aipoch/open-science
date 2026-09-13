@@ -147,6 +147,64 @@ describe('ProviderRuntimeProjectionOwner', () => {
     })
   })
 
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'projects the SenseNova catalog and preserves a pinned legacy model for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'sensenova',
+        type: 'official',
+        vendorId: 'sensenova',
+        name: 'SenseNova'
+      }
+      const before = structuredClone(provider)
+      const framework = getAgentFramework(frameworkId)
+      const targets = owner.resolveRuntimeModelCatalog(provider, framework)
+
+      expect(targets.map(({ effectiveModel }) => effectiveModel)).toEqual([
+        'sensenova-6.8-flash-lite',
+        'deepseek-v4-pro',
+        'deepseek-v4-flash',
+        'glm-5.2',
+        'kimi-k3',
+        'sensenova-6.7-flash-lite'
+      ])
+      for (const target of targets) {
+        const messagesSupported = [
+          'sensenova-6.8-flash-lite',
+          'deepseek-v4-flash',
+          'sensenova-6.7-flash-lite'
+        ].includes(target.effectiveModel ?? '')
+        expect(target).toMatchObject({
+          frameworkCompatible: frameworkId !== 'claude-code' || messagesSupported,
+          needsChatResponsesBridge: frameworkId === 'codex',
+          needsNativeResponsesCompatibility: false,
+          provider: {
+            vendorId: 'sensenova',
+            baseUrl: 'https://token.sensenova.cn',
+            openaiBaseUrl: 'https://token.sensenova.cn/v1',
+            supportsImageInput: [
+              'sensenova-6.8-flash-lite',
+              'kimi-k3',
+              'sensenova-6.7-flash-lite'
+            ].includes(target.effectiveModel ?? '')
+          }
+        })
+      }
+      expect(
+        owner.resolveRuntimeTarget(provider, { kind: 'provider-default' }, framework).effectiveModel
+      ).toBe('sensenova-6.8-flash-lite')
+      expect(
+        owner.resolveRuntimeTarget(
+          provider,
+          { kind: 'configured', requestedModel: 'sensenova-6.7-flash-lite' },
+          framework
+        ).effectiveModel
+      ).toBe('sensenova-6.7-flash-lite')
+      expect(provider).toEqual(before)
+    }
+  )
+
   it('enables image input only for DeepSeek vision-exp while keeping native Responses', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
