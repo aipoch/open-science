@@ -1025,21 +1025,28 @@
       "ownerPaths": [
         "src/main/ipc-surfaces/adapter.ts",
         "src/main/ipc-surfaces/core.ts",
-        "src/main/ipc-surfaces/uploads.ts"
+        "src/main/ipc-surfaces/uploads.ts",
+        "src/main/ipc-surfaces/notifications.ts"
       ],
       "interfacePaths": [
         "src/main/ipc-surfaces/adapter.ts",
         "src/main/ipc-surfaces/core.ts",
-        "src/main/ipc-surfaces/uploads.ts"
+        "src/main/ipc-surfaces/uploads.ts",
+        "src/main/ipc-surfaces/notifications.ts"
       ],
       "consumerModules": [],
       "testFiles": {
         "owner": [
           "src/main/ipc-surfaces/adapter.test.ts",
           "src/main/ipc-surfaces/core.test.ts",
-          "src/main/ipc-surfaces/uploads.test.ts"
+          "src/main/ipc-surfaces/uploads.test.ts",
+          "src/main/ipc-surfaces/notifications.test.ts"
         ],
         "contract": [
+          "src/main/notifications/notification-inbox-ipc.test.ts",
+          "src/main/notifications/electron-wiring.test.ts",
+          "src/main/notifications/task-notifications.test.ts",
+          "src/main/notifications/notification-inbox-controller.test.ts",
           "src/main/uploads/ipc.test.ts",
           "src/main/uploads/command-owner.test.ts",
           "src/main/renderer-broadcast.test.ts",

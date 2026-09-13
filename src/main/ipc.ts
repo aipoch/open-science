@@ -169,16 +169,14 @@ import { registerWindowIpcHandlers } from './window-ipc'
 import { registerWindowFindIpcHandlers } from './window-find-ipc'
 import { TaskNotificationService } from './notifications/task-notifications'
 import { createNotificationInboxController } from './notifications/notification-inbox-controller'
-import { registerNotificationInboxIpcAdapter } from './notifications/notification-inbox-ipc'
+import { createNotificationElectronSurface } from './ipc-surfaces/notifications'
 import { NotificationInboxDbRepository } from './notifications/notification-inbox-repository'
 import { bindNotificationInboxDeletionRuntime } from './notifications/notification-inbox-runtime'
 import {
   buildSkillImportApprovalBroadcast,
   buildConnectorApprovalBroadcast,
   buildConnectorCredentialRequestBroadcast,
-  buildTaskNotificationShow,
-  getTaskNotificationAvailability,
-  showTestTaskNotification
+  buildTaskNotificationShow
 } from './notifications/electron-wiring'
 import { createLogger, diagnosticErrorFields, errorLogFields } from './logger'
 import { startDiagnosticOperation, type DiagnosticOperation } from './diagnostics/operation'
@@ -2320,26 +2318,13 @@ const createApplicationModules = async (
     onInboxError: (error) =>
       notificationsLog.warn('message center recording failed', errorLogFields(error))
   })
-  // The renderer peeks once sessions are hydrated, then conditionally consumes the same target.
-  // This lets partial recovery open an already-loaded conversation while retaining an omitted one
-  // for retry, without an older IPC round trip clearing a newer click target.
-  declareElectronAdapter('task-notifications', () => {
-    registerNotificationInboxIpcAdapter(notificationInbox)
-    ipcMainHandle('notifications:get-desktop-availability', () =>
-      getTaskNotificationAvailability(taskNotificationDeliveryDeps)
+  surfaceAdapters.push(
+    createNotificationElectronSurface(
+      notificationInbox,
+      taskNotifications,
+      taskNotificationDeliveryDeps
     )
-    ipcMainHandle('notifications:send-test', () =>
-      showTestTaskNotification(taskNotificationDeliveryDeps)
-    )
-    ipcMainHandle('notifications:peek-pending-open-session', () =>
-      taskNotifications.peekPendingOpenSession()
-    )
-    ipcMainHandle('notifications:take-pending-open-session', (_event, expectedToken: unknown) =>
-      typeof expectedToken === 'number' && Number.isSafeInteger(expectedToken) && expectedToken > 0
-        ? taskNotifications.takePendingOpenSession(expectedToken)
-        : null
-    )
-  })
+  )
   // The connector application owns MCP, connector/skill approval, runtime projection, and service
   // construction. Late-bound local tools remain composition-root dependencies and are passed in.
   const moleculePreviewHandler = createMoleculePreviewHandler({
