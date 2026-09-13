@@ -268,6 +268,23 @@ const writeFakeRemoteItCommands = async (root: string): Promise<void> => {
   )
 }
 
+const removeTreeForCleanup = async (root: string): Promise<void> => {
+  const maxAttempts = process.platform === 'linux' ? 1 : 5
+  let lastError: unknown
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      await rm(root, { force: true, maxRetries: 0, recursive: true })
+      return
+    } catch (error) {
+      lastError = error
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'EPERM' || code === 'EACCES' || attempt + 1 === maxAttempts) throw error
+      await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)))
+    }
+  }
+  throw lastError
+}
+
 const makeTreeWritable = async (root: string): Promise<void> => {
   await chmod(root, 0o700).catch(() => undefined)
   const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
@@ -961,7 +978,7 @@ class ElectronAppHarness implements ElectronApp {
     try {
       await this.closeForCleanup()
       await makeTreeWritable(this.testRoot)
-      await rm(this.testRoot, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 })
+      await removeTreeForCleanup(this.testRoot)
     } catch (error) {
       errors.push(error)
     }
