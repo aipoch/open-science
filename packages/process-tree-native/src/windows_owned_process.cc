@@ -3,9 +3,10 @@
 #include <vector>
 
 #ifdef _WIN32
+// libuv includes Winsock 2; load it before windows.h can pull in legacy Winsock.
+#include <uv.h>
 #include <windows.h>
 #include <sddl.h>
-#include <uv.h>
 
 namespace {
 struct Handle {
