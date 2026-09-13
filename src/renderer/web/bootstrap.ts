@@ -91,8 +91,6 @@ const setConnectionMessage = (message: string): void => {
   if (element) element.textContent = message
 }
 
-setConnectionMessage(t('Connecting to remote computer…'))
-
 const connectionLogo = document.getElementById('open-science-connection-logo')
 if (connectionLogo) {
   connectionLogo.innerHTML = openScienceLogoSvg.replace(
@@ -594,6 +592,7 @@ const eventConsumersReady = new Promise<void>((resolve) => {
 try {
   await prepareI18nLocale(initialLocale)
   initI18n(initialLocale)
+  setConnectionMessage(t('Connecting to remote computer…'))
   eventCursor = await installWebApi()
   await import('../src/main')
   await eventConsumersReady
