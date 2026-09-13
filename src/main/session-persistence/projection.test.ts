@@ -1,6 +1,8 @@
 import { lstat, mkdir, mkdtemp, readFile, rename, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -1177,6 +1179,132 @@ describe('Session projection', () => {
       }
     }
   )
+
+  it.each(['pending replay', 'catalog initialization'] as const)(
+    'preserves a failed first-save draft with live-owner temporary evidence during %s',
+    async (recovery) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-live-temp-replay-'))
+      client = createProjectDbClient(storageRoot)
+      await migrateApplicationDatabase(client)
+      await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+      const projection = new SessionProjectionRepository(async () => client!)
+      const files = new SessionRepository(storageRoot, {}, projection)
+      await files.ensureSessionProjection(() => files.loadAll())
+      const failure = new Error('injected Session rename failure')
+      let temporaryPath: string | undefined
+      const failing = new SessionRepository(
+        storageRoot,
+        {
+          renameFile: async (source) => {
+            temporaryPath = source
+            throw failure
+          },
+          remove: async () => {
+            throw new Error('injected temporary cleanup failure')
+          }
+        },
+        projection
+      )
+      const draft = session('session-1')
+      await expect(failing.saveSession(draft, 0)).rejects.toBe(failure)
+      const temporaryContents = await readFile(temporaryPath!, 'utf8')
+      expect(JSON.parse(temporaryContents).session.id).toBe(draft.id)
+
+      if (recovery === 'pending replay') await files.reconcilePendingSessionProjection()
+      else await files.ensureSessionProjection(() => files.loadAll())
+
+      await expect(readFile(temporaryPath!, 'utf8')).resolves.toBe(temporaryContents)
+      // A retained temporary file is unresolved evidence, not a user deletion.
+      await expect(client.session.findUnique({ where: { id: draft.id } })).resolves.toMatchObject({
+        number: 1,
+        deletedAtMs: null
+      })
+      await expect(projection.pending()).resolves.toEqual([
+        { projectId: draft.projectId, sessionId: draft.id, operation: 'save' }
+      ])
+      // Revisioned writes must wait for readable authority instead of guessing revision zero.
+      await expect(files.saveSession(draft, 0)).rejects.toThrow(
+        'Cannot compare Session revision because durable JSON is unreadable.'
+      )
+      await expect(readFile(temporaryPath!, 'utf8')).resolves.toBe(temporaryContents)
+    }
+  )
+
+  it('recovers retained temporary authority after its actual writer process exits', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-exited-temp-writer-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const files = new SessionRepository(storageRoot, {}, projection)
+    await files.ensureSessionProjection(() => files.loadAll())
+    const prepared = await projection.prepareSave(session('session-1'))
+    const directory = join(storageRoot, 'sessions', 'project-1')
+    await mkdir(directory, { recursive: true })
+    const writer = spawn(process.execPath, [
+      '-e',
+      `const fs = require('node:fs');
+       const path = require('node:path');
+       const file = path.join(process.argv[1], 'session-1.json.' + process.pid + '-12345678-1234-1234-1234-123456789abc.tmp');
+       fs.writeFileSync(file, process.argv[2]);
+       process.stdout.write(file);
+       process.stdin.resume();`,
+      directory,
+      JSON.stringify(createSessionFile(prepared.session))
+    ])
+    const exited = once(writer, 'exit')
+    try {
+      const [output] = await once(writer.stdout, 'data')
+      const temporaryPath = String(output)
+      await files.ensureSessionProjection(() => files.loadAll())
+      await expect(projection.pending()).resolves.toHaveLength(1)
+      await expect(readFile(temporaryPath, 'utf8')).resolves.toContain('session-1')
+    } finally {
+      writer.stdin.end()
+      await exited
+    }
+
+    await client.$disconnect()
+    client = createProjectDbClient(storageRoot)
+    const restartedProjection = new SessionProjectionRepository(async () => client!)
+    const restarted = new SessionRepository(storageRoot, {}, restartedProjection)
+    await restarted.ensureSessionProjection(() => restarted.loadAll())
+    const recovered = await restarted.loadSession('project-1', 'session-1')
+    expect(recovered).toMatchObject({ id: 'session-1', number: 1 })
+    await expect(restartedProjection.pending()).resolves.toEqual([])
+    await expect(
+      restarted.saveSession({ ...recovered!, title: 'Saved after recovery' }, recovered!.revision)
+    ).resolves.toMatchObject({ title: 'Saved after recovery', number: 1 })
+  })
+
+  it('recovers an eligible orphan temporary file before replaying its pending save', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-orphan-temp-replay-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const files = new SessionRepository(storageRoot, {}, projection)
+    await files.ensureSessionProjection(() => files.loadAll())
+    const draft = session('session-1')
+    const prepared = await projection.prepareSave(draft)
+    const projectDirectory = join(storageRoot, 'sessions', draft.projectId)
+    await mkdir(projectDirectory, { recursive: true })
+    // This supported legacy suffix has no live-writer ownership marker.
+    await writeFile(
+      join(projectDirectory, `${draft.id}.json.1700000000000-1.tmp`),
+      JSON.stringify(createSessionFile(prepared.session)),
+      'utf8'
+    )
+
+    await files.ensureSessionProjection(() => files.loadAll())
+    await expect(files.loadSession(draft.projectId, draft.id)).resolves.toMatchObject({
+      id: draft.id,
+      title: draft.title,
+      number: 1
+    })
+    await expect(projection.pending()).resolves.toEqual([])
+    await expect(projection.list()).resolves.toEqual([expect.objectContaining({ id: draft.id })])
+  })
 
   it('retains both errors and pending evidence when allocation compensation fails', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-compensation-failure-'))
