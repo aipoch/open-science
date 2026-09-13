@@ -1,5 +1,7 @@
 import { lstat, readdir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
+import type { MarketplacePackage } from '../skills/marketplace-package'
+import type { SkillMarketplaceInstallation } from '../../shared/skill-marketplace'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
@@ -663,6 +665,26 @@ class SkillCatalogModule {
       await this.authenticatedGitHubFetch(),
       await this.bundledSkillNames(),
       { signal }
+    )
+    await this.refreshRegisteredHelpers()
+    return { ...outcome, skills: await this.listSkills() }
+  }
+
+  async marketplaceInstallation(
+    id: string,
+    version: string
+  ): Promise<SkillMarketplaceInstallation> {
+    return this.userSkills.marketplaceInstallation(id, version, await this.bundledSkillNames())
+  }
+
+  async installMarketplace(
+    pkg: MarketplacePackage,
+    expectedVersion: string | null
+  ): Promise<ImportSkillResult> {
+    const outcome = await this.userSkills.installMarketplace(
+      pkg,
+      expectedVersion,
+      await this.bundledSkillNames()
     )
     await this.refreshRegisteredHelpers()
     return { ...outcome, skills: await this.listSkills() }

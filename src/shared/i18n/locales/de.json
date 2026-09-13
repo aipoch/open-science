@@ -118,7 +118,12 @@
   },
   "renderer": {
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "Die Überprüfung des R-Zugriffs erfordert einen einsatzbereiten Netzwerkschutz. Prüfen Sie die Netzwerkeinstellungen und überprüfen Sie anschließend die Laufzeitumgebungen erneut.",
-    "Browse published Skill metadata. Downloads and installation are not available.": "Metadaten veröffentlichter Fähigkeiten durchsuchen. Download und Installation sind nicht verfügbar.",
+    "Browse and install verified Marketplace releases. Updates require confirmation.": "Geprüfte Marktplatz-Veröffentlichungen durchsuchen und installieren. Updates erfordern eine Bestätigung.",
+    "Installed version: {{version}}": "Installierte Version: {{version}}",
+    "Skill installation failed": "Installation der Fähigkeit fehlgeschlagen",
+    "Local changes or an existing Skill prevent installation. No files were replaced.": "Lokale Änderungen oder eine vorhandene Fähigkeit verhindern die Installation. Es wurden keine Dateien ersetzt.",
+    "Update Skill from {{from}} to {{to}}?": "Fähigkeit von {{from}} auf {{to}} aktualisieren?",
+    "Installing downloads and verifies the package. Bundled scripts are not run during installation.": "Bei der Installation wird das Paket heruntergeladen und geprüft. Enthaltene Skripte werden dabei nicht ausgeführt.",
     "Marketplace verification failed": "Überprüfung des Marktplatzes fehlgeschlagen",
     "Marketplace snapshot is no longer available": "Der Marktplatz-Snapshot ist nicht mehr verfügbar",
     "Unable to load Marketplace": "Marktplatz kann nicht geladen werden",

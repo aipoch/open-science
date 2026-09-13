@@ -20,6 +20,8 @@ import type { UserSkillRepository } from '../skills/user-skill-repository'
 import { SPECIALIST_PACKAGE_SKILL_METADATA } from '../skills/specialist-package-adapter'
 import { SettingsRepository } from './repository'
 import { SkillCatalogModule } from './skill-catalog'
+import { marketplaceContentDigest, type MarketplacePackage } from '../skills/marketplace-package'
+import { sha256 } from '../skills/marketplace-protocol'
 
 const roots: string[] = []
 const catalogStorageRoots = new WeakMap<SkillCatalogModule, string>()
@@ -81,6 +83,44 @@ const userSkillSourceDir = (catalog: SkillCatalogModule, source: 'personal' | 'i
   join(catalogStorageRoots.get(catalog)!, 'skills', source)
 
 describe('SkillCatalogModule', () => {
+  it('preserves disabled status and stable references when a Marketplace Skill updates', async () => {
+    const catalog = await createCatalog()
+    const packageFor = (version: string): MarketplacePackage => {
+      const files = [
+        {
+          relativePath: 'SKILL.md',
+          content: Buffer.from(`---\nname: market-example\ndescription: Example\n---\n${version}\n`)
+        }
+      ]
+      return {
+        files,
+        receipt: {
+          marketplace: 'openscience-skills',
+          id: 'market-example',
+          version,
+          snapshotId: 'a'.repeat(40),
+          revision: 'b'.repeat(64),
+          descriptorSha256: sha256(Buffer.from(version)),
+          artifactSha256: 'c'.repeat(64),
+          contentSha256: marketplaceContentDigest(files)
+        }
+      }
+    }
+    const installed = await catalog.installMarketplace(packageFor('1.0.0'), null)
+    await catalog.setSkillEnabled({ id: installed.id, enabled: false })
+    const updated = await catalog.installMarketplace(packageFor('1.1.0'), '1.0.0')
+    expect(updated.id).toBe(installed.id)
+    expect(updated.skills.find((skill) => skill.id === installed.id)).toMatchObject({
+      name: 'market-example',
+      source: 'imported',
+      enabled: false
+    })
+    expect(await catalog.marketplaceInstallation('market-example', '1.1.0')).toEqual({
+      kind: 'installed',
+      version: '1.1.0',
+      canUpdate: false
+    })
+  })
   it('lists bundled Specialist dependencies without consulting user Skills', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
     roots.push(storageRoot)

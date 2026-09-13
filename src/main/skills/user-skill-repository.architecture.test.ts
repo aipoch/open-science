@@ -171,6 +171,7 @@ describe('User Skill repository architecture', () => {
   it('locks the compatibility export and operation inventories', () => {
     expect(exportInventory()).toEqual([
       'type:ImportOutcome',
+      'value:MarketplaceInstallConflict',
       'value:SAFE_SKILL_DIRECTORY_NAME',
       'value:SAFE_SKILL_NAME',
       'value:UserSkillRepository',
@@ -188,8 +189,10 @@ describe('User Skill repository architecture', () => {
       'importFromGitHub',
       'importFromZip',
       'importFromZipBatch',
+      'installMarketplace',
       'list',
       'listAgentHomeSkills',
+      'marketplaceInstallation',
       'matchImportedAgentHomeSkills',
       'previewAgentHomeSkill',
       'previewGitHubSkill',

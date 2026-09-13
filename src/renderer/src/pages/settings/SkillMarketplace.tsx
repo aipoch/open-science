@@ -2,11 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   SkillMarketplaceCatalog,
   SkillMarketplaceDetail,
+  SkillMarketplaceInstallation,
+  SkillMarketplaceInstallResult,
   SkillMarketplaceResult
 } from '../../../../shared/skill-marketplace'
 import { ErrorNotice } from '@/components/error-notice'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import {
   Select,
@@ -98,6 +101,120 @@ function MetadataLink({
     <ExternalTextLink href={href} className="max-w-full break-all">
       {children}
     </ExternalTextLink>
+  )
+}
+
+function MarketplaceInstallControls({
+  entry,
+  snapshotId,
+  installation,
+  onChanged
+}: {
+  entry: SkillMarketplaceEntry
+  snapshotId: string
+  installation: SkillMarketplaceInstallation
+  onChanged: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const [confirm, setConfirm] = useState(false)
+  const [pending, setPending] = useState(false)
+  const [failure, setFailure] = useState<Extract<SkillMarketplaceInstallResult, { ok: false }>>()
+  const active = useRef(true)
+  const inFlight = useRef(false)
+  const trigger = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    active.current = true
+    return () => {
+      active.current = false
+    }
+  }, [])
+  const installed = installation.kind === 'installed' ? installation : undefined
+  const conflict = installation.kind === 'conflict' || failure?.error === 'conflict'
+  const install = async (): Promise<void> => {
+    if (inFlight.current) return
+    inFlight.current = true
+    setPending(true)
+    setFailure(undefined)
+    let result: SkillMarketplaceInstallResult
+    try {
+      result = await window.api.settings.installSkillMarketplace({
+        id: entry.id,
+        snapshotId,
+        expectedVersion: installed?.version ?? null
+      })
+    } catch {
+      result = { ok: false, error: 'installation-failed' }
+    }
+    inFlight.current = false
+    if (!active.current) return
+    setPending(false)
+    setConfirm(false)
+    if (result.ok) onChanged()
+    else setFailure(result)
+  }
+  return (
+    <div className="space-y-3">
+      {installed ? (
+        <p className="text-sm text-muted-foreground">
+          {t('Installed version: {{version}}', { version: installed.version })}
+        </p>
+      ) : null}
+      {conflict || failure ? (
+        <ErrorNotice
+          tone={conflict ? 'amber' : 'red'}
+          title={t('Skill installation failed')}
+          description={
+            conflict
+              ? t(
+                  'Local changes or an existing Skill prevent installation. No files were replaced.'
+                )
+              : undefined
+          }
+          errorCode={failure?.error ?? 'conflict'}
+          primaryButton={{ label: t('Refresh'), onClick: onChanged }}
+        />
+      ) : null}
+      <Button
+        ref={trigger}
+        disabled={pending || conflict || Boolean(installed && !installed.canUpdate)}
+        onClick={() => setConfirm(true)}
+      >
+        {pending
+          ? t('Installing…')
+          : installed
+            ? installed.canUpdate
+              ? t('Update')
+              : t('Installed')
+            : t('Install')}
+      </Button>
+      <ConfirmActionDialog
+        open={confirm}
+        title={installed ? t('Update') : t('Install')}
+        description={
+          (installed
+            ? t('Update Skill from {{from}} to {{to}}?', {
+                from: installed.version,
+                to: entry.version
+              }) + ' '
+            : '') +
+          t(
+            'Installing downloads and verifies the package. Bundled scripts are not run during installation.'
+          )
+        }
+        cancelLabel={t('Cancel', { ns: 'common' })}
+        confirmLabel={installed ? t('Update') : t('Install')}
+        loading={pending}
+        loadingLabel={t('Installing…')}
+        onCancel={() => setConfirm(false)}
+        onConfirm={() => {
+          void install()
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          trigger.current?.focus()
+        }}
+      />
+    </div>
   )
 }
 
@@ -194,7 +311,7 @@ export function SkillMarketplace({
         role="note"
         className="rounded-lg border border-border bg-muted/50 p-3 text-xs text-muted-foreground"
       >
-        {t('Browse published Skill metadata. Downloads and installation are not available.')}
+        {t('Browse and install verified Marketplace releases. Updates require confirmation.')}
       </p>
       {!result ? (
         <p role="status">{t('Loading…')}</p>
@@ -230,6 +347,15 @@ export function SkillMarketplace({
           <div className="space-y-5" data-slot="skill-marketplace-detail">
             <h3 className="break-words text-lg font-semibold">{selected.displayName}</h3>
             <p className="text-sm text-muted-foreground">{selected.summary}</p>
+            {detailResult?.ok && detailResult.value.installation && snapshotId ? (
+              <MarketplaceInstallControls
+                key={detailKey}
+                entry={selected}
+                snapshotId={snapshotId}
+                installation={detailResult.value.installation}
+                onChanged={() => setDetailRefresh((value) => value + 1)}
+              />
+            ) : null}
             <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-3 text-sm">
               <dt>{t('Category')}</dt>
               <dd>{labels[selected.category]}</dd>

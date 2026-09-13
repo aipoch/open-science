@@ -261,6 +261,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.installNotebookNetwork': 'settings:install-notebook-network',
   'settings.installOpencode': 'settings:install-opencode',
   'settings.installRecommendedWslDistro': 'settings:install-recommended-wsl-distro',
+  'settings.installSkillMarketplace': 'settings:install-skill-marketplace',
   'settings.installWslPlatform': 'settings:install-wsl-platform',
   'settings.isEncryptionAvailable': 'settings:encryption-available',
   'settings.isNpmAvailable': 'settings:npm-available',

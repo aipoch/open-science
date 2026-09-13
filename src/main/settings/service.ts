@@ -1,9 +1,13 @@
 import { homedir } from 'node:os'
+import { z } from 'zod'
+import { MarketplaceInstallConflict } from '../skills/user-skill-repository'
 import { SkillMarketplaceService } from '../skills/marketplace-service'
 import type {
   SkillMarketplaceCatalog,
   SkillMarketplaceDetail,
   SkillMarketplaceDetailRequest,
+  SkillMarketplaceInstallRequest,
+  SkillMarketplaceInstallResult,
   SkillMarketplaceResult
 } from '../../shared/skill-marketplace'
 import { readFile, stat } from 'node:fs/promises'
@@ -276,10 +280,52 @@ class SettingsService {
     return this.skillMarketplace.list()
   }
 
-  getSkillMarketplaceDetail(
+  async getSkillMarketplaceDetail(
     request: SkillMarketplaceDetailRequest
   ): Promise<SkillMarketplaceResult<SkillMarketplaceDetail>> {
-    return this.skillMarketplace.detail(request)
+    const result = await this.skillMarketplace.detail(request)
+    if (!result.ok) return result
+    return {
+      ok: true,
+      value: {
+        ...result.value,
+        installation: await this.skills.marketplaceInstallation(
+          result.value.entry.id,
+          result.value.entry.version
+        )
+      }
+    }
+  }
+
+  async installSkillMarketplace(
+    request: SkillMarketplaceInstallRequest
+  ): Promise<SkillMarketplaceInstallResult> {
+    const parsed = z
+      .strictObject({
+        snapshotId: z.string().regex(/^[a-f0-9]{40}$/),
+        id: z
+          .string()
+          .max(128)
+          .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+        expectedVersion: z.string().max(128).nullable()
+      })
+      .safeParse(request)
+    if (!parsed.success) return { ok: false, error: 'conflict' }
+    const { expectedVersion, ...identity } = parsed.data
+    const downloaded = await this.skillMarketplace.download(identity)
+    if (!downloaded.ok) return downloaded
+    try {
+      const result = await this.skills.installMarketplace(downloaded.value, expectedVersion)
+      return {
+        ok: true,
+        value: { id: result.id, status: result.status, version: downloaded.value.receipt.version }
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof MarketplaceInstallConflict ? 'conflict' : 'installation-failed'
+      }
+    }
   }
 
   private readonly repository: SettingsRepository

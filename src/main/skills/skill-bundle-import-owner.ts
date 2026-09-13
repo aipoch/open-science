@@ -27,6 +27,13 @@ import { inspectSkillPackage } from './skill-package-inspection'
 import { extractZip, extractZipLenient } from './zip-extract'
 import type { SkillPackageTransactionOwner } from './skill-package-transaction-owner'
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
+import type { SkillMarketplaceInstallation } from '../../shared/skill-marketplace'
+import {
+  marketplaceContentDigest,
+  marketplaceReceiptSchema,
+  type MarketplacePackage,
+  type MarketplaceReceipt
+} from './marketplace-package'
 import { UserSkillStore, normalizeSkillName, parseUserSkillId } from './user-skill-store'
 
 type SkillRoot = { subPath: string; files: FetchedSkillFile[] }
@@ -76,6 +83,17 @@ const parsedSkillPreview = (
 
 const canonicalImportedSkillDocument = (content: Buffer, name: string): Buffer => {
   return Buffer.from(canonicalSkillDocument(content.toString('utf8'), name), 'utf8')
+}
+
+export class MarketplaceInstallConflict extends Error {}
+
+const newerStableVersion = (offered: string, installed: string): boolean => {
+  const schema = marketplaceReceiptSchema.shape.version
+  if (!schema.safeParse(offered).success || !schema.safeParse(installed).success) return false
+  const left = offered.split('+')[0].split('.').map(BigInt)
+  const right = installed.split('+')[0].split('.').map(BigInt)
+  const different = left.findIndex((value, index) => value !== right[index])
+  return different >= 0 && left[different] > right[different]
 }
 
 const findSkillRoots = (entries: { path: string; content: Buffer }[]): SkillRoot[] => {
@@ -353,6 +371,99 @@ export class SkillBundleImportOwner {
     )
   }
 
+  async marketplaceInstallation(
+    id: string,
+    offeredVersion: string,
+    reservedNames: readonly string[]
+  ): Promise<SkillMarketplaceInstallation> {
+    return this.transactions.runRecovered(async () => {
+      const existing = await this.transactions.readImportedSource(id)
+      if (existing?.marketplace?.id === id) {
+        try {
+          await this.store.assertOrdinaryReplacement('imported', id)
+          if ((await this.installedDigest(id)) !== existing.marketplace.installedContentSha256)
+            return { kind: 'conflict' }
+          return {
+            kind: 'installed',
+            version: existing.marketplace.version,
+            canUpdate: newerStableVersion(offeredVersion, existing.marketplace.version)
+          }
+        } catch {
+          return { kind: 'conflict' }
+        }
+      }
+      if (await this.marketplaceNameTaken(id, reservedNames)) return { kind: 'conflict' }
+      return { kind: 'not-installed' }
+    })
+  }
+
+  async installMarketplace(
+    pkg: MarketplacePackage,
+    expectedVersion: string | null,
+    reservedNames: readonly string[]
+  ): Promise<ImportOutcome> {
+    return this.transactions.runMutationRecovered(async () => {
+      const receipt = marketplaceReceiptSchema
+        .omit({ installedContentSha256: true })
+        .parse(pkg.receipt)
+      const { id } = receipt
+      const source = await this.transactions.readImportedSource(id)
+      const existing = source?.marketplace
+      const conflict = (): never => {
+        throw new MarketplaceInstallConflict(
+          'Marketplace installation conflicts with local content'
+        )
+      }
+      if (existing) {
+        if (
+          existing.id !== id ||
+          (await this.installedDigest(id).catch(() => '')) !== existing.installedContentSha256
+        )
+          conflict()
+        // Repeated delivery after a successful install is safe only for the exact same release.
+        if (
+          existing.version === receipt.version &&
+          existing.contentSha256 === receipt.contentSha256 &&
+          existing.descriptorSha256 === receipt.descriptorSha256
+        )
+          return { status: 'unchanged', id: `imported-${id}` }
+        if (
+          expectedVersion !== existing.version ||
+          !newerStableVersion(receipt.version, existing.version)
+        )
+          conflict()
+      } else if (expectedVersion !== null || (await this.marketplaceNameTaken(id, reservedNames)))
+        conflict()
+      if (marketplaceContentDigest(pkg.files) !== receipt.contentSha256)
+        throw new Error('Marketplace content changed before installation')
+      await this.writeImported(id, pkg.files, '', signatureOf(pkg.files), receipt)
+      return { status: existing ? 'updated' : 'imported', id: `imported-${id}` }
+    })
+  }
+
+  private async marketplaceNameTaken(
+    id: string,
+    reservedNames: readonly string[]
+  ): Promise<boolean> {
+    return (
+      reservedNames.some((name) => name.toLowerCase() === id) ||
+      (await this.store.directoryNameTaken('imported', id)) ||
+      (await this.store.listSkillsLocked()).some((skill) => skill.name.toLowerCase() === id)
+    )
+  }
+
+  private async installedDigest(id: string): Promise<string> {
+    const files = await inspectSkillPackage(this.store.skillDirectory('imported', id))
+    return marketplaceContentDigest(
+      await Promise.all(
+        files.map(async (file) => ({
+          relativePath: file.relativePath,
+          content: await readFile(file.absolutePath)
+        }))
+      )
+    )
+  }
+
   async importFromZipBatch(
     zip: Buffer,
     items: { subPath: string; replaceId?: string }[],
@@ -591,7 +702,8 @@ export class SkillBundleImportOwner {
     directoryName: string,
     files: FetchedSkillFile[],
     url: string,
-    signature: string
+    signature: string,
+    marketplace?: Omit<MarketplaceReceipt, 'installedContentSha256'>
   ): Promise<void> {
     await this.store.assertOrdinaryReplacement('imported', directoryName)
     const dir = this.store.skillDirectory('imported', directoryName)
@@ -639,7 +751,24 @@ export class SkillBundleImportOwner {
           throw error
         }
       }
-      await this.transactions.writeSourceManifest(staging, { url, signature })
+      const installedContentSha256 =
+        marketplace &&
+        marketplaceContentDigest(
+          files.map((file) => ({
+            ...file,
+            content:
+              file.relativePath.toLowerCase() === 'skill.md'
+                ? canonicalImportedSkillDocument(file.content, directoryName)
+                : file.content
+          }))
+        )
+      await this.transactions.writeSourceManifest(staging, {
+        url,
+        signature,
+        ...(marketplace
+          ? { marketplace: { ...marketplace, installedContentSha256: installedContentSha256! } }
+          : {})
+      })
     })
     await this.transactions.promote(staged)
   }

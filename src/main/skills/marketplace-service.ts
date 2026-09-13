@@ -5,7 +5,13 @@ import type {
   SkillMarketplaceDetailRequest,
   SkillMarketplaceResult
 } from '../../shared/skill-marketplace'
-import { netFetchStandard } from './net-fetch'
+import { netFetchWithManualRedirect } from './net-fetch'
+import { createLogger } from '../logger'
+import {
+  marketplaceReceiptSchema,
+  verifyMarketplacePackage,
+  type MarketplacePackage
+} from './marketplace-package'
 import {
   toMarketplaceEntry,
   verifyMarketplaceDetail,
@@ -13,6 +19,7 @@ import {
   verifyMarketplaceRoot,
   type MarketplaceRoot
 } from './marketplace-protocol'
+import { sha256 } from './marketplace-protocol'
 
 const REPOSITORY = 'aipoch/openscience-skill-marketplace'
 const detailRequest = z.strictObject({
@@ -24,24 +31,45 @@ const detailRequest = z.strictObject({
 })
 class NetworkError extends Error {}
 
-// Read-only owner: never downloads shards, writes files or modifies the installed Skill catalog.
+// Owns remote verification; package writes remain in the existing UserSkillRepository transaction.
 export class SkillMarketplaceService {
   private readonly snapshots = new Map<string, MarketplaceRoot>()
   private pending?: Promise<SkillMarketplaceResult<SkillMarketplaceCatalog>>
 
-  constructor(private readonly fetch: typeof globalThis.fetch = netFetchStandard) {}
+  constructor(private readonly fetch: typeof globalThis.fetch = netFetchWithManualRedirect) {}
 
   private async read(
     url: string,
     limit: number,
-    signal = AbortSignal.timeout(15000)
+    signal = AbortSignal.timeout(15000),
+    artifact = false
   ): Promise<Uint8Array> {
     try {
-      const response = await this.fetch(url, {
+      let response = await this.fetch(url, {
         signal,
-        redirect: 'error',
-        headers: { Accept: 'application/json' }
+        credentials: 'omit',
+        redirect: artifact ? 'manual' : 'error',
+        headers: { Accept: artifact ? 'application/octet-stream' : 'application/json' }
       })
+      // GitHub Release downloads redirect to its asset host. Never forward credentials or follow
+      // publisher-controlled hosts, local addresses, or a redirect chain beyond this single hop.
+      if (artifact && [301, 302, 303, 307, 308].includes(response.status)) {
+        const location = new URL(response.headers.get('location') ?? '', url)
+        await response.body?.cancel()
+        if (
+          location.protocol !== 'https:' ||
+          location.hostname !== 'release-assets.githubusercontent.com' ||
+          location.port ||
+          location.username ||
+          location.password
+        )
+          throw new NetworkError('Invalid asset redirect')
+        response = await this.fetch(location.href, {
+          signal,
+          redirect: 'error',
+          credentials: 'omit'
+        })
+      }
       if (!response.ok || !response.body) throw new NetworkError('Metadata unavailable')
       const reader = response.body.getReader()
       let done = false
@@ -67,6 +95,10 @@ export class SkillMarketplaceService {
       }
     } catch (error) {
       if (error instanceof Error && error.message === 'Metadata exceeds limit') throw error
+      createLogger('skill-marketplace').warn('Marketplace request failed', {
+        origin: new URL(url).origin,
+        reason: error instanceof Error ? error.message : 'Unknown network failure'
+      })
       throw new NetworkError('Metadata request failed')
     }
   }
@@ -137,6 +169,55 @@ export class SkillMarketplaceService {
     try {
       const bytes = await this.read(this.rawUrl(snapshotId, listing.release.path), 1024 * 1024)
       return { ok: true, value: verifyMarketplaceDetail(bytes, listing) }
+    } catch (error) {
+      return { ok: false, error: error instanceof NetworkError ? 'network' : 'integrity' }
+    }
+  }
+
+  async download(
+    request: SkillMarketplaceDetailRequest
+  ): Promise<SkillMarketplaceResult<MarketplacePackage>> {
+    const parsed = detailRequest.safeParse(request)
+    if (!parsed.success) return { ok: false, error: 'snapshot-unavailable' }
+    const { snapshotId, id } = parsed.data
+    const root = this.snapshots.get(snapshotId)
+    const listing = root?.skills.find((entry) => entry.id === id)
+    if (!root || !listing) return { ok: false, error: 'snapshot-unavailable' }
+    try {
+      const signal = AbortSignal.timeout(25000)
+      const descriptor = verifyMarketplaceDetail(
+        await this.read(this.rawUrl(snapshotId, listing.release.path), 1024 * 1024, signal),
+        listing
+      )
+      const receipt = marketplaceReceiptSchema.omit({ installedContentSha256: true }).parse({
+        marketplace: 'openscience-skills',
+        id,
+        version: listing.version,
+        snapshotId,
+        revision: root.revision,
+        descriptorSha256: listing.release.sha256,
+        artifactSha256: listing.artifact.sha256,
+        contentSha256: listing.content_sha256
+      })
+      const assetName = `${sha256(Buffer.from(listing.artifact.path))}.zip`
+      const bytes = await this.read(
+        `https://github.com/${REPOSITORY}/releases/download/catalog-${root.revision}/${assetName}`,
+        Math.min(listing.artifact.bytes, 64 * 1024 * 1024),
+        signal,
+        true
+      )
+      return {
+        ok: true,
+        value: {
+          receipt,
+          files: verifyMarketplacePackage(
+            Buffer.from(bytes),
+            id,
+            listing.artifact,
+            descriptor.package
+          )
+        }
+      }
     } catch (error) {
       return { ok: false, error: error instanceof NetworkError ? 'network' : 'integrity' }
     }

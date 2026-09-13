@@ -119,7 +119,12 @@
   },
   "renderer": {
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "La vérification de l’accès à R nécessite une protection réseau opérationnelle. Consultez les paramètres réseau, puis vérifiez à nouveau les environnements d’exécution.",
-    "Browse published Skill metadata. Downloads and installation are not available.": "Consulter les métadonnées des compétences publiées. Le téléchargement et l’installation ne sont pas disponibles.",
+    "Browse and install verified Marketplace releases. Updates require confirmation.": "Parcourir et installer les versions vérifiées de la place de marché. Les mises à jour nécessitent une confirmation.",
+    "Installed version: {{version}}": "Version installée : {{version}}",
+    "Skill installation failed": "Échec de l’installation de la compétence",
+    "Local changes or an existing Skill prevent installation. No files were replaced.": "Des modifications locales ou une compétence existante empêchent l’installation. Aucun fichier n’a été remplacé.",
+    "Update Skill from {{from}} to {{to}}?": "Mettre à jour la compétence de {{from}} vers {{to}} ?",
+    "Installing downloads and verifies the package. Bundled scripts are not run during installation.": "L’installation télécharge et vérifie le paquet. Les scripts inclus ne sont pas exécutés pendant l’installation.",
     "Marketplace verification failed": "Échec de la vérification de la place de marché",
     "Marketplace snapshot is no longer available": "L’instantané de la place de marché n’est plus disponible",
     "Unable to load Marketplace": "Impossible de charger la place de marché",

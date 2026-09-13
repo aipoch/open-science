@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { verify } from 'node:crypto'
+import { zipSync } from 'fflate'
+import { marketplaceContentDigest } from './marketplace-package'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SkillMarketplaceService } from './marketplace-service'
 import {
@@ -44,6 +46,97 @@ afterEach(() => {
 })
 
 describe('verified Skill Marketplace browsing', () => {
+  it('downloads the root-selected Release asset, follows only the GitHub asset hop, and verifies package contents', async () => {
+    const files = [
+      {
+        relativePath: 'SKILL.md',
+        content: Buffer.from(
+          '---\nname: abstract-trimmer\ndescription: Test-only package\n---\nTest instructions\n'
+        )
+      }
+    ]
+    const archive = Buffer.from(zipSync({ 'abstract-trimmer/SKILL.md': files[0].content }))
+    const testRoot = structuredClone(root)
+    const testDescriptor = JSON.parse(descriptor.toString())
+    const listing = testRoot.skills[0]
+    listing.artifact = {
+      path: `shards/${sha256(archive)}.zip`,
+      sha256: sha256(archive),
+      bytes: archive.length,
+      skill_path: listing.id
+    }
+    listing.content_sha256 = marketplaceContentDigest(files)
+    testDescriptor.artifact = listing.artifact
+    testDescriptor.package = {
+      content_sha256: listing.content_sha256,
+      file_count: 1,
+      uncompressed_bytes: files[0].content.length
+    }
+    const descriptorBytes = json(testDescriptor)
+    listing.release.sha256 = sha256(descriptorBytes)
+    const indexBytes = json({ schema_version: 1, releases: [listing.release] })
+    testRoot.release_index = {
+      path: `indexes/${sha256(indexBytes)}.json`,
+      sha256: sha256(indexBytes)
+    }
+    const { revision: _revision, ...body } = testRoot
+    void _revision
+    testRoot.revision = sha256(json(body))
+    const assetUrl = `https://github.com/aipoch/openscience-skill-marketplace/releases/download/catalog-${testRoot.revision}/${sha256(Buffer.from(listing.artifact.path))}.zip`
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
+      const value = String(url)
+      if (value.endsWith('/git/ref/heads/published'))
+        return Response.json({ object: { sha: commit, type: 'commit' } })
+      if (value.endsWith('/marketplace.json')) return new Response(json(testRoot).toString())
+      if (value.endsWith('/marketplace.json.sig')) return new Response(signature.toString())
+      if (value.endsWith(testRoot.release_index.path)) return new Response(indexBytes.toString())
+      if (value.endsWith(listing.release.path)) return new Response(descriptorBytes.toString())
+      if (value === assetUrl) {
+        expect(init?.redirect).toBe('manual')
+        return new Response(null, {
+          status: 302,
+          headers: { location: 'https://release-assets.githubusercontent.com/test?signature=test' }
+        })
+      }
+      if (value.startsWith('https://release-assets.githubusercontent.com/')) {
+        expect(init?.redirect).toBe('error')
+        expect(init?.headers).toBeUndefined()
+        return new Response(archive)
+      }
+      throw new Error('Unexpected URL')
+    })
+    const service = new SkillMarketplaceService(fetch)
+    // This synthetic package is confined to the transport test. Production has no key override.
+    vi.mocked(verify).mockImplementationOnce(() => true)
+    expect((await service.list()).ok).toBe(true)
+    expect(await service.download({ id: listing.id, snapshotId: commit })).toMatchObject({
+      ok: true,
+      value: {
+        files,
+        receipt: { id: listing.id, version: '1.0.0', contentSha256: listing.content_sha256 }
+      }
+    })
+  })
+
+  it.each([
+    'http://127.0.0.1/private',
+    'https://attacker.example/payload',
+    'https://release-assets.githubusercontent.com:444/payload'
+  ])('rejects an untrusted artifact redirect to %s', async (location) => {
+    const metadata = transport()
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) =>
+      String(url).startsWith('https://github.com/')
+        ? new Response(null, { status: 302, headers: { location } })
+        : metadata(url, init)
+    )
+    const service = new SkillMarketplaceService(fetch)
+    await service.list()
+    expect(await service.download({ id: 'abstract-trimmer', snapshotId: commit })).toEqual({
+      ok: false,
+      error: 'network'
+    })
+    expect(fetch.mock.calls.some(([url]) => String(url) === location)).toBe(false)
+  })
   it('accepts the published signature, index and descriptor without requesting shards', async () => {
     const fetch = transport()
     const service = new SkillMarketplaceService(fetch)

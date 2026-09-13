@@ -268,6 +268,11 @@ describe('renderer argument-shape characterization', () => {
         'settings.getSkillMarketplaceDetail',
         'settings:get-skill-marketplace-detail',
         [{ snapshotId: 'a'.repeat(40), id: 'abstract-trimmer' }]
+      ],
+      [
+        'settings.installSkillMarketplace',
+        'settings:install-skill-marketplace',
+        [{ snapshotId: 'a'.repeat(40), id: 'abstract-trimmer', expectedVersion: '1.0.0' }]
       ]
     ] as const) {
       expect(await invokeElectron(electronApi, path, [...args])).toEqual({ channel, args })

@@ -3,6 +3,8 @@ import type {
   SkillMarketplaceCatalog,
   SkillMarketplaceDetail,
   SkillMarketplaceDetailRequest,
+  SkillMarketplaceInstallRequest,
+  SkillMarketplaceInstallResult,
   SkillMarketplaceResult
 } from './skill-marketplace'
 import type {
@@ -2018,6 +2020,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
       request: SkillMarketplaceDetailRequest
     ) => Promise<SkillMarketplaceResult<SkillMarketplaceDetail>>
   >()('settings', ['settings:get-skill-marketplace-detail']),
+  'settings.installSkillMarketplace': callable<
+    (request: SkillMarketplaceInstallRequest) => Promise<SkillMarketplaceInstallResult>
+  >()('settings', ['settings:install-skill-marketplace']),
   'settings.getSkillDetail': callable<(id: string) => Promise<SkillDetailView>>()('settings', [
     'settings:get-skill-detail'
   ]),

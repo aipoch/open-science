@@ -120,7 +120,12 @@
   },
   "renderer": {
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "Для проверки доступа к R защита сети должна быть готова. Проверьте настройки сети, затем повторно проверьте среды выполнения.",
-    "Browse published Skill metadata. Downloads and installation are not available.": "Просмотр метаданных опубликованных навыков. Загрузка и установка недоступны.",
+    "Browse and install verified Marketplace releases. Updates require confirmation.": "Просмотр и установка проверенных выпусков маркетплейса. Обновления требуют подтверждения.",
+    "Installed version: {{version}}": "Установленная версия: {{version}}",
+    "Skill installation failed": "Не удалось установить навык",
+    "Local changes or an existing Skill prevent installation. No files were replaced.": "Локальные изменения или существующий навык препятствуют установке. Файлы не были заменены.",
+    "Update Skill from {{from}} to {{to}}?": "Обновить навык с {{from}} до {{to}}?",
+    "Installing downloads and verifies the package. Bundled scripts are not run during installation.": "При установке пакет загружается и проверяется. Включённые скрипты не запускаются во время установки.",
     "Marketplace verification failed": "Не удалось проверить маркетплейс",
     "Marketplace snapshot is no longer available": "Снимок маркетплейса больше недоступен",
     "Unable to load Marketplace": "Не удалось загрузить маркетплейс",

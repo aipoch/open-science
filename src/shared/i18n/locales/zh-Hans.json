@@ -117,7 +117,12 @@
   },
   "renderer": {
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "验证 R 访问权限需要网络保护就绪。请检查网络设置，然后重新检查运行环境。",
-    "Browse published Skill metadata. Downloads and installation are not available.": "浏览已发布技能的元信息。暂不支持下载和安装。",
+    "Browse and install verified Marketplace releases. Updates require confirmation.": "浏览并安装经校验的市场发布版本。更新需要确认。",
+    "Installed version: {{version}}": "已安装版本：{{version}}",
+    "Skill installation failed": "技能安装失败",
+    "Local changes or an existing Skill prevent installation. No files were replaced.": "本地修改或已有技能阻止了安装。未替换任何文件。",
+    "Update Skill from {{from}} to {{to}}?": "将技能从 {{from}} 更新到 {{to}}？",
+    "Installing downloads and verifies the package. Bundled scripts are not run during installation.": "安装会下载并校验软件包。安装期间不会运行包内脚本。",
     "Marketplace verification failed": "市场验证失败",
     "Marketplace snapshot is no longer available": "市场快照已失效",
     "Unable to load Marketplace": "无法加载市场",

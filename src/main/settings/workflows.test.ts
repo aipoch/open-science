@@ -122,6 +122,7 @@ const fakeStore = () => {
     deleteSkill: vi.fn().mockResolvedValue([]),
     importSkill: vi.fn().mockResolvedValue({ skills: [] }),
     importSkillZip: vi.fn().mockResolvedValue({ skills: [] }),
+    installSkillMarketplace: vi.fn().mockResolvedValue({ ok: true, value: { status: 'imported' } }),
     importSkillZipBatch: vi.fn().mockResolvedValue({ results: [], skills: [] }),
     importAgentHomeSkills: vi.fn().mockResolvedValue({ results: [], skills: [] }),
     setConnectorEnabled: vi.fn().mockResolvedValue({ connectors: [] }),
@@ -427,6 +428,25 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     expect(removeTagsForSkill).toHaveBeenNthCalledWith(2, 'deleted-skill-with-tag-failure')
     expect(notifySkillCatalogChanged).toHaveBeenCalledTimes(5)
     expect(requestSkillsReload).toHaveBeenCalledOnce()
+  })
+
+  it('notifies Marketplace mutations only after a successful change', async () => {
+    const { store, capability } = fakeStore()
+    const notifySkillCatalogChanged = vi.fn()
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({ notifySkillCatalogChanged })
+    ).skills
+    const request = { id: 'example', snapshotId: 'a'.repeat(40), expectedVersion: null }
+    await workflows.installSkillMarketplace(request)
+    store.installSkillMarketplace.mockResolvedValueOnce({ ok: false, error: 'conflict' })
+    await workflows.installSkillMarketplace(request)
+    store.installSkillMarketplace.mockResolvedValueOnce({
+      ok: true,
+      value: { status: 'unchanged' }
+    })
+    await workflows.installSkillMarketplace(request)
+    expect(notifySkillCatalogChanged).toHaveBeenCalledOnce()
   })
 
   it('reloads installed Skill batches only when an item changed', async () => {

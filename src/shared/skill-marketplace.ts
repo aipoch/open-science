@@ -38,9 +38,27 @@ export type SkillMarketplaceCatalog = {
 }
 
 export type SkillMarketplaceDetailRequest = { snapshotId: string; id: string }
+export type SkillMarketplaceInstallation =
+  | { kind: 'not-installed' }
+  | { kind: 'conflict' }
+  | { kind: 'installed'; version: string; canUpdate: boolean }
+export type SkillMarketplaceInstallRequest = SkillMarketplaceDetailRequest & {
+  // null is an explicit first install, a version is an optimistic update precondition.
+  expectedVersion: string | null
+}
+export type SkillMarketplaceInstallResult =
+  | {
+      ok: true
+      value: { id: string; status: 'imported' | 'unchanged' | 'updated'; version: string }
+    }
+  | {
+      ok: false
+      error: 'network' | 'integrity' | 'snapshot-unavailable' | 'conflict' | 'installation-failed'
+    }
 export type SkillMarketplaceDetail = {
   entry: SkillMarketplaceEntry
   licenseEvidence: { url: string; sha256: string }[]
+  installation?: SkillMarketplaceInstallation
 }
 
 // Transport-safe failures; these are transient browsing results, not installed Skill states.

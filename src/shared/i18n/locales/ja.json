@@ -117,7 +117,12 @@
   },
   "renderer": {
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "R のアクセス検証にはネットワーク保護の準備が必要です。ネットワーク設定を確認してから、ランタイムを再確認してください。",
-    "Browse published Skill metadata. Downloads and installation are not available.": "公開済みスキルのメタデータを閲覧できます。ダウンロードとインストールは利用できません。",
+    "Browse and install verified Marketplace releases. Updates require confirmation.": "検証済みのマーケットプレイスのリリースを閲覧してインストールできます。更新には確認が必要です。",
+    "Installed version: {{version}}": "インストール済みバージョン: {{version}}",
+    "Skill installation failed": "スキルのインストールに失敗しました",
+    "Local changes or an existing Skill prevent installation. No files were replaced.": "ローカルの変更または既存のスキルによりインストールできません。ファイルは置き換えられていません。",
+    "Update Skill from {{from}} to {{to}}?": "スキルを {{from}} から {{to}} に更新しますか？",
+    "Installing downloads and verifies the package. Bundled scripts are not run during installation.": "インストール時にパッケージをダウンロードして検証します。同梱スクリプトは実行されません。",
     "Marketplace verification failed": "マーケットプレイスの検証に失敗しました",
     "Marketplace snapshot is no longer available": "マーケットプレイスのスナップショットは利用できなくなりました",
     "Unable to load Marketplace": "マーケットプレイスを読み込めません",

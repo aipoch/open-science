@@ -42,6 +42,7 @@ const expectedSkillChannels = [
   'settings:delete-skill',
   'settings:import-skill',
   'settings:import-skill-zip',
+  'settings:install-skill-marketplace',
   'settings:import-skill-zip-batch'
 ] as const
 
@@ -152,7 +153,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings integration application commands', () => {
-  it('defines the exact 37-command Skill, Connector, and approval inventory', () => {
+  it('defines the exact 38-command Skill, Connector, and approval inventory', () => {
     const groups = [
       settingsSkillApplicationCommandGroup,
       settingsConnectorApplicationCommandGroup,
@@ -186,7 +187,7 @@ describe('Settings integration application commands', () => {
     expect(settingsApprovalApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedApprovalChannels
     )
-    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(37)
+    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(38)
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     expect(settingsChannels).toEqual(
       expect.arrayContaining([
@@ -195,7 +196,7 @@ describe('Settings integration application commands', () => {
         ...expectedApprovalChannels
       ])
     )
-    expect(integrationContracts).toHaveLength(36)
+    expect(integrationContracts).toHaveLength(37)
     expect(
       integrationContracts
         ?.filter(

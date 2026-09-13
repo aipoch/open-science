@@ -17,6 +17,7 @@ const entries: SkillMarketplaceEntry[] = Array.from({ length: 40 }, (_, index) =
   displayName: 'Skill ' + String(index).padStart(2, '0')
 }))
 const list = vi.fn().mockResolvedValue({ ok: true, value: { ...marketplaceCatalog, entries } })
+const install = vi.fn()
 const detail = vi.fn().mockImplementation(async ({ id }) => ({
   ok: true,
   value: {
@@ -28,7 +29,11 @@ let container: HTMLDivElement
 let root: Root
 beforeEach(() => {
   vi.stubGlobal('api', {
-    settings: { listSkillMarketplace: list, getSkillMarketplaceDetail: detail }
+    settings: {
+      listSkillMarketplace: list,
+      getSkillMarketplaceDetail: detail,
+      installSkillMarketplace: install
+    }
   })
   container = document.createElement('div')
   document.body.append(container)
@@ -42,6 +47,96 @@ afterEach(async () => {
 })
 
 describe('Skill Marketplace', () => {
+  it('requires confirmation, binds the old version, and prevents duplicate update submissions', async () => {
+    detail.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        ...marketplaceDetail,
+        entry: { ...marketplaceEntry, version: '1.1.0' },
+        installation: { kind: 'installed', version: '1.0.0', canUpdate: true }
+      }
+    })
+    let finish!: (value: unknown) => void
+    install.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await act(async () =>
+      root.render(
+        <SkillMarketplace
+          view={{
+            kind: 'marketplace-detail',
+            id: marketplaceEntry.id,
+            displayName: marketplaceEntry.displayName,
+            snapshotId: marketplaceCatalog.snapshotId
+          }}
+          onNavigate={vi.fn()}
+        />
+      )
+    )
+    const update = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Update'
+    )!
+    await act(async () => update.click())
+    expect(install).not.toHaveBeenCalled()
+    const dialog = document.querySelector('[role="alertdialog"]')!
+    expect(dialog.textContent).toContain('Update Skill from 1.0.0 to 1.1.0?')
+    const confirm = [...dialog.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Update'
+    )!
+    await act(async () => {
+      confirm.click()
+      confirm.click()
+    })
+    expect(install).toHaveBeenCalledExactlyOnceWith({
+      id: marketplaceEntry.id,
+      snapshotId: marketplaceCatalog.snapshotId,
+      expectedVersion: '1.0.0'
+    })
+    expect(confirm.disabled).toBe(true)
+    detail.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        ...marketplaceDetail,
+        installation: { kind: 'installed', version: '1.1.0', canUpdate: false }
+      }
+    })
+    await act(async () =>
+      finish({
+        ok: true,
+        value: { id: 'imported-abstract-trimmer', status: 'updated', version: '1.1.0' }
+      })
+    )
+    expect(container.textContent).toContain('Installed version: 1.1.0')
+  })
+
+  it('keeps conflicting local installations read-only', async () => {
+    detail.mockResolvedValueOnce({
+      ok: true,
+      value: { ...marketplaceDetail, installation: { kind: 'conflict' } }
+    })
+    await act(async () =>
+      root.render(
+        <SkillMarketplace
+          view={{
+            kind: 'marketplace-detail',
+            id: marketplaceEntry.id,
+            displayName: marketplaceEntry.displayName,
+            snapshotId: marketplaceCatalog.snapshotId
+          }}
+          onNavigate={vi.fn()}
+        />
+      )
+    )
+    expect(container.textContent).toContain('No files were replaced.')
+    expect(
+      [...container.querySelectorAll('button')].find((button) => button.textContent === 'Install')
+        ?.disabled
+    ).toBe(true)
+    expect(install).not.toHaveBeenCalled()
+  })
   it('shows loading, empty catalogs and retryable integrity failures without falling back to mock data', async () => {
     let finish!: (value: unknown) => void
     list.mockImplementationOnce(
@@ -160,7 +255,7 @@ describe('Skill Marketplace', () => {
     )
     await render(onNavigate.mock.calls[0][0])
     expect(container.querySelector('[data-slot="skill-marketplace-detail"]')).not.toBeNull()
-    expect(container.textContent).toContain('Downloads and installation are not available.')
+    expect(container.textContent).toContain('Updates require confirmation.')
     await render({ kind: 'marketplace' })
     expect(container.textContent).toContain('Page 2 of 2')
     expect(

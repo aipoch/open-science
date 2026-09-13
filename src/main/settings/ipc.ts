@@ -74,7 +74,10 @@ import type {
   SelectWslProfileRequest
 } from '../../shared/wsl-setup'
 import { SettingsService } from './service'
-import type { SkillMarketplaceDetailRequest } from '../../shared/skill-marketplace'
+import type {
+  SkillMarketplaceDetailRequest,
+  SkillMarketplaceInstallRequest
+} from '../../shared/skill-marketplace'
 import { connectorTemplateExportSelection } from './connector-template'
 import type { SettingsWorkflows } from './workflows'
 import { createLogger } from '../logger'
@@ -391,6 +394,11 @@ const registerSettingsIpcHandlers = ({
 
   ipcMainHandle('settings:list-skills', () => service.listSkills())
   ipcMainHandle('settings:list-skill-marketplace', () => service.listSkillMarketplace())
+  ipcMainHandle(
+    'settings:install-skill-marketplace',
+    (_event, request: SkillMarketplaceInstallRequest) =>
+      workflows.skills.installSkillMarketplace(request)
+  )
   ipcMainHandle(
     'settings:get-skill-marketplace-detail',
     (_event, request: SkillMarketplaceDetailRequest) => service.getSkillMarketplaceDetail(request)

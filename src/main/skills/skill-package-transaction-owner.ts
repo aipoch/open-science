@@ -5,6 +5,7 @@ import { basename, dirname, join } from 'node:path'
 import type { AgentHomeSkillRef, AgentHomeSkillSource, SkillSource } from '../../shared/settings'
 import { createLogger } from '../logger'
 import { type SkillMutationOwner, skillMutationOwnerFor } from './skill-mutation-owner'
+import { marketplaceReceiptSchema, type MarketplaceReceipt } from './marketplace-package'
 
 export type { SkillMutationOwner } from './skill-mutation-owner'
 
@@ -27,6 +28,7 @@ export type ImportedSourceManifest = {
   url?: string
   signature?: string
   agentHome?: AgentHomeSkillRef
+  marketplace?: MarketplaceReceipt
 }
 
 export type StagedSkillPackage = Readonly<{
@@ -183,6 +185,8 @@ export class SkillPackageTransactionOwner {
       const manifest: ImportedSourceManifest = {}
       if (typeof record.url === 'string') manifest.url = record.url
       if (typeof record.signature === 'string') manifest.signature = record.signature
+      const receipt = marketplaceReceiptSchema.safeParse(record.marketplace)
+      if (receipt.success) manifest.marketplace = receipt.data
 
       if (typeof record.agentHome === 'object' && record.agentHome !== null) {
         const agentHome = record.agentHome as Record<string, unknown>

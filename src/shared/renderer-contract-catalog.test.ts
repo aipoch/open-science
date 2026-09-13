@@ -30,10 +30,11 @@ describe('renderer contract catalog', () => {
     }
   })
 
-  it('exposes both read-only Skill Marketplace commands on Electron, local Web and remote Web', () => {
+  it('exposes Skill Marketplace browsing and installation on Electron, local Web and remote Web', () => {
     for (const publicPath of [
       'settings.listSkillMarketplace',
-      'settings.getSkillMarketplaceDetail'
+      'settings.getSkillMarketplaceDetail',
+      'settings.installSkillMarketplace'
     ]) {
       expect(
         RENDERER_CONTRACT_CATALOG.find((contract) => contract.publicPath === publicPath)

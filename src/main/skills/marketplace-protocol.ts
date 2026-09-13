@@ -14,7 +14,7 @@ const id = text(128).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
 const version = text(128).regex(
   /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 )
-const path = text(1024).refine(
+export const marketplacePath = text(1024).refine(
   (value) =>
     value === value.normalize('NFC') &&
     // eslint-disable-next-line no-control-regex -- Protocol paths must reject ASCII controls.
@@ -31,6 +31,7 @@ const path = text(1024).refine(
           !/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(part)
       )
 )
+const path = marketplacePath
 const https = text(4096).refine((value) => {
   try {
     const url = new URL(value)
@@ -261,6 +262,7 @@ export function verifyMarketplaceDetail(
 ): {
   entry: SkillMarketplaceEntry
   licenseEvidence: { url: string; sha256: string }[]
+  package: { contentSha256: string; fileCount: number; uncompressedBytes: number }
 } {
   const { release: pointer, artifact, content_sha256, ...listedSkill } = listing
   if (sha256(bytes) !== pointer.sha256) throw new Error('Descriptor digest mismatch')
@@ -277,6 +279,11 @@ export function verifyMarketplaceDetail(
     throw new Error('Descriptor identity mismatch')
   return {
     entry: toMarketplaceEntry(release.skill),
-    licenseEvidence: release.skill.license.evidence
+    licenseEvidence: release.skill.license.evidence,
+    package: {
+      contentSha256: release.package.content_sha256,
+      fileCount: release.package.file_count,
+      uncompressedBytes: release.package.uncompressed_bytes
+    }
   }
 }

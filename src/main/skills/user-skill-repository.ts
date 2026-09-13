@@ -18,6 +18,8 @@ import {
   type SkillMutationOwner
 } from './skill-package-transaction-owner'
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
+import type { MarketplacePackage } from './marketplace-package'
+import type { SkillMarketplaceInstallation } from '../../shared/skill-marketplace'
 import { UserSkillCompatibilityIndex } from './user-skill-compatibility-index'
 import {
   SAFE_SKILL_DIRECTORY_NAME,
@@ -33,6 +35,7 @@ import {
 } from './user-skill-store'
 
 export type { ImportOutcome } from './user-skill-import-contracts'
+export { MarketplaceInstallConflict } from './skill-bundle-import-owner'
 
 // Reads and writes user-authored (personal) and imported skills under `<storageRoot>/skills/`.
 class UserSkillRepository {
@@ -161,6 +164,22 @@ class UserSkillRepository {
 
   async previewZip(zip: Buffer): Promise<SkillBundlePreviewResult> {
     return this.bundleImports.previewZip(zip)
+  }
+
+  marketplaceInstallation(
+    id: string,
+    version: string,
+    reservedNames: readonly string[]
+  ): Promise<SkillMarketplaceInstallation> {
+    return this.bundleImports.marketplaceInstallation(id, version, reservedNames)
+  }
+
+  installMarketplace(
+    pkg: MarketplacePackage,
+    expectedVersion: string | null,
+    reservedNames: readonly string[]
+  ): Promise<ImportOutcome> {
+    return this.bundleImports.installMarketplace(pkg, expectedVersion, reservedNames)
   }
 
   async importFromZip(
