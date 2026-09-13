@@ -238,7 +238,7 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(document.activeElement).toBe(buttons[1])
   })
 
-  it('keeps every mark short and gray until hover, then tapers away from the highlighted mark', () => {
+  it('keeps visible marks dark at rest while hover tapers mark lengths independently', () => {
     const items = [0, 1, 2, 3, 4].map((index) => {
       const messageId = `prompt-${index}`
       appendMessageTarget(viewport, messageId, 120 + index * 100)
@@ -251,9 +251,10 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(indicators.every((indicator) => indicator?.classList.contains('scale-x-[0.4]'))).toBe(
       true
     )
-    expect(indicators.every((indicator) => indicator?.className.includes('bg-text-300/60'))).toBe(
-      true
-    )
+    expect(indicators[0]?.classList.contains('bg-text-000')).toBe(true)
+    expect(
+      indicators.slice(1).every((indicator) => indicator?.className.includes('bg-text-300/60'))
+    ).toBe(true)
 
     fireEvent.pointerEnter(buttons[2]!)
     expect(indicators[2]?.classList.contains('scale-x-100')).toBe(true)
@@ -266,6 +267,43 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(indicators.every((indicator) => indicator?.classList.contains('scale-x-[0.4]'))).toBe(
       true
     )
+  })
+
+  it('highlights all visible segments and follows replies even when their prompt is unmounted', async () => {
+    viewport.getBoundingClientRect = () => createRect(100, 400)
+    const items = [
+      createMessageItem({ id: 'prompt-0' }, 0),
+      createMessageItem({ id: 'reply-0', role: 'agent', responseToMessageId: 'prompt-0' }, 1),
+      createMessageItem({ id: 'prompt-1' }, 2),
+      createMessageItem({ id: 'prompt-2' }, 3),
+      createMessageItem({ id: 'prompt-3' }, 4)
+    ]
+    for (const [id, top] of [
+      ['reply-0', 80],
+      ['prompt-1', 200],
+      ['prompt-2', 600],
+      ['prompt-3', 800]
+    ] as const) {
+      appendMessageTarget(viewport, id, top)
+      const target = viewport.lastElementChild as HTMLElement
+      target.getBoundingClientRect = () => createRect(top - viewport.scrollTop)
+    }
+    render(<WorkspaceRunMarks items={items} viewport={viewport} onRevealMessage={vi.fn()} />)
+    const buttons = screen.getAllByRole('button', { name: /Go to run/u })
+    const visible = (): boolean[] => buttons.map((button) => button.dataset.visible === 'true')
+    expect(visible()).toEqual([true, true, false, false])
+    expect(buttons[0]?.querySelector('span')?.className).toContain('bg-text-000')
+    await act(async () => {
+      viewport.scrollTop = 500
+      fireEvent.scroll(viewport)
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+    })
+    expect(visible()).toEqual([false, false, true, true])
+    expect(buttons[0]?.querySelector('span')?.className).toContain('bg-text-300/60')
+    fireEvent.pointerEnter(buttons[2]!)
+    fireEvent.pointerLeave(buttons[2]!)
+    expect(buttons[2]?.querySelector('span')?.className).toContain('bg-text-000')
+    expect(buttons[3]?.querySelector('span')?.className).toContain('bg-text-000')
   })
 
   it('keeps a compact rail fixed to the conversation panel when the scroller is squeezed', async () => {

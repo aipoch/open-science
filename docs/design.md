@@ -590,7 +590,10 @@ colors communicate a successful or failed probe/migration result.
   directly so short in-memory transitions never flash a loading surface.
 - Desktop conversations with at least four visible human-authored runs show **Run Marks** in the
   scroller's left gutter. One mark belongs to the visible user Message that admitted the Run; model
-  Turns inside that Run do not create marks. At rest, every mark is the same short gray segment.
+  Turns inside that Run do not create marks. At rest, all marks stay equally short. Marks whose conversation segments intersect the transcript
+  viewport use `bg-text-000`; off-screen segments remain gray. Multiple visible segments may be dark
+  at once, including a visible response whose prompt has scrolled off-screen. Scrolling and content
+  resizing refresh this highlight independently of pointer hover.
   Pointer hover or keyboard focus emphasizes one mark and tapers nearby segments by distance; the
   segments use a 20px pitch for short lists, tightening to a minimum of 12px as the list grows,
   with 200ms transform easing and reduced-motion support. Colors
@@ -599,7 +602,7 @@ colors communicate a successful or failed probe/migration result.
   visible edge. The rail does not scroll independently on wheel or touch input; keyboard focus can
   still reveal a clipped mark. Its outer frame stays fixed at the conversation panel midpoint so
   bottom approval or permission surfaces do not shift it. The current Run remains available through
-  `aria-current` without a persistent visual highlight.
+  `aria-current`; the visible-segment highlight remains when hover ends.
   Activating a mark scrolls that Message to the top with reduced-motion support. The preview shows
   the user Message as a dark single-line excerpt plus up to two muted lines from the first visible
   Agent Message explicitly linked through `responseToMessageId`; historical Agent Messages without

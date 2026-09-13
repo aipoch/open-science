@@ -50,6 +50,24 @@ const createRunMarks = (items: readonly WorkspaceConversationTimelineItem[]): Ru
   })
 }
 
+// Visual navigation segments run from one human prompt to the next in the already-filtered
+// timeline. This lookup also covers mounted replies when their prompt is outside the DOM window;
+// it does not change the explicit ownership used to build Agent previews.
+const createRunMarkItemIndex = (
+  items: readonly WorkspaceConversationTimelineItem[],
+  marks: readonly RunMark[]
+): Map<string, number> => {
+  const indexByPromptId = new Map(marks.map((mark, index) => [mark.id, index]))
+  const indexByItemId = new Map<string, number>()
+  let index = -1
+  for (const item of items) {
+    if (item.type === 'message' && isHiddenControlMessage(item.message)) continue
+    index = indexByPromptId.get(item.id) ?? index
+    if (index >= 0) indexByItemId.set(item.id, index)
+  }
+  return indexByItemId
+}
+
 const findMessageTarget = (viewport: HTMLDivElement, messageId: string): HTMLElement | undefined =>
   Array.from(viewport.querySelectorAll<HTMLElement>('[data-message-id]')).find(
     (element) => element.dataset.messageId === messageId
@@ -85,7 +103,11 @@ const resolveCurrentRunMarkPosition = (
 const resolveCurrentRunMarkIndex = (viewport: HTMLDivElement, marks: readonly RunMark[]): number =>
   Math.floor(resolveCurrentRunMarkPosition(viewport, marks))
 
-const runMarkIndicatorClassName = (highlightedIndex: number | null, markIndex: number): string => {
+const runMarkIndicatorClassName = (
+  highlightedIndex: number | null,
+  markIndex: number,
+  visible = false
+): string => {
   const distance = highlightedIndex === null ? undefined : Math.abs(highlightedIndex - markIndex)
 
   return cn(
@@ -98,12 +120,14 @@ const runMarkIndicatorClassName = (highlightedIndex: number | null, markIndex: n
           ? 'scale-x-[0.55] bg-text-300/80'
           : distance === 3
             ? 'scale-x-[0.48] bg-text-300/70'
-            : 'scale-x-[0.4] bg-text-300/60'
+            : 'scale-x-[0.4] bg-text-300/60',
+    visible && 'bg-text-000'
   )
 }
 
 export {
   createRunMarks,
+  createRunMarkItemIndex,
   findMessageTarget,
   normalizePreviewText,
   resolveCurrentRunMarkIndex,

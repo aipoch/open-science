@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next'
 import type { WorkspaceConversationTimelineItem } from './workspace-conversation-timeline'
 import {
   createRunMarks,
+  createRunMarkItemIndex,
   findMessageTarget,
   normalizePreviewText,
   resolveCurrentRunMarkPosition,
@@ -44,6 +45,8 @@ const WorkspaceRunMarks = ({
 }: WorkspaceRunMarksProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const marks = useMemo(() => createRunMarks(items), [items])
+  const markIndexByItemId = useMemo(() => createRunMarkItemIndex(items, marks), [items, marks])
+  const [visibleIndices, setVisibleIndices] = useState<number[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
   const [availableMessageIds, setAvailableMessageIds] = useState<Set<string>>(
@@ -78,10 +81,25 @@ const WorkspaceRunMarks = ({
 
   const updateCurrentIndex = useCallback((): void => {
     if (!viewport || marks.length === 0) return
-    const position = resolveCurrentRunMarkPosition(viewport, marks)
+    const bounds = viewport.getBoundingClientRect()
+    const visible = new Set<number>()
+    for (const element of viewport.querySelectorAll<HTMLElement>('[data-message-id]')) {
+      const index = markIndexByItemId.get(element.dataset.messageId ?? '')
+      if (index === undefined) continue
+      const rect = element.getBoundingClientRect()
+      if (rect.bottom > bounds.top && rect.top < bounds.bottom) visible.add(index)
+    }
+    const nextVisible = [...visible].sort((a, b) => a - b)
+    setVisibleIndices((previous) =>
+      previous.length === nextVisible.length &&
+      previous.every((value, index) => value === nextVisible[index])
+        ? previous
+        : nextVisible
+    )
+    const position = Math.max(resolveCurrentRunMarkPosition(viewport, marks), nextVisible[0] ?? 0)
     setCurrentIndex(Math.floor(position))
     updateRailScroll(position)
-  }, [marks, updateRailScroll, viewport])
+  }, [markIndexByItemId, marks, updateRailScroll, viewport])
 
   const updateRailPosition = useCallback((): void => {
     if (!viewport) return
@@ -145,6 +163,7 @@ const WorkspaceRunMarks = ({
     const resizeObserver =
       typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleLayoutUpdate)
     resizeObserver?.observe(viewport)
+    if (viewport.firstElementChild) resizeObserver?.observe(viewport.firstElementChild)
     if (panel && panel !== viewport) resizeObserver?.observe(panel)
 
     return () => {
@@ -164,8 +183,12 @@ const WorkspaceRunMarks = ({
 
   // The portal is mounted after its first measurement; also follow after panel/window resizing.
   useLayoutEffect(() => {
-    if (viewport) updateRailScroll(resolveCurrentRunMarkPosition(viewport, marks))
-  }, [marks, railPosition, updateRailScroll, viewport])
+    if (viewport) {
+      updateRailScroll(
+        Math.max(resolveCurrentRunMarkPosition(viewport, marks), visibleIndices[0] ?? 0)
+      )
+    }
+  }, [marks, railPosition, updateRailScroll, viewport, visibleIndices])
 
   const scrollToRun = (mark: RunMark, index: number): void => {
     if (!viewport) return
@@ -230,6 +253,7 @@ const WorkspaceRunMarks = ({
                     <button
                       type="button"
                       className="group/run-mark flex size-full min-h-1 items-center rounded-sm ps-1 outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring/60 disabled:cursor-not-allowed disabled:opacity-40"
+                      data-visible={visibleIndices.includes(index) || undefined}
                       aria-current={isCurrent ? 'location' : undefined}
                       aria-label={t('Go to run {{index}}: {{preview}}', {
                         index: index + 1,
@@ -248,7 +272,11 @@ const WorkspaceRunMarks = ({
                     >
                       <span
                         aria-hidden="true"
-                        className={runMarkIndicatorClassName(highlightedIndex, index)}
+                        className={runMarkIndicatorClassName(
+                          highlightedIndex,
+                          index,
+                          visibleIndices.includes(index)
+                        )}
                       />
                     </button>
                   </TooltipTrigger>

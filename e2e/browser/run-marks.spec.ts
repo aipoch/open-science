@@ -111,3 +111,40 @@ for (const [count, pitch] of [
     expect(await marks.first().evaluate((el) => el.getBoundingClientRect().height)).toBe(pitch)
   })
 }
+
+test('keeps visible conversation segments dark without hover and updates them on scroll', async ({
+  page
+}, testInfo) => {
+  await page.goto('/run-marks.html')
+  const conversation = page.getByRole('region', { name: 'Conversation' })
+  const marks = page.getByRole('navigation', { name: 'Run marks' }).getByRole('button')
+  const visible = page.locator('nav button[data-visible="true"]')
+  await expect(visible).toHaveCount(2)
+  await expect(marks.nth(0)).toHaveAttribute('data-visible', 'true')
+  await expect(marks.nth(1)).toHaveAttribute('data-visible', 'true')
+  await expect(marks.nth(0).locator('span')).toHaveClass(/bg-text-000/)
+  await expect(marks.nth(2).locator('span')).toHaveClass(/bg-text-300\/60/)
+  await conversation.evaluate((el) => {
+    const reply = el.querySelector('[data-message-id="agent-45"]')!
+    el.scrollTop += reply.getBoundingClientRect().top - el.getBoundingClientRect().top + 40
+  })
+  await expect(marks.nth(45)).toHaveAttribute('data-visible', 'true')
+  await expect(marks.nth(0)).not.toHaveAttribute('data-visible')
+  await expect(marks.nth(45).locator('span')).toHaveClass(/bg-text-000/)
+  const forwardTop = await page.locator('nav ol').evaluate((el) => el.scrollTop)
+  expect(forwardTop).toBeGreaterThan(0)
+  await page.screenshot({
+    path: testInfo.outputPath('visible-marks-forward.png'),
+    animations: 'disabled'
+  })
+  await conversation.evaluate((el) => {
+    el.scrollTop = 0
+  })
+  await expect(marks.nth(0)).toHaveAttribute('data-visible', 'true')
+  await expect(marks.nth(45)).not.toHaveAttribute('data-visible')
+  await expect.poll(() => page.locator('nav ol').evaluate((el) => el.scrollTop)).toBe(0)
+  await page.screenshot({
+    path: testInfo.outputPath('visible-marks-start.png'),
+    animations: 'disabled'
+  })
+})
