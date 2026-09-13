@@ -135,6 +135,10 @@ const OPENCODE_PERMISSION_RULES: Record<string, 'ask' | 'allow' | 'deny'> = {
   // work graph. Deny it at the highest-precedence config layer: asking is insufficient because an
   // approval would still create an invisible child that bypasses Attempt authority and lifecycle.
   task: 'deny',
+  // Open Science owns durable planning and progress through Session Plans. Keep OpenCode's transient
+  // native Todo list unavailable so it cannot create a competing, non-durable progress surface.
+  todoread: 'deny',
+  todowrite: 'deny',
   // Skill loading only reads definitions already provisioned into the isolated OpenCode config.
   // Permission for creating/editing/enabling those definitions remains app-owned elsewhere.
   skill: 'allow',
@@ -150,6 +154,11 @@ const OPENCODE_DISABLED_NATIVE_AGENTS = {
   general: { disable: true },
   explore: { disable: true },
   scout: { disable: true }
+} as const
+
+const OPENCODE_DISABLED_NATIVE_TOOLS = {
+  todoread: false,
+  todowrite: false
 } as const
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -380,6 +389,7 @@ const buildAppConfigContent = (
 
   return {
     ...(bareModel ? { model: `${providerId}/${bareModel}` } : {}),
+    tools: { ...OPENCODE_DISABLED_NATIVE_TOOLS },
     permission: { ...OPENCODE_PERMISSION_RULES },
     agent: { ...OPENCODE_DISABLED_NATIVE_AGENTS },
     provider: buildOpencodeProviders(provider, reasoningEffort, catalog)
@@ -402,6 +412,7 @@ const buildOpencodeConfig = (
 
   const baseProviders = asRecord(baseConfig.provider)
   const basePermission = asRecord(baseConfig.permission)
+  const baseTools = asRecord(baseConfig.tools)
   // Preserve any instructions the base config already declared, then append ours (de-duplicated).
   const baseInstructions = Array.isArray(baseConfig.instructions)
     ? baseConfig.instructions.filter((entry): entry is string => typeof entry === 'string')
@@ -420,6 +431,10 @@ const buildOpencodeConfig = (
     permission: {
       ...basePermission,
       ...OPENCODE_PERMISSION_RULES
+    },
+    tools: {
+      ...baseTools,
+      ...OPENCODE_DISABLED_NATIVE_TOOLS
     },
     agent: {
       ...asRecord(baseConfig.agent),
