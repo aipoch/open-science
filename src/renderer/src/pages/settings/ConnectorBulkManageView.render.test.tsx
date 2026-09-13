@@ -343,6 +343,34 @@ describe('ConnectorBulkManageView', () => {
     expect(document.body.textContent).not.toContain('Deletion or cleanup did not finish')
   })
 
+  it.each(['Done', 'Clear selection'])(
+    'dismisses incomplete cleanup feedback with %s while retaining the cleanup journal',
+    async (dismiss) => {
+      const remove = vi.fn(async (id: string) => {
+        useSettingsStore.setState((state) => ({
+          customServers: state.customServers.filter((item) => item.id !== id),
+          reservedCustomServerIds: [id]
+        }))
+        throw new Error('cleanup failed after persistence')
+      })
+      useSettingsStore.setState({ removeCustomServer: remove })
+      await render()
+      select('Select Local tools')
+      select('Select PubMed')
+      await act(async () => button('Delete selected (2)').click())
+      await act(async () => button('Delete 1 Connector').click())
+      expect(document.body.textContent).toContain('Deletion or cleanup did not finish')
+      await act(async () => button(dismiss).click())
+      expect(document.body.textContent).not.toContain('Deletion or cleanup did not finish')
+      expect(document.body.textContent).not.toContain('Retry cleanup')
+      expect(document.body.textContent).not.toContain('Deleted:')
+      expect(useSettingsStore.getState().reservedCustomServerIds).toEqual(['local'])
+      expect(remove).toHaveBeenCalledExactlyOnceWith('local')
+      if (dismiss === 'Clear selection')
+        expect(document.querySelector('[data-slot="batch-manage-dock"]')).toBeNull()
+    }
+  )
+
   it('restores focus to Done and then search when deleting leaves an empty selected-only list', async () => {
     await render()
     select('Select Local tools')

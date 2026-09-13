@@ -150,6 +150,7 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
     setShowSelectedOnly(false)
     setBulkError(undefined)
     setBulkResult(undefined)
+    setIncompleteDeletions([])
   }
   const resetFilters = (): void => {
     setGroupFilter('all')
@@ -494,10 +495,11 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
         ) : undefined
       }
       onDone={
-        bulkError || bulkResult
+        bulkError || bulkResult || incompleteDeletions.length > 0
           ? () => {
               setBulkError(undefined)
               setBulkResult(undefined)
+              setIncompleteDeletions([])
             }
           : undefined
       }
