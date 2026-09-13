@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { openProjectSession } from './certification/helpers'
@@ -36,16 +37,21 @@ test('bounds history scrolling and preserves native find across the transcript',
     })
   }, cwd)
   page = await app.restart()
+  const openedAt = performance.now()
   await openProjectSession(page, 'Transcript capacity', 'Capacity history')
   const viewport = page.locator('[data-slot="message-scroller-viewport"]')
   const rows = viewport.locator('[data-message-id^="capacity-"]')
   await expect(rows).toHaveCount(80)
+  const openMs = performance.now() - openedAt
+  const scrollMs: number[] = []
   const counts: number[] = [80]
   await viewport.hover()
   for (let i = 0; i < 4; i++) {
     const first = await rows.first().getAttribute('data-message-id')
+    const startedAt = performance.now()
     await page.mouse.wheel(0, -100_000)
     await expect.poll(() => rows.first().getAttribute('data-message-id')).not.toBe(first)
+    scrollMs.push(performance.now() - startedAt)
     counts.push(await rows.count())
     expect(counts.at(-1)).toBeLessThanOrEqual(160)
   }
@@ -77,8 +83,23 @@ test('bounds history scrolling and preserves native find across the transcript',
   await overlay.getByRole('button', { name: 'Close find' }).click()
   await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
   await expect.poll(() => rows.count()).toBeLessThanOrEqual(160)
-  await testInfo.attach('mounted-row-counts', {
-    body: JSON.stringify(counts),
+  const screenshot = testInfo.outputPath('transcript-capacity.png')
+  await page.screenshot({ path: screenshot })
+  await testInfo.attach('transcript-capacity', { path: screenshot, contentType: 'image/png' })
+  const timingsPath = testInfo.outputPath('transcript-timings.json')
+  await writeFile(
+    timingsPath,
+    JSON.stringify({
+      messageCount: 400,
+      mountedRows: counts,
+      openMs,
+      scrollMs,
+      measurement:
+        'Playwright wall time from wheel to changed first row; includes automation and polling latency, not frame time'
+    })
+  )
+  await testInfo.attach('transcript-timings', {
+    path: timingsPath,
     contentType: 'application/json'
   })
 })

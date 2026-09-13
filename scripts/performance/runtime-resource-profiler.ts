@@ -10,7 +10,7 @@ import {
   type ProcessTreeSnapshot
 } from './process-snapshot'
 
-const PROFILE_SCHEMA_VERSION = 3
+const PROFILE_SCHEMA_VERSION = 4
 const DEFAULT_SAMPLE_INTERVAL_MS = 1_000
 const MIN_SAMPLE_INTERVAL_MS = 250
 const MAX_SAMPLE_INTERVAL_MS = 10_000
@@ -119,6 +119,7 @@ type RuntimeProfileSummary = {
   sampleIntervalMs: number
   schemaVersion: number
   sessionHydrationTrace: SessionHydrationTraceEvent[]
+  timings?: Record<string, NumberStats & { median: number; count: number }>
   startedAt: number
 }
 
@@ -380,6 +381,14 @@ const percentile = (values: readonly number[], ratio: number): number => {
   return sorted[Math.max(0, Math.ceil(sorted.length * ratio) - 1)] ?? 0
 }
 
+const median = (values: readonly number[]): number => {
+  const sorted = [...values].sort((a, b) => a - b)
+  const middle = Math.floor(sorted.length / 2)
+  return sorted.length % 2
+    ? sorted[middle]
+    : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2
+}
+
 const numberStats = (values: readonly number[]): NumberStats => {
   const first = values[0] ?? 0
   const last = values.at(-1) ?? 0
@@ -598,6 +607,22 @@ Phase | Included/total | CPU mean % | CPU p95 % | CPU peak % | CPU end % | RSS s
 ${rows.join('\n')}
 ${sessionTraceSection}
 ${storageSection}
+## Journey timings
+
+Metric | Count | Median ms | p95 ms
+--- | ---: | ---: | ---:
+${Object.entries(summary.timings ?? {})
+  .map(
+    ([name, stats]) =>
+      `${name} | ${stats.count} | ${formatNumber(stats.median)} | ${formatNumber(stats.p95)}`
+  )
+  .join('\n')}
+
+Startup-ready measures process launch through the fixture's UI readiness gate; it is not a browser TTI estimate.
+The first-startup-ready metric stops at the first renderer/database/settings readiness gate.
+The startup-ready metric also includes the fixture’s controlled reload to suppress the Star nudge.
+Paint timings are reported only when Chromium supplies them. Disk caches are not cleared between runs.
+Persistence stage timings retain the latest completed lookup at each capture, not every lookup.
 
 RSS is the sum of per-process resident sets and can double-count shared pages. It is intended for
 same-machine trend comparison, not as a portable absolute memory value. The profile records no
@@ -692,6 +717,7 @@ class RuntimeResourceProfiler {
   private readonly samples: RuntimeResourceSample[] = []
   private readonly sessionHydrationTrace: SessionHydrationTraceEvent[] = []
   private phase = 'startup'
+  private readonly timings = new Map<string, number[]>()
   private sampleInFlight: Promise<void> | undefined
   private startedAt: number
   private timer: NodeJS.Timeout | undefined
@@ -745,6 +771,17 @@ class RuntimeResourceProfiler {
     this.phase = validatePhase(phase)
   }
 
+  recordTiming(name: string, durationMs: number): void {
+    if (!/^[a-z][a-z0-9:.-]{0,79}$/u.test(name) || !Number.isFinite(durationMs) || durationMs < 0) {
+      throw new Error(
+        'Runtime timing requires a fixed metric name and finite nonnegative duration.'
+      )
+    }
+    const values = this.timings.get(name) ?? []
+    values.push(durationMs)
+    this.timings.set(name, values)
+  }
+
   async sampleNow(): Promise<void> {
     await this.queueSample(this.phase, true)
   }
@@ -765,6 +802,12 @@ class RuntimeResourceProfiler {
         electronVersion: this.electronVersion
       },
       this.sessionHydrationTrace
+    )
+    summary.timings = Object.fromEntries(
+      [...this.timings].map(([name, values]) => [
+        name,
+        { ...numberStats(values), median: median(values), count: values.length }
+      ])
     )
     const outputDirectory = join(this.outputRoot, this.runId)
     await mkdir(outputDirectory, { recursive: true })
