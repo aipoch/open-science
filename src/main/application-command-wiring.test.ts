@@ -34,13 +34,7 @@ const webAdapterSources = [
 const legacyAdapterBlock = compact(
   between(ipcSource, "declareElectronAdapter('desktop-utilities'", 'const electronSenderFor')
 )
-const notificationAdapterBlock = compact(
-  between(
-    ipcSource,
-    "declareElectronAdapter('task-notifications'",
-    'const connectorApplication = await modules.add('
-  )
-)
+const notificationAdapterBlock = compact(readSource('src/main/ipc-surfaces/notifications.ts'))
 const dependencyBlock = compact(
   between(
     ipcSource,
@@ -264,9 +258,28 @@ describe('production application command wiring', () => {
   })
 
   it('installs every notification inbox request on the Electron adapter', () => {
-    expect(notificationAdapterBlock).toContain(
-      'registerNotificationInboxIpcAdapter(notificationInbox)'
+    expect(
+      compact(
+        between(
+          ipcSource,
+          'let surfaceAdapters = beforeComputeAdapters',
+          'surfaceAdapters = beforeAcpAdapters'
+        )
+      )
+    ).toContain(
+      'surfaceAdapters.push( createNotificationElectronSurface( notificationInbox, taskNotifications, taskNotificationDeliveryDeps ) )'
     )
+    expect(occurrences(ipcSource, 'createNotificationElectronSurface(')).toBe(1)
+    expect(notificationAdapterBlock).toContain(
+      "import { registerNotificationInboxIpcAdapter, type NotificationInboxIpcOwner } from '../notifications/notification-inbox-ipc'"
+    )
+    expect(notificationAdapterBlock).toContain('registerNotificationInboxIpcAdapter(inbox)')
+    expect(notificationAdapterBlock).toContain('taskNotifications.peekPendingOpenSession()')
+    expect(notificationAdapterBlock).toContain(
+      'taskNotifications.takePendingOpenSession(expectedToken)'
+    )
+    expect(notificationAdapterBlock).toContain('getTaskNotificationAvailability(delivery)')
+    expect(notificationAdapterBlock).toContain('showTestTaskNotification(delivery)')
     expect(notificationIpcSource).toContain("ipcMainHandle('notifications:get-snapshot'")
     expect(notificationIpcSource).toContain("ipcMainHandle('notifications:mark-read'")
     expect(notificationIpcSource).toContain("ipcMainHandle('notifications:mark-all-read'")
