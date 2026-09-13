@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, Component, type ReactNode } from 'react'
+import { fireEvent } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -673,7 +674,7 @@ describe('PdfPreviewContent', () => {
       expect(button).not.toBeNull()
       return button!
     })
-    expect(outlineToggle.title).toBe('Navigation')
+    expect(outlineToggle.hasAttribute('title')).toBe(false)
 
     await act(async () => outlineToggle.click())
     const outline = container.querySelector<HTMLElement>('#pdf-navigation-sidebar')!
@@ -1643,6 +1644,122 @@ describe('PdfPreviewContent', () => {
     await act(async () => vi.advanceTimersByTimeAsync(100))
 
     expect(container.querySelector('[data-pdf-page-control]')?.textContent).toBe('2/3')
+  })
+
+  it.each([
+    ['interaction', 'Show navigation', 'Hand'],
+    ['view', 'Page 1 of 2', 'Zoom in']
+  ])(
+    'shares a 250ms first hint and 300ms skip window in the %s toolbar',
+    async (_, firstLabel, nextLabel) => {
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({ numPages: 2, getPage, destroy: destroyDocument }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      await act(async () => {
+        root.render(<PdfPreviewContent path="/workspace/hints.pdf" name="hints.pdf" />)
+      })
+      await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
+      vi.useFakeTimers()
+      const first = container.querySelector<HTMLButtonElement>(`[aria-label="${firstLabel}"]`)!
+      const next = container.querySelector<HTMLButtonElement>(`[aria-label="${nextLabel}"]`)!
+      const hover = (element: Element): void => {
+        fireEvent.pointerOver(element, { pointerType: 'mouse' })
+        fireEvent.pointerMove(element, { pointerType: 'mouse' })
+      }
+      const leave = (element: Element): void => {
+        fireEvent.pointerLeave(element)
+        fireEvent.pointerMove(document.body, { pointerType: 'mouse', clientX: 1000, clientY: 1000 })
+      }
+      expect(first.hasAttribute('title')).toBe(false)
+      hover(first)
+      await act(async () => vi.advanceTimersByTimeAsync(249))
+      expect(first.getAttribute('data-state')).toBe('closed')
+      await act(async () => vi.advanceTimersByTimeAsync(1))
+      expect(first.getAttribute('data-state')).toBe('delayed-open')
+      leave(first)
+      hover(next)
+      await act(async () => vi.advanceTimersByTimeAsync(0))
+      expect(next.getAttribute('data-state')).toBe('instant-open')
+      leave(next)
+      await act(async () => vi.advanceTimersByTimeAsync(301))
+      hover(first)
+      await act(async () => vi.advanceTimersByTimeAsync(249))
+      expect(first.getAttribute('data-state')).toBe('closed')
+      await act(async () => vi.advanceTimersByTimeAsync(1))
+      expect(first.getAttribute('data-state')).toBe('delayed-open')
+      act(() => fireEvent.keyDown(first, { key: 'Escape' }))
+      expect(first.getAttribute('data-state')).toBe('closed')
+    }
+  )
+
+  it('explains page entry on focus and dismisses the hint while editing or cancelling', async () => {
+    await act(async () => {
+      root.render(<PdfPreviewContent path="/workspace/hints.pdf" name="hints.pdf" />)
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
+    const button = container.querySelector<HTMLButtonElement>('[data-pdf-page-control] button')!
+    await act(async () => button.focus())
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(
+      'Click to enter a page number'
+    )
+    await act(async () => button.click())
+    const input = container.querySelector<HTMLInputElement>('[data-pdf-page-control] input')!
+    expect(document.activeElement).toBe(input)
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    act(() => fireEvent.change(input, { target: { value: '99' } }))
+    act(() => fireEvent.keyDown(input, { key: 'Escape' }))
+    expect(container.querySelector('[data-pdf-page-control]')?.textContent).toBe('1/1')
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+  })
+
+  it('provides keyboard hints for search actions and the sidebar close action', async () => {
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({ numPages: 2, getPage, destroy: destroyDocument }),
+      destroy: vi.fn().mockResolvedValue(undefined)
+    } as never)
+    await act(async () => {
+      root.render(<PdfPreviewContent path="/workspace/hints.pdf" name="hints.pdf" />)
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Search"]')!.click()
+    )
+    act(() =>
+      fireEvent.change(container.querySelector('[aria-label="Search document"]')!, {
+        target: { value: 'Selectable' }
+      })
+    )
+    await vi.waitFor(() =>
+      expect(
+        container.querySelector<HTMLButtonElement>('[aria-label="Next match"]')?.disabled
+      ).toBe(false)
+    )
+    for (const label of ['Previous match', 'Next match', 'Close search']) {
+      const button = container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!
+      await act(async () => button.focus())
+      expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(label)
+      act(() => fireEvent.keyDown(button, { key: 'Escape' }))
+      expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    }
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Close search"]')!.click()
+    )
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Show navigation"]')!.click()
+    )
+    const close = container.querySelector<HTMLButtonElement>(
+      'aside [aria-label="Hide navigation"]'
+    )!
+    expect(close.hasAttribute('title')).toBe(false)
+    await act(async () => close.focus())
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('Hide navigation')
+    await act(async () => close.click())
+    expect(container.querySelector('aside')).toBeNull()
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    expect(
+      container.querySelector('[aria-label="Show navigation"] .lucide-panel-left')
+    ).not.toBeNull()
   })
 
   it('matches the artifact image zoom action order and reset icon', async () => {

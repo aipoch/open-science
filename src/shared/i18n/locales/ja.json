@@ -116,6 +116,7 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "元のパッケージを利用できません。移動、削除されたか、読み取れなくなった可能性があります。別のパッケージを選択してください。"
   },
   "renderer": {
+    "Click to enter a page number": "クリックしてページ番号を入力",
     "Only stable releases can be installed.": "安定版のみインストールできます。",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "R のアクセス検証にはネットワーク保護の準備が必要です。ネットワーク設定を確認してから、ランタイムを再確認してください。",
     "Batch operation": "一括操作",

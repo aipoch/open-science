@@ -119,6 +119,7 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Исходный пакет недоступен. Возможно, он перемещён, удалён или больше не читается. Выберите другой пакет."
   },
   "renderer": {
+    "Click to enter a page number": "Нажмите, чтобы ввести номер страницы",
     "Only stable releases can be installed.": "Можно устанавливать только стабильные версии.",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "Для проверки доступа к R защита сети должна быть готова. Проверьте настройки сети, затем повторно проверьте среды выполнения.",
     "Batch operation": "Пакетная операция",

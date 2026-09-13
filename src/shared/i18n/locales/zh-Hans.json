@@ -116,6 +116,7 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原包文件不可用，可能已移动、删除或无法读取。请选择其他包文件。"
   },
   "renderer": {
+    "Click to enter a page number": "点击输入页码",
     "Only stable releases can be installed.": "仅可安装稳定版本。",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "验证 R 访问权限需要网络保护就绪。请检查网络设置，然后重新检查运行环境。",
     "Batch operation": "批量操作",

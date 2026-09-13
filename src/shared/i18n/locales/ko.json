@@ -116,6 +116,7 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "원본 패키지를 사용할 수 없습니다. 이동 또는 삭제되었거나 읽을 수 없는 상태일 수 있습니다. 다른 패키지를 선택하세요."
   },
   "renderer": {
+    "Click to enter a page number": "클릭하여 페이지 번호 입력",
     "Only stable releases can be installed.": "안정 버전만 설치할 수 있습니다.",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "R 접근 권한을 검증하려면 네트워크 보호가 준비되어 있어야 합니다. 네트워크 설정을 확인한 후 런타임을 다시 확인하세요.",
     "Batch operation": "일괄 작업",

@@ -117,6 +117,7 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Das ursprüngliche Paket ist nicht verfügbar. Es wurde möglicherweise verschoben, gelöscht oder ist nicht mehr lesbar. Wählen Sie ein anderes Paket."
   },
   "renderer": {
+    "Click to enter a page number": "Klicken, um eine Seitenzahl einzugeben",
     "Only stable releases can be installed.": "Es können nur stabile Versionen installiert werden.",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "Die Überprüfung des R-Zugriffs erfordert einen einsatzbereiten Netzwerkschutz. Prüfen Sie die Netzwerkeinstellungen und überprüfen Sie anschließend die Laufzeitumgebungen erneut.",
     "Batch operation": "Stapelaktion",
