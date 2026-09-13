@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process'
+import type { LookupAddress, LookupAllOptions } from 'node:dns'
+import { lookup } from 'node:dns/promises'
 import { createRequire } from 'node:module'
 import { createServer, request as httpRequest } from 'node:http'
 import { mkdtemp, rm, readFile, stat } from 'node:fs/promises'
@@ -6,6 +8,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('node:dns/promises', { spy: true })
 
 import { NotebookNetworkSandbox } from './index.js'
 import * as localCa from '../runtime/src/gateway/local-ca.js'
@@ -366,9 +370,8 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
   })
 
   it('allows a listed destination and blocks it after a live policy update', async () => {
-    // A trusted local parent-proxy fixture keeps this test hermetic while the requested destination
-    // remains a real public hostname. The sandbox must never allowlist loopback/private destinations,
-    // even for tests.
+    // Pin public DNS as well as the parent proxy: this tests live policy changes, not DNS availability.
+    // The real policy still rejects loopback/private destinations, including in this fixture.
     const server = createServer((_request, response) => response.end('sandbox-ok'))
     await new Promise<void>((resolveListen, reject) => {
       server.once('error', reject)
@@ -383,6 +386,22 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
       resources: { root: resolve(import.meta.dirname, '../vendor') },
       parentProxy: { http: `http://127.0.0.1:${address.port}` }
     })
+    const dnsFixture = vi
+      .mocked<(hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]>>(lookup)
+      .mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
+    const runAndCleanup = async (
+      wrapped: NotebookSandboxedProcess
+    ): Promise<Awaited<ReturnType<typeof run>> & { annotatedStderr: string }> => {
+      const result = await run(wrapped, cwd)
+      const annotatedStderr = wrapped.annotateStderr(result.stderr)
+      // run resolves only after close, so cleanup has termination evidence even if an assertion fails.
+      expect(await wrapped.cleanup('exit', { processesTerminated: true })).toEqual({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+      return { ...result, annotatedStderr }
+    }
 
     try {
       await sandbox.initialize()
@@ -391,8 +410,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         cwd,
         onNetworkAccessRequest: async () => false
       })
-      const allowed = await run(allowedProcess, cwd)
-      await allowedProcess.cleanup('exit', { processesTerminated: true })
+      const allowed = await runAndCleanup(allowedProcess)
       expect(allowed, allowed.stderr).toMatchObject({ code: 0, stdout: 'sandbox-ok' })
 
       sandbox.updatePolicy({ allowedDomains: [], deniedDomains: [] })
@@ -401,13 +419,11 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         cwd,
         onNetworkAccessRequest: async () => false
       })
-      const denied = await run(deniedProcess, cwd)
+      const denied = await runAndCleanup(deniedProcess)
       expect(denied.code).not.toBe(0)
       expect(denied.stdout).not.toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
-      const annotatedDeniedStderr = deniedProcess.annotateStderr(denied.stderr)
-      expect(annotatedDeniedStderr).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
-      expect(annotatedDeniedStderr).toContain('deny network-outbound example.com:80')
-      await deniedProcess.cleanup('exit', { processesTerminated: true })
+      expect(denied.annotatedStderr).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
+      expect(denied.annotatedStderr).toContain('deny network-outbound example.com:80')
 
       sandbox.updatePolicy({
         allowedDomains: [],
@@ -420,14 +436,11 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         cwd,
         onNetworkAccessRequest: hardDeniedDecision
       })
-      const hardDenied = await run(hardDeniedProcess, cwd)
+      const hardDenied = await runAndCleanup(hardDeniedProcess)
       expect(hardDenied.code).not.toBe(0)
       expect(hardDenied.stdout).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
-      expect(hardDeniedProcess.annotateStderr(hardDenied.stderr)).toContain(
-        'destination is explicitly blocked'
-      )
+      expect(hardDenied.annotatedStderr).toContain('destination is explicitly blocked')
       expect(hardDeniedDecision).not.toHaveBeenCalled()
-      await hardDeniedProcess.cleanup('exit', { processesTerminated: true })
 
       const privateDecision = vi.fn(async () => true)
       const privateProcess = await sandbox.wrap({
@@ -435,19 +448,22 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         cwd,
         onNetworkAccessRequest: privateDecision
       })
-      const privateResult = await run(privateProcess, cwd)
+      const privateResult = await runAndCleanup(privateProcess)
       expect(privateResult.code).not.toBe(0)
       expect(privateResult.stdout).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
-      expect(privateProcess.annotateStderr(privateResult.stderr)).toContain(
+      expect(privateResult.annotatedStderr).toContain(
         'destination resolves to a non-public network address'
       )
       expect(privateDecision).not.toHaveBeenCalled()
-      await privateProcess.cleanup('exit', { processesTerminated: true })
     } finally {
-      await sandbox.dispose()
-      await new Promise<void>((resolveClose, reject) =>
-        server.close((error) => (error ? reject(error) : resolveClose()))
-      )
+      dnsFixture.mockRestore()
+      try {
+        await sandbox.dispose()
+      } finally {
+        await new Promise<void>((resolveClose, reject) =>
+          server.close((error) => (error ? reject(error) : resolveClose()))
+        )
+      }
     }
   })
 
