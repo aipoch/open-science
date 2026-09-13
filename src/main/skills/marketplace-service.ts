@@ -271,6 +271,15 @@ export class SkillMarketplaceService {
         throw cdnFailure instanceof NetworkError ? error : cdnFailure
       }
     } catch (error) {
+      if (error instanceof NetworkError && this.current) {
+        // Keep only previously verified bytes. Expire the cache so the next visit retries;
+        // installation still re-fetches and verifies the descriptor and package independently.
+        this.current.checkedAt = -Infinity
+        return {
+          ok: true,
+          value: { ...structuredClone(this.current.catalog), revalidate: true }
+        }
+      }
       this.current = undefined
       return { ok: false, error: error instanceof NetworkError ? 'network' : 'integrity' }
     }
@@ -335,7 +344,8 @@ export class SkillMarketplaceService {
   }
 
   async download(
-    request: SkillMarketplaceDetailRequest
+    request: SkillMarketplaceDetailRequest,
+    cancellation?: AbortSignal
   ): Promise<SkillMarketplaceResult<MarketplacePackage>> {
     const parsed = detailRequest.safeParse(request)
     if (!parsed.success) return { ok: false, error: 'snapshot-unavailable' }
@@ -344,7 +354,11 @@ export class SkillMarketplaceService {
     const listing = root?.skills.find((entry) => entry.id === id)
     if (!root || !listing) return { ok: false, error: 'snapshot-unavailable' }
     try {
-      const signal = AbortSignal.timeout(25000)
+      // Reject unsupported versions before any descriptor or package download.
+      marketplaceReceiptSchema.shape.version.parse(listing.version)
+      const deadline = AbortSignal.timeout(25000)
+      const signal = cancellation ? AbortSignal.any([deadline, cancellation]) : deadline
+      signal.throwIfAborted()
       const descriptor = await this.readObject(
         root,
         listing.release.path,

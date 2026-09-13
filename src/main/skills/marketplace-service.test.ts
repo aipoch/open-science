@@ -52,6 +52,78 @@ afterEach(() => {
 })
 
 describe('verified Skill Marketplace browsing', () => {
+  it('cancels an in-flight download without starting an archive or mirror request', async () => {
+    const fetch = transport()
+    const service = new SkillMarketplaceService(fetch)
+    await service.list()
+    fetch.mockClear()
+    const cancellation = new AbortController()
+    let requestSignal: AbortSignal | undefined
+    fetch.mockImplementationOnce(
+      (_url, options) =>
+        new Promise((_resolve, reject) => {
+          requestSignal = options?.signal ?? undefined
+          requestSignal?.addEventListener('abort', () => reject(requestSignal?.reason), {
+            once: true
+          })
+        })
+    )
+    const result = service.download(
+      { snapshotId: root.revision, id: root.skills[0].id },
+      cancellation.signal
+    )
+    expect(requestSignal?.aborted).toBe(false)
+    cancellation.abort()
+    expect(await result).toEqual({ ok: false, error: 'network' })
+    expect(requestSignal?.aborted).toBe(true)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps valid prerelease metadata browseable but rejects downloads before fetching release objects', async () => {
+    const changedRoot = structuredClone(root)
+    changedRoot.skills[0].version = '1.0.0-beta.1'
+    const listing = changedRoot.skills[0]
+    const prereleaseDescriptor = JSON.parse(descriptor.toString())
+    prereleaseDescriptor.skill.version = listing.version
+    const descriptorBytes = json(prereleaseDescriptor)
+    listing.release = {
+      path: `releases/${listing.id}/${listing.version}.json`,
+      sha256: sha256(descriptorBytes)
+    }
+    const indexBytes = json({ schema_version: 1, releases: [listing.release] })
+    changedRoot.release_index = {
+      path: `indexes/${sha256(indexBytes)}.json`,
+      sha256: sha256(indexBytes)
+    }
+    const { revision: _revision, ...body } = changedRoot
+    void _revision
+    changedRoot.revision = sha256(json(body))
+    const metadata = transport()
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
+      if (String(url).endsWith('/marketplace.json'))
+        return new Response(json(changedRoot).toString())
+      if (String(url).endsWith(changedRoot.release_index.path))
+        return new Response(indexBytes.toString())
+      if (String(url).endsWith(listing.release.path))
+        return new Response(descriptorBytes.toString())
+      return metadata(url, init)
+    })
+    vi.mocked(verify).mockImplementationOnce(() => true)
+    const service = new SkillMarketplaceService(fetch)
+    expect(await service.list()).toMatchObject({
+      ok: true,
+      value: { entries: [{ version: '1.0.0-beta.1' }] }
+    })
+    expect(
+      await service.detail({ snapshotId: changedRoot.revision, id: listing.id })
+    ).toMatchObject({ ok: true, value: { entry: { version: listing.version } } })
+    fetch.mockClear()
+    expect(
+      await service.download({ snapshotId: changedRoot.revision, id: changedRoot.skills[0].id })
+    ).toEqual({ ok: false, error: 'integrity' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('times out a stalled CDN response before falling back to GitHub', async () => {
     vi.useFakeTimers()
     vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => {
@@ -566,19 +638,42 @@ describe('verified Skill Marketplace browsing', () => {
     expect(fetch).toHaveBeenCalledTimes(3)
   })
 
-  it('fails closed on refresh failure but keeps an already verified detail snapshot usable', async () => {
+  it('retains verified listings after a network refresh failure and retries without caching the failure', async () => {
     const fetch = transport()
     const service = new SkillMarketplaceService(fetch)
     await service.list()
     fetch.mockImplementation(async () => new Response('', { status: 503 }))
-    expect(await service.list({ forceRefresh: true })).toEqual({ ok: false, error: 'network' })
+    expect(await service.list({ forceRefresh: true })).toMatchObject({
+      ok: true,
+      value: { snapshotId: root.revision, revalidate: true }
+    })
+    fetch.mockClear()
+    expect(await service.list()).toMatchObject({ ok: true, value: { revalidate: true } })
+    expect(fetch).not.toHaveBeenCalled()
+    expect(await service.download({ snapshotId: root.revision, id: 'abstract-trimmer' })).toEqual({
+      ok: false,
+      error: 'network'
+    })
     fetch.mockImplementation(transport().getMockImplementation()!)
     expect(
       await service.detail({ snapshotId: root.revision, id: 'abstract-trimmer' })
     ).toMatchObject({
       ok: true
     })
-    expect(await service.list()).toMatchObject({ ok: true })
+    expect(await service.list({ forceRefresh: true })).toMatchObject({ ok: true })
+    expect(await service.list()).toMatchObject({ ok: true, value: { revalidate: false } })
+  })
+
+  it('does not substitute cached listings for an integrity failure or an initial network failure', async () => {
+    const fetch = transport()
+    const service = new SkillMarketplaceService(fetch)
+    fetch.mockRejectedValue(new Error('offline'))
+    expect(await service.list()).toEqual({ ok: false, error: 'network' })
+    fetch.mockImplementation(transport().getMockImplementation()!)
+    await service.list()
+    fetch.mockImplementation(async () => new Response('{}'))
+    expect(await service.list({ forceRefresh: true })).toEqual({ ok: false, error: 'integrity' })
+    expect(await service.list()).toEqual({ ok: false, error: 'integrity' })
   })
 
   it.each([true, false])(

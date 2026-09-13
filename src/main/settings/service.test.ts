@@ -334,6 +334,119 @@ afterEach(async () => {
 })
 
 describe('SettingsService: Marketplace installation projection', () => {
+  it('aborts batch downloads on disposal and never commits a late download', async () => {
+    const pending =
+      Promise.withResolvers<Awaited<ReturnType<SkillMarketplaceService['download']>>>()
+    const retain = vi
+      .spyOn(SkillMarketplaceService.prototype, 'retainSnapshot')
+      .mockReturnValue(vi.fn())
+    const download = vi
+      .spyOn(SkillMarketplaceService.prototype, 'download')
+      .mockReturnValue(pending.promise)
+    const write = vi.spyOn(SkillCatalogModule.prototype, 'installMarketplacePackage')
+    const refresh = vi.spyOn(SkillCatalogModule.prototype, 'refreshMarketplace')
+    try {
+      const service = createService()
+      const request = {
+        snapshotId: 'a'.repeat(64),
+        items: [
+          { id: 'one', version: '1.0.0', expectedVersion: null },
+          { id: 'two', version: '1.0.0', expectedVersion: null }
+        ]
+      }
+      expect(service.startSkillMarketplaceBatch(request, vi.fn()).ok).toBe(true)
+      const signal = download.mock.calls[0][1]!
+      let disposed = false
+      const disposal = service.dispose().then(() => {
+        disposed = true
+      })
+      expect(signal.aborted).toBe(true)
+      await Promise.resolve()
+      expect(disposed).toBe(false)
+      // Even an adapter that ignores cancellation cannot commit after shutdown starts.
+      pending.resolve({
+        ok: true,
+        value: {
+          files: [],
+          receipt: {
+            marketplace: 'openscience-skills',
+            id: 'one',
+            version: '1.0.0',
+            snapshotId: request.snapshotId,
+            revision: 'b'.repeat(64),
+            descriptorSha256: 'c'.repeat(64),
+            artifactSha256: 'd'.repeat(64),
+            contentSha256: 'e'.repeat(64)
+          }
+        }
+      })
+      await disposal
+      expect(download).toHaveBeenCalledTimes(1)
+      expect(write).not.toHaveBeenCalled()
+      expect(refresh).not.toHaveBeenCalled()
+      expect(service.getSkillMarketplaceBatch()?.items.map(({ status }) => status)).toEqual([
+        'stopped',
+        'stopped'
+      ])
+      expect(service.startSkillMarketplaceBatch(request, vi.fn())).toEqual({
+        ok: false,
+        error: 'busy'
+      })
+    } finally {
+      pending.resolve({ ok: false, error: 'network' })
+      retain.mockRestore()
+      download.mockRestore()
+      write.mockRestore()
+      refresh.mockRestore()
+    }
+  })
+
+  it('reports a committed direct installation as successful when runtime refresh fails', async () => {
+    const pkg = {
+      files: [],
+      receipt: {
+        marketplace: 'openscience-skills' as const,
+        id: 'one',
+        version: '1.0.0',
+        snapshotId: 'a'.repeat(64),
+        revision: 'b'.repeat(64),
+        descriptorSha256: 'c'.repeat(64),
+        artifactSha256: 'd'.repeat(64),
+        contentSha256: 'e'.repeat(64)
+      }
+    }
+    const download = vi
+      .spyOn(SkillMarketplaceService.prototype, 'download')
+      .mockResolvedValue({ ok: true, value: pkg })
+    const write = vi
+      .spyOn(SkillCatalogModule.prototype, 'installMarketplacePackage')
+      .mockResolvedValue({ id: 'imported-one', status: 'imported' })
+    const refresh = vi
+      .spyOn(SkillCatalogModule.prototype, 'refreshMarketplace')
+      .mockRejectedValueOnce(new Error('runtime unavailable'))
+      .mockResolvedValue(undefined)
+    try {
+      const service = createService()
+      const request = { snapshotId: pkg.receipt.snapshotId, id: 'one', expectedVersion: null }
+      expect(await service.installSkillMarketplace(request)).toEqual({
+        ok: true,
+        value: { id: 'imported-one', status: 'imported', version: '1.0.0', refreshFailed: true }
+      })
+      write.mockResolvedValueOnce({ id: 'imported-one', status: 'unchanged' })
+      expect(
+        await service.installSkillMarketplace({ ...request, expectedVersion: '1.0.0' })
+      ).toEqual({
+        ok: true,
+        value: { id: 'imported-one', status: 'unchanged', version: '1.0.0' }
+      })
+      expect(refresh).toHaveBeenCalledTimes(2)
+    } finally {
+      download.mockRestore()
+      write.mockRestore()
+      refresh.mockRestore()
+    }
+  })
+
   it('keeps an admitted queue alive independently of callers and uses verified package writes', async () => {
     const release = vi.fn()
     const retain = vi

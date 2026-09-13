@@ -114,7 +114,7 @@ describe('SkillCatalogModule', () => {
       ['demo']
     )
   })
-  it('preserves disabled status and stable references when a Marketplace Skill updates', async () => {
+  it.each([true, false])('preserves Marketplace enablement (%s)', async (enabled) => {
     const catalog = await createCatalog()
     const packageFor = (version: string): MarketplacePackage => {
       const files = [
@@ -138,13 +138,16 @@ describe('SkillCatalogModule', () => {
       }
     }
     const installed = await catalog.installMarketplace(packageFor('1.0.0'), null)
-    await catalog.setSkillEnabled({ id: installed.id, enabled: false })
+    expect((await catalog.listSkills()).find((skill) => skill.id === installed.id)?.enabled).toBe(
+      true
+    )
+    await catalog.setSkillEnabled({ id: installed.id, enabled })
     const updated = await catalog.installMarketplace(packageFor('1.1.0'), '1.0.0')
     expect(updated.id).toBe(installed.id)
-    expect(updated.skills.find((skill) => skill.id === installed.id)).toMatchObject({
+    expect((await catalog.listSkills()).find((skill) => skill.id === installed.id)).toMatchObject({
       name: 'market-example',
       source: 'imported',
-      enabled: false
+      enabled
     })
     expect(await catalog.marketplaceInstallation('market-example', '1.1.0')).toEqual({
       kind: 'installed',
@@ -154,7 +157,10 @@ describe('SkillCatalogModule', () => {
     })
     const entries = [
       { ...marketplaceEntry, id: 'market-example', version: '1.2.0' },
-      ...Array.from({ length: 584 }, (_, index) => ({ ...marketplaceEntry, id: `absent-${index}` }))
+      ...Array.from({ length: 584 }, (_, index) => ({
+        ...marketplaceEntry,
+        id: `absent-${index}`
+      }))
     ]
     const verify = vi.spyOn(catalog, 'marketplaceInstallation')
     expect(await catalog.marketplaceInstallations(entries)).toEqual({

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { CircleCheck, ChevronDown, Download, LoaderCircle, Trash2 } from 'lucide-react'
 import { useSettingsStore } from '@/stores/settings-store'
+import { skillMarketplaceStableVersionPattern } from '../../../../shared/skill-marketplace'
 import type {
   SkillMarketplaceCatalog,
   SkillMarketplaceCatalogRequest,
@@ -134,6 +135,7 @@ function MarketplaceInstallControls({
   const [pending, setPending] = useState<'install' | 'uninstall' | 'toggle'>()
   const packagePending = pending === 'install' || pending === 'uninstall'
   const [failure, setFailure] = useState<Extract<SkillMarketplaceInstallResult, { ok: false }>>()
+  const [refreshFailed, setRefreshFailed] = useState(false)
   const [uninstallConfirm, setUninstallConfirm] = useState(false)
   const [uninstallPreview, setUninstallArmed] = useState(false)
   const [managementFailure, setManagementFailure] = useState<string>()
@@ -154,6 +156,16 @@ function MarketplaceInstallControls({
       active.current = false
     }
   }, [])
+  if (!skillMarketplaceStableVersionPattern.test(entry.version)) {
+    return (
+      <span
+        className="text-xs text-muted-foreground"
+        title={t('Only stable releases can be installed.')}
+      >
+        {compact ? t('Unavailable') : t('Only stable releases can be installed.')}
+      </span>
+    )
+  }
   const conflict = installation.kind === 'conflict' || failure?.error === 'conflict'
   const canUninstallInline = Boolean(
     installed && !installed.canUpdate && localSkillId && !conflict && !disabled && !pending
@@ -170,7 +182,10 @@ function MarketplaceInstallControls({
       if (active.current) {
         setUninstallConfirm(false)
         setUninstallArmed(false)
-        if (remove) onChanged({ kind: 'not-installed' })
+        if (remove) {
+          setRefreshFailed(false)
+          onChanged({ kind: 'not-installed' })
+        }
       }
     } catch (error) {
       if (active.current) {
@@ -204,20 +219,35 @@ function MarketplaceInstallControls({
     if (!active.current) return
     setPending(undefined)
     setConfirm(false)
-    if (result.ok)
+    if (result.ok) {
+      setRefreshFailed(result.value.refreshFailed === true)
       onChanged({
         kind: 'installed',
         version: result.value.version,
         canUpdate: false,
         localSkillId: result.value.id
       })
-    else setFailure(result)
+    } else setFailure(result)
   }
   return (
     <div
       className={compact ? 'skill-marketplace-card-controls' : 'skill-marketplace-detail-controls'}
       aria-busy={Boolean(pending)}
     >
+      {refreshFailed && installed ? (
+        <ErrorNotice
+          tone="amber"
+          role="status"
+          title={t(
+            'Skills were installed, but runtime refresh failed. Restart the app to reload them.'
+          )}
+          primaryButton={{
+            label: t('Retry'),
+            onClick: () => void install(),
+            disabled: disabled || Boolean(pending)
+          }}
+        />
+      ) : null}
       {installed && !compact ? (
         <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
           <CircleCheck className="size-4 text-success-000" aria-hidden="true" />
@@ -498,7 +528,7 @@ export function SkillMarketplace({
     result: SkillMarketplaceResult<SkillMarketplaceCatalog>
   }>()
   const refreshing = catalogResponse?.key !== refresh
-  // Keep only verified content visible while refreshing; a failed response replaces it.
+  // Network failures may return a stale verified catalog; integrity errors replace it.
   const catalog = !refreshing || catalogResponse?.result.ok ? catalogResponse?.result : undefined
   const [detail, setDetail] = useState<{
     key: string
@@ -513,8 +543,9 @@ export function SkillMarketplace({
       try {
         let result = await readCatalog(refresh ? { forceRefresh: true } : undefined)
         if (!active) return
-        setCatalog({ key: refresh, result })
-        if (result.ok && result.value.revalidate) {
+        const revalidate = refresh === 0 && result.ok && result.value.revalidate
+        setCatalog({ key: revalidate ? refresh - 1 : refresh, result })
+        if (revalidate) {
           result = await readCatalog({ forceRefresh: true })
           if (active) setCatalog({ key: refresh, result })
         }
@@ -631,6 +662,7 @@ export function SkillMarketplace({
     let update = 0
     if (installations)
       for (const item of items) {
+        if (!skillMarketplaceStableVersionPattern.test(item.version)) continue
         const state = installations[item.id]
         if (!state || state.kind === 'not-installed') install++
         else if (state.kind === 'installed' && state.canUpdate) update++
@@ -639,7 +671,7 @@ export function SkillMarketplace({
   }, [items, installations])
   const canSelect = useCallback(
     (item: SkillMarketplaceEntry): boolean => {
-      if (!installations) return false
+      if (!installations || !skillMarketplaceStableVersionPattern.test(item.version)) return false
       const state = installations[item.id]
       return batchMode === 'update'
         ? state?.kind === 'installed' && state.canUpdate
@@ -830,6 +862,16 @@ export function SkillMarketplace({
       >
         {(selectionControls) => (
           <>
+            {view.kind !== 'marketplace-detail' &&
+            !refreshing &&
+            catalog?.ok &&
+            catalog.value.revalidate ? (
+              <ErrorNotice
+                role="status"
+                tone="amber"
+                title={t('Could not refresh Marketplace. Showing the last available data.')}
+              />
+            ) : null}
             {localSyncError ? (
               <ErrorNotice
                 role="alert"

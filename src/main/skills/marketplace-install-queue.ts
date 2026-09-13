@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import { skillMarketplaceStableVersionPattern } from '../../shared/skill-marketplace'
 import type {
   SkillMarketplaceBatch,
   SkillMarketplaceBatchRequest,
@@ -18,7 +19,7 @@ const batchRequest = z
             .string()
             .max(128)
             .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-          version: z.string().min(1).max(128),
+          version: z.string().max(128).regex(skillMarketplaceStableVersionPattern),
           expectedVersion: z.string().min(1).max(128).nullable()
         })
       )
@@ -30,11 +31,16 @@ const batchRequest = z
 // One main-process owner. No timers, renderer leases, persistence or downloaded-package backlog.
 export class SkillMarketplaceInstallQueue {
   private batch: SkillMarketplaceBatch | null = null
+  private readonly shutdown = new AbortController()
+  private running?: Promise<void>
 
   constructor(
     private readonly dependencies: {
       retainSnapshot: (request: SkillMarketplaceBatchRequest) => (() => void) | undefined
-      install: (request: SkillMarketplaceInstallRequest) => Promise<SkillMarketplaceInstallResult>
+      install: (
+        request: SkillMarketplaceInstallRequest,
+        signal: AbortSignal
+      ) => Promise<SkillMarketplaceInstallResult>
       refresh: () => Promise<void>
     }
   ) {}
@@ -47,6 +53,7 @@ export class SkillMarketplaceInstallQueue {
     request: SkillMarketplaceBatchRequest,
     notifyChanged: () => void
   ): SkillMarketplaceBatchStartResult {
+    if (this.shutdown.signal.aborted) return { ok: false, error: 'busy' }
     const parsed = batchRequest.safeParse(request)
     if (!parsed.success) return { ok: false, error: 'invalid-request' }
     if (this.batch?.status === 'running' || this.batch?.status === 'stopping')
@@ -60,7 +67,7 @@ export class SkillMarketplaceInstallQueue {
       items: parsed.data.items.map((item) => ({ ...item, status: 'queued' }))
     }
     this.batch = batch
-    void this.run(batch, release, notifyChanged)
+    this.running = this.run(batch, release, notifyChanged)
     return { ok: true, value: structuredClone(batch) }
   }
 
@@ -68,6 +75,13 @@ export class SkillMarketplaceInstallQueue {
     if (typeof id !== 'string' || this.batch?.id !== id) return false
     if (this.batch.status === 'running') this.batch.status = 'stopping'
     return true
+  }
+
+  async dispose(): Promise<void> {
+    if (this.batch) this.stop(this.batch.id)
+    this.shutdown.abort()
+    // The application owner bounds disposal. Never interrupt a filesystem transaction.
+    await this.running
   }
 
   private async run(
@@ -84,22 +98,28 @@ export class SkillMarketplaceInstallQueue {
         }
         item.status = 'installing'
         try {
-          item.result = await this.dependencies.install({
-            snapshotId: batch.snapshotId,
-            id: item.id,
-            expectedVersion: item.expectedVersion
-          })
+          item.result = await this.dependencies.install(
+            {
+              snapshotId: batch.snapshotId,
+              id: item.id,
+              expectedVersion: item.expectedVersion
+            },
+            this.shutdown.signal
+          )
         } catch {
           item.result = { ok: false, error: 'installation-failed' }
         }
-        item.status = !item.result.ok
-          ? 'failed'
-          : item.result.value.status === 'unchanged'
-            ? 'skipped'
-            : 'succeeded'
+        item.status =
+          !item.result.ok && this.shutdown.signal.aborted
+            ? 'stopped'
+            : !item.result.ok
+              ? 'failed'
+              : item.result.value.status === 'unchanged'
+                ? 'skipped'
+                : 'succeeded'
         changed ||= item.status === 'succeeded'
       }
-      if (changed) {
+      if (changed && !this.shutdown.signal.aborted) {
         try {
           await this.dependencies.refresh()
         } catch {
@@ -107,7 +127,7 @@ export class SkillMarketplaceInstallQueue {
           batch.refreshFailed = true
         }
         try {
-          notifyChanged()
+          if (!this.shutdown.signal.aborted) notifyChanged()
         } catch {
           batch.refreshFailed = true
         }

@@ -280,7 +280,7 @@ class SettingsService {
   private readonly skillMarketplace = new SkillMarketplaceService()
   private readonly skillMarketplaceQueue = new SkillMarketplaceInstallQueue({
     retainSnapshot: (request) => this.skillMarketplace.retainSnapshot(request),
-    install: (request) => this.performSkillMarketplaceInstall(request, false),
+    install: (request, signal) => this.performSkillMarketplaceInstall(request, false, signal),
     refresh: () => this.skills.refreshMarketplace()
   })
 
@@ -338,7 +338,8 @@ class SettingsService {
 
   private async performSkillMarketplaceInstall(
     request: SkillMarketplaceInstallRequest,
-    refresh: boolean
+    refresh: boolean,
+    signal?: AbortSignal
   ): Promise<SkillMarketplaceInstallResult> {
     const parsed = z
       .strictObject({
@@ -352,15 +353,25 @@ class SettingsService {
       .safeParse(request)
     if (!parsed.success) return { ok: false, error: 'conflict' }
     const { expectedVersion, ...identity } = parsed.data
-    const downloaded = await this.skillMarketplace.download(identity)
+    const downloaded = await this.skillMarketplace.download(identity, signal)
     if (!downloaded.ok) return downloaded
     try {
-      const result = refresh
+      signal?.throwIfAborted()
+      const result: {
+        id: string
+        status: 'imported' | 'unchanged' | 'updated'
+        refreshFailed?: boolean
+      } = refresh
         ? await this.skills.installMarketplace(downloaded.value, expectedVersion)
         : await this.skills.installMarketplacePackage(downloaded.value, expectedVersion)
       return {
         ok: true,
-        value: { id: result.id, status: result.status, version: downloaded.value.receipt.version }
+        value: {
+          id: result.id,
+          status: result.status,
+          version: downloaded.value.receipt.version,
+          ...(result.refreshFailed ? { refreshFailed: true } : {})
+        }
       }
     } catch (error) {
       return {
@@ -415,6 +426,7 @@ class SettingsService {
 
   async dispose(): Promise<void> {
     const outcomes = await Promise.allSettled([
+      this.skillMarketplaceQueue.dispose(),
       this.providers.dispose(),
       this.runtimeManager.dispose()
     ])

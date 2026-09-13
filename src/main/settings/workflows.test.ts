@@ -431,7 +431,7 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     expect(requestSkillsReload).toHaveBeenCalledOnce()
   })
 
-  it('notifies Marketplace mutations only after a successful change', async () => {
+  it('notifies committed Marketplace installs and same-version refresh retries, not failures', async () => {
     const { store, capability } = fakeStore()
     const notifySkillCatalogChanged = vi.fn()
     const workflows = createSettingsWorkflows(
@@ -447,7 +447,14 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
       value: { status: 'unchanged' }
     })
     await workflows.installSkillMarketplace(request)
-    expect(notifySkillCatalogChanged).toHaveBeenCalledOnce()
+    expect(notifySkillCatalogChanged).toHaveBeenCalledTimes(2)
+    notifySkillCatalogChanged.mockImplementationOnce(() => {
+      throw new Error('notification failed')
+    })
+    expect(await workflows.installSkillMarketplace(request)).toMatchObject({
+      ok: true,
+      value: { refreshFailed: true }
+    })
   })
 
   it('leaves batch notification with the queue instead of emitting on admission', async () => {

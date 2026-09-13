@@ -123,7 +123,52 @@ describe('Skill Marketplace', () => {
     )
     expect(option).toBeDefined()
     await act(async () => option!.click())
+    // Finish Radix's asynchronous focus restoration before the next simulated action.
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger))
   }
+  it('keeps committed installation visible with a refresh warning and safely retries it', async () => {
+    list.mockResolvedValue({
+      ok: true,
+      value: { ...marketplaceCatalog, entries: [entries[0]], installations: {} }
+    })
+    install
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          id: 'imported-one',
+          status: 'imported',
+          version: '1.0.0',
+          refreshFailed: true
+        }
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          id: 'imported-one',
+          status: 'unchanged',
+          version: '1.0.0'
+        }
+      })
+    await act(async () =>
+      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
+    )
+    await click('Install')
+    expect(container.textContent).toContain('Installed')
+    expect(container.textContent).not.toContain('Skill installation failed')
+    expect(container.textContent).toContain('Skills were installed, but runtime refresh failed.')
+    await click('Retry')
+    expect(install).toHaveBeenLastCalledWith({
+      id: entries[0].id,
+      snapshotId: marketplaceCatalog.snapshotId,
+      expectedVersion: '1.0.0'
+    })
+    expect(container.textContent).not.toContain(
+      'Skills were installed, but runtime refresh failed.'
+    )
+    expect(container.textContent).toContain('Installed')
+    expect(list).toHaveBeenCalledTimes(1)
+  })
+
   it('installs immediately once without refreshing discovery and keeps cards during manual refresh', async () => {
     let complete!: (result: unknown) => void
     let refreshComplete!: (result: unknown) => void
@@ -187,6 +232,63 @@ describe('Skill Marketplace', () => {
     expect(container.querySelector('article')).toBeNull()
     expect(container.textContent).toContain('Marketplace verification failed')
   })
+
+  it.each(['not-installed', 'installed'] as const)(
+    'keeps prerelease cards and details read-only when %s',
+    async (kind) => {
+      const entry = { ...marketplaceEntry, version: '2.0.0-rc.1' }
+      const installation =
+        kind === 'installed' ? { kind, version: '1.0.0', canUpdate: false } : { kind }
+      list.mockResolvedValue({
+        ok: true,
+        value: {
+          ...marketplaceCatalog,
+          entries: [entry],
+          installations: { [entry.id]: installation }
+        }
+      })
+      detail.mockResolvedValue({ ok: true, value: { ...marketplaceDetail, entry, installation } })
+      await act(async () =>
+        root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
+      )
+      const card = container.querySelector('article')!
+      expect(card.textContent).toContain(entry.displayName)
+      expect(card.textContent).toContain('Unavailable')
+      expect(card.querySelector('[title="Only stable releases can be installed."]')).not.toBeNull()
+      expect(card.querySelector('.skill-marketplace-install-action')).toBeNull()
+      await act(async () =>
+        root.render(<SkillMarketplace view={detailView} onNavigate={vi.fn()} />)
+      )
+      expect(container.textContent).toContain('Only stable releases can be installed.')
+      expect(container.querySelector('.skill-marketplace-install-action')).toBeNull()
+      expect(install).not.toHaveBeenCalled()
+    }
+  )
+
+  it('excludes prereleases from batch counts and select-all while allowing stable build metadata', async () => {
+    const batchEntries = entries.slice(0, 3).map((entry, index) => ({
+      ...entry,
+      version: ['1.0.0-beta.1', '2.0.0-rc.1', '1.0.0+build-1'][index]
+    }))
+    list.mockResolvedValue({
+      ok: true,
+      value: {
+        ...marketplaceCatalog,
+        entries: batchEntries,
+        installations: { 'skill-1': { kind: 'installed', version: '1.0.0', canUpdate: false } }
+      }
+    })
+    await act(async () =>
+      root.render(<SkillMarketplace view={{ kind: 'marketplace-batch' }} onNavigate={vi.fn()} />)
+    )
+    expect(container.querySelectorAll('article')).toHaveLength(1)
+    expect(container.querySelector('[data-skill-id="skill-2"]')).not.toBeNull()
+    await click('Select all filtered results (1)')
+    await click('Install selected')
+    expect(container.textContent).toContain('Review selection · 1')
+    expect(container.textContent).toContain('skill-2: 1.0.0+build-1')
+    expect(window.api.settings.startSkillMarketplaceBatch).not.toHaveBeenCalled()
+  })
   it('shows expired verified cards immediately while revalidating in the background', async () => {
     let complete!: (result: unknown) => void
     list
@@ -207,8 +309,47 @@ describe('Skill Marketplace', () => {
     expect(card).not.toBeNull()
     expect(list.mock.calls.map(([request]) => request)).toEqual([undefined, { forceRefresh: true }])
     expect(container.querySelector('[data-slot="skill-marketplace-loading"]')).toBeNull()
+    expect(container.textContent).not.toContain(
+      'Could not refresh Marketplace. Showing the last available data.'
+    )
     await act(async () => complete({ ok: true, value: { ...marketplaceCatalog, entries } }))
     expect(container.querySelector('article')).toBe(card)
+  })
+
+  it('keeps stale verified cards with a notice after failed revalidation and clears it after retry', async () => {
+    const stale = { ok: true, value: { ...marketplaceCatalog, entries, revalidate: true } }
+    list.mockResolvedValueOnce(stale).mockResolvedValueOnce(stale)
+    await act(async () =>
+      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
+    )
+    const card = container.querySelector('article')
+    expect(card).not.toBeNull()
+    expect(container.textContent).toContain(
+      'Could not refresh Marketplace. Showing the last available data.'
+    )
+    expect(list).toHaveBeenCalledTimes(2)
+    await click('Refresh')
+    expect(container.querySelector('article')).toBe(card)
+    expect(container.textContent).not.toContain(
+      'Could not refresh Marketplace. Showing the last available data.'
+    )
+  })
+
+  it('keeps cards after a failed manual refresh without immediately repeating discovery', async () => {
+    await act(async () =>
+      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
+    )
+    const card = container.querySelector('article')
+    list.mockResolvedValueOnce({
+      ok: true,
+      value: { ...marketplaceCatalog, entries, revalidate: true }
+    })
+    await click('Refresh')
+    expect(container.querySelector('article')).toBe(card)
+    expect(container.textContent).toContain(
+      'Could not refresh Marketplace. Showing the last available data.'
+    )
+    expect(list.mock.calls.map(([request]) => request)).toEqual([undefined, { forceRefresh: true }])
   })
 
   it('reconciles a completed batch from local state without remote discovery or replaying old job results', async () => {

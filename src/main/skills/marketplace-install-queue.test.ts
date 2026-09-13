@@ -18,7 +18,7 @@ const success: SkillMarketplaceInstallResult = {
 }
 const setup = (): {
   queue: SkillMarketplaceInstallQueue
-  install: Mock<(request: unknown) => Promise<SkillMarketplaceInstallResult>>
+  install: Mock<(request: unknown, signal: AbortSignal) => Promise<SkillMarketplaceInstallResult>>
   refresh: Mock
   release: Mock
   notify: Mock
@@ -26,7 +26,7 @@ const setup = (): {
 } => {
   const release = vi.fn()
   const install = vi
-    .fn<(request: unknown) => Promise<SkillMarketplaceInstallResult>>()
+    .fn<(request: unknown, signal: AbortSignal) => Promise<SkillMarketplaceInstallResult>>()
     .mockResolvedValue(success)
   const refresh = vi.fn().mockResolvedValue(undefined)
   const notify = vi.fn()
@@ -42,6 +42,65 @@ const setup = (): {
 }
 
 describe('Marketplace main-process batch queue', () => {
+  it('closes admission, drains the current item and skips refresh during disposal', async () => {
+    const s = setup()
+    const pending = Promise.withResolvers<SkillMarketplaceInstallResult>()
+    s.install.mockReturnValueOnce(pending.promise)
+    s.queue.start(request, s.notify)
+    let disposed = false
+    const disposal = s.queue.dispose().then(() => {
+      disposed = true
+    })
+    await Promise.resolve()
+    expect(disposed).toBe(false)
+    expect(s.install.mock.calls[0][1].aborted).toBe(true)
+    expect(s.queue.start(request, s.notify)).toEqual({ ok: false, error: 'busy' })
+    pending.resolve(success)
+    await disposal
+    await s.queue.dispose()
+    expect(s.install).toHaveBeenCalledTimes(1)
+    expect(s.queue.get()?.items.map(({ status }) => status)).toEqual(['succeeded', 'stopped'])
+    expect(s.queue.get()?.status).toBe('stopped')
+    expect(s.refresh).not.toHaveBeenCalled()
+    expect(s.notify).not.toHaveBeenCalled()
+    expect(s.release).toHaveBeenCalledTimes(1)
+    expect(s.queue.start(request, s.notify)).toEqual({ ok: false, error: 'busy' })
+  })
+
+  it('drains an already-running refresh without notifying disposed consumers', async () => {
+    const s = setup()
+    const refresh = Promise.withResolvers<void>()
+    s.refresh.mockReturnValue(refresh.promise)
+    s.queue.start(request, s.notify)
+    await vi.waitFor(() => expect(s.refresh).toHaveBeenCalledOnce())
+    let disposed = false
+    const disposal = s.queue.dispose().then(() => {
+      disposed = true
+    })
+    await Promise.resolve()
+    expect(disposed).toBe(false)
+    refresh.resolve()
+    await disposal
+    expect(s.notify).not.toHaveBeenCalled()
+    expect(s.release).toHaveBeenCalledOnce()
+  })
+
+  it.each(['1.0.0-beta.1', '2.0.0-rc.1+build'])(
+    'rejects prerelease batch %s before admission',
+    (version) => {
+      const s = setup()
+      expect(
+        s.queue.start({ ...request, items: [{ ...request.items[0], version }] }, s.notify)
+      ).toEqual({
+        ok: false,
+        error: 'invalid-request'
+      })
+      expect(s.retainSnapshot).not.toHaveBeenCalled()
+      expect(s.install).not.toHaveBeenCalled()
+      expect(s.queue.get()).toBeNull()
+    }
+  )
+
   it('validates before retaining a snapshot or writing and admits only one batch', async () => {
     const s = setup()
     expect(s.queue.start({ ...request, snapshotId: 'a'.repeat(40) }, s.notify)).toEqual({
@@ -89,11 +148,14 @@ describe('Marketplace main-process batch queue', () => {
     expect(s.queue.get()?.items[1].status).toBe('queued')
     complete(success)
     await vi.waitFor(() => expect(s.queue.get()?.status).toBe('completed'))
-    expect(s.install).toHaveBeenLastCalledWith({
-      snapshotId: request.snapshotId,
-      id: 'two',
-      expectedVersion: null
-    })
+    expect(s.install).toHaveBeenLastCalledWith(
+      {
+        snapshotId: request.snapshotId,
+        id: 'two',
+        expectedVersion: null
+      },
+      expect.any(AbortSignal)
+    )
     expect(s.queue.get()?.items.map(({ status }) => status)).toEqual(['succeeded', 'succeeded'])
     expect(s.refresh).toHaveBeenCalledTimes(1)
     expect(s.notify).toHaveBeenCalledTimes(1)

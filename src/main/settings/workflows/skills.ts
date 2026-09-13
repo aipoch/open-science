@@ -94,7 +94,14 @@ class SkillSettingsWorkflows {
     request: SkillMarketplaceInstallRequest
   ): WorkflowResult<'installSkillMarketplace'> {
     const result = await this.settings.installSkillMarketplace(request)
-    if (result.ok && result.value.status !== 'unchanged') this.effects.notifySkillCatalogChanged()
+    if (result.ok) {
+      try {
+        // A same-version retry may have recovered a previous runtime refresh failure.
+        this.effects.notifySkillCatalogChanged()
+      } catch {
+        return { ok: true, value: { ...result.value, refreshFailed: true } }
+      }
+    }
     return result
   }
 

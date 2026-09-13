@@ -108,6 +108,37 @@ describe('Marketplace package boundary', () => {
 })
 
 describe('Marketplace installation transactions', () => {
+  it.each(['1.0.0-beta.1', '2.0.0-rc.1+build'])(
+    'rejects prerelease %s without writing or offering an update',
+    async (version) => {
+      const { repo } = await repository()
+      await expect(repo.installMarketplace(pkg(version), null, [])).rejects.toThrow()
+      expect(await repo.list()).toEqual([])
+      await repo.installMarketplace(pkg('1.0.0'), null, [])
+      expect(await repo.marketplaceInstallation('example', version, [])).toMatchObject({
+        kind: 'installed',
+        version: '1.0.0',
+        canUpdate: false
+      })
+      await expect(repo.installMarketplace(pkg(version), '1.0.0', [])).rejects.toThrow()
+      expect(await repo.marketplaceInstallation('example', '1.0.0', [])).toMatchObject({
+        kind: 'installed',
+        version: '1.0.0',
+        canUpdate: false
+      })
+    }
+  )
+
+  it('accepts stable build metadata containing hyphens', async () => {
+    const { repo } = await repository()
+    await expect(repo.installMarketplace(pkg('1.0.0+build-1'), null, [])).resolves.toMatchObject({
+      status: 'imported'
+    })
+    expect(await repo.marketplaceInstallation('example', '1.1.0+build-2', [])).toMatchObject({
+      canUpdate: true
+    })
+  })
+
   it.each(['a'.repeat(65), 'os-example', 'mcp-example'])(
     'rejects names that cannot appear in the local Skill catalog: %s',
     async (id) => {

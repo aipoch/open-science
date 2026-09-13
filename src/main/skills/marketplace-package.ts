@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { inflateRawSync } from 'node:zlib'
 import { z } from 'zod'
+import { skillMarketplaceStableVersionPattern } from '../../shared/skill-marketplace'
 import {
   isAppOwnedSkillRootFile,
   SKILL_IMPORT_LIMITS as limits
@@ -16,12 +17,7 @@ export const marketplaceReceiptSchema = z.strictObject({
     .string()
     .max(128)
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-  version: z
-    .string()
-    .max(128)
-    .regex(
-      /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
-    ),
+  version: z.string().max(128).regex(skillMarketplaceStableVersionPattern),
   // Signed catalog revision, not a transport-specific Git commit.
   snapshotId: hash,
   revision: hash,

@@ -8,6 +8,10 @@ export const skillMarketplaceCategories = [
 
 export const skillMarketplaceRepository = 'https://github.com/aipoch/openscience-skill-marketplace'
 
+// Catalogs may describe prereleases, but installation and updates offer stable releases only.
+export const skillMarketplaceStableVersionPattern =
+  /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+
 export type SkillMarketplaceEntry = {
   id: string
   displayName: string
@@ -60,7 +64,12 @@ export type SkillMarketplaceInstallRequest = SkillMarketplaceDetailRequest & {
 export type SkillMarketplaceInstallResult =
   | {
       ok: true
-      value: { id: string; status: 'imported' | 'unchanged' | 'updated'; version: string }
+      value: {
+        id: string
+        status: 'imported' | 'unchanged' | 'updated'
+        version: string
+        refreshFailed?: boolean
+      }
     }
   | {
       ok: false

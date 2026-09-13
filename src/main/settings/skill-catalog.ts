@@ -721,10 +721,15 @@ class SkillCatalogModule {
   async installMarketplace(
     pkg: MarketplacePackage,
     expectedVersion: string | null
-  ): Promise<ImportSkillResult> {
+  ): Promise<Pick<ImportSkillResult, 'id' | 'status'> & { refreshFailed?: boolean }> {
     const outcome = await this.installMarketplacePackage(pkg, expectedVersion)
-    await this.refreshMarketplace()
-    return { ...outcome, skills: await this.listSkills() }
+    try {
+      await this.refreshMarketplace()
+      return outcome
+    } catch {
+      // The transaction already committed; a reload failure must not invite another first install.
+      return { ...outcome, refreshFailed: true }
+    }
   }
 
   installMarketplacePackage(
