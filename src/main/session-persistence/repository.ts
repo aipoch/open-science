@@ -52,6 +52,16 @@ const PRE_SUBAGENT_MODEL_BACKUP_SUFFIX = '.pre-subagent-model-backup'
 const RECOVERABLE_TEMPORARY_FILE_PATTERN =
   /^(.+\.json)\.(?:\d{13}-\d+|\d+|(\d+)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.tmp$/iu
 
+const temporarySessionPrimaryName = (fileName: string): string | undefined => {
+  const temporary = RECOVERABLE_TEMPORARY_FILE_PATTERN.exec(fileName)
+  if (!temporary) return undefined
+  // Match the durable reader: only current PID/UUID names carry a validated PID.
+  // Legacy numeric suffixes have no reliable live-writer ownership marker.
+  const pid = Number(temporary[2])
+  if (temporary[2] !== undefined && (!Number.isSafeInteger(pid) || pid <= 0)) return undefined
+  return temporary[1]
+}
+
 const nextSessionRevision = (revision: number): number => {
   if (!Number.isSafeInteger(revision) || revision < 0 || revision >= Number.MAX_SAFE_INTEGER) {
     throw new Error('Session revision cannot be incremented safely.')
@@ -1154,10 +1164,19 @@ class SessionRepository {
       await this.projection?.markPending(safeProjectId, safeSessionId, 'delete')
     }
 
-    // The valid primary proves matching quarantines are superseded authority covered by this
-    // explicit Session deletion. Remove every backup first so any failure leaves that proof in
+    // The valid primary proves matching temps/quarantines are authority covered by this
+    // explicit Session deletion. Remove every candidate first so any failure leaves that proof in
     // place and the operation safely retryable; only then remove the current primary.
     const primaryPath = this.sessionFilePath(safeProjectId, safeSessionId)
+    const entries = await this.dependencies.readDirectoryEntries(this.projectDir(safeProjectId))
+    for (const entry of entries) {
+      if (entry.isFile() && temporarySessionPrimaryName(entry.name) === basename(primaryPath)) {
+        await this.dependencies.remove(join(this.projectDir(safeProjectId), entry.name), {
+          force: true,
+          recursive: false
+        })
+      }
+    }
     for (const suffix of [PRE_S2_BACKUP_SUFFIX, PRE_SUBAGENT_MODEL_BACKUP_SUFFIX]) {
       await this.dependencies.remove(`${primaryPath}${suffix}`, {
         force: true,
@@ -1973,13 +1992,8 @@ class SessionRepository {
               ) {
                 return [entry.name]
               }
-              const temporary = RECOVERABLE_TEMPORARY_FILE_PATTERN.exec(entry.name)
-              if (!temporary) return []
-              // Match the durable reader: only current PID/UUID names carry a validated PID.
-              // Legacy numeric suffixes have no reliable live-writer ownership marker.
-              const pid = Number(temporary[2])
-              if (temporary[2] !== undefined && (!Number.isSafeInteger(pid) || pid <= 0)) return []
-              return [temporary[1]]
+              const primary = temporarySessionPrimaryName(entry.name)
+              return primary ? [primary] : []
             })
           )
         ],

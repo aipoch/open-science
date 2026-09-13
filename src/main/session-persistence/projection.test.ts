@@ -1277,6 +1277,42 @@ describe('Session projection', () => {
     ).resolves.toMatchObject({ title: 'Saved after recovery', number: 1 })
   })
 
+  it('does not restore explicitly deleted JSON from an exited writer temporary file', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-deleted-temp-writer-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const files = new SessionRepository(storageRoot, {}, projection)
+    await files.ensureSessionProjection(() => files.loadAll())
+    const saved = await files.saveSession(session('session-1'))
+    const directory = join(storageRoot, 'sessions', 'project-1')
+    const writer = spawn(process.execPath, [
+      '-e',
+      `const fs = require('node:fs');
+       const path = require('node:path');
+       const file = path.join(process.argv[1], 'session-1.json.' + process.pid + '-12345678-1234-1234-1234-123456789abc.tmp');
+       fs.writeFileSync(file, process.argv[2]);
+       process.stdout.write(file);
+       process.stdin.resume();`,
+      directory,
+      JSON.stringify(createSessionFile({ ...saved, title: 'Unpublished draft' }))
+    ])
+    const exited = once(writer, 'exit')
+    try {
+      await once(writer.stdout, 'data')
+      await files.deleteSession(saved.projectId, saved.id)
+      await expect(projection.list()).resolves.toEqual([])
+    } finally {
+      writer.stdin.end()
+      await exited
+    }
+    // The lower-level file scan must not recreate authority after a successful explicit deletion.
+    const scan = await files.loadAllWithDiagnostics()
+    expect(scan.result.sessions.map(({ id }) => id)).toEqual([])
+    await expect(files.loadSession(saved.projectId, saved.id)).resolves.toBeUndefined()
+  })
+
   it('recovers an eligible orphan temporary file before replaying its pending save', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-orphan-temp-replay-'))
     client = createProjectDbClient(storageRoot)

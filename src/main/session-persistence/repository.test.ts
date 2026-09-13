@@ -1492,6 +1492,39 @@ describe('session persistence repository (per-session files)', () => {
     }
   )
 
+  it('keeps the primary when explicit deletion cannot remove a recognized temporary file', async () => {
+    const root = await createStorageRoot()
+    const files = new SessionRepository(root)
+    const saved = await files.saveSession(createSession())
+    const primary = join(root, 'sessions', saved.projectId, `${saved.id}.json`)
+    const temporary = `${primary}.${process.pid}-12345678-1234-1234-1234-123456789abc.tmp`
+    await writeFile(temporary, '{', 'utf8')
+    const failure = new Error('injected temporary removal failure')
+    const failing = new SessionRepository(root, {
+      remove: async (path, options) => {
+        if (path === temporary) throw failure
+        await rm(path, options)
+      }
+    })
+    await expect(failing.deleteSession(saved.projectId, saved.id)).rejects.toBe(failure)
+    await expect(readFile(primary, 'utf8')).resolves.toContain(saved.id)
+    await expect(readFile(temporary, 'utf8')).resolves.toBe('{')
+    const unrelated = `${primary}.unrelated.tmp`
+    const otherSession = join(
+      root,
+      'sessions',
+      saved.projectId,
+      `other.json.${process.pid}-12345678-1234-1234-1234-123456789abc.tmp`
+    )
+    await writeFile(unrelated, 'unrelated', 'utf8')
+    await writeFile(otherSession, 'other Session', 'utf8')
+    await files.deleteSession(saved.projectId, saved.id)
+    await expect(readFile(primary, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(temporary, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(unrelated, 'utf8')).resolves.toBe('unrelated')
+    await expect(readFile(otherSession, 'utf8')).resolves.toBe('other Session')
+  })
+
   it('classifies an oversized recovery temp when no primary Session exists', async () => {
     const root = await createStorageRoot()
     const projectDir = join(root, 'sessions', 'project-a')
