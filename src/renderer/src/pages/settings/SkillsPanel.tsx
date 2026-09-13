@@ -476,7 +476,7 @@ const SkillsPanel = ({
           </Select>
           <TagFilter resourceType="catalog.skill" value={tagFilter} onChange={setTagFilter} />
           <SettingsSearchInput
-            containerClassName="min-w-56"
+            containerClassName="min-w-48"
             aria-label={t('Search skills')}
             placeholder={t('Search skills…')}
             value={query}

@@ -27,6 +27,7 @@ import type {
   ConnectorView,
   CustomServerView
 } from '../../../../shared/settings'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
@@ -51,7 +52,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
 import { ConnectorGlyph } from './connector-icons'
-import { SettingsLoadNotice, SettingsSection, SettingsToggle } from './SettingsLayout'
+import { SettingsLoadNotice, SettingsToggle } from './SettingsLayout'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { specialistsUsingConnector, type SpecialistUsage } from './specialist-resource-scope'
 import { ResourceTagBadges, ResourceTagMenu, TagFilter } from './ResourceTagControls'
@@ -61,7 +62,7 @@ import { cannotEnableCustomServer, requiresSignInBeforeEnable } from './connecto
 import { localizeCredentialError } from './credential-error-message'
 
 // The connectors panel sub-view, driven by the settings navigation history. The detail and add pages
-// are separate components owned by SettingsPage; this panel only renders the list + contact-email section.
+// are separate components owned by SettingsPage; this panel only renders the catalog list.
 export type ConnectorsView =
   | { kind: 'list' }
   | { kind: 'manage' }
@@ -108,14 +109,12 @@ type ConnectorsPanelProps = {
   onNavigate: (view: ConnectorsView) => void
   onOpenTag?: (tagId: string) => void
   onOpenSpecialist?: (usage: SpecialistUsage) => void
-  onOpenCredentials?: () => void
 }
 
 export function ConnectorsPanel({
   onNavigate,
   onOpenTag,
-  onOpenSpecialist,
-  onOpenCredentials
+  onOpenSpecialist
 }: ConnectorsPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const { t: tCommon } = useTranslation()
@@ -123,7 +122,6 @@ export function ConnectorsPanel({
   const connectorsLoaded = useSettingsStore((state) => state.connectorsLoaded)
   const customServers = useSettingsStore((state) => state.customServers)
   const skillProjectionStatus = useSettingsStore((state) => state.skillProjectionStatus)
-  const ncbi = useSettingsStore((state) => state.ncbi)
   const loadConnectors = useSettingsStore((state) => state.loadConnectors)
   const setConnectorEnabled = useSettingsStore((state) => state.setConnectorEnabled)
   const setCustomServerEnabled = useSettingsStore((state) => state.setCustomServerEnabled)
@@ -521,23 +519,67 @@ export function ConnectorsPanel({
           className="mb-4"
         />
       ) : null}
-      <SettingsSection
-        title={t('Contact email')}
-        description={t(
-          'When allowed, shared with research data services that ask for a contact email (such as those run by NCBI, EBI, and OurResearch) on requests made on your behalf.'
-        )}
-        className="mb-4"
+      <div
+        className="mb-4 flex flex-wrap items-center justify-between gap-3"
+        data-slot="connectors-header"
       >
-        <div className="mt-3 flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-            {ncbi.contactEmail ?? t('Not set')}
-          </span>
-          <Button type="button" variant="outline" onClick={onOpenCredentials}>
-            {t('Manage credentials')}
+        <h3 className="flex items-center gap-2 text-sm font-semibold">
+          {t('Installed')}
+          <Badge variant="outline" className="tabular-nums">
+            {connectors.length + customServers.length}
+          </Badge>
+        </h3>
+        <div data-slot="connectors-action-bar" className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" onClick={() => onNavigate({ kind: 'manage' })}>
+            <ListChecks data-icon="inline-start" aria-hidden="true" />
+            {t('Manage')}
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="shrink-0">
+                <Plus data-icon="inline-start" aria-hidden="true" />
+                {t('Add connector')}
+                <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                className="gap-2.5"
+                onSelect={() => onNavigate({ kind: 'add', transport: 'local' })}
+              >
+                <Terminal className="size-4 shrink-0" aria-hidden="true" />
+                <span className="flex flex-col">
+                  <span>{t('Local command')}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {t('Run an MCP server via a command')}
+                  </span>
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="gap-2.5"
+                onSelect={() => onNavigate({ kind: 'add', transport: 'remote' })}
+              >
+                <Globe className="size-4 shrink-0" aria-hidden="true" />
+                <span className="flex flex-col">
+                  <span>{t('Remote server')}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {t('Connect to an MCP server URL')}
+                  </span>
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'import' })}>
+                <FileUp className="size-4 shrink-0" aria-hidden="true" />
+                <span className="flex flex-col">
+                  <span>{tCommon('Import configuration')}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {tCommon('Import a Connector or MCP client configuration')}
+                  </span>
+                </span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-      </SettingsSection>
-
+      </div>
       <div
         data-slot="connectors-filter-bar"
         className="mb-4 flex flex-wrap items-center gap-2"
@@ -585,56 +627,6 @@ export function ConnectorsPanel({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-      </div>
-      <div data-slot="connectors-action-bar" className="mb-4 flex items-center justify-end gap-2">
-        <Button type="button" variant="outline" onClick={() => onNavigate({ kind: 'manage' })}>
-          <ListChecks data-icon="inline-start" aria-hidden="true" />
-          {t('Manage')}
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="shrink-0">
-              <Plus data-icon="inline-start" aria-hidden="true" />
-              {t('Add connector')}
-              <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              className="gap-2.5"
-              onSelect={() => onNavigate({ kind: 'add', transport: 'local' })}
-            >
-              <Terminal className="size-4 shrink-0" aria-hidden="true" />
-              <span className="flex flex-col">
-                <span>{t('Local command')}</span>
-                <span className="text-xs text-muted-foreground">
-                  {t('Run an MCP server via a command')}
-                </span>
-              </span>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="gap-2.5"
-              onSelect={() => onNavigate({ kind: 'add', transport: 'remote' })}
-            >
-              <Globe className="size-4 shrink-0" aria-hidden="true" />
-              <span className="flex flex-col">
-                <span>{t('Remote server')}</span>
-                <span className="text-xs text-muted-foreground">
-                  {t('Connect to an MCP server URL')}
-                </span>
-              </span>
-            </DropdownMenuItem>
-            <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'import' })}>
-              <FileUp className="size-4 shrink-0" aria-hidden="true" />
-              <span className="flex flex-col">
-                <span>{tCommon('Import configuration')}</span>
-                <span className="text-xs text-muted-foreground">
-                  {tCommon('Import a Connector or MCP client configuration')}
-                </span>
-              </span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
 
       <div className="flex flex-col gap-4">

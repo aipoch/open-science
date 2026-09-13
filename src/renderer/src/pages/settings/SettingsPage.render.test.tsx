@@ -3232,7 +3232,7 @@ describe('SettingsPage layout', () => {
         .settings.listConnectors
     ).toHaveBeenCalled()
     expect(document.body.textContent).toContain('Chemistry')
-    expect(document.body.textContent).toContain('Contact email')
+    expect(document.body.textContent).not.toContain('Contact email')
   })
 
   it('keeps a Connector draft when device credential creation uses Settings history', async () => {

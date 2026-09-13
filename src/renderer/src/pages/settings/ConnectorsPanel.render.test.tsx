@@ -265,7 +265,7 @@ describe('ConnectorsPanel (groups)', () => {
     // Three featured toggles + one custom toggle.
     expect(document.body.querySelectorAll('[role="switch"]')).toHaveLength(4)
     expect(document.body.querySelectorAll('[data-slot="settings-list-row"]')).toHaveLength(4)
-    expect(document.body.querySelector('[data-slot="settings-section"]')).not.toBeNull()
+    expect(document.body.querySelector('[data-slot="settings-section"]')).toBeNull()
     const addConnector = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>('button')
     ).find((button) => button.textContent?.includes('Add connector'))
@@ -273,7 +273,7 @@ describe('ConnectorsPanel (groups)', () => {
     expect(addConnector?.getAttribute('data-variant')).toBe('outline')
   })
 
-  it('keeps filters in the first row and Manage and Add connector in the second row', () => {
+  it('keeps the installed count and actions above the filters and search', () => {
     act(() => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
     })
@@ -295,12 +295,16 @@ describe('ConnectorsPanel (groups)', () => {
     expect(filter?.compareDocumentPosition(agentFilter!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(agentFilter?.compareDocumentPosition(tagFilter!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(tagFilter?.compareDocumentPosition(search!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(search?.compareDocumentPosition(addConnector!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(addConnector?.compareDocumentPosition(search!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(search?.parentElement?.className).toContain('min-w-48')
     expect(filter?.className).toContain('w-36')
     expect(agentFilter?.className).toContain('w-48')
     const actionBar = document.body.querySelector('[data-slot="connectors-action-bar"]')
-    expect(actionBar?.className).toContain('justify-end')
+    expect(actionBar?.className).toContain('flex-wrap')
+    const header = document.body.querySelector('[data-slot="connectors-header"]')
+    expect(header?.querySelector('h3')?.textContent).toContain('Installed')
+    expect(header?.querySelector('[data-slot="badge"]')?.textContent).toBe('4')
+    expect(header?.contains(actionBar!)).toBe(true)
     expect(actionBar?.textContent).toContain('Manage')
     expect(toolbar?.contains(addConnector!)).toBe(false)
     expect(addConnector?.className).toContain('shrink-0')
@@ -1086,14 +1090,12 @@ describe('ConnectorsPanel (groups)', () => {
 })
 
 describe('ConnectorsPanel (contact email)', () => {
-  it('opens the centralized credentials editor', () => {
-    const onOpenCredentials = vi.fn()
+  it('leaves contact email configuration in Credentials', () => {
     act(() => {
-      root.render(<ConnectorsPanel onNavigate={vi.fn()} onOpenCredentials={onOpenCredentials} />)
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
     })
 
-    clickButtonByText('Manage credentials')
-
-    expect(onOpenCredentials).toHaveBeenCalledOnce()
+    expect(document.body.textContent).not.toContain('Contact email')
+    expect(document.body.textContent).not.toContain('Manage credentials')
   })
 })

@@ -1660,12 +1660,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     ) : (
                       <ConnectorsPanel
                         onNavigate={navigateConnectors}
-                        onOpenCredentials={() =>
-                          navigate({
-                            panel: 'credentials',
-                            view: { kind: 'service', serviceId: 'literature' }
-                          })
-                        }
                         onOpenTag={navigateTag}
                         onOpenSpecialist={(usage) =>
                           navigate({
