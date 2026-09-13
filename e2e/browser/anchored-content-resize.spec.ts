@@ -18,7 +18,14 @@ test('keeps the current turn anchored when trailing content shrinks or grows', a
       const button = Array.from(document.querySelectorAll('button')).find(
         (button) => button.textContent === 'Toggle trailing height'
       )!
-      button.click()
+      // Streaming presentation can change height during an animation frame. Sample the next
+      // frame before a deferred resize repair can hide a one-frame jump.
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => {
+          button.click()
+          resolve()
+        })
+      )
       for (let frame = 0; frame < 20; frame += 1) {
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
         positions.push(element.getBoundingClientRect().top)

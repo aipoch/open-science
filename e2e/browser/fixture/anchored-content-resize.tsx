@@ -1,5 +1,6 @@
 import '@/assets/main.css'
 import { useState, type JSX } from 'react'
+import { createPortal } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import {
   MessageScrollerProvider,
@@ -8,13 +9,24 @@ import {
   MessageScrollerContent,
   MessageScrollerItem
 } from '@/components/ui/message-scroller'
-export function App(): JSX.Element {
+function TrailingReply(): JSX.Element {
   const [short, setShort] = useState(false)
+  return (
+    <>
+      {createPortal(
+        <button onClick={() => setShort(!short)}>Toggle trailing height</button>,
+        document.body
+      )}
+      <div style={{ height: short ? 24 : 104 }}>Final reply</div>
+    </>
+  )
+}
+
+export function App(): JSX.Element {
   const [added, setAdded] = useState(false)
   return (
     <>
       <button onClick={() => setAdded(true)}>Append turn</button>
-      <button onClick={() => setShort(!short)}>Toggle trailing height</button>
       <div style={{ height: 509, width: 700 }}>
         <MessageScrollerProvider
           autoScroll
@@ -39,7 +51,7 @@ export function App(): JSX.Element {
                       <div style={{ height: 36 }}>Completed tool</div>
                     </MessageScrollerItem>
                     <MessageScrollerItem messageId="tail" disableContainment>
-                      <div style={{ height: short ? 24 : 104 }}>Final reply</div>
+                      <TrailingReply />
                     </MessageScrollerItem>
                   </>
                 )}
