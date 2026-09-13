@@ -14,6 +14,9 @@ const ctx: ToolContext = {
   fetchText: async () => {
     throw new Error('map_reactome_pathways must not use ctx.fetchText')
   },
+  postForm: async () => {
+    throw new Error('unused multipart transport')
+  },
   postJson: async () => {
     throw new Error('map_reactome_pathways must not use ctx.postJson (text/plain body, not JSON)')
   },

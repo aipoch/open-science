@@ -9,12 +9,14 @@ export type ConnectorCredentials = {
 export type ToolContext = {
   signal?: AbortSignal
   fetchJson(url: string): Promise<unknown>
-  fetchText(url: string): Promise<string>
+  fetchText(url: string, accept?: string): Promise<string>
   // GET JSON plus the response headers — for APIs that report totals/pagination in headers rather than
   // the body (e.g. PRIDE Archive's `total_records`), which fetchJson alone would drop.
   fetchJsonWithHeaders(url: string): Promise<{ body: unknown; headers: Headers }>
   // POST a JSON body and parse the JSON response — for GraphQL / POST-only APIs (e.g. gnomAD).
   postJson(url: string, body: unknown): Promise<unknown>
+  // Submit multipart data once and parse JSON; never retry a potentially created job.
+  postForm(url: string, body: FormData): Promise<unknown>
   credentials: ConnectorCredentials
 }
 

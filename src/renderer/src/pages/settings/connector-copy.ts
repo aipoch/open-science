@@ -12,6 +12,10 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'rna/search_sequence':
+      return t(
+        'Search RNA/DNA against Rfam models. Cancelling stops polling; the service retains results for one week.'
+      )
     case 'literature/crossref_get_work':
       return t('Retrieve publisher-deposited bibliographic metadata by DOI.')
     case 'literature/crossref_get_updates':

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { z } from 'zod'
 import type { ToolContext, ToolDescriptor } from '../types'
 import { abortableDelay } from '../abortable-delay'
 
@@ -8,6 +9,7 @@ import { abortableDelay } from '../abortable-delay'
 // and async single-sequence cmscan search. Every /family route resolves an accession (RF00005)
 // or a family id (tRNA) interchangeably.
 const RFAM = 'https://rfam.org'
+const RFAM_BATCH = 'https://batch.rfam.org'
 
 // Default text-payload cap: alignment/CM texts of large families (e.g. tRNA) run to multiple MB
 // and blow past the notebook transport limit — omit the body past this size but keep metadata.
@@ -213,8 +215,13 @@ function capTextPayload(
   return result
 }
 
-type SearchSubmission = { resultURL?: string; jobId?: string; opened?: string }
-type SearchResult = { hits?: Record<string, unknown[]>; searchSequence?: string }
+const searchSubmission = z.object({ resultURL: z.string().min(1), jobId: z.string().min(1) })
+const searchResult = z.object({
+  hits: z.record(z.string(), z.array(z.unknown())),
+  searchSequence: z.string().min(1),
+  closed: z.string().min(1),
+  jobId: z.string().optional()
+})
 
 export const RNA_TOOLS: ToolDescriptor[] = [
   {
@@ -439,7 +446,7 @@ export const RNA_TOOLS: ToolDescriptor[] = [
     // Preserve the default 300s polling window with headroom for submission and network waits.
     totalTimeoutMs: 600_000,
     description:
-      'Search a single RNA/DNA sequence against all Rfam covariance models (async cmscan): submit to rfam.org and poll until done. The whole call is capped at 600 seconds, including submission and polling. Known upstream limitation: the job backend may be down (valid submissions return "SearchUnavailable … come back later"; invalid sequences still get a 400) — the error is surfaced as-is.',
+      'Search a single RNA/DNA sequence against all Rfam covariance models (async cmscan): submit a multipart sequence file to batch.rfam.org and poll until done. The whole call is capped at 600 seconds, including submission and polling. Submission is not automatically retried. Cancellation stops local polling; the provider retains job results for one week. Upstream failures are surfaced as errors.',
     input: {
       type: 'object',
       properties: {
@@ -451,39 +458,47 @@ export const RNA_TOOLS: ToolDescriptor[] = [
     },
     required: ['sequence'],
     returns:
-      '`{ "job_id": str, "num_hits": int, "families": [str], "hits": { family_id: [ { e-value, score, alignment blocks, … } ] }, "search_sequence": str }` — hits grouped by matching family id. Surfaces upstream SearchUnavailable/400/timeout errors as-is; no local fallback.',
+      '`{ "job_id": str, "num_hits": int, "families": [str], "hits": { family_id: [ { e-value, score, alignment blocks, … } ] }, "search_sequence": str }` — hits grouped by matching family id. Surfaces upstream HTTP, invalid-response and timeout errors; no local fallback.',
     example:
       'const result = await host.mcp("rna", "search_sequence", {"sequence": "GGUUCCGGGAAGGCAGCAGGUGGAAACCUGCCA"})',
     run: async (ctx: ToolContext, a) => {
       const sequence = String(a.sequence)
       const maxWaitS = Number(a.max_wait_s ?? 300)
       const pollIntervalS = Number(a.poll_interval_s ?? 5)
-      // Submit the async cmscan job (upstream posts { seq }). The engine surfaces a 400 (invalid
-      // sequence) or 5xx (backend down) as an HTTP error, matching the upstream pass-through.
-      const sub = (await ctx.postJson(`${RFAM}/search/sequence`, {
-        seq: sequence
-      })) as SearchSubmission
-      const resultUrl = sub.resultURL
-      if (!resultUrl)
-        throw new Error(`submission response missing resultURL: ${JSON.stringify(sub)}`)
-      // Bounded poll loop: rfam.org holds the result behind the submission's resultURL until the
-      // job finishes. Cap total polls by max_wait_s / poll_interval_s (and a hard ceiling).
+      // https://docs.rfam.org/en/latest/api.html#sequence-searches
+      const form = new FormData()
+      form.append('sequence_file', new Blob([sequence], { type: 'text/plain' }), 'query.seq')
+      const sub = searchSubmission.parse(await ctx.postForm(`${RFAM_BATCH}/submit-job`, form))
+      const resultUrl = `${RFAM_BATCH}/result/${encodeURIComponent(sub.jobId)}`
+      if (sub.resultURL !== resultUrl) throw new Error('Rfam returned an unexpected result URL')
+      // Keep the existing bounded polling window; never follow a result URL outside this job.
       const deadline = Date.now() + maxWaitS * 1000
       const maxPolls = Math.min(
         Math.max(1, Math.ceil(maxWaitS / Math.max(pollIntervalS, 0.001))),
         120
       )
-      let res: SearchResult | null = null
+      let res: z.infer<typeof searchResult> | null = null
       for (let poll = 0; poll < maxPolls; poll++) {
-        const payload = (await ctx.fetchJson(resultUrl)) as SearchResult
-        if (payload && typeof payload === 'object' && payload.hits != null) {
-          res = payload
+        const text = (await ctx.fetchText(resultUrl, 'application/json')).trim()
+        // Pending responses may be bare status text; only completed results are JSON objects.
+        const payload = text === 'PEND' || text === 'RUN' ? text : JSON.parse(text)
+        if (payload?.jobId !== undefined && payload.jobId !== sub.jobId) {
+          throw new Error('Rfam returned results for a different job')
+        }
+        const pending =
+          payload === 'PEND' ||
+          payload === 'RUN' ||
+          payload?.status === 'PEND' ||
+          payload?.status === 'RUN' ||
+          payload?.closed === ''
+        if (!pending) {
+          res = searchResult.parse(payload)
           break
         }
         if (Date.now() >= deadline) break
         await abortableDelay(pollIntervalS * 1000, ctx.signal)
       }
-      if (!res || res.hits == null) {
+      if (!res) {
         throw new Error(`Rfam sequence search not finished after ${maxWaitS}s (${resultUrl})`)
       }
       const hits = res.hits ?? {}

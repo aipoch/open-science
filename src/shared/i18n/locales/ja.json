@@ -5702,6 +5702,7 @@
     "Retrieve publisher-deposited bibliographic metadata by DOI.": "DOI を指定して出版社が登録した書誌メタデータを取得します。",
     "Find deposited corrections and retractions. Missing updates do not establish reliability.": "登録された訂正や撤回を検索します。更新がないことは信頼性を保証しません。",
     "Find datasets and software by topic or related DOI.": "トピックや関連 DOI からデータセットとソフトウェアを検索します。",
-    "Retrieve dataset metadata, rights and publication relationships by DOI.": "DOI を指定してデータセットのメタデータ、権利、出版物との関連を取得します。"
+    "Retrieve dataset metadata, rights and publication relationships by DOI.": "DOI を指定してデータセットのメタデータ、権利、出版物との関連を取得します。",
+    "Search RNA/DNA against Rfam models. Cancelling stops polling; the service retains results for one week.": "Rfam モデルに対して RNA/DNA を検索します。キャンセルすると結果の確認を停止します。サービスは結果を 1 週間保持します。"
   }
 }

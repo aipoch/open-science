@@ -420,6 +420,67 @@ describe('ParserEngine declarative path', () => {
     expect(out).toEqual({ data: { ok: true } })
   })
 
+  it('postForm lets fetch serialize multipart boundaries and preserves the uploaded sequence', async () => {
+    const body = new FormData()
+    body.append('sequence_file', new Blob(['AGUUCC'], { type: 'text/plain' }), 'query.seq')
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(url, init)
+      expect(request.headers.get('content-type')).toMatch(/^multipart\/form-data; boundary=/)
+      expect(request.headers.get('accept')).toBe('application/json')
+      const file = (await request.formData()).get('sequence_file') as File
+      expect(file.name).toBe('query.seq')
+      expect(await file.text()).toBe('AGUUCC')
+      return Response.json({ jobId: 'job-1' })
+    })
+    const descriptor: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      run: (ctx) => ctx.postForm('https://batch.test/submit', body)
+    }
+    await expect(new ParserEngine({ fetchImpl }).call(descriptor, {}, {})).resolves.toEqual({
+      jobId: 'job-1'
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['http', 'network'])(
+    'does not retry a multipart job submission after a %s failure',
+    async (failure) => {
+      const fetchImpl = vi.fn(async () => {
+        if (failure === 'network') throw new TypeError('connection lost')
+        return new Response('', { status: 503 })
+      })
+      const descriptor: ToolDescriptor = {
+        id: 't',
+        connector: 'c',
+        description: '',
+        input: {},
+        run: (ctx) => ctx.postForm('https://batch.test/submit', new FormData())
+      }
+      await expect(
+        new ParserEngine({ fetchImpl, retryBackoffMs: 0 }).call(descriptor, {}, {})
+      ).rejects.toThrow()
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('applies the response body cap to multipart submissions', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ oversized: '1234567890' }))
+    const descriptor: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      run: (ctx) => ctx.postForm('https://batch.test/submit', new FormData())
+    }
+    await expect(
+      new ParserEngine({ fetchImpl, maxResponseBytes: 8 }).call(descriptor, {}, {})
+    ).rejects.toMatchObject({ name: 'ConnectorResponseTooLargeError' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it('sends a User-Agent header (some APIs 403 without one)', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ ok: 1 }))
     const engine = new ParserEngine({ fetchImpl })

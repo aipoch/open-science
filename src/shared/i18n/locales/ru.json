@@ -6169,6 +6169,7 @@
     "Retrieve publisher-deposited bibliographic metadata by DOI.": "Получить библиографические метаданные, зарегистрированные издателями, по DOI.",
     "Find deposited corrections and retractions. Missing updates do not establish reliability.": "Найти зарегистрированные исправления и отзывы публикаций. Отсутствие обновлений не подтверждает достоверность.",
     "Find datasets and software by topic or related DOI.": "Найти наборы данных и программное обеспечение по теме или связанному DOI.",
-    "Retrieve dataset metadata, rights and publication relationships by DOI.": "Получить метаданные, права и связи набора данных с публикациями по DOI."
+    "Retrieve dataset metadata, rights and publication relationships by DOI.": "Получить метаданные, права и связи набора данных с публикациями по DOI.",
+    "Search RNA/DNA against Rfam models. Cancelling stops polling; the service retains results for one week.": "Поиск РНК/ДНК по моделям Rfam. Отмена прекращает опрос; сервис хранит результаты одну неделю."
   }
 }
