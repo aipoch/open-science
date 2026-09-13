@@ -2,9 +2,15 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { locateApp } from './locate-app.mjs'
+import * as fs from 'node:fs/promises'
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, access: vi.fn(actual.access) }
+})
 
 describe('locateApp', () => {
   let dir: string
@@ -14,6 +20,8 @@ describe('locateApp', () => {
   })
 
   afterEach(async () => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
     await rm(dir, { recursive: true, force: true })
   })
 
@@ -31,6 +39,21 @@ describe('locateApp', () => {
     const app = await locateApp({ env: { OPEN_SCIENCE_APP_PATH: exe } })
     expect(app.command).toBe(exe)
     expect(app.packaged).toBe(true)
+  })
+
+  it('prefers the Debian Electron executable over the system CLI wrapper', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'linux' })
+    const candidates = new Set(['/opt/Open Science/open-science', '/usr/bin/open-science'])
+    vi.mocked(fs.access).mockImplementation(async (path) => {
+      if (!candidates.has(String(path))) throw new Error('ENOENT')
+    })
+    const app = await locateApp({ env: {} })
+    expect(app).toMatchObject({
+      command: '/opt/Open Science/open-science',
+      args: [],
+      packaged: true
+    })
+    vi.mocked(fs.access).mockRestore()
   })
 
   it('throws a helpful error when the explicit path does not exist', async () => {
