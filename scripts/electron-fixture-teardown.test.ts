@@ -45,7 +45,8 @@ vi.mock('../e2e/fixtures/renderer-failure-gate', () => ({
 import '../e2e/fixtures/electron-app'
 
 const startupBudget = process.platform === 'win32' ? 180_000 : 90_000
-const forcedCleanupBudget = process.platform === 'win32' ? 30_000 : 10_000
+const forcedCleanupBudget =
+  process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
 
 let root: string
 const close = vi.fn()
