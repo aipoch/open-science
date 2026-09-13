@@ -113,6 +113,10 @@ test('preserves a Web message edit while another client changes the selected Bra
   test.setTimeout(180_000)
   await app.completeOnboarding()
   const first = await app.configureFakeAgent()
+  // This fixture assigns a fixed title; background generation would race that manual edit.
+  await first.evaluate(() =>
+    window.api.settings.setSessionDetailsModel({ configuration: { mode: 'disabled' } })
+  )
   const projectName = 'Branch consistency'
   const original = 'Original branch prompt'
   const revised = 'Revised branch prompt'
