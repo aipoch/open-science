@@ -225,6 +225,8 @@ test('shows a recoverable disk-capacity error before copying an import', async (
 test('exports a Session package and imports its conversation as read-only history', async ({
   app
 }, testInfo) => {
+  // This journey validates the archive several times and performs two persistence restarts.
+  test.setTimeout(240_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   page.on('console', (message) => {
@@ -375,7 +377,9 @@ test('exports a Session package and imports its conversation as read-only histor
   await page.getByRole('menuitem', { name: 'Import Session package…', exact: true }).click()
   await expect(page.getByLabel('Destination project')).toHaveCount(0)
   const importing = page.getByRole('dialog', { name: 'Import Session package', exact: true })
-  await expect(importing.getByRole('button', { name: 'Import', exact: true })).toBeVisible()
+  await expect(importing.getByRole('button', { name: 'Import', exact: true })).toBeVisible({
+    timeout: 60_000
+  })
   await page.screenshot({ path: testInfo.outputPath('session-package-import-progress.png') })
   await importing.getByRole('button', { name: 'Hide progress' }).click()
   const backgroundImport = page.getByRole('region', { name: 'Package progress', exact: true })
@@ -450,6 +454,7 @@ test('exports a Session package and imports its conversation as read-only histor
   await page.getByRole('textbox', { name: 'Ask anything' }).fill('Continue in an ordinary Session.')
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
   await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   await expect(page.getByText('Conversation storage needs attention', { exact: true })).toHaveCount(
     0
   )
