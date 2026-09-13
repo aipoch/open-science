@@ -543,6 +543,68 @@ describe('local model lifecycle', () => {
     })
   })
 
+  it.each([
+    { update: false, publishedAssets: 1 },
+    { update: false, publishedAssets: 2 },
+    { update: true, publishedAssets: 1 },
+    { update: true, publishedAssets: 2 }
+  ])(
+    'retries interrupted publication (update=$update, publishedAssets=$publishedAssets)',
+    async ({ update, publishedAssets }) => {
+      const root = await prepare()
+      if (update) await seed(root)
+      const recommended = revision('v2')
+      const base = join(root, 'models', 'pdf-tables')
+      const destination = join(base, 'revisions', recommended.revision)
+      const staging = join(base, 'staging', recommended.revision)
+      await mkdir(destination, { recursive: true })
+      await mkdir(staging, { recursive: true })
+      // Recreate a process exit between asset moves, or before the receipt is committed.
+      for (const [index, asset] of recommended.assets.entries()) {
+        await writeFile(join(index < publishedAssets ? destination : staging, asset.file), content)
+      }
+      const deps = {
+        dataRoot: () => root,
+        revisions: [recommended, revision('v1')],
+        download: installFile,
+        acquireWriter: () => () => undefined
+      }
+      const owner = createLocalModelOwner(deps)
+      try {
+        expect(await owner.getSnapshot()).toMatchObject({
+          availability: update ? 'ready' : 'notInstalled',
+          installedRevision: update ? 'v1' : undefined
+        })
+        await owner.install()
+        await waitForIdle(owner)
+        expect(await owner.getSnapshot()).toMatchObject({
+          availability: 'ready',
+          installedRevision: 'v2',
+          error: undefined
+        })
+        expect(JSON.parse(await readFile(join(base, 'active.json'), 'utf8')).revision).toBe('v2')
+        for (const asset of recommended.assets) {
+          expect(await readFile(join(destination, asset.file))).toEqual(content)
+          await expect(readFile(join(staging, asset.file))).rejects.toMatchObject({
+            code: 'ENOENT'
+          })
+          if (update)
+            expect(await readFile(join(base, 'revisions', 'v1', asset.file))).toEqual(content)
+        }
+      } finally {
+        await owner.close()
+      }
+      const restarted = createLocalModelOwner(deps)
+      try {
+        const use = await restarted.acquireUse()
+        use.release()
+        expect(use.revision).toBe('v2')
+      } finally {
+        await restarted.close()
+      }
+    }
+  )
+
   it('deduplicates downloads and joins cancellation before releasing the writer', async () => {
     const root = await prepare()
     let writers = 0
