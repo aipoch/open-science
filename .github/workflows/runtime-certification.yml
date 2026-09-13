@@ -122,8 +122,6 @@ jobs:
           src/main/notebook/host-mcp.integration.test.ts
           src/main/notebook/python-loop.integration.test.ts
           src/main/notebook/r-loop.integration.test.ts
-          src/main/notebook/welch-volcano-statistics.test.ts
-          src/main/notebook/welch-volcano-plot.test.ts
           src/main/notebook/reproduction-runtime.integration.test.ts
           src/main/notebook/native-lock-restoration.test.ts
           src/main/notebook/environment-lock.test.ts

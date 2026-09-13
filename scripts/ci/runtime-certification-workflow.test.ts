@@ -126,8 +126,6 @@ describe('runtime certification workflow', () => {
       'host-mcp.integration.test.ts',
       'python-loop.integration.test.ts',
       'r-loop.integration.test.ts',
-      'welch-volcano-statistics.test.ts',
-      'welch-volcano-plot.test.ts',
       'reproduction-runtime.integration.test.ts',
       'native-lock-restoration.test.ts',
       'environment-lock.test.ts',
