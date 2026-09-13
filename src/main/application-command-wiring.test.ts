@@ -50,6 +50,20 @@ const dependencyBlock = compact(
 )
 
 describe('production application command wiring', () => {
+  it('keeps the upload owner and notification surface in its original installation phase', () => {
+    const uploadSurface = compact(readSource('src/main/ipc-surfaces/uploads.ts'))
+    expect(uploadSurface).toContain("import { registerUploadIpcHandlers } from '../uploads/ipc'")
+    expect(uploadSurface).toContain('registerUploadIpcHandlers(owner, {')
+    expect(
+      between(
+        ipcSource,
+        'surfaceAdapters = afterAcpAdapters',
+        "declareElectronAdapter('notebook-input-preview'"
+      )
+    ).toContain('surfaceAdapters.push(createUploadElectronSurface(uploadCommandOwner))')
+    expect(occurrences(ipcSource, 'createUploadElectronSurface(uploadCommandOwner)')).toBe(1)
+  })
+
   it('includes active reproducibility kernels in the Session export admission gate', () => {
     expect(compact(ipcSource)).toContain(
       'const notebookLifecycle = withReproducibilityNotebookLifecycle( notebookService, () => artifactReproducibilityAttemptOwnerRef.current )'
@@ -140,7 +154,7 @@ describe('production application command wiring', () => {
       ['logsCommandOwner', 'registerLogsIpcHandlers(logsCommandOwner)', 'logs: logsCommandOwner'],
       [
         'uploadCommandOwner',
-        'registerUploadIpcHandlers(uploadCommandOwner, {',
+        'surfaceAdapters.push(createUploadElectronSurface(uploadCommandOwner))',
         'uploads: uploadCommandOwner'
       ],
       [

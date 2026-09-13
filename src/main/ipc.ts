@@ -468,7 +468,8 @@ import {
 } from './update/strategy'
 import type { UpdateBlocker } from '../shared/update'
 import { startUpdateScheduler } from './update/scheduler'
-import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
+import { createDefaultUploadRepository } from './uploads/ipc'
+import { createUploadElectronSurface } from './ipc-surfaces/uploads'
 import { createUploadCommandOwner } from './uploads/command-owner'
 import { ContentRepository } from './storage/content-repository'
 import { broadcastToRenderers, installRendererBroadcastEventHub } from './renderer-broadcast'
@@ -4674,19 +4675,7 @@ const createApplicationModules = async (
         receiptExporter.importEnvironmentLock(sender, request)
     })
   })
-  declareElectronAdapter('uploads', () =>
-    registerUploadIpcHandlers(uploadCommandOwner, {
-      // Standalone "Save as artifact" uploads have no session mutation to piggyback on, so the
-      // Files panel only learns about them through this broadcast.
-      onStandaloneUploadSaved: (projectId, sessionId) =>
-        broadcastToRenderers('project-files:changed', {
-          projectId,
-          sessionId,
-          sources: ['upload'],
-          kind: 'upsert'
-        })
-    })
-  )
+  surfaceAdapters.push(createUploadElectronSurface(uploadCommandOwner))
   declareElectronAdapter('notebook-input-preview', () => {
     ipcMainHandle('notebook:read-input-preview', (_event, request) =>
       notebookInputRegistry.readPreview(request)
