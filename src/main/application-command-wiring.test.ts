@@ -370,14 +370,20 @@ describe('production application command wiring', () => {
     expect(occurrences(returnedViews, 'applicationCommandComposition.')).toBe(3)
   })
 
-  it('injects the bounded isolated page preview resolver into production reviews', () => {
-    const source = compact(ipcSource)
-    expect(source).toContain('pagedContentResolver: createReviewerPagedContentResolver({')
-    expect(source).toContain("partition: 'reviewer-paged-preview'")
-    expect(source).toContain('contextIsolation: true, nodeIntegration: false, sandbox: true')
-    expect(source).toContain("setWindowOpenHandler(() => ({ action: 'deny' }))")
-    expect(source).toContain('previewResources.acquireResolvedFile(')
-    expect(source).toContain('renderPdfPages: renderPdfPagePreviews')
+  it('shares one Electron page preview resolver with the production Reviewer owner', () => {
+    const options = compact(
+      between(ipcSource, 'const reviewerOptions = {', 'const reviewerCommandOwner =')
+    )
+    expect(options).toContain(
+      'pagedContentResolver: createReviewerElectronPagedContentResolver(previewResources)'
+    )
+    expect(occurrences(ipcSource, 'createReviewerElectronPagedContentResolver(')).toBe(1)
+    expect(compact(ipcSource)).toContain('createReviewerCommandOwner(reviewerOptions)')
+    expect(compact(ipcSource)).toContain(
+      'registerReviewerIpcHandlers(reviewerOptions, reviewerCommandOwner)'
+    )
+    expect(ipcSource).not.toContain('createReviewerPagedContentResolver(')
+    expect(ipcSource).not.toContain("partition: 'reviewer-paged-preview'")
   })
 
   it('installs every notification inbox request on the Electron adapter', () => {
