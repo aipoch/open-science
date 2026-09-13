@@ -128,7 +128,6 @@
     "Stopped": "Gestoppt",
     "Batch manage": "Stapelverwaltung",
     "Select all filtered results ({{total}})": "Alle gefilterten Ergebnisse auswählen ({{total}})",
-    "Selected: {{selected}}": "Ausgewählt: {{selected}}",
     "Update selected": "Auswahl aktualisieren",
     "Install selected": "Auswahl installieren",
     "Batch installation": "Stapelinstallation",
@@ -3174,11 +3173,9 @@
     "Could not validate the configuration.": "Die Konfiguration konnte nicht validiert werden.",
     "Couldn't load bookmarks.": "Lesezeichen konnten nicht geladen werden.",
     "Couldn't update bookmarks.": "Lesezeichen konnten nicht aktualisiert werden.",
-    "Disable selected ({{selectedCount}})": "Ausgewählte deaktivieren ({{selectedCount}})",
     "Disabling…": "Deaktivieren…",
     "Downloading": "Herunterladen",
     "Enable or disable imported and personal Skills in bulk. Featured Skills are not changed.": "Aktivieren oder deaktivieren Sie importierte und persönliche Fähigkeiten in großen Mengen. Die vorgestellten Fähigkeiten werden nicht geändert.",
-    "Enable selected ({{selectedCount}})": "Ausgewählte aktivieren ({{selectedCount}})",
     "Enabled": "Ermöglicht",
     "Enabling…": "Aktivieren…",
     "Enter locally: {{names}}": "Geben Sie lokal ein: {{names}}",
@@ -3203,7 +3200,6 @@
     "Resize question panel": "Größe des Fragenbereichs ändern",
     "Search manageable skills": "Suchen Sie nach überschaubaren Fähigkeiten",
     "Select all results": "Alle Ergebnisse auswählen",
-    "Selected ({{selectedCount}})": "Ausgewählt ({{selectedCount}})",
     "Show all manageable Skills": "Alle überschaubaren Fähigkeiten anzeigen",
     "SSE": "SSE",
     "Streamable HTTP": "Streambar HTTP",
@@ -3892,7 +3888,6 @@
     "View Connector availability for {{count}} agents_one": "Konnektorverfügbarkeit für {{count}} Agenten anzeigen",
     "View Connector availability for {{count}} agents_other": "Konnektorverfügbarkeit für {{count}} Agenten anzeigen",
     "Open {{name}} in Specialist Settings": "{{name}} in den Spezialisteneinstellungen öffnen",
-    "Delete selected ({{selectedCount}})": "Ausgewählte löschen ({{selectedCount}})",
     "Delete selected Skills?": "Ausgewählte Fähigkeiten löschen?",
     "Deleted Skills are removed from this device and cannot be recovered.": "Gelöschte Fähigkeiten werden von diesem Gerät entfernt und können nicht wiederhergestellt werden.",
     "{{count}} selected Skills can be deleted._one": "{{count}} ausgewählte Fähigkeit kann gelöscht werden.",
@@ -5923,6 +5918,11 @@
     "Elements: {{total}}": "Elemente: {{total}}",
     "Parsed pages: {{parsed}} / {{checked}}": "Analysierte Seiten: {{parsed}} / {{checked}}",
     "Image delivered": "Bild bereitgestellt",
-    "Some evidence is unavailable or incomplete.": "Einige Belege sind nicht verfügbar oder unvollständig."
+    "Some evidence is unavailable or incomplete.": "Einige Belege sind nicht verfügbar oder unvollständig.",
+    "Show selected": "Auswahl anzeigen",
+    "Disable": "Deaktivieren",
+    "Delete…": "Löschen…",
+    "Install…": "Installieren…",
+    "Update…": "Aktualisieren…"
   }
 }

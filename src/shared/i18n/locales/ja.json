@@ -127,7 +127,6 @@
     "Stopped": "停止済み",
     "Batch manage": "一括管理",
     "Select all filtered results ({{total}})": "絞り込み結果をすべて選択（{{total}}）",
-    "Selected: {{selected}}": "選択済み: {{selected}}",
     "Update selected": "選択項目を更新",
     "Install selected": "選択項目をインストール",
     "Batch installation": "一括インストール",
@@ -3319,11 +3318,9 @@
     "Could not validate the configuration.": "構成を検証できませんでした。",
     "Couldn't load bookmarks.": "ブックマークを読み込めませんでした。",
     "Couldn't update bookmarks.": "ブックマークを更新できませんでした。",
-    "Disable selected ({{selectedCount}})": "選択したものを無効にする ({{selectedCount}})",
     "Disabling…": "無効化中…",
     "Downloading": "ダウンロード中",
     "Enable or disable imported and personal Skills in bulk. Featured Skills are not changed.": "インポート済みのスキルと個人スキルを一括で有効または無効にします。注目のスキルは変更されません。",
-    "Enable selected ({{selectedCount}})": "選択したものを有効にする ({{selectedCount}})",
     "Enabled": "有効",
     "Enabling…": "有効化中…",
     "Enter locally: {{names}}": "ローカルで入力します：{{names}}",
@@ -3349,7 +3346,6 @@
     "Resize question panel": "質問パネルのサイズを変更",
     "Search manageable skills": "管理可能なスキルを検索",
     "Select all results": "すべての結果を選択",
-    "Selected ({{selectedCount}})": "選択済み ({{selectedCount}})",
     "Show all manageable Skills": "管理可能なすべてのスキルを表示",
     "SSE": "SSE",
     "Streamable HTTP": "Streamable HTTP",
@@ -4047,7 +4043,6 @@
     "View Skill availability for {{count}} agents_other": "{{count}} 件のエージェントのスキル利用状況を表示",
     "View Connector availability for {{count}} agents_other": "{{count}} 件のエージェントのコネクタ利用状況を表示",
     "Open {{name}} in Specialist Settings": "スペシャリスト設定で {{name}} を開く",
-    "Delete selected ({{selectedCount}})": "選択項目を削除 ({{selectedCount}})",
     "Delete selected Skills?": "選択したスキルを削除しますか？",
     "Deleted Skills are removed from this device and cannot be recovered.": "削除したスキルはこのデバイスから消去され、復元できません。",
     "{{count}} selected Skills can be deleted._other": "選択したスキルのうち {{count}} 件を削除できます。",
@@ -5763,6 +5758,11 @@
     "Elements: {{total}}": "要素：{{total}}",
     "Parsed pages: {{parsed}} / {{checked}}": "解析済みページ：{{parsed}} / {{checked}}",
     "Image delivered": "画像を提供済み",
-    "Some evidence is unavailable or incomplete.": "一部の証拠が利用できないか、不完全です。"
+    "Some evidence is unavailable or incomplete.": "一部の証拠が利用できないか、不完全です。",
+    "Show selected": "選択項目を表示",
+    "Disable": "無効にする",
+    "Delete…": "削除…",
+    "Install…": "インストール…",
+    "Update…": "更新…"
   }
 }

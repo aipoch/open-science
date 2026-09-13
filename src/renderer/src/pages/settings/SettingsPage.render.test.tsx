@@ -3674,7 +3674,7 @@ describe('SettingsPage layout', () => {
     await act(async () =>
       document.body.querySelector<HTMLInputElement>('[aria-label="Select Test skill"]')!.click()
     )
-    await clickText('Delete selected (1)')
+    await clickText('Delete…')
     const title = document.body.querySelector<HTMLElement>('[data-slot="batch-review-title"]')!
     expect(document.activeElement).toBe(title)
     await act(async () =>
@@ -3784,7 +3784,7 @@ describe('SettingsPage layout', () => {
       expect(query()?.value).toBe('trimmer')
       expect(
         document.body.querySelector('[data-slot="skill-marketplace-batch-dock"]')?.textContent
-      ).toContain(mode === 'update' ? 'Update selected' : 'Install selected')
+      ).toContain(mode === 'update' ? 'Update…' : 'Install…')
       await act(async () =>
         document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')!.click()
       )
@@ -3823,13 +3823,13 @@ describe('SettingsPage layout', () => {
     )!
     expect(checkbox).not.toBeNull()
     await act(async () => checkbox.click())
-    await clickText('Install selected')
+    await clickText('Install…')
     const review = document.body.querySelector('[data-slot="skill-marketplace-batch-review"]')!
     expect(review).not.toBeNull()
     await act(async () => fireEvent.keyDown(review.querySelector('h4')!, { key: 'Escape' }))
     expect(document.body.querySelector('[data-slot="skill-marketplace-batch-review"]')).toBeNull()
     expect(onClose).not.toHaveBeenCalled()
-    expect(document.activeElement?.textContent).toBe('Install selected')
+    expect(document.activeElement?.textContent).toBe('Install…')
     await act(async () => fireEvent.keyDown(document.activeElement!, { key: 'Escape' }))
     expect(onClose).toHaveBeenCalledOnce()
   })

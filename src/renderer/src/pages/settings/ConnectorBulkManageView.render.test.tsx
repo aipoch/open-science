@@ -138,7 +138,7 @@ const render = async (): Promise<void> => {
 }
 const button = (label: string): HTMLButtonElement => {
   const result = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-    (item) => item.textContent?.trim() === label
+    (item) => (item.getAttribute('aria-label') ?? item.textContent?.trim()) === label
   )
   if (!result) throw new Error(`Missing button: ${label}`)
   return result
@@ -188,8 +188,8 @@ describe('ConnectorBulkManageView', () => {
     filter('status', 'Any status')
     search('PubMed')
     select('Select all results')
-    expect(button('Selected (2)')).toBeDefined()
-    await act(async () => button('Selected (2)').click())
+    expect(button('Show selected')).toBeDefined()
+    await act(async () => button('Show selected').click())
     expect(rows()).toHaveLength(2)
     // Select all in selected-only mode acts on those visible rows, not a hidden old search.
     select('Select all results')
@@ -199,10 +199,10 @@ describe('ConnectorBulkManageView', () => {
   it('disables mixed resources and enables eligible targets without changing approvals', async () => {
     await render()
     select('Select all results')
-    await act(async () => button('Disable selected (4)').click())
+    await act(async () => button('Disable').click())
     expect(useSettingsStore.getState().setConnectorEnabled).toHaveBeenCalledWith('pubmed', false)
     expect(useSettingsStore.getState().setCustomServerEnabled).toHaveBeenCalledWith('local', false)
-    await act(async () => button('Enable selected (4)').click())
+    await act(async () => button('Enable').click())
     expect(useSettingsStore.getState().setConnectorEnabled).toHaveBeenCalledWith('openalex', true)
     expect(useSettingsStore.getState().setCustomServerEnabled).not.toHaveBeenCalledWith(
       'oauth',
@@ -211,7 +211,7 @@ describe('ConnectorBulkManageView', () => {
     expect(document.body.textContent).toContain('Updated: 3 / 4')
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Sign-in tools')
     expect(rows()).toHaveLength(1)
-    expect(button('Selected (1)')).toBeDefined()
+    expect(button('Show selected')).toBeDefined()
     expect(useSettingsStore.getState().setConnectorAutoAllow).not.toHaveBeenCalled()
   })
 
@@ -228,7 +228,7 @@ describe('ConnectorBulkManageView', () => {
     await render()
     select('Select PubMed')
     select('Select Local tools')
-    const disable = button('Disable selected (2)')
+    const disable = button('Disable')
     await act(async () => {
       disable.click()
       disable.click()
@@ -240,8 +240,8 @@ describe('ConnectorBulkManageView', () => {
     ).toBe(true)
     await act(async () => finish())
     expect(useSettingsStore.getState().setCustomServerEnabled).toHaveBeenCalledTimes(1)
-    await act(async () => button('Disable selected (2)').click())
-    expect(button('Selected (1)')).toBeDefined()
+    await act(async () => button('Disable').click())
+    expect(button('Show selected')).toBeDefined()
     expect(rows()[0]).toContain('PubMed')
   })
 
@@ -262,7 +262,7 @@ describe('ConnectorBulkManageView', () => {
     useSpecialistStore.setState({ items: [specialist] })
     await render()
     select('Select all results')
-    await act(async () => button('Delete selected (4)').click())
+    await act(async () => button('Delete…').click())
     expect(window.api.specialist.list).toHaveBeenCalledTimes(1)
     const dialog = document.body.querySelector('[data-slot="batch-manage-review"]')
     expect(dialog?.textContent).toContain('3 protected Connectors will be kept.')
@@ -278,7 +278,7 @@ describe('ConnectorBulkManageView', () => {
     await render()
     select('Select Local tools')
     select('Select Sign-in tools')
-    await act(async () => button('Delete selected (2)').click())
+    await act(async () => button('Delete…').click())
     vi.mocked(window.api.specialist.list).mockResolvedValue({
       items: [specialist],
       integrity: { status: 'ok' }
@@ -292,7 +292,7 @@ describe('ConnectorBulkManageView', () => {
     expect(document.body.textContent).toContain(
       'Deletion or cleanup did not finish for: Sign-in tools'
     )
-    expect(button('Selected (2)')).toBeDefined()
+    expect(button('Show selected')).toBeDefined()
   })
 
   it.each(['load failure', 'degraded catalog', 'unavailable API'])(
@@ -307,7 +307,7 @@ describe('ConnectorBulkManageView', () => {
       if (failure === 'unavailable API') Object.assign(window, { api: { platform: 'darwin' } })
       await render()
       select('Select Local tools')
-      await act(async () => button('Delete selected (1)').click())
+      await act(async () => button('Delete…').click())
       expect(document.body.querySelector('[data-slot="batch-manage-review"]')).toBeNull()
       expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
         'Could not check Specialist usage'
@@ -332,7 +332,7 @@ describe('ConnectorBulkManageView', () => {
     useSettingsStore.setState({ removeCustomServer: remove })
     await render()
     select('Select Local tools')
-    await act(async () => button('Delete selected (1)').click())
+    await act(async () => button('Delete…').click())
     await act(async () => button('Delete 1 Connector').click())
     expect(document.body.textContent).toContain(
       'Deletion or cleanup did not finish for: Local tools'
@@ -357,7 +357,7 @@ describe('ConnectorBulkManageView', () => {
       await render()
       select('Select Local tools')
       select('Select PubMed')
-      await act(async () => button('Delete selected (2)').click())
+      await act(async () => button('Delete…').click())
       await act(async () => button('Delete 1 Connector').click())
       expect(document.body.textContent).toContain('Deletion or cleanup did not finish')
       await act(async () => button(dismiss).click())
@@ -374,7 +374,7 @@ describe('ConnectorBulkManageView', () => {
   it('restores focus to Done and then search when deleting leaves an empty selected-only list', async () => {
     await render()
     select('Select Local tools')
-    await act(async () => button('Delete selected (1)').click())
+    await act(async () => button('Delete…').click())
     await act(async () => button('Delete 1 Connector').click())
     expect(rows()).toHaveLength(0)
     expect(document.activeElement).toBe(button('Done'))
@@ -388,18 +388,18 @@ describe('ConnectorBulkManageView', () => {
     useSettingsStore.setState({ removeCustomServer: remove })
     await render()
     select('Select Local tools')
-    await act(async () => button('Delete selected (1)').click())
+    await act(async () => button('Delete…').click())
     await act(async () => button('Delete 1 Connector').click())
     await act(async () => button('Retry cleanup').click())
     expect(remove).toHaveBeenCalledTimes(1)
     expect(document.body.textContent).toContain('Review their usage and try again.')
-    expect(button('Selected (1)')).toBeDefined()
+    expect(button('Show selected')).toBeDefined()
   })
 
   it('uses the requested usage snapshot even when a concurrent store refresh leaves stale items', async () => {
     await render()
     select('Select Local tools')
-    await act(async () => button('Delete selected (1)').click())
+    await act(async () => button('Delete…').click())
     // A newer catalog refresh may supersede a store load while leaving its old items published.
     useSpecialistStore.setState({
       items: [],
@@ -417,7 +417,7 @@ describe('ConnectorBulkManageView', () => {
   it('does not remove anything when usage refresh fails after confirmation', async () => {
     await render()
     select('Select Local tools')
-    await act(async () => button('Delete selected (1)').click())
+    await act(async () => button('Delete…').click())
     vi.mocked(window.api.specialist.list).mockRejectedValue(new Error('offline'))
     await act(async () => button('Delete 1 Connector').click())
     expect(useSettingsStore.getState().removeCustomServer).not.toHaveBeenCalled()

@@ -420,9 +420,7 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
                 {t('Enabling…')}
               </>
             ) : (
-              t('Enable selected ({{selectedCount}})', {
-                selectedCount: validSelectedIds.size
-              })
+              t('Enable')
             )}
           </Button>
           <Button
@@ -438,14 +436,12 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
                 {t('Disabling…')}
               </>
             ) : (
-              t('Disable selected ({{selectedCount}})', {
-                selectedCount: validSelectedIds.size
-              })
+              t('Disable')
             )}
           </Button>
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             data-batch-delete-trigger
             className="text-destructive hover:text-destructive"
             size="sm"
@@ -460,9 +456,7 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
             ) : (
               <Trash2 aria-hidden="true" />
             )}
-            {t('Delete selected ({{selectedCount}})', {
-              selectedCount: validSelectedIds.size
-            })}
+            {t('Delete…')}
           </Button>
         </>
       }

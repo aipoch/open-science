@@ -1,3 +1,4 @@
+import { BatchActionDock, BatchSelectionActions } from './BatchActionDock'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, ChevronDown, Download, ListChecks, LoaderCircle, RefreshCw } from 'lucide-react'
@@ -348,232 +349,222 @@ export function SkillMarketplaceBatchControls({
         {children ? children(selection) : selection}
       </div>
       {expanded && (error || draft || showProgress || (showSelection && selectedCount > 0)) ? (
-        <div
-          data-slot="skill-marketplace-batch-dock"
-          className="skill-marketplace-batch-dock space-y-3"
-        >
-          {expanded && error ? (
-            <ErrorNotice
-              role="alert"
-              tone="amber"
-              title={error}
-              secondaryButton={{ label: t('Dismiss'), onClick: () => setError(undefined) }}
-            />
-          ) : null}
-          {draft ? (
-            <section
-              data-slot="skill-marketplace-batch-review"
-              data-testid="skill-marketplace-batch-confirm"
-              aria-label={t('Review selection')}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape' && !pending) {
-                  event.stopPropagation()
-                  restoreActionFocus.current = true
-                  setDraft(undefined)
-                }
-              }}
-              className="space-y-2"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h4 ref={reviewHeading} tabIndex={-1} className="text-sm font-medium">
-                  {t('Review selection')} · {draft.items.length}
-                </h4>
-                <div className="ml-auto flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={pending}
-                    onClick={() => {
-                      restoreActionFocus.current = true
-                      setDraft(undefined)
-                    }}
-                  >
-                    {t('Cancel', { ns: 'common' })}
-                  </Button>
-                  <Button size="sm" disabled={pending || disabled} onClick={() => void start()}>
-                    {pending ? (
-                      <LoaderCircle
-                        aria-hidden="true"
-                        className="size-4 animate-spin motion-reduce:animate-none"
-                      />
-                    ) : null}
-                    {draft.items.some(({ expectedVersion }) => expectedVersion !== null)
-                      ? t('Update selected')
-                      : t('Install selected')}
-                  </Button>
+        <BatchActionDock data-slot="skill-marketplace-batch-dock">
+          <div className="space-y-3">
+            {expanded && error ? (
+              <ErrorNotice
+                role="alert"
+                tone="amber"
+                title={error}
+                secondaryButton={{ label: t('Dismiss'), onClick: () => setError(undefined) }}
+              />
+            ) : null}
+            {draft ? (
+              <section
+                data-slot="skill-marketplace-batch-review"
+                data-testid="skill-marketplace-batch-confirm"
+                aria-label={t('Review selection')}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape' && !pending) {
+                    event.stopPropagation()
+                    restoreActionFocus.current = true
+                    setDraft(undefined)
+                  }
+                }}
+                className="space-y-2"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h4 ref={reviewHeading} tabIndex={-1} className="text-sm font-medium">
+                    {t('Review selection')} · {draft.items.length}
+                  </h4>
+                  <div className="ml-auto flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={pending}
+                      onClick={() => {
+                        restoreActionFocus.current = true
+                        setDraft(undefined)
+                      }}
+                    >
+                      {t('Cancel', { ns: 'common' })}
+                    </Button>
+                    <Button size="sm" disabled={pending || disabled} onClick={() => void start()}>
+                      {pending ? (
+                        <LoaderCircle
+                          aria-hidden="true"
+                          className="size-4 animate-spin motion-reduce:animate-none"
+                        />
+                      ) : null}
+                      {draft.items.some(({ expectedVersion }) => expectedVersion !== null)
+                        ? t('Update selected')
+                        : t('Install selected')}
+                    </Button>
+                  </div>
                 </div>
-              </div>
-              <details className="skill-marketplace-disclosure">
-                <summary>
-                  <span>{t('Details')}</span>
-                  <ChevronDown aria-hidden="true" className="size-4" />
-                </summary>
-                <div className="mb-3 space-y-2 text-xs text-muted-foreground">
-                  <p>
-                    {t(
-                      'Installing downloads and verifies the package. Bundled scripts are not run during installation.'
-                    )}
+                <details className="skill-marketplace-disclosure">
+                  <summary>
+                    <span>{t('Details')}</span>
+                    <ChevronDown aria-hidden="true" className="size-4" />
+                  </summary>
+                  <div className="mb-3 space-y-2 text-xs text-muted-foreground">
+                    <p>
+                      {t(
+                        'Installing downloads and verifies the package. Bundled scripts are not run during installation.'
+                      )}
+                    </p>
+                    <p>
+                      {t(
+                        'Installation continues when Settings is closed. Quitting the app stops the queue.'
+                      )}
+                    </p>
+                  </div>
+                  <ul className="max-h-40 overflow-auto space-y-1 text-xs">
+                    {draft.items.map(({ id, version, expectedVersion }) => (
+                      <li key={id} className="break-words">
+                        {id}: {expectedVersion ? `${expectedVersion} → ` : ''}
+                        {version}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </section>
+            ) : showProgress && batch ? (
+              <section className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 ref={progressHeading} tabIndex={-1} className="text-sm font-medium">
+                    {active
+                      ? t('Batch installation')
+                      : batch.status === 'stopped'
+                        ? t('Batch stopped')
+                        : t('Batch complete')}
+                  </h4>
+                  <span role="status" className="text-xs tabular-nums">
+                    {finished}/{batch.items.length}
+                  </span>
+                </div>
+                <progress
+                  className="h-1.5 w-full accent-primary"
+                  value={finished}
+                  max={batch.items.length}
+                  aria-label={t('Batch installation')}
+                />
+                {failed ? (
+                  <p className="text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
+                    {t('Failed: {{total}}', { total: failed })}
                   </p>
-                  <p>
+                ) : null}
+                {active ? (
+                  <p className="text-xs text-muted-foreground">
                     {t(
                       'Installation continues when Settings is closed. Quitting the app stops the queue.'
                     )}
                   </p>
+                ) : null}
+                <div className="flex flex-wrap items-center gap-2">
+                  {active ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="ml-auto"
+                      disabled={pending || batch.status === 'stopping'}
+                      onClick={() => void stop()}
+                    >
+                      {batch.status === 'stopping' ? t('Stopping…') : t('Stop after current item')}
+                    </Button>
+                  ) : null}
+                  {!active && batch.items.some(({ status }) => status === 'failed') ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={disabled || !ready || pending}
+                      onClick={() =>
+                        confirm({
+                          snapshotId: batch.snapshotId,
+                          items: batch.items
+                            .filter(({ status }) => status === 'failed')
+                            .map(({ id, version, expectedVersion }) => ({
+                              id,
+                              version,
+                              expectedVersion
+                            }))
+                        })
+                      }
+                    >
+                      {t('Retry failed items')}
+                    </Button>
+                  ) : null}
+                  {!active ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="ml-auto"
+                      onClick={() => {
+                        setDismissedBatchId(batch.id)
+                        selectAll.current?.focus({ preventScroll: true })
+                      }}
+                    >
+                      {t('Done')}
+                    </Button>
+                  ) : null}
                 </div>
-                <ul className="max-h-40 overflow-auto space-y-1 text-xs">
-                  {draft.items.map(({ id, version, expectedVersion }) => (
-                    <li key={id} className="break-words">
-                      {id}: {expectedVersion ? `${expectedVersion} → ` : ''}
-                      {version}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            </section>
-          ) : showProgress && batch ? (
-            <section className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h4 ref={progressHeading} tabIndex={-1} className="text-sm font-medium">
-                  {active
-                    ? t('Batch installation')
-                    : batch.status === 'stopped'
-                      ? t('Batch stopped')
-                      : t('Batch complete')}
-                </h4>
-                <span role="status" className="text-xs tabular-nums">
-                  {finished}/{batch.items.length}
-                </span>
-              </div>
-              <progress
-                className="h-1.5 w-full accent-primary"
-                value={finished}
-                max={batch.items.length}
-                aria-label={t('Batch installation')}
-              />
-              {failed ? (
-                <p className="text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
-                  {t('Failed: {{total}}', { total: failed })}
-                </p>
-              ) : null}
-              {active ? (
-                <p className="text-xs text-muted-foreground">
-                  {t(
-                    'Installation continues when Settings is closed. Quitting the app stops the queue.'
-                  )}
-                </p>
-              ) : null}
-              <div className="flex flex-wrap items-center gap-2">
-                {active ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="ml-auto"
-                    disabled={pending || batch.status === 'stopping'}
-                    onClick={() => void stop()}
-                  >
-                    {batch.status === 'stopping' ? t('Stopping…') : t('Stop after current item')}
-                  </Button>
+                {batch.refreshFailed ? (
+                  <ErrorNotice
+                    tone="amber"
+                    title={t(
+                      'Skills were installed, but runtime refresh failed. Restart the app to reload them.'
+                    )}
+                  />
                 ) : null}
-                {!active && batch.items.some(({ status }) => status === 'failed') ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={disabled || !ready || pending}
-                    onClick={() =>
-                      confirm({
-                        snapshotId: batch.snapshotId,
-                        items: batch.items
-                          .filter(({ status }) => status === 'failed')
-                          .map(({ id, version, expectedVersion }) => ({
-                            id,
-                            version,
-                            expectedVersion
-                          }))
-                      })
-                    }
-                  >
-                    {t('Retry failed items')}
-                  </Button>
-                ) : null}
-                {!active ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="ml-auto"
-                    onClick={() => {
-                      setDismissedBatchId(batch.id)
-                      selectAll.current?.focus({ preventScroll: true })
-                    }}
-                  >
-                    {t('Done')}
-                  </Button>
-                ) : null}
-              </div>
-              {batch.refreshFailed ? (
-                <ErrorNotice
-                  tone="amber"
-                  title={t(
-                    'Skills were installed, but runtime refresh failed. Restart the app to reload them.'
-                  )}
-                />
-              ) : null}
-              <details className="skill-marketplace-disclosure">
-                <summary>
-                  <span>{t('Details')}</span>
-                  <ChevronDown className="size-4" aria-hidden="true" />
-                </summary>
-                <ul className="max-h-60 space-y-2 overflow-auto pt-2 text-xs">
-                  {batch.items.map((item) => (
-                    <li key={item.id} className="flex items-start justify-between gap-3">
-                      <span className="min-w-0 break-words">
-                        {item.id} <span className="text-muted-foreground">{item.version}</span>
-                      </span>
-                      <span className="shrink-0 text-right">
-                        {labels[item.status]}
-                        {item.result && !item.result.ok ? (
-                          <span className="block text-muted-foreground">{item.result.error}</span>
-                        ) : null}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            </section>
-          ) : showSelection && selectedCount > 0 ? (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <span role="status" className="text-sm font-medium tabular-nums">
-                  {t('Selected: {{selected}}', { selected: selectedCount })}
-                </span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={selectionLocked}
-                  onClick={() => {
-                    onClearSelection()
-                    selectAll.current?.focus({ preventScroll: true })
-                  }}
-                >
-                  {t('Clear selection')}
-                </Button>
-              </div>
-              <Button
-                ref={selectionAction}
-                size="sm"
-                className="ml-auto"
+                <details className="skill-marketplace-disclosure">
+                  <summary>
+                    <span>{t('Details')}</span>
+                    <ChevronDown className="size-4" aria-hidden="true" />
+                  </summary>
+                  <ul className="max-h-60 space-y-2 overflow-auto pt-2 text-xs">
+                    {batch.items.map((item) => (
+                      <li key={item.id} className="flex items-start justify-between gap-3">
+                        <span className="min-w-0 break-words">
+                          {item.id} <span className="text-muted-foreground">{item.version}</span>
+                        </span>
+                        <span className="shrink-0 text-right">
+                          {labels[item.status]}
+                          {item.result && !item.result.ok ? (
+                            <span className="block text-muted-foreground">{item.result.error}</span>
+                          ) : null}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </section>
+            ) : showSelection && selectedCount > 0 ? (
+              <BatchSelectionActions
+                selectedCount={selectedCount}
                 disabled={selectionLocked}
-                onClick={() => request && confirm(request)}
+                onClear={() => {
+                  onClearSelection()
+                  selectAll.current?.focus({ preventScroll: true })
+                }}
               >
-                {mode === 'update' ? (
-                  <RefreshCw data-icon="inline-start" aria-hidden="true" />
-                ) : (
-                  <Download data-icon="inline-start" aria-hidden="true" />
-                )}
-                {mode === 'update' ? t('Update selected') : t('Install selected')}
-              </Button>
-            </div>
-          ) : null}
-        </div>
+                <Button
+                  ref={selectionAction}
+                  size="sm"
+                  className="ml-auto"
+                  disabled={selectionLocked}
+                  onClick={() => request && confirm(request)}
+                >
+                  {mode === 'update' ? (
+                    <RefreshCw data-icon="inline-start" aria-hidden="true" />
+                  ) : (
+                    <Download data-icon="inline-start" aria-hidden="true" />
+                  )}
+                  {mode === 'update' ? t('Update…') : t('Install…')}
+                </Button>
+              </BatchSelectionActions>
+            ) : null}
+          </div>
+        </BatchActionDock>
       ) : null}
     </div>
   )

@@ -284,7 +284,7 @@ describe('Skill Marketplace', () => {
     expect(container.querySelectorAll('article')).toHaveLength(1)
     expect(container.querySelector('[data-skill-id="skill-2"]')).not.toBeNull()
     await click('Select all filtered results (1)')
-    await click('Install selected')
+    await click('Install…')
     expect(container.textContent).toContain('Review selection · 1')
     expect(container.textContent).toContain('skill-2: 1.0.0+build-1')
     expect(window.api.settings.startSkillMarketplaceBatch).not.toHaveBeenCalled()
@@ -629,7 +629,7 @@ describe('Skill Marketplace', () => {
     expect(container.querySelectorAll('article input[type="checkbox"]')).toHaveLength(40)
     expect(container.querySelector('.skill-marketplace-card-controls')).toBeNull()
     await click('Select all filtered results (40)')
-    expect(container.textContent).toContain('Selected: 40')
+    expect(container.textContent).toContain('40 selected')
     const input = container.querySelector<HTMLInputElement>('input:not([type="checkbox"])')!
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
@@ -641,7 +641,7 @@ describe('Skill Marketplace', () => {
     expect(container.querySelectorAll('article')).toHaveLength(1)
     expect(container.querySelector('[data-slot="skill-marketplace-batch-dock"]')).toBeNull()
     await click('Select all filtered results (1)')
-    await click('Install selected')
+    await click('Install…')
     expect(document.querySelector('[data-testid="skill-marketplace-batch-confirm"]')).not.toBeNull()
     // Shared Settings history can leave the view while an unsubmitted draft is open.
     await render({ kind: 'marketplace' })
@@ -682,7 +682,7 @@ describe('Skill Marketplace', () => {
     expect(container.querySelector('[data-skill-id="skill-2"]')).toBeNull()
     expect(container.querySelector('[aria-label="Installation status"]')).toBeNull()
     await click('Select all filtered results (37)')
-    await click('Install selected')
+    await click('Install…')
     expect(window.api.settings.startSkillMarketplaceBatch).not.toHaveBeenCalled()
     let dialog = document.querySelector('[data-testid="skill-marketplace-batch-confirm"]')!
     expect(dialog.querySelector('h4')?.textContent).toBe('Review selection · 37')
@@ -697,7 +697,7 @@ describe('Skill Marketplace', () => {
     expect(dialog.textContent).toContain('skill-39: 1.0.0')
     await click('Cancel', dialog)
     expect(window.api.settings.startSkillMarketplaceBatch).not.toHaveBeenCalled()
-    await click('Install selected')
+    await click('Install…')
     dialog = document.querySelector('[data-testid="skill-marketplace-batch-confirm"]')!
     vi.mocked(window.api.settings.startSkillMarketplaceBatch).mockImplementationOnce(
       async (request) => ({
@@ -742,7 +742,7 @@ describe('Skill Marketplace', () => {
     )
     await click('Updates1', container.querySelector('[data-slot="skill-marketplace-batch"]')!)
     await click('Select all filtered results (1)')
-    await click('Update selected')
+    await click('Update…')
     const dialog = document.querySelector('[data-testid="skill-marketplace-batch-confirm"]')!
     expect(dialog.textContent).toContain('skill-1: 0.9.0 → 1.0.0')
     expect(dialog.textContent).not.toContain('skill-0:')
@@ -756,7 +756,7 @@ describe('Skill Marketplace', () => {
       items: [{ id: 'skill-1', version: '1.0.0', expectedVersion: '0.9.0' }]
     })
     expect(container.textContent).toContain('snapshot-unavailable')
-    expect(container.textContent).toContain('Selected: 1')
+    expect(container.textContent).toContain('1 selected')
   })
   it('separates selection from modes and preserves it only across sorting and loading more', async () => {
     list.mockResolvedValue({
@@ -776,7 +776,7 @@ describe('Skill Marketplace', () => {
     expect(all().indeterminate).toBe(true)
     expect(
       container.querySelector('[data-slot="skill-marketplace-batch-dock"]')?.textContent
-    ).toContain('Selected: 1')
+    ).toContain('1 selected')
     expect(
       container.querySelector('[data-skill-id="skill-0"]')?.getAttribute('data-selected')
     ).toBe('true')
@@ -808,7 +808,7 @@ describe('Skill Marketplace', () => {
       root.render(<SkillMarketplace view={{ kind: 'marketplace-batch' }} onNavigate={vi.fn()} />)
     )
     await click('Select all filtered results (40)')
-    await click('Install selected')
+    await click('Install…')
     const review = container.querySelector('[data-testid="skill-marketplace-batch-confirm"]')!
     expect(document.querySelector('[role="alertdialog"]')).toBeNull()
     expect(document.activeElement).toBe(review.querySelector('h4'))
@@ -821,7 +821,7 @@ describe('Skill Marketplace', () => {
       )
     )
     expect(container.querySelector('[data-testid="skill-marketplace-batch-confirm"]')).toBeNull()
-    expect(document.activeElement?.textContent).toBe('Install selected')
+    expect(document.activeElement?.textContent).toBe('Install…')
     expect(container.querySelector<HTMLInputElement>('input[type="search"]')?.disabled).toBe(false)
     expect(window.api.settings.startSkillMarketplaceBatch).not.toHaveBeenCalled()
     await click('Updates0')

@@ -127,7 +127,6 @@
     "Stopped": "已停止",
     "Batch manage": "批量管理",
     "Select all filtered results ({{total}})": "全选筛选结果（{{total}}）",
-    "Selected: {{selected}}": "已选择：{{selected}}",
     "Update selected": "更新所选",
     "Install selected": "安装所选",
     "Batch installation": "批量安装",
@@ -3406,11 +3405,9 @@
     "Could not validate the configuration.": "无法验证配置。",
     "Couldn't load bookmarks.": "无法加载书签。",
     "Couldn't update bookmarks.": "无法更新书签。",
-    "Disable selected ({{selectedCount}})": "禁用所选项（{{selectedCount}}）",
     "Disabling…": "正在禁用…",
     "Downloading": "下载中",
     "Enable or disable imported and personal Skills in bulk. Featured Skills are not changed.": "批量启用或禁用已导入和个人技能。精选技能不受影响。",
-    "Enable selected ({{selectedCount}})": "启用所选项（{{selectedCount}}）",
     "Enabled": "已启用",
     "Enabling…": "正在启用…",
     "Enter locally: {{names}}": "在本地输入：{{names}}",
@@ -3436,7 +3433,6 @@
     "Resize question panel": "调整提问面板大小",
     "Search manageable skills": "搜索可管理的技能",
     "Select all results": "选择所有结果",
-    "Selected ({{selectedCount}})": "已选择（{{selectedCount}}）",
     "Show all manageable Skills": "显示所有可管理的技能",
     "SSE": "SSE",
     "Streamable HTTP": "流式 HTTP",
@@ -4048,7 +4044,6 @@
     "View Skill availability for {{count}} agents_other": "查看 {{count}} 个智能体的技能可用性",
     "View Connector availability for {{count}} agents_other": "查看 {{count}} 个智能体的连接器可用性",
     "Open {{name}} in Specialist Settings": "在专家设置中打开 {{name}}",
-    "Delete selected ({{selectedCount}})": "删除所选技能（{{selectedCount}}）",
     "Delete selected Skills?": "删除所选技能？",
     "Deleted Skills are removed from this device and cannot be recovered.": "删除后，技能将从此设备移除且无法恢复。",
     "{{count}} selected Skills can be deleted._other": "可以删除 {{count}} 个所选技能。",
@@ -5763,6 +5758,11 @@
     "Elements: {{total}}": "元素：{{total}}",
     "Parsed pages: {{parsed}} / {{checked}}": "已解析页面：{{parsed}} / {{checked}}",
     "Image delivered": "已提供图片",
-    "Some evidence is unavailable or incomplete.": "部分证据不可用或不完整。"
+    "Some evidence is unavailable or incomplete.": "部分证据不可用或不完整。",
+    "Show selected": "仅看已选",
+    "Disable": "禁用",
+    "Delete…": "删除…",
+    "Install…": "安装…",
+    "Update…": "更新…"
   }
 }
