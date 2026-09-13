@@ -761,30 +761,33 @@ it('offers original-page navigation without an endless skeleton when no crop exi
   expect(navigate).toHaveBeenCalledWith(1)
 })
 
-it('waits for asynchronous model installation before continuing extraction', async () => {
-  vi.useFakeTimers()
-  model = { ...model, availability: 'notInstalled', installedRevision: undefined }
-  api.localModels.install.mockImplementationOnce(async () => {
-    const installing = { ...model, availability: 'installing' as const }
-    model = { ...model, availability: 'ready', installedRevision: 'v1' }
-    return installing
-  })
-  api.pdfStructure.parse
-    .mockRejectedValueOnce(new Error(LOCAL_MODEL_NOT_INSTALLED))
-    .mockResolvedValue(result)
-  await act(async () =>
-    root.render(
-      <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+it.each(['notInstalled', 'installing'] as const)(
+  'waits for model installation before continuing extraction from %s',
+  async (availability) => {
+    vi.useFakeTimers()
+    model = { ...model, availability, installedRevision: undefined }
+    api.localModels.install.mockImplementationOnce(async () => {
+      const installing = { ...model, availability: 'installing' as const }
+      model = { ...model, availability: 'ready', installedRevision: 'v1' }
+      return installing
+    })
+    api.pdfStructure.parse
+      .mockRejectedValueOnce(new Error(LOCAL_MODEL_NOT_INSTALLED))
+      .mockResolvedValue(result)
+    await act(async () =>
+      root.render(
+        <PdfFiguresView attachmentVersionId="version-1" pageCount={1} onNavigate={navigate} />
+      )
     )
-  )
-  await click('Download and continue')
-  expect(api.pdfStructure.parse).toHaveBeenCalledOnce()
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(1000)
-  })
-  expect(api.pdfStructure.parse).toHaveBeenCalledTimes(2)
-  expect(container.textContent).not.toContain('PDF extraction is unavailable')
-})
+    await click('Download and continue')
+    expect(api.pdfStructure.parse).toHaveBeenCalledOnce()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    expect(api.pdfStructure.parse).toHaveBeenCalledTimes(2)
+    expect(container.textContent).not.toContain('PDF extraction is unavailable')
+  }
+)
 it('opens cached results without reinstalling a removed model package', async () => {
   model = { ...model, availability: 'notInstalled', installedRevision: undefined }
   api.pdfStructure.parse.mockResolvedValue(result)

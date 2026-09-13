@@ -7,6 +7,7 @@ import { DownloadChecksumError } from '../net/resilient-download'
 import { createLocalModelOwner } from './owner'
 import type { LocalModelRevision } from './catalog'
 import type { DownloadProgress } from '../../shared/download-progress'
+import { LOCAL_MODEL_NOT_INSTALLED } from '../../shared/local-models'
 import {
   acquireDataRootWriter,
   beginMigration,
@@ -61,6 +62,39 @@ const seed = async (root: string, name = 'v1'): Promise<void> => {
 }
 
 describe('local model use leases', () => {
+  it('lets parsing join an initial install without starting a duplicate download', async () => {
+    const root = await prepare()
+    let finishDownload!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      finishDownload = resolve
+    })
+    const download = vi.fn(async (_url: string, path: string) => {
+      await blocked
+      await writeFile(path, content)
+      return path
+    })
+    const owner = createLocalModelOwner({
+      dataRoot: () => root,
+      revisions: [revision('v1')],
+      download
+    })
+    try {
+      await owner.install()
+      await vi.waitFor(() => expect(download).toHaveBeenCalledOnce())
+      await expect(owner.acquireUse()).rejects.toThrow(LOCAL_MODEL_NOT_INSTALLED)
+      expect(await owner.install()).toMatchObject({ availability: 'installing', inUse: false })
+      expect(download).toHaveBeenCalledOnce()
+      finishDownload()
+      await waitForIdle(owner)
+      const use = await owner.acquireUse()
+      expect(use.revision).toBe('v1')
+      use.release()
+      expect(download).toHaveBeenCalledTimes(2)
+    } finally {
+      finishDownload()
+      await owner.close()
+    }
+  })
   it('does not overwrite a published update with a late old-revision verification failure', async () => {
     const root = await prepare()
     await seed(root)

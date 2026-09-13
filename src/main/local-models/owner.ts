@@ -186,6 +186,9 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
     // Initialization owns its own short writer. Never acquire an outer writer before this await.
     await initialize()
     if (closed) throw new Error('Local model owner is closed.')
+    // Reuse the install-and-retry contract so parsing joins an initial download already in flight.
+    if (operation?.kind === 'install' && !snapshot.installedRevision)
+      throw new Error(LOCAL_MODEL_NOT_INSTALLED)
     if (
       operation?.kind === 'remove' ||
       (operation &&
