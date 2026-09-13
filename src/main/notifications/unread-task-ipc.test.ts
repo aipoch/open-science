@@ -1,21 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { handlers } = vi.hoisted(() => ({
-  handlers: new Map<string, (event: { sender: unknown }, input: unknown) => void>()
-}))
-
-vi.mock('electron', () => ({
-  ipcMain: {
-    on: (channel: string, handler: (event: { sender: unknown }, input: unknown) => void): void => {
-      handlers.set(channel, handler)
-    }
-  }
-}))
+const ipcEvents = await vi.hoisted(async () => {
+  const { EventEmitter } = await import('node:events')
+  return new EventEmitter()
+})
+vi.mock('electron', () => ({ ipcMain: ipcEvents }))
 
 import { registerUnreadTaskIpc } from './unread-task-ipc'
 
 describe('registerUnreadTaskIpc', () => {
-  beforeEach(() => handlers.clear())
+  beforeEach(() => ipcEvents.removeAllListeners())
   afterEach(() => vi.useRealTimers())
 
   it('accepts only normalized visibility from the current main renderer', async () => {
@@ -26,7 +20,8 @@ describe('registerUnreadTaskIpc', () => {
       controller
     })
 
-    handlers.get('notifications:sync-unread-view')?.(
+    ipcEvents.emit(
+      'notifications:sync-unread-view',
       { sender },
       {
         visibleSessionId: ' session-2 ',
@@ -46,7 +41,8 @@ describe('registerUnreadTaskIpc', () => {
       controller
     })
 
-    handlers.get('notifications:sync-unread-view')?.(
+    ipcEvents.emit(
+      'notifications:sync-unread-view',
       { sender },
       { visibleSessionId: ' session-2 ' }
     )
@@ -66,7 +62,8 @@ describe('registerUnreadTaskIpc', () => {
     const visibility = probe.confirmSessionVisible('session-2')
     const challengeId = sender.send.mock.calls[0]?.[1]
 
-    handlers.get('notifications:sync-unread-view')?.(
+    ipcEvents.emit(
+      'notifications:sync-unread-view',
       { sender },
       { challengeId, visibleSessionId: 'session-2' }
     )
@@ -87,13 +84,15 @@ describe('registerUnreadTaskIpc', () => {
       controller
     })
 
-    handlers.get('notifications:sync-unread-view')?.(
+    ipcEvents.emit(
+      'notifications:sync-unread-view',
       { sender },
       { visibleSessionId: 'session-1', existingSessionIds: ['session-1'] }
     )
     const visibility = probe.confirmSessionVisible('session-2')
     const challengeId = sender.send.mock.calls[0]?.[1]
-    handlers.get('notifications:sync-unread-view')?.(
+    ipcEvents.emit(
+      'notifications:sync-unread-view',
       { sender },
       { challengeId, visibleSessionId: 'session-2' }
     )
@@ -112,7 +111,8 @@ describe('registerUnreadTaskIpc', () => {
       controller
     })
 
-    handlers.get('notifications:sync-unread-view')?.(
+    ipcEvents.emit(
+      'notifications:sync-unread-view',
       { sender },
       {
         visibleSessionId: 'session-2',
@@ -133,7 +133,8 @@ describe('registerUnreadTaskIpc', () => {
 
     const visibility = probe.confirmSessionVisible('session-2')
     const challengeId = sender.send.mock.calls[0]?.[1]
-    handlers.get('notifications:sync-unread-view')?.(
+    ipcEvents.emit(
+      'notifications:sync-unread-view',
       { sender },
       { challengeId, visibleSessionId: 'session-1' }
     )
@@ -183,7 +184,8 @@ describe('registerUnreadTaskIpc', () => {
       controller
     })
 
-    handlers.get('notifications:sync-unread-view')?.(
+    ipcEvents.emit(
+      'notifications:sync-unread-view',
       { sender: { id: 2 } },
       { visibleSessionId: 'session-1' }
     )
@@ -205,7 +207,7 @@ describe('registerUnreadTaskIpc', () => {
       controller
     })
 
-    handlers.get('notifications:sync-unread-view')?.({ sender }, input)
+    ipcEvents.emit('notifications:sync-unread-view', { sender }, input)
     expect(controller.syncViewState).not.toHaveBeenCalled()
   })
 
@@ -220,9 +222,64 @@ describe('registerUnreadTaskIpc', () => {
       onError
     })
 
-    handlers.get('notifications:sync-unread-view')?.({ sender }, { visibleSessionId: 'session-1' })
+    ipcEvents.emit('notifications:sync-unread-view', { sender }, { visibleSessionId: 'session-1' })
     await Promise.resolve()
 
     expect(onError).toHaveBeenCalledWith(error)
+  })
+
+  it('disposes only its listener and fails all pending and future probes closed without timers', async () => {
+    vi.useFakeTimers()
+    const sender = { id: 1, send: vi.fn(), isDestroyed: () => false }
+    const controller = { syncViewState: vi.fn(async () => {}) }
+    const external = vi.fn()
+    ipcEvents.on('notifications:sync-unread-view', external)
+    const probe = registerUnreadTaskIpc({
+      getMainWindow: () => ({ webContents: sender }),
+      controller
+    })
+    const first = probe.confirmSessionVisible('session-1')
+    const second = probe.confirmSessionVisible('session-2')
+    const lateListener = ipcEvents.listeners('notifications:sync-unread-view')[1]
+    const challengeId = sender.send.mock.calls[0][1]
+    expect(vi.getTimerCount()).toBe(2)
+    probe.dispose()
+    probe.dispose()
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+    ipcEvents.emit(
+      'notifications:sync-unread-view',
+      { sender },
+      { challengeId, visibleSessionId: 'session-1' }
+    )
+    lateListener({ sender }, { visibleSessionId: 'session-1' })
+    expect(external).toHaveBeenCalledOnce()
+    expect(controller.syncViewState).not.toHaveBeenCalled()
+    expect(ipcEvents.listeners('notifications:sync-unread-view')).toEqual([external])
+    sender.send.mockClear()
+    await expect(probe.confirmSessionVisible('session-3')).resolves.toBe(false)
+    expect(sender.send).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('delivers a visibility projection once after disposal and reinstallation', async () => {
+    const sender = { id: 1 }
+    const old = { syncViewState: vi.fn(async () => {}) }
+    const current = { syncViewState: vi.fn(async () => {}) }
+    const previous = registerUnreadTaskIpc({
+      getMainWindow: () => ({ webContents: sender }),
+      controller: old
+    })
+    previous.dispose()
+    const next = registerUnreadTaskIpc({
+      getMainWindow: () => ({ webContents: sender }),
+      controller: current
+    })
+    ipcEvents.emit('notifications:sync-unread-view', { sender }, { visibleSessionId: 'session-1' })
+    await Promise.resolve()
+    expect(old.syncViewState).not.toHaveBeenCalled()
+    expect(current.syncViewState).toHaveBeenCalledExactlyOnceWith({ visibleSessionId: 'session-1' })
+    next.dispose()
   })
 })

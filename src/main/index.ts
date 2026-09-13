@@ -510,6 +510,12 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           let partialWebController: ReturnType<typeof createWebServiceController> | undefined
           let disposeTrayLocaleSubscription: (() => void) | undefined
 
+          // The controller must exist before its IPC responder, while the responder calls back into the
+          // controller. This box breaks that startup cycle without exposing unread ownership to renderer.
+          const visibilityProbeBox: {
+            current: ReturnType<typeof registerUnreadTaskIpc> | undefined
+          } = { current: undefined }
+
           try {
             startupDiagnostics?.phase('register-application-ipc')
             // Held in a box (not a bare let) so the settings IPC callback registered below can reach the icon
@@ -552,7 +558,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               holdSettingsInstallAdmission,
               prepareForQuit,
               abortQuitPreparation,
-              dispose: disposeApplicationRuntime
+              dispose: disposeRuntime
             } = await registerIpcHandlers({
               mainEntryPath,
               settingsStore,
@@ -582,14 +588,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               },
               listAppIconPreviews: () => buildAppIconPreviews(nativeImage, iconVariantPaths)
             })
+            const disposeApplicationRuntime = (): ReturnType<typeof disposeRuntime> => {
+              visibilityProbeBox.current?.dispose()
+              return disposeRuntime()
+            }
             disposePartialRuntime = disposeApplicationRuntime
             startupDiagnostics?.phase('compose-desktop-surfaces')
 
-            // The controller must exist before its IPC responder, while the responder calls back into the
-            // controller. This box breaks that startup cycle without exposing unread ownership to renderer.
-            const visibilityProbeBox: {
-              current: ReturnType<typeof registerUnreadTaskIpc> | undefined
-            } = { current: undefined }
             notificationInbox.configureDesktop({
               // Only the main conversation window can acknowledge a visible session. A focused preview
               // window must not clear unread state for the conversation underneath it.
@@ -657,6 +662,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             void remoteAccess.restore()
 
             const disposeApplicationIpcHandlers = (): void => {
+              visibilityProbeBox.current?.dispose()
               disposeTrayLocaleSubscription?.()
               disposeLocalePreferenceIpc()
               managedPreviewProtocolBridge.dispose()
@@ -736,6 +742,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             // outer shell rollback destroys the window and quits, but renderer calls can still arrive
             // while that shutdown is in flight.
             for (const invalidate of [
+              () => visibilityProbeBox.current?.dispose(),
               disposeIpcHandlerRegistry,
               () => managedPreviewProtocolBridge.dispose()
             ]) {

@@ -1099,7 +1099,9 @@
           "src/main/office-preview/office-preview-ipc.test.ts",
           "src/main/office-preview/office-preview-navigation.test.ts",
           "src/main/office-preview/office-preview-oopif-supervisor.test.ts",
-          "src/main/office-preview/office-preview-runtime-protocol.test.ts"
+          "src/main/office-preview/office-preview-runtime-protocol.test.ts",
+          "src/main/notifications/unread-task-ipc.test.ts",
+          "src/main/notifications/notification-inbox-repository.test.ts"
         ],
         "consumer": [
           "src/main/application-runtime.test.ts",
@@ -1111,7 +1113,13 @@
           "src/main/window-shortcuts.test.ts",
           "src/preload/find-overlay.test.ts",
           "src/shared/window-controls.test.ts",
-          "resources/find-overlay/findOverlay.test.js"
+          "resources/find-overlay/findOverlay.test.js",
+          "src/main/index-startup-order.test.ts",
+          "src/main/app-startup.test.ts",
+          "src/main/app-lifecycle.test.ts",
+          "src/preload/index.test.ts",
+          "src/preload/electron-renderer-contract-adapter.test.ts",
+          "src/renderer/src/hooks/useUnreadTaskViewSync.test.tsx"
         ]
       },
       "capabilityOverlays": [],
