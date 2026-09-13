@@ -656,6 +656,8 @@ export function associateFigures(page, candidates, tableRects = []) {
       return (
         g.kind === 'image' &&
         area(g.normalizedRect) > 0.2 &&
+        // Quantized image bounds can graze an external legend by a few points.
+        r[3] > caption.rect[1] + edgeTolerance &&
         (intersection(r, caption.rect) > area(caption.rect) * 0.2 ||
           (caption.lines.join(' ').length > 100 && intersection(r, caption.rect) > 0)) &&
         caption.rect[1] > r[1] + (r[3] - r[1]) * 0.5 &&
@@ -674,7 +676,8 @@ export function associateFigures(page, candidates, tableRects = []) {
       ? assigned[index].filter(
           (item) =>
             item.kind === 'image' ||
-            (area(item.rect) >= page.width * page.height * 0.02 &&
+            (item.rect[2] - item.rect[0] >= 12 &&
+              item.rect[3] - item.rect[1] >= 12 &&
               !page.lines.some(
                 (l) => l.text.length > 80 && intersection(lineRect(l), item.rect) > 0
               ) &&
@@ -716,6 +719,7 @@ export function associateFigures(page, candidates, tableRects = []) {
       connected = connected.filter(
         (g) =>
           area(g.rect) > page.width * page.height * 0.01 ||
+          (plates.length && g.rect[2] - g.rect[0] >= 12 && g.rect[3] - g.rect[1] >= 12) ||
           substantial.some(
             (p) =>
               intersection(g.rect, [
@@ -726,6 +730,33 @@ export function associateFigures(page, candidates, tableRects = []) {
               ]) > 0
           )
       )
+    // A composite figure can mix raster panels with connected vector drawings
+    // and outlined labels. Grow from the retained graphics using the same local
+    // margin as raster adjacency; distance from the raster alone is not evidence
+    // that a path is decoration. Only already-assigned paths may join the figure.
+    const retained = new Set(connected)
+    const pending = new Set(
+      plates.length
+        ? assigned[index].filter(
+            (item) =>
+              item.kind === 'path' &&
+              !retained.has(item) &&
+              item.rect[0] < page.width * 0.94 &&
+              !tableRects.some((t) => intersection(t, item.rect) > 0) &&
+              !page.lines.some(
+                (l) => l.text.length > 80 && intersection(lineRect(l), item.rect) > 0
+              )
+          )
+        : []
+    )
+    for (let cursor = 0; cursor < connected.length && pending.size; cursor++) {
+      const r = connected[cursor].rect
+      for (const item of pending) {
+        if (intersection(item.rect, [r[0] - 8, r[1] - 8, r[2] + 8, r[3] + 8]) <= 0) continue
+        pending.delete(item)
+        connected.push(item)
+      }
+    }
     // Small operations inside a side-captioned panel share its direction.
     for (const item of connected) {
       const parent = connected.find(
@@ -1291,7 +1322,7 @@ export function associateAdjacentFigure(page, pages, candidates) {
   const nearby = page.lines.filter(
     (line) =>
       line.y >= bounds[1] - 24 &&
-      line.y + line.height <= bounds[3] + 12 &&
+      line.y + line.height <= bounds[3] + 24 &&
       line.x >= bounds[0] - (/^[a-z]$/i.test(line.text.trim()) ? 24 : 12) &&
       line.x + line.width <= bounds[2] + (/^[a-z]$/i.test(line.text.trim()) ? 24 : 12) &&
       !continuesExternalParagraph(line, bounds, page.lines)

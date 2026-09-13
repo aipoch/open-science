@@ -35,6 +35,148 @@ const graphic = (
   imageHash
 })
 
+it('keeps external labels when quantized raster bounds only graze the caption', () => {
+  const source = {
+    ...page,
+    graphicsBounds: [graphic('image', [0.1, 0.1, 0.9, 0.6])],
+    lines: [
+      { text: 'a', x: 60, y: 64, width: 6, height: 10, fontSize: 10 },
+      { text: '100', x: 540, y: 300, width: 12, height: 8, fontSize: 8 }
+    ]
+  }
+  const caption = {
+    page: 1,
+    lines: ['Figure 1. ' + 'This long legend describes each of the composite panels. '.repeat(3)],
+    rect: [50, 478, 550, 520]
+  }
+  expect(associateFigures(source, [caption])[0].rect).toEqual([60, 64, 552, 476])
+  // A genuinely embedded legend must still preserve the full surrounding raster.
+  expect(associateFigures(source, [{ ...caption, rect: [50, 400, 550, 460] }])[0].rect).toEqual([
+    60, 80, 540, 480
+  ])
+})
+
+it.each([false, true])(
+  'includes tilted labels beside an adjacent-page legend (prose: %s)',
+  (prose) => {
+    const source = {
+      ...page,
+      graphicsBounds: [graphic('image', [0.1, 0.1, 0.9, 0.8])],
+      lines: [
+        { text: 'Group label', x: 180, y: 634, width: 24, height: 24, fontSize: 5 },
+        ...(prose ? [658, 668, 678] : []).map((y) => ({
+          text: 'This is a separate paragraph of ordinary article prose.',
+          x: 300,
+          y,
+          width: 230,
+          height: 8,
+          fontSize: 8
+        }))
+      ]
+    }
+    const neighbor = { ...page, pageNumber: 2, graphicsBounds: [] }
+    const [figure] = associateAdjacentFigure(
+      source,
+      [source, neighbor],
+      [{ page: 2, lines: ['Figure 1. Results'], rect: [50, 60, 550, 90] }]
+    )
+    expect(figure.rect).toEqual([60, 80, 540, prose ? 656 : 658])
+  }
+)
+
+it('keeps connected vector panels and outlined labels outside a composite raster plate', () => {
+  // The left panels and their labels are paths; the large raster
+  // contains only part of the composite figure. Text is anonymized.
+  const source = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/mixed-vector-figure.jsonl')
+  )
+  const [figure] = associateFigures(source, findCaptionCandidates([source]))
+  expect(figure.rect[0]).toBeCloseTo(44.180640625)
+  expect(figure.rect[1]).toBeCloseTo(58.6970859375)
+  expect(figure.rect[2]).toBeCloseTo(541.794171875)
+  expect(figure.rect[3]).toBeCloseTo(571.5242578125)
+})
+
+it.each([false, true])(
+  'recovers a vector chain without isolated marks (reversed: %s)',
+  (reverse) => {
+    const graphicsBounds = [
+      graphic('image', [200 / 600, 0.25, 440 / 600, 0.75]),
+      ...Array.from({ length: 13 }, (_, i) => 120 + i * 6).map((x) =>
+        graphic('path', [x / 600, 0.25, (x + 5) / 600, 0.26])
+      ),
+      graphic('path', [60 / 600, 0.25, 70 / 600, 0.3]),
+      graphic('path', [200 / 600, 0.1, 240 / 600, 0.11])
+    ]
+    const captions = [{ page: 1, lines: ['Figure 1. Results'], rect: [50, 620, 550, 640] }]
+    expect(
+      associateFigures(
+        { ...page, graphicsBounds: reverse ? graphicsBounds.reverse() : graphicsBounds },
+        captions
+      )[0].rect.map(Math.round)
+    ).toEqual([120, 200, 440, 600])
+    // Pure-vector figures keep their existing pruning behavior.
+    expect(
+      associateFigures(
+        { ...page, graphicsBounds: graphicsBounds.map((g) => ({ ...g, kind: 'path' })) },
+        captions
+      )[0].rect[0]
+    ).toBe(174)
+    // A separate caption or prose between a path and this legend still blocks ownership.
+    for (const barrier of ['caption', 'prose']) {
+      expect(
+        associateFigures(
+          {
+            ...page,
+            graphicsBounds,
+            lines:
+              barrier === 'prose'
+                ? [{ text: 'Article prose. '.repeat(8), x: 110, y: 450, width: 40, height: 8 }]
+                : []
+          },
+          barrier === 'caption'
+            ? [...captions, { page: 1, lines: ['Table 1. Data'], rect: [110, 450, 150, 465] }]
+            : captions
+        )[0].rect[0]
+      ).toBe(150)
+    }
+  }
+)
+
+it('keeps detached vector subfigures alongside a raster panel under the same caption', () => {
+  // The raster only covers the right-hand panels; text is anonymized.
+  const source = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/detached-vector-panels.jsonl')
+  )
+  const [figure] = associateFigures(source, findCaptionCandidates([source]))
+  expect(figure.rect[0]).toBeLessThan(55)
+  expect(figure.rect[1]).toBeLessThan(63)
+  expect(figure.rect[2]).toBeGreaterThan(550)
+  expect(figure.rect[3]).toBeGreaterThan(638)
+  expect(figure.rect[3]).toBeLessThan(figure.caption.rect[1])
+})
+
+it.each(['table', 'prose'])('does not recover a connected path intersecting %s', (barrier) => {
+  const source = {
+    ...page,
+    graphicsBounds: [
+      graphic('image', [200 / 600, 0.25, 440 / 600, 0.75]),
+      graphic('path', [185 / 600, 0.25, 197 / 600, 212 / 800]),
+      graphic('path', [167 / 600, 0.25, 179 / 600, 212 / 800])
+    ],
+    lines:
+      barrier === 'prose'
+        ? [{ text: 'Article prose. '.repeat(8), x: 150, y: 200, width: 25, height: 8 }]
+        : []
+  }
+  const [figure] = associateFigures(
+    source,
+    [{ page: 1, lines: ['Figure 1. Results'], rect: [50, 620, 550, 640] }],
+    barrier === 'table' ? [[150, 200, 175, 250]] : []
+  )
+  expect(figure.rect.map(Math.round)).toEqual([185, 200, 440, 600])
+})
+
 it('excludes a detached multi-column prose clipping path above photographs', () => {
   const lines = [60, 240, 420].flatMap((x) =>
     [200, 210, 220].map((y) => ({
