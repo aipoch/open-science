@@ -1,6 +1,6 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
@@ -14,6 +14,9 @@ import {
   environmentFromProcess,
   loadSkillDocument
 } from './runtime-mcp-server'
+
+import { SkillRegistry } from './registry'
+import { ClaudeCodeSkillMaterializer } from './materializer'
 
 const roots: string[] = []
 
@@ -64,6 +67,52 @@ afterEach(async () => {
 })
 
 describe('Skill runtime MCP loader', () => {
+  it.each([
+    'self-awareness',
+    'skill-creator',
+    'customize',
+    'env-management',
+    'compute-env-setup',
+    'remote-compute-ssh',
+    'literature-review'
+  ])('loads the bundled %s package by its public name through Codex MCP', async (name) => {
+    const root = await mkdtemp(join(tmpdir(), 'bundled-codex-skill-'))
+    roots.push(root)
+    const skill = (await new SkillRegistry(resolve('resources/skills')).list()).find(
+      (entry) => entry.name === name
+    )
+    expect(skill).toBeDefined()
+    await new ClaudeCodeSkillMaterializer().sync(root, [skill!])
+    const server = await createSkillRuntimeMcpServer({
+      root,
+      skillsDirectory: join(root, 'skills')
+    })
+    const client = new Client({ name: 'bundled-codex-loader-test', version: '1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      const result = await client.callTool({
+        name: LOAD_SKILL_TOOL_NAME,
+        arguments: { skill: name }
+      })
+      expect(result, JSON.stringify(result)).not.toHaveProperty('isError', true)
+      expect(JSON.stringify(result.content)).toContain(`name: ${name}`)
+      expect(JSON.stringify(await client.listTools())).toContain(name)
+    } finally {
+      await client.close()
+      await server.close()
+      // The real materializer makes package directories read-only on POSIX.
+      const writable = async (directory: string): Promise<void> => {
+        await chmod(directory, 0o755)
+        for (const entry of await readdir(directory, { withFileTypes: true })) {
+          if (entry.isDirectory()) await writable(join(directory, entry.name))
+        }
+      }
+      await writable(root)
+    }
+  })
+
   it('rejects catalogs outside the runtime root and linked catalog directories', async () => {
     const root = await seedProjection()
     const outside = await seedProjection('outside-skill')
