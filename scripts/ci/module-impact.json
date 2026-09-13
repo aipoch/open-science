@@ -1028,7 +1028,8 @@
         "src/main/ipc-surfaces/uploads.ts",
         "src/main/ipc-surfaces/notifications.ts",
         "src/main/ipc-surfaces/connector-approvals.ts",
-        "src/main/window-find-ipc.ts"
+        "src/main/window-find-ipc.ts",
+        "src/main/ipc-surfaces/desktop-utilities.ts"
       ],
       "interfacePaths": [
         "src/main/ipc-surfaces/adapter.ts",
@@ -1036,7 +1037,8 @@
         "src/main/ipc-surfaces/uploads.ts",
         "src/main/ipc-surfaces/notifications.ts",
         "src/main/ipc-surfaces/connector-approvals.ts",
-        "src/main/window-find-ipc.ts"
+        "src/main/window-find-ipc.ts",
+        "src/main/ipc-surfaces/desktop-utilities.ts"
       ],
       "consumerModules": [],
       "testFiles": {
@@ -1046,7 +1048,8 @@
           "src/main/ipc-surfaces/uploads.test.ts",
           "src/main/ipc-surfaces/notifications.test.ts",
           "src/main/ipc-surfaces/connector-approvals.test.ts",
-          "src/main/window-find-ipc.test.ts"
+          "src/main/window-find-ipc.test.ts",
+          "src/main/ipc-surfaces/desktop-utilities.test.ts"
         ],
         "contract": [
           "src/main/connectors/approval-broker.test.ts",
@@ -1070,7 +1073,12 @@
           "src/main/managed-file-versions/ipc.test.ts",
           "src/main/local-fs/ipc.test.ts",
           "src/main/projects/ipc.test.ts",
-          "src/main/lifecycle-broadcast.test.ts"
+          "src/main/lifecycle-broadcast.test.ts",
+          "src/main/file-save.test.ts",
+          "src/main/logs-ipc.test.ts",
+          "src/main/github-ipc.test.ts",
+          "src/main/cli-install/ipc.test.ts",
+          "src/main/window-ipc.test.ts"
         ],
         "consumer": [
           "src/main/application-runtime.test.ts",

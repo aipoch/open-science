@@ -148,12 +148,11 @@ import { isCustomMcpServerRouteSafe } from './connectors/custom-mcp-bootstrap'
 import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { connectorSkillSourceDir } from './connectors/provision'
-import { registerFileSaveHandlers } from './file-save'
 import { publishUserFile } from './user-file-publisher'
 import { ImmutableInputAuthority } from './immutable-input-authority'
-import { createCliCommandOwner, registerCliInstallIpcHandlers } from './cli-install/ipc'
+import { createCliCommandOwner } from './cli-install/ipc'
 
-import { createGithubCommandOwner, registerGithubIpcHandlers } from './github-ipc'
+import { createGithubCommandOwner } from './github-ipc'
 import {
   BackendShutdownOutcomeError,
   BackendShutdownCoordinator,
@@ -168,11 +167,10 @@ import {
   type RendererSessionPersistenceSurface,
   type RendererSessionPersistenceTarget
 } from './session-persistence/renderer-flush'
-import { createLogsCommandOwner, registerLogsIpcHandlers } from './logs-ipc'
-import { registerWindowIpcHandlers } from './window-ipc'
-import { registerWindowFindIpcHandlers } from './window-find-ipc'
+import { createLogsCommandOwner } from './logs-ipc'
 import { TaskNotificationService } from './notifications/task-notifications'
 import { createNotificationInboxController } from './notifications/notification-inbox-controller'
+import { createDesktopUtilitiesElectronSurface } from './ipc-surfaces/desktop-utilities'
 import { createConnectorApprovalElectronSurface } from './ipc-surfaces/connector-approvals'
 import { createNotificationElectronSurface } from './ipc-surfaces/notifications'
 import { NotificationInboxDbRepository } from './notifications/notification-inbox-repository'
@@ -3189,25 +3187,17 @@ const createApplicationModules = async (
   await cliCommandOwner.ensureCurrent()
   const githubCommandOwner = createGithubCommandOwner({ fetch: netFetchStandard })
   const logsCommandOwner = createLogsCommandOwner()
-  declareElectronAdapter('desktop-utilities', () => {
-    registerFileSaveHandlers({
+  surfaceAdapters.push(
+    createDesktopUtilitiesElectronSurface({
       resolveManagedFilePath,
-      openLatestManagedFile: (source, request) =>
-        managedFileVersionService.openLatest({ source, ...request }),
-      openManagedFileVersion: (source, request) =>
-        managedFileVersionService.openVersion(
-          { source, projectId: request.projectId, fileId: request.fileId },
-          request.versionId
-        ),
-      openNotebookInput: (request) => notebookInputRegistry.openPreviewKey(request.path),
-      translate
+      managedFileVersions: managedFileVersionService,
+      notebookInputs: notebookInputRegistry,
+      translate,
+      logs: logsCommandOwner,
+      github: githubCommandOwner,
+      cli: cliCommandOwner
     })
-    registerLogsIpcHandlers(logsCommandOwner)
-    registerGithubIpcHandlers({}, githubCommandOwner)
-    registerCliInstallIpcHandlers(cliCommandOwner)
-    registerWindowIpcHandlers()
-    return registerWindowFindIpcHandlers()
-  })
+  )
   // ACP identity resolution and the Specialist settings IPC must use the same service instance.
   // Creating it only for settings leaves create-session unable to resolve a selected UUID.
   const approvalSessionLifecycle = bindComputeApprovalSessionLifecycle(

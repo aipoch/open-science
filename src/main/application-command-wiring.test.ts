@@ -32,7 +32,7 @@ const webAdapterSources = [
   'src/main/web-service/task-api.ts'
 ].map(readSource)
 const legacyAdapterBlock = compact(
-  between(ipcSource, "declareElectronAdapter('desktop-utilities'", 'const electronSenderFor')
+  between(ipcSource, 'createDesktopUtilitiesElectronSurface({', 'const electronSenderFor')
 )
 const notificationAdapterBlock = compact(readSource('src/main/ipc-surfaces/notifications.ts'))
 const dependencyBlock = compact(
@@ -44,11 +44,28 @@ const dependencyBlock = compact(
 )
 
 describe('production application command wiring', () => {
-  it('hands window-find event cleanup to the desktop surface installation', () => {
+  it('installs desktop utilities with shared owners and retains find-event cleanup', () => {
     const desktop = compact(
-      between(ipcSource, "declareElectronAdapter('desktop-utilities'", '// ACP identity resolution')
+      between(ipcSource, 'createDesktopUtilitiesElectronSurface({', '// ACP identity resolution')
     )
-    expect(desktop).toContain('return registerWindowFindIpcHandlers()')
+    expect(desktop).toContain(
+      'resolveManagedFilePath, managedFileVersions: managedFileVersionService, notebookInputs: notebookInputRegistry, translate, logs: logsCommandOwner, github: githubCommandOwner, cli: cliCommandOwner'
+    )
+    const phase = between(
+      ipcSource,
+      'surfaceAdapters = beforeAcpAdapters',
+      'surfaceAdapters = afterAcpAdapters'
+    )
+    expect(phase).toContain('createDesktopUtilitiesElectronSurface({')
+    expect(occurrences(ipcSource, 'createDesktopUtilitiesElectronSurface(')).toBe(1)
+    const surface = compact(readSource('src/main/ipc-surfaces/desktop-utilities.ts'))
+    expect(surface).toContain("createElectronSurfaceAdapter('desktop-utilities'")
+    expect(surface).toContain('registerLogsIpcHandlers(logs)')
+    expect(surface).toContain('registerGithubIpcHandlers({}, github)')
+    expect(surface).toContain('registerCliInstallIpcHandlers(cli)')
+    expect(surface).toContain('return registerWindowFindIpcHandlers()')
+    expect(ipcSource).not.toContain('registerWindowFindIpcHandlers')
+    expect(ipcSource).not.toContain('registerFileSaveHandlers')
   })
 
   it('installs approval handlers with the shared connector brokers in beforeAcp', () => {
@@ -169,13 +186,9 @@ describe('production application command wiring', () => {
         'registerUpdateIpcHandlers(updateStrategy, updateCommandOwner)',
         'update: updateCommandOwner'
       ],
-      ['cliCommandOwner', 'registerCliInstallIpcHandlers(cliCommandOwner)', 'cli: cliCommandOwner'],
-      [
-        'githubCommandOwner',
-        'registerGithubIpcHandlers({}, githubCommandOwner)',
-        'github: githubCommandOwner'
-      ],
-      ['logsCommandOwner', 'registerLogsIpcHandlers(logsCommandOwner)', 'logs: logsCommandOwner'],
+      ['cliCommandOwner', 'cli: cliCommandOwner', 'cli: cliCommandOwner'],
+      ['githubCommandOwner', 'github: githubCommandOwner', 'github: githubCommandOwner'],
+      ['logsCommandOwner', 'logs: logsCommandOwner', 'logs: logsCommandOwner'],
       [
         'uploadCommandOwner',
         'surfaceAdapters.push(createUploadElectronSurface(uploadCommandOwner))',
