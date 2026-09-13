@@ -50,7 +50,7 @@ const MANIFEST_FILE = 'manifest.json'
 const PRE_S2_BACKUP_SUFFIX = '.pre-s2-backup'
 const PRE_SUBAGENT_MODEL_BACKUP_SUFFIX = '.pre-subagent-model-backup'
 const RECOVERABLE_TEMPORARY_FILE_PATTERN =
-  /^(.+\.json)\.(?:\d{13}-\d+|\d+|\d+-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.tmp$/iu
+  /^(.+\.json)\.(?:\d{13}-\d+|\d+|(\d+)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.tmp$/iu
 
 const nextSessionRevision = (revision: number): number => {
   if (!Number.isSafeInteger(revision) || revision < 0 || revision >= Number.MAX_SAFE_INTEGER) {
@@ -1973,8 +1973,13 @@ class SessionRepository {
               ) {
                 return [entry.name]
               }
-              const primary = RECOVERABLE_TEMPORARY_FILE_PATTERN.exec(entry.name)?.[1]
-              return primary ? [primary] : []
+              const temporary = RECOVERABLE_TEMPORARY_FILE_PATTERN.exec(entry.name)
+              if (!temporary) return []
+              // Match the durable reader: only current PID/UUID names carry a validated PID.
+              // Legacy numeric suffixes have no reliable live-writer ownership marker.
+              const pid = Number(temporary[2])
+              if (temporary[2] !== undefined && (!Number.isSafeInteger(pid) || pid <= 0)) return []
+              return [temporary[1]]
             })
           )
         ],

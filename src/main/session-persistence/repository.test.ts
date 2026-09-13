@@ -1453,20 +1453,44 @@ describe('session persistence repository (per-session files)', () => {
     }
   )
 
-  it('reports true absence without treating an unrelated temporary filename as Session authority', async () => {
-    const root = await createStorageRoot()
-    const directory = join(root, 'sessions', 'project-a')
-    await mkdir(directory, { recursive: true })
-    await writeFile(join(directory, 'session-1.json.unrelated.tmp'), '{', 'utf8')
-    const repository = new SessionRepository(root)
-    await expect(repository.loadSessionWithDiagnostics('project-a', 'session-1')).resolves.toEqual({
-      status: 'missing'
-    })
-    await expect(repository.loadAllWithDiagnostics()).resolves.toMatchObject({
-      isComplete: true,
-      result: { sessions: [] }
-    })
-  })
+  it.each([
+    'unrelated',
+    '0-12345678-1234-1234-1234-123456789abc',
+    '9007199254740992-12345678-1234-1234-1234-123456789abc'
+  ])(
+    'reports true absence without treating an unrecognized temp suffix as authority: %s',
+    async (suffix) => {
+      const root = await createStorageRoot()
+      const directory = join(root, 'sessions', 'project-a')
+      await mkdir(directory, { recursive: true })
+      await writeFile(join(directory, `session-1.json.${suffix}.tmp`), '{', 'utf8')
+      const repository = new SessionRepository(root)
+      await expect(
+        repository.loadSessionWithDiagnostics('project-a', 'session-1')
+      ).resolves.toEqual({
+        status: 'missing'
+      })
+      await expect(repository.loadAllWithDiagnostics()).resolves.toMatchObject({
+        isComplete: true,
+        result: { sessions: [] }
+      })
+    }
+  )
+
+  it.each(['0', '9007199254740992'])(
+    'preserves supported legacy PID-only temporary evidence: %s',
+    async (suffix) => {
+      const root = await createStorageRoot()
+      const repository = new SessionRepository(root)
+      const saved = await repository.saveSession(createSession())
+      const primary = join(root, 'sessions', saved.projectId, `${saved.id}.json`)
+      await rename(primary, `${primary}.${suffix}.tmp`)
+      await expect(
+        repository.loadSessionWithDiagnostics(saved.projectId, saved.id)
+      ).resolves.toMatchObject({ status: 'found', session: { id: saved.id } })
+      await expect(readFile(primary, 'utf8')).resolves.toContain(saved.id)
+    }
+  )
 
   it('classifies an oversized recovery temp when no primary Session exists', async () => {
     const root = await createStorageRoot()
