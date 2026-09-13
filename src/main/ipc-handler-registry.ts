@@ -201,6 +201,7 @@ const createIpcHandlerRegistry = (
     dispose: () => {
       activeCallerLeaseEpoch.registry.dispose()
       activeCallerLeaseEpoch.disposed = true
+      removeChannels([...registeredChannels])
     }
   }
 }
