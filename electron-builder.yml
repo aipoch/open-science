@@ -179,9 +179,14 @@ linux:
     # looks for it there via process.resourcesPath).
     - from: resources/bin/linux/${arch}/micromamba
       to: micromamba
+    # Debian registers this CLI entry; AppImage retains its explicit user launcher workflow.
+    - from: build/deb-cli-launcher
+      to: open-science-cli
 appImage:
   artifactName: aipoch-${name}-${version}-linux-${arch}.${ext}
 deb:
+  afterInstall: build/deb-after-install.tpl
+  afterRemove: build/deb-after-remove.tpl
   artifactName: aipoch-${name}_${version}_${arch}.${ext}
   depends:
     - libgtk-3-0
