@@ -88,6 +88,9 @@ const settlesWithin = async (promise: Promise<void>, timeoutMs: number): Promise
     )
   })
 
+const CLEANUP_GRACEFUL_TIMEOUT_MS = process.platform === 'win32' ? 20_000 : 10_000
+const CLEANUP_FORCED_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : 10_000
+
 const closeElectronApplicationForCleanup = async (
   target: ElectronCleanupTarget,
   { gracefulTimeoutMs, forcedTimeoutMs, requireGraceful = false }: ElectronCleanupOptions
@@ -1074,7 +1077,11 @@ class ElectronAppHarness implements ElectronApp {
             throw new Error('Electron E2E forced close did not reap the process tree.')
         }
       },
-      { gracefulTimeoutMs: 10_000, forcedTimeoutMs: 10_000, requireGraceful }
+      {
+        gracefulTimeoutMs: CLEANUP_GRACEFUL_TIMEOUT_MS,
+        forcedTimeoutMs: CLEANUP_FORCED_TIMEOUT_MS,
+        requireGraceful
+      }
     )
   }
 }

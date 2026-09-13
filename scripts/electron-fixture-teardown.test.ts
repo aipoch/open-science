@@ -45,6 +45,7 @@ vi.mock('../e2e/fixtures/renderer-failure-gate', () => ({
 import '../e2e/fixtures/electron-app'
 
 const startupBudget = process.platform === 'win32' ? 180_000 : 90_000
+const forcedCleanupBudget = process.platform === 'win32' ? 30_000 : 10_000
 
 let root: string
 const close = vi.fn()
@@ -121,7 +122,7 @@ it.each(['not reaped', 'rejected', 'timeout'])(
     const rejected = expect(operation).rejects.toThrow(/reap|forced/i)
     if (failure === 'timeout') {
       await vi.waitFor(() => expect(boundary.reap).toHaveBeenCalled())
-      await vi.advanceTimersByTimeAsync(10_000)
+      await vi.advanceTimersByTimeAsync(forcedCleanupBudget)
     }
     await rejected
     expect(existsSync(join(root, 'logs', 'main.log'))).toBe(true)
