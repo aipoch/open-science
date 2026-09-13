@@ -8179,6 +8179,10 @@ const analyzeRFileAccessTree = (
         if (arrowPaths) {
           for (const arrowPath of arrowPaths)
             if (!definitelyWritten.has(arrowPath)) reads.add(arrowPath)
+        } else {
+          const arrowPath =
+            fileConnectionPath(arrowArgument) ?? rStaticString(arrowArgument, bindings, collections)
+          if (arrowPath !== undefined && !definitelyWritten.has(arrowPath)) reads.add(arrowPath)
         }
       }
       // A device path may be a printf page template or a shell pipe, not an

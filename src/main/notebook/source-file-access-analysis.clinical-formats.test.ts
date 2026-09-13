@@ -254,6 +254,33 @@ describe('clinical statistical file readers', () => {
   })
 
   it.each([
+    'ArchR::ArchRProject(ArrowFiles="inputs/a.arrow", outputDirectory="outputs/project")',
+    'ArchR::ArchRProject("inputs/a.arrow", "outputs/project")',
+    'arrow <- "inputs/a.arrow"\nArchRProject(ArrowFiles=arrow, outputDirectory="outputs/project")'
+  ])('records scalar project inputs while retaining uncertainty: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['inputs/a.arrow'],
+      readState: 'partial',
+      writes: ['outputs/project'],
+      writeScopes: [{ kind: 'directory', path: 'outputs/project' }]
+    })
+  })
+
+  it('keeps dynamic project inputs unresolved without losing the fixed output', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'ArchR::ArchRProject(ArrowFiles=choose_input(), outputDirectory="outputs/project")'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writes: ['outputs/project'],
+      writeScopes: [{ kind: 'directory', path: 'outputs/project' }]
+    })
+  })
+
+  it.each([
     'other::createArrowFiles(inputFiles="inputs/a.tsv.gz", QCDir="outputs/qc")',
     'other::Read10X("inputs/matrix")',
     'other::ArchRProject("inputs/a.arrow", "outputs/project")',
