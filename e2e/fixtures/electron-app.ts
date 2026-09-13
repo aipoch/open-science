@@ -89,7 +89,9 @@ const settlesWithin = async (promise: Promise<void>, timeoutMs: number): Promise
     )
   })
 
-const CLEANUP_GRACEFUL_TIMEOUT_MS = process.platform === 'linux' ? 10_000 : 20_000
+// Allow platform-specific shutdown latency while keeping each cleanup phase bounded.
+const CLEANUP_GRACEFUL_TIMEOUT_MS =
+  process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
 const CLEANUP_FORCED_TIMEOUT_MS =
   process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
 
@@ -279,20 +281,18 @@ const writeFakeRemoteItCommands = async (root: string): Promise<void> => {
 }
 
 const removeTreeForCleanup = async (root: string): Promise<void> => {
-  const maxAttempts = process.platform === 'linux' ? 1 : 5
-  let lastError: unknown
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+  // Keep retries outside recursive rm so they cannot multiply with directory depth.
+  for (let attempt = 0; ; attempt += 1) {
     try {
       await rm(root, { force: true, maxRetries: 0, recursive: true })
       return
     } catch (error) {
-      lastError = error
       const code = (error as NodeJS.ErrnoException).code
-      if (code === 'EPERM' || code === 'EACCES' || attempt + 1 === maxAttempts) throw error
+      if (!['EBUSY', 'ENOTEMPTY', 'EMFILE', 'ENFILE'].includes(code ?? '') || attempt === 4)
+        throw error
       await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)))
     }
   }
-  throw lastError
 }
 
 const makeTreeWritable = async (root: string): Promise<void> => {
@@ -1272,6 +1272,7 @@ export {
   closeElectronApplicationForCleanup,
   electronLaunchTarget,
   launchEnvironment,
+  removeTreeForCleanup,
   STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
   suppressWorkspaceStarNudge,
   test

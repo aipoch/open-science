@@ -1,7 +1,13 @@
+import * as filesystem from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rm: vi.fn(actual.rm) }
+})
 
 const boundary = vi.hoisted(() => ({
   fixture: undefined as unknown as (
@@ -45,7 +51,7 @@ vi.mock('../e2e/fixtures/renderer-failure-gate', () => ({
     assertNoFailures = boundary.rendererFailure
   }
 }))
-import '../e2e/fixtures/electron-app'
+import { removeTreeForCleanup } from '../e2e/fixtures/electron-app'
 
 const startupBudget = process.platform === 'win32' ? 180_000 : 90_000
 const forcedCleanupBudget =
@@ -92,6 +98,9 @@ beforeEach(() => {
 })
 afterEach(async () => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  vi.mocked(filesystem.rm).mockReset().mockImplementation(actual.rm)
   if (root) await rm(root, { recursive: true, force: true })
 })
 
@@ -324,4 +333,46 @@ it('restarts without passing the timing label as a package file argument', async
   )
   expect(boundary.launch).toHaveBeenCalledTimes(2)
   expect(boundary.launch.mock.calls[1][0].args).toEqual(boundary.launch.mock.calls[0][0].args)
+})
+
+// Fault injection checks the retry bound without depending on OS-specific file locks or ACLs.
+it.each(['EPERM', 'EACCES', 'EIO'])(
+  'does not retry non-transient removal error %s',
+  async (code) => {
+    const error = Object.assign(new Error('cannot remove fixture'), { code })
+    const remove = vi.mocked(filesystem.rm).mockRejectedValue(error)
+    await expect(removeTreeForCleanup('owned-fixture')).rejects.toBe(error)
+    expect(remove).toHaveBeenCalledExactlyOnceWith('owned-fixture', {
+      force: true,
+      recursive: true,
+      maxRetries: 0
+    })
+  }
+)
+
+it.each(['EBUSY', 'ENOTEMPTY', 'EMFILE', 'ENFILE'])(
+  'recovers from a transient removal error %s',
+  async (code) => {
+    vi.useFakeTimers()
+    const remove = vi
+      .spyOn(filesystem, 'rm')
+      .mockRejectedValueOnce(Object.assign(new Error('temporary lock'), { code }))
+      .mockResolvedValue(undefined)
+    const cleanup = removeTreeForCleanup('owned-fixture')
+    await vi.advanceTimersByTimeAsync(200)
+    await cleanup
+    expect(remove).toHaveBeenCalledTimes(2)
+    expect(vi.getTimerCount()).toBe(0)
+  }
+)
+
+it('stops transient removal retries after five attempts and leaves no retry timer', async () => {
+  vi.useFakeTimers()
+  const error = Object.assign(new Error('still locked'), { code: 'EBUSY' })
+  const remove = vi.mocked(filesystem.rm).mockRejectedValue(error)
+  const rejected = expect(removeTreeForCleanup('owned-fixture')).rejects.toBe(error)
+  await vi.advanceTimersByTimeAsync(200 + 400 + 600 + 800)
+  await rejected
+  expect(remove).toHaveBeenCalledTimes(5)
+  expect(vi.getTimerCount()).toBe(0)
 })

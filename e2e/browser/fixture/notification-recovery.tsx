@@ -1,7 +1,7 @@
 import '@/assets/main.css'
 import { createRoot } from 'react-dom/client'
 import { isLocale } from '../../../src/shared/locale'
-import { initI18n } from '@/i18n'
+import { initI18n, prepareI18nLocale } from '@/i18n'
 import { NotificationBell } from '@/components/NotificationBell'
 import { NotificationErrorBoundary } from '@/components/NotificationErrorBoundary'
 import { ConnectorApprovalDialog } from '@/pages/settings/ConnectorApprovalDialog'
@@ -13,7 +13,10 @@ import type {
 } from '../../../src/shared/notifications'
 
 const locale = new URLSearchParams(location.search).get('locale')
-initI18n(isLocale(locale) ? locale : 'en')
+const fixtureLocale = isLocale(locale) ? locale : 'en'
+const localeReady = Promise.resolve(prepareI18nLocale(fixtureLocale)).then(() =>
+  initI18n(fixtureLocale)
+)
 let broken = true
 let reads = 0
 let responses = 0
@@ -86,16 +89,18 @@ useSettingsStore.setState({
 export const BrokenSurface = (): React.JSX.Element => {
   throw new Error('synthetic entire surface error')
 }
-createRoot(document.getElementById('root')!).render(
-  <main className="min-h-screen bg-bg-000 p-4 text-text-000">
-    <h1>Notification quality fixture</h1>
-    <NotificationBell />
-    <button type="button">Following action</button>
-    <ConnectorApprovalDialog />
-    <div className="mt-4">
-      <NotificationErrorBoundary surface="center">
-        <BrokenSurface />
-      </NotificationErrorBoundary>
-    </div>
-  </main>
-)
+void localeReady.then(() => {
+  createRoot(document.getElementById('root')!).render(
+    <main className="min-h-screen bg-bg-000 p-4 text-text-000">
+      <h1>Notification quality fixture</h1>
+      <NotificationBell />
+      <button type="button">Following action</button>
+      <ConnectorApprovalDialog />
+      <div className="mt-4">
+        <NotificationErrorBoundary surface="center">
+          <BrokenSurface />
+        </NotificationErrorBoundary>
+      </div>
+    </main>
+  )
+})
