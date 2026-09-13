@@ -44,6 +44,25 @@ const dependencyBlock = compact(
 )
 
 describe('production application command wiring', () => {
+  it('returns Office preview cleanup to its scoped afterAcp installation', () => {
+    const phase = compact(
+      between(
+        ipcSource,
+        'surfaceAdapters = afterAcpAdapters',
+        "declareElectronAdapter('notebook-environment'"
+      )
+    )
+    expect(phase).toContain(
+      "declareElectronAdapter('office-preview', () => registerOfficePreviewIpcHandlers(officePreviewSupervisor) )"
+    )
+    expect(
+      occurrences(ipcSource, 'registerOfficePreviewIpcHandlers(officePreviewSupervisor)')
+    ).toBe(1)
+    expect(phase.indexOf("declareElectronAdapter('office-preview-runtime'")).toBeLessThan(
+      phase.indexOf("declareElectronAdapter('office-preview',")
+    )
+  })
+
   it('installs Settings once with shared owners before Notebook in afterAcp', () => {
     const phase = compact(
       between(

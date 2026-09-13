@@ -1093,7 +1093,13 @@
           "src/main/logs-ipc.test.ts",
           "src/main/github-ipc.test.ts",
           "src/main/cli-install/ipc.test.ts",
-          "src/main/window-ipc.test.ts"
+          "src/main/window-ipc.test.ts",
+          "src/main/office-preview/office-preview-electron.test.ts",
+          "src/main/office-preview/office-preview-ipc-lifecycle.test.ts",
+          "src/main/office-preview/office-preview-ipc.test.ts",
+          "src/main/office-preview/office-preview-navigation.test.ts",
+          "src/main/office-preview/office-preview-oopif-supervisor.test.ts",
+          "src/main/office-preview/office-preview-runtime-protocol.test.ts"
         ],
         "consumer": [
           "src/main/application-runtime.test.ts",

@@ -40,7 +40,7 @@ const createSupervisor = (): TestSupervisor => ({
   attachFrame: vi.fn(),
   reportState: vi.fn(),
   close: vi.fn(),
-  closeOwner: vi.fn()
+  closeOwner: vi.fn(async () => {})
 })
 
 describe('registerOfficePreviewIpcHandlers', () => {
