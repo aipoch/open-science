@@ -2,21 +2,11 @@ import { ErrorNotice } from '@/components/error-notice'
 import { LoaderCircle, SearchX, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertDialog } from 'radix-ui'
 
 import type { CustomServerView } from '../../../../shared/settings'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  dialogBodyClassName,
-  dialogCancelButtonClassName,
-  dialogDescriptionClassName,
-  dialogFooterClassName,
-  dialogHeaderClassName,
-  dialogOverlayClassName,
-  dialogPanelClassName,
-  dialogTitleClassName
-} from '@/components/ui/dialog-chrome'
+import { BatchManageLayout, BatchManageReview } from './BatchManageLayout'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { SpecialistListItem } from '../../../../shared/specialist'
@@ -136,6 +126,7 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
   )
 
   const toggleSelected = (id: string): void => {
+    if (operationRef.current || deleteOpen) return
     setSelectedIds((current) => {
       const next = new Set(current)
       if (next.has(id)) next.delete(id)
@@ -144,6 +135,7 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
     })
   }
   const toggleAllResults = (): void => {
+    if (operationRef.current || deleteOpen) return
     setSelectedIds((current) => {
       const next = new Set(current)
       for (const id of resultIds) {
@@ -342,18 +334,19 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
     )
 
   return (
-    <div className="p-5">
-      <p className="text-[13px] leading-5 text-muted-foreground">
-        {t(
-          'Changes to Main Agent availability are saved for future sessions. Specialist assignments and approval settings are unchanged.'
-        )}
-      </p>
-
-      <div className="sticky top-0 z-10 -mx-5 mt-4 bg-card px-5 py-3">
-        <div className="flex flex-wrap items-center gap-2">
+    <BatchManageLayout
+      description={
+        <>
+          {t(
+            'Changes to Main Agent availability are saved for future sessions. Specialist assignments and approval settings are unchanged.'
+          )}
+        </>
+      }
+      filters={
+        <>
           <Select
             value={groupFilter}
-            disabled={busy}
+            disabled={busy || deleteOpen}
             onValueChange={(value) => {
               setGroupFilter(value as GroupFilter)
               setShowSelectedOnly(false)
@@ -371,7 +364,7 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
           </Select>
           <Select
             value={statusFilter}
-            disabled={busy}
+            disabled={busy || deleteOpen}
             onValueChange={(value) => {
               setStatusFilter(value as StatusFilter)
               setShowSelectedOnly(false)
@@ -393,177 +386,261 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
             aria-label={t('Search manageable connectors')}
             placeholder={t('Search connectors…')}
             value={query}
-            disabled={busy}
+            disabled={busy || deleteOpen}
             onChange={(event) => {
               setQuery(event.target.value)
               setShowSelectedOnly(false)
             }}
-            containerClassName="min-w-48"
+            containerClassName="min-w-0 basis-full"
           />
-        </div>
-
-        <div
-          role="group"
-          aria-label={t('Bulk Connector controls')}
-          className="mt-3 flex min-h-9 flex-wrap items-center gap-1.5"
-        >
-          <label className="flex min-h-9 items-center gap-1.5 pr-2 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11">
-            <input
-              type="checkbox"
-              aria-label={t('Select all results')}
-              checked={allResultsSelected}
-              onChange={toggleAllResults}
-              disabled={busy || resultIds.length === 0}
-              className="size-4 shrink-0"
-            />
-            {t('Select all results')}
-          </label>
-          <span className="mr-1 text-xs tabular-nums text-muted-foreground">
-            {t('{{selectedCount}} selected', { selectedCount: validSelectedIds.size })}
-          </span>
+        </>
+      }
+      controlsLabel={t('Bulk Connector controls')}
+      visibleCount={visible.length}
+      visibleSelectedCount={visible.filter((item) => validSelectedIds.has(item.id)).length}
+      selectedCount={validSelectedIds.size}
+      selectedOnly={showSelectedOnly}
+      busy={busy}
+      onToggleAll={toggleAllResults}
+      onToggleSelectedOnly={() => setShowSelectedOnly((current) => !current)}
+      onClear={clearSelection}
+      actions={
+        <>
           <Button
             type="button"
-            variant={showSelectedOnly ? 'secondary' : 'ghost'}
+            variant="outline"
             size="sm"
-            aria-pressed={showSelectedOnly}
-            onClick={() => setShowSelectedOnly((current) => !current)}
+            onClick={() => void updateSelected(true)}
             disabled={busy || validSelectedIds.size === 0}
           >
-            {t('Selected ({{selectedCount}})', { selectedCount: validSelectedIds.size })}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={clearSelection}
-            disabled={busy || validSelectedIds.size === 0}
-          >
-            {t('Clear selection')}
-          </Button>
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void updateSelected(true)}
-              disabled={busy || validSelectedIds.size === 0}
-            >
-              {pendingEnabled === true ? (
-                <>
-                  <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />
-                  {t('Enabling…')}
-                </>
-              ) : (
-                t('Enable selected ({{selectedCount}})', {
-                  selectedCount: validSelectedIds.size
-                })
-              )}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void updateSelected(false)}
-              disabled={busy || validSelectedIds.size === 0}
-            >
-              {pendingEnabled === false ? (
-                <>
-                  <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />
-                  {t('Disabling…')}
-                </>
-              ) : (
-                t('Disable selected ({{selectedCount}})', {
-                  selectedCount: validSelectedIds.size
-                })
-              )}
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              onClick={() => void previewDeletion()}
-              disabled={busy || validSelectedIds.size === 0}
-            >
-              <Trash2 aria-hidden="true" />
-              {t('Delete selected ({{selectedCount}})', {
+            {pendingEnabled === true ? (
+              <>
+                <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />
+                {t('Enabling…')}
+              </>
+            ) : (
+              t('Enable selected ({{selectedCount}})', {
                 selectedCount: validSelectedIds.size
-              })}
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {bulkResult ? (
-        <p
-          role="status"
-          className="mt-3 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-foreground"
-        >
-          {bulkResult}
-        </p>
-      ) : null}
-
-      {incompleteDeletions.length > 0 ? (
-        <ErrorNotice
-          role="alert"
-          tone="amber"
-          className="mt-3"
-          description={t(
-            'Deletion or cleanup did not finish for: {{names}}. Retry cleanup; any remaining configurations require a new deletion confirmation.',
-            { names: incompleteDeletions.map((item) => item.displayName).join(', ') }
-          )}
-          primaryButton={{
-            label: t('Retry cleanup'),
-            onClick: () => void retryCleanup(),
-            disabled: busy,
-            loading: deleteBusy
-          }}
-        />
-      ) : null}
-
-      {bulkError ? (
-        <ErrorNotice role="alert" tone="amber" className="mt-3" description={bulkError} />
-      ) : null}
-
+              })
+            )}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void updateSelected(false)}
+            disabled={busy || validSelectedIds.size === 0}
+          >
+            {pendingEnabled === false ? (
+              <>
+                <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />
+                {t('Disabling…')}
+              </>
+            ) : (
+              t('Disable selected ({{selectedCount}})', {
+                selectedCount: validSelectedIds.size
+              })
+            )}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            data-batch-delete-trigger
+            className="text-destructive hover:text-destructive"
+            size="sm"
+            onClick={() => void previewDeletion()}
+            disabled={busy || validSelectedIds.size === 0}
+          >
+            {checkingDeletion ? (
+              <LoaderCircle
+                className="size-4 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : (
+              <Trash2 aria-hidden="true" />
+            )}
+            {t('Delete selected ({{selectedCount}})', {
+              selectedCount: validSelectedIds.size
+            })}
+          </Button>
+        </>
+      }
+      feedback={
+        bulkError || bulkResult || incompleteDeletions.length > 0 ? (
+          <>
+            {bulkResult ? (
+              <p role="status" className="text-sm font-medium text-foreground">
+                {bulkResult}
+              </p>
+            ) : null}
+            {incompleteDeletions.length > 0 ? (
+              <ErrorNotice
+                role="alert"
+                tone="amber"
+                description={t(
+                  'Deletion or cleanup did not finish for: {{names}}. Retry cleanup; any remaining configurations require a new deletion confirmation.',
+                  { names: incompleteDeletions.map((item) => item.displayName).join(', ') }
+                )}
+                primaryButton={{
+                  label: t('Retry cleanup'),
+                  onClick: () => void retryCleanup(),
+                  disabled: busy || deleteOpen,
+                  loading: deleteBusy
+                }}
+              />
+            ) : null}
+            {bulkError ? <ErrorNotice role="alert" tone="amber" description={bulkError} /> : null}
+          </>
+        ) : undefined
+      }
+      onDone={
+        bulkError || bulkResult
+          ? () => {
+              setBulkError(undefined)
+              setBulkResult(undefined)
+            }
+          : undefined
+      }
+      review={
+        deleteOpen ? (
+          <BatchManageReview
+            title={t('Delete selected Connectors?')}
+            description={
+              <p
+                data-slot="connector-bulk-delete-description"
+                className="text-xs leading-5 text-muted-foreground"
+              >
+                {t(
+                  'Selected custom Connector configurations will be removed from this device. Shared credentials are kept.'
+                )}
+              </p>
+            }
+            summary={
+              <>
+                <h3
+                  data-slot="connector-bulk-delete-primary-summary"
+                  className="text-sm font-medium leading-5 text-foreground"
+                >
+                  {t('{{count}} selected Connectors can be deleted.', {
+                    count: deletableConnectors.length,
+                    defaultValue_one: '{{count}} selected Connector can be deleted.'
+                  })}
+                </h3>
+                {protectedConnectors.length > 0 ? (
+                  <h3
+                    data-slot="connector-bulk-delete-protected-summary"
+                    className="text-sm font-medium leading-5 text-foreground"
+                  >
+                    {t('{{count}} protected Connectors will be kept.', {
+                      count: protectedConnectors.length,
+                      defaultValue_one: '{{count}} protected Connector will be kept.'
+                    })}
+                  </h3>
+                ) : null}
+              </>
+            }
+            details={
+              <>
+                {deletableConnectors.length > 0 ? (
+                  <ul
+                    data-slot="connector-bulk-delete-deletable-list"
+                    className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground"
+                  >
+                    {deletableConnectors.map(({ connector }) => (
+                      <li key={connector.id} className="break-words">
+                        {connector.displayName}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {protectedConnectors.length > 0 ? (
+                  <ul
+                    data-slot="connector-bulk-delete-protected-list"
+                    className="mt-2 space-y-2 text-xs leading-5"
+                  >
+                    {protectedConnectors.map(({ connector, usages }) => (
+                      <li key={connector.id}>
+                        <p className="break-words text-foreground">{connector.displayName}</p>
+                        <p className="text-muted-foreground">
+                          {connector.custom ? t('Used by a Specialist.') : t('Built-in Connector.')}
+                          {usages.length > 0
+                            ? ` ${usages.map((item) => item.name).join(', ')}`
+                            : ''}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </>
+            }
+            busy={busy}
+            onCancel={() => setDeleteOpen(false)}
+            actions={
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                disabled={busy || deletableConnectors.length === 0}
+                onClick={(event) => {
+                  event.preventDefault()
+                  void deleteSelected()
+                }}
+              >
+                {deleteBusy ? (
+                  <>
+                    <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />
+                    {t('Deleting…')}
+                  </>
+                ) : (
+                  t('Delete {{count}} Connectors', {
+                    count: deletableConnectors.length,
+                    defaultValue_one: 'Delete {{count}} Connector'
+                  })
+                )}
+              </Button>
+            }
+          />
+        ) : undefined
+      }
+    >
       {visible.length > 0 ? (
         <ul className="mt-3 flex flex-col">
           {visible.map((connector) => (
-            <li
-              key={connector.id}
-              data-slot="bulk-connector-row"
-              className="flex min-h-14 items-center gap-3 py-2.5"
-            >
-              <span className="flex size-4 shrink-0 items-center justify-center [@media(pointer:coarse)]:size-11">
-                <input
-                  type="checkbox"
-                  aria-label={t('Select {{name}}', { name: connector.displayName })}
-                  checked={validSelectedIds.has(connector.id)}
-                  onChange={() => toggleSelected(connector.id)}
-                  disabled={busy}
-                  className="size-4 shrink-0"
-                />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm text-foreground">
-                  {connector.displayName}
+            <li key={connector.id} data-slot="bulk-connector-row" className="min-w-0">
+              <label className="flex min-h-14 min-w-0 cursor-pointer items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-ring has-[:disabled]:cursor-default has-[:disabled]:opacity-60 [@media(hover:hover)]:hover:bg-muted/60">
+                <span className="flex size-4 shrink-0 items-center justify-center [@media(pointer:coarse)]:size-11">
+                  <input
+                    type="checkbox"
+                    aria-label={t('Select {{name}}', { name: connector.displayName })}
+                    checked={validSelectedIds.has(connector.id)}
+                    onChange={() => toggleSelected(connector.id)}
+                    disabled={busy || deleteOpen}
+                    className="size-4 shrink-0 accent-primary"
+                  />
                 </span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {connector.description}
-                </span>
-                {connector.custom && cannotEnableCustomServer(connector.custom) ? (
-                  <span className="block text-xs text-muted-foreground">
-                    {t('Sign in or configure credentials before enabling this Connector.')}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-foreground">
+                    {connector.displayName}
                   </span>
-                ) : null}
-              </span>
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {t(GROUP_LABEL_KEYS[connector.group])}
-              </span>
-              <Badge
-                variant={connector.enabled ? 'secondary' : 'outline'}
-                data-connector-status={connector.enabled ? 'enabled' : 'disabled'}
-              >
-                {connector.enabled ? t('Enabled') : t('Disabled')}
-              </Badge>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {connector.description}
+                  </span>
+                  {connector.custom && cannotEnableCustomServer(connector.custom) ? (
+                    <span className="block text-xs text-muted-foreground">
+                      {t('Sign in or configure credentials before enabling this Connector.')}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="hidden shrink-0 text-xs text-muted-foreground sm:block">
+                  {t(GROUP_LABEL_KEYS[connector.group])}
+                </span>
+                <Badge
+                  variant={connector.enabled ? 'secondary' : 'outline'}
+                  data-connector-status={connector.enabled ? 'enabled' : 'disabled'}
+                >
+                  {connector.enabled ? t('Enabled') : t('Disabled')}
+                </Badge>
+              </label>
             </li>
           ))}
         </ul>
@@ -583,142 +660,14 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
               variant="outline"
               size="sm"
               onClick={resetFilters}
-              disabled={busy}
+              disabled={busy || deleteOpen}
             >
               {t('Show all manageable Connectors')}
             </Button>
           ) : null}
         </div>
       )}
-
-      <AlertDialog.Root
-        open={deleteOpen}
-        onOpenChange={(nextOpen) => {
-          if (!operationRef.current) setDeleteOpen(nextOpen)
-        }}
-      >
-        <AlertDialog.Portal>
-          <AlertDialog.Overlay className={dialogOverlayClassName} />
-          <AlertDialog.Content
-            className={dialogPanelClassName('w-[min(520px,calc(100vw-2rem))] max-h-[85vh] p-0')}
-          >
-            <div data-slot="connector-bulk-delete-header" className={dialogHeaderClassName}>
-              <AlertDialog.Title className={dialogTitleClassName}>
-                {t('Delete selected Connectors?')}
-              </AlertDialog.Title>
-            </div>
-
-            <div className={`${dialogBodyClassName} max-h-[55vh] overflow-y-auto`}>
-              <AlertDialog.Description
-                data-slot="connector-bulk-delete-description"
-                className={dialogDescriptionClassName}
-              >
-                {t(
-                  'Selected custom Connector configurations will be removed from this device. Shared credentials are kept.'
-                )}
-              </AlertDialog.Description>
-
-              <div className="mt-5 space-y-5">
-                <section>
-                  <h3
-                    data-slot="connector-bulk-delete-primary-summary"
-                    className="text-base font-semibold leading-6 text-foreground"
-                  >
-                    {t('{{count}} selected Connectors can be deleted.', {
-                      count: deletableConnectors.length,
-                      defaultValue_one: '{{count}} selected Connector can be deleted.'
-                    })}
-                  </h3>
-                  {deletableConnectors.length > 0 ? (
-                    <ul
-                      data-slot="connector-bulk-delete-deletable-list"
-                      className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground"
-                    >
-                      {deletableConnectors.map(({ connector }) => (
-                        <li key={connector.id} className="truncate">
-                          {connector.displayName}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </section>
-
-                {protectedConnectors.length > 0 ? (
-                  <section data-slot="connector-bulk-delete-protected-section">
-                    <h3
-                      data-slot="connector-bulk-delete-protected-summary"
-                      className="text-base font-semibold leading-6 text-foreground"
-                    >
-                      {t('{{count}} protected Connectors will be kept.', {
-                        count: protectedConnectors.length,
-                        defaultValue_one: '{{count}} protected Connector will be kept.'
-                      })}
-                    </h3>
-                    <ul
-                      data-slot="connector-bulk-delete-protected-list"
-                      className="mt-2 space-y-2 text-xs leading-5"
-                    >
-                      {protectedConnectors.map(({ connector, usages }) => (
-                        <li key={connector.id}>
-                          <p className="truncate text-foreground">{connector.displayName}</p>
-                          <p className="text-muted-foreground">
-                            {connector.custom
-                              ? t('Used by a Specialist.')
-                              : t('Built-in Connector.')}
-                            {usages.length > 0
-                              ? ` ${usages.map((item) => item.name).join(', ')}`
-                              : ''}
-                          </p>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                ) : null}
-              </div>
-            </div>
-
-            <div className={dialogFooterClassName}>
-              <AlertDialog.Cancel asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className={dialogCancelButtonClassName}
-                  disabled={busy}
-                >
-                  {t('Cancel')}
-                </Button>
-              </AlertDialog.Cancel>
-              <AlertDialog.Action asChild>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  disabled={busy || deletableConnectors.length === 0}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    void deleteSelected()
-                  }}
-                >
-                  {deleteBusy ? (
-                    <>
-                      <LoaderCircle
-                        className="animate-spin motion-reduce:animate-none"
-                        aria-hidden
-                      />
-                      {t('Deleting…')}
-                    </>
-                  ) : (
-                    t('Delete {{count}} Connectors', {
-                      count: deletableConnectors.length,
-                      defaultValue_one: 'Delete {{count}} Connector'
-                    })
-                  )}
-                </Button>
-              </AlertDialog.Action>
-            </div>
-          </AlertDialog.Content>
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
-    </div>
+    </BatchManageLayout>
   )
 }
 

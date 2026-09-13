@@ -3626,6 +3626,13 @@ describe('SettingsPage layout', () => {
     await act(async () => manage?.click())
     expect(document.body.textContent).toContain('Manage connectors')
     expect(document.body.querySelector('[aria-label="Bulk Connector controls"]')).not.toBeNull()
+    const layout = document.body.querySelector('[data-slot="batch-manage-layout"]')
+    expect(
+      layout
+        ?.closest('[data-slot="settings-content-scroll"]')
+        ?.firstElementChild?.classList.contains('h-full')
+    ).toBe(true)
+    expect(document.body.querySelector('[data-slot="batch-manage-dock"]')).toBeNull()
     const crumb = document.body.querySelector<HTMLButtonElement>(
       '[aria-label="Back to connectors"]'
     )
@@ -3633,6 +3640,51 @@ describe('SettingsPage layout', () => {
     await act(async () => crumb?.click())
     expect(document.body.querySelector('[aria-label="Bulk Connector controls"]')).toBeNull()
     expect(document.body.querySelector('[data-slot="connectors-action-bar"]')).not.toBeNull()
+  })
+
+  it('cancels inline Skill removal with Escape without closing Settings', async () => {
+    vi.mocked(window.api.settings.listSkills).mockResolvedValue([
+      {
+        id: 'personal-test',
+        name: 'Test skill',
+        displayName: 'Test skill',
+        description: 'Test',
+        source: 'personal',
+        enabled: true,
+        updatedAt: '2026-09-13T00:00:00Z'
+      }
+    ])
+    const onClose = vi.fn()
+    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+    await act(async () => navButton('Skills')?.click())
+    const clickText = async (label: string): Promise<void> => {
+      const button = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (item) => item.textContent?.trim() === label
+      )!
+      expect(button).toBeDefined()
+      await act(async () => button.click())
+    }
+    await clickText('Manage')
+    const layout = document.body.querySelector('[data-slot="batch-manage-layout"]')!
+    expect(
+      layout
+        .closest('[data-slot="settings-content-scroll"]')
+        ?.firstElementChild?.classList.contains('h-full')
+    ).toBe(true)
+    await act(async () =>
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Test skill"]')!.click()
+    )
+    await clickText('Delete selected (1)')
+    const title = document.body.querySelector<HTMLElement>('[data-slot="batch-review-title"]')!
+    expect(document.activeElement).toBe(title)
+    await act(async () =>
+      title.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    )
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[data-slot="batch-manage-review"]')).toBeNull()
+    expect(document.activeElement).toBe(document.body.querySelector('[data-batch-delete-trigger]'))
   })
 
   it('integrates batch mode with Marketplace breadcrumbs and shared Back/Forward history', async () => {

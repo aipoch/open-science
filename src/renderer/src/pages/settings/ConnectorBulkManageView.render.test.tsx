@@ -193,7 +193,7 @@ describe('ConnectorBulkManageView', () => {
     expect(rows()).toHaveLength(2)
     // Select all in selected-only mode acts on those visible rows, not a hidden old search.
     select('Select all results')
-    expect(button('Selected (0)').disabled).toBe(true)
+    expect(document.body.querySelectorAll('input[type="checkbox"]:checked')).toHaveLength(0)
   })
 
   it('disables mixed resources and enables eligible targets without changing approvals', async () => {
@@ -264,7 +264,7 @@ describe('ConnectorBulkManageView', () => {
     select('Select all results')
     await act(async () => button('Delete selected (4)').click())
     expect(window.api.specialist.list).toHaveBeenCalledTimes(1)
-    const dialog = document.body.querySelector('[role="alertdialog"]')
+    const dialog = document.body.querySelector('[data-slot="batch-manage-review"]')
     expect(dialog?.textContent).toContain('3 protected Connectors will be kept.')
     expect(dialog?.textContent).toContain('Researcher')
     expect(useSettingsStore.getState().removeCustomServer).not.toHaveBeenCalled()
@@ -308,7 +308,7 @@ describe('ConnectorBulkManageView', () => {
       await render()
       select('Select Local tools')
       await act(async () => button('Delete selected (1)').click())
-      expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+      expect(document.body.querySelector('[data-slot="batch-manage-review"]')).toBeNull()
       expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
         'Could not check Specialist usage'
       )
@@ -337,10 +337,22 @@ describe('ConnectorBulkManageView', () => {
     expect(document.body.textContent).toContain(
       'Deletion or cleanup did not finish for: Local tools'
     )
-    expect(button('Selected (0)').disabled).toBe(true)
+    expect(document.body.querySelectorAll('input[type="checkbox"]:checked')).toHaveLength(0)
     await act(async () => button('Retry cleanup').click())
     expect(remove).toHaveBeenNthCalledWith(2, 'local')
     expect(document.body.textContent).not.toContain('Deletion or cleanup did not finish')
+  })
+
+  it('restores focus to Done and then search when deleting leaves an empty selected-only list', async () => {
+    await render()
+    select('Select Local tools')
+    await act(async () => button('Delete selected (1)').click())
+    await act(async () => button('Delete 1 Connector').click())
+    expect(rows()).toHaveLength(0)
+    expect(document.activeElement).toBe(button('Done'))
+    await act(async () => button('Done').click())
+    expect(document.activeElement?.matches(':enabled')).toBe(true)
+    expect(document.activeElement?.closest('[data-slot="batch-manage-scroll"]')).not.toBeNull()
   })
 
   it('does not use cleanup retry to delete a surviving or recreated configuration', async () => {

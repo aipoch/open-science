@@ -184,13 +184,9 @@ describe('SkillBulkManageView', () => {
     act(() =>
       document.body.querySelector<HTMLInputElement>('[aria-label="Select all results"]')?.click()
     )
-    expect(document.body.textContent).toContain('1 selected')
-    expect(document.body.textContent).toContain('Team')
-    expect(document.body.textContent).not.toContain('Mine')
-
-    act(() => button('Clear selection')?.click())
-    expect(document.body.textContent).toContain('0 selected')
-    expect(button('Selected (0)')?.hasAttribute('disabled')).toBe(true)
+    expect(document.body.querySelectorAll('input[type="checkbox"]:checked')).toHaveLength(0)
+    expect(document.body.querySelector('[data-slot="batch-manage-dock"]')).toBeNull()
+    expect(document.body.textContent).toContain('No Skills are selected.')
   })
 
   it('keeps the selection and reports which bulk action failed', async () => {
@@ -210,6 +206,46 @@ describe('SkillBulkManageView', () => {
     ).toBe(true)
   })
 
+  it('selects from the whole row and locks filters while deduplicating a pending write', async () => {
+    let finish!: () => void
+    const update = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    useSettingsStore.setState({ setSkillsEnabled: update })
+    act(() => root.render(<SkillBulkManageView />))
+    const label = document.body.querySelector<HTMLLabelElement>(
+      '[data-slot="bulk-skill-row"] label'
+    )!
+    act(() => label.click())
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Team"]')?.checked
+    ).toBe(true)
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select all results"]')
+        ?.indeterminate
+    ).toBe(true)
+    const enable = button('Enable selected (1)')!
+    await act(async () => {
+      enable.click()
+      enable.click()
+    })
+    expect(update).toHaveBeenCalledExactlyOnceWith(['imported-team'], true)
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Search manageable skills"]')
+        ?.disabled
+    ).toBe(true)
+    expect(
+      document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Filter manageable skills by source"]'
+      )?.disabled
+    ).toBe(true)
+    await act(async () => finish())
+    expect(document.body.textContent).toContain('Updated: 1 / 1')
+  })
+
   it('deletes every selected manageable Skill after confirmation', async () => {
     act(() => root.render(<SkillBulkManageView />))
     act(() =>
@@ -217,7 +253,7 @@ describe('SkillBulkManageView', () => {
     )
 
     act(() => button('Delete selected (2)')?.click())
-    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(
+    expect(document.body.querySelector('[data-slot="batch-manage-review"]')?.textContent).toContain(
       '2 selected Skills can be deleted.'
     )
 
@@ -270,7 +306,7 @@ describe('SkillBulkManageView', () => {
     )
 
     act(() => button('Delete selected (2)')?.click())
-    const dialog = document.body.querySelector('[role="alertdialog"]')
+    const dialog = document.body.querySelector('[data-slot="batch-manage-review"]')
     expect(dialog?.textContent).toContain('1 selected Skill can be deleted.')
     expect(dialog?.textContent).toContain('1 protected Skill will be kept.')
     expect(dialog?.textContent).toContain('Research Specialist')
@@ -290,7 +326,7 @@ describe('SkillBulkManageView', () => {
     ).toBe(true)
   })
 
-  it('uses the project dialog hierarchy for a protected-only deletion impact', () => {
+  it('shows protected-only deletion impact in the dock with expandable details', () => {
     useSpecialistStore.setState({
       items: [
         {
@@ -316,8 +352,8 @@ describe('SkillBulkManageView', () => {
     act(() => document.body.querySelector<HTMLInputElement>('[aria-label="Select Mine"]')?.click())
     act(() => button('Delete selected (1)')?.click())
 
-    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
-    const header = dialog?.querySelector<HTMLElement>('[data-slot="skill-bulk-delete-header"]')
+    const dialog = document.body.querySelector<HTMLElement>('[data-slot="batch-manage-review"]')
+    const header = dialog?.querySelector<HTMLElement>('[data-slot="batch-review-title"]')
     const description = dialog?.querySelector<HTMLElement>(
       '[data-slot="skill-bulk-delete-description"]'
     )
@@ -337,9 +373,9 @@ describe('SkillBulkManageView', () => {
       'Deleted Skills are removed from this device and cannot be recovered.'
     )
     expect(primarySummary?.textContent).toBe('0 selected Skills can be deleted.')
-    expect(primarySummary?.className).toContain('text-base')
+    expect(primarySummary?.className).toContain('text-sm')
     expect(dialog?.textContent).not.toContain('No selected Skills can be deleted.')
-    expect(protectedSummary?.className).toContain('text-base')
+    expect(protectedSummary?.className).toContain('text-sm')
     expect(protectedSummary?.className).toBe(primarySummary?.className)
     expect(protectedList?.className).toContain('text-xs')
     expect(protectedList?.textContent).toContain('Mine')

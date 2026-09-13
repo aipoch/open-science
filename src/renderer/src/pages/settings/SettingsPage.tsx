@@ -1149,7 +1149,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             // Radix observes Escape in capture, before the inline review can cancel itself.
             if (
               event.target instanceof Element &&
-              event.target.closest('[data-slot="skill-marketplace-batch-review"]')
+              event.target.closest(
+                '[data-slot="skill-marketplace-batch-review"], [data-slot="batch-manage-review"]'
+              )
             ) {
               event.preventDefault()
               return
@@ -1458,7 +1460,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     : 'max-w-[880px]',
                   activePanel === 'memory' ||
                     activePanel === 'tags' ||
-                    (activePanel === 'skills' && skillsView.kind === 'marketplace-batch')
+                    (activePanel === 'skills' &&
+                      (skillsView.kind === 'marketplace-batch' || skillsView.kind === 'manage')) ||
+                    (activePanel === 'connectors' && connectorsView.kind === 'manage')
                     ? 'h-full'
                     : 'min-h-full'
                 )}
