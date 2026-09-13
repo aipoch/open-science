@@ -199,8 +199,11 @@ it('serializes real kernels, TCP servers, and integration files', () => {
   expect(processProject.maxWorkers).toBe(1)
 })
 
-it('runs the migration ledger smoke after other schema-using projects', () => {
-  expect(VITEST_DATABASE_TEST_GLOBS).toEqual(['scripts/database-migration-ledger-smoke.test.ts'])
+it('serializes migration and Session package round trips after other schema-using projects', () => {
+  expect(VITEST_DATABASE_TEST_GLOBS).toEqual([
+    'scripts/database-migration-ledger-smoke.test.ts',
+    'src/main/session-package/service.test.ts'
+  ])
   const database = projectByName('database')
   expect(database.include).toEqual([...VITEST_DATABASE_TEST_GLOBS])
   expect(database.isolate).toBe(true)
