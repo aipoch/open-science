@@ -321,7 +321,7 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(rail.style.top).toBe('440px')
   })
 
-  it('keeps fixed spacing and follows transcript progress only beyond the visible rail edges', async () => {
+  it('bounds dense spacing and follows transcript progress only beyond the visible rail edges', async () => {
     const items = Array.from({ length: 60 }, (_, index) => {
       const id = `prompt-${index}`
       appendMessageTarget(viewport, id, 100 + index * 100)
@@ -333,9 +333,9 @@ describe('WorkspaceRunMarks interaction', () => {
     const rail = screen.getByRole('list')
     Object.defineProperties(rail, {
       clientHeight: { value: 480 },
-      scrollHeight: { value: 1_200 }
+      scrollHeight: { value: 720 }
     })
-    expect(rail.style.gridAutoRows).toBe('20px')
+    expect(rail.style.gridTemplateRows).toBe('repeat(60, minmax(12px, 1fr))')
     expect(rail.style.height).toBe('480px')
     expect(rail.className).toContain('overflow-hidden')
 
@@ -348,18 +348,18 @@ describe('WorkspaceRunMarks interaction', () => {
     }
     await scrollTranscript(1_000)
     expect(rail.scrollTop).toBe(0)
-    await scrollTranscript(2_300)
-    expect(rail.scrollTop).toBeCloseTo(26.4)
-    await scrollTranscript(2_350)
-    expect(rail.scrollTop).toBeCloseTo(36.4)
-    await scrollTranscript(2_300)
-    expect(rail.scrollTop).toBeCloseTo(36.4)
+    await scrollTranscript(3_900)
+    expect(rail.scrollTop).toBeCloseTo(15.84)
+    await scrollTranscript(3_950)
+    expect(rail.scrollTop).toBeCloseTo(21.84)
+    await scrollTranscript(3_900)
+    expect(rail.scrollTop).toBeCloseTo(21.84)
     await scrollTranscript(100)
-    expect(rail.scrollTop).toBeCloseTo(6.4)
+    expect(rail.scrollTop).toBeCloseTo(3.84)
     await scrollTranscript(0)
     expect(rail.scrollTop).toBe(0)
     await scrollTranscript(5_900)
-    expect(rail.scrollTop).toBe(720)
+    expect(rail.scrollTop).toBe(240)
   })
 
   it('shows the user message and first explicitly linked Agent message on keyboard focus', async () => {

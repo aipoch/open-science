@@ -5,16 +5,19 @@ test('shows four runs, hides three, and previews the hovered message', async ({
 }, testInfo) => {
   await page.goto('/run-marks.html?count=3')
   await expect(page.getByRole('navigation', { name: 'Run marks' })).toHaveCount(0)
-  await page.screenshot({ path: testInfo.outputPath('three-runs.png') })
+  await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('three-runs.png') })
   await page.goto('/run-marks.html?count=4')
   const marks = page.getByRole('button', { name: /Go to run/ })
   await expect(marks).toHaveCount(4)
   await marks.nth(2).hover()
   await expect(page.getByRole('tooltip')).toContainText('3. Compare the RNA family')
-  await page.screenshot({ path: testInfo.outputPath('four-runs-hover.png') })
+  await page.screenshot({
+    animations: 'disabled',
+    path: testInfo.outputPath('four-runs-hover.png')
+  })
 })
 
-test('follows transcript reading at both edges without compressing or independently scrolling', async ({
+test('follows transcript reading at both edges with bounded spacing and no independent scrolling', async ({
   page
 }, testInfo) => {
   await page.goto('/run-marks.html')
@@ -26,7 +29,7 @@ test('follows transcript reading at both edges without compressing or independen
     marks.evaluateAll(
       (buttons) => buttons[1].getBoundingClientRect().top - buttons[0].getBoundingClientRect().top
     )
-  expect(await pitch()).toBe(20)
+  expect(await pitch()).toBe(12)
   const railTop = (): Promise<number> => rail.evaluate((el) => el.scrollTop)
   const readRun = async (index: number, extra = 0): Promise<void> => {
     await conversation.evaluate(
@@ -40,16 +43,19 @@ test('follows transcript reading at both edges without compressing or independen
   await readRun(10)
   await expect(marks.nth(10)).toHaveAttribute('aria-current', 'location')
   expect(await railTop()).toBe(0)
-  await readRun(30)
-  await expect.poll(railTop).toBeGreaterThan(150)
+  await readRun(45)
+  await expect.poll(railTop).toBeGreaterThan(60)
   const before = await railTop()
-  await readRun(30, 60)
+  await readRun(45, 60)
   await expect.poll(railTop).toBeGreaterThan(before)
-  expect((await railTop()) - before).toBeLessThan(20)
-  expect(await pitch()).toBe(20)
-  await marks.nth(30).hover()
-  await expect(page.getByRole('tooltip')).toContainText('31. Compare')
-  await page.screenshot({ path: testInfo.outputPath('long-conversation-hover.png') })
+  expect((await railTop()) - before).toBeLessThan(12)
+  expect(await pitch()).toBe(12)
+  await marks.nth(45).hover()
+  await expect(page.getByRole('tooltip')).toContainText('46. Compare')
+  await page.screenshot({
+    animations: 'disabled',
+    path: testInfo.outputPath('long-conversation-hover.png')
+  })
   const stationaryTop = await railTop()
   await page.mouse.wheel(0, 500)
   // Wait on subsequent input processing before observing the absence of independent scrolling.
@@ -63,12 +69,12 @@ test('follows transcript reading at both edges without compressing or independen
   await expect.poll(railTop).toBeGreaterThan(stationaryTop)
   expect(await conversation.evaluate((el) => el.scrollTop)).toBe(readingTop)
   await readRun(59)
-  await expect.poll(railTop).toBe(720)
+  await expect.poll(railTop).toBe(240)
   await marks.last().focus()
   await expect(marks.last()).toBeFocused()
   await readRun(0)
   await expect.poll(railTop).toBe(0)
-  expect(await pitch()).toBe(20)
+  expect(await pitch()).toBe(12)
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await marks.nth(3).click()
   await expect(marks.nth(3)).toHaveAttribute('aria-current', 'location')
@@ -87,7 +93,21 @@ test('keeps mark spacing when the window shrinks and hides the rail on mobile', 
       .locator('li')
       .first()
       .evaluate((el) => el.getBoundingClientRect().height)
-  ).toBe(20)
+  ).toBe(12)
   await page.setViewportSize({ width: 600, height: 800 })
   await expect(rail).toBeHidden()
 })
+
+for (const [count, pitch] of [
+  [4, 20],
+  [30, 16],
+  [60, 12]
+]) {
+  test(`uses ${pitch}px spacing for ${count} messages`, async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 820 })
+    await page.goto(`/run-marks.html?count=${count}`)
+    const marks = page.getByRole('navigation', { name: 'Run marks' }).locator('li')
+    await expect(marks).toHaveCount(count)
+    expect(await marks.first().evaluate((el) => el.getBoundingClientRect().height)).toBe(pitch)
+  })
+}

@@ -592,9 +592,10 @@ colors communicate a successful or failed probe/migration result.
   scroller's left gutter. One mark belongs to the visible user Message that admitted the Run; model
   Turns inside that Run do not create marks. At rest, every mark is the same short gray segment.
   Pointer hover or keyboard focus emphasizes one mark and tapers nearby segments by distance; the
-  segments use a fixed 20px pitch with 200ms transform easing and reduced-motion support. Colors
+  segments use a 20px pitch for short lists, tightening to a minimum of 12px as the list grows,
+  with 200ms transform easing and reduced-motion support. Colors
   update immediately. The rail clips overflow at 480px (or the available window height), never
-  compresses marks, and follows transcript reading progress only when the current mark reaches a
+  compresses marks below 12px, and follows transcript reading progress only when the current mark reaches a
   visible edge. The rail does not scroll independently on wheel or touch input; keyboard focus can
   still reveal a clipped mark. Its outer frame stays fixed at the conversation panel midpoint so
   bottom approval or permission surfaces do not shift it. The current Run remains available through

@@ -28,6 +28,7 @@ const RUN_MARK_HOVER_DELAY_MS = 200
 const RUN_MARK_INLINE_OFFSET_PX = 8
 const RUN_MARK_TOP_OFFSET_PX = 8
 const RUN_MARK_ROW_SIZE_PX = 20
+const RUN_MARK_MIN_ROW_SIZE_PX = 12
 const RUN_MARK_MAX_RAIL_HEIGHT_PX = 480
 
 type RunMarkRailPosition = {
@@ -53,20 +54,27 @@ const WorkspaceRunMarks = ({
   const animationFrameRef = useRef<number | undefined>(undefined)
   const layoutAnimationFrameRef = useRef<number | undefined>(undefined)
 
-  const updateRailScroll = useCallback((position: number): void => {
-    const rail = railRef.current
-    if (!rail || rail.clientHeight === 0) return
+  const updateRailScroll = useCallback(
+    (position: number): void => {
+      const rail = railRef.current
+      if (!rail || rail.clientHeight === 0) return
 
-    // Follow reading only after its mark reaches an edge. Fractional Run progress keeps the
-    // fixed-pitch rail moving continuously with the transcript rather than jumping per message.
-    const markTop = position * RUN_MARK_ROW_SIZE_PX
-    const inset = Math.min(RUN_MARK_ROW_SIZE_PX, rail.clientHeight / 4)
-    const nextTop = Math.max(
-      markTop + RUN_MARK_ROW_SIZE_PX + inset - rail.clientHeight,
-      Math.min(rail.scrollTop, markTop - inset)
-    )
-    rail.scrollTop = Math.max(0, Math.min(nextTop, rail.scrollHeight - rail.clientHeight))
-  }, [])
+      // Match the bounded grid tracks: compact long lists, then follow reading beyond an edge.
+      // Fractional Run progress keeps movement continuous rather than jumping per message.
+      const rowSize = Math.max(
+        RUN_MARK_MIN_ROW_SIZE_PX,
+        Math.min(RUN_MARK_ROW_SIZE_PX, rail.clientHeight / marks.length)
+      )
+      const markTop = position * rowSize
+      const inset = Math.min(rowSize, rail.clientHeight / 4)
+      const nextTop = Math.max(
+        markTop + rowSize + inset - rail.clientHeight,
+        Math.min(rail.scrollTop, markTop - inset)
+      )
+      rail.scrollTop = Math.max(0, Math.min(nextTop, rail.scrollHeight - rail.clientHeight))
+    },
+    [marks.length]
+  )
 
   const updateCurrentIndex = useCallback((): void => {
     if (!viewport || marks.length === 0) return
@@ -183,7 +191,7 @@ const WorkspaceRunMarks = ({
   if (marks.length < 4 || !railPosition || typeof document === 'undefined') return null
 
   const railStyle: CSSProperties = {
-    gridAutoRows: `${RUN_MARK_ROW_SIZE_PX}px`,
+    gridTemplateRows: `repeat(${marks.length}, minmax(${RUN_MARK_MIN_ROW_SIZE_PX}px, 1fr))`,
     height: `${Math.min(marks.length * RUN_MARK_ROW_SIZE_PX, RUN_MARK_MAX_RAIL_HEIGHT_PX)}px`,
     maxHeight: 'calc(100vh - 6rem)'
   }
