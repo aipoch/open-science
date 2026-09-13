@@ -857,8 +857,7 @@ const convertCallArgs = (node: Node | null): { args: PyNode[]; keywords: PyKeywo
       continue
     }
     if (child.type === 'list_splat') {
-      const value = child.namedChildren[0]
-      if (value) args.push(convertExpr(value, 'Load'))
+      args.push(convertExpr(child, 'Load'))
       continue
     }
     args.push(convertExpr(child, 'Load'))
@@ -7346,6 +7345,111 @@ const analyzePythonFileAccessTree = (
       unsupportedExternalState = true
       return
     }
+    if (
+      ['pysam.VariantFile', 'pysam.TabixFile'].includes(canonicalName) &&
+      importedNames.has(rawName.split('.')[0]!)
+    ) {
+      const args = Array.isArray(node.args) ? node.args : []
+      const keyword = (name: string): PyNode | undefined =>
+        (node.keywords ?? []).find((entry) => entry.arg === name)?.value
+      const tabix = canonicalName === 'pysam.TabixFile'
+      const modeNode = keyword('mode') ?? args[1]
+      const mode =
+        !modeNode || (modeNode.type === 'Constant' && modeNode.value === null)
+          ? 'r'
+          : resolveStaticString(modeNode, bindings)
+      const path = keyword('filename') ?? args[0]
+      if (mode && (tabix ? mode === 'r' : ['r', 'rb'].includes(mode))) {
+        recordHtsFileAccess('read', path)
+        const index = tabix ? (keyword('index') ?? args[3]) : (keyword('index_filename') ?? args[2])
+        if (index && !(index.type === 'Constant' && index.value === null))
+          recordHtsFileAccess('read', index)
+      } else if (!tabix && mode && ['w', 'wb', 'wbu', 'wb0', 'wz', 'wz0'].includes(mode)) {
+        recordHtsFileAccess('write', path)
+      } else {
+        unresolvedReads = true
+        unresolvedWrites = true
+      }
+      unsupportedExternalState = true
+      return
+    }
+    if (canonicalName === 'muon.read_10x_h5') {
+      const args = Array.isArray(node.args) ? node.args : []
+      recordFileAccess(
+        'read',
+        (node.keywords ?? []).find((entry) => entry.arg === 'filename')?.value ?? args[0]
+      )
+      const extended =
+        (node.keywords ?? []).find((entry) => entry.arg === 'extended')?.value ?? args[1]
+      if (
+        !(extended?.type === 'Constant' && extended.value === false) ||
+        (node.keywords ?? []).some((entry) => !entry.arg)
+      ) {
+        // Extended loading discovers annotation and fragment companions.
+        unresolvedReads = true
+        unsupportedExternalState = true
+      }
+      return
+    }
+    if (canonicalName === 'muon.read_h5mu') {
+      const args = Array.isArray(node.args) ? node.args : []
+      recordFileAccess(
+        'read',
+        (node.keywords ?? []).find((keyword) => keyword.arg === 'filename')?.value ?? args[0]
+      )
+      unresolvedReads = true
+      unsupportedExternalState = true
+      return
+    }
+    if (canonicalName === 'pyfaidx.Fasta') {
+      const args = Array.isArray(node.args) ? node.args : []
+      recordFileAccess(
+        'read',
+        (node.keywords ?? []).find((entry) => entry.arg === 'filename')?.value ?? args[0]
+      )
+      // Index creation and mutable FASTA access depend on constructor options and disk state.
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      return
+    }
+    if (['wfdb.rdrecord', 'wfdb.rdann', 'wfdb.wrsamp'].includes(canonicalName)) {
+      // A record name identifies a group of header, signal and annotation files.
+      // It is not itself a filename; remote records also use the same argument.
+      if (canonicalName === 'wfdb.wrsamp') unresolvedWrites = true
+      else unresolvedReads = true
+      unsupportedExternalState = true
+      return
+    }
+    if (canonicalName === 'dask.DataFrame.to_parquet') {
+      // Building a delayed graph does not prove that its destination was written.
+      // Partition discovery, metadata and custom filesystems need runtime evidence.
+      const args = Array.isArray(node.args) ? node.args : []
+      const keyword = (name: string): PyNode | undefined =>
+        (node.keywords ?? []).find((entry) => entry.arg === name)?.value
+      const compute = keyword('compute')
+      const customFilesystem = [keyword('filesystem'), keyword('storage_options')].some(
+        (option) => option && !(option.type === 'Constant' && option.value === null)
+      )
+      const path = resolveStaticString(keyword('path') ?? args[0], bindings)
+      if (
+        (!compute || (compute.type === 'Constant' && compute.value === true)) &&
+        args.length <= 1 &&
+        !args.some((argument) => argument.type === 'Starred') &&
+        !(node.keywords ?? []).some((entry) => !entry.arg) &&
+        !customFilesystem &&
+        path &&
+        !pythonPathHasCollectionPattern(path) &&
+        !/^[a-z][a-z\d+.-]*:\/\//iu.test(path)
+      ) {
+        writes.add(path)
+        writeScopes.set(`directory\0${path}`, { kind: 'directory', path })
+      }
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      return
+    }
     if (canonicalName === 'pysam.AlignmentFile' && importedNames.has(rawName.split('.')[0]!)) {
       // Only the file and mode positions are stable across documented versions.
       // Preserve explicitly named companions without guessing which implicit
@@ -7424,9 +7528,40 @@ const analyzePythonFileAccessTree = (
       return
     }
 
+    if (canonicalName === 'pyarrow.parquet.read_table') {
+      const args = Array.isArray(node.args) ? node.args : []
+      const keywords = node.keywords ?? []
+      const source = keywords.find((keyword) => keyword.arg === 'source')?.value ?? args[0]
+      const path = resolveStaticString(source, bindings)
+      if (
+        importedNames.has(rawName.split('.')[0]!) &&
+        args.length <= 1 &&
+        !keywords.some(
+          (keyword) =>
+            !keyword.arg || (keyword.arg === 'filesystem' && keyword.value.constKind !== 'none')
+        ) &&
+        path &&
+        !/^[a-z][a-z\d+.-]*:\/\//iu.test(path)
+      ) {
+        recordFileAccess('read', source)
+      }
+      // A string can name a directory dataset, even with a file-like suffix.
+      unresolvedReads = true
+      unsupportedExternalState = true
+      return
+    }
+    if (canonicalName.startsWith('squidpy.datasets.')) {
+      // Dataset helpers may download or resolve cache files outside the workspace.
+      unresolvedReads = true
+      unsupportedExternalState = true
+      return
+    }
     if (
       [
         'scanpy.read_10x_mtx',
+        'muon.read_10x_mtx',
+        'dask.dataframe.read_parquet',
+        'dask.dataframe.read_csv',
         'scanpy.read_visium',
         'pyarrow.dataset.dataset',
         'fsspec.open',
@@ -7434,6 +7569,14 @@ const analyzePythonFileAccessTree = (
         'fsspec.get_mapper'
       ].includes(canonicalName)
     ) {
+      if (['dask.dataframe.read_parquet', 'dask.dataframe.read_csv'].includes(canonicalName)) {
+        const args = Array.isArray(node.args) ? node.args : []
+        const parameter = canonicalName.endsWith('read_csv') ? 'urlpath' : 'path'
+        const fileArgument =
+          (node.keywords ?? []).find((entry) => entry.arg === parameter)?.value ?? args[0]
+        const path = resolveStaticString(fileArgument, bindings)
+        if (path && !/^[a-z][a-z\d+.-]*:\/\//iu.test(path)) recordFileAccess('read', fileArgument)
+      }
       unresolvedReads = true
       unsupportedExternalState = true
       return
@@ -7589,12 +7732,31 @@ const analyzePythonFileAccessTree = (
       isPyNode(node.func.value) &&
       node.func.value.type === 'Name' &&
       node.func.value.id &&
-      scientificObjectTypes.get(node.func.value.id) === 'astropy-table'
+      ['astropy-table', 'muon.MuData'].includes(scientificObjectTypes.get(node.func.value.id) ?? '')
     ) {
       const args = Array.isArray(node.args) ? node.args : []
       recordFileAccess(
         'write',
-        (node.keywords ?? []).find((keyword) => keyword.arg === 'output')?.value ?? args[0]
+        (node.keywords ?? []).find((keyword) =>
+          ['output', 'filename', 'path'].includes(keyword.arg ?? '')
+        )?.value ?? args[0]
+      )
+      return
+    }
+
+    if (
+      [
+        'muon.MuData.write',
+        'muon.MuData.write_h5mu',
+        'mudata.MuData.write',
+        'mudata.MuData.write_h5mu'
+      ].includes(canonicalName ?? '')
+    ) {
+      const args = Array.isArray(node.args) ? node.args : []
+      recordFileAccess(
+        'write',
+        (node.keywords ?? []).find((keyword) => ['filename', 'path'].includes(keyword.arg ?? ''))
+          ?.value ?? args[0]
       )
       return
     }
@@ -7960,7 +8122,11 @@ const analyzePythonFileAccessTree = (
           : undefined
       const configurationMapping =
         mapping && pythonLibraryMethodEffect(mapping, 'update')?.plottingState === 'write'
-      invalidateStaticValue(rootName(target), !configurationMapping)
+      const dataframeColumn =
+        target?.type === 'Subscript' &&
+        isPyNode(target.value) &&
+        scientificObjectType(target.value) === 'pandas.DataFrame'
+      invalidateStaticValue(rootName(target), !configurationMapping && !dataframeColumn)
     }
     if (node.type === 'Call' && MUTATING_METHODS.has(memberName(node.func) ?? '')) {
       const canonical = canonicalCallName(node)
