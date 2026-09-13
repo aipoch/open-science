@@ -361,7 +361,10 @@ describe('ConnectorBulkManageView', () => {
     select('Select Local tools')
     await act(async () => button('Delete selected (1)').click())
     // A newer catalog refresh may supersede a store load while leaving its old items published.
-    useSpecialistStore.setState({ items: [], load: vi.fn(() => new Promise<void>(() => undefined)) })
+    useSpecialistStore.setState({
+      items: [],
+      load: vi.fn(() => new Promise<void>(() => undefined))
+    })
     vi.mocked(window.api.specialist.list).mockResolvedValue({
       items: [specialist],
       integrity: { status: 'ok' }
