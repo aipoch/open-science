@@ -4,6 +4,7 @@ import type { AcpAgentRuntimeUpdate } from '../../shared/acp'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import {
   DelegateExecutionError,
+  DelegateExecutionCleanupError,
   DelegateMessagePreAcceptanceError,
   type DelegateCapacityReservation,
   type DelegateExecutionBackendClaim,
@@ -188,8 +189,9 @@ const createDurableDelegatedWork = (
       createMessageId: () => createId('message')
     })
     let cancelRequested = false
+    let retainBackendClaim = false
     let cancellationReason: 'main_agent_stop' | 'session_stop' | 'runtime_interrupted' =
-      'main_agent_stop'
+      'runtime_interrupted'
     let context: Awaited<ReturnType<DelegatedWorkDurableRecords['startRuntime']>> | undefined
     const stageRuntimeTranscript = createAttemptRuntimeTranscriptStager({
       records: options.records,
@@ -271,7 +273,8 @@ const createDurableDelegatedWork = (
           options.onAgentRuntimeUpdate?.(event.update)
         })
         void handle.completion.finally(unsubscribe).catch(() => undefined)
-        await Promise.race([handle.accepted, handle.completion.then(() => undefined)])
+        // When failure settles both promises, the cleanup outcome owns resource release.
+        await Promise.race([handle.completion, handle.accepted])
         const outcome = await handle.completion
         const endedAt = now()
         if (outcome.status === 'completed' && !cancelRequested) {
@@ -313,6 +316,7 @@ const createDurableDelegatedWork = (
           })
         }
       } catch (error) {
+        retainBackendClaim = error instanceof DelegateExecutionCleanupError
         rejectHandle(
           handle ? error : new DelegateMessagePreAcceptanceError(toErrorMessage(error), error)
         )
@@ -326,7 +330,7 @@ const createDurableDelegatedWork = (
                 attemptId: attempt.id,
                 endedAt,
                 error,
-                ...(cancelRequested ? { cancellationReason } : {})
+                ...(cancelRequested && !retainBackendClaim ? { cancellationReason } : {})
               })
             } catch (terminalizeError) {
               const settled = await snapshotChild(child.frameId)
@@ -339,7 +343,7 @@ const createDurableDelegatedWork = (
       } finally {
         permissionOwner.clearAttempt(child.frameId, attempt.id)
         await turnLifecycle.dispose()
-        await executionBackendClaim?.release().catch(() => undefined)
+        if (!retainBackendClaim) await executionBackendClaim?.release().catch(() => undefined)
         await reservation.release(slotId).catch(() => undefined)
         if (running.get(child.frameId)?.attemptId === attempt.id) running.delete(child.frameId)
       }

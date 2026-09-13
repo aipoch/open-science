@@ -1434,3 +1434,42 @@ describe('AcpPromptTurnWorkflow', () => {
     )
   })
 })
+
+it('does not dispatch after cancellation is accepted during framework preparation', async () => {
+  const gate = deferred<void>()
+  const entered = deferred<void>()
+  const providerPrompt = vi.fn(async () => undefined)
+  const executor = new AcpProviderPromptExecutor({
+    backendGeneration: { current: backend, openCodeUsageApi: () => undefined }
+  })
+  const harness = createHarness({
+    beforePromptDispatch: async () => {
+      entered.resolve()
+      await gate.promise
+    },
+    execute: (input) => executor.execute(input)
+  })
+  harness.setSession({
+    sessionId: 'provider-1',
+    prompt: providerPrompt,
+    nextUpdate: async () => ({ kind: 'stop', response: { stopReason: 'end_turn' } })
+  } as unknown as ActiveSession)
+  const run = harness.workflow.run(request(), { kind: 'user' })
+  try {
+    await entered.promise
+    await harness.owner.cancelPrompt({
+      sessionId: 's1',
+      notify: async () => undefined,
+      onAccepted: () => undefined,
+      onTimeout: () => undefined
+    })
+    gate.resolve()
+    await run
+    expect(providerPrompt).not.toHaveBeenCalled()
+    expect(harness.onProviderPromptAccepted).not.toHaveBeenCalled()
+  } finally {
+    gate.resolve()
+    await run
+    harness.owner.supersedeAll()
+  }
+})

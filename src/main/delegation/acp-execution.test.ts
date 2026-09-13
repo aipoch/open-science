@@ -1385,3 +1385,64 @@ describe('ACP delegate execution production adapter', () => {
 
 const _eventTypeCheck: AcpRuntimeEvent | undefined = undefined
 void _eventTypeCheck
+
+it('preserves provider cancellation without a local cancel request', async () => {
+  const harness = makeHarness(1)
+  const reservation = await harness.execution.reserve(1)
+  const run = harness.execution.run(makeInput('audit-cancel'), reservation.slotIds[0])
+  await vi.waitFor(() => expect(harness.controls.get('audit-cancel')?.prompts.length).toBe(1))
+  harness.controls.get('audit-cancel')!.complete({ stopReason: 'cancelled' })
+  await expect(run.completion).resolves.toMatchObject({ status: 'cancelled' })
+})
+it.each(['unreaped', 'throws'] as const)(
+  'does not reuse resources when shutdown %s',
+  async (mode) => {
+    const disposeResources = vi.fn()
+    const shutdownForQuit = vi
+      .fn(async () => ({ reaped: true }))
+      .mockImplementationOnce(async () => {
+        if (mode === 'throws') throw new Error('process teardown failed')
+        return { reaped: false }
+      })
+    const revoke = vi.fn()
+    const execution = createAcpDelegateExecution({
+      capacity: 1,
+      prepare: async (input) => ({
+        executionId: input.attemptId,
+        provenance: {
+          projectId: input.session.projectId,
+          sessionId: input.session.sessionId,
+          agentFrameId: input.frameId,
+          runtimeSegmentId: input.runtimeSegmentId
+        },
+        workspace: { cwd: '/audit/workspace' },
+        runtimeHome: '/audit/home',
+        frameworkId: 'test',
+        capability: { revoke },
+        disposeResources
+      }),
+      assertFrameworkNativeDelegationDisabled: async () => undefined,
+      createRuntime: () => ({
+        createSession: async () => ({ sessionId: 'provider-audit' }),
+        sendAppContinuation: async () => ({ stopReason: 'end_turn' }),
+        cancelPrompt: async () => undefined,
+        setPermissionProfile: async () => undefined,
+        respondToPermission: async () => undefined,
+        deleteSession: async () => undefined,
+        shutdownForQuit
+      })
+    })
+    const reservation = await execution.reserve(1)
+    const run = execution.run(makeInput('audit-reap'), reservation.slotIds[0])
+    const outcome = await run.completion.catch((error: unknown) => error)
+    expect.soft(outcome).toBeInstanceOf(Error)
+    expect.soft(shutdownForQuit).toHaveBeenCalledOnce()
+    expect.soft(revoke).toHaveBeenCalledOnce()
+    expect.soft(disposeResources).not.toHaveBeenCalled()
+    // The durable caller releases its reservation again in finally. That must not
+    // erase the execution owner's knowledge that the process may still be alive.
+    await reservation.releaseAll()
+    const next = await execution.reserve(1).catch((error: unknown) => error)
+    expect(next).toBeInstanceOf(Error)
+  }
+)
