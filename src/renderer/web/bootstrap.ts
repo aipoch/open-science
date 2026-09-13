@@ -29,7 +29,7 @@ import {
 } from '../../shared/file-save'
 import type { AcquireManagedPreviewRequest } from '../../shared/preview-resources'
 import { installWebRendererContracts } from './api-installer'
-import { i18next, initI18n } from '@/i18n'
+import { i18next, initI18n, prepareI18nLocale } from '@/i18n'
 import { applyHtmlLang, resolveInitialLocale } from '@/lib/locale-preference'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
 import openScienceLogoSvg from '../../main/remote-access/openscience-logo.svg?raw'
@@ -42,14 +42,14 @@ applyTheme(resolveInitialTheme())
 // Language, for the same reason. Detection reads the *browser's* language list, which describes the
 // person reading the page — the backend host's OS locale may be something else entirely.
 const initialLocale = resolveInitialLocale()
-initI18n(initialLocale)
 const t = i18next.t.bind(i18next)
 applyHtmlLang(initialLocale)
 document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
 
-const AUTHORIZATION_EXPIRED_MESSAGE = t(
-  'Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.'
-)
+const authorizationExpiredMessage = (): string =>
+  t(
+    'Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.'
+  )
 
 class AuthorizationExpiredError extends Error {}
 
@@ -91,8 +91,6 @@ const setConnectionMessage = (message: string): void => {
   if (element) element.textContent = message
 }
 
-setConnectionMessage(t('Connecting to remote computer…'))
-
 const connectionLogo = document.getElementById('open-science-connection-logo')
 if (connectionLogo) {
   connectionLogo.innerHTML = openScienceLogoSvg.replace(
@@ -129,7 +127,7 @@ const withRequestTimeout = async <T>(
 const responseError = (response: Response, body: string, fallback: string): Error => {
   if (response.status === 401) {
     requireAuthorization()
-    return new AuthorizationExpiredError(AUTHORIZATION_EXPIRED_MESSAGE)
+    return new AuthorizationExpiredError(authorizationExpiredMessage())
   }
   try {
     const payload = JSON.parse(body) as {
@@ -321,7 +319,7 @@ const publishEventConnectionPhase = (phase: WebEventConnectionPhase): void => {
 const requireAuthorization = (): void => {
   preserveComposerDraftsForRecovery()
   eventRecoveryRequired = true
-  eventConnectionController.abort(new AuthorizationExpiredError(AUTHORIZATION_EXPIRED_MESSAGE))
+  eventConnectionController.abort(new AuthorizationExpiredError(authorizationExpiredMessage()))
   publishEventConnectionPhase('authorization-required')
   activeEventSocket?.close(1000, 'Authorization required')
 }
@@ -592,11 +590,15 @@ const eventConsumersReady = new Promise<void>((resolve) => {
 })
 
 try {
+  await prepareI18nLocale(initialLocale)
+  initI18n(initialLocale)
+  setConnectionMessage(t('Connecting to remote computer…'))
   eventCursor = await installWebApi()
   await import('../src/main')
   await eventConsumersReady
   publishEventConnectionPhase('connecting')
   connectEvents()
 } catch (error) {
+  if (!i18next.isInitialized) initI18n('en')
   showConnectionFailure(error)
 }

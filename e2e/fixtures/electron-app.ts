@@ -154,6 +154,8 @@ type ElectronApp = {
   restartAfterCrash: () => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
+  recordResourceTiming: (name: string, durationMs: number) => void
+  captureResourceTimings: (prefix?: string) => Promise<void>
   sampleResourceProfileNow: () => Promise<void>
   setMainWindowZoomFactor: (factor: number) => Promise<void>
   finishResourceProfile: () => Promise<RuntimeProfileResult>
@@ -322,12 +324,14 @@ const applyHiddenWindowPresentation = async (
 const openMainWindow = async (
   application: ElectronApplication,
   rendererFailures: RendererFailureGate,
-  windowMode: E2eWindowMode
+  windowMode: E2eWindowMode,
+  onFirstReady?: (page: Page) => Promise<void>
 ): Promise<Page> => {
   const page = await application.firstWindow()
   await applyHiddenWindowPresentation(page, windowMode)
   await rendererFailures.observe(page)
   await waitForRendererReady(page)
+  await onFirstReady?.(page)
   // Writing the cooldown after first paint does not cancel a timer GitHubStarBadge already
   // scheduled. Reload so the workspace variant remounts with the cooldown already set.
   await suppressWorkspaceStarNudge(page)
@@ -537,6 +541,43 @@ class ElectronAppHarness implements ElectronApp {
     if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
     this.resourceProfiler.markPhase(phase)
     await this.resourceProfiler.sampleNow()
+  }
+
+  recordResourceTiming(name: string, durationMs: number): void {
+    this.resourceProfiler?.recordTiming(name, durationMs)
+  }
+
+  async captureResourceTimings(prefix = ''): Promise<void> {
+    if (!this.resourceProfiler) return
+    const collect = (): { name: string; duration: number }[] => {
+      const names = new Set([
+        'open-science:ipc-registration',
+        'open-science:renderer-bootstrap',
+        'open-science:i18n-init',
+        'open-science:i18n-locale-switch',
+        'open-science:persistence-runtime-lookup-fallback',
+        'open-science:persistence-runtime-lookup-catalog',
+        'open-science:persistence-runtime-lookup-ownership',
+        'open-science:persistence-runtime-lookup-read',
+        'open-science:persistence-runtime-lookup-targeted'
+      ])
+      const timings = performance
+        .getEntriesByType('measure')
+        .filter((entry) => names.has(entry.name))
+        .map(({ name, duration }) => ({ name, duration }))
+      for (const name of names) performance.clearMeasures(name)
+      for (const entry of performance.getEntriesByType('paint')) {
+        if (entry.name === 'first-paint' || entry.name === 'first-contentful-paint') {
+          timings.push({ name: entry.name, duration: entry.startTime })
+        }
+      }
+      return timings
+    }
+    for (const timing of [
+      ...(await this.runningApplication.evaluate(collect)),
+      ...(await this.page.evaluate(collect))
+    ])
+      this.resourceProfiler.recordTiming(prefix + timing.name, timing.duration)
   }
 
   async sampleResourceProfileNow(): Promise<void> {
@@ -962,7 +1003,10 @@ class ElectronAppHarness implements ElectronApp {
       if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
       this.resourceProfiler.markPhase(options.resourceProfilePhase)
     }
-    await this.launch()
+    await this.launch(
+      undefined,
+      options.resourceProfilePhase === 'recovery' ? 'recovery-startup-ready' : 'startup-ready'
+    )
     return this.page
   }
 
@@ -1026,7 +1070,8 @@ class ElectronAppHarness implements ElectronApp {
     }
   }
 
-  private async launch(packagePath?: string): Promise<void> {
+  private async launch(packagePath?: string, timingName = 'startup-ready'): Promise<void> {
+    const launchStartedAt = performance.now()
     this.application = await launchOpenScience(
       this.roots,
       this.fakeAgentEnabled,
@@ -1038,11 +1083,39 @@ class ElectronAppHarness implements ElectronApp {
     )
     await this.resourceProfiler?.attach(this.application)
     try {
+      if (process.env.OPEN_SCIENCE_E2E_EXECUTABLE) {
+        const evidence = await this.application.evaluate(({ app }) => ({
+          packaged: app.isPackaged,
+          appPath: app.getAppPath(),
+          executable: process.execPath,
+          version: app.getVersion()
+        }))
+        const revision = process.env.OPEN_SCIENCE_E2E_EXPECTED_BUILD_SHA
+        if (
+          !evidence.packaged ||
+          !evidence.appPath.endsWith('app.asar') ||
+          evidence.executable !== process.env.OPEN_SCIENCE_E2E_EXECUTABLE ||
+          (revision && !evidence.version.endsWith(`-nightly.${revision.slice(0, 7)}`))
+        ) {
+          throw new Error(`Packaged Electron identity mismatch: ${JSON.stringify(evidence)}`)
+        }
+        console.info('Packaged Electron identity:', JSON.stringify(evidence))
+      }
       this.currentPage = await openMainWindow(
         this.application,
         this.rendererFailures,
-        this.windowMode
+        this.windowMode,
+        this.resourceProfiler
+          ? async (page) => {
+              this.currentPage = page
+              this.recordResourceTiming('first-' + timingName, performance.now() - launchStartedAt)
+              await this.captureResourceTimings(
+                timingName === 'recovery-startup-ready' ? 'first-recovery:' : 'first:'
+              )
+            }
+          : undefined
       )
+      this.recordResourceTiming(timingName, performance.now() - launchStartedAt)
     } finally {
       this.mainLogDirectory = await this.application
         .evaluate(({ app }) => app.getPath('logs'))

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
-import { createEngine, resultShapeVersion, type WasmCitationEngine } from 'citeme-engine-wasm'
+import type { WasmCitationEngine } from 'citeme-engine-wasm'
 import { z } from 'zod'
 
 import {
@@ -236,6 +236,7 @@ const parseResultSchema = z
 const loadEngine = async (
   styleLibrary?: LiteratureCitationStyleLibrary
 ): Promise<WasmCitationEngine> => {
+  const { createEngine, resultShapeVersion } = await import('citeme-engine-wasm')
   const wasmPath = require.resolve('citeme-engine-wasm/pkg/citeme_engine_wasm_bg.wasm')
   const engine = await createEngine(await readFile(wasmPath))
   if (resultShapeVersion() !== 1) throw new Error('Unsupported citation engine result shape.')

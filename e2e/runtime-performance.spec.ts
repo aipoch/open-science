@@ -6,6 +6,8 @@ import {
 import { createProject, openProjectSession, sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
 
+test.use({ windowMode: 'normal' })
+
 const PROFILE_PROJECT_NAME = 'Runtime performance fixture'
 const ACP_PROMPT = 'Summarize the deterministic fixture.'
 const ACP_REPLY = `Deterministic reply: ${ACP_PROMPT}`
@@ -49,8 +51,11 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
     await page.waitForTimeout(phaseDurationMs)
     await app.sampleResourceProfileNow()
 
+    await app.captureResourceTimings()
     await app.markResourceProfilePhase('workspace')
+    const workspaceStartedAt = performance.now()
     await createProject(page, PROFILE_PROJECT_NAME)
+    app.recordResourceTiming('workspace-create-visible', performance.now() - workspaceStartedAt)
     await app.sampleResourceProfileNow()
 
     await app.markResourceProfilePhase('acp-turn')
@@ -73,11 +78,16 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
     }
 
     page = await app.restart({ resourceProfilePhase: 'recovery' })
-    await page.waitForTimeout(phaseDurationMs)
+    const recoveryStartedAt = performance.now()
     await openProjectSession(page, PROFILE_PROJECT_NAME, ACP_PROMPT)
     await expect(page.getByText(STRESS_REPLY, { exact: false }).last()).toBeVisible({
       timeout: RUNTIME_PERFORMANCE_PROMPT_TIMEOUT_MS
     })
+    app.recordResourceTiming('workspace-reopen-visible', performance.now() - recoveryStartedAt)
+    await app.captureResourceTimings('recovery:')
+    // Opening the recovered workspace starts file/runtime probes. Sample after the same
+    // settling window as idle, rather than immediately after that new work is triggered.
+    await page.waitForTimeout(phaseDurationMs)
     await app.sampleResourceProfileNow()
   } finally {
     result = await app.finishResourceProfile().catch((error: unknown) => {
@@ -113,7 +123,7 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
   ).toBeGreaterThan(0)
   expect(
     recovery.processCount.last,
-    'recovery must not retain more processes than the stable idle phase'
+    'recovery must not retain more app-owned processes than the stable idle phase'
   ).toBeLessThanOrEqual(idle.processCount.last)
   const recoveryStorage = recovery.storage
   expect(recoveryStorage?.temporaryFileCount.last, 'recovery must leave no temporary files').toBe(0)

@@ -1204,11 +1204,17 @@ const WorkspaceMessageScrollerImpl = ({
     const byIndex = new Map<number, JobSummary[]>()
     const trailing: JobSummary[] = []
 
+    let conversationIndex = 0
     for (const job of sorted) {
-      // Find the first conversation item strictly after this job's timestamp.
-      const insertBeforeIndex = conversationItems.findIndex(
-        (item) => item.createdAt > job.created_at
-      )
+      // Both arrays are chronological, so advance one cursor instead of rescanning the timeline.
+      while (
+        conversationIndex < conversationItems.length &&
+        conversationItems[conversationIndex].createdAt <= job.created_at
+      ) {
+        conversationIndex += 1
+      }
+      const insertBeforeIndex =
+        conversationIndex < conversationItems.length ? conversationIndex : -1
       if (insertBeforeIndex === -1) {
         // No later item — job goes in the trailing slot.
         trailing.push(job)

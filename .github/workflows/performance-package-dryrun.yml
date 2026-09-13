@@ -1,0 +1,83 @@
+name: Performance Package Dry Run
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: performance-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      nightly: true
+      skip_verify: true
+      platform_name: macos-arm64
+
+  smoke:
+    needs: build
+    uses: ./.github/workflows/package-smoke.yml
+    with:
+      platform_name: macos-arm64
+
+  performance:
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - name: Checkout tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install test tooling
+        run: node scripts/ci/npm-ci.mjs
+      - name: Download package from this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: macos-arm64
+          path: package
+      - name: Extract packaged executable
+        id: packaged
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip=$(find package -maxdepth 1 -type f -name '*-mac-arm64.zip' -print -quit)
+          test -n "$zip"
+          mkdir -p extracted
+          ditto -x -k "$zip" extracted
+          executable=$(find extracted -type f -path '*/Open Science.app/Contents/MacOS/Open Science' -print -quit)
+          test -n "$executable"
+          echo "executable=$(node -e 'process.stdout.write(require("path").resolve(process.argv[1]))' "$executable")" >> "$GITHUB_OUTPUT"
+          shasum -a 256 "$zip" > package/SHA256-tested.txt
+          printf '%s\n' "$GITHUB_SHA" > package/tested-revision.txt
+      - name: Profile packaged startup and runtime
+        env:
+          OPEN_SCIENCE_E2E_EXECUTABLE: ${{ steps.packaged.outputs.executable }}
+          OPEN_SCIENCE_E2E_EXPECTED_BUILD_SHA: ${{ github.sha }}
+        run: npm run perf:runtime -- --skip-build --repeat=1
+      - name: Verify packaged locale loading and restart
+        if: ${{ !cancelled() && steps.packaged.outcome == 'success' }}
+        env:
+          OPEN_SCIENCE_E2E_EXECUTABLE: ${{ steps.packaged.outputs.executable }}
+          OPEN_SCIENCE_E2E_EXPECTED_BUILD_SHA: ${{ github.sha }}
+        run: npx playwright test e2e/settings-persistence.spec.ts --grep 'persists (Russian|German)|after an Electron restart' --workers=1 --retries=0
+      - name: Upload package test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: packaged-performance-evidence
+          retention-days: 7
+          path: |
+            test-results/
+            playwright-report/
+            package/SHA256-tested.txt
+            package/tested-revision.txt

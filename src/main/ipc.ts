@@ -5467,6 +5467,7 @@ const createApplicationModules = async (
 }
 
 const registerIpcHandlers = async (options: IpcRegistrationOptions): Promise<IpcRegistration> => {
+  performance.mark('open-science:ipc-registration-start')
   const composition = startDiagnosticOperation(createLogger('startup'), {
     operation: 'application-composition',
     cpuUsage: process.cpuUsage
@@ -5478,6 +5479,12 @@ const registerIpcHandlers = async (options: IpcRegistrationOptions): Promise<Ipc
     )
     composition.phase('ipc-adapters')
     composition.complete()
+    performance.mark('open-science:ipc-registration-complete')
+    performance.measure(
+      'open-science:ipc-registration',
+      'open-science:ipc-registration-start',
+      'open-science:ipc-registration-complete'
+    )
     return {
       ...applicationRuntime.interfaces,
       dispose: applicationRuntime.dispose

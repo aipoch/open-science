@@ -1,4 +1,5 @@
 import { resolve } from 'path'
+import { nativeLocaleAssets } from './scripts/native-locale-assets'
 import { defineConfig } from 'electron-vite'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import react from '@vitejs/plugin-react'
@@ -14,7 +15,9 @@ export const resolveWsl2BashPreviewBuildEnabled = (
 
 export default defineConfig(({ command }) => ({
   main: {
+    plugins: [nativeLocaleAssets()],
     define: {
+      __OPEN_SCIENCE_NATIVE_LOCALE_DIRECTORY__: JSON.stringify('native-locales'),
       __OPEN_SCIENCE_WSL2_BASH_PREVIEW__: resolveWsl2BashPreviewBuildEnabled(
         process.platform,
         process.env.OPEN_SCIENCE_BUILD_WSL2_BASH_PREVIEW
