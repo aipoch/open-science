@@ -129,3 +129,25 @@ describe('resolveActionMenuEntries', () => {
     expect(entries[0]).not.toHaveProperty('execute')
   })
 })
+
+it('resolves submenu children through the same visibility and permission bindings', () => {
+  const entries = resolveActionMenuEntries(
+    {
+      identityKey: 'session',
+      catalog,
+      recipe: [
+        { kind: 'submenu', labelKey: 'Export', icon: Download, actions: ['copy', 'download'] }
+      ],
+      bindings: { copy: { execute, hidden: true }, download: { execute, disabled: true } }
+    },
+    { kind: 'message', text: '', locked: false }
+  )
+  expect(entries).toEqual([
+    expect.objectContaining({
+      kind: 'action',
+      action: 'download',
+      disabled: true,
+      submenu: { labelKey: 'Export', icon: Download }
+    })
+  ])
+})

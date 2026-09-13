@@ -171,6 +171,7 @@ type WebServerOptions = {
         | 'doctor'
         | 'bootstrap'
         | 'installCli'
+        | 'listRuntimes'
       >
     >
   waitUntilTasksReady?: () => Promise<void>
@@ -1015,6 +1016,13 @@ const handleTaskApiRequest = async (
       if (url.pathname === '/api/v1/cli/install' && request.method === 'POST' && tasks.installCli) {
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, { data: await tasks.installCli() })
+        return true
+      }
+      if (url.pathname === '/api/v1/runtimes' && request.method === 'GET' && tasks.listRuntimes) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const data = await tasks.listRuntimes()
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data })
         return true
       }
       const connectorMatch = url.pathname.match(

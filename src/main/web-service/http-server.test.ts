@@ -4805,3 +4805,76 @@ describe('Connector Task HTTP routes', () => {
     await tasks.dispose()
   })
 })
+
+describe('Agent runtime Task HTTP routes', () => {
+  it('serves the runtime list locally without exposing executable paths', async () => {
+    const settings = {
+      claude: { resolvedPath: '/private/claude', version: '2.1.0' },
+      opencode: {},
+      codebuddy: {},
+      codex: {},
+      claudeManaged: true,
+      opencodeManaged: false,
+      codebuddyManaged: false,
+      codexManaged: false,
+      providers: [],
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        { id: 'claude-code', displayName: 'Claude Code' },
+        { id: 'opencode', displayName: 'OpenCode' },
+        { id: 'codex', displayName: 'Codex' },
+        { id: 'codebuddy', displayName: 'CodeBuddy' }
+      ]
+    }
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'settings:get-preflight') {
+        return {
+          claudeReady: true,
+          opencodeReady: false,
+          codebuddyReady: false,
+          codexReady: false,
+          agentFrameworkId: 'claude-code',
+          agentReady: true,
+          activeProviderReady: true,
+          runtimeReadiness: { status: 'ready' },
+          providerReadiness: { status: 'ready' }
+        }
+      }
+      if (channel === 'settings:get-settings') return settings
+      throw new Error(`Unexpected command: ${channel}`)
+    })
+    const tasks = new HeadlessTaskApi({
+      commands: { commandNames: () => [], invoke },
+      agent: {} as never
+    })
+    const serverOptions = {
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      tasks,
+      rpc: { channels: () => [], invoke: vi.fn() },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: 'test',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    }
+    const localServer = await startTestWebHttpServer(serverOptions)
+    servers.push(localServer)
+    const client = new OpenScienceClient({
+      baseUrl: `http://127.0.0.1:${localServer.port}`,
+      token: 'test-token'
+    })
+
+    await expect(client.listRuntimes()).resolves.toEqual([
+      { framework: 'claude-code', status: 'ready', version: '2.1.0', source: 'managed' },
+      { framework: 'opencode', status: 'missing' },
+      { framework: 'codex', status: 'missing' },
+      { framework: 'codebuddy', status: 'missing' }
+    ])
+    await tasks.dispose()
+  })
+})

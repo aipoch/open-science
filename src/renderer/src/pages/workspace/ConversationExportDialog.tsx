@@ -13,8 +13,8 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
-import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { cn } from '@/lib/utils'
+import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import type { ChatSession } from '@/stores/session-store'
 import {
   serializeConversationExportContent,
@@ -91,7 +91,6 @@ const ConversationExportDialogContent = ({
     : true
   const noSelection = scope === 'selected' && selectedCount === 0
   const disabled = unavailable || conversationChanged || noSelection || isExporting
-
   const toggleTurn = (promptMessageId: string): void => {
     setError(undefined)
     setSelectedPromptIds((current) => {

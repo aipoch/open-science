@@ -6,7 +6,10 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 const boundary = vi.hoisted(() => ({
   fixture: undefined as unknown as (
     options: unknown,
-    use: (app: { restartAfterCrash: () => Promise<unknown> }) => Promise<void>,
+    use: (app: {
+      restartAfterCrash: () => Promise<unknown>
+      restart: () => Promise<unknown>
+    }) => Promise<void>,
     info: unknown
   ) => Promise<void>,
   fixtureTimeout: undefined as number | undefined,
@@ -310,3 +313,15 @@ it.each([true, false])(
     }
   }
 )
+
+it('restarts without passing the timing label as a package file argument', async () => {
+  await boundary.fixture(
+    { windowMode: 'hidden' },
+    async (app) => {
+      await app.restart()
+    },
+    { status: 'passed', expectedStatus: 'passed', attach }
+  )
+  expect(boundary.launch).toHaveBeenCalledTimes(2)
+  expect(boundary.launch.mock.calls[1][0].args).toEqual(boundary.launch.mock.calls[0][0].args)
+})

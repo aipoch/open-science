@@ -246,6 +246,45 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     }
   }
 
+  async importedState(
+    request: NotebookSessionRequest,
+    runIds: readonly string[],
+    historySummaryFrameId: string | undefined,
+    historyBefore: NotebookRunCursor | undefined,
+    historyLimit: number
+  ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
+    const projectId = resolveProjectId(request, this.options.defaultProjectId)
+    const window = await this.options.repository.readSessionRunWindow(
+      projectId,
+      request.sessionId,
+      historyLimit,
+      runIds,
+      historySummaryFrameId,
+      historyBefore
+    )
+    const root = getNotebookSessionRoot(this.options.storageRoot, projectId, request.sessionId)
+    const runs = window.runs.map((run) => this.toPublicRunRecord(run))
+    return {
+      id: request.sessionId,
+      sessionId: request.sessionId,
+      cwd: root,
+      notebookSessionRoot: root,
+      dataRoot: getNotebookDataRoot(this.options.storageRoot, projectId, request.sessionId),
+      runtimeRoot: getRuntimeRoot(this.options.storageRoot),
+      runJsonPath: getNotebookRunJsonPath(this.options.storageRoot, projectId, request.sessionId),
+      kernelStatus: 'idle',
+      cells: [],
+      runCount: window.total,
+      latestRunEnvironments: window.latestRunEnvironments,
+      ...(window.historySummary ? { historySummary: window.historySummary } : {}),
+      ...(window.historyPage ? { historyPage: window.historyPage } : {}),
+      runs,
+      recentRuns: runs.slice(-20),
+      environments: [],
+      runtimeBindings: {}
+    }
+  }
+
   async getSessionReference(
     request: NotebookSessionRequest
   ): Promise<NotebookSessionReference | null> {

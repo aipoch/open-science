@@ -107,6 +107,12 @@ const encodeRequestArguments = (
       return [{ parent: args[0] }]
     case 'storage-data-root-object':
       return [{ parent: args[0], markOnboarding: args[1] }]
+    case 'session-package-import-file': {
+      if (args[1] === undefined) return args
+      const sourcePath = getPathForFile(args[1])
+      if (!sourcePath) throw new Error('The dropped file has no native path.')
+      return [args[0], sourcePath]
+    }
     case 'native-file-upload-request': {
       const sourcePath = getPathForFile(args[0])
       return sourcePath ? [{ ...(args[1] as object), sourcePath }] : null

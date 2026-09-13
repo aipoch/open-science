@@ -411,6 +411,114 @@ const createProjectReconciliationSnapshot = (): ArtifactProjectReconciliationSna
   ({}) as ArtifactProjectReconciliationSnapshot
 
 describe('SessionPersistenceCoordinator', () => {
+  it('defers late renderer saves until export releases without occupying other persistence lanes', async () => {
+    const repository = createSessionRepository()
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const release = await coordinator.reserveSessionExport('project-1', 'session-1')
+    const failures: unknown[] = []
+    const delayed = coordinator.saveSession(createSession()).catch((error) => {
+      failures.push(error)
+    })
+    await coordinator.runSessionMutation('project-1', 'session-2', async () => undefined)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(failures).toEqual([])
+    expect(repository.saveSession).not.toHaveBeenCalled()
+    release()
+    await delayed
+    expect(failures).toEqual([])
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+  })
+  it('drains earlier writes and rejects source mutations and deletion until export releases', async () => {
+    const repository = createSessionRepository()
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const prior = coordinator.runSessionMutation('project-1', 'session-1', () => pending)
+    let reserved = false
+    const reservation = coordinator
+      .reserveSessionExport('project-1', 'session-1')
+      .then((release) => {
+        reserved = true
+        return release
+      })
+    await Promise.resolve()
+    expect(reserved).toBe(false)
+    finish()
+    await prior
+    const release = await reservation
+    const mutation = vi.fn(async () => undefined)
+    await expect(
+      coordinator.runSessionMutation('project-1', 'session-1', mutation)
+    ).rejects.toThrow('locked')
+    await expect(coordinator.deleteSession('project-1', 'session-1')).rejects.toThrow('locked')
+    await expect(coordinator.deleteProjectSessions('project-1')).rejects.toThrow('locked')
+    expect(repository.deleteSession).not.toHaveBeenCalled()
+    expect(mutation).not.toHaveBeenCalled()
+    await coordinator.runSessionMutation('project-1', 'session-2', mutation)
+    release()
+    await coordinator.runSessionMutation('project-1', 'session-1', mutation)
+    expect(mutation).toHaveBeenCalledTimes(2)
+  })
+
+  it('saves an imported renderer projection through Main without losing runtime evidence', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'imported-session-save-'))
+    try {
+      const repository = new SessionRepository(root)
+      await repository.saveSession(
+        createSession({
+          id: 'import-session-1',
+          runtimeContext: { version: 1, revision: 1 },
+          packageOrigin: {
+            importId: 'import-operation',
+            sourceProjectId: 'source-project',
+            sourceSessionId: 'source-session',
+            importedAt: 1,
+            manifestChecksum: 'a'.repeat(64)
+          }
+        })
+      )
+      const current = await repository.loadSession('project-1', 'import-session-1')
+      if (!current) throw new Error('Imported Session was not readable')
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+      await coordinator.saveSession({
+        ...current,
+        title: 'Renamed history',
+        runtimeContext: undefined,
+        description: current.description ?? '',
+        permissionProfile: current.permissionProfile ?? 'ask'
+      })
+      const saved = await repository.loadSession('project-1', 'import-session-1')
+      expect(saved).toMatchObject({
+        title: 'Renamed history',
+        runtimeContext: current.runtimeContext,
+        packageOrigin: current.packageOrigin
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects imported research at the shared prompt and Side chat admission boundary', async () => {
+    const session = createSession({
+      packageOrigin: {
+        importId: 'import-operation',
+        sourceProjectId: 'source-project',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'found', session })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    await expect(coordinator.assertSessionAvailable(session.projectId, session.id)).rejects.toThrow(
+      'read-only'
+    )
+  })
+
   it('rejects a retry when any requested native Artifact run remains unresolved', async () => {
     const session = createSession()
     const repository = createSessionRepository({

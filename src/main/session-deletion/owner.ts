@@ -29,6 +29,10 @@ type SessionDeletionOwnerOptions = {
     request: DeleteSessionRequest,
     operation: () => Promise<SessionDeletionResult>
   ) => Promise<SessionDeletionResult>
+  withAdmission?: (
+    request: DeleteSessionRequest,
+    work: () => Promise<SessionDeletionResult>
+  ) => Promise<SessionDeletionResult>
   log?: Pick<Logger, 'warn'>
 }
 
@@ -69,19 +73,25 @@ class SessionDeletionOwner {
       })
     }
 
-    const operation = (): Promise<SessionDeletionResult> => this.run(request)
-    const promise = (
-      this.options.withStoppedWork ? this.options.withStoppedWork(request, operation) : operation()
-    )
-      .catch((error: unknown): SessionDeletionResult => {
+    const stopped = (): Promise<SessionDeletionResult> => {
+      const operation = (): Promise<SessionDeletionResult> => this.run(request)
+      return (
+        this.options.withStoppedWork
+          ? this.options.withStoppedWork(request, operation)
+          : operation()
+      ).catch((error: unknown): SessionDeletionResult => {
         this.log.warn('Session background work could not be stopped', diagnosticErrorFields(error))
         return { status: 'failed', reason: 'runtime', runtimeDetached: false }
       })
-      .finally(() => {
-        if (this.activeBySessionId.get(request.sessionId)?.promise === promise) {
-          this.activeBySessionId.delete(request.sessionId)
-        }
-      })
+    }
+    const pending = this.options.withAdmission
+      ? this.options.withAdmission(request, stopped)
+      : stopped()
+    const promise = pending.finally(() => {
+      if (this.activeBySessionId.get(request.sessionId)?.promise === promise) {
+        this.activeBySessionId.delete(request.sessionId)
+      }
+    })
     this.activeBySessionId.set(request.sessionId, { projectId: request.projectId, promise })
     return promise
   }

@@ -304,7 +304,19 @@ describe('runtime resource profiler', () => {
       await samplingRecovery
       await samplingIdle
 
+      for (const duration of [10, 30, 20]) profiler.recordTiming('workspace-open', duration)
+      for (const duration of [10, 30]) profiler.recordTiming('even-sample', duration)
+      expect(() => profiler.recordTiming('private path/file', 1)).toThrow()
+      expect(() => profiler.recordTiming('startup', Number.NaN)).toThrow()
+      expect(() => profiler.recordTiming('startup', -1)).toThrow()
       const result = await profiler.finish()
+      expect(result.summary.timings?.['workspace-open']).toMatchObject({
+        median: 20,
+        count: 3,
+        p95: 30
+      })
+      expect(result.summary.timings?.['even-sample'].median).toBe(20)
+      expect(renderSummaryMarkdown(result.summary)).toContain('workspace-open')
 
       expect(result.summary.phases.startup.sampleCount).toBe(1)
       expect(result.summary.phases.recovery.sampleCount).toBe(1)

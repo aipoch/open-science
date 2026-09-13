@@ -478,6 +478,7 @@ describe('Session persistence coordinator architecture', () => {
         'recoverInterruptedDelegatedWork',
         'replaceSessionMetadata',
         'repairProjectFiles',
+        'reserveSessionExport',
         'retryArtifactFinalization',
         'runSessionMutation',
         'saveManifest',
@@ -530,7 +531,8 @@ describe('Session persistence coordinator architecture', () => {
       'computeJobs:optional',
       'onDelegatedWorkSessionUpdated:optional',
       'onDelegationPolicyUpdated:optional',
-      'workspaceOwnership:optional'
+      'workspaceOwnership:optional',
+      'preparePackageDeletion:optional'
     ])
     expect(exportedNames(facadeFile, 'value')).toEqual(
       ['SessionPersistenceCoordinator', 'SessionRuntimeContextRevisionConflictError'].sort()
@@ -568,6 +570,7 @@ describe('Session persistence coordinator architecture', () => {
         'deletedSessions',
         'deletionOwner',
         'destructiveStartupWindowOpen',
+        'exportingSessions',
         'fileIndex',
         'log',
         'delegatedWorkOwner',
@@ -622,6 +625,7 @@ describe('Session persistence coordinator architecture', () => {
         'log',
         'notifyFilesChanged',
         'notifySessionsDeleted',
+        'preparePackageDeletion',
         'provenance',
         'repository',
         'stateOwner',
@@ -717,6 +721,7 @@ describe('Session persistence coordinator architecture', () => {
         'mutateSessionDetailsAuthority',
         'patchSessionRuntimeContext',
         'readSessionRuntimeContext',
+        'reserveSessionExport',
         'retryArtifactFinalization',
         'runSessionMutation',
         'saveSession',
@@ -743,6 +748,22 @@ describe('Session persistence coordinator architecture', () => {
     )
     for (const name of asynchronousMethods) {
       const method = methodFrom(facade, name)
+      if (name === 'saveSession') {
+        // Export release waits outside the lane; each actual save still enters the same Session
+        // scheduler. Behavioral coordinator tests cover release/retry and unrelated-lane progress.
+        const calls: string[] = []
+        const visit = (node: Node): void => {
+          if (
+            isCallExpression(node) &&
+            node.expression.getText(facadeFile).startsWith('this.operationScheduler.')
+          )
+            calls.push(node.expression.getText(facadeFile))
+          forEachChild(node, visit)
+        }
+        visit(method)
+        expect(calls).toEqual(['this.operationScheduler.runSession'])
+        continue
+      }
       expect(method.body?.statements, name).toHaveLength(1)
       const statement = method.body?.statements[0]
       expect(statement, name).toBeDefined()
@@ -782,7 +803,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(42)
+    expect(expectedSchedulerRoute.size).toBe(43)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')

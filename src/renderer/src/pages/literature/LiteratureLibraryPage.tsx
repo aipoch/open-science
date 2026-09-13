@@ -77,6 +77,7 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { ActionToast } from '@/components/ActionToast'
 import { ErrorNotice } from '@/components/error-notice'
 import { LiteratureErrorNotice } from './LiteratureErrorNotice'
+import { ProjectPicker } from '@/components/ProjectPicker'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -1523,6 +1524,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     []
   )
   const [startingReadingProjectId, setStartingReadingProjectId] = useState<string>()
+  const [readingProjectQuery, setReadingProjectQuery] = useState('')
   const [readingProjectError, setReadingProjectError] = useState<string>()
   const [citationStyles, setCitationStyles] = useState<LiteratureCitationStyleView[]>()
   const [citationStylesOpen, setCitationStylesOpen] = useState(false)
@@ -3241,6 +3243,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       void startReadingInProject(selectedProject.id, reading)
       return
     }
+    setReadingProjectQuery('')
     setPendingLiteratureReading(reading)
   }
 
@@ -6725,6 +6728,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         open={Boolean(pendingLiteratureReading) && !readingProjectFormDialog.dialogProps.open}
         onOpenChange={(open) => {
           if (open || startingReadingProjectId) return
+          setReadingProjectQuery('')
           setPendingLiteratureReading(undefined)
           setReadingProjectError(undefined)
         }}
@@ -6781,28 +6785,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 ) : null}
                 {projectsLoaded ? (
                   activeProjects.length > 0 ? (
-                    <div className="grid gap-2">
-                      {activeProjects.map((project) => (
-                        <Button
-                          key={project.id}
-                          type="button"
-                          variant="outline"
-                          className="min-w-0 justify-start"
-                          disabled={Boolean(startingReadingProjectId)}
-                          onClick={() => void startReadingInProject(project.id)}
-                        >
-                          {startingReadingProjectId === project.id ? (
-                            <LoaderCircle
-                              className="size-4 animate-spin motion-reduce:animate-none"
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            <FolderOpen className="size-4" aria-hidden="true" />
-                          )}
-                          <span className="truncate">{project.name}</span>
-                        </Button>
-                      ))}
-                    </div>
+                    <ProjectPicker
+                      projects={activeProjects}
+                      query={readingProjectQuery}
+                      onQueryChange={setReadingProjectQuery}
+                      disabled={Boolean(startingReadingProjectId)}
+                      pendingId={startingReadingProjectId}
+                      onSelect={(id) => void startReadingInProject(id)}
+                    />
                   ) : (
                     <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border-300/80 bg-bg-100 p-4">
                       <FolderPlus className="size-5 text-muted-foreground" aria-hidden="true" />
@@ -6863,6 +6853,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           }}
           onContinue={(documents) => {
             setBatchReading(undefined)
+            setReadingProjectQuery('')
             setReadingProjectError(undefined)
             if (selectedProject) void startReadingInProject(selectedProject.id, documents)
             else setPendingLiteratureReading(documents)

@@ -14,6 +14,8 @@ import {
   retryPendingArtifactFinalization,
   saveSessionInOrder
 } from '@/lib/session-persistence/session-persistence'
+import { exportSessionPackage, sessionPackageExportAvailable } from '@/lib/session-package-export'
+import { usePackageOperationStore } from '@/stores/package-operation-store'
 import { useMemoryStore } from '@/stores/memory-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -69,6 +71,7 @@ import { SessionReproducibilityDialog } from './SessionReproducibilityDialog'
 import { FilePreviewDialog } from './FilePreviewDialog'
 import { EditSessionDialog } from './EditSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
+import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { JobDetailModal } from '@/components/JobDetailModal'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { startWslSetupConversation } from '@/lib/wsl-support-handoff'
@@ -451,6 +454,7 @@ const WorkspacePage = ({
     : false
   const canEditDraft =
     isSessionPersistenceReady &&
+    !activeSession?.packageOrigin &&
     !activeSessionHasSendPreparation &&
     activeSession?.status !== 'waiting-plan-approval'
   const composerHistoryPolicy = useMemo(
@@ -1015,6 +1019,18 @@ const WorkspacePage = ({
     useNavigationStore.getState().openSession(scopedProjectId, sessionId, 'user')
   }
 
+  const openPackageExport = async (session: ChatSession): Promise<void> => {
+    const previous = usePackageOperationStore.getState().operation?.id
+    try {
+      await exportSessionPackage(session)
+    } catch (error) {
+      const operation = usePackageOperationStore.getState().operation
+      // Transfer failures have their own retry surface. Failures before admission stay in Workspace.
+      if (operation?.id === previous || operation?.kind !== 'export')
+        setAttachmentError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const openSessionWithoutExportError = (sessionId: string): void => {
     sessionController.actions.clearExportError()
     openSession(sessionId)
@@ -1171,7 +1187,14 @@ const WorkspacePage = ({
     typeof window.api.backgroundResultDelivery?.getProjectActivity === 'function'
 
   return (
-    <main
+    <ProjectPackageDropZone
+      projectId={scopedProjectId}
+      projectName={activeProject?.name ?? t('Project')}
+      canImport={
+        isSessionPersistenceReady &&
+        Boolean(activeProject) &&
+        activeProject?.archivedAt === undefined
+      }
       ref={previewFocusFallbackRef}
       tabIndex={-1}
       className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]"
@@ -1222,6 +1245,7 @@ const WorkspacePage = ({
               window.api.artifacts?.sessionReproducibility ? setCheckSession : undefined
             }
             onViewNotebook={sessionController.actions.openNotebook}
+            onExportPackage={sessionPackageExportAvailable() ? openPackageExport : undefined}
             onExportSession={
               typeof window.api.sessions?.exportConversation === 'function'
                 ? sessionController.actions.openExportConversation
@@ -1309,6 +1333,14 @@ const WorkspacePage = ({
               close()
               sessionController.actions.openNotebook(session)
             }}
+            onExportPackage={
+              sessionPackageExportAvailable()
+                ? async (session) => {
+                    close()
+                    await openPackageExport(session)
+                  }
+                : undefined
+            }
             onExportSession={
               typeof window.api.sessions?.exportConversation === 'function'
                 ? (session) => {
@@ -1539,7 +1571,7 @@ const WorkspacePage = ({
       />
 
       <ProjectFormDialog {...projectFormDialog.dialogProps} />
-    </main>
+    </ProjectPackageDropZone>
   )
 }
 

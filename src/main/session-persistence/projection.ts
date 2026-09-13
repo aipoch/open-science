@@ -22,7 +22,7 @@ const runProjectionTransaction = <Result>(
 ): Promise<Result> => client.$transaction(operation, { maxWait: 10_000 })
 
 const PROJECTION_STATE_ID = 'session-projection'
-const PROJECTION_VERSION = 4
+const PROJECTION_VERSION = 5
 const SESSION_NUMBER_SEQUENCE_ID = 'global'
 const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
 const MAX_SQLITE_INT = 2_147_483_647
@@ -300,6 +300,7 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
   )
   const details = session.sessionDetailsGeneration
   if (
+    !session.packageOrigin &&
     details &&
     'completedAt' in details &&
     'frameworkId' in details &&
@@ -804,6 +805,17 @@ export class SessionProjectionRepository {
         }
       })
     ]
+    // Source-side title generation is historical evidence, never local model usage.
+    for (const chunk of chunksOf(
+      projected.filter(({ session }) => session.packageOrigin),
+      200
+    )) {
+      writes.push(
+        client.sessionAuxiliaryTurnUsage.deleteMany({
+          where: { sessionId: { in: chunk.map(({ session }) => session.id) } }
+        })
+      )
+    }
     for (const chunk of chunksOf(projected, 40)) {
       writes.push(
         client.session.createMany({

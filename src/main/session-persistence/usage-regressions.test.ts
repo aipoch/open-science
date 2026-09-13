@@ -17,6 +17,7 @@ import {
   useSessionStore
 } from '../../renderer/src/stores/session-store'
 import {
+  buildTokenUsageAnalytics,
   buildTokenUsageAnalyticsFromProjection,
   selectTokenUsageSummary,
   type TokenUsageSummary
@@ -118,6 +119,63 @@ const summary = async (period: 'all' | 'today' = 'all'): Promise<TokenUsageSumma
   )
 
 describe('usage through real store, Session codec, and SQLite', () => {
+  it('does not count imported source usage as local execution', async () => {
+    run('source')
+    const source = await save('source')
+    const imported = await repository.prepareSave({
+      ...structuredClone(source),
+      id: 'imported',
+      number: undefined,
+      revision: undefined,
+      sessionDetailsGeneration: {
+        sourceMessageId: source.messages[0].id,
+        requestId: 'imported-title',
+        status: 'succeeded',
+        queuedAt: now,
+        startedAt: now,
+        completedAt: now,
+        frameworkId: 'opencode',
+        model: 'title-model',
+        reasoningEffort: 'default',
+        usage: { inputTokens: 4, cacheTokens: 1, outputTokens: 2 }
+      },
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: source.projectId,
+        sourceSessionId: source.id,
+        importedAt: now,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+    await repository.commitSave(imported)
+    expect.soft(await summary()).toMatchObject({ totalSessions: 2, totalRuns: 1, totalTokens: 15 })
+    expect.soft(await client.sessionModelCallUsage.count()).toBe(1)
+    expect
+      .soft(imported.messages.find((message) => message.role === 'agent')?.turnUsage)
+      .toEqual(usage)
+    expect
+      .soft(selectTokenUsageSummary(buildTokenUsageAnalytics([source, imported], now), 'all'))
+      .toMatchObject({ totalSessions: 2, totalRuns: 1, totalTokens: 15 })
+    // An earlier projection may already have recorded the source's title-generation usage.
+    await client.sessionAuxiliaryTurnUsage.create({
+      data: {
+        sessionId: imported.id,
+        eventId: 'imported-title',
+        source: 'session-details',
+        frameworkId: 'opencode',
+        completedAtMs: BigInt(now),
+        inputTokens: 4n,
+        cacheTokens: 1n,
+        outputTokens: 2n
+      }
+    })
+    await repository.replaceAll([source, imported])
+    expect(await summary()).toMatchObject({ totalSessions: 2, totalRuns: 1, totalTokens: 15 })
+    expect(
+      await client.sessionAuxiliaryTurnUsage.count({ where: { sessionId: imported.id } })
+    ).toBe(0)
+  })
+
   it('U01 counts only new execution after branching, while retaining historical display', async () => {
     const { answer } = run('source')
     const source = await save('source')

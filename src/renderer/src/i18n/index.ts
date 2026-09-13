@@ -1,8 +1,7 @@
 // i18next setup for the renderer, shared by the Electron window and the localhost web build.
 //
-// initI18n() is called synchronously before React mounts (main.tsx / web/bootstrap.ts) so the first
-// paint is already in the resolved language. i18next's init is synchronous when resources are passed
-// inline and no async backend is configured, which is why the catalogs are statically imported.
+// Prepare the selected catalog before mounting React; initialization and already-loaded switches
+// remain synchronous. Unselected catalogs are separate chunks and never enter the startup graph.
 //
 // Keys are the English source text: t('Data folder not found'), not t('dataRoot.missing.title').
 // English therefore has no catalog — it renders from i18next's missing-key fallback, which returns
@@ -20,39 +19,46 @@ import {
   RENDERER_NAMESPACE
 } from '../../../shared/i18n/core'
 import type { Locale } from '../../../shared/locale'
-import { DEFAULT_NAMESPACE, resources } from './resources'
+import { preparedI18nResources } from './locale-loader'
+export { prepareI18nLocale } from './locale-loader'
 
 let initialized = false
 const i18next = createI18nInstance()
 
 export const initI18n = (locale: Locale): i18n => {
+  const resources = preparedI18nResources(locale)
   if (initialized) {
-    void i18next.changeLanguage(locale)
+    for (const [namespace, catalog] of Object.entries(resources[locale] ?? {})) {
+      if (!i18next.hasResourceBundle(locale, namespace))
+        i18next.addResourceBundle(locale, namespace, catalog)
+    }
+    const startedAt = performance.now()
+    void i18next.changeLanguage(locale).then(() => {
+      performance.clearMeasures('open-science:i18n-locale-switch')
+      performance.measure('open-science:i18n-locale-switch', { start: startedAt })
+    })
     return i18next
   }
 
+  const startedAt = performance.now()
   i18next.use(initReactI18next)
   initializeI18nInstance(i18next, {
     locale,
     resources,
     namespaces: [RENDERER_NAMESPACE, COMMON_NAMESPACE],
-    defaultNamespace: DEFAULT_NAMESPACE,
+    defaultNamespace: RENDERER_NAMESPACE,
     fallbackNamespaces: [COMMON_NAMESPACE]
   })
 
   initialized = true
+  performance.measure('open-science:i18n-init', { start: startedAt })
   return i18next
 }
 
 // Switches the active language on an already-initialized instance. Safe to call before init (the
 // store's setter may run in a test that never bootstrapped): init then applies the same locale.
 export const setI18nLocale = (locale: Locale): void => {
-  if (!initialized) {
-    initI18n(locale)
-    return
-  }
-
-  void i18next.changeLanguage(locale)
+  initI18n(locale)
 }
 
 export { i18next }

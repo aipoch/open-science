@@ -20,6 +20,13 @@ import type {
   SubagentModelConfiguration
 } from './settings'
 
+export type TaskAgentRuntime = Readonly<{
+  framework: AgentFrameworkId
+  status: ReadinessStatus
+  version?: string
+  source?: 'managed' | 'external'
+}>
+
 export type TaskDoctorReport = Readonly<{
   ready: boolean
   checks: Readonly<{

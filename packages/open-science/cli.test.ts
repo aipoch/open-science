@@ -163,6 +163,47 @@ describe('task CLI', () => {
     }
   )
 
+  it('parses runtime list', () => {
+    expect(parseCliArgs(['runtime', 'list'])).toMatchObject({
+      command: 'runtime',
+      subcommand: 'list',
+      options: { json: false }
+    })
+    expect(parseCliArgs(['runtime', 'list', '--json'])).toMatchObject({
+      command: 'runtime',
+      subcommand: 'list',
+      options: { json: true }
+    })
+  })
+
+  it('prints runtime list in human-readable and JSON forms', async () => {
+    const runtimes = [
+      { framework: 'claude-code', status: 'ready', version: '2.1.0', source: 'managed' },
+      { framework: 'codex', status: 'missing' }
+    ]
+    const listRuntimes = vi.fn().mockResolvedValue(runtimes)
+    const humanLog = vi.fn()
+    const jsonLog = vi.fn()
+
+    await runTaskCommand(parseCliArgs(['runtime', 'list']), {
+      connect: vi.fn().mockResolvedValue({ listRuntimes }),
+      log: humanLog,
+      stdinIsTTY: true
+    })
+    await runTaskCommand(parseCliArgs(['runtime', 'list', '--json']), {
+      connect: vi.fn().mockResolvedValue({ listRuntimes }),
+      log: jsonLog,
+      stdinIsTTY: true
+    })
+
+    expect(humanLog.mock.calls.map(([line]) => line)).toEqual([
+      'FRAMEWORK\tSTATUS\tVERSION\tSOURCE',
+      'claude-code\tready\t2.1.0\tmanaged',
+      'codex\tmissing\t-\t-'
+    ])
+    expect(JSON.parse(jsonLog.mock.calls[0][0])).toEqual(runtimes)
+  })
+
   it('rejects ports that are not complete decimal values', () => {
     expect(() => parseCliArgs(['start', '--port', '44100xyz'])).toThrow('Invalid port: 44100xyz')
     expect(() => parseCliArgs(['start', '--port', '0'])).toThrow('Invalid port: 0')

@@ -455,6 +455,38 @@ describe('Artifact reproducibility verification export', () => {
     expect(buildVerificationReport(value)).not.toContain('/Users/')
   })
 
+  it('exports source checks from an imported Version without relabeling the receipt', async () => {
+    const { receipt: value, log } = receiptWithCheckLog()
+    const local = {
+      ...request(value),
+      projectId: 'import-project',
+      appSessionId: 'import-session',
+      artifactId: 'local-artifact',
+      versionId: 'local-version'
+    }
+    const writeArchive = vi.fn<(path: string, bytes: Uint8Array) => Promise<void>>(
+      async () => undefined
+    )
+    const exporter = createArtifactReproducibilityReceiptExporter({
+      downloadsDirectory: () => '/downloads',
+      readReceipt: async () => value,
+      readCheckLog: async () => log,
+      readSourceScope: async () => value.artifactVersion,
+      readVersion: async () => ({
+        versionId: local.versionId,
+        artifactId: local.artifactId,
+        checksum: value.artifactVersion.targetChecksum,
+        versionNumber: 1
+      }),
+      showSaveDialog: async () => ({ canceled: false, filePath: '/exports/source.zip' }),
+      writeArchive
+    })
+    await expect(exporter.export(undefined, local)).resolves.toEqual({ saved: true })
+    const archive = unzipSync(writeArchive.mock.calls[0]![1])
+    expect(JSON.parse(strFromU8(archive['verification-receipt.json']!))).toEqual(value)
+    expect(strFromU8(archive['report.md']!)).toContain('source installation')
+  })
+
   it('reloads and validates the selected receipt before saving', async () => {
     const { receipt: value, log } = receiptWithCheckLog()
     const writeArchive = vi.fn<(path: string, bytes: Uint8Array) => Promise<void>>(
@@ -859,7 +891,12 @@ describe('Artifact Environment lock export', () => {
       artifactId: 'artifact-1',
       versionId: 'version-1'
     })
-    expect(readEnvironmentLock).toHaveBeenCalledWith(environmentLockChecksum)
+    expect(readEnvironmentLock).toHaveBeenCalledWith(environmentLockChecksum, {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1'
+    })
     expect(showSaveDialog).toHaveBeenCalledWith(
       { window: 1 },
       expect.objectContaining({

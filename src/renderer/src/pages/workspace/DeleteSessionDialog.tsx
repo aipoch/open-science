@@ -83,10 +83,22 @@ const DeleteSessionDialog = ({
                     {t('Project: {{name}}', { name: dialogProjectName })}
                   </p>
                 ) : null}
-                {t(
-                  'This will permanently delete "{{title}}". Artifacts created in this session will remain in the project. Messages and execution evidence attached to those Artifacts will remain available in Provenance. Files in its working folder are not deleted. This action cannot be undone.',
-                  { title: dialogSession?.title ?? '' }
-                )}
+                {dialogSession?.packageOrigin || dialogSession?.id.startsWith('import-')
+                  ? t(
+                      'This will permanently delete "{{title}}". Imported files will be checked for cleanup the next time Open Science starts. The entire package is kept if other research references it or references cannot be verified. Exported .science files are not deleted. This action cannot be undone.',
+                      { title: dialogSession?.title ?? '' }
+                    )
+                  : t(
+                      'This will permanently delete "{{title}}". Artifacts created in this session will remain in the project. Messages and execution evidence attached to those Artifacts will remain available in Provenance. Files in its working folder are not deleted. This action cannot be undone.',
+                      { title: dialogSession?.title ?? '' }
+                    )}
+                {dialogSession?.packageOrigin || dialogSession?.id.startsWith('import-') ? (
+                  <p className="mt-2">
+                    {t(
+                      'If package ownership cannot be verified, the conversation is deleted but its files are kept.'
+                    )}
+                  </p>
+                ) : null}
               </div>
             </AlertDialog.Description>
             {isDeleting ? (

@@ -13,6 +13,7 @@ import {
 import { terminateProcessTree } from '../../src/main/process-tree'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
 import { RendererFailureGate } from './renderer-failure-gate'
+import type { PackageOperationSnapshot } from '../../src/shared/session-package'
 
 const APP_ROOT = resolve(process.cwd())
 const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs')
@@ -135,6 +136,10 @@ type ElectronApp = {
   configureFileBrowserFixture: () => Promise<void>
   configureFakeAgent: () => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
+  configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
+  restartWithPackage: (path: string) => Promise<Page>
+  emitPackageFileOpen: (path: string) => Promise<void>
+  emitSessionPackageProgress: (snapshot: PackageOperationSnapshot) => Promise<void>
   enableFakeRemoteIt: () => Promise<Page>
   findOverlayIsVisible: () => Promise<boolean>
   launchSecondInstance: () => Promise<Page>
@@ -152,6 +157,8 @@ type ElectronApp = {
   restartAfterCrash: () => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
+  recordResourceTiming: (name: string, durationMs: number) => void
+  captureResourceTimings: (prefix?: string) => Promise<void>
   sampleResourceProfileNow: () => Promise<void>
   setMainWindowZoomFactor: (factor: number) => Promise<void>
   finishResourceProfile: () => Promise<RuntimeProfileResult>
@@ -204,10 +211,12 @@ const launchOpenScience = async (
   fakeRemoteItEnabled: boolean,
   fakeRemoteItRoot: string,
   windowMode: E2eWindowMode,
-  sessionPerformanceTrace: boolean
+  sessionPerformanceTrace: boolean,
+  packagePath?: string
 ): Promise<ElectronApplication> => {
   const application = await electron.launch({
     ...electronLaunchTarget(userDataRoot),
+    args: [...electronLaunchTarget(userDataRoot).args, ...(packagePath ? [packagePath] : [])],
     cwd: fakeRemoteItEnabled ? fakeRemoteItRoot : APP_ROOT,
     env: launchEnvironment(
       storageRoot,
@@ -335,12 +344,14 @@ const applyHiddenWindowPresentation = async (
 const openMainWindow = async (
   application: ElectronApplication,
   rendererFailures: RendererFailureGate,
-  windowMode: E2eWindowMode
+  windowMode: E2eWindowMode,
+  onFirstReady?: (page: Page) => Promise<void>
 ): Promise<Page> => {
   const page = await application.firstWindow()
   await applyHiddenWindowPresentation(page, windowMode)
   await rendererFailures.observe(page)
   await waitForRendererReady(page)
+  await onFirstReady?.(page)
   // Writing the cooldown after first paint does not cancel a timer GitHubStarBadge already
   // scheduled. Reload so the workspace variant remounts with the cooldown already set.
   await suppressWorkspaceStarNudge(page)
@@ -552,6 +563,43 @@ class ElectronAppHarness implements ElectronApp {
     await this.resourceProfiler.sampleNow()
   }
 
+  recordResourceTiming(name: string, durationMs: number): void {
+    this.resourceProfiler?.recordTiming(name, durationMs)
+  }
+
+  async captureResourceTimings(prefix = ''): Promise<void> {
+    if (!this.resourceProfiler) return
+    const collect = (): { name: string; duration: number }[] => {
+      const names = new Set([
+        'open-science:ipc-registration',
+        'open-science:renderer-bootstrap',
+        'open-science:i18n-init',
+        'open-science:i18n-locale-switch',
+        'open-science:persistence-runtime-lookup-fallback',
+        'open-science:persistence-runtime-lookup-catalog',
+        'open-science:persistence-runtime-lookup-ownership',
+        'open-science:persistence-runtime-lookup-read',
+        'open-science:persistence-runtime-lookup-targeted'
+      ])
+      const timings = performance
+        .getEntriesByType('measure')
+        .filter((entry) => names.has(entry.name))
+        .map(({ name, duration }) => ({ name, duration }))
+      for (const name of names) performance.clearMeasures(name)
+      for (const entry of performance.getEntriesByType('paint')) {
+        if (entry.name === 'first-paint' || entry.name === 'first-contentful-paint') {
+          timings.push({ name: entry.name, duration: entry.startTime })
+        }
+      }
+      return timings
+    }
+    for (const timing of [
+      ...(await this.runningApplication.evaluate(collect)),
+      ...(await this.page.evaluate(collect))
+    ])
+      this.resourceProfiler.recordTiming(prefix + timing.name, timing.duration)
+  }
+
   async sampleResourceProfileNow(): Promise<void> {
     if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
     await this.resourceProfiler.sampleNow()
@@ -736,6 +784,49 @@ class ElectronAppHarness implements ElectronApp {
     const path = join(this.testRoot, name)
     await mkdir(path, { recursive: true })
     return path
+  }
+
+  async emitSessionPackageProgress(snapshot: PackageOperationSnapshot): Promise<void> {
+    // Presentation fixtures use the existing native event boundary, without a production test seam.
+    await this.runningApplication.evaluate(({ BrowserWindow }, snapshot) => {
+      BrowserWindow.getAllWindows()[0].webContents.send(
+        'sessions:package-operation-changed',
+        snapshot
+      )
+    }, snapshot)
+  }
+
+  async restartWithPackage(path: string): Promise<Page> {
+    await this.close()
+    await this.launch(path)
+    return this.page
+  }
+
+  async emitPackageFileOpen(path: string): Promise<void> {
+    await this.runningApplication.evaluate(({ app }, path) => {
+      app.emit('open-file', { preventDefault: () => undefined }, path)
+    }, path)
+  }
+
+  async configureSessionPackageDialogs(options?: { availableBytes?: number }): Promise<string> {
+    const archive = join(this.testRoot, 'research.science')
+    if (options?.availableBytes !== undefined)
+      await this.runningApplication.evaluate((_electron, freeBytes) => {
+        const fs = process.getBuiltinModule('node:fs/promises')
+        fs.statfs = new Proxy(fs.statfs, {
+          apply: async (original, receiver, args) => {
+            const stats = await Reflect.apply(original, receiver, args)
+            stats.bavail = typeof stats.bavail === 'bigint' ? BigInt(freeBytes) : freeBytes
+            stats.bsize = typeof stats.bsize === 'bigint' ? 1n : 1
+            return stats
+          }
+        })
+      }, options.availableBytes)
+    await this.runningApplication.evaluate(({ dialog }, archive) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: archive })
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [archive] })
+    }, archive)
+    return archive
   }
 
   async enableFakeRemoteIt(): Promise<Page> {
@@ -932,7 +1023,10 @@ class ElectronAppHarness implements ElectronApp {
       if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
       this.resourceProfiler.markPhase(options.resourceProfilePhase)
     }
-    await this.launch()
+    await this.launch(
+      undefined,
+      options.resourceProfilePhase === 'recovery' ? 'recovery-startup-ready' : 'startup-ready'
+    )
     return this.page
   }
 
@@ -996,22 +1090,52 @@ class ElectronAppHarness implements ElectronApp {
     }
   }
 
-  private async launch(): Promise<void> {
+  private async launch(packagePath?: string, timingName = 'startup-ready'): Promise<void> {
+    const launchStartedAt = performance.now()
     this.application = await launchOpenScience(
       this.roots,
       this.fakeAgentEnabled,
       this.fakeRemoteItEnabled,
       this.roots.fakeRemoteItRoot,
       this.windowMode,
-      this.resourceProfiler !== undefined
+      this.resourceProfiler !== undefined,
+      packagePath
     )
     await this.resourceProfiler?.attach(this.application)
     try {
+      if (process.env.OPEN_SCIENCE_E2E_EXECUTABLE) {
+        const evidence = await this.application.evaluate(({ app }) => ({
+          packaged: app.isPackaged,
+          appPath: app.getAppPath(),
+          executable: process.execPath,
+          version: app.getVersion()
+        }))
+        const revision = process.env.OPEN_SCIENCE_E2E_EXPECTED_BUILD_SHA
+        if (
+          !evidence.packaged ||
+          !evidence.appPath.endsWith('app.asar') ||
+          evidence.executable !== process.env.OPEN_SCIENCE_E2E_EXECUTABLE ||
+          (revision && !evidence.version.endsWith(`-nightly.${revision.slice(0, 7)}`))
+        ) {
+          throw new Error(`Packaged Electron identity mismatch: ${JSON.stringify(evidence)}`)
+        }
+        console.info('Packaged Electron identity:', JSON.stringify(evidence))
+      }
       this.currentPage = await openMainWindow(
         this.application,
         this.rendererFailures,
-        this.windowMode
+        this.windowMode,
+        this.resourceProfiler
+          ? async (page) => {
+              this.currentPage = page
+              this.recordResourceTiming('first-' + timingName, performance.now() - launchStartedAt)
+              await this.captureResourceTimings(
+                timingName === 'recovery-startup-ready' ? 'first-recovery:' : 'first:'
+              )
+            }
+          : undefined
       )
+      this.recordResourceTiming(timingName, performance.now() - launchStartedAt)
     } finally {
       this.mainLogDirectory = await this.application
         .evaluate(({ app }) => app.getPath('logs'))
@@ -1097,6 +1221,8 @@ class ElectronAppHarness implements ElectronApp {
       {
         gracefulTimeoutMs: CLEANUP_GRACEFUL_TIMEOUT_MS,
         forcedTimeoutMs: CLEANUP_FORCED_TIMEOUT_MS,
+        requireGraceful
+      }
         requireGraceful
       }
     )

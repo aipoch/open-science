@@ -187,6 +187,15 @@ Repeat the same absolute invocation with `cli install --json`. Respect the retur
 Windows may require a new terminal and Unix shells may need the existing launcher directory on PATH.
 The launcher uses the existing ownership receipts and does not claim unrelated executables.
 
+## Agent runtimes
+
+List the supported Agent runtimes and inspect their readiness without exposing executable paths:
+
+```bash
+open-science runtime list
+open-science runtime list --json
+```
+
 ## Application updates
 
 Check, download, and apply an Open Science application update without opening the browser or desktop

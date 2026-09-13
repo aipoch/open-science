@@ -1,3 +1,4 @@
+import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
 import { configureCredentialStore } from './settings/credential-store-mode'
 import { createRequire } from 'node:module'
 import { isAbsolute } from 'node:path'
@@ -110,6 +111,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     protocol
   } = createRequire(import.meta.url)('electron') as typeof import('electron')
 
+  let reportPackageOverflow = (): void => undefined
+  const packageFiles = new PackageFileOpenRelay(() => reportPackageOverflow())
+  app.on('open-file', (event, path) => {
+    event.preventDefault()
+    packageFiles.receive(path)
+  })
+
   // Electron accepts privileged schemes only before app ready. Keep this in the synchronous UI
   // bootstrap before any awaited import can yield to the ready event.
   protocol.registerSchemesAsPrivileged([
@@ -156,12 +164,16 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   if (
     !allowMultiInstance &&
     !acquireSingleInstanceLock({
-      onSecondInstance: (argv) => preStartupSecondInstanceRelay.signal(argv)
+      onSecondInstance: (argv, cwd) => {
+        for (const path of packagePathsFromArgv(argv, cwd)) packageFiles.receive(path)
+        preStartupSecondInstanceRelay.signal(argv)
+      }
     })
   ) {
     app.quit()
     return
   }
+  for (const path of packagePathsFromArgv(process.argv, process.cwd())) packageFiles.receive(path)
   const webMode = parseWebModeOptions(process.argv)
   configureCredentialStore(process.argv, process.platform, webMode.headless)
   let bindSystemShutdownWindow = (window: InstanceType<typeof BrowserWindow>): void => {
@@ -255,6 +267,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // returns the handles the migration guard and lifecycle need; the guard is installed before the
   // lifecycle so its before-quit runs first. A second launch that arrives mid-startup is recorded by the
   // relay and surfaced once the window exists.
+  let openPackageWindow: (() => void) | undefined
   let forwardSecondInstanceDuringStartup: ((argv: string[]) => void) | undefined
   await orchestrateAppStartup({
     diagnostics: startupDiagnostics,
@@ -521,6 +534,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
 
             // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
             const {
+              openSessionPackageFile,
               applicationCommands,
               applicationEvents,
               permissionApprovalPresence,
@@ -658,6 +672,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             })
 
             return {
+              openSessionPackageFile,
               installMigrationQuitGuard,
               isMigrationInProgress,
               createMainWindow: (options: Parameters<typeof createMainWindow>[0]) =>
@@ -825,6 +840,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         shutdownBackends: ctx.shutdownApplicationSurfaces
       })
       const { showMainWindow, getMainWindow, isMainWindowHidden, onSystemShutdown } = lifecycle
+      openPackageWindow = showMainWindow
 
       // Window lifecycle now exists: expose it to the restored controller, reapply any Windows
       // overlay to the first window, then attach completion/focus/window-recreation events.
@@ -881,6 +897,11 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     markReady: (ctx) => {
       ctx.databaseStartupOwner.complete()
       ctx.databaseStartupQuitGuard.release()
+      reportPackageOverflow = () => ctx.openSessionPackageFile(null)
+      packageFiles.bind((path) => {
+        openPackageWindow?.()
+        ctx.openSessionPackageFile(path)
+      })
     }
   })
 }

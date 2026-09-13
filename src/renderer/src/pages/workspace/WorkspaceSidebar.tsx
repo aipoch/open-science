@@ -1,3 +1,4 @@
+import { SessionPackageImportMenu } from '@/components/SessionPackageImportMenu'
 import {
   BookOpen,
   ChevronDown,
@@ -5,6 +6,7 @@ import {
   Download,
   Files,
   Cpu,
+  Lock,
   MoreVertical,
   PanelLeft,
   Plus,
@@ -22,6 +24,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -56,6 +59,7 @@ import {
 } from './session-action-menu'
 
 type WorkspaceSidebarProps = {
+  importProjectId?: string
   projectName: string
   otherProjects?: ReadonlyArray<{
     id: string
@@ -92,6 +96,7 @@ type WorkspaceSidebarProps = {
   onCheckArtifacts?: (session: ChatSession) => void
   onViewNotebook: (session: ChatSession) => void
   onExportSession?: (session: ChatSession) => void
+  onExportPackage?: (session: ChatSession) => Promise<void>
   onTogglePin: (session: ChatSession) => void
   canArchiveSession?: (session: ChatSession) => boolean
   onArchiveSession?: (session: ChatSession) => void
@@ -120,6 +125,7 @@ type WorkspaceSidebarProps = {
 
 type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
   now: number
+  packageBusy?: boolean
   showSessionShortcuts?: boolean
   openSessionActionsId?: string | null
   onSessionActionsOpenChange?: (sessionId: string, open: boolean) => void
@@ -258,7 +264,7 @@ const sessionRowClassName = cn(
 )
 
 const sessionRowActionClassName =
-  'absolute right-1.5 top-1/2 z-10 -translate-y-1/2 rounded p-0.5 text-text-100 opacity-0 transition-opacity duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100'
+  'absolute right-1.5 top-1/2 z-10 -translate-y-1/2 rounded p-0.5 text-text-100 opacity-0 transition-opacity duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100'
 
 const SESSION_ACTION_TARGET_PREFIX = 'session:'
 const sessionActionDangerClassName =
@@ -369,6 +375,7 @@ const matchProjects = (
 
 // Left navigation owns session selection, creation entry, and workspace settings.
 const WorkspaceSidebarView = ({
+  importProjectId,
   projectName,
   otherProjects = [],
   onOpenProject,
@@ -395,6 +402,8 @@ const WorkspaceSidebarView = ({
   onCheckArtifacts,
   onViewNotebook,
   onExportSession,
+  onExportPackage,
+  packageBusy = false,
   onTogglePin,
   canArchiveSession,
   onArchiveSession,
@@ -526,6 +535,7 @@ const WorkspaceSidebarView = ({
                   </span>
                   {t('Download artifacts…')}
                 </DropdownMenuItem>
+                {importProjectId ? <SessionPackageImportMenu projectId={importProjectId} /> : null}
                 <DropdownMenuSeparator />
                 {otherProjects.length > INITIAL_PROJECT_MENU_LIMIT ? (
                   // Keep the input outside the Radix item collection so typing never selects a row.
@@ -896,6 +906,9 @@ const WorkspaceSidebarView = ({
                     </div>
                     {section.items.map((session) => {
                       const isActive = session.id === activeSessionId
+                      // Catalog-only Sessions do not load packageOrigin until opened.
+                      const imported =
+                        Boolean(session.packageOrigin) || session.id.startsWith('import-')
                       const shortcutNumber = shortcutNumberBySessionId.get(session.id)
                       const presentedStatus = getPresentedSessionStatus(
                         session,
@@ -917,6 +930,8 @@ const WorkspaceSidebarView = ({
                         onCheckArtifacts,
                         onViewNotebook,
                         onExportSession,
+                        onExportPackage,
+                        packageBusy,
                         onArchiveSession,
                         onDeleteSession
                       })
@@ -930,12 +945,15 @@ const WorkspaceSidebarView = ({
                         canDeleteConversations,
                         canDownloadArtifacts,
                         Boolean(onExportSession),
+                        Boolean(onExportPackage),
+                        packageBusy,
                         archiveAvailable
                       ])
                       const openSessionButton = (
                         <button
                           type="button"
                           data-slot="session-open-button"
+                          title={imported ? t('Read-only') : undefined}
                           className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
                           aria-current={isActive ? 'page' : undefined}
                           aria-keyshortcuts={
@@ -983,6 +1001,21 @@ const WorkspaceSidebarView = ({
                             >
                               {isMac ? `⌘${shortcutNumber}` : `Ctrl+${shortcutNumber}`}
                             </kbd>
+                          ) : null}
+                          {imported ? (
+                            <span
+                              role="img"
+                              aria-label={t('Read-only')}
+                              className={cn(
+                                'relative z-[2] inline-flex size-4 shrink-0 items-center justify-center text-text-200 transition-opacity motion-reduce:transition-none',
+                                mobileMode
+                                  ? 'mr-5'
+                                  : 'group-hover:opacity-0 group-focus-within:opacity-0',
+                                !mobileMode && openSessionActionsId === session.id && 'opacity-0'
+                              )}
+                            >
+                              <Lock className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                            </span>
                           ) : null}
                         </button>
                       )
@@ -1104,6 +1137,7 @@ const WorkspaceSidebarView = ({
 }
 
 const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
+  const packageBusy = usePackageOperationStore((state) => packageOperationActive(state.operation))
   const {
     credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
     onOpenSession,
@@ -1191,6 +1225,7 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
   return (
     <WorkspaceSidebarView
       {...props}
+      packageBusy={packageBusy}
       now={now}
       showSessionShortcuts={showSessionShortcuts}
       openSessionActionsId={openSessionActionsId}

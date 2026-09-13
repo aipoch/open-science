@@ -112,6 +112,8 @@ await run(
     'playwright',
     'test',
     'e2e/runtime-performance.spec.ts',
+    'e2e/transcript-capacity.spec.ts',
+    'e2e/startup-performance.spec.ts',
     '--workers=1',
     `--repeat-each=${options.repeat}`,
     // Independent samples already come from --repeat-each. CI retries would replay a 10+ minute

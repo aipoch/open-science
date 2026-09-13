@@ -30,6 +30,7 @@ import type { ProjectSessionDeletionState } from './repository'
 import { saveSessionWithRevision } from './save-session'
 import type { SessionPersistenceStateOwner } from './state-owner'
 import { hasLegacySessionUpload } from './legacy-upload'
+import { IMPORTED_SESSION_READ_ONLY } from './imported-session'
 
 // Old JSON may still reference process-local drafts. Drop only those references during deletion;
 // the existing startup transfer owner cleans their bytes after the process ends.
@@ -152,6 +153,7 @@ type SessionPersistenceDeletionOwnerOptions = {
   uploads?: SessionDeletionUploads
   computeJobs?: ComputeJobDeletionParticipant
   workspaceOwnership?: SessionWorkspaceOwnership
+  preparePackageDeletion?: (session: PersistedChatSession) => Promise<void>
   log: Logger
   assertArchiveMutable(projectId: string, sessionId: string): void
   notifyFilesChanged(event: ProjectFilesChangedEvent): void
@@ -181,6 +183,7 @@ class SessionPersistenceDeletionOwner {
   private readonly uploads: SessionDeletionUploads | undefined
   private readonly computeJobs: ComputeJobDeletionParticipant | undefined
   private readonly workspaceOwnership: SessionWorkspaceOwnership | undefined
+  private readonly preparePackageDeletion: SessionPersistenceDeletionOwnerOptions['preparePackageDeletion']
   private readonly log: Logger
   private readonly assertArchiveMutable: (projectId: string, sessionId: string) => void
   private readonly notifyFilesChanged: (event: ProjectFilesChangedEvent) => void
@@ -194,6 +197,7 @@ class SessionPersistenceDeletionOwner {
     this.uploads = options.uploads
     this.computeJobs = options.computeJobs
     this.workspaceOwnership = options.workspaceOwnership
+    this.preparePackageDeletion = options.preparePackageDeletion
     this.log = options.log
     this.assertArchiveMutable = options.assertArchiveMutable
     this.notifyFilesChanged = options.notifyFilesChanged
@@ -222,6 +226,7 @@ class SessionPersistenceDeletionOwner {
       throw new Error('Cannot use a Session whose durable JSON is unreadable.')
     }
     if (loaded.status === 'missing') return
+    if (loaded.session.packageOrigin) throw new Error(IMPORTED_SESSION_READ_ONLY)
     if (loaded.session.archivedAt !== undefined) {
       throw new ArchiveAvailabilityError('session-archived')
     }
@@ -501,6 +506,11 @@ class SessionPersistenceDeletionOwner {
         throw new Error('Cannot delete a Session whose durable JSON is unreadable.')
       }
       session = loadedSession.status === 'found' ? loadedSession.session : undefined
+      if (session?.packageOrigin) {
+        failurePhase = 'prepare-package-cleanup'
+        operation.phase(failurePhase)
+        await this.preparePackageDeletion?.(session)
+      }
       if (session && this.uploads) {
         failurePhase = 'prepare-upload-cleanup'
         operation.phase(failurePhase)

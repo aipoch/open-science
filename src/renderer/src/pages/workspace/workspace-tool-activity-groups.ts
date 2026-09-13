@@ -96,10 +96,6 @@ const isProviderWebSearchActivity = (activity: ToolActivity): boolean =>
 const isQuotedActivityTitle = (activity: ToolActivity): boolean =>
   /^["'].+["']$/u.test(getTrimmedActivityTitle(activity))
 
-// Checks prior sibling rows so ToolSearch can classify following quoted fetch rows as searches.
-const hasEarlierToolSearchWrapper = (activities: ToolActivity[], activityIndex: number): boolean =>
-  activities.slice(0, activityIndex).some((activity) => isToolSearchWrapperActivity(activity))
-
 // ToolSearch can emit concrete search rows as fetch activities or without a tool kind.
 const canInferToolSearchResultActivity = (activity: ToolActivity): boolean =>
   activity.toolKind === undefined || activity.toolKind === 'fetch'
@@ -115,6 +111,7 @@ const hasToolSearchInferenceEvidence = (activity: ToolActivity): boolean =>
   isActivityActive(activity) || hasWebSearchContentEvidence(activity)
 
 // Classifies concrete WebSearch tools and likely ToolSearch result rows as web searches.
+// Kept for row-level rendering; group counting below uses a single pass.
 const isSearchActivity = (
   activity: ToolActivity,
   activities: ToolActivity[],
@@ -125,13 +122,27 @@ const isSearchActivity = (
     canUseToolSearchProviderInference(activity) &&
     isQuotedActivityTitle(activity) &&
     hasToolSearchInferenceEvidence(activity) &&
-    hasEarlierToolSearchWrapper(activities, activityIndex))
+    activities.slice(0, activityIndex).some((candidate) => isToolSearchWrapperActivity(candidate)))
 
 // Counts detected search activities so headers can summarize searches instead of raw tool calls.
-const countSearchActivities = (activities: ToolActivity[]): number =>
-  activities.filter((activity, activityIndex) =>
-    isSearchActivity(activity, activities, activityIndex)
-  ).length
+const countSearchActivities = (activities: ToolActivity[]): number => {
+  let count = 0
+  let hasEarlierToolSearchWrapper = false
+
+  for (const activity of activities) {
+    const isSearch =
+      isProviderWebSearchActivity(activity) ||
+      (canInferToolSearchResultActivity(activity) &&
+        canUseToolSearchProviderInference(activity) &&
+        isQuotedActivityTitle(activity) &&
+        hasToolSearchInferenceEvidence(activity) &&
+        hasEarlierToolSearchWrapper)
+    if (isSearch) count += 1
+    if (isToolSearchWrapperActivity(activity)) hasEarlierToolSearchWrapper = true
+  }
+
+  return count
+}
 
 // Coarse activity categories that map many concrete tools onto a few readable header verbs.
 type ActivityCategory =
@@ -185,9 +196,19 @@ const getNormalizedProviderName = (activity: ToolActivity): string =>
 const categorizeActivity = (
   activity: ToolActivity,
   activities: ToolActivity[],
-  activityIndex: number
+  activityIndex: number,
+  hasEarlierToolSearchWrapper?: boolean
 ): ActivityCategory => {
-  if (isSearchActivity(activity, activities, activityIndex)) return 'search'
+  const isSearch =
+    hasEarlierToolSearchWrapper === undefined
+      ? isSearchActivity(activity, activities, activityIndex)
+      : isProviderWebSearchActivity(activity) ||
+        (canInferToolSearchResultActivity(activity) &&
+          canUseToolSearchProviderInference(activity) &&
+          isQuotedActivityTitle(activity) &&
+          hasToolSearchInferenceEvidence(activity) &&
+          hasEarlierToolSearchWrapper)
+  if (isSearch) return 'search'
   if (isToolSearchWrapperActivity(activity)) return 'toolSearch'
 
   const providerName = getNormalizedProviderName(activity)
@@ -259,16 +280,27 @@ const formatActivityGroupTitle = (
   const groupTitle = declaredTitle?.trim()
   if (groupTitle) return groupTitle
 
-  const hasSearchActivities = countSearchActivities(activities) > 0
   const categoryCounts = new Map<ActivityCategory, number>()
 
+  let hasEarlierToolSearchWrapper = false
   activities.forEach((activity, activityIndex) => {
-    // Mirror rendering: drop the synthetic ToolSearch wrapper once concrete searches exist.
-    if (hasSearchActivities && isToolSearchWrapperActivity(activity)) return
+    const category = categorizeActivity(
+      activity,
+      activities,
+      activityIndex,
+      hasEarlierToolSearchWrapper
+    )
 
-    const category = categorizeActivity(activity, activities, activityIndex)
-
+    if (category === 'search' && !categoryCounts.has('search')) {
+      // A concrete search supersedes any wrappers encountered earlier in this same pass.
+      categoryCounts.delete('toolSearch')
+    }
+    if (category === 'toolSearch' && categoryCounts.has('search')) {
+      hasEarlierToolSearchWrapper = true
+      return
+    }
     categoryCounts.set(category, (categoryCounts.get(category) ?? 0) + 1)
+    if (isToolSearchWrapperActivity(activity)) hasEarlierToolSearchWrapper = true
   })
 
   const clauses = ACTIVITY_CATEGORY_ORDER.filter(

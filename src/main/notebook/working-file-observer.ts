@@ -2405,6 +2405,7 @@ export {
   cleanupComputeJobFileEvidence,
   completeWorkingFileEvidence,
   deleteWorkingFileEvidenceProject,
+  ensureWorkingFileEvidenceProject,
   reconcileComputeJobFileEvidence,
   reconcileWorkingFileEvidence,
   publishComputeJobFileEvidence,

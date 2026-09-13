@@ -136,6 +136,220 @@ describe('ArchiveCoordinator', () => {
     expect(stop).toHaveBeenCalledTimes(2)
   })
 
+  it.each(['export', 'import'] as const)(
+    'cancels queued %s admission without installing a late reservation',
+    async (kind) => {
+      const coordinator = new ArchiveCoordinator(
+        { get: async () => project, updateArchive: vi.fn() },
+        {
+          assertProjectArchivable: vi.fn(),
+          assertSessionAvailable: vi.fn(),
+          updateArchive: vi.fn(),
+          sessionProjectId: async () => project.id
+        },
+        {
+          isSessionBusy: () => false,
+          isProjectBusy: () => false,
+          liveSessionProjectId: () => project.id
+        }
+      )
+      let unblock!: () => void
+      let started!: () => void
+      const entered = new Promise<void>((resolve) => {
+        started = resolve
+      })
+      const blocked = coordinator.withProjectAvailable(project.id, () => {
+        started()
+        return new Promise<void>((resolve) => {
+          unblock = resolve
+        })
+      })
+      await entered
+      const controller = new AbortController()
+      const assertIdle = vi.fn(async () => undefined)
+      const reservation =
+        kind === 'export'
+          ? coordinator.reserveSessionExport(project.id, session.id, assertIdle, controller.signal)
+          : coordinator.reserveProjectImport(project.id, controller.signal)
+      const rejected = vi.fn()
+      const settled = reservation.then((release) => release(), rejected)
+      const reason = new Error('Cancel package admission')
+      controller.abort(reason)
+      const laterWork = vi.fn(async () => undefined)
+      const later = coordinator.withProjectAvailable(project.id, laterWork)
+      try {
+        await vi.waitFor(() => expect(rejected).toHaveBeenCalledWith(reason))
+        expect(laterWork).not.toHaveBeenCalled()
+      } finally {
+        unblock()
+        await blocked
+        await settled
+        await later
+      }
+      expect(laterWork).toHaveBeenCalledOnce()
+      expect(assertIdle).not.toHaveBeenCalled()
+      expect(coordinator.isSessionExporting(project.id, session.id)).toBe(false)
+      const remove = vi.fn(async () => undefined)
+      await coordinator.withProjectDeletion(project.id, remove)
+      expect(remove).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('keeps existing Sessions available while import fences Project deletion', async () => {
+    const coordinator = new ArchiveCoordinator(
+      { get: async () => project, updateArchive: vi.fn() },
+      {
+        assertProjectArchivable: vi.fn(),
+        assertSessionAvailable: vi.fn(),
+        updateArchive: vi.fn(),
+        sessionProjectId: async () => project.id
+      },
+      {
+        isSessionBusy: () => false,
+        isProjectBusy: () => false,
+        liveSessionProjectId: () => project.id
+      }
+    )
+    const release = await coordinator.reserveProjectImport(project.id)
+    await expect(
+      coordinator.assertSessionAvailable(project.id, session.id)
+    ).resolves.toBeUndefined()
+    const remove = vi.fn(async () => undefined)
+    await expect(coordinator.withProjectDeletion(project.id, remove)).rejects.toThrow('import')
+    expect(remove).not.toHaveBeenCalled()
+    expect(() => coordinator.restoreProjectDeletion(project.id)).toThrow('import')
+    release()
+    release()
+    await coordinator.withProjectDeletion(project.id, remove)
+    expect(remove).toHaveBeenCalledOnce()
+  })
+  it.each(['sync', 'async'] as const)(
+    'reserves idle export with %s activity before prompt admission and rejects deletion before installing its fence',
+    async (activity) => {
+      const coordinator = new ArchiveCoordinator(
+        { get: async () => project, updateArchive: vi.fn() },
+        {
+          assertProjectArchivable: vi.fn(),
+          assertSessionAvailable: vi.fn(),
+          updateArchive: vi.fn(),
+          sessionProjectId: async () => project.id
+        },
+        {
+          isSessionBusy: () => (activity === 'async' ? Promise.resolve(false) : false),
+          isProjectBusy: () => false,
+          liveSessionProjectId: () => project.id
+        }
+      )
+      const release = await coordinator.reserveSessionExport(
+        project.id,
+        session.id,
+        async () => undefined
+      )
+      const dispatch = vi.fn(async () => undefined)
+      await expect(
+        coordinator.withSessionDeletionAdmissionById(session.id, dispatch)
+      ).rejects.toThrow('locked')
+      expect(dispatch).not.toHaveBeenCalled()
+      expect(() => coordinator.restoreProjectDeletion(project.id)).toThrow('export')
+      await expect(coordinator.assertProjectAvailable(project.id)).resolves.toBeUndefined()
+      release()
+      await coordinator.withSessionDeletionAdmissionById(session.id, dispatch)
+      expect(dispatch).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each(['idle', 'busy', 'failed'] as const)(
+    'fences new work during asynchronous activity checks and releases an %s result',
+    async (result) => {
+      let finish!: (busy: boolean) => void
+      let fail!: (error: Error) => void
+      let checking!: () => void
+      const started = new Promise<void>((resolve) => {
+        checking = resolve
+      })
+      const activity = new Promise<boolean>((resolve, reject) => {
+        finish = resolve
+        fail = reject
+      })
+      const coordinator = new ArchiveCoordinator(
+        { get: async () => project, updateArchive: vi.fn() },
+        {
+          assertProjectArchivable: vi.fn(),
+          assertSessionAvailable: vi.fn(),
+          updateArchive: vi.fn(),
+          sessionProjectId: async () => project.id
+        },
+        {
+          isSessionBusy: () => {
+            checking()
+            return activity
+          },
+          isProjectBusy: () => false,
+          liveSessionProjectId: () => project.id
+        }
+      )
+      const reserve = coordinator.reserveSessionExport(
+        project.id,
+        session.id,
+        async () => undefined
+      )
+      await started
+      expect(() => coordinator.admitSessionWork(project.id, session.id)).toThrow('locked')
+      if (result === 'failed') fail(new Error('Activity lookup failed'))
+      else finish(result === 'busy')
+      if (result === 'idle') {
+        const release = await reserve
+        expect(() => coordinator.admitSessionWork(project.id, session.id)).toThrow('locked')
+        release()
+      } else {
+        await expect(reserve).rejects.toThrow(result === 'busy' ? 'idle' : 'Activity lookup failed')
+      }
+      const releaseWork = coordinator.admitSessionWork(project.id, session.id)
+      releaseWork()
+    }
+  )
+
+  it('rejects export while an admitted dispatch has not settled', async () => {
+    const coordinator = new ArchiveCoordinator(
+      { get: async () => project, updateArchive: vi.fn() },
+      {
+        assertProjectArchivable: vi.fn(),
+        assertSessionAvailable: vi.fn(),
+        updateArchive: vi.fn(),
+        sessionProjectId: async () => project.id
+      },
+      {
+        isSessionBusy: () => false,
+        isProjectBusy: () => false,
+        liveSessionProjectId: () => project.id
+      }
+    )
+    let finish!: () => void
+    let started!: () => void
+    const admitted = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const work = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const dispatch = coordinator.withSessionDeletionAdmissionById(session.id, () => {
+      started()
+      return work
+    })
+    await admitted
+    await expect(
+      coordinator.reserveSessionExport(project.id, session.id, async () => undefined)
+    ).rejects.toThrow('idle')
+    finish()
+    await dispatch
+    const release = await coordinator.reserveSessionExport(
+      project.id,
+      session.id,
+      async () => undefined
+    )
+    release()
+  })
+
   it('archives a project only after the complete idle child catalog is checked', async () => {
     const projects = {
       get: vi.fn().mockResolvedValue(project),
