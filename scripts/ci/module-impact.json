@@ -1020,6 +1020,35 @@
       },
       "capabilityOverlays": ["windows_sensitive"],
       "fallbackCapability": "main_runtime"
+    },
+    "ipc_surfaces": {
+      "ownerPaths": ["src/main/ipc-surfaces/adapter.ts", "src/main/ipc-surfaces/core.ts"],
+      "interfacePaths": ["src/main/ipc-surfaces/adapter.ts", "src/main/ipc-surfaces/core.ts"],
+      "consumerModules": [],
+      "testFiles": {
+        "owner": ["src/main/ipc-surfaces/adapter.test.ts", "src/main/ipc-surfaces/core.test.ts"],
+        "contract": [
+          "src/main/ipc-handler-registry.test.ts",
+          "src/main/caller-lifecycle.test.ts",
+          "src/main/runtime-electron-wiring.test.ts",
+          "src/main/application-command-wiring.test.ts",
+          "src/main/permission-grants/ipc.test.ts",
+          "src/main/project-files/ipc.test.ts",
+          "src/main/managed-file-versions/ipc.test.ts",
+          "src/main/local-fs/ipc.test.ts",
+          "src/main/projects/ipc.test.ts",
+          "src/main/lifecycle-broadcast.test.ts"
+        ],
+        "consumer": [
+          "src/main/application-runtime.test.ts",
+          "src/main/index-startup-failure.test.ts",
+          "src/main/application-command-composition.test.ts",
+          "src/main/application-command-electron-adapter.test.ts",
+          "src/main/runtime-state-ownership.architecture.test.ts"
+        ]
+      },
+      "capabilityOverlays": [],
+      "fallbackCapability": "main_runtime"
     }
   }
 }
