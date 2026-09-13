@@ -1030,7 +1030,8 @@
         "src/main/ipc-surfaces/connector-approvals.ts",
         "src/main/window-find-ipc.ts",
         "src/main/ipc-surfaces/desktop-utilities.ts",
-        "src/main/ipc-surfaces/settings.ts"
+        "src/main/ipc-surfaces/settings.ts",
+        "src/main/ipc-surfaces/artifacts.ts"
       ],
       "interfacePaths": [
         "src/main/ipc-surfaces/adapter.ts",
@@ -1040,7 +1041,8 @@
         "src/main/ipc-surfaces/connector-approvals.ts",
         "src/main/window-find-ipc.ts",
         "src/main/ipc-surfaces/desktop-utilities.ts",
-        "src/main/ipc-surfaces/settings.ts"
+        "src/main/ipc-surfaces/settings.ts",
+        "src/main/ipc-surfaces/artifacts.ts"
       ],
       "consumerModules": [],
       "testFiles": {
@@ -1052,9 +1054,13 @@
           "src/main/ipc-surfaces/connector-approvals.test.ts",
           "src/main/window-find-ipc.test.ts",
           "src/main/ipc-surfaces/desktop-utilities.test.ts",
-          "src/main/ipc-surfaces/settings.test.ts"
+          "src/main/ipc-surfaces/settings.test.ts",
+          "src/main/ipc-surfaces/artifacts.test.ts"
         ],
         "contract": [
+          "src/main/artifacts/ipc.test.ts",
+          "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
+          "src/main/artifacts/artifact-reproducibility-export.test.ts",
           "src/main/settings/ipc.test.ts",
           "src/main/settings/workflows.test.ts",
           "src/main/settings/connector-template.test.ts",

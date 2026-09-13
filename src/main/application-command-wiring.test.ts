@@ -181,6 +181,21 @@ describe('production application command wiring', () => {
     )
   })
 
+  it('installs the Artifact surface in its existing phase with the shared owners', () => {
+    expect(compact(ipcSource)).toContain(
+      'surfaceAdapters.push( createArtifactElectronSurface({ artifactRepository, artifactRunRegistry, artifactProvenanceRepository, artifactHandlers, artifactReproducibilityAttemptOwnerRef, archiveCoordinator, sessionPersistenceCoordinator, notebookService, translate }) )'
+    )
+    const installation = ipcSource.indexOf('createArtifactElectronSurface({')
+    expect(installation).toBeGreaterThan(ipcSource.indexOf('surfaceAdapters = afterAcpAdapters'))
+    expect(installation).toBeGreaterThan(ipcSource.indexOf("declareElectronAdapter('storage'"))
+    expect(installation).toBeLessThan(
+      ipcSource.indexOf('createUploadElectronSurface(uploadCommandOwner)')
+    )
+    expect(ipcSource).not.toContain('registerArtifactIpcHandlers')
+    expect(ipcSource).not.toContain('registerArtifactReproducibilityIpcHandlers')
+    expect(ipcSource).not.toContain('createArtifactReproducibilityReceiptExporter')
+  })
+
   it('injects each stateful owner into its Electron adapter and command composition', () => {
     const sharedOwners = [
       [
@@ -193,7 +208,11 @@ describe('production application command wiring', () => {
         'reviewRepository, sessionPersistenceHandlers, async (session)',
         '...sessionPersistenceHandlers'
       ],
-      ['artifactHandlers', 'artifactHandlers )', 'artifacts: artifactHandlers'],
+      [
+        'artifactHandlers',
+        'artifactHandlers, artifactReproducibilityAttemptOwnerRef,',
+        'artifacts: artifactHandlers'
+      ],
       ['storageCommandOwner', 'storageCommandOwner )', 'storage: storageCommandOwner'],
       [
         'reviewerCommandOwner',

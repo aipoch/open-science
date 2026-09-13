@@ -84,21 +84,13 @@ import { VisionEvidenceRepository } from './acp/vision-evidence-repository'
 import { ArtifactTurnOwner } from './acp/artifact-turn-owner'
 import { ArchiveCoordinator } from './archive/coordinator'
 import { ArtifactCodeReconstructionService } from './artifacts/code-reconstruction'
-import { createArtifactReproducibilityReceiptExporter } from './artifacts/artifact-reproducibility-export'
-import { registerArtifactReproducibilityIpcHandlers } from './artifacts/artifact-reproducibility-ipc'
 import { withReproducibilityNotebookLifecycle } from './artifacts/reproducibility-notebook-lifecycle'
 import { ArtifactReproducibilityAttemptOwner } from './artifacts/artifact-reproducibility-lifecycle'
 import {
   appendArtifactReproducibilityReceipt,
-  getArtifactReproducibilityOutput,
   retainArtifactReproducibilityOutput,
-  getArtifactReproducibilityOutputStorage,
-  getArtifactReproducibilitySource,
-  getArtifactReproducibilityEnvironmentLock,
-  clearArtifactReproducibilityOutputs,
   pruneArtifactReproducibilityOutputs,
   getArtifactReproducibilityCheckLog,
-  getArtifactReproducibilityReceipt,
   listArtifactReproducibilityReceipts,
   recordFailedArtifactReproducibilityAttempt,
   type ArtifactReproducibilityCheckLogDraft,
@@ -108,14 +100,10 @@ import {
 import {
   createArtifactHandlers,
   createDefaultArtifactRepository,
-  registerArtifactIpcHandlers,
   type ArtifactHandlers
 } from './artifacts/ipc'
 import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
-import {
-  readArtifactReproducibilityExecutionEvidence,
-  readArtifactReproducibilityOriginalOutput
-} from './artifacts/provenance-reproducibility-execution-evidence'
+import { readArtifactReproducibilityExecutionEvidence } from './artifacts/provenance-reproducibility-execution-evidence'
 import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { broadcastJobUpdated, createComputeIpcModule, toJobSummary } from './compute/ipc'
@@ -148,7 +136,6 @@ import { isCustomMcpServerRouteSafe } from './connectors/custom-mcp-bootstrap'
 import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { connectorSkillSourceDir } from './connectors/provision'
-import { publishUserFile } from './user-file-publisher'
 import { ImmutableInputAuthority } from './immutable-input-authority'
 import { createCliCommandOwner } from './cli-install/ipc'
 
@@ -170,6 +157,7 @@ import {
 import { createLogsCommandOwner } from './logs-ipc'
 import { TaskNotificationService } from './notifications/task-notifications'
 import { createNotificationInboxController } from './notifications/notification-inbox-controller'
+import { createArtifactElectronSurface } from './ipc-surfaces/artifacts'
 import { createSettingsElectronSurface } from './ipc-surfaces/settings'
 import { createDesktopUtilitiesElectronSurface } from './ipc-surfaces/desktop-utilities'
 import { createConnectorApprovalElectronSurface } from './ipc-surfaces/connector-approvals'
@@ -4474,155 +4462,19 @@ const createApplicationModules = async (
       sessionPersistenceCoordinator.retryArtifactFinalization(request)
   })
   artifactHandlersRef.current = artifactHandlers
-  declareElectronAdapter('artifacts', () => {
-    if (!artifactReproducibilityAttemptOwnerRef.current) {
-      throw new Error('Artifact reproducibility lifecycle is not configured.')
-    }
-    registerArtifactIpcHandlers(
+  surfaceAdapters.push(
+    createArtifactElectronSurface({
       artifactRepository,
       artifactRunRegistry,
       artifactProvenanceRepository,
-      (projectId, sessionId, mutation) =>
-        sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation),
-      artifactHandlers
-    )
-    const reproducibilityOwner = artifactReproducibilityAttemptOwnerRef.current
-    const receiptExporter = createArtifactReproducibilityReceiptExporter({
-      readSourceScope: (request) =>
-        withDataRootWrite(
-          async () =>
-            (await getArtifactReproducibilitySource(artifactProvenanceRepository, request))
-              ?.sourceScope
-        ),
-      readVersion: (request) =>
-        withDataRootWrite(
-          async () =>
-            // Read metadata only; exporting a version label must not scan large Artifact contents.
-            (await artifactProvenanceRepository.getLineage(request))?.selectedVersion
-        ),
-      readOutputStorage: (request) =>
-        withDataRootWrite(() =>
-          getArtifactReproducibilityOutputStorage(artifactProvenanceRepository, request)
-        ),
-      downloadsDirectory: () => app.getPath('downloads'),
-      readOutput: (request, checksum, entityId) =>
-        withDataRootWrite(() =>
-          getArtifactReproducibilityOutput(
-            artifactProvenanceRepository,
-            request,
-            checksum,
-            entityId
-          )
-        ),
-      readOriginalOutput: (request, entityId) =>
-        withDataRootWrite(() =>
-          readArtifactReproducibilityOriginalOutput(
-            artifactProvenanceRepository,
-            resolveDataRoot(),
-            request,
-            entityId
-          )
-        ),
-      readExecution: (request) =>
-        withDataRootWrite(() =>
-          readArtifactReproducibilityExecutionEvidence(artifactProvenanceRepository, request)
-        ),
-      readEnvironmentLock: (lockChecksum, request) =>
-        withDataRootWrite(async () => {
-          if (await getArtifactReproducibilitySource(artifactProvenanceRepository, request))
-            return getArtifactReproducibilityEnvironmentLock(
-              artifactProvenanceRepository,
-              request,
-              lockChecksum
-            )
-          return readFile(
-            join(
-              resolveDataRoot(),
-              'runtime',
-              'provenance',
-              'environment-locks',
-              `${lockChecksum}.json`
-            ),
-            'utf8'
-          ).catch((error: unknown) => {
-            if (
-              typeof error === 'object' &&
-              error !== null &&
-              'code' in error &&
-              error.code === 'ENOENT'
-            ) {
-              return undefined
-            }
-            throw error
-          })
-        }),
-      readReceipt: (request, receiptChecksum) =>
-        withDataRootWrite(() =>
-          getArtifactReproducibilityReceipt(artifactProvenanceRepository, request, receiptChecksum)
-        ),
-      readCheckLog: (request) =>
-        withDataRootWrite(() =>
-          getArtifactReproducibilityCheckLog(artifactProvenanceRepository, request)
-        ),
-      showSaveDialog: (sender, options) => {
-        const parentWindow = BrowserWindow.fromWebContents(sender as WebContents)
-        return parentWindow
-          ? dialog.showSaveDialog(parentWindow, options)
-          : dialog.showSaveDialog(options)
-      },
-      showOpenDialog: (sender, options) => {
-        const parentWindow = BrowserWindow.fromWebContents(sender as WebContents)
-        return parentWindow
-          ? dialog.showOpenDialog(parentWindow, options)
-          : dialog.showOpenDialog(options)
-      },
-      createEnvironmentFromLock: ({ projectId, lockChecksum, kernelKind, lock }) =>
-        notebookService.importEnvironmentLock({
-          projectId,
-          language: kernelKind,
-          lock,
-          lockChecksum
-        }),
-      writeArchive: (filePath, bytes) =>
-        publishUserFile(filePath, (temporaryPath) => writeFile(temporaryPath, bytes)),
+      artifactHandlers,
+      artifactReproducibilityAttemptOwnerRef,
+      archiveCoordinator,
+      sessionPersistenceCoordinator,
+      notebookService,
       translate
     })
-    registerArtifactReproducibilityIpcHandlers(reproducibilityOwner, {
-      outputStorage: (request) =>
-        withDataRootWrite(() =>
-          getArtifactReproducibilityOutputStorage(artifactProvenanceRepository, request)
-        ),
-      clearOutputs: (request) =>
-        archiveCoordinator.withSessionAvailable(request.projectId, request.appSessionId, () =>
-          sessionPersistenceCoordinator.runSessionMutation(
-            request.projectId,
-            request.appSessionId,
-            () =>
-              reproducibilityOwner.withIdleVersion(request, () =>
-                withDataRootWrite(() =>
-                  clearArtifactReproducibilityOutputs(artifactProvenanceRepository, request)
-                )
-              )
-          )
-        ),
-      previewOutput: (request) => receiptExporter.previewOutput(request),
-      withSessionAvailable: (request, start) =>
-        archiveCoordinator.withSessionAvailable(request.projectId, request.appSessionId, () =>
-          sessionPersistenceCoordinator.runSessionMutation(
-            request.projectId,
-            request.appSessionId,
-            start
-          )
-        ),
-      describeEnvironmentLock: (request) => receiptExporter.describeEnvironmentLock(request),
-      createEnvironmentFromLock: (request) => receiptExporter.createEnvironmentFromLock(request),
-      exportEnvironmentLock: (sender, request) =>
-        receiptExporter.exportEnvironmentLock(sender, request),
-      exportReceipt: (sender, request) => receiptExporter.export(sender, request),
-      importEnvironmentLock: (sender, request) =>
-        receiptExporter.importEnvironmentLock(sender, request)
-    })
-  })
+  )
   surfaceAdapters.push(createUploadElectronSurface(uploadCommandOwner))
   declareElectronAdapter('notebook-input-preview', () => {
     ipcMainHandle('notebook:read-input-preview', (_event, request) =>
