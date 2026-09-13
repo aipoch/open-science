@@ -982,6 +982,10 @@ colors communicate a successful or failed probe/migration result.
 
 #### Connectors panel
 
+- The catalog follows the Skills toolbar rhythm: group, agent, Tag and search filters on the first row; **Manage** and **Add connector** right-aligned on the second row. Manage opens **Connectors / Manage connectors** through shared Settings history.
+- Manage lists Featured, Directory and Custom Connectors with group/status/search filters, native selection checkboxes, select-all-results, selected-only view and bulk enable/disable. These actions persist Main Agent availability through the existing settings commands; Specialist assignments and approval policy are unchanged. Unauthenticated or credential-blocked custom Connectors cannot be enabled. Commands run sequentially and report partial completion, keeping failed targets selected for retry.
+- Bulk deletion previews custom Connector configurations only. Bundled Connectors and Connectors used by Specialists are protected. Usage must load successfully from a healthy catalog before preview and is refreshed again before confirmation executes; newly referenced targets are kept. Deletion reuses the existing cleanup workflow and journal, retains shared credentials, and reports failed targets. The preview never expands the set the user reviewed.
+
 - Remembered permission rows identify Connector tools by the current Connector display name,
   public server ID, and exact tool name. The name opens the existing Connector Settings route in
   active, policy-covered, and blocked states. Revoke accessible names also include the scope.

@@ -273,7 +273,7 @@ describe('ConnectorsPanel (groups)', () => {
     expect(addConnector?.getAttribute('data-variant')).toBe('outline')
   })
 
-  it('keeps the agent filter and search in the first row with Add Connector at the far right', () => {
+  it('keeps filters in the first row and Manage and Add connector in the second row', () => {
     act(() => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
     })
@@ -299,9 +299,12 @@ describe('ConnectorsPanel (groups)', () => {
     expect(search?.parentElement?.className).toContain('min-w-48')
     expect(filter?.className).toContain('w-36')
     expect(agentFilter?.className).toContain('w-48')
-    expect(addConnector?.className).toContain('ml-auto')
+    const actionBar = document.body.querySelector('[data-slot="connectors-action-bar"]')
+    expect(actionBar?.className).toContain('justify-end')
+    expect(actionBar?.textContent).toContain('Manage')
+    expect(toolbar?.contains(addConnector!)).toBe(false)
     expect(addConnector?.className).toContain('shrink-0')
-    expect(toolbar?.lastElementChild).toBe(addConnector)
+    expect(actionBar?.lastElementChild).toBe(addConnector)
     expect(document.body.querySelector('[aria-label="Filter Connectors by scope"]')).toBeNull()
   })
 

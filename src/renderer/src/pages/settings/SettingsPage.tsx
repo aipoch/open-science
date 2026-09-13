@@ -1,3 +1,4 @@
+import { ConnectorBulkManageView } from './ConnectorBulkManageView'
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 /* Hallmark · component: settings side rail · genre: modern-minimal · theme: existing Open Science tokens · slop: pass */
@@ -758,21 +759,24 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         }
       }
       const leaf =
-        connectorsView.kind === 'add'
-          ? t('Add connector')
-          : connectorsView.kind === 'import'
-            ? t('Import Connector or MCP configuration')
-            : connectorsView.kind === 'export'
-              ? t('Export {{name}}', {
-                  name:
-                    customServers.find((s) => s.id === connectorsView.id)?.name ?? t('connector')
-                }).trim()
-              : connectorsView.kind === 'edit'
-                ? t('Edit {{name}}', {
+        connectorsView.kind === 'manage'
+          ? t('Manage connectors')
+          : connectorsView.kind === 'add'
+            ? t('Add connector')
+            : connectorsView.kind === 'import'
+              ? t('Import Connector or MCP configuration')
+              : connectorsView.kind === 'export'
+                ? t('Export {{name}}', {
                     name:
                       customServers.find((s) => s.id === connectorsView.id)?.name ?? t('connector')
                   }).trim()
-                : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
+                : connectorsView.kind === 'edit'
+                  ? t('Edit {{name}}', {
+                      name:
+                        customServers.find((s) => s.id === connectorsView.id)?.name ??
+                        t('connector')
+                    }).trim()
+                  : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
       return {
         rootLabelKey: 'Connectors',
         rootTo: { panel: 'connectors', view: { kind: 'list' } },
@@ -1518,7 +1522,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       }}
                     />
                   ) : activePanel === 'connectors' ? (
-                    connectorsView.kind === 'detail' ? (
+                    connectorsView.kind === 'manage' ? (
+                      <ConnectorBulkManageView />
+                    ) : connectorsView.kind === 'detail' ? (
                       <div>
                         <ResourceTagSummary
                           reference={{

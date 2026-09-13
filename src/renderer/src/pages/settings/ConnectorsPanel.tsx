@@ -10,6 +10,7 @@ import {
   Download,
   FileUp,
   Globe,
+  ListChecks,
   Pencil,
   Plus,
   Terminal,
@@ -55,12 +56,14 @@ import { specialistsUsingConnector, type SpecialistUsage } from './specialist-re
 import { ResourceTagBadges, ResourceTagMenu, TagFilter } from './ResourceTagControls'
 import { SkillUsageAgents } from './SkillUsageAgents'
 import { ConnectorOAuthSignInDialog } from './ConnectorOAuthSignInDialog'
+import { cannotEnableCustomServer, requiresSignInBeforeEnable } from './connector-enablement'
 import { localizeCredentialError } from './credential-error-message'
 
 // The connectors panel sub-view, driven by the settings navigation history. The detail and add pages
 // are separate components owned by SettingsPage; this panel only renders the list + contact-email section.
 export type ConnectorsView =
   | { kind: 'list' }
+  | { kind: 'manage' }
   | { kind: 'detail'; id: string }
   | {
       kind: 'add'
@@ -99,17 +102,6 @@ const includesAgent = (
   if (specialistFilter === MAIN_AGENT_FILTER) return enabled
   return specialistFilter === 'all' || usages.some((usage) => usage.id === specialistFilter)
 }
-
-const requiresSignInBeforeEnable = (server: CustomServerView): boolean =>
-  Boolean(
-    server.oauth &&
-    (!server.oauth.hasTokens || server.availability === 'unauthenticated') &&
-    !server.enabled
-  )
-
-const cannotEnableCustomServer = (server: CustomServerView): boolean =>
-  requiresSignInBeforeEnable(server) ||
-  (!server.enabled && server.availability === 'credential_unavailable')
 
 type ConnectorsPanelProps = {
   onNavigate: (view: ConnectorsView) => void
@@ -592,9 +584,15 @@ export function ConnectorsPanel({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
+      </div>
+      <div data-slot="connectors-action-bar" className="mb-4 flex items-center justify-end gap-2">
+        <Button type="button" variant="outline" onClick={() => onNavigate({ kind: 'manage' })}>
+          <ListChecks data-icon="inline-start" aria-hidden="true" />
+          {t('Manage')}
+        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="ml-auto shrink-0">
+            <Button variant="outline" className="shrink-0">
               <Plus data-icon="inline-start" aria-hidden="true" />
               {t('Add connector')}
               <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />

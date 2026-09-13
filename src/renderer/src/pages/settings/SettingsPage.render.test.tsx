@@ -3606,6 +3606,25 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
   })
 
+  it('opens Connector management through the shared breadcrumb and returns to the catalog', async () => {
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Connectors')?.click())
+    const manage = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Manage'
+    )
+    expect(manage).toBeDefined()
+    await act(async () => manage?.click())
+    expect(document.body.textContent).toContain('Manage connectors')
+    expect(document.body.querySelector('[aria-label="Bulk Connector controls"]')).not.toBeNull()
+    const crumb = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Back to connectors"]'
+    )
+    expect(crumb).not.toBeNull()
+    await act(async () => crumb?.click())
+    expect(document.body.querySelector('[aria-label="Bulk Connector controls"]')).toBeNull()
+    expect(document.body.querySelector('[data-slot="connectors-action-bar"]')).not.toBeNull()
+  })
+
   it('opens bulk Skill management as a breadcrumb sub-page without Featured Skills', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
