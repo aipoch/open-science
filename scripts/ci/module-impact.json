@@ -1022,12 +1022,28 @@
       "fallbackCapability": "main_runtime"
     },
     "ipc_surfaces": {
-      "ownerPaths": ["src/main/ipc-surfaces/adapter.ts", "src/main/ipc-surfaces/core.ts"],
-      "interfacePaths": ["src/main/ipc-surfaces/adapter.ts", "src/main/ipc-surfaces/core.ts"],
+      "ownerPaths": [
+        "src/main/ipc-surfaces/adapter.ts",
+        "src/main/ipc-surfaces/core.ts",
+        "src/main/ipc-surfaces/uploads.ts"
+      ],
+      "interfacePaths": [
+        "src/main/ipc-surfaces/adapter.ts",
+        "src/main/ipc-surfaces/core.ts",
+        "src/main/ipc-surfaces/uploads.ts"
+      ],
       "consumerModules": [],
       "testFiles": {
-        "owner": ["src/main/ipc-surfaces/adapter.test.ts", "src/main/ipc-surfaces/core.test.ts"],
+        "owner": [
+          "src/main/ipc-surfaces/adapter.test.ts",
+          "src/main/ipc-surfaces/core.test.ts",
+          "src/main/ipc-surfaces/uploads.test.ts"
+        ],
         "contract": [
+          "src/main/uploads/ipc.test.ts",
+          "src/main/uploads/command-owner.test.ts",
+          "src/main/renderer-broadcast.test.ts",
+          "src/main/application-events.test.ts",
           "src/main/ipc-handler-registry.test.ts",
           "src/main/caller-lifecycle.test.ts",
           "src/main/runtime-electron-wiring.test.ts",
