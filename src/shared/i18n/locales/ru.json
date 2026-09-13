@@ -6053,6 +6053,7 @@
     "Drop files": "Перетащите файлы",
     "Agent models": "Модели агентов",
     "Models": "Модели",
+    "Model source": "Источник модели",
     "Local parsing models": "Локальные модели разбора",
     "Could not access local models. Open the local app and try again.": "Не удалось получить доступ к локальным моделям. Откройте локальное приложение и повторите попытку.",
     "These model files belong to an unsupported version. Update the app to manage them.": "Эти файлы модели относятся к неподдерживаемой версии. Обновите приложение для управления ими.",

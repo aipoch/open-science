@@ -4,6 +4,7 @@ import { Brain, Cpu, Download, ShieldCheck, Table2, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import {
   dialogOverlayClassName,
@@ -118,6 +119,12 @@ const LocalModelsPanel = (): React.JSX.Element => {
             <div className="col-span-full min-w-0 sm:pl-8">
               <p className="text-[13px] text-muted-foreground">
                 {t('Find candidate figures, captions and copyable tables in Literature PDFs.')}
+              </p>
+              <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                <span className="text-muted-foreground">{t('Model source')}</span>
+                <ExternalTextLink href="https://github.com/microsoft/table-transformer">
+                  {'microsoft/table-transformer'}
+                </ExternalTextLink>
               </p>
               <dl className="mt-4 grid gap-2 text-xs sm:grid-cols-2">
                 <div>

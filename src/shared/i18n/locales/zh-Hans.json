@@ -5595,6 +5595,7 @@
     "Drop files": "拖入文件",
     "Agent models": "智能体模型",
     "Models": "模型",
+    "Model source": "模型来源",
     "Local parsing models": "本地解析模型",
     "Could not access local models. Open the local app and try again.": "无法访问本地模型。请打开本机应用后重试。",
     "These model files belong to an unsupported version. Update the app to manage them.": "这些模型文件属于不支持的版本。请更新应用后再管理。",

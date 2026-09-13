@@ -5917,6 +5917,7 @@
     "Drop files": "Déposez des fichiers",
     "Agent models": "Modèles des agents",
     "Models": "Modèles",
+    "Model source": "Source du modèle",
     "Local parsing models": "Modèles d’analyse locaux",
     "Could not access local models. Open the local app and try again.": "Impossible d’accéder aux modèles locaux. Ouvrez l’application locale et réessayez.",
     "These model files belong to an unsupported version. Update the app to manage them.": "Ces fichiers de modèle appartiennent à une version non prise en charge. Mettez l’application à jour pour les gérer.",

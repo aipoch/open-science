@@ -5595,6 +5595,7 @@
     "Drop files": "ファイルをドロップ",
     "Agent models": "エージェントモデル",
     "Models": "モデル",
+    "Model source": "モデルの提供元",
     "Local parsing models": "ローカル解析モデル",
     "Could not access local models. Open the local app and try again.": "ローカルモデルにアクセスできません。本機のアプリを開いて再試行してください。",
     "These model files belong to an unsupported version. Update the app to manage them.": "このモデルファイルのバージョンは未対応です。管理するにはアプリを更新してください。",

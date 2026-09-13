@@ -5593,6 +5593,7 @@
     "Drop files": "파일 놓기",
     "Agent models": "에이전트 모델",
     "Models": "모델",
+    "Model source": "모델 출처",
     "Local parsing models": "로컬 분석 모델",
     "Could not access local models. Open the local app and try again.": "로컬 모델에 접근할 수 없습니다. 로컬 앱을 열고 다시 시도하세요.",
     "These model files belong to an unsupported version. Update the app to manage them.": "지원되지 않는 버전의 모델 파일입니다. 관리하려면 앱을 업데이트하세요.",

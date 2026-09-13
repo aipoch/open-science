@@ -5752,6 +5752,7 @@
     "Drop files": "Dateien ablegen",
     "Agent models": "Agentenmodelle",
     "Models": "Modelle",
+    "Model source": "Modellquelle",
     "Local parsing models": "Lokale Analysemodelle",
     "Could not access local models. Open the local app and try again.": "Auf lokale Modelle konnte nicht zugegriffen werden. Öffnen Sie die lokale App und versuchen Sie es erneut.",
     "These model files belong to an unsupported version. Update the app to manage them.": "Diese Modelldateien gehören zu einer nicht unterstützten Version. Aktualisieren Sie die App, um sie zu verwalten.",
