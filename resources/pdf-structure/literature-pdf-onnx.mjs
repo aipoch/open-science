@@ -289,18 +289,20 @@ try {
         detection,
         tables
       })
-      console.log(
-        JSON.stringify({
-          page: pageNumber,
-          tables: tables.map(({ id, rowCount, columnCount, grid, unassigned }) => ({
-            id,
-            rowCount,
-            columnCount,
-            grid,
-            unassigned
-          }))
-        })
-      )
+      // Production results are read from disk; raw grids can exhaust the worker's stdout budget.
+      if (mode !== 'production')
+        console.log(
+          JSON.stringify({
+            page: pageNumber,
+            tables: tables.map(({ id, rowCount, columnCount, grid, unassigned }) => ({
+              id,
+              rowCount,
+              columnCount,
+              grid,
+              unassigned
+            }))
+          })
+        )
     } finally {
       page.cleanup()
     }
