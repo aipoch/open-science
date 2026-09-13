@@ -1004,6 +1004,7 @@ class ElectronAppHarness implements ElectronApp {
       this.resourceProfiler.markPhase(options.resourceProfilePhase)
     }
     await this.launch(
+      undefined,
       options.resourceProfilePhase === 'recovery' ? 'recovery-startup-ready' : 'startup-ready'
     )
     return this.page
@@ -1082,6 +1083,24 @@ class ElectronAppHarness implements ElectronApp {
     )
     await this.resourceProfiler?.attach(this.application)
     try {
+      if (process.env.OPEN_SCIENCE_E2E_EXECUTABLE) {
+        const evidence = await this.application.evaluate(({ app }) => ({
+          packaged: app.isPackaged,
+          appPath: app.getAppPath(),
+          executable: process.execPath,
+          version: app.getVersion()
+        }))
+        const revision = process.env.OPEN_SCIENCE_E2E_EXPECTED_BUILD_SHA
+        if (
+          !evidence.packaged ||
+          !evidence.appPath.endsWith('app.asar') ||
+          evidence.executable !== process.env.OPEN_SCIENCE_E2E_EXECUTABLE ||
+          (revision && !evidence.version.endsWith(`-nightly.${revision.slice(0, 7)}`))
+        ) {
+          throw new Error(`Packaged Electron identity mismatch: ${JSON.stringify(evidence)}`)
+        }
+        console.info('Packaged Electron identity:', JSON.stringify(evidence))
+      }
       this.currentPage = await openMainWindow(
         this.application,
         this.rendererFailures,

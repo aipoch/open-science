@@ -158,7 +158,7 @@ describe('release and scheduled workflow topology', () => {
     expect(schedule).toEqual([{ cron: '23 3 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'smoke',
-      options: ['smoke', 'soak']
+      options: ['smoke', 'soak', 'package-macos-arm64']
     })
     expect(resource.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(resource.concurrency).toEqual({
@@ -170,7 +170,7 @@ describe('release and scheduled workflow topology', () => {
     )
     expect(soak).toMatchObject({
       needs: 'plan',
-      if: "needs.plan.outputs.should_test == 'true'",
+      if: "needs.plan.outputs.should_test == 'true' && inputs.mode != 'package-macos-arm64'",
       'runs-on': 'windows-latest',
       'timeout-minutes': 70
     })

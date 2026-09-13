@@ -1213,7 +1213,8 @@ const WorkspaceMessageScrollerImpl = ({
       ) {
         conversationIndex += 1
       }
-      const insertBeforeIndex = conversationIndex < conversationItems.length ? conversationIndex : -1
+      const insertBeforeIndex =
+        conversationIndex < conversationItems.length ? conversationIndex : -1
       if (insertBeforeIndex === -1) {
         // No later item — job goes in the trailing slot.
         trailing.push(job)
