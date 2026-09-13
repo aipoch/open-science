@@ -751,6 +751,13 @@ colors communicate a successful or failed probe/migration result.
 - Brand title: display `Open Science`, `text-[26px] leading-none font-medium`.
 - Global search: expose a `Search` ghost icon action in the header; it opens the same shared dialog as
   `Cmd/Ctrl+K` and does not maintain a second search state.
+- Global search filters: keep a labelled, primary-tinted Filters button fixed at the right of the
+  horizontally scrollable category row. The button reveals a full-width second row containing the
+  existing scope, order, time, and category refinement controls. Use `aria-expanded` and
+  `aria-controls`; collapsed controls must leave the keyboard tab order. Collapsing retains filter
+  values, and a numeric badge counts effective non-default controls (including order). Reopening
+  search collapses the row without persisting its visibility. The expanded button uses a stronger
+  primary tint. Keep both themes and narrow windows usable.
 - Account menu: `Button variant="ghost" size="icon"`, `size-9 rounded-lg`.
 - Main create button: `Button variant="outline" size="sm"` or `Button size="sm"`; the compact button is `h-8 px-3 text-xs rounded-md`.
 - List title: `text-[17px] leading-6 font-medium`.

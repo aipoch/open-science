@@ -31,10 +31,31 @@
 .search-scope-select {
   max-width: 180px;
 }
+.global-search-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px 6px;
+}
+.search-filter-toggle {
+  flex-shrink: 0;
+}
+.search-filter-count {
+  min-width: 17px;
+  padding: 0 4px;
+  border-radius: 99px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 10px;
+  line-height: 17px;
+  font-variant-numeric: tabular-nums;
+}
 .global-search-chips {
   display: flex;
   gap: 6px;
-  padding: 0 20px 6px;
+  min-width: 0;
+  flex: 1;
+  padding: 3px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -702,7 +723,8 @@
   .global-search-searchbar input {
     font-size: 18px;
   }
-  .global-search-chips {
+  .global-search-toolbar {
+    gap: 8px;
     padding: 0 13px 6px;
   }
   .search-subfilters {
