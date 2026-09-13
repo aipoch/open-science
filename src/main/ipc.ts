@@ -17,7 +17,7 @@ import {
   type WebContents
 } from 'electron'
 
-import { createIpcHandlerInstallationScope, ipcMainHandle } from './ipc-handler-registry'
+import { ipcMainHandle } from './ipc-handler-registry'
 import {
   APPLICATION_MODULE_DISPOSAL_BUDGET_MS,
   composeApplicationRuntimeWithAdapters,
@@ -157,7 +157,6 @@ import {
   UPDATE_SHUTDOWN_BUDGET_MS,
   type ShutdownStepOutcome
 } from './lifecycle-shutdown'
-import { registerLifecycleIpcHandlers } from './lifecycle-broadcast'
 import {
   createWebSessionPersistenceFlush,
   rendererSessionPersistenceFlushBlocksShutdown,
@@ -258,8 +257,7 @@ import {
 import {
   createDefaultPreviewStateRepository,
   createDefaultProjectRepository,
-  createProjectHandlers,
-  registerPreviewStateIpcHandlers
+  createProjectHandlers
 } from './projects/ipc'
 import {
   createReviewerCommandOwner,
@@ -285,12 +283,9 @@ import {
   registerConversationExportIpcHandler
 } from './session-persistence/conversation-export'
 import { SessionProjectionDiagnostics } from './session-persistence/projection-diagnostics'
-import { createProjectFilesHandlers, registerProjectFilesIpcHandlers } from './project-files/ipc'
+import { createProjectFilesHandlers } from './project-files/ipc'
 import { createManagedFileIndexRepository } from './project-files/repository'
-import {
-  createManagedFileVersionHandlers,
-  registerManagedFileVersionIpcHandlers
-} from './managed-file-versions/ipc'
+import { createManagedFileVersionHandlers } from './managed-file-versions/ipc'
 import { ManagedFileVersionService } from './managed-file-versions/service'
 import {
   ProjectDeletionCoordinator,
@@ -302,7 +297,6 @@ import { getProjectDbClient } from './projects/prisma-client'
 import { seedDefaultPermissionGrants } from './permission-grants/defaults'
 import { createPermissionGrantRegistry } from './permission-grants/registry'
 import { isPermissionGrantScopeLive } from './permission-grants/scope-liveness'
-import { registerPermissionGrantIpcAdapter } from './permission-grants/ipc'
 import { createPermissionGrantProjectionController } from './permission-grants/projection-controller'
 import {
   reconcilePendingCustomServerDeletions,
@@ -334,7 +328,8 @@ import { SessionDeletionOwner } from './session-deletion/owner'
 import { buildSessionDetailsUserPrompt, createSessionDetailsOwner } from './session-details/owner'
 import { tryDecryptKey } from './settings/crypto'
 import { SETTINGS_INSTALL_LOG_CHANNEL, registerSettingsIpcHandlers } from './settings/ipc'
-import { registerLocalFsIpcHandlers } from './local-fs/ipc'
+import { createCoreElectronSurfaces } from './ipc-surfaces/core'
+import { createElectronSurfaceAdapter } from './ipc-surfaces/adapter'
 import { GrantedLocalRootsRepository } from './local-fs/granted-roots-repository'
 import { LocalFsService } from './local-fs/service'
 import { SettingsService } from './settings/service'
@@ -579,19 +574,7 @@ const createApplicationModules = async (
   const afterAcpAdapters: NamedElectronSurfaceAdapter[] = []
   let surfaceAdapters = beforeComputeAdapters
   const declareElectronAdapter = (name: string, install: () => void | (() => void)): void => {
-    surfaceAdapters.push({
-      name,
-      install: () => {
-        const scope = createIpcHandlerInstallationScope()
-        try {
-          const cleanup = install()
-          return scope.complete(typeof cleanup === 'function' ? cleanup : undefined)
-        } catch (error) {
-          scope.rollback()
-          throw error
-        }
-      }
-    })
+    surfaceAdapters.push(createElectronSurfaceAdapter(name, install))
   }
   const applicationEvents = await modules.add(
     installRendererBroadcastEventHub,
@@ -4831,26 +4814,20 @@ const createApplicationModules = async (
     removePackageQuitGuard()
     await sessionPackageDesktop.close()
   }
-  declareElectronAdapter('permission-grants', () =>
-    registerPermissionGrantIpcAdapter(permissionGrantProjection)
+  surfaceAdapters.push(
+    ...createCoreElectronSurfaces({
+      permissionGrantProjection,
+      projectFiles: [
+        projectFilesRepository,
+        sessionPersistenceCoordinator,
+        projectDeletionCoordinator,
+        projectFilesHandlers
+      ],
+      managedFileVersionHandlers,
+      localFsService,
+      previewStateRepository
+    })
   )
-  declareElectronAdapter('project-files', () =>
-    registerProjectFilesIpcHandlers(
-      projectFilesRepository,
-      sessionPersistenceCoordinator,
-      projectDeletionCoordinator,
-      projectFilesHandlers
-    )
-  )
-  declareElectronAdapter('managed-file-versions', () =>
-    registerManagedFileVersionIpcHandlers(managedFileVersionHandlers)
-  )
-  // Backs the "This computer" browser; shares localFsService with the managed-preview resolver.
-  declareElectronAdapter('local-fs', () => registerLocalFsIpcHandlers(localFsService))
-  declareElectronAdapter('preview-state', () =>
-    registerPreviewStateIpcHandlers(previewStateRepository)
-  )
-  declareElectronAdapter('lifecycle', () => registerLifecycleIpcHandlers())
   // Compute IPC handlers are registered earlier (before the notebook RPC server) so computeService
   // can be injected into the RPC server for the computeCall route. See above.
   // Wire the reviewer backend into the app lifecycle: installs ipcMainHandle('reviewer:run', ...)
