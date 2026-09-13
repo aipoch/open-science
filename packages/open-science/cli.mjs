@@ -746,8 +746,17 @@ const readLogTail = async (logPath) => {
 
 export const openLaunchLog = (logPath) => openSync(logPath, 'w')
 
-export const buildAppLaunchArgs = (appArgs, options, port) => [
+export const buildAppLaunchArgs = (
+  appArgs,
+  options,
+  port,
+  { platform = process.platform, env = process.env } = {}
+) => [
   ...(options.noSandbox ? ['--no-sandbox'] : []),
+  // No-window mode alone still initializes X11. Select Ozone's display-free backend on servers.
+  ...(platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY
+    ? ['--ozone-platform=headless']
+    : []),
   ...appArgs,
   ...(options.credentialStore ? [`--credential-store=${options.credentialStore}`] : []),
   // `--open-science-headless` instead of `--headless`: Chromium consumes `--headless` and renders
