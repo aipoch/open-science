@@ -7,7 +7,7 @@ import { PdfStructureReader } from './literature/pdf-structure/reader'
 import { createSpecialistApplicationOwner } from './specialist/application-commands'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 
 import {
   app,
@@ -359,11 +359,6 @@ import { OFFICIAL_MARKETPLACE_SOURCE } from './specialist/marketplace/official-s
 import { MarketplaceRepository } from './specialist/marketplace/repository'
 import { MarketplaceService } from './specialist/marketplace/service'
 import { MarketplaceOperationCoordinator } from './specialist/marketplace/operation-coordinator'
-import {
-  saveSpecialistExport,
-  saveSpecialistPackageReport,
-  selectSpecialistArchive
-} from './specialist/package/electron-adapter'
 import { UserSkillSpecialistPackageAdapter } from './skills/specialist-package-adapter'
 import { netFetchStandard } from './skills/net-fetch'
 import { AgentsService } from './agents/agents-service'
@@ -389,11 +384,7 @@ import { installCompletionGateDiagnostics } from './agents/completion-gate-diagn
 import { PendingSessionSpecialistBindings } from './agents/pending-session-specialist-bindings'
 import { createCodexCompletionGateRuntime } from './acp/codex-completion-handoff'
 import { createOpenCodeImmediateHandoffRuntime } from './acp/opencode-immediate-handoff'
-import { registerSpecialistIpcHandlers } from './specialist/ipc'
-import {
-  createContributionTemplateExporter,
-  resolveContributionTemplateReadmePath
-} from './specialist/package/contribution-template'
+import { createSpecialistElectronSurface } from './ipc-surfaces/specialist'
 import { SessionBindingService } from './specialist/session-binding'
 import {
   SessionSpecialistReconfiguration,
@@ -4125,55 +4116,17 @@ const createApplicationModules = async (
   specialistService.subscribe(() =>
     applicationEvents.publish('specialist:catalog-changed', undefined)
   )
-  declareElectronAdapter('specialist', () =>
-    registerSpecialistIpcHandlers(
+  surfaceAdapters.push(
+    createSpecialistElectronSurface({
       specialistService,
       sessionBindingService,
       sessionSpecialistReconfiguration,
-      // A specialist capability edit (skills/connectors/enabled) must reach live sessions on the next
-      // turn: reconnect so the agent respawns (re-provisioning skills) and resumes with the updated
-      // specialist whitelist in the session _meta.
-      () => void runtime.requestSkillsReload(),
-      createContributionTemplateExporter({
-        appVersion: app.getVersion(),
-        translate,
-        showSaveDialog: (options) => dialog.showSaveDialog(options),
-        readReadme: () => readFile(resolveContributionTemplateReadmePath(app.getAppPath()), 'utf8'),
-        writeFile: (filePath, bytes) => writeFile(filePath, bytes)
-      }),
-      {
-        service: specialistPackageService,
-        selectArchive: () =>
-          selectSpecialistArchive(
-            {
-              showOpenDialog: (options) => dialog.showOpenDialog(options),
-              readFile,
-              getFileSize: async (filePath) => (await stat(filePath)).size
-            },
-            translate
-          ),
-        saveReport: (report) =>
-          saveSpecialistPackageReport(
-            {
-              showSaveDialog: (options) => dialog.showSaveDialog(options),
-              writeFile: (filePath, contents) => writeFile(filePath, contents, 'utf8')
-            },
-            report,
-            translate
-          ),
-        saveExport: (archive) =>
-          saveSpecialistExport(
-            {
-              showSaveDialog: (options) => dialog.showSaveDialog(options),
-              writeFile: (filePath, bytes) => writeFile(filePath, bytes)
-            },
-            archive,
-            translate
-          )
-      },
+      onProfilesChanged: () => void runtime.requestSkillsReload(),
+      specialistPackageService,
       marketplaceService,
-      specialistApplicationOwner
-    )
+      specialistApplicationOwner,
+      translate
+    })
   )
   // Runtime Settings UI: discover managed/external environments and pick an interpreter file. The
   // runtime root MUST match the executor/service's

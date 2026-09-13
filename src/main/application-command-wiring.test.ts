@@ -44,6 +44,29 @@ const dependencyBlock = compact(
 )
 
 describe('production application command wiring', () => {
+  it('installs Specialist once with shared owners before Notebook runtime in afterAcp', () => {
+    const phase = compact(
+      between(
+        ipcSource,
+        'surfaceAdapters = afterAcpAdapters',
+        "declareElectronAdapter('notebook-runtime'"
+      )
+    )
+    expect(phase).toContain(
+      'createSpecialistElectronSurface({ specialistService, sessionBindingService, sessionSpecialistReconfiguration, onProfilesChanged: () => void runtime.requestSkillsReload(), specialistPackageService, marketplaceService, specialistApplicationOwner, translate })'
+    )
+    expect(occurrences(ipcSource, 'createSpecialistElectronSurface(')).toBe(1)
+    expect(
+      occurrences(ipcSource, 'const specialistApplicationOwner = createSpecialistApplicationOwner(')
+    ).toBe(1)
+    expect(phase).toContain(
+      "specialistService.subscribe(() => applicationEvents.publish('specialist:catalog-changed', undefined) )"
+    )
+    expect(ipcSource).not.toContain('registerSpecialistIpcHandlers')
+    expect(ipcSource).not.toContain('selectSpecialistArchive')
+    expect(ipcSource).not.toContain('createContributionTemplateExporter')
+  })
+
   it('returns Office preview cleanup to its scoped afterAcp installation', () => {
     const phase = compact(
       between(

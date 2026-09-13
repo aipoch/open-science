@@ -1031,7 +1031,8 @@
         "src/main/window-find-ipc.ts",
         "src/main/ipc-surfaces/desktop-utilities.ts",
         "src/main/ipc-surfaces/settings.ts",
-        "src/main/ipc-surfaces/artifacts.ts"
+        "src/main/ipc-surfaces/artifacts.ts",
+        "src/main/ipc-surfaces/specialist.ts"
       ],
       "interfacePaths": [
         "src/main/ipc-surfaces/adapter.ts",
@@ -1042,7 +1043,8 @@
         "src/main/window-find-ipc.ts",
         "src/main/ipc-surfaces/desktop-utilities.ts",
         "src/main/ipc-surfaces/settings.ts",
-        "src/main/ipc-surfaces/artifacts.ts"
+        "src/main/ipc-surfaces/artifacts.ts",
+        "src/main/ipc-surfaces/specialist.ts"
       ],
       "consumerModules": [],
       "testFiles": {
@@ -1055,7 +1057,8 @@
           "src/main/window-find-ipc.test.ts",
           "src/main/ipc-surfaces/desktop-utilities.test.ts",
           "src/main/ipc-surfaces/settings.test.ts",
-          "src/main/ipc-surfaces/artifacts.test.ts"
+          "src/main/ipc-surfaces/artifacts.test.ts",
+          "src/main/ipc-surfaces/specialist.test.ts"
         ],
         "contract": [
           "src/main/artifacts/ipc.test.ts",
@@ -1099,7 +1102,15 @@
           "src/main/office-preview/office-preview-ipc.test.ts",
           "src/main/office-preview/office-preview-navigation.test.ts",
           "src/main/office-preview/office-preview-oopif-supervisor.test.ts",
-          "src/main/office-preview/office-preview-runtime-protocol.test.ts"
+          "src/main/office-preview/office-preview-runtime-protocol.test.ts",
+          "src/main/specialist/ipc.test.ts",
+          "src/main/specialist/application-commands.test.ts",
+          "src/main/specialist/session-binding.test.ts",
+          "src/main/specialist/session-reconfiguration.test.ts",
+          "src/main/specialist/package/electron-adapter.test.ts",
+          "src/main/specialist/package/contribution-template.test.ts",
+          "src/main/specialist/package/service.test.ts",
+          "src/main/runtime-import-cycle.architecture.test.ts"
         ],
         "consumer": [
           "src/main/application-runtime.test.ts",
@@ -1111,7 +1122,13 @@
           "src/main/window-shortcuts.test.ts",
           "src/preload/find-overlay.test.ts",
           "src/shared/window-controls.test.ts",
-          "resources/find-overlay/findOverlay.test.js"
+          "resources/find-overlay/findOverlay.test.js",
+          "src/preload/index.test.ts",
+          "src/preload/electron-renderer-contract-adapter.test.ts",
+          "src/renderer/src/stores/specialist-store.test.ts",
+          "src/renderer/src/stores/specialist-store.upload.test.ts",
+          "src/renderer/src/pages/settings/SpecialistsPanel.render.test.tsx",
+          "src/renderer/src/pages/settings/SpecialistEditor.persistence.render.test.tsx"
         ]
       },
       "capabilityOverlays": [],
