@@ -1,5 +1,5 @@
 import { ErrorNotice } from '@/components/error-notice'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { Trans, useTranslation } from 'react-i18next'
@@ -8,6 +8,7 @@ import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { Button } from '@/components/ui/button'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   dialogBodyClassName,
@@ -48,6 +49,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
   const open = Boolean(active && isOpen && status.latest)
   const dialogStatus = useRetainedDialogValue(open ? status : undefined)
   const failureNotice = useRef<HTMLDivElement>(null)
+  const [recoveryToken, setRecoveryToken] = useState<string>()
   useEffect(() => {
     if (open && dialogStatus?.error) {
       failureNotice.current?.scrollIntoView({ block: 'start' })
@@ -59,16 +61,11 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
   const isApplying = dialogStatus?.state === 'applying'
   const legacyRecovery = dialogStatus?.legacyShellRecovery
   const recoverUpdate = (): void => {
-    if (
-      legacyRecovery &&
-      window.confirm(
-        t(
-          'Open Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
-        )
-      )
-    )
-      void apply({ legacyShellRecoveryToken: legacyRecovery.token })
+    if (legacyRecovery) setRecoveryToken(legacyRecovery.token)
   }
+  const recoveryConfirmationOpen = Boolean(
+    open && isReady && recoveryToken && recoveryToken === legacyRecovery?.token
+  )
   const isInstallerUnavailable =
     dialogStatus?.state === 'available' &&
     dialogStatus.applyKind === 'installer' &&
@@ -101,7 +98,10 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
     <Dialog.Root
       open={open}
       onOpenChange={(open) => {
-        if (!open && !isApplying) closeDialog()
+        if (!open && !isApplying) {
+          setRecoveryToken(undefined)
+          closeDialog()
+        }
       }}
     >
       {dialogStatus ? (
@@ -353,6 +353,29 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
           </Dialog.Content>
         </Dialog.Portal>
       ) : null}
+      <ConfirmActionDialog
+        open={recoveryConfirmationOpen}
+        title={t('Back up records and retry')}
+        description={t(
+          'Open Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
+        )}
+        cancelLabel={t('Cancel')}
+        confirmLabel={t('Back up records and retry')}
+        destructive
+        onCancel={() => setRecoveryToken(undefined)}
+        onConfirm={() => {
+          if (!recoveryConfirmationOpen) return
+          setRecoveryToken(undefined)
+          void apply({ legacyShellRecoveryToken: recoveryToken })
+        }}
+        onCloseAutoFocus={(event) => {
+          const trigger = failureNotice.current?.querySelector('button')
+          if (open && isReady && trigger) {
+            event.preventDefault()
+            trigger.focus()
+          }
+        }}
+      />
     </Dialog.Root>
   )
 }
