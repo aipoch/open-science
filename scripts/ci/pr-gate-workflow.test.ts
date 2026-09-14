@@ -138,7 +138,15 @@ describe('PR Gate workflow', () => {
           required: false,
           default: 'classified',
           type: 'choice',
-          options: ['classified', 'unit-coverage', 'i18n', 'runtime-bundle', 'windows-e2e', 'e2e']
+          options: [
+            'classified',
+            'unit-coverage',
+            'i18n',
+            'runtime-bundle',
+            'windows-e2e',
+            'windows-process',
+            'e2e'
+          ]
         }
       }
     })
@@ -767,9 +775,16 @@ describe('PR Gate workflow', () => {
     }
   )
 
-  it.skipIf(process.platform === 'win32')(
-    'executes the focused Windows plan through the real preflight script',
-    () => {
+  it.skipIf(process.platform === 'win32').each([
+    [
+      'windows-e2e',
+      ['policy', 'windows_e2e'],
+      ['policy', 'e2e_functional_windows', 'e2e_workspace_windows']
+    ],
+    ['windows-process', ['policy', 'windows_core'], ['policy', 'windows_runtime']]
+  ])(
+    'executes the focused %s plan through the real preflight script',
+    (dryRunMode, bundles, lanes) => {
       const directory = mkdtempSync(join(tmpdir(), 'pr-gate-windows-'))
       try {
         const output = join(directory, 'output')
@@ -778,7 +793,7 @@ describe('PR Gate workflow', () => {
           env: {
             ...process.env,
             EVENT_NAME: 'workflow_dispatch',
-            DRY_RUN_MODE: 'windows-e2e',
+            DRY_RUN_MODE: dryRunMode,
             GITHUB_OUTPUT: output,
             GITHUB_STEP_SUMMARY: join(directory, 'summary')
           },
@@ -790,8 +805,8 @@ describe('PR Gate workflow', () => {
           .find((line) => line.startsWith('plan='))!
         expect(JSON.parse(planLine.slice(5))).toMatchObject({
           mode: 'selective',
-          bundles: ['policy', 'windows_e2e'],
-          lanes: ['policy', 'e2e_functional_windows', 'e2e_workspace_windows']
+          bundles,
+          lanes
         })
       } finally {
         rmSync(directory, { recursive: true, force: true })

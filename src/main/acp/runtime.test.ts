@@ -23297,6 +23297,76 @@ describe('ACP runtime skill force-load + nudge', () => {
     expect(onPromptEnded).toHaveBeenCalledWith(session.sessionId, onPromptStarted.mock.calls[0][1])
   })
 
+  it.each(['backend resolution', 'provider resume'] as const)(
+    'does not send a stopped prompt after forced Skill reload pauses at %s',
+    async (pauseAt) => {
+      const entered = createDeferred()
+      const release = createDeferred()
+      const agents: Array<ReturnType<typeof startFakeAgent>> = []
+      const spawn = (): ChildProcessWithoutNullStreams => {
+        const process = new FakeAgentProcess()
+        const reconnect = agents.length === 1
+        agents.push(
+          startFakeAgent(process, ['remote-session-1'], {
+            onResumeRequest: async () => {
+              if (reconnect && pauseAt === 'provider resume') {
+                entered.resolve()
+                await release.promise
+              }
+            }
+          })
+        )
+        return asAgentProcess(process)
+      }
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: async (context) => {
+          if (context.forcedSkillIds.length > 0 && pauseAt === 'backend resolution') {
+            entered.resolve()
+            await release.promise
+          }
+          return {
+            framework: { ...claudeCodeFramework, spawn },
+            executablePath: '/bin/agent',
+            env: {}
+          }
+        },
+        resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+        resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
+        skills: createSkillsHooks({ needForceLoad: ['research'] })
+      })
+      const session = await runtime.createSession({
+        cwd: '/workspace',
+        specialistId: 'force-load-specialist'
+      })
+      const prompt = runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'summarize the paper',
+        forcedSkillIds: ['research']
+      })
+      try {
+        await entered.promise
+        await runtime.cancelPrompt({ sessionId: session.sessionId })
+        release.resolve()
+        await prompt
+        expect(agents.flatMap((agent) => agent.prompts)).toEqual([])
+        await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('idle'))
+        await runtime.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
+        await expect(
+          runtime.sendPrompt({ sessionId: session.sessionId, text: 'new request' })
+        ).resolves.toMatchObject({ stopReason: 'end_turn' })
+        expect(agents.flatMap((agent) => agent.prompts)).toEqual([
+          { sessionId: session.sessionId, text: 'new request' }
+        ])
+      } finally {
+        release.resolve()
+        await prompt.catch(() => undefined)
+        await runtime.disconnect()
+      }
+    }
+  )
+
   it('passes turn-forced skill ids to backend resolution per runtime instance', async () => {
     const firstSpawner = createFreshAgentSpawner()
     const secondSpawner = createFreshAgentSpawner()

@@ -465,7 +465,7 @@ export const createOpencodeFramework = ({
     // path quoted; a native `.exe`/Unix binary spawns directly.
     const needsShell = platform === 'win32' && /\.(cmd|bat)$/i.test(input.executablePath)
 
-    return spawnProcess(
+    return (input.spawnProcess ?? spawnProcess)(
       needsShell ? `"${input.executablePath}"` : input.executablePath,
       ['acp', ...input.args],
       {

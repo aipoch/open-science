@@ -5,6 +5,7 @@ import { basename, join } from 'node:path'
 import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { parseUploadVersionReference } from '../../shared/uploads'
 import type { SessionKey } from './session-records'
+import type { DelegatedProcessOwnership } from './process-ownership'
 
 type ResolvedImmutableInput = Readonly<{
   path: string
@@ -15,6 +16,7 @@ type ResolvedImmutableInput = Readonly<{
 
 type ProductionFrameWorkspaceOptions = Readonly<{
   root: string
+  ownership?: DelegatedProcessOwnership
   resolveInput(identity: string, session: SessionKey): Promise<ResolvedImmutableInput>
 }>
 
@@ -97,7 +99,7 @@ const createProductionFrameWorkspace = (
     return options.resolveInput(identity, session)
   }
 
-  return Object.freeze({
+  const workspace = Object.freeze({
     async validateInput(identity: string, session: SessionKey): Promise<boolean> {
       let input: ResolvedImmutableInput | undefined
       try {
@@ -114,6 +116,8 @@ const createProductionFrameWorkspace = (
       frameId: string,
       inputs: readonly string[]
     ): Promise<{ cwd: string }> {
+      await options.ownership?.recover({ ...session, frameId })
+      options.ownership?.assertClear({ ...session, frameId })
       const root = sessionRoot(session)
       const cwd = join(root, 'frames', safeSegment(frameId, 'Frame id'))
       const staging = join(root, '.staging', `${frameId}-${randomUUID()}`)
@@ -156,15 +160,32 @@ const createProductionFrameWorkspace = (
       }
     },
     async deleteSession(session: SessionKey): Promise<void> {
+      await options.ownership?.recover(session)
+      options.ownership?.assertClear(session)
       const root = sessionRoot(session)
       await makeTreeRemovable(root)
       await rm(root, { recursive: true, force: true })
     },
     async deleteProject(projectId: string): Promise<void> {
+      await options.ownership?.recover({ projectId })
+      options.ownership?.assertClear({ projectId })
       const root = projectRoot(projectId)
       await makeTreeRemovable(root)
       await rm(root, { recursive: true, force: true })
     }
+  })
+  if (!options.ownership) return workspace
+  const ownership = options.ownership
+  return Object.freeze({
+    ...workspace,
+    prepare: (session, frameId, inputs) =>
+      ownership.withWorkspace({ ...session, frameId }, () =>
+        workspace.prepare(session, frameId, inputs)
+      ),
+    deleteSession: (session) =>
+      ownership.withWorkspace(session, () => workspace.deleteSession(session)),
+    deleteProject: (projectId) =>
+      ownership.withWorkspace({ projectId }, () => workspace.deleteProject(projectId))
   })
 }
 

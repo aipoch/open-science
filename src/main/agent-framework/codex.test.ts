@@ -1394,3 +1394,32 @@ describe('buildCodexConfig reasoning effort', () => {
     expect(JSON.parse(config.env?.CODEX_CONFIG ?? '').model_reasoning_effort).toBe('max')
   })
 })
+
+it('prevents physical launch when delegated ownership admission fails', () => {
+  const ordinarySpawn = vi.fn(() => ({}) as ChildProcessWithoutNullStreams)
+  const ownedSpawn = vi.fn(() => {
+    throw new Error('ownership receipt write failed')
+  })
+  const framework = createCodexFramework({
+    platform: 'win32',
+    sourceEnv: { PATH: 'C:\\bin' },
+    spawnProcess: ordinarySpawn
+  })
+  const input = {
+    executablePath: 'C:\\runtime\\codex.exe',
+    args: ['--trace'],
+    env: { OWNED: 'yes' },
+    spawnProcess: ownedSpawn
+  }
+  expect(() => framework.spawn(input)).toThrow('ownership receipt write failed')
+  expect(ordinarySpawn).not.toHaveBeenCalled()
+  expect(ownedSpawn).toHaveBeenCalledWith(
+    input.executablePath,
+    ['--trace'],
+    expect.objectContaining({
+      env: expect.objectContaining({ OWNED: 'yes' }),
+      stdio: 'pipe',
+      windowsHide: true
+    })
+  )
+})

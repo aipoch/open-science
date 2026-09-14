@@ -1699,12 +1699,14 @@ class AcpRuntime {
 
   // Requests cancellation without clearing in-flight state before the agent stops.
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
+    const cancelPromptRequest = this.promptTurnWorkflow.captureCancellation(request.sessionId)
     const connection = this.connection
     const activeSession = this.activeSessionFor(request.sessionId)
     const cancelPlanInteraction = this.sessionPlanWorkflow.capturePromptCancellation(
       request.sessionId
     )
-    const interactionInFlight = this.sessionInteractions.current(request.sessionId) !== undefined
+    const interactionInFlight =
+      this.sessionInteractions.has(request.sessionId) || !!cancelPromptRequest
     const durablePermission = this.durablePermissionContinuations?.get(request.sessionId)
     if (durablePermission) durablePermission.cancellationRequested = true
     const continuationWasPending = this.appContinuations.get(request.sessionId) !== undefined
@@ -1749,6 +1751,19 @@ class AcpRuntime {
     }
 
     let cancellationAccepted = false
+    const onAccepted = (): void => {
+      cancellationAccepted = true
+      cancelPromptRequest?.()
+      cancelPlanInteraction()
+      this.cancelPermissionFlowForSession(request.sessionId)
+      this.pushEvent({
+        kind: 'system',
+        level: 'warning',
+        sessionId: request.sessionId,
+        title: 'Prompt cancellation requested'
+      })
+      this.emitState()
+    }
     if (connection && activeSession) {
       await this.sessionInteractions.cancelPrompt({
         sessionId: request.sessionId,
@@ -1756,18 +1771,7 @@ class AcpRuntime {
           connection.agent.notify(acp.methods.agent.session.cancel, {
             sessionId: activeSession.sessionId
           }),
-        onAccepted: () => {
-          cancellationAccepted = true
-          cancelPlanInteraction()
-          this.cancelPermissionFlowForSession(request.sessionId)
-          this.pushEvent({
-            kind: 'system',
-            level: 'warning',
-            sessionId: request.sessionId,
-            title: 'Prompt cancellation requested'
-          })
-          this.emitState()
-        },
+        onAccepted,
         onTimeout: () => {
           this.pushEvent({
             kind: 'error',
@@ -1779,6 +1783,8 @@ class AcpRuntime {
           void this.disconnect()
         }
       })
+    } else if (cancelPromptRequest) {
+      onAccepted()
     }
     if (cancellationAccepted) {
       await this.settleCancelledDurablePermissionContinuation(request.sessionId)

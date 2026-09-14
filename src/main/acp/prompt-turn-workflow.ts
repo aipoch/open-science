@@ -204,11 +204,43 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
 }>
 
 class AcpPromptTurnWorkflow {
+  // A send outlives the provider generation replaced by a forced Skill reload.
+  private readonly requests = new Map<string, { cancelled: boolean }>()
+
+  captureCancellation(sessionId: string): (() => void) | undefined {
+    const request = this.requests.get(sessionId)
+    return request
+      ? () => {
+          request.cancelled = true
+        }
+      : undefined
+  }
+
   constructor(private readonly options: AcpPromptTurnWorkflowOptions) {}
 
   async run(
     request: AcpPromptRequest,
     mode: AcpPromptTurnMode,
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+  ): Promise<PromptResponse> {
+    if (!this.activeSession(request.sessionId)) {
+      throw new Error(`ACP session not found: ${request.sessionId}`)
+    }
+    this.assertSessionIdle(request.sessionId)
+    const cancellation = { cancelled: false }
+    this.requests.set(request.sessionId, cancellation)
+    try {
+      return await this.runRequest(request, mode, cancellation, onPromptAdmitted)
+    } finally {
+      if (this.requests.get(request.sessionId) === cancellation)
+        this.requests.delete(request.sessionId)
+    }
+  }
+
+  private async runRequest(
+    request: AcpPromptRequest,
+    mode: AcpPromptTurnMode,
+    cancellation: { cancelled: boolean },
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
     let activeSession = this.activeSession(request.sessionId)
@@ -241,6 +273,11 @@ class AcpPromptTurnWorkflow {
     try {
       if (skill.reloadDecision.kind === 'reload') {
         this.assertSessionIdle(request.sessionId)
+        if (cancellation.cancelled) {
+          skill.close('reload-restored')
+          this.options.interactions.release(reservation)
+          return { stopReason: 'cancelled' }
+        }
         const snapshot = this.options.registry.lookup(request.sessionId)?.aggregate.snapshot()
         const projectId = this.options.resolveProjectId(request.sessionId)
         await this.options.disconnectForReload()
@@ -252,6 +289,11 @@ class AcpPromptTurnWorkflow {
             snapshot?.permissionProfile?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
           ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {})
         })
+        if (cancellation.cancelled) {
+          skill.close('reload-restored')
+          this.options.interactions.release(reservation)
+          return { stopReason: 'cancelled' }
+        }
         if (resumed.contextReset) {
           request.historyPreamble = request.resumeFallback?.historyPreamble
           request.historyAttachments = request.resumeFallback?.historyAttachments
@@ -455,6 +497,7 @@ class AcpPromptTurnWorkflow {
                 ? { skillRuntimeAllowlist: readyPrepared.skillRuntimeAllowlist }
                 : {})
             })
+            if ((await this.checkpoint(interaction)) === 'cancelled') return 'cancelled'
             if (request.historyPreamble) {
               log.info('session transcript replay dispatched', {
                 sessionId,

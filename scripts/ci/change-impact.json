@@ -148,6 +148,7 @@
         "src/main/compute/scp-runner.ts",
         "src/main/compute/ssh-runner.ts",
         "src/main/crash-diagnostics.ts",
+        "src/main/delegation/process-ownership.ts",
         "src/main/immutable-input-authority.ts",
         "src/main/index.ts",
         "src/main/ipc.ts",

@@ -380,6 +380,7 @@ describe('pull request change classification', () => {
     ['ACL behavior', 'src/main/notebook/micromamba-cache-acl.integration.test.ts'],
     ['storage', 'src/main/storage/ipc.ts'],
     ['session persistence', 'src/main/session-persistence/ipc.ts'],
+    ['delegated process ownership', 'src/main/delegation/process-ownership.ts'],
     ['notebook shell process', 'src/main/notebook/shell-process.ts'],
     ['file save', 'src/main/file-save.ts'],
     ['specialist repository', 'src/main/specialist/repository.ts'],

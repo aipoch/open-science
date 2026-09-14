@@ -21,6 +21,8 @@ import {
   withDelegatedChildContext
 } from './production-framework-runtime'
 
+import { DelegatedProcessOwnership } from './process-ownership'
+
 const safeOpenCodeConfig = JSON.stringify({
   permission: { task: 'deny' },
   agent: {
@@ -619,4 +621,74 @@ describe('production delegated framework runtime bridge', () => {
       ])
     }
   })
+})
+
+it('does not retain backend leases when pending ownership rejects repeated preparation', async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-blocked-backend-'))
+  const durable = delegatedSession('opencode')
+  const key = { projectId: durable.projectId, sessionId: durable.id }
+  let liveLeases = 0
+  const owner = new DelegatedProcessOwnership(dataRoot)
+  owner.recordFailure({
+    ...key,
+    frameId: 'child-frame',
+    attemptId: 'old-attempt',
+    frameworkId: 'opencode'
+  })
+  const frameworks = createProductionDelegatedFrameworkRuntime({
+    capacity: 1,
+    dataRoot,
+    runtime: {
+      settingsService: {
+        async resolveAdmittedSubagentBackend() {
+          liveLeases++
+          return {
+            ...backend('opencode'),
+            providerTransportLease: {
+              setTarget: () => true,
+              release: async () => {
+                liveLeases--
+              }
+            }
+          }
+        }
+      }
+    } as never,
+    notebookRpcServer: () => {
+      throw new Error('blocked preparation must not start Notebook')
+    },
+    readSession: async () => durable
+  })
+  try {
+    const selected = await frameworks.forSession(durable, owner)
+    for (let index = 0; index < 2; index++) {
+      const reservation = await selected.execution.reserve(1)
+      const running = selected.execution.run(
+        {
+          session: key,
+          frameId: 'child-frame',
+          attemptId: `retry-${index}`,
+          runtimeSegmentId: `runtime-${index}`,
+          task: 'Investigate',
+          inputs: [],
+          workspaceCwd: dataRoot,
+          continuation: false,
+          executionModel: {
+            frameworkId: 'opencode',
+            providerId: 'provider-a',
+            backendId: 'opencode:provider-a',
+            modelRoute: 'opencode-openai',
+            model: 'model-a',
+            reasoningEffort: 'default'
+          }
+        },
+        reservation.slotIds[0]
+      )
+      await expect(running.completion).rejects.toThrow(/cleanup is unconfirmed/)
+      await reservation.releaseAll()
+    }
+    expect(liveLeases).toBe(0)
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true })
+  }
 })

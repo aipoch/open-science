@@ -19,6 +19,7 @@ on:
           - i18n
           - runtime-bundle
           - windows-e2e
+          - windows-process
           - e2e
 
 permissions:
@@ -183,6 +184,13 @@ jobs:
             plan='{"schemaVersion":1,"mode":"selective","roots":["manual:e2e"],"lanes":["policy","build","e2e_functional_macos","e2e_workspace_macos","e2e_accessibility_macos","e2e_visual_macos","e2e_functional_windows","e2e_workspace_windows"],"bundles":["policy","macos_e2e","windows_e2e"],"reasonChains":["workflow_dispatch e2e -> real desktop jobs and renderer pilot"]}'
             echo "plan=$plan" >> "$GITHUB_OUTPUT"
             echo "lanes=$(node -e 'console.log(JSON.stringify(JSON.parse(process.argv[1]).lanes))' "$plan")" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "windows-process" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["manual:windows-process"],"lanes":["policy","windows_runtime"],"bundles":["policy","windows_core"],"reasonChains":["workflow_dispatch windows-process -> delegated native process ownership dry-run"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy","windows_runtime"]' >> "$GITHUB_OUTPUT"
+            printf '%s\n' '## PR Gate preflight' '' '- Focused dry-run: delegated Windows process ownership' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "windows-e2e" ]]; then
@@ -695,14 +703,24 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Test delegated Windows process ownership
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        run: >-
+          npx vitest run
+          src/main/process-tree.windows.integration.test.ts
+          src/main/delegation/process-ownership.test.ts
+          src/main/delegation/production-composition.test.ts
+          --maxWorkers=1
+          --testTimeout=30000
+          --hookTimeout=30000
       - name: Test Windows sandbox native source
         id: windows_sandbox_source
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
         continue-on-error: true
         run: cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml
       - name: Build Windows sandbox native host
         id: windows_sandbox_build
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
         continue-on-error: true
         run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
       - name: Upload rebuilt Windows sandbox native host
@@ -716,7 +734,7 @@ jobs:
           if-no-files-found: error
       - name: Test Windows-specific behavior
         id: windows_runtime
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
         continue-on-error: true
         run: >-
           npx vitest run
@@ -730,7 +748,7 @@ jobs:
           src/main/notebook/micromamba-cache-acl.integration.test.ts
       - name: Test Windows notebook shell behavior
         id: windows_shell
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
         continue-on-error: true
         run: >-
           npx vitest run
@@ -739,7 +757,7 @@ jobs:
           src/main/notebook/shell-search-scope.test.ts
       - name: Test Windows notebook shell service timeout
         id: windows_service_timeout
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
         continue-on-error: true
         run: >-
           npx vitest run
@@ -748,7 +766,7 @@ jobs:
           "kills a command that outlasts the timeout and returns a non-normal result"
       - name: Test Windows AppContainer ownership and removal lifecycle
         id: windows_sandbox
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && steps.windows_sandbox_source.outcome == 'success' && steps.windows_sandbox_build.outcome == 'success' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && steps.windows_sandbox_source.outcome == 'success' && steps.windows_sandbox_build.outcome == 'success' }}
         continue-on-error: true
         shell: powershell
         run: >-

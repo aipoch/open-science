@@ -1,3 +1,4 @@
+import { DelegatedProcessOwnership } from './process-ownership'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -83,10 +84,14 @@ const sessionSetup = (backend: ResolvedAgentBackend): SessionSetup =>
 
 const createProductionDelegatedFrameworkRuntime = (
   options: ProductionFrameworkRuntimeOptions
-): ProductionDelegatedFrameworks =>
-  createProductionDelegatedFrameworks({
+): ProductionDelegatedFrameworks => {
+  let standaloneOwnership: DelegatedProcessOwnership | undefined
+  return createProductionDelegatedFrameworks({
     capacity: options.capacity,
-    async certify(session) {
+    async certify(session, suppliedOwnership) {
+      const ownership =
+        suppliedOwnership ??
+        (standaloneOwnership ??= new DelegatedProcessOwnership(options.dataRoot))
       const frameworkId = session.agentFrameworkId
       if (!frameworkId) throw new Error('Delegated Work Session has no framework identity.')
       const preparedAttempts = new Map<
@@ -100,13 +105,14 @@ const createProductionDelegatedFrameworkRuntime = (
       // The exact provider/model is validated by admission's model resolver. This certification hook
       // must not read the process-wide Active model, which may differ from the originating Session.
       const assertProviderAvailable = async (): Promise<void> => undefined
-      const prepare = async (
+      const prepareScope = async (
         input: DelegateExecutionInput
       ): Promise<PreparedProductionFrameworkScope> => {
         if (!input.workspaceCwd) throw new Error('Delegated Attempt has no prepared Frame cwd.')
         if (!input.executionModel) {
           throw new Error('Delegated Attempt has no admitted model snapshot.')
         }
+        ownership.assertClear({ ...input.session, frameId: input.frameId })
         const resolveAdmitted = options.runtime.settingsService.resolveAdmittedSubagentBackend
         if (!input.executionBackend && !resolveAdmitted) {
           throw new Error('Admitted delegated backend resolution is unavailable.')
@@ -183,7 +189,12 @@ const createProductionDelegatedFrameworkRuntime = (
             ...(input.artifactCurrentRunFile
               ? { artifactCurrentRunFile: input.artifactCurrentRunFile }
               : {}),
+            async confirmProcessCleanup() {
+              await ownership.recover({ ...input.session, attemptId: input.attemptId }, true)
+              ownership.assertClear({ ...input.session, attemptId: input.attemptId })
+            },
             async disposeResources() {
+              ownership.assertClear({ ...input.session, attemptId: input.attemptId })
               const owned = preparedAttempts.get(input.attemptId)
               preparedAttempts.delete(input.attemptId)
               if (owned?.releaseBackend) await releaseResolvedAgentBackendLeases(owned.backend)
@@ -194,7 +205,25 @@ const createProductionDelegatedFrameworkRuntime = (
             backend,
             runtimeHome
           )
-          if (delegatedSpawn) return { ...base, spawn: delegatedSpawn }
+          if (delegatedSpawn)
+            return {
+              ...base,
+              spawn: {
+                ...delegatedSpawn,
+                spawnProcess: (command, args, spawnOptions) =>
+                  ownership.spawn(
+                    {
+                      ...input.session,
+                      frameId: input.frameId,
+                      attemptId: input.attemptId,
+                      frameworkId
+                    },
+                    command,
+                    args,
+                    spawnOptions
+                  )
+              }
+            }
           if (frameworkId === 'claude-code') {
             return { ...base, sessionSetup: sessionSetup(backend) }
           }
@@ -211,6 +240,10 @@ const createProductionDelegatedFrameworkRuntime = (
           throw error
         }
       }
+      const prepare = (input: DelegateExecutionInput): Promise<PreparedProductionFrameworkScope> =>
+        ownership.withWorkspace({ ...input.session, frameId: input.frameId }, () =>
+          prepareScope(input)
+        )
       const createRuntime = (
         scope: PreparedProductionFrameworkScope,
         callbacks: AcpDelegateExecutionCallbacks,
@@ -219,11 +252,41 @@ const createProductionDelegatedFrameworkRuntime = (
         const owned = preparedAttempts.get(scope.executionId)
         if (!owned) throw new Error('Delegated runtime scope is unavailable.')
         preparedAttempts.delete(scope.executionId)
+        let initialProcess = agentProcess
+        const backend = withDelegatedChildContext(owned.backend)
+        const spawnOwned = (): ChildProcessWithoutNullStreams => {
+          if (initialProcess) {
+            const process = initialProcess
+            initialProcess = undefined
+            return process
+          }
+          return backend.framework.spawn({
+            ...(scope.spawn ?? {
+              executablePath: backend.executablePath,
+              args: backend.args ?? [],
+              env: backend.env,
+              proxyEnvironmentMode: backend.proxyEnvironmentMode
+            }),
+            spawnProcess: (command, args, spawnOptions) =>
+              ownership.spawn(
+                {
+                  projectId: scope.provenance.projectId,
+                  sessionId: scope.provenance.sessionId,
+                  frameId: scope.provenance.agentFrameId,
+                  attemptId: scope.executionId,
+                  frameworkId
+                },
+                command,
+                args,
+                spawnOptions
+              )
+          })
+        }
         try {
           return createAcpRuntime({
             ...options.runtime,
             notebookRpcServer: options.notebookRpcServer(),
-            fixedBackend: withDelegatedChildContext(owned.backend),
+            fixedBackend: backend,
             runtimeCallbacks: callbacks,
             delegatedNotebookConnection: owned.connection,
             permissionGrantContext: {
@@ -233,7 +296,7 @@ const createProductionDelegatedFrameworkRuntime = (
             ...(scope.artifactCurrentRunFile
               ? { delegatedArtifactCurrentRunFile: scope.artifactCurrentRunFile }
               : {}),
-            ...(agentProcess ? { spawnAgent: () => agentProcess } : {})
+            spawnAgent: spawnOwned
           })
         } catch (error) {
           if (owned.releaseBackend) void releaseResolvedAgentBackendLeases(owned.backend)
@@ -249,6 +312,7 @@ const createProductionDelegatedFrameworkRuntime = (
       }
     }
   })
+}
 
 export {
   createProductionDelegatedFrameworkRuntime,

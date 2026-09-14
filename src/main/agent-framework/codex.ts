@@ -445,7 +445,7 @@ export const createCodexFramework = ({
     const child = spawnCodexWithInstallAdmission(
       [input.executablePath, ...(input.env.CODEX_PATH ? [input.env.CODEX_PATH] : [])],
       () =>
-        spawnProcess(command, args, {
+        (input.spawnProcess ?? spawnProcess)(command, args, {
           env: buildSpawnEnvironment(input, sourceEnv),
           stdio: 'pipe',
           // Keep a terminal/dev-runner SIGINT aimed at the Electron application's foreground process
