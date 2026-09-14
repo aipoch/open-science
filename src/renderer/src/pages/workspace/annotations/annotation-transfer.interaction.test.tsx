@@ -28,6 +28,22 @@ const annotation: Annotation = {
   quote: 'Evidence',
   source: { kind: 'agent-message', sessionId: 'main', messageId: 'message' }
 }
+const createDataTransfer = (): {
+  types: string[]
+  setData: (type: string, value: string) => void
+  getData: (type: string) => string
+} => {
+  const data = new Map<string, string>()
+  const dataTransfer = {
+    types: [] as string[],
+    setData: (type: string, value: string) => {
+      data.set(type, value)
+      if (!dataTransfer.types.includes(type)) dataTransfer.types.push(type)
+    },
+    getData: (type: string) => data.get(type) ?? ''
+  }
+  return dataTransfer
+}
 afterEach(() => {
   cleanup()
   annotationTransfers.cancel()
@@ -133,15 +149,7 @@ it('drops into the selected sibling draft without sending, deduplicates, and lea
     first = transfers().create({ sessionId: 'main', projectId: 'project' })!
     second = transfers().create({ sessionId: 'main', projectId: 'project' })!
   })
-  const data = new Map<string, string>()
-  const dataTransfer = {
-    types: [] as string[],
-    setData: (type: string, value: string) => {
-      data.set(type, value)
-      dataTransfer.types.push(type)
-    },
-    getData: (type: string) => data.get(type) ?? ''
-  }
+  const dataTransfer = createDataTransfer()
   fireEvent.dragStart(ui.getByTestId('source'), { dataTransfer })
   fireEvent.dragOver(ui.getAllByTestId('side-chat-annotation-drop')[1], { dataTransfer })
   expect(ui.getByText('Add to this Side chat')).toBeTruthy()
@@ -205,15 +213,7 @@ it('moves a side annotation back to the main draft and refuses a drop onto its o
   act(() => {
     target = transfers().create({ sessionId: 'main', projectId: 'project' })!
   })
-  const data = new Map<string, string>()
-  const dataTransfer = {
-    types: [] as string[],
-    setData: (type: string, value: string) => {
-      data.set(type, value)
-      if (!dataTransfer.types.includes(type)) dataTransfer.types.push(type)
-    },
-    getData: (type: string) => data.get(type) ?? ''
-  }
+  const dataTransfer = createDataTransfer()
   fireEvent.dragStart(ui.getByTestId('source'), { dataTransfer })
   fireEvent.drop(ui.getByTestId('side-chat-annotation-drop'), { dataTransfer })
   expect(ui.queryByTestId('source')).toBeNull()

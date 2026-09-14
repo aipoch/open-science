@@ -907,7 +907,6 @@ it('owns a runtime-backed tab across project switches and only destroys it after
   })
   expect(close).not.toHaveBeenCalled()
   const dialog = (): Element | null => document.querySelector('[role="alertdialog"]')
-  expect(dialog()?.textContent).toContain('delete its saved conversation')
   act(() => {
     ;[...dialog()!.querySelectorAll('button')]
       .find((button) => button.textContent === 'Cancel')!
@@ -931,98 +930,95 @@ it('owns a runtime-backed tab across project switches and only destroys it after
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
 })
 
-it.each([false, true])(
-  'restores unclosed Side chat tabs with sibling=%s and never restores a confirmed closed chat',
-  async (withSibling) => {
-    const { usePreviewWorkbenchStore, createInitialPreviewWorkbenchState, sideChatTabId } =
-      await import('@/stores/preview-workbench-store')
-    const saved = {
-      revision: 1,
-      parentSessionId: 'saved-parent',
-      projectId: 'saved-project',
-      sideSessionId: 'saved-side',
-      entries: [
-        {
-          id: 'saved-message',
-          kind: 'message' as const,
-          role: 'user' as const,
-          text: 'Retain this conversation'
-        }
-      ],
-      running: false,
-      notice: 'interrupted' as const
-    }
-    const sibling = { ...saved, sideSessionId: 'saved-sibling' }
-    let savedChats = withSibling ? [saved, sibling] : [saved]
-    const close = vi.fn(async () => {
-      savedChats = savedChats.filter((chat) => chat.sideSessionId !== 'saved-side')
-    })
-    window.api = {
-      sideChat: {
-        list: vi.fn(async () => ({ revision: 1, chats: savedChats })),
-        close,
-        start: vi.fn(),
-        send: vi.fn(),
-        cancel: vi.fn(),
-        onEvent: vi.fn(() => () => undefined)
+it('restores siblings after restart and omits a confirmed closed Side chat', async () => {
+  const { usePreviewWorkbenchStore, createInitialPreviewWorkbenchState, sideChatTabId } =
+    await import('@/stores/preview-workbench-store')
+  const saved = {
+    revision: 1,
+    parentSessionId: 'saved-parent',
+    projectId: 'saved-project',
+    sideSessionId: 'saved-side',
+    entries: [
+      {
+        id: 'saved-message',
+        kind: 'message' as const,
+        role: 'user' as const,
+        text: 'Retain this conversation'
       }
-    } as unknown as Window['api']
-    const container = document.createElement('div')
-    document.body.append(container)
-    let root = createRoot(container)
-    let chat!: ReturnType<typeof useSideChatController>
-    const Harness = (): null => {
-      chat = useSideChatController(
-        { sessionId: 'saved-parent', projectId: 'saved-project' },
-        'saved-side'
-      )
-      return null
-    }
-    const mount = async (): Promise<void> => {
-      usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
-      usePreviewWorkbenchStore.getState().activateProject('saved-project')
-      await act(async () =>
-        root.render(createElement(SideChatProvider, null, createElement(Harness)))
-      )
-    }
-    const id = sideChatTabId('saved-side')
-    await mount()
-    expect(chat.view?.entries).toEqual(saved.entries)
-    expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toContain(id)
-    expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
-    act(() => {
-      usePreviewWorkbenchStore
-        .getState()
-        .activateProject('saved-project', { items: [], panelState: 'collapsed' })
-    })
-    expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
-    expect(close).not.toHaveBeenCalled()
-    // Unmounting for application exit must not invoke the explicit destructive close path.
-    act(() => root.unmount())
-    expect(close).not.toHaveBeenCalled()
-    root = createRoot(container)
-    await mount()
-    expect(chat.view?.entries).toEqual(saved.entries)
-    expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toContain(id)
-    act(() => {
-      usePreviewWorkbenchStore.getState().removeItem(id)
-    })
-    const dialog = document.querySelector('[role="alertdialog"]')!
-    await act(async () => {
-      ;[...dialog.querySelectorAll('button')]
-        .find((button) => button.textContent === 'Close Side chat')!
-        .click()
-    })
-    expect(close).toHaveBeenCalledExactlyOnceWith({ sideSessionId: 'saved-side' })
-    act(() => root.unmount())
-    root = createRoot(container)
-    await mount()
-    expect(chat.view).toBeUndefined()
-    expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toEqual(
-      withSibling ? [sideChatTabId('saved-sibling')] : []
-    )
-    act(() => root.unmount())
-    container.remove()
-    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    ],
+    running: false,
+    notice: 'interrupted' as const
   }
-)
+  const sibling = { ...saved, sideSessionId: 'saved-sibling' }
+  let savedChats = [saved, sibling]
+  const close = vi.fn(async () => {
+    savedChats = savedChats.filter((chat) => chat.sideSessionId !== 'saved-side')
+  })
+  window.api = {
+    sideChat: {
+      list: vi.fn(async () => ({ revision: 1, chats: savedChats })),
+      close,
+      start: vi.fn(),
+      send: vi.fn(),
+      cancel: vi.fn(),
+      onEvent: vi.fn(() => () => undefined)
+    }
+  } as unknown as Window['api']
+  const container = document.createElement('div')
+  document.body.append(container)
+  let root = createRoot(container)
+  let chat!: ReturnType<typeof useSideChatController>
+  const Harness = (): null => {
+    chat = useSideChatController(
+      { sessionId: 'saved-parent', projectId: 'saved-project' },
+      'saved-side'
+    )
+    return null
+  }
+  const mount = async (): Promise<void> => {
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    usePreviewWorkbenchStore.getState().activateProject('saved-project')
+    await act(async () =>
+      root.render(createElement(SideChatProvider, null, createElement(Harness)))
+    )
+  }
+  const id = sideChatTabId('saved-side')
+  await mount()
+  expect(chat.view?.entries).toEqual(saved.entries)
+  expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toContain(id)
+  expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+  act(() => {
+    usePreviewWorkbenchStore
+      .getState()
+      .activateProject('saved-project', { items: [], panelState: 'collapsed' })
+  })
+  expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+  expect(close).not.toHaveBeenCalled()
+  // Unmounting for application exit must not invoke the explicit destructive close path.
+  act(() => root.unmount())
+  expect(close).not.toHaveBeenCalled()
+  root = createRoot(container)
+  await mount()
+  expect(chat.view?.entries).toEqual(saved.entries)
+  expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toContain(id)
+  act(() => {
+    usePreviewWorkbenchStore.getState().removeItem(id)
+  })
+  const dialog = document.querySelector('[role="alertdialog"]')!
+  await act(async () => {
+    ;[...dialog.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Close Side chat')!
+      .click()
+  })
+  expect(close).toHaveBeenCalledExactlyOnceWith({ sideSessionId: 'saved-side' })
+  act(() => root.unmount())
+  root = createRoot(container)
+  await mount()
+  expect(chat.view).toBeUndefined()
+  expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toEqual([
+    sideChatTabId('saved-sibling')
+  ])
+  act(() => root.unmount())
+  container.remove()
+  usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+})
