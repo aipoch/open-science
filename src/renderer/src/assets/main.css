@@ -80,6 +80,20 @@
   transform-origin: 0 0;
 }
 
+/* TextLayer stores glyph positions before the page's intrinsic rotation, then marks its container
+   with data-main-rotation. Keep the selectable DOM aligned with the rotated PDF canvas. */
+.pdf-text-layer[data-main-rotation='90'] {
+  transform: rotate(90deg) translateY(-100%);
+}
+
+.pdf-text-layer[data-main-rotation='180'] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+
+.pdf-text-layer[data-main-rotation='270'] {
+  transform: rotate(270deg) translateX(-100%);
+}
+
 .pdf-text-layer :is(span, br) {
   position: absolute;
   color: transparent;
