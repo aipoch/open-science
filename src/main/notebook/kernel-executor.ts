@@ -540,6 +540,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
       const proc = await this.ensureProc(key, kind, env, request)
       if (proc.pending) throw new Error('Notebook execution is already running.')
       endSandboxExecution = proc.beginSandboxExecution()
+      if (kind !== 'repl') {
+        cwdBefore = proc.cwd
+        request = { ...request, cwd: cwdBefore }
+      }
 
       const helperModules = request.helperModules ?? []
       for (const helper of helperModules) {
@@ -579,10 +583,6 @@ class NotebookKernelExecutor implements NotebookExecutor {
         if (initialization.response.error !== null) {
           throw helperInitializationError(helperModules, initialization.response.error)
         }
-      }
-      if (kind !== 'repl') {
-        cwdBefore = proc.cwd
-        request = { ...request, cwd: cwdBefore }
       }
       workingFileObservation = await startWorkingFileObservation(request)
       // sendRequest installs proc.pending synchronously. Revalidate immediately before that handoff:

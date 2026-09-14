@@ -1958,7 +1958,7 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
     }
   })
 
-  it('preserves a sanitized missing dependency diagnostic without dispatching producer code', async () => {
+  it('AUDIT: preserves process cwd and a sanitized diagnostic when helper initialization fails', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-helper-missing-dependency-'))
     const request = baseRequest(cwdDir)
     await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
@@ -1983,8 +1983,18 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
       await helperHost.preflight('python', ['dependency-helper'])
     )
     const sentinel = join(cwdDir, 'missing-dependency-producer-sentinel.txt')
+    const processDir = join(cwdDir, 'analysis')
+    await mkdir(processDir)
 
     try {
+      const changed = await executor.execute({
+        ...request,
+        code: `import os; os.chdir(${JSON.stringify(processDir)})`
+      })
+      expect(changed).toMatchObject({
+        status: 'completed',
+        cwdAfter: realpathSync(processDir)
+      })
       const result = await executor.execute({
         ...request,
         language: 'python',
@@ -2001,6 +2011,8 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
       expect(result.traceback).toContain(
         'Python ModuleNotFoundError: No module named "open_science_definitely_missing_dependency".'
       )
+      expect.soft(result).toHaveProperty('cwdBefore', realpathSync(processDir))
+      expect.soft(result.cwdAfter).toBe(realpathSync(processDir))
       expect(result.traceback).toContain('inspect_packages')
       expect(result.traceback).toContain('manage_packages')
       expect(result.traceback).not.toContain('def dependency_export')
