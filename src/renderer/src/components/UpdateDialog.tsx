@@ -109,6 +109,13 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
           <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
           <Dialog.Content
             onInteractOutside={(event) => event.preventDefault()}
+            onEscapeKeyDown={(event) => {
+              // The nested layer may not have registered its Escape listener yet.
+              if (recoveryConfirmationOpen) {
+                event.preventDefault()
+                setRecoveryToken(undefined)
+              }
+            }}
             className={dialogPanelClassName(
               'z-[60] flex max-h-[calc(100svh-2rem)] flex-col w-[min(560px,calc(100vw-2rem))] overflow-hidden p-0'
             )}
