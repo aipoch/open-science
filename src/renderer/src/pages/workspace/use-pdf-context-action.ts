@@ -35,10 +35,10 @@ export const resolvePdfContextTarget = (item: PreviewFileItem): PdfContextTarget
   }
   if (item.source === 'literature') {
     const versionId = parseLiteratureAttachmentVersionReference(item.path)
-    return versionId && item.managedFileId
+    return versionId
       ? {
           sourceKind: 'literature-attachment-version',
-          sourceFileId: item.managedFileId,
+          ...(item.managedFileId ? { sourceFileId: item.managedFileId } : {}),
           sourceVersionId: versionId
         }
       : undefined

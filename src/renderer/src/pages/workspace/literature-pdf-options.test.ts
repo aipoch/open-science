@@ -54,6 +54,9 @@ describe('literature PDF source identity', () => {
         ...literatureReadingDocument(literatureItem)!.item,
         managedFileId: undefined
       })
-    ).toBeUndefined()
+    ).toEqual({
+      sourceKind: 'literature-attachment-version',
+      sourceVersionId: 'literature-version-1'
+    })
   })
 })
