@@ -1998,46 +1998,6 @@ describe('SettingsService: validation', () => {
     expect(stored.lastValidationFailure?.at).toBeGreaterThan(0)
   })
 
-  it('probes the provider route and flags the framework mismatch instead of failing', async () => {
-    const service = createService()
-    const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
-    vi.stubGlobal('fetch', fetchMock)
-
-    // Default framework is Claude Code (Anthropic /v1/messages only); an OpenAI-only gateway cannot
-    // drive it. The endpoint is still probed over its own /v1/chat/completions route (so the verdict
-    // stays valid across framework switches), the mismatch rides along as a flag, and endpoint
-    // health — not the derivable pairing — is what gets persisted.
-    const created = (
-      await service.upsertProvider({
-        type: 'custom',
-        name: 'G',
-        baseUrl: 'https://g',
-        model: 'm',
-        key: 'k',
-        apiEndpoints: ['openai']
-      })
-    ).providers[0]
-
-    const result = await service.validateProvider({ providerId: created.id })
-
-    expect(result).toMatchObject({
-      ok: true,
-      category: 'ok',
-      applied: true,
-      frameworkIncompatible: true
-    })
-    expect(result.message).toContain('/v1/chat/completions')
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://g/v1/chat/completions',
-      expect.objectContaining({ method: 'POST' })
-    )
-
-    const stored = (await repository.getSettings()).providers.find((p) => p.id === created.id)
-    expect(stored?.lastValidatedAt).toBeGreaterThan(0)
-    expect(stored?.lastValidatedTarget).toEqual({ model: 'm', endpoint: 'openai' })
-    expect(stored?.lastValidationFailure).toBeUndefined()
-  })
-
   it('probes normally once the active framework can drive the provider', async () => {
     const service = createService()
     const fetchMock = vi.fn().mockResolvedValue({ status: 200 })

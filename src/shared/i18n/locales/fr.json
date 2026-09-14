@@ -6121,7 +6121,6 @@
     "Add to main conversation": "Ajouter à la conversation principale",
     "Move to Side chat": "Déplacer vers une discussion parallèle",
     "Connection succeeded, but this provider is not usable by the active agent framework.": "La connexion a réussi, mais ce fournisseur ne peut pas être utilisé avec le framework d'agents actif.",
-    "{{base}} {{detail}}": "{{base}} {{detail}}",
     "Local model server": "Serveur de modèles local",
     "Local model servers do not require an API key.": "Les serveurs de modèles locaux ne nécessitent pas de clé API.",
     "Leave blank for a local server": "Laisser vide pour un serveur local",

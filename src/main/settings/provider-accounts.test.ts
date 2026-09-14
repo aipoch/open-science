@@ -1066,7 +1066,7 @@ describe('ProviderAccountsModule', () => {
     expect(xaiOAuth.cancelLogin).toHaveBeenCalledOnce()
   })
 
-  it('returns bounded failures for missing model catalogs and incompatible drafts', async () => {
+  it('returns bounded failures for missing model catalogs', async () => {
     await expect(module.refreshProviderModels({ providerId: 'missing-provider' })).resolves.toEqual(
       {
         ok: false,
@@ -1089,7 +1089,9 @@ describe('ProviderAccountsModule', () => {
       category: 'unknown',
       message: 'This provider has no model-list endpoint.'
     })
+  })
 
+  it('probes a custom gateway over its own route under a foreign framework and persists health only', async () => {
     // An incompatible pairing no longer short-circuits the probe. The endpoint is still tested over
     // its own declared route (framework-agnostic), the framework mismatch rides along as a flag,
     // and the outcome persists as endpoint health — never as an 'incompatible' failure that would
@@ -1105,15 +1107,31 @@ describe('ProviderAccountsModule', () => {
         })
       })
     )
+    await module.upsertProvider({
+      type: 'custom',
+      name: 'Lab gateway',
+      baseUrl: 'https://lab.example/v1',
+      model: 'lab-model',
+      key: 'secret-key',
+      apiEndpoints: ['openai']
+    })
     const storedProvider = (await repository.getSettings()).providers[0]
     const result = await module.validateProvider({ providerId: storedProvider.id })
-    expect(result).toMatchObject({ ok: true, category: 'ok', frameworkIncompatible: true })
+    expect(result).toMatchObject({
+      ok: true,
+      category: 'ok',
+      applied: true,
+      frameworkIncompatible: true
+    })
     // The default framework (Claude Code) speaks /v1/messages only; the probe must exercise the
-    // provider's own /v1/chat/completions route, not the framework's.
+    // provider's own /v1/chat/completions route, not the framework's. A verified endpoint pairs
+    // its success with the specific route mismatch.
     expect(probedUrls).toEqual(['https://lab.example/v1/chat/completions'])
+    expect(result.message).toContain('/v1/chat/completions')
 
     const saved = (await repository.getSettings()).providers[0]
     expect(saved.lastValidatedAt).toBeGreaterThan(0)
+    expect(saved.lastValidatedTarget).toEqual({ model: 'lab-model', endpoint: 'openai' })
     expect(saved.lastValidationFailure).toBeUndefined()
     vi.unstubAllGlobals()
   })

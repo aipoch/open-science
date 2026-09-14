@@ -92,22 +92,6 @@ describe('configured model catalog', () => {
     ).toEqual([['ollama', 'qwen3:14b', false, 'framework-incompatible']])
   })
 
-  it('ignores legacy incompatible validation failures recorded before the probe decoupling', () => {
-    const entries = buildConfiguredModelCatalog({
-      providers: [
-        provider('legacy', ['old-openai-model'], {
-          lastValidationFailure: { at: 30, category: 'incompatible' }
-        })
-      ],
-      frameworkId: 'claude-code',
-      frameworkEndpoints: ['anthropic']
-    })
-
-    expect(
-      entries.map((entry) => [entry.model, entry.selectable, entry.unavailableReason])
-    ).toEqual([['old-openai-model', false, 'framework-incompatible']])
-  })
-
   it('excludes only the model target whose validation reported it missing', () => {
     const failedTargetProvider = provider('multi-model', ['model-a', 'model-b'], {
       lastValidationFailure: {

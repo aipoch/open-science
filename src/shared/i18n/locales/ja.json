@@ -5793,7 +5793,6 @@
     "Add to main conversation": "メインの会話に追加",
     "Move to Side chat": "サイドチャットに移動",
     "Connection succeeded, but this provider is not usable by the active agent framework.": "接続に成功しましたが、このプロバイダーは現在のエージェントフレームワークでは使用できません。",
-    "{{base}} {{detail}}": "{{base}} {{detail}}",
     "Local model server": "ローカルモデルサーバー",
     "Local model servers do not require an API key.": "ローカルモデルサーバーは API キーを必要としません。",
     "Leave blank for a local server": "ローカルサーバーの場合は空欄のままにしてください",

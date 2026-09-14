@@ -6260,7 +6260,6 @@
     "Add to main conversation": "Добавить в основной диалог",
     "Move to Side chat": "Переместить в боковой чат",
     "Connection succeeded, but this provider is not usable by the active agent framework.": "Соединение успешно установлено, но этот поставщик нельзя использовать с активным агентским фреймворком.",
-    "{{base}} {{detail}}": "{{base}} {{detail}}",
     "Local model server": "Локальный сервер моделей",
     "Local model servers do not require an API key.": "Локальным серверам моделей API-ключ не требуется.",
     "Leave blank for a local server": "Оставьте пустым для локального сервера",

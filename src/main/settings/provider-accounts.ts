@@ -27,12 +27,13 @@ import {
   providerEndpoints,
   preferredEndpoint,
   requiresChatCompletionsBridge,
-  xaiSubscriptionProviderIdentity
+  xaiSubscriptionProviderIdentity,
+  ENDPOINT_PATHS
 } from '../../shared/settings'
 import { defaultVendorModel, isOfficialVendorId } from '../../shared/provider-registry'
 import {
-  getCustomProviderBaseUrlError,
-  isLoopbackProviderBaseUrl
+  customProviderRequiresKey,
+  getCustomProviderBaseUrlError
 } from '../../shared/provider-base-url'
 import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
 import {
@@ -364,7 +365,7 @@ class ProviderAccountsModule {
       if (baseUrlError) throw new Error(baseUrlError)
       if (!model) throw new Error('Model is required for a custom provider.')
       // Local loopback gateways serve without a key; a remote gateway still requires one.
-      if (!carryKey() && !isLoopbackProviderBaseUrl(baseUrl)) {
+      if (!carryKey() && customProviderRequiresKey(baseUrl)) {
         throw new Error('API key is required for a custom provider.')
       }
       provider.baseUrl = baseUrl
@@ -531,7 +532,7 @@ class ProviderAccountsModule {
       isCodexSubscriptionProvider(resolved.provider.type) ||
       isClaudeSubscriptionProvider(resolved.provider.type)
         ? undefined
-        : this.frameworkIncompatibilityResult(resolved.provider, framework)
+        : this.frameworkIncompatibilityMessage(resolved.provider, framework)
 
     let expectedKeyRef = storedValidationTarget?.keyRef
     let xaiAuthResult: ValidateProviderResult | undefined
@@ -564,13 +565,11 @@ class ProviderAccountsModule {
     // passing test stays valid across framework switches; the mismatch rides along as a flag.
     const validationFrameworkEndpoints = isXaiSubscriptionProvider(resolved.provider.type)
       ? (['responses'] as const)
-      : incompatibility
-        ? undefined
-        : framework.id === 'codebuddy' && usesCompatibilityTransport
-          ? providerEndpoints(resolved.provider)
-          : framework.id === 'codex'
-            ? undefined
-            : framework.supportedApiTypes
+      : !incompatibility && framework.id === 'codebuddy' && usesCompatibilityTransport
+        ? providerEndpoints(resolved.provider)
+        : incompatibility || framework.id === 'codex'
+          ? undefined
+          : framework.supportedApiTypes
     const probeResult =
       xaiAuthResult ??
       authResult ??
@@ -588,7 +587,7 @@ class ProviderAccountsModule {
           frameworkIncompatible: true,
           // A verified endpoint pairs its success with the specific route mismatch; a failed probe
           // keeps its own actionable category message.
-          ...(probeResult.ok ? { message: incompatibility.message } : {})
+          ...(probeResult.ok ? { message: incompatibility } : {})
         }
       : probeResult
 
@@ -713,10 +712,13 @@ class ProviderAccountsModule {
     return resolveProviderDraft(draft)
   }
 
-  private frameworkIncompatibilityResult(
+  // The route-mismatch sentence for a provider the active framework cannot drive, or undefined
+  // when the pairing works. Subscription providers never reach this (their auth-status check owns
+  // the verdict), so no credential-specific branch is needed here.
+  private frameworkIncompatibilityMessage(
     provider: ResolvedProvider,
     framework: ReturnType<typeof getAgentFramework>
-  ): ValidateProviderResult | undefined {
+  ): string | undefined {
     if (
       isProviderUsableByFramework(
         { apiEndpoints: provider.apiEndpoints, type: provider.type },
@@ -726,21 +728,11 @@ class ProviderAccountsModule {
       return undefined
     }
 
-    const routes: Record<ChatApiEndpoint, string> = {
-      anthropic: '/v1/messages',
-      openai: '/v1/chat/completions',
-      responses: '/v1/responses'
-    }
-    const message =
-      provider.type === 'claude-isolated'
-        ? 'Carries an Anthropic OAuth token (setup-token) in app-owned storage, which only Claude Code can carry. Switch to Claude Code or pick another provider.'
-        : `Not compatible with ${framework.displayName}: it needs ${framework.supportedApiTypes
-            .map((endpoint) => routes[endpoint])
-            .join(' or ')}, but this provider speaks ${providerEndpoints(provider)
-            .map((endpoint) => routes[endpoint])
-            .join(' or ')}. Change the API format or switch the agent framework.`
-
-    return { ok: false, category: 'incompatible', message }
+    return `Not compatible with ${framework.displayName}: it needs ${framework.supportedApiTypes
+      .map((endpoint) => ENDPOINT_PATHS[endpoint])
+      .join(' or ')}, but this provider speaks ${providerEndpoints(provider)
+      .map((endpoint) => ENDPOINT_PATHS[endpoint])
+      .join(' or ')}. Change the API format or switch the agent framework.`
   }
 
   private resolveValidationTarget(

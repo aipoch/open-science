@@ -5953,7 +5953,6 @@
     "Add to main conversation": "Zur Hauptkonversation hinzufügen",
     "Move to Side chat": "In den Side-Chat verschieben",
     "Connection succeeded, but this provider is not usable by the active agent framework.": "Verbindung erfolgreich, aber dieser Anbieter kann vom aktiven Agent-Framework nicht verwendet werden.",
-    "{{base}} {{detail}}": "{{base}} {{detail}}",
     "Local model server": "Lokaler Modellserver",
     "Local model servers do not require an API key.": "Lokale Modellserver benötigen keinen API-Schlüssel.",
     "Leave blank for a local server": "Für einen lokalen Server leer lassen",

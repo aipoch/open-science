@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useSettingsStore } from '@/stores/settings-store'
 import { i18next } from '@/i18n'
+import type { AgentFrameworkView } from '../../../../shared/settings'
 import { ProviderForm } from './ProviderForm'
 import { getApiKeySecurityCopyKeys } from './provider-key-security'
 import {
@@ -39,9 +40,7 @@ const render = (
     hasStoredKey = false,
     showCodexSubscriptions = false,
     showClaudeIsolated = false,
-    frameworkId,
-    frameworkEndpoints,
-    frameworkName
+    framework
   }: {
     onChange?: () => void
     supportedModels?: string[]
@@ -49,9 +48,7 @@ const render = (
     hasStoredKey?: boolean
     showCodexSubscriptions?: boolean
     showClaudeIsolated?: boolean
-    frameworkId?: 'claude-code' | 'opencode' | 'codex' | 'codebuddy'
-    frameworkEndpoints?: readonly ('anthropic' | 'openai' | 'responses')[]
-    frameworkName?: string
+    framework?: AgentFrameworkView
   } = {}
 ): void => {
   act(() => {
@@ -64,70 +61,28 @@ const render = (
         hasStoredKey={hasStoredKey}
         showCodexSubscriptions={showCodexSubscriptions}
         showClaudeIsolated={showClaudeIsolated}
-        frameworkId={frameworkId}
-        frameworkEndpoints={frameworkEndpoints}
-        frameworkName={frameworkName}
+        framework={framework}
       />
     )
   })
 }
 
 describe('ProviderForm field switching', () => {
-  it('quick-fills a local model preset, never overwrites typed fields, and taps again to clear', () => {
+  it('quick-fills a local model preset into the draft on tap', () => {
+    // The seed/revert patch semantics are pinned as unit tests on localModelPresetPatch; this
+    // smoke test only wires the preset buttons to onChange.
     const onChange = vi.fn()
-    render(
-      createEmptyProviderFormValue({
-        type: 'custom',
-        name: 'My own name',
-        model: 'my-own-model'
-      }),
-      { onChange }
-    )
+    render(createEmptyProviderFormValue({ type: 'custom' }), { onChange })
 
-    const ollama = container.querySelector<HTMLButtonElement>(
-      'button[aria-pressed="false"]:not([disabled])'
-    )
-    expect(ollama?.textContent).toContain('Ollama')
-    act(() => ollama?.click())
-    // An existing name and the model stay untouched; only the base URL and format are seeded —
-    // local model ids depend on what the user has pulled, so nothing is guessed for them.
-    expect(onChange).toHaveBeenCalledWith({
-      baseUrl: 'http://localhost:11434',
-      apiEndpoint: 'openai'
-    })
-
-    const empty = createEmptyProviderFormValue({ type: 'custom' })
-    onChange.mockClear()
-    render(empty, { onChange })
-    const preset = [
-      ...container.querySelectorAll<HTMLButtonElement>('button[aria-pressed="false"]')
+    const ollama = [
+      ...container.querySelectorAll<HTMLButtonElement>('button[type="button"]')
     ].find((button) => button.textContent?.includes('Ollama'))
-    act(() => preset?.click())
+    act(() => ollama?.click())
+
     expect(onChange).toHaveBeenCalledWith({
       baseUrl: 'http://localhost:11434',
       apiEndpoint: 'openai',
       name: 'Ollama'
-    })
-
-    // Tapping the now-active preset deselects it: the fields it filled revert, and the format
-    // falls back to the caller's framework default.
-    onChange.mockClear()
-    render(
-      createEmptyProviderFormValue({
-        type: 'custom',
-        baseUrl: 'http://localhost:11434',
-        name: 'Ollama',
-        apiEndpoint: 'openai'
-      }),
-      { onChange }
-    )
-    const active = container.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')
-    expect(active?.textContent).toContain('Ollama')
-    act(() => active?.click())
-    expect(onChange).toHaveBeenCalledWith({
-      baseUrl: '',
-      apiEndpoint: 'anthropic',
-      name: ''
     })
   })
 
@@ -153,9 +108,12 @@ describe('ProviderForm field switching', () => {
       apiEndpoint: 'openai'
     })
     render(value, {
-      frameworkId: 'claude-code',
-      frameworkEndpoints: ['anthropic'],
-      frameworkName: 'Claude Code'
+      framework: {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        supportedApiTypes: ['anthropic'],
+        supportsSkills: true
+      }
     })
 
     expect(container.textContent).toContain('Not usable with Claude Code')
@@ -163,9 +121,12 @@ describe('ProviderForm field switching', () => {
 
     // The same draft under a framework that speaks its format shows no warning.
     render(value, {
-      frameworkId: 'opencode',
-      frameworkEndpoints: ['anthropic', 'openai'],
-      frameworkName: 'OpenCode'
+      framework: {
+        id: 'opencode',
+        displayName: 'OpenCode',
+        supportedApiTypes: ['anthropic', 'openai'],
+        supportsSkills: true
+      }
     })
     expect(container.textContent).not.toContain('Not usable with')
   })

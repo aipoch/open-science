@@ -42,20 +42,12 @@ import {
   type ProviderFormValue,
   type ProviderKind
 } from './provider-form-value'
-import { isLoopbackProviderBaseUrl } from '../../../../shared/provider-base-url'
+import { customProviderRequiresKey } from '../../../../shared/provider-base-url'
 import {
+  ENDPOINT_PATHS,
   isProviderUsableByFramework,
-  type AgentFrameworkId,
-  type ChatApiEndpoint
+  type AgentFrameworkView
 } from '../../../../shared/settings'
-
-// Route paths shown in the framework-notice copy. Raw API paths stay untranslated so they match
-// every gateway's own documentation (same convention as API_FORMAT_LABELS).
-const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
-  anthropic: '/v1/messages',
-  openai: '/v1/chat/completions',
-  responses: '/v1/responses'
-}
 
 type ProviderFormProps = {
   value: ProviderFormValue
@@ -87,9 +79,7 @@ type ProviderFormProps = {
   // Active agent framework context. When supplied and the draft's API format cannot drive the
   // framework, the custom-gateway form explains the pairing (still savable) instead of staying
   // silent until the post-save validation reports it.
-  frameworkId?: AgentFrameworkId
-  frameworkEndpoints?: readonly ChatApiEndpoint[]
-  frameworkName?: string
+  framework?: AgentFrameworkView
 }
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
@@ -266,9 +256,7 @@ const ProviderForm = ({
   showCodexSubscriptions = false,
   showClaudeIsolated = false,
   defaultCustomApiEndpoint = 'anthropic',
-  frameworkId,
-  frameworkEndpoints,
-  frameworkName
+  framework
 }: ProviderFormProps): React.JSX.Element => {
   const { t } = useTranslation()
   const fileCredentialNotice = useFileCredentialNotice()
@@ -296,16 +284,17 @@ const ProviderForm = ({
   const keyVisible = revealedKeyDraft?.kind === selectedKey && revealedKeyDraft.key === value.key
   // A loopback custom gateway (local model server) serves without a key, so the key field reads as
   // optional and the required-field guard below stays quiet for it.
-  const loopbackCustomGateway = isCustom && isLoopbackProviderBaseUrl(value.baseUrl.trim())
+  const loopbackCustomGateway = isCustom && !customProviderRequiresKey(value.baseUrl)
   const keyRequired = !loopbackCustomGateway && (needsKey || !hasStoredKey)
   // Whether the active framework can drive this draft as configured. Undefined while the caller
-  // supplies no framework context (compatibility feedback stays hidden then).
+  // supplies no framework context, or before the framework list has loaded (compatibility
+  // feedback stays hidden then).
   const frameworkCanDriveDraft =
-    frameworkId === undefined || frameworkEndpoints === undefined
+    framework?.supportedApiTypes === undefined
       ? undefined
       : isProviderUsableByFramework(
           { apiEndpoints: providerFormApiEndpoints(value), type: value.type },
-          { id: frameworkId, supportedApiTypes: frameworkEndpoints }
+          { id: framework.id, supportedApiTypes: framework.supportedApiTypes }
         )
 
   const advancedVisible =
@@ -658,11 +647,7 @@ const ProviderForm = ({
                     aria-pressed={active}
                     disabled={disabled}
                     onClick={() =>
-                      onChange(
-                        localModelPresetPatch(preset, value, {
-                          defaultApiEndpoint: defaultCustomApiEndpoint
-                        })
-                      )
+                      onChange(localModelPresetPatch(preset, value, defaultCustomApiEndpoint))
                     }
                     className={cn(
                       'inline-flex min-h-8 items-center rounded-full border px-3 text-xs font-medium transition-colors duration-150 outline-none motion-reduce:transition-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50',
@@ -746,7 +731,7 @@ const ProviderForm = ({
             </Select>
           </div>
 
-          {frameworkCanDriveDraft === false ? (
+          {frameworkCanDriveDraft === false && framework ? (
             <p
               role="status"
               className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-foreground"
@@ -754,9 +739,9 @@ const ProviderForm = ({
               {t(
                 'Not usable with {{framework}}: it needs {{routes}}, but this gateway speaks {{providerRoutes}}. You can still save it — switch the agent framework to use this model.',
                 {
-                  framework: frameworkName ?? frameworkId,
-                  routes: frameworkEndpoints
-                    ?.map((endpoint) => ENDPOINT_PATHS[endpoint])
+                  framework: framework.displayName,
+                  routes: (framework.supportedApiTypes ?? [])
+                    .map((endpoint) => ENDPOINT_PATHS[endpoint])
                     .join(' / '),
                   providerRoutes: providerFormApiEndpoints(value)
                     .map((endpoint) => ENDPOINT_PATHS[endpoint])

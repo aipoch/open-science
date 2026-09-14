@@ -23,6 +23,7 @@ import type {
 } from '../../../../shared/settings'
 import {
   codexSubscriptionProviderIdentity,
+  ENDPOINT_PATHS,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
@@ -124,16 +125,6 @@ const describeValidationFailure = (failure: ProviderValidationFailure, t: TFunct
   }
 }
 
-// Endpoint route + full description for the chat API a provider speaks. Rendered as a route-icon badge
-// showing the raw /v1 path (not a vendor name) so the user reads it as "which API shape", distinct from
-// the provider's own name/brand: Claude Code needs the Anthropic /v1/messages route, while OpenCode also
-// accepts the OpenAI /v1/chat/completions route.
-const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
-  anthropic: '/v1/messages',
-  openai: '/v1/chat/completions',
-  responses: '/v1/responses'
-}
-
 const DEFAULT_FRAMEWORK_ENDPOINTS = ['anthropic'] as const
 
 // Human label for a provider type badge: the vendor name for official providers, else a type name.
@@ -219,6 +210,8 @@ const ProviderList = ({
       ? [{ ...selectedClaudeProvider, name: t('Claude subscription') }]
       : [])
   ]
+  const frameworkLabel = frameworkName ?? agentFrameworkId
+  const activeFramework = { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -244,10 +237,7 @@ const ProviderList = ({
                 ? (['responses'] as const)
                 : agentFrameworkId === 'codex'
                   ? (['anthropic', 'openai', 'responses'] as const)
-                  : requiresChatCompletionsBridge(
-                        { apiEndpoints: providerRoutes },
-                        { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
-                      )
+                  : requiresChatCompletionsBridge({ apiEndpoints: providerRoutes }, activeFramework)
                     ? providerRoutes
                     : frameworkEndpoints
             )
@@ -282,9 +272,11 @@ const ProviderList = ({
           // discoverable path to "switch the framework to use this provider".
           const frameworkIncompatible = !isProviderUsableByFramework(
             { apiEndpoints: provider.apiEndpoints, type: provider.type },
-            { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+            activeFramework
           )
-          const frameworkLabel = frameworkName ?? agentFrameworkId
+          const incompatibilityMessage = frameworkIncompatible
+            ? incompatibilityReason(provider, frameworkLabel, frameworkEndpoints, t)
+            : undefined
 
           return (
             <li
@@ -326,20 +318,13 @@ const ProviderList = ({
                         <TooltipTrigger asChild>
                           <span
                             className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-                            aria-label={incompatibilityReason(
-                              provider,
-                              frameworkLabel,
-                              frameworkEndpoints,
-                              t
-                            )}
+                            aria-label={incompatibilityMessage}
                           >
                             <TriangleAlert className="size-3" strokeWidth={2} aria-hidden="true" />
                             {t('Not usable with {{framework}}', { framework: frameworkLabel })}
                           </span>
                         </TooltipTrigger>
-                        <TooltipContent>
-                          {incompatibilityReason(provider, frameworkLabel, frameworkEndpoints, t)}
-                        </TooltipContent>
+                        <TooltipContent>{incompatibilityMessage}</TooltipContent>
                       </Tooltip>
                     ) : null}
                     {isBusy ? (

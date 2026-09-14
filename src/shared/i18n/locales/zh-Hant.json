@@ -5793,7 +5793,6 @@
     "Add to main conversation": "新增至主對話",
     "Move to Side chat": "移至側邊聊天",
     "Connection succeeded, but this provider is not usable by the active agent framework.": "連線成功，但此模型服務商無法用於目前智能體框架。",
-    "{{base}} {{detail}}": "{{base}} {{detail}}",
     "Local model server": "本機模型服務",
     "Local model servers do not require an API key.": "本機模型服務不需要 API 金鑰。",
     "Leave blank for a local server": "本機服務可留空",

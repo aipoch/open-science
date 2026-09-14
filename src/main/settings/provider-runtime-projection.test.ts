@@ -69,27 +69,6 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
   )
 
-  it('strips a legacy incompatible validation failure from the provider view', () => {
-    const owner = new ProviderRuntimeProjectionOwner()
-    const provider: StoredProvider = {
-      id: 'legacy-openai',
-      type: 'custom',
-      name: 'Legacy gateway',
-      baseUrl: 'https://lab.example/v1',
-      model: 'lab-model',
-      apiEndpoints: ['openai'],
-      lastValidationFailure: { at: 10, category: 'incompatible' }
-    }
-
-    expect(owner.toProviderView(provider).lastValidationFailure).toBeUndefined()
-    expect(
-      owner.toProviderView({
-        ...provider,
-        lastValidationFailure: { at: 10, category: 'auth' }
-      }).lastValidationFailure
-    ).toMatchObject({ category: 'auth' })
-  })
-
   it('fails closed when a required model is outside the provider catalog', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {

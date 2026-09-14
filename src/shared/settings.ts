@@ -5,7 +5,7 @@
 // only while the user is actively typing one in.
 
 import type { OfficialVendorId } from './provider-registry'
-import { isLoopbackProviderBaseUrl } from './provider-base-url'
+import { customProviderRequiresKey } from './provider-base-url'
 import type { PermissionProfileId } from './permission-profiles'
 import type {
   CustomReasoningEffortTransport,
@@ -134,6 +134,15 @@ export const selectClaudeSubscriptionProvider = <T extends { id: string; type: P
 // A provider advertises the explicit set of endpoints it serves; a framework supports a set too.
 export type ChatApiEndpoint = 'anthropic' | 'openai' | 'responses'
 
+// Route path each chat endpoint speaks. Raw API paths are literal and identical in every locale
+// (they must match a gateway's own documentation); only the surrounding copy is localized per
+// surface. Main and renderer share this one map so no surface keeps a private copy.
+export const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
+  anthropic: '/v1/messages',
+  openai: '/v1/chat/completions',
+  responses: '/v1/responses'
+}
+
 // The endpoints a provider offers. Absent/empty ⇒ treat as ['anthropic'] (every legacy provider, and
 // the migration target for the removed 'both' apiType, which mapped to ['anthropic','openai']).
 export const providerEndpoints = (provider: {
@@ -158,7 +167,7 @@ export const canUseClaudeProviderTransport = (provider: {
   // Anthropic route without one; the transport adapters already treat the key as optional.
   (provider.type !== 'custom' ||
     Boolean(provider.key) ||
-    isLoopbackProviderBaseUrl(provider.baseUrl ?? ''))
+    !customProviderRequiresKey(provider.baseUrl))
 
 // A provider's endpoints are compatible with a framework only when they share at least one endpoint.
 // Codex's Responses-compatible bridge is a separate local gateway: it does not change the provider's

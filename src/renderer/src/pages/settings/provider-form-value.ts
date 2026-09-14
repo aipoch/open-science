@@ -18,8 +18,8 @@ import {
   type OfficialVendorId
 } from '../../../../shared/provider-registry'
 import {
+  customProviderRequiresKey,
   getCustomProviderBaseUrlError,
-  isLoopbackProviderBaseUrl,
   type CustomProviderBaseUrlError
 } from '../../../../shared/provider-base-url'
 import type {
@@ -110,12 +110,12 @@ export const LOCAL_MODEL_PRESETS: readonly LocalModelPreset[] = [
 export const localModelPresetPatch = (
   preset: LocalModelPreset,
   value: ProviderFormValue,
-  options: { defaultApiEndpoint?: ProviderFormValue['apiEndpoint'] } = {}
+  defaultApiEndpoint: ProviderFormValue['apiEndpoint']
 ): Partial<ProviderFormValue> => {
   if (value.baseUrl.trim() === preset.baseUrl) {
     return {
       baseUrl: '',
-      apiEndpoint: options.defaultApiEndpoint ?? 'anthropic',
+      apiEndpoint: defaultApiEndpoint,
       ...(value.name.trim() === preset.label ? { name: '' } : {})
     }
   }
@@ -266,11 +266,7 @@ export const getProviderFormErrors = (
     }
     // Local loopback gateways (Ollama, LM Studio, llama.cpp, vLLM) serve without a key; only a
     // remote gateway requires one.
-    if (
-      !value.key.trim() &&
-      !options.hasStoredKey &&
-      !isLoopbackProviderBaseUrl(value.baseUrl.trim())
-    ) {
+    if (!value.key.trim() && !options.hasStoredKey && customProviderRequiresKey(value.baseUrl)) {
       errors.key = 'API key is required.'
     }
   } else if (value.type === 'official') {
