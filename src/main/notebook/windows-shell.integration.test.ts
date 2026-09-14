@@ -116,7 +116,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
     try {
       const controller = join(root, 'controller.cjs')
       await build({
-        entryPoints: [join(__dirname, 'fixtures/interrupted-shell-launch.ts')],
+        entryPoints: [join(__dirname, 'fixtures/windows-interrupted-shell-launch.ts')],
         outfile: controller,
         bundle: true,
         platform: 'node',

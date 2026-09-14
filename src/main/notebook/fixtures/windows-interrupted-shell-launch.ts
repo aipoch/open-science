@@ -1,4 +1,4 @@
-// Run in a disposable process: the harmless workload deliberately ends its owning application.
+// Run in a disposable Windows process: the harmless workload deliberately ends its owning application.
 import { join } from 'node:path'
 import { NotebookShellProcessAdapter } from '../shell-process'
 import { ShellProcessOwnershipRegistry } from '../shell-process-ownership.windows-posix'
