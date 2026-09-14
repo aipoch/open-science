@@ -1230,16 +1230,15 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       },
       // Free, tool-capable entries from https://openrouter.ai/api/v1/models (2026-09-13).
       // Keep exact free IDs: appending :free to an arbitrary paid model does not make it available.
+      // Both also expose /api/v1/messages, so retain the gateway's dual-endpoint compatibility.
       {
         id: 'openrouter/free',
         contextWindow: 200_000,
-        apiEndpoint: 'openai',
         reasoningEffort: 'unsupported'
       },
       {
         id: 'google/gemma-4-31b-it:free',
         contextWindow: 262_144,
-        apiEndpoint: 'openai',
         reasoningEffort: 'unsupported'
       }
     ],

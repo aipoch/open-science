@@ -171,7 +171,9 @@ describe('provider registry', () => {
     { vendorId: 'opencode', model: 'mimo-v2.5-free', contextWindow: 200_000, vision: true }
   ] as const)('offers $vendorId/$model with its documented capabilities', (entry) => {
     expect(getOfficialVendorModelIds(entry.vendorId)).toContain(entry.model)
-    expect(resolveVendorModelApiEndpoints(entry.vendorId, entry.model)).toEqual(['openai'])
+    expect(resolveVendorModelApiEndpoints(entry.vendorId, entry.model)).toEqual(
+      entry.vendorId === 'openrouter' ? ['anthropic', 'openai'] : ['openai']
+    )
     expect(isVendorModelResponsesSupported(entry.vendorId, entry.model)).toBe(false)
     expect(resolveModelContextWindow(entry.vendorId, entry.model)).toBe(entry.contextWindow)
     expect(isVendorModelMultimodal(entry.vendorId, entry.model)).toBe(entry.vision)

@@ -395,7 +395,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
   })
 
   it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
-    'projects free gateway models through Chat Completions for %s',
+    'projects free gateway models through their supported protocols for %s',
     (frameworkId) => {
       const owner = new ProviderRuntimeProjectionOwner()
       for (const [vendorId, models] of [
@@ -416,8 +416,8 @@ describe('ProviderRuntimeProjectionOwner', () => {
             owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
           ).toMatchObject({
             effectiveModel: model,
-            apiEndpoints: ['openai'],
-            frameworkCompatible: frameworkId !== 'claude-code',
+            apiEndpoints: vendorId === 'openrouter' ? ['anthropic', 'openai'] : ['openai'],
+            frameworkCompatible: vendorId === 'openrouter' || frameworkId !== 'claude-code',
             needsChatResponsesBridge: frameworkId === 'codex',
             needsNativeResponsesCompatibility: false,
             provider: { model, supportsImageInput: model !== 'big-pickle' }
