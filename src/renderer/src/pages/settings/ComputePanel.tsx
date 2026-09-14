@@ -1,4 +1,3 @@
-import { ErrorNotice } from '@/components/error-notice'
 import { Folder, Info, Plus, Server } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -13,6 +12,8 @@ import { consumeComputeHostsPreload, useComputeStore } from '@/stores/compute-st
 import { probedLabel } from './compute-probed-label'
 import { ComputeHostRemovalDialog } from './ComputeHostRemovalDialog'
 import { FileBrowserModal } from './FileBrowserModal'
+import { SettingsLoadNotice } from './SettingsLayout'
+import { retryPreviewComputeLoad, useSettingsPreviewState } from './visual-preview/preview-store'
 
 // The compute panel sub-view, driven by the settings navigation history. The add form and host detail
 // are separate components owned by SettingsPage; this panel renders the list + header banner only.
@@ -127,10 +128,20 @@ const HostCard = ({
 
 export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Element {
   const { t } = useTranslation()
-  const hosts = useComputeStore((state) => state.hosts)
-  const isLoaded = useComputeStore((state) => state.isLoaded)
-  const loadError = useComputeStore((state) => state.loadError)
+  // Visual-preview seam (see visual-preview/preview-store.ts): fixture data replaces the real
+  // store reads below; null in normal operation.
+  const preview = useSettingsPreviewState()
+  const storeHosts = useComputeStore((state) => state.hosts)
+  const storeIsLoaded = useComputeStore((state) => state.isLoaded)
+  const storeLoadError = useComputeStore((state) => state.loadError)
   const loadHosts = useComputeStore((state) => state.loadHosts)
+  const hosts = preview ? preview.compute.hosts : storeHosts
+  const isLoaded = preview ? preview.compute.status !== 'loading' : storeIsLoaded
+  const loadError = preview
+    ? preview.compute.status === 'error'
+      ? 'settings-visual-preview: simulated hosts load failure'
+      : undefined
+    : storeLoadError
   const initialLoadStartedRef = useRef(false)
 
   // A short-lived confirmation message shown after a delete (the prototype's "confirmation toast").
@@ -146,8 +157,10 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
     // one-shot preload and then issuing a second read; a genuine remount receives a fresh ref.
     if (initialLoadStartedRef.current) return
     initialLoadStartedRef.current = true
+    // Visual preview: hosts come from fixtures; never issue the real read.
+    if (preview) return
     if (!consumeComputeHostsPreload()) void loadHosts()
-  }, [loadHosts])
+  }, [loadHosts, preview])
 
   useEffect(() => {
     if (!removedName) return
@@ -190,13 +203,28 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
         </p>
       ) : null}
 
-      <div className="mt-4 flex flex-col gap-2.5">
+      <div className="mt-4 flex flex-col gap-2.5" data-visual-change="compute-load-states">
         {loadError ? (
-          <ErrorNotice role="alert" description={t("Couldn't load hosts.")}>
+          <>
+            <SettingsLoadNotice
+              state="error"
+              loadingLabel={t('Loading hosts…')}
+              errorMessage={t("Couldn't load hosts.")}
+              onRetry={() => {
+                // Visual preview: simulate the retry locally; never re-issue the real read.
+                if (preview) void retryPreviewComputeLoad()
+                else void loadHosts()
+              }}
+            />
             <DiagnosticDetails detail={loadError} />
-          </ErrorNotice>
+          </>
         ) : !isLoaded ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">{t('Loading hosts…')}</p>
+          <SettingsLoadNotice
+            state="loading"
+            loadingLabel={t('Loading hosts…')}
+            errorMessage={t("Couldn't load hosts.")}
+            onRetry={() => void loadHosts()}
+          />
         ) : hosts.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
             {t('No SSH hosts yet. Add one to let Open Science run compute on your servers.')}
@@ -208,7 +236,15 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
               host={host}
               onOpen={() => onNavigate({ kind: 'detail', providerId: host.providerId })}
               onRemoved={() => setRemovedName(host.displayName)}
-              onBrowse={() => setBrowserProviderId(host.providerId)}
+              onBrowse={() => {
+                // Visual preview: the file browser is outside the demonstrated flows; log instead
+                // of opening it against the real API.
+                if (preview) {
+                  console.log('[settings-visual-preview] file browser suppressed (fixture host)')
+                  return
+                }
+                setBrowserProviderId(host.providerId)
+              }}
             />
           ))
         )}

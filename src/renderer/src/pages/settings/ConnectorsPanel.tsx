@@ -48,6 +48,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
@@ -466,20 +467,28 @@ export function ConnectorsPanel({
                       <ResourceTagMenu
                         reference={{ resourceType: 'catalog.connector', resourceId: connector.id }}
                       />
-                      <SettingsToggle
-                        enabled={connector.enabled}
-                        aria-label={t('Toggle {{name}}', { name: connector.displayName })}
-                        title={
-                          connector.enabled
-                            ? t('Available to Main Agent')
-                            : t('Unavailable to Main Agent')
-                        }
-                        onToggle={() =>
-                          void saveToggle(async () => {
-                            await setConnectorEnabled(connector.id, !connector.enabled)
-                          })
-                        }
-                      />
+                      <TooltipProvider delayDuration={200}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex">
+                              <SettingsToggle
+                                enabled={connector.enabled}
+                                aria-label={t('Toggle {{name}}', { name: connector.displayName })}
+                                onToggle={() =>
+                                  void saveToggle(async () => {
+                                    await setConnectorEnabled(connector.id, !connector.enabled)
+                                  })
+                                }
+                              />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {connector.enabled
+                              ? t('Available to Main Agent')
+                              : t('Unavailable to Main Agent')}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </div>
                   </li>
                 )
@@ -854,29 +863,40 @@ export function ConnectorsPanel({
                           </DropdownMenuContent>
                         </DropdownMenu>
                         <div className="flex shrink-0 items-center gap-2">
-                          <SettingsToggle
-                            enabled={server.enabled}
-                            aria-label={t('Toggle {{name}}', { name: server.displayName })}
-                            aria-disabled={cannotEnableCustomServer(server) || undefined}
-                            className={
-                              cannotEnableCustomServer(server)
-                                ? 'cursor-not-allowed opacity-50'
-                                : undefined
-                            }
-                            title={
-                              requiresSignInBeforeEnable(server)
-                                ? t('Sign in before enabling this Connector')
-                                : server.enabled
-                                  ? t('Available to Main Agent')
-                                  : t('Unavailable to Main Agent')
-                            }
-                            onToggle={() => {
-                              if (cannotEnableCustomServer(server)) return
-                              void saveToggle(async () => {
-                                await setCustomServerEnabled(server.id, !server.enabled)
-                              })
-                            }}
-                          />
+                          <TooltipProvider delayDuration={200}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span
+                                  className="inline-flex"
+                                  data-visual-change="disabled-action-explanations"
+                                >
+                                  <SettingsToggle
+                                    enabled={server.enabled}
+                                    aria-label={t('Toggle {{name}}', { name: server.displayName })}
+                                    aria-disabled={cannotEnableCustomServer(server) || undefined}
+                                    className={
+                                      cannotEnableCustomServer(server)
+                                        ? 'cursor-not-allowed opacity-50'
+                                        : undefined
+                                    }
+                                    onToggle={() => {
+                                      if (cannotEnableCustomServer(server)) return
+                                      void saveToggle(async () => {
+                                        await setCustomServerEnabled(server.id, !server.enabled)
+                                      })
+                                    }}
+                                  />
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {requiresSignInBeforeEnable(server)
+                                  ? t('Sign in before enabling this Connector')
+                                  : server.enabled
+                                    ? t('Available to Main Agent')
+                                    : t('Unavailable to Main Agent')}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         </div>
                       </li>
                     )

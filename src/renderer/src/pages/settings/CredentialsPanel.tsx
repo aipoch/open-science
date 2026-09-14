@@ -33,6 +33,13 @@ import { DeviceCredentialLoadNotice } from './DeviceCredentialLoadNotice'
 import { localizeCredentialError } from './credential-error-message'
 import { SettingsSection } from './SettingsLayout'
 import { UnpaywallCredentialForm } from './UnpaywallCredentialForm'
+import {
+  getSettingsPreviewState,
+  isSettingsVisualPreview,
+  setSettingsPreviewState,
+  simulatePreviewCall,
+  useSettingsPreviewState
+} from './visual-preview/preview-store'
 
 export type CredentialsServiceId = 'github' | 'literature' | 'openalex' | 'unpaywall'
 export type CredentialsView =
@@ -62,13 +69,19 @@ export function CredentialsPanel({
 }: CredentialsPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const fileCredentialNotice = useFileCredentialNotice()
+  // Visual-preview seam (see visual-preview/preview-store.ts): fixture credentials replace the
+  // store reads below and removal resolves locally; null in normal operation.
+  const preview = useSettingsPreviewState()
   const openAlex = useSettingsStore((state) => state.openAlex)
   const ncbi = useSettingsStore((state) => state.ncbi)
   const customServers = useSettingsStore((state) => state.customServers)
-  const deviceCredentials = useSettingsStore((state) => state.deviceCredentials)
-  const credentialsLoaded = useSettingsStore((state) => state.deviceCredentialsLoaded)
-  const credentialsError = useSettingsStore((state) => state.deviceCredentialsError)
+  const storeDeviceCredentials = useSettingsStore((state) => state.deviceCredentials)
+  const storeCredentialsLoaded = useSettingsStore((state) => state.deviceCredentialsLoaded)
+  const storeCredentialsError = useSettingsStore((state) => state.deviceCredentialsError)
   const providers = useSettingsStore((state) => state.providers)
+  const deviceCredentials = preview ? preview.credentials.deviceCredentials : storeDeviceCredentials
+  const credentialsLoaded = preview ? true : storeCredentialsLoaded
+  const credentialsError = preview ? undefined : storeCredentialsError
   const loadConnectors = useSettingsStore((state) => state.loadConnectors)
   const loadDeviceCredentials = useSettingsStore((state) => state.loadDeviceCredentials)
   const removeDeviceCredential = useSettingsStore((state) => state.removeDeviceCredential)
@@ -78,7 +91,9 @@ export function CredentialsPanel({
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const [githubConfigured, setGithubConfigured] = useState(false)
   const [desktopCredentialAvailability, setDesktopCredentialAvailability] =
-    useState<DesktopCredentialAvailability>('checking')
+    useState<DesktopCredentialAvailability>(() =>
+      isSettingsVisualPreview() ? 'available' : 'checking'
+    )
   const activeServiceId = view.kind === 'service' ? view.serviceId : undefined
   const [apiKeyDraft, setApiKeyDraft] = useState<{
     serviceId: CredentialsServiceId
@@ -110,6 +125,8 @@ export function CredentialsPanel({
   }
 
   useEffect(() => {
+    // Visual preview: credentials come from fixtures; skip every real read in this effect.
+    if (preview) return
     void loadConnectors().catch(() => undefined)
     void loadDeviceCredentials().catch(() => undefined)
     void window.api.settings
@@ -123,7 +140,7 @@ export function CredentialsPanel({
           isLocalOnlyActionError(error) ? 'unavailable' : 'available'
         )
       })
-  }, [loadConnectors, loadDeviceCredentials])
+  }, [loadConnectors, loadDeviceCredentials, preview])
 
   if (
     (view.kind === 'create' || view.kind === 'credential') &&
@@ -457,6 +474,19 @@ export function CredentialsPanel({
     setBusy(true)
     setCredentialMessage(undefined)
     try {
+      if (preview) {
+        await simulatePreviewCall('settings.removeDeviceCredential')
+        const current = getSettingsPreviewState().credentials
+        setSettingsPreviewState({
+          credentials: {
+            deviceCredentials: current.deviceCredentials.filter(
+              (candidate) => candidate.id !== credentialToRemove.id
+            )
+          }
+        })
+        setCredentialToRemove(undefined)
+        return
+      }
       await removeDeviceCredential({ id: credentialToRemove.id })
       setCredentialToRemove(undefined)
     } catch (error) {
@@ -575,20 +605,30 @@ export function CredentialsPanel({
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          aria-label={t('Remove {{name}}', { name: credential.displayName })}
-                          aria-disabled={credential.consumerCount > 0 || undefined}
-                          disabled={busy}
-                          onClick={() => {
-                            if (credential.consumerCount > 0) return
-                            setCredentialMessage(undefined)
-                            setCredentialToRemove(credential)
-                          }}
+                        <span
+                          className="inline-flex"
+                          data-visual-change="credential-remove-disabled"
                         >
-                          <Trash2 className="size-4" aria-hidden="true" />
-                        </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            aria-label={t('Remove {{name}}', { name: credential.displayName })}
+                            aria-disabled={credential.consumerCount > 0 || undefined}
+                            disabled={busy}
+                            className={
+                              credential.consumerCount > 0
+                                ? 'cursor-not-allowed opacity-50'
+                                : undefined
+                            }
+                            onClick={() => {
+                              if (credential.consumerCount > 0) return
+                              setCredentialMessage(undefined)
+                              setCredentialToRemove(credential)
+                            }}
+                          >
+                            <Trash2 className="size-4" aria-hidden="true" />
+                          </Button>
+                        </span>
                       </TooltipTrigger>
                       {credential.consumerCount > 0 ? (
                         <TooltipContent>

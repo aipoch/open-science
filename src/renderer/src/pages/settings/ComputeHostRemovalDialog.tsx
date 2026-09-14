@@ -21,6 +21,12 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useComputeStore } from '@/stores/compute-store'
+import {
+  getSettingsPreviewState,
+  setSettingsPreviewCompute,
+  simulatePreviewCall,
+  useSettingsPreviewState
+} from './visual-preview/preview-store'
 
 type ComputeHostRemovalDialogProps = {
   host: ComputeHost
@@ -34,17 +40,25 @@ const canCleanRemoteFiles = (job: ComputeHostDeletionBlocker): boolean =>
   !HARVESTABLE_TERMINAL_STATUSES.has(job.status) ||
   job.harvested === true
 
+// A destructive remote-cleanup action that has been clicked once and is now waiting for its inline
+// confirmation step inside this dialog (never window.confirm).
+type ArmedCleanupAction = { kind: 'clean' | 'abandon'; jobId: string } | { kind: 'cleanAll' }
+
 export function ComputeHostRemovalDialog({
   host,
   onRemoved
 }: ComputeHostRemovalDialogProps): React.JSX.Element {
   const { t } = useTranslation()
+  // Visual-preview seam (see visual-preview/preview-store.ts): the deletion status and every
+  // mutation below resolve against fixtures with simulated latency; null in normal operation.
+  const preview = useSettingsPreviewState()
   const deleteHost = useComputeStore((state) => state.deleteHost)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
   const [deletionStatus, setDeletionStatus] = useState<ComputeHostDeletionStatus | undefined>()
   const [showJobs, setShowJobs] = useState(false)
+  const [armed, setArmed] = useState<ArmedCleanupAction | undefined>(undefined)
   const blockingJobs = deletionStatus?.blockingJobs ?? []
 
   const openConfirmation = (): void => {
@@ -52,6 +66,15 @@ export function ComputeHostRemovalDialog({
     setError(undefined)
     setDeletionStatus(undefined)
     setShowJobs(false)
+    setArmed(undefined)
+    if (preview) {
+      setBusy(true)
+      void simulatePreviewCall('compute.deletionStatus').then(() => {
+        setDeletionStatus(getSettingsPreviewState().compute.deletionStatus)
+        setBusy(false)
+      })
+      return
+    }
     void window.api.compute
       .deletionStatus({ providerId: host.providerId })
       .then(setDeletionStatus)
@@ -65,19 +88,31 @@ export function ComputeHostRemovalDialog({
     setBusy(true)
     setError(undefined)
     try {
-      await window.api.compute.jobsSetRemoteCleanup({
-        jobId: job.jobId,
-        providerId: host.providerId,
-        projectId: job.projectId,
-        sessionId: job.sessionId,
-        disposition
-      })
-      setDeletionStatus((current) => {
-        const blockingJobs = (current?.blockingJobs ?? []).filter(
+      if (preview) {
+        await simulatePreviewCall(`compute.jobsSetRemoteCleanup (${disposition})`)
+      } else {
+        await window.api.compute.jobsSetRemoteCleanup({
+          jobId: job.jobId,
+          providerId: host.providerId,
+          projectId: job.projectId,
+          sessionId: job.sessionId,
+          disposition
+        })
+      }
+      const nextStatus = (
+        current: ComputeHostDeletionStatus | undefined
+      ): ComputeHostDeletionStatus => {
+        const remaining = (current?.blockingJobs ?? []).filter(
           (candidate) => candidate.jobId !== job.jobId
         )
-        return { blockedByJobs: blockingJobs.length > 0, blockingJobs }
-      })
+        return { blockedByJobs: remaining.length > 0, blockingJobs: remaining }
+      }
+      setDeletionStatus(nextStatus)
+      if (preview) {
+        setSettingsPreviewCompute({
+          deletionStatus: nextStatus(getSettingsPreviewState().compute.deletionStatus)
+        })
+      }
     } catch {
       setError(t('Could not update remote cleanup for this Compute Job.'))
     } finally {
@@ -85,45 +120,100 @@ export function ComputeHostRemovalDialog({
     }
   }
 
+  // Every destructive cleanup arms an inline confirmation step inside this dialog instead of
+  // stacking a native window.confirm on top of the open AlertDialog.
   const cleanJob = (job: ComputeHostDeletionBlocker): void => {
-    const active = ACTIVE_JOB_STATUSES.has(job.status)
-    if (
-      active &&
-      !window.confirm(t('This Compute Job is active. Cancel it and remove its remote files?'))
-    ) {
+    if (ACTIVE_JOB_STATUSES.has(job.status)) {
+      setArmed({ kind: 'clean', jobId: job.jobId })
       return
     }
     void settleRemoteCleanup(job, 'cleaned')
   }
 
   const abandonJob = (job: ComputeHostDeletionBlocker): void => {
-    if (
-      !window.confirm(
-        t(
-          'Abandon remote cleanup? The Job history stays local, but its remote files may remain permanently.'
-        )
-      )
-    ) {
-      return
-    }
-    void settleRemoteCleanup(job, 'abandoned')
+    setArmed({ kind: 'abandon', jobId: job.jobId })
   }
 
-  const cleanAllJobs = async (): Promise<void> => {
-    if (
-      blockingJobs.some((job) => ACTIVE_JOB_STATUSES.has(job.status)) &&
-      !window.confirm(t('Cancel active Compute Jobs and remove all listed remote files?'))
-    ) {
+  const cleanAllJobs = (): void => {
+    if (blockingJobs.some((job) => ACTIVE_JOB_STATUSES.has(job.status))) {
+      setArmed({ kind: 'cleanAll' })
       return
     }
-    for (const job of blockingJobs) await settleRemoteCleanup(job, 'cleaned')
+    void (async () => {
+      for (const job of blockingJobs) await settleRemoteCleanup(job, 'cleaned')
+    })()
   }
+
+  const armedPrompt = (kind: ArmedCleanupAction['kind']): string =>
+    kind === 'clean'
+      ? t('This Compute Job is active. Cancel it and remove its remote files?')
+      : kind === 'abandon'
+        ? t(
+            'Abandon remote cleanup? The Job history stays local, but its remote files may remain permanently.'
+          )
+        : t('Cancel active Compute Jobs and remove all listed remote files?')
+
+  const confirmArmed = (): void => {
+    const action = armed
+    setArmed(undefined)
+    if (!action) return
+    if (action.kind === 'cleanAll') {
+      void (async () => {
+        for (const job of blockingJobs) await settleRemoteCleanup(job, 'cleaned')
+      })()
+      return
+    }
+    const job = blockingJobs.find((candidate) => candidate.jobId === action.jobId)
+    if (job) void settleRemoteCleanup(job, action.kind === 'clean' ? 'cleaned' : 'abandoned')
+  }
+
+  // The inline confirmation step replacing an action button while it is armed.
+  const armedConfirmation = (
+    action: ArmedCleanupAction,
+    confirmLabel: string
+  ): React.JSX.Element => (
+    <div
+      data-slot="compute-remote-cleanup-confirm"
+      className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-2.5"
+    >
+      <p className="text-xs leading-5 text-destructive">{armedPrompt(action.kind)}</p>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="destructive"
+          disabled={busy}
+          onClick={confirmArmed}
+        >
+          {confirmLabel}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => setArmed(undefined)}
+        >
+          {t('Cancel')}
+        </Button>
+      </div>
+    </div>
+  )
 
   const removeHost = async (): Promise<void> => {
     setBusy(true)
     setError(undefined)
     try {
-      await deleteHost(host.providerId)
+      if (preview) {
+        await simulatePreviewCall('compute.delete')
+        setSettingsPreviewCompute({
+          hosts: getSettingsPreviewState().compute.hosts.filter(
+            (candidate) => candidate.providerId !== host.providerId
+          )
+        })
+      } else {
+        await deleteHost(host.providerId)
+      }
       setOpen(false)
       onRemoved()
     } catch {
@@ -147,6 +237,7 @@ export function ComputeHostRemovalDialog({
               type="button"
               variant="ghost"
               size="icon-sm"
+              data-slot="compute-host-removal-trigger"
               onClick={openConfirmation}
               aria-label={t('Remove {{name}}', { name: host.displayName })}
               className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
@@ -162,6 +253,7 @@ export function ComputeHostRemovalDialog({
         <AlertDialog.Overlay className={dialogOverlayClassName} />
         <AlertDialog.Content
           className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))] p-0')}
+          data-visual-change="compute-removal-inline-confirm"
         >
           <div className={dialogHeaderClassName}>
             <AlertDialog.Title className={dialogTitleClassName}>
@@ -186,6 +278,7 @@ export function ComputeHostRemovalDialog({
                   variant="outline"
                   size="sm"
                   disabled={busy}
+                  data-slot="compute-blocking-jobs-toggle"
                   onClick={() => setShowJobs((visible) => !visible)}
                 >
                   {showJobs ? t('Hide blocking jobs') : t('View blocking jobs')}
@@ -204,27 +297,38 @@ export function ComputeHostRemovalDialog({
                             cancellationStatus={job.cancellationStatus}
                           />
                         </div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            disabled={busy || !canCleanRemoteFiles(job)}
-                            onClick={() => cleanJob(job)}
-                          >
-                            {t('Clean up remote files')}
-                          </Button>
-                          {!['queued', 'submitted', 'running'].includes(job.status) ? (
+                        {armed && 'jobId' in armed && armed.jobId === job.jobId ? (
+                          <div className="mt-2">
+                            {armedConfirmation(
+                              armed,
+                              armed.kind === 'clean'
+                                ? t('Clean up remote files')
+                                : t('Abandon remote cleanup')
+                            )}
+                          </div>
+                        ) : (
+                          <div className="mt-2 flex flex-wrap gap-2">
                             <Button
                               type="button"
-                              variant="outline"
                               size="sm"
-                              disabled={busy}
-                              onClick={() => abandonJob(job)}
+                              disabled={busy || !canCleanRemoteFiles(job)}
+                              onClick={() => cleanJob(job)}
                             >
-                              {t('Abandon remote cleanup')}
+                              {t('Clean up remote files')}
                             </Button>
-                          ) : null}
-                        </div>
+                            {!['queued', 'submitted', 'running'].includes(job.status) ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={busy}
+                                onClick={() => abandonJob(job)}
+                              >
+                                {t('Abandon remote cleanup')}
+                              </Button>
+                            ) : null}
+                          </div>
+                        )}
                         {!canCleanRemoteFiles(job) ? (
                           <p className="mt-2 text-xs text-muted-foreground">
                             {t('Finish harvesting before cleaning up remote files.')}
@@ -232,15 +336,19 @@ export function ComputeHostRemovalDialog({
                         ) : null}
                       </div>
                     ))}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={busy || blockingJobs.some((job) => !canCleanRemoteFiles(job))}
-                      onClick={() => void cleanAllJobs()}
-                    >
-                      {t('Clean up all remote files')}
-                    </Button>
+                    {armed?.kind === 'cleanAll' ? (
+                      armedConfirmation(armed, t('Clean up all remote files'))
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={busy || blockingJobs.some((job) => !canCleanRemoteFiles(job))}
+                        onClick={cleanAllJobs}
+                      >
+                        {t('Clean up all remote files')}
+                      </Button>
+                    )}
                   </div>
                 ) : null}
               </div>
