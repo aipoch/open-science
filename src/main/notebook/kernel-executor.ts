@@ -48,7 +48,6 @@ import {
 } from './notebook-workload-cache-paths'
 import {
   condaActivatedPath,
-  DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
   pythonBin,
@@ -763,25 +762,14 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
     const prefix = envPrefix(request.runtimeRoot, env, this.platform)
 
-    if (kind === 'python') {
-      // Every env (default and named) is gated on its own on-disk interpreter: there is no system-PATH
-      // fallback, so a missing interpreter is always a hard error here rather than a silent leak to a
-      // system python. The default env keeps its "still being prepared" wording; a named env is named.
-      if (!existsSync(pythonBin(prefix, this.platform))) {
-        throw new Error(
-          env === DEFAULT_PY_ENV
-            ? 'The Python environment is still being prepared — retry shortly. Do NOT create a new environment; the default one provisions automatically.'
-            : `The Python environment "${env}" does not exist. Create it first with manage_environments(action:"create", language:"python", name:"${env}").`
-        )
-      }
-      return
-    }
-
-    if (!existsSync(rBin(prefix, this.platform))) {
+    const interpreter =
+      kind === 'python' ? pythonBin(prefix, this.platform) : rBin(prefix, this.platform)
+    if (!existsSync(interpreter)) {
+      const language = kind === 'python' ? 'Python' : 'R'
       throw new Error(
-        env === DEFAULT_R_ENV
-          ? 'The R environment is still being prepared — retry shortly. Do NOT create a new environment; the default one provisions automatically.'
-          : `The R environment "${env}" does not exist. Create it first with manage_environments(action:"create", language:"r", name:"${env}").`
+        `The ${language} interpreter for environment "${env}" was not found at "${interpreter}". ` +
+          'The cell was not dispatched. Environment preparation or repair may be required; ' +
+          'this check does not establish whether preparation is running. Check the environment status in the application before retrying.'
       )
     }
   }

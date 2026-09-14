@@ -26,6 +26,7 @@ import {
   shellRuntimeAgentContract,
   shellRuntimeBindingSchema
 } from './shell-runtime'
+import { redactRuntimeDiagnosticText } from './runtime-diagnostics'
 import {
   memoryAgentRememberMcpOutputSchema,
   memoryAgentRememberRequestSchema,
@@ -42,7 +43,7 @@ const LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE =
   'Save runId. Query background_run with action:"query" and the exact runId when relevant. It is a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means the query prevented fallback; "committed" means fallback crossed the dispatch fence. Unread results arrive in a follow-up Turn.'
 
 // Scoped prompt addendum that only applies when the agent is given notebook tools. Keep equivalent
-// guidance concise because this prompt and the complete Notebook MCP schema share a 3,500-token cap.
+// guidance concise; the prompt and complete MCP schema share the tested static context budget.
 const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   '<open_science_notebook_instructions>',
   'Guidance only applies when using open-science-notebook tools.',
@@ -55,7 +56,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
-  'Retry once at most; repeated kernel-process failures mean stop Notebook tools and report the failure.',
+  'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before replaying. Retry at most once when safe; repeated kernel failures mean stop Notebook tools and report the failure.',
   'Beyond restricted reads, call `request_network_access`. A failed connection is not required.',
   'Follow recovery guidance; never bypass protection/TLS. Check settings for setup failures.',
   'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
@@ -219,7 +220,7 @@ const MANAGE_ENVIRONMENTS_DOC = [
   'Create, list, or remove named persistent Python/R environments. Each is a separate process and namespace.',
   `Only action:"list" returns the full snapshot (at most ${MAX_ENVIRONMENT_RESULTS}, with offset/limit/nextOffset); action:"create" needs language/name (optional packages), and action:"remove" needs name. Mutations return only target receipts.`,
   'Create returns created.runtimeId and does not select it; bind the first target, otherwise switch.',
-  'Removal is limited to agent-created, idle named environments; defaults, app-managed versioned environments, and external interpreters cannot be removed.',
+  'Removal is limited to agent-created named environments without live Kernels or active/revoking Runtime Bindings; defaults, app-managed versioned environments, and external interpreters cannot be removed.',
   'Named data kernels cannot call connectors; use repl_execute and the OPEN_SCIENCE_HANDOFF_DIR environment path.'
 ].join('\n')
 
@@ -825,6 +826,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
       'executionInvocationId',
       'cellId',
       'kernelKind',
+      'kernelDispatched',
       'status',
       'executionCount',
       'environment',
@@ -987,6 +989,7 @@ const compactStateRun = (
       'runId',
       'cellId',
       'kernelKind',
+      'kernelDispatched',
       'status',
       'executionCount',
       'environment',
@@ -1399,9 +1402,49 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
       ? Number(logTruncation.droppedBytes)
       : undefined
   const target = compactRuntimeTarget(result.target)
+  // Installer logs are useful on failure, but successful solver output is usually large noise.
+  // Keep both edges: setup errors may be first, while the final installer diagnosis is often last.
+  const failureLog =
+    result.ok === false && typeof result.log === 'string'
+      ? redactRuntimeDiagnosticText(result.log)
+          // pip ends a missing-distribution error with a second, less informative summary.
+          // Match adjacent lines for the exact same requirement; retain version candidates,
+          // index context, and all other diagnostics rather than deduplicating arbitrary logs.
+          .replace(
+            /^(ERROR: Could not find a version that satisfies the requirement (.+) \(from versions: [^\r\n]*\))\r?\nERROR: No matching distribution found for \2(?=\r?$)/gm,
+            '$1'
+          )
+          .trim()
+      : ''
+  const diagnostics =
+    failureLog.length > 2_400
+      ? `${failureLog.slice(0, 800)}\n…[${failureLog.length - 2_400} chars omitted from installer output]…\n${failureLog.slice(-1_600)}`
+      : failureLog
+  const attempts =
+    result.ok === false && Array.isArray(result.attempts)
+      ? result.attempts.slice(0, 8).flatMap((value) => {
+          const attempt = asRecord(value)
+          return attempt
+            ? [
+                pickDefined(attempt, [
+                  'groupOrdinal',
+                  'installer',
+                  'status',
+                  'mutationRisk',
+                  'reason'
+                ])
+              ]
+            : []
+        })
+      : []
   const base = {
     ok: result.ok,
     needsRestart: result.needsRestart,
+    ...(diagnostics ? { diagnostics } : {}),
+    ...(attempts.length ? { attempts } : {}),
+    ...(result.ok === false && Array.isArray(result.attempts) && result.attempts.length > 8
+      ? { omittedAttempts: result.attempts.length - 8 }
+      : {}),
     ...(result.environmentName !== undefined ? { environmentName: result.environmentName } : {}),
     ...(result.method !== undefined ? { method: result.method } : {}),
     ...(asRecord(result.source)
@@ -1596,7 +1639,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_restart',
     title: 'Restart notebook interpreter',
     description:
-      'Restart the shared notebook interpreter, clearing in-memory variables (run history is preserved). RARELY NEEDED: hangs and crashes recover on their own, and installing a package does NOT require a restart — a running kernel picks it up on its next import/library(). Use it only to (a) deliberately wipe the namespace / free memory, or (b) reload a NEWER version of a package you already imported this session.',
+      'Restart the shared notebook interpreter, clearing in-memory variables (run history is preserved). Use when manage_packages reports needsRestart:true, to reload an updated package already imported in this session, or to deliberately clear the namespace / free memory. Installing a new Python package usually does not require a restart; follow the actual needsRestart result for the selected runtime.',
     method: 'restart',
     inputSchema: {},
     mapResult: compactRestartResult,

@@ -34,7 +34,9 @@ describe('Responses request protocol adapter', () => {
         stream: false
       },
       'deepseek-v4-pro',
-      new Map([['call-1', 'inspect the notebook first']]),
+      new Map([
+        [JSON.stringify(['function_call', 'call-1']), { text: 'inspect the notebook first' }]
+      ]),
       [
         {
           namespace: 'mcp__open_science_notebook',

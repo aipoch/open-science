@@ -205,11 +205,13 @@ describe('workspace page architecture', () => {
     ])
     expect(importersOf(ownerPaths.sideChat)).toEqual([
       'App.tsx',
-      'hooks/useApplicationEventBindings.ts',
       'pages/workspace/ConversationPanel.tsx',
       'pages/workspace/SideChatPanel.tsx',
+      'pages/workspace/SideChatWorkbench.tsx',
       'pages/workspace/WorkspacePage.tsx',
-      'pages/workspace/previews/PreviewToolContent.tsx',
+      'pages/workspace/annotations/AnnotationTransferSource.tsx',
+      'pages/workspace/annotations/SideChatAnnotationDrop.tsx',
+      'pages/workspace/side-chat-summary.ts',
       'pages/workspace/workspace-conversation-controller.ts',
       'pages/workspace/workspace-message-queue-controller.ts'
     ])

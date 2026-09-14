@@ -1,6 +1,17 @@
 // @vitest-environment jsdom
 import { act, createElement } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createRoot as createReactRoot } from 'react-dom/client'
+const roots = new Set<ReturnType<typeof createReactRoot>>()
+const createRoot: typeof createReactRoot = (...args) => {
+  const root = createReactRoot(...args)
+  roots.add(root)
+  const unmount = root.unmount.bind(root)
+  root.unmount = () => {
+    roots.delete(root)
+    unmount()
+  }
+  return root
+}
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { SideChatProvider, useSideChatController } from './use-side-chat-controller'
@@ -21,6 +32,9 @@ const deferred = <Value>(): {
 const originalApi = window.api
 
 afterEach(() => {
+  act(() => {
+    for (const root of roots) root.unmount()
+  })
   window.api = originalApi
 })
 
@@ -67,16 +81,17 @@ describe('Side chat renderer controller', () => {
     const initialLiveTurnUserEntryId = result.current.view?.entries[0]?.id
     expect(result.current.view?.liveTurnUserEntryId).toBe(initialLiveTurnUserEntryId)
 
+    const sideId = result.current.view!.sideSessionId!
     act(() => {
       eventListener?.({
         parentSessionId: 'main-1',
-        sideSessionId: 'side-1',
+        sideSessionId: sideId,
         event: {
           id: 'event-1',
           timestamp: 1,
           kind: 'message',
           level: 'info',
-          sessionId: 'side-1',
+          sessionId: sideId,
           messageId: 'assistant-1',
           role: 'assistant',
           text: 'Hello '
@@ -84,13 +99,13 @@ describe('Side chat renderer controller', () => {
       } as never)
       eventListener?.({
         parentSessionId: 'main-1',
-        sideSessionId: 'side-1',
+        sideSessionId: sideId,
         event: {
           id: 'event-2',
           timestamp: 2,
           kind: 'message',
           level: 'info',
-          sessionId: 'side-1',
+          sessionId: sideId,
           messageId: 'assistant-1',
           role: 'assistant',
           text: 'there'
@@ -100,19 +115,19 @@ describe('Side chat renderer controller', () => {
     expect(result.current.view?.entries[1]).toMatchObject({ text: 'Hello there' })
 
     await act(async () => {
-      started.resolve({ sideSessionId: 'side-1', frameworkId: 'claude-code' })
+      started.resolve({ sideSessionId: sideId, frameworkId: 'claude-code' })
       await admitted
     })
     await act(async () => {
       expect(await result.current.send('Follow up')).toBe(false)
       eventListener?.({
         parentSessionId: 'main-1',
-        sideSessionId: 'side-1',
+        sideSessionId: sideId,
         event: { id: 'stop-1', timestamp: 3, kind: 'stop', level: 'info' }
       } as never)
       expect(await result.current.send('Follow up')).toBe(true)
     })
-    expect(send).toHaveBeenCalledWith({ sideSessionId: 'side-1', text: 'Follow up' })
+    expect(send).toHaveBeenCalledWith({ sideSessionId: sideId, text: 'Follow up' })
     const followUpEntry = result.current.view?.entries.findLast(
       (entry) => entry.kind === 'message' && entry.role === 'user'
     )
@@ -120,7 +135,7 @@ describe('Side chat renderer controller', () => {
     expect(result.current.view?.liveTurnUserEntryId).not.toBe(initialLiveTurnUserEntryId)
 
     act(() => result.current.close())
-    expect(close).toHaveBeenCalledWith({ sideSessionId: 'side-1' })
+    expect(close).toHaveBeenCalledWith({ sideSessionId: sideId })
     act(() => root.unmount())
     expect(close).toHaveBeenCalledOnce()
   })
@@ -163,7 +178,18 @@ describe('Side chat renderer controller', () => {
       expect(await result.current.start('Hello')).toBe(true)
     })
     expect(result.current.view?.sideSessionId).toBe('side-scope-1')
-    act(() => result.current.setDraft('Unsent follow up'))
+    act(() => {
+      result.current.setDraft('Unsent follow up')
+      result.current.setAnnotations?.([
+        {
+          id: 'draft-annotation',
+          kind: 'text',
+          target: 'agent',
+          quote: 'Keep this quote',
+          source: { kind: 'agent-message', sessionId: 'main-scope', messageId: 'message-1' }
+        }
+      ])
+    })
 
     parent = { sessionId: 'main-other', projectId: 'project-1' }
     render()
@@ -171,6 +197,7 @@ describe('Side chat renderer controller', () => {
     expect(result.current.unavailableReason).toBeUndefined()
     await act(async () => expect(await result.current.start('Another')).toBe(true))
     expect(result.current.view?.sideSessionId).toBe('side-scope-2')
+    expect(result.current.view?.annotations ?? []).toEqual([])
     expect(close).not.toHaveBeenCalled()
     act(() => {
       eventListener?.({
@@ -184,6 +211,9 @@ describe('Side chat renderer controller', () => {
     render()
     expect(result.current.view?.entries[0]).toMatchObject({ text: 'Hello' })
     expect(result.current.view?.draft).toBe('Unsent follow up')
+    expect(result.current.view?.annotations).toEqual([
+      expect.objectContaining({ id: 'draft-annotation', quote: 'Keep this quote' })
+    ])
     await act(async () => expect(await result.current.send('Continue')).toBe(true))
     expect(send).toHaveBeenCalledWith({ sideSessionId: 'side-scope-1', text: 'Continue' })
 
@@ -195,7 +225,7 @@ describe('Side chat renderer controller', () => {
     expect(close).not.toHaveBeenCalled()
   })
 
-  it('blocks only the closing parent until cleanup finishes', async () => {
+  it('allows a sibling Side chat while a previous chat closes', async () => {
     const closed = deferred<void>()
     const start = vi.fn(async ({ parentSessionId }: { parentSessionId: string }) => ({
       sideSessionId: `side-${parentSessionId}-${start.mock.calls.length}`,
@@ -228,9 +258,9 @@ describe('Side chat renderer controller', () => {
     await act(async () => expect(await result.current.start('First')).toBe(true))
     act(() => result.current.close())
     expect(result.current.view).toBeUndefined()
-    expect(result.current.unavailableReason).toBe('Closing Side chat…')
-    await act(async () => expect(await result.current.start('Too soon')).toBe(false))
-    expect(start).toHaveBeenCalledOnce()
+    expect(result.current.unavailableReason).toBeUndefined()
+    await act(async () => expect(await result.current.start('Sibling')).toBe(true))
+    expect(start).toHaveBeenCalledTimes(2)
 
     parent = { sessionId: 'main-other', projectId: 'project-1' }
     render()
@@ -239,14 +269,14 @@ describe('Side chat renderer controller', () => {
 
     parent = { sessionId: 'main-closing', projectId: 'project-1' }
     render()
-    expect(result.current.unavailableReason).toBe('Closing Side chat…')
+    expect(result.current.unavailableReason).toBeUndefined()
     await act(async () => {
       closed.resolve()
       await closed.promise
     })
     expect(result.current.unavailableReason).toBeUndefined()
     await act(async () => expect(await result.current.start('Fresh')).toBe(true))
-    expect(start).toHaveBeenCalledTimes(3)
+    expect(start).toHaveBeenCalledTimes(4)
     act(() => root.unmount())
   })
 
@@ -340,6 +370,7 @@ describe('Side chat renderer controller', () => {
     expect(result.current.unavailableReason).toBeUndefined()
     await act(async () => expect(await result.current.start('Recovered')).toBe(true))
     expect(start).toHaveBeenCalledWith({
+      sideSessionId: expect.stringMatching(/^side-chat-/),
       parentSessionId: 'main-retry',
       projectId: 'project-1',
       text: 'Recovered'
@@ -669,7 +700,7 @@ it.each([
     const root = createRoot(document.createElement('div'))
     let controller!: ReturnType<typeof useSideChatController>
     const Harness = (): null => {
-      controller = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' })
+      controller = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' }, 'side-1')
       return null
     }
     try {
@@ -744,7 +775,7 @@ it('keeps an admitted follow-up when its IPC response fails', async () => {
   const root = createRoot(document.createElement('div'))
   let controller!: ReturnType<typeof useSideChatController>
   const Harness = (): null => {
-    controller = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' })
+    controller = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' }, 'side-1')
     return null
   }
   try {
@@ -790,7 +821,7 @@ it('publishes save failure and recovery without replacing a pending follow-up or
   const root = createRoot(document.createElement('div'))
   let controller!: ReturnType<typeof useSideChatController>
   const Harness = (): null => {
-    controller = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' })
+    controller = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' }, 'side-1')
     return null
   }
   try {
@@ -830,4 +861,164 @@ it('publishes save failure and recovery without replacing a pending follow-up or
   } finally {
     act(() => root.unmount())
   }
+})
+
+it('owns a runtime-backed tab across project switches and only destroys it after close confirmation', async () => {
+  const { usePreviewWorkbenchStore, createInitialPreviewWorkbenchState } =
+    await import('@/stores/preview-workbench-store')
+  const { toPersistedPreviewState } = await import('@/lib/preview-persistence/preview-persistence')
+  usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+  usePreviewWorkbenchStore.getState().activateProject('project-1')
+  const close = vi.fn(async () => undefined)
+  window.api = {
+    sideChat: {
+      start: vi.fn(async () => ({ sideSessionId: 'side-transient', frameworkId: 'claude-code' })),
+      close,
+      send: vi.fn(),
+      cancel: vi.fn(),
+      onEvent: vi.fn(() => () => undefined)
+    }
+  } as unknown as Window['api']
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  let chat!: ReturnType<typeof useSideChatController>
+  const Harness = (): null => {
+    chat = useSideChatController({ sessionId: 'main-transient', projectId: 'project-1' })
+    return null
+  }
+  await act(async () => root.render(createElement(SideChatProvider, null, createElement(Harness))))
+  await act(async () => {
+    await chat.start('Temporary question')
+  })
+  const id = `tool:side-chat:${chat.view!.id}`
+  expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(id)
+  expect(toPersistedPreviewState(usePreviewWorkbenchStore.getState()).items).toEqual([])
+  act(() => {
+    usePreviewWorkbenchStore.getState().collapsePanel()
+    usePreviewWorkbenchStore.getState().activateProject('project-2')
+  })
+  expect(close).not.toHaveBeenCalled()
+  act(() => {
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+  })
+  act(() => {
+    expect(usePreviewWorkbenchStore.getState().removeItem(id)).toBe(false)
+  })
+  expect(close).not.toHaveBeenCalled()
+  const dialog = (): Element | null => document.querySelector('[role="alertdialog"]')
+  act(() => {
+    ;[...dialog()!.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Cancel')!
+      .click()
+  })
+  expect(chat.view).toBeDefined()
+  expect(usePreviewWorkbenchStore.getState().items.some((item) => item.id === id)).toBe(true)
+  act(() => {
+    usePreviewWorkbenchStore.getState().removeItem(id)
+  })
+  await act(async () => {
+    ;[...dialog()!.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Close Side chat')!
+      .click()
+  })
+  expect(close).toHaveBeenCalledExactlyOnceWith({ sideSessionId: 'side-transient' })
+  expect(chat.view).toBeUndefined()
+  expect(usePreviewWorkbenchStore.getState().items.some((item) => item.id === id)).toBe(false)
+  act(() => root.unmount())
+  container.remove()
+  usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+})
+
+it('restores siblings after restart and omits a confirmed closed Side chat', async () => {
+  const { usePreviewWorkbenchStore, createInitialPreviewWorkbenchState, sideChatTabId } =
+    await import('@/stores/preview-workbench-store')
+  const saved = {
+    revision: 1,
+    parentSessionId: 'saved-parent',
+    projectId: 'saved-project',
+    sideSessionId: 'saved-side',
+    entries: [
+      {
+        id: 'saved-message',
+        kind: 'message' as const,
+        role: 'user' as const,
+        text: 'Retain this conversation'
+      }
+    ],
+    running: false,
+    notice: 'interrupted' as const
+  }
+  const sibling = { ...saved, sideSessionId: 'saved-sibling' }
+  let savedChats = [saved, sibling]
+  const close = vi.fn(async () => {
+    savedChats = savedChats.filter((chat) => chat.sideSessionId !== 'saved-side')
+  })
+  window.api = {
+    sideChat: {
+      list: vi.fn(async () => ({ revision: 1, chats: savedChats })),
+      close,
+      start: vi.fn(),
+      send: vi.fn(),
+      cancel: vi.fn(),
+      onEvent: vi.fn(() => () => undefined)
+    }
+  } as unknown as Window['api']
+  const container = document.createElement('div')
+  document.body.append(container)
+  let root = createRoot(container)
+  let chat!: ReturnType<typeof useSideChatController>
+  const Harness = (): null => {
+    chat = useSideChatController(
+      { sessionId: 'saved-parent', projectId: 'saved-project' },
+      'saved-side'
+    )
+    return null
+  }
+  const mount = async (): Promise<void> => {
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    usePreviewWorkbenchStore.getState().activateProject('saved-project')
+    await act(async () =>
+      root.render(createElement(SideChatProvider, null, createElement(Harness)))
+    )
+  }
+  const id = sideChatTabId('saved-side')
+  await mount()
+  expect(chat.view?.entries).toEqual(saved.entries)
+  expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toContain(id)
+  expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+  act(() => {
+    usePreviewWorkbenchStore
+      .getState()
+      .activateProject('saved-project', { items: [], panelState: 'collapsed' })
+  })
+  expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+  expect(close).not.toHaveBeenCalled()
+  // Unmounting for application exit must not invoke the explicit destructive close path.
+  act(() => root.unmount())
+  expect(close).not.toHaveBeenCalled()
+  root = createRoot(container)
+  await mount()
+  expect(chat.view?.entries).toEqual(saved.entries)
+  expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toContain(id)
+  act(() => {
+    usePreviewWorkbenchStore.getState().removeItem(id)
+  })
+  const dialog = document.querySelector('[role="alertdialog"]')!
+  await act(async () => {
+    ;[...dialog.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Close Side chat')!
+      .click()
+  })
+  expect(close).toHaveBeenCalledExactlyOnceWith({ sideSessionId: 'saved-side' })
+  act(() => root.unmount())
+  root = createRoot(container)
+  await mount()
+  expect(chat.view).toBeUndefined()
+  expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toEqual([
+    sideChatTabId('saved-sibling')
+  ])
+  act(() => root.unmount())
+  container.remove()
+  usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
 })

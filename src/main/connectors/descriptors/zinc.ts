@@ -292,7 +292,7 @@ async function poll(task: string, deadline: number, signal?: AbortSignal): Promi
     }
     if (Date.now() >= deadline) {
       throw new Error(
-        `ZINC task ${task} did not complete in time — the server is likely still computing. Re-poll ${BASE_URL}/search/result/${task} later, or retry with fewer ids or a larger timeout_s.`
+        `ZINC task ${task} did not complete within the polling deadline and may still be running. This Connector cannot resume polling an existing task. Preserve this task ID when reporting the unresolved result. Calling the search again creates a new task; a smaller query is new work and does not stop this task.`
       )
     }
     const wait = Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - Date.now()))

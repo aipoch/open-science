@@ -67,6 +67,10 @@ vi.mock('@/pages/workspace/FilePreviewDialog', () => ({
 beforeEach(setupSearch)
 afterEach(teardownSearch)
 
+const openAdvancedFilters = (): void => {
+  act(() => screen.getByRole('button', { name: 'Advanced filters' }).click())
+}
+
 it('ignores saved search history and no longer records queries when opening a result', async () => {
   const history = JSON.stringify(['previous search'])
   localStorage.setItem('open-science-recent-searches', history)
@@ -83,20 +87,19 @@ it('ignores saved search history and no longer records queries when opening a re
   expect(localStorage.getItem('open-science-recent-searches')).toBe(history)
 })
 
-it('toggles filters, retains effective values while collapsed, and collapses on reopen', async () => {
+it('retains effective filter values while the island is collapsed and collapses on reopen', async () => {
   await renderSearch()
-  const toggle = screen.getByRole('button', { name: 'Filters' })
+  const toggle = screen.getByRole('button', { name: 'Advanced filters' })
   expect(toggle.getAttribute('aria-expanded')).toBe('false')
   expect(screen.queryByRole('combobox', { name: 'Time range' })).toBeNull()
   fireEvent.click(toggle)
   expect(toggle.getAttribute('aria-expanded')).toBe('true')
-  expect(document.getElementById(toggle.getAttribute('aria-controls')!)?.hidden).toBe(false)
   await selectFilter('Time range', 'Last 7 days')
   await selectFilter('Result order', 'Recently updated')
-  expect(toggle.textContent).toBe('Filters2')
+  expect(toggle.textContent).toBe('Advanced filters2')
   fireEvent.click(toggle)
   expect(screen.queryByRole('combobox', { name: 'Time range' })).toBeNull()
-  expect(toggle.textContent).toBe('Filters2')
+  expect(toggle.textContent).toBe('Advanced filters2')
   await search('retained filters')
   expect(window.api.sessions.searchMessages).toHaveBeenLastCalledWith(
     expect.objectContaining({ sort: 'recent', updatedAfter: expect.any(Number) })
@@ -105,27 +108,33 @@ it('toggles filters, retains effective values while collapsed, and collapses on 
   expect(screen.getByRole('combobox', { name: 'Time range' }).textContent).toBe('Last 7 days')
   await renderSearch(false)
   await renderSearch()
-  expect(screen.getByRole('button', { name: /^Filters/ }).getAttribute('aria-expanded')).toBe(
-    'false'
-  )
+  expect(
+    screen.getByRole('button', { name: /^Advanced filters/ }).getAttribute('aria-expanded')
+  ).toBe('false')
   await selectFilter('Time range', 'Any time')
   await selectFilter('Result order', 'Relevance within categories')
-  expect(screen.getByRole('button', { name: 'Filters' }).textContent).toBe('Filters')
+  expect(screen.getByRole('button', { name: 'Advanced filters' }).textContent).toBe(
+    'Advanced filters'
+  )
 })
 
 it('counts only the refinement that applies to the selected category', async () => {
   await renderSearch()
-  act(() => button('Messages').click())
+  act(() => document.querySelector<HTMLButtonElement>('[data-category="messages"]')!.click())
   await selectFilter('Refine category', 'Sent by me')
-  expect(screen.getByRole('button', { name: /^Filters/ }).textContent).toBe('Filters1')
-  act(() => button('Projects').click())
-  expect(screen.getByRole('button', { name: 'Filters' }).textContent).toBe('Filters')
+  expect(screen.getByRole('button', { name: /^Advanced filters/ }).textContent).toBe(
+    'Advanced filters1'
+  )
+  act(() => document.querySelector<HTMLButtonElement>('[data-category="projects"]')!.click())
+  expect(screen.getByRole('button', { name: 'Advanced filters' }).textContent).toBe(
+    'Advanced filters'
+  )
   expect(screen.queryByRole('combobox', { name: 'Refine category' })).toBeNull()
 })
 
 const selectFilter = async (name: string, option: string): Promise<void> => {
   if (!screen.queryByRole('combobox', { name })) {
-    fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Advanced filters/ }))
   }
   const trigger = screen.getByRole('combobox', { name })
   fireEvent.keyDown(trigger, { key: 'Enter' })
@@ -534,13 +543,16 @@ describe('GlobalSearchDialog', () => {
   })
   it('returns to all-project scope when navigation leaves the workspace', async () => {
     await renderSearch()
+    openAdvancedFilters()
     await selectFilter('Search scope', 'Current project')
     await waitFor(() =>
       expect(window.api.sessions.searchMessages).toHaveBeenLastCalledWith(
         expect.objectContaining({ projectIds: ['project-a'] })
       )
     )
-    expect(screen.getByRole('button', { name: /^Filters/ }).textContent).toBe('Filters1')
+    expect(screen.getByRole('button', { name: /^Advanced filters/ }).textContent).toBe(
+      'Advanced filters1'
+    )
     act(() => useNavigationStore.setState({ view: 'home' }))
     await waitFor(() =>
       expect(window.api.sessions.searchMessages).toHaveBeenLastCalledWith(
@@ -550,13 +562,18 @@ describe('GlobalSearchDialog', () => {
     expect(screen.getByRole('combobox', { name: 'Search scope' }).textContent).toBe(
       'All projects and Library'
     )
-    expect(screen.getByRole('button', { name: 'Filters' }).textContent).toBe('Filters')
+    expect(screen.getByRole('button', { name: 'Advanced filters' }).textContent).toBe(
+      'Advanced filters'
+    )
   })
   it('applies sender, time and sorting filters before loading a category page', async () => {
     await renderSearch()
     act(() => document.querySelector<HTMLButtonElement>('[data-category="messages"]')!.click())
+    openAdvancedFilters()
     await selectFilter('Refine category', 'Sent by me')
-    expect(screen.getByRole('button', { name: /^Filters/ }).textContent).toBe('Filters1')
+    expect(screen.getByRole('button', { name: /^Advanced filters/ }).textContent).toBe(
+      'Advanced filters1'
+    )
     await selectFilter('Result order', 'Recently updated')
     await selectFilter('Time range', 'Last 7 days')
     await waitFor(() =>
@@ -717,6 +734,37 @@ describe('GlobalSearchDialog', () => {
     act(() => document.querySelector<HTMLButtonElement>('[aria-label="Collapse details"]')!.click())
     expect(panel.dataset.open).toBe('false')
   })
+  it('keeps the filter selects inside the advanced filter island as the single entry', async () => {
+    await renderSearch()
+    const toggle = screen.getByRole('button', { name: 'Advanced filters' })
+    const panel = document.querySelector<HTMLElement>('[data-testid="global-search-advanced"]')!
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.getAttribute('aria-controls')).toBe(panel.id)
+    expect(panel.dataset.open).toBe('false')
+    expect(panel.getAttribute('aria-hidden')).toBe('true')
+    // The inline filter row is gone for good: the island is the only entry to the selects.
+    expect(document.querySelector('.global-search-list-pane .search-subfilters')).toBeNull()
+    expect(panel.querySelector('.search-subfilters')).toBeNull()
+    expect(screen.queryByRole('combobox', { name: 'Search scope' })).toBeNull()
+    act(() => toggle.click())
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(panel.dataset.open).toBe('true')
+    expect(panel.getAttribute('aria-hidden')).toBe('false')
+    expect(document.querySelector('.global-search-list-pane .search-subfilters')).toBeNull()
+    expect(panel.querySelector('.search-subfilters-stacked')).not.toBeNull()
+    await selectFilter('Search scope', 'Current project')
+    await waitFor(() =>
+      expect(window.api.sessions.searchMessages).toHaveBeenLastCalledWith(
+        expect.objectContaining({ projectIds: ['project-a'] })
+      )
+    )
+    act(() => toggle.click())
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(panel.dataset.open).toBe('false')
+    expect(document.querySelector('.global-search-list-pane .search-subfilters')).toBeNull()
+    expect(panel.querySelector('.search-subfilters')).toBeNull()
+    expect(screen.queryByRole('combobox', { name: 'Search scope' })).toBeNull()
+  })
   it('searches all projects by default and applies an explicit current-project filter', async () => {
     await renderSearch()
     expect(window.api.projectFiles.searchArtifacts).toHaveBeenCalledWith(
@@ -729,6 +777,7 @@ describe('GlobalSearchDialog', () => {
     expect(window.api.sessions.searchMessages).toHaveBeenCalledWith(
       expect.objectContaining({ projectIds: ['project-a', 'project-b'] })
     )
+    openAdvancedFilters()
     await selectFilter('Search scope', 'Current project')
     await waitFor(() =>
       expect(window.api.sessions.searchMessages).toHaveBeenLastCalledWith(

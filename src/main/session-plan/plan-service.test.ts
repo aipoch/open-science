@@ -929,14 +929,23 @@ describe('PlanService', () => {
     })
 
     for (const status of ['in_progress', 'blocked', 'skipped'] as const) {
-      await expect(
-        service.updateStepStatus({
+      const failure = await service
+        .updateStepStatus({
           ...identity,
           expectedRevision: completed.projection.revision,
           title: 'Analyze the data',
           status
         })
-      ).rejects.toMatchObject({ code: 'invalid-transition' })
+        .then(
+          () => {
+            throw new Error('Expected invalid transition')
+          },
+          (error: Error) => error
+        )
+      expect(failure).toMatchObject({ code: 'invalid-transition' })
+      expect(failure.message).toContain('completed')
+      expect(failure.message).toContain(status)
+      expect(failure.message).toMatch(/allowed statuses\s*:\s*completed/i)
     }
   })
 
@@ -1405,6 +1414,29 @@ describe('PlanService', () => {
     ).rejects.toMatchObject({ code: 'stale-plan' })
   })
 
+  it('explains the allowed first transition without changing the Plan', async () => {
+    const { service, identity, approved } = await approveExecutionPlan()
+    const before = await service.getProjection(identity.projectId, identity.sessionId)
+    const failure = await service
+      .updateStepStatus({
+        ...identity,
+        expectedRevision: approved.projection.revision,
+        title: 'Validate cohorts',
+        status: 'completed'
+      })
+      .then(
+        () => {
+          throw new Error('Expected invalid transition')
+        },
+        (error: Error) => error
+      )
+    expect(failure).toMatchObject({ code: 'invalid-transition' })
+    for (const fact of ['Validate cohorts', 'not_started', 'completed', 'in_progress', 'skipped']) {
+      expect(failure.message).toContain(fact)
+    }
+    expect(await service.getProjection(identity.projectId, identity.sessionId)).toEqual(before)
+  })
+
   it('enforces serial steps and phase gates while independent delegations may start together', async () => {
     const { service, identity, approved } = await approveExecutionPlan()
 
@@ -1415,7 +1447,10 @@ describe('PlanService', () => {
         title: 'Compare cohorts',
         status: 'in_progress'
       })
-    ).rejects.toMatchObject({ code: 'dependency-not-satisfied' })
+    ).rejects.toMatchObject({
+      code: 'dependency-not-satisfied',
+      message: expect.stringContaining('Prior step "Validate cohorts" is not_started')
+    })
     await expect(
       service.updateStepStatus({
         ...identity,
@@ -1423,7 +1458,10 @@ describe('PlanService', () => {
         title: 'Compare cohorts',
         status: 'skipped'
       })
-    ).rejects.toMatchObject({ code: 'dependency-not-satisfied' })
+    ).rejects.toMatchObject({
+      code: 'dependency-not-satisfied',
+      message: expect.stringContaining('Prior step "Validate cohorts" is not_started')
+    })
 
     const cohortRunning = await service.updateStepStatus({
       ...identity,
@@ -1449,7 +1487,10 @@ describe('PlanService', () => {
         title: 'Draft report',
         status: 'in_progress'
       })
-    ).rejects.toMatchObject({ code: 'dependency-not-satisfied' })
+    ).rejects.toMatchObject({
+      code: 'dependency-not-satisfied',
+      message: expect.stringContaining('Prior phase')
+    })
   })
 
   it('lets an already-started peer delegation settle after a block and then completes cleanly blocked', async () => {
@@ -1487,7 +1528,10 @@ describe('PlanService', () => {
         title: 'Audit findings',
         status: 'in_progress'
       })
-    ).rejects.toMatchObject({ code: 'dependency-not-satisfied' })
+    ).rejects.toMatchObject({
+      code: 'dependency-not-satisfied',
+      message: expect.stringContaining('Plan step "Validate cohorts" is blocked')
+    })
 
     const evidenceFound = await service.updateStepStatus({
       ...identity,

@@ -17,6 +17,7 @@ import {
   synchronizeActiveConversationMessages
 } from '../../shared/conversation-graph'
 import {
+  getPersistedSideChats,
   materializeSessionConversationGraph,
   SessionRevisionConflictError,
   type PersistedArtifact,
@@ -1214,6 +1215,51 @@ describe('SessionPersistenceCoordinator', () => {
         }
       ]
     })
+  })
+
+  it('preserves sibling Side chats across saves, relays, restoration, and individual close', async () => {
+    let durable = createSession({
+      runtimeContext: { version: 1, revision: 1, sideChat: createSideChatProjection() }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
+        durable = structuredClone(session)
+        return structuredClone(durable)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const address = { projectId: 'project-1', sessionId: 'session-1' }
+    await coordinator.saveSideChatProjection({
+      ...address,
+      sideChat: createSideChatProjection({ id: 'side-chat-2' })
+    })
+    await coordinator.saveSideChatProjection({
+      ...address,
+      sideChat: createSideChatProjection({ id: 'side-chat-1', updatedAt: 42 })
+    })
+    expect(getPersistedSideChats(durable.runtimeContext).map((chat) => chat.id)).toEqual([
+      'side-chat-1',
+      'side-chat-2'
+    ])
+    await coordinator.appendSideChatRelay({
+      ...address,
+      sideChatId: 'side-chat-2',
+      relay: { id: 'relay-sibling', text: 'Sibling advice', createdAt: 43 }
+    })
+    expect(durable.runtimeContext?.sideChat?.id).toBe('side-chat-1')
+    expect(durable.runtimeContext?.sideChatRelays?.[0].sideChatId).toBe('side-chat-2')
+    const restarted = new SessionPersistenceCoordinator(repository, createFileIndex())
+    await restarted.clearSideChat({ ...address, sideChatId: 'side-chat-1' })
+    expect(getPersistedSideChats(durable.runtimeContext).map((chat) => chat.id)).toEqual([
+      'side-chat-2'
+    ])
+    expect(durable.runtimeContext?.sideChat?.id).toBe('side-chat-2')
+    expect(durable.runtimeContext?.sideChats).toBeUndefined()
+    expect(durable.runtimeContext?.sideChatRelays).toHaveLength(1)
   })
 
   it('publishes the parent Session after every Side chat mutation', async () => {

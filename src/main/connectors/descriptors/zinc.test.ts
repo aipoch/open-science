@@ -286,9 +286,15 @@ describe('zinc / zinc_search_by_id', () => {
     vi.stubGlobal('fetch', fetchImpl)
 
     const promise = byId.run!(ctx, { zinc_ids: ['ZINC000000000012'], timeout_s: 5 })
-    const assertion = expect(promise).rejects.toThrow(/ZTASK-STUCK/)
+    const outcome = promise.catch((error: unknown) => error)
     await vi.runAllTimersAsync()
-    await assertion
+    const error = await outcome
+    expect(error).toBeInstanceOf(Error)
+    const message = (error as Error).message
+    expect(message).toContain('ZTASK-STUCK')
+    expect(message).toContain('may still be running')
+    expect(message).toContain('cannot resume polling')
+    expect(message).toContain('creates a new task')
   })
 
   it('bounds returned_count to max_results while reporting the true total', async () => {

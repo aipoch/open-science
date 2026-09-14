@@ -33,10 +33,20 @@ describe('full-text transfer progress', () => {
     try {
       await expect(
         downloadFullText('https://limited.example/paper.pdf', 100)
-      ).rejects.toMatchObject({ retryAt: now + 120_000 })
+      ).rejects.toMatchObject({
+        retryAt: now + 120_000,
+        message: expect.stringContaining(
+          `Retry no earlier than ${new Date(now + 120_000).toISOString()}`
+        )
+      })
       await expect(
         downloadFullText('https://limited.example/another.pdf', 100)
-      ).rejects.toMatchObject({ retryAt: now + 120_000 })
+      ).rejects.toMatchObject({
+        retryAt: now + 120_000,
+        message: expect.stringContaining(
+          `Retry no earlier than ${new Date(now + 120_000).toISOString()}`
+        )
+      })
       expect(fixture.requests - before).toBe(1)
       vi.spyOn(Date, 'now').mockReturnValue(now + 121_000)
       fixture.status = 200

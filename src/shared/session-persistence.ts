@@ -432,8 +432,17 @@ export type SessionRuntimeContext = Readonly<{
   permission?: SessionPermissionRuntimeContext
   pdfContext?: SessionPdfContext
   sideChat?: PersistedSideChat
+  sideChats?: readonly PersistedSideChat[]
   sideChatRelays?: readonly PersistedSideChatRelay[]
 }>
+
+// Keep the legacy first-chat slot readable while extending a parent to multiple independent chats.
+export const getPersistedSideChats = (
+  context: SessionRuntimeContext | undefined
+): readonly PersistedSideChat[] => [
+  ...(context?.sideChat ? [context.sideChat] : []),
+  ...(context?.sideChats ?? [])
+]
 
 export type SessionRuntimeContextPatch = Readonly<
   Partial<{
@@ -442,6 +451,7 @@ export type SessionRuntimeContextPatch = Readonly<
     permission: SessionPermissionRuntimeContext | undefined
     pdfContext: SessionPdfContext | undefined
     sideChat: PersistedSideChat | undefined
+    sideChats: readonly PersistedSideChat[] | undefined
     sideChatRelays: readonly PersistedSideChatRelay[] | undefined
   }>
 >
@@ -2754,6 +2764,7 @@ export const sanitizeSessionRuntimeContext = (
     permission?: SessionPermissionRuntimeContext
     pdfContext?: SessionPdfContext
     sideChat?: PersistedSideChat
+    sideChats?: readonly PersistedSideChat[]
     sideChatRelays?: readonly PersistedSideChatRelay[]
   } = {
     version: 1,
@@ -2802,6 +2813,14 @@ export const sanitizeSessionRuntimeContext = (
       }
       continue
     }
+    if (owner === 'sideChats') {
+      if (ownerValue === undefined) continue
+      if (!Array.isArray(ownerValue) || ownerValue.length > 100) return undefined
+      const chats = ownerValue.map(sanitizePersistedSideChat)
+      if (chats.some((chat) => !chat)) return undefined
+      result.sideChats = chats as PersistedSideChat[]
+      continue
+    }
     if (owner === 'sideChatRelays') {
       if (!Array.isArray(ownerValue) || ownerValue.length > MAX_SIDE_CHAT_RELAYS) continue
       const relays = ownerValue.map((relay) => sanitizePersistedSideChatRelay(relay))
@@ -2811,6 +2830,8 @@ export const sanitizeSessionRuntimeContext = (
     }
     return undefined
   }
+  const chatIds = getPersistedSideChats(result).map((chat) => chat.id)
+  if (new Set(chatIds).size !== chatIds.length) return undefined
   const sideChatRelays = [...directRelays, ...legacyRelays]
   if (sideChatRelays.length > MAX_SIDE_CHAT_RELAYS) return undefined
   const relayIds = new Set<string>()

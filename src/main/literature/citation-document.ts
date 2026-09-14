@@ -222,6 +222,8 @@ const replaceRunText = (
 
 const sha256 = (content: Uint8Array): string => createHash('sha256').update(content).digest('hex')
 
+class CitationExtractionLimitError extends Error {}
+
 class LiteratureCitationDocument {
   constructor(
     private readonly catalog: CitationDocumentCatalog,
@@ -241,12 +243,15 @@ class LiteratureCitationDocument {
           entryCount += 1
           inflatedBytes += entry.originalSize
           if (entryCount > MAX_DOCX_ENTRIES || inflatedBytes > MAX_DOCX_INFLATED_BYTES) {
-            throw new Error('Citation document exceeds the safe extraction limit.')
+            throw new CitationExtractionLimitError(
+              'Citation document exceeds the extraction budget (5,000 entries or 256 MiB uncompressed). Use a smaller DOCX document or stop this formatting attempt.'
+            )
           }
           return true
         }
       })
     } catch (error) {
+      if (error instanceof CitationExtractionLimitError) throw error
       throw new Error('Citation document must be a valid DOCX file.', { cause: error })
     }
     const document = archive[DOCX_DOCUMENT_PATH]
@@ -448,12 +453,15 @@ class LiteratureCitationDocument {
           entryCount += 1
           inflatedBytes += entry.originalSize
           if (entryCount > MAX_DOCX_ENTRIES || inflatedBytes > MAX_DOCX_INFLATED_BYTES) {
-            throw new Error('Citation document exceeds the safe extraction limit.')
+            throw new CitationExtractionLimitError(
+              'Citation document exceeds the extraction budget (5,000 entries or 256 MiB uncompressed). Use a smaller DOCX document or stop this formatting attempt.'
+            )
           }
           return true
         }
       })
     } catch (error) {
+      if (error instanceof CitationExtractionLimitError) throw error
       throw new Error('Citation document must be a valid DOCX file.', { cause: error })
     }
     if (!archive[DOCX_DOCUMENT_PATH]) {

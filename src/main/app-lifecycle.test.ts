@@ -268,6 +268,89 @@ const installWithCapturedOpts = (opts: {
 }
 
 describe('installAppLifecycle', () => {
+  it('reconfirms a replacement Settings install when app.quit synchronously reenters before-quit', async () => {
+    let activeInstallId = 'install-1'
+    const decisions: Array<(choice: CloseConfirmChoice) => void> = []
+    const confirmClose = vi.fn(
+      () => new Promise<CloseConfirmChoice>((resolve) => decisions.push(resolve))
+    )
+    const { app, quit, prepareForQuit, flushSessionPersistence, shutdownBackends } = setup({
+      getActiveSettingsInstallId: () => activeInstallId,
+      confirmClose
+    })
+    // Electron emits before-quit inside app.quit(), before the prior confirmation chain settles.
+    quit.mockImplementation(() => app.emit('before-quit'))
+
+    app.emit('before-quit')
+    expect(confirmClose).toHaveBeenCalledOnce()
+    expect(confirmClose).toHaveBeenLastCalledWith('quit', [], true)
+    // The old installation finishes and another starts while its warning is still open.
+    activeInstallId = 'install-2'
+    decisions[0]('quit')
+    await flush()
+
+    expect(quit).toHaveBeenCalledOnce()
+    expect(confirmClose).toHaveBeenCalledTimes(2)
+    expect(confirmClose).toHaveBeenLastCalledWith('quit', [], true)
+    // The completed dialog must also leave the replacement dialog's admission latch intact.
+    app.emit('before-quit')
+    await flush()
+    expect(confirmClose).toHaveBeenCalledTimes(2)
+    decisions[1]('cancel')
+    await flush()
+
+    expect(prepareForQuit).not.toHaveBeenCalled()
+    expect(flushSessionPersistence).not.toHaveBeenCalled()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  it.each(['retry', 'force-quit'] as const)(
+    'rechecks installation work admitted during persistence %s confirmation',
+    async (choice) => {
+      let activeInstallId: string | undefined = undefined
+      const decisions: Array<(choice: CloseConfirmChoice) => void> = []
+      const confirmClose = vi.fn(
+        () => new Promise<CloseConfirmChoice>((resolve) => decisions.push(resolve))
+      )
+      const { app, quit, closeOpts, shutdownBackends, flushSessionPersistence } = setup({
+        getActiveSettingsInstallId: () => activeInstallId,
+        flushSessionPersistence: vi.fn(async () => 'timeout' as const),
+        confirmClose
+      })
+      quit.mockImplementation(() => app.emit('before-quit'))
+      closeOpts[0].requestQuit()
+      await flush()
+      expect(confirmClose).toHaveBeenLastCalledWith('persistence-failed', [])
+
+      activeInstallId = 'new-install'
+      decisions[0](choice)
+      await flush()
+      expect(confirmClose).toHaveBeenCalledTimes(2)
+      expect(confirmClose).toHaveBeenLastCalledWith('quit', [], true)
+      app.emit('before-quit')
+      await flush()
+      expect(confirmClose).toHaveBeenCalledTimes(2)
+      decisions[1]('cancel')
+      await flush()
+      expect(flushSessionPersistence).toHaveBeenCalledOnce()
+      expect(shutdownBackends).not.toHaveBeenCalled()
+      expect(app.exit).not.toHaveBeenCalled()
+    }
+  )
+
+  it('shuts down once when a synchronously reissued quit confirms the same installation', async () => {
+    const { app, quit, shutdownBackends, confirmClose } = setup({
+      getActiveSettingsInstallId: () => 'same-install'
+    })
+    quit.mockImplementation(() => app.emit('before-quit'))
+    app.emit('before-quit')
+    await flush()
+    expect(confirmClose).toHaveBeenCalledOnce()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(app.exit).toHaveBeenCalledExactlyOnceWith(0)
+  })
+
   it('creates the first window and tray on install', () => {
     const { windows, trayHandlers } = setup()
     expect(windows).toHaveLength(1)

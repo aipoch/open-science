@@ -14,7 +14,6 @@ import { useLifecycleSync } from '@/hooks/useLifecycleSync'
 import { useUnreadTaskViewSync } from '@/hooks/useUnreadTaskViewSync'
 import { useWebEventConnection } from '@/hooks/useWebEventConnection'
 import { useWindowFindAppearanceSync } from '@/hooks/useWindowFindAppearanceSync'
-import { useOpenSideChatParentSessionIds } from '@/pages/workspace/use-side-chat-controller'
 import type { StartupView } from '@/pages/onboarding/startup-gate'
 import { useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore, type NavigationView } from '@/stores/navigation-store'
@@ -87,16 +86,11 @@ const useApplicationEventBindings = ({
   hasLegacyDataMove,
   closeActiveSettingsPane
 }: ApplicationEventBindingsInput): ApplicationEventProjection => {
-  const openSideChatParentSessionIds = useOpenSideChatParentSessionIds()
   const view = useNavigationStore((state) => state.view)
   const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const closeSettings = useSettingsStore((state) => state.closeSettings)
-  const hasConnectorApproval = useSettingsStore((state) =>
-    state.pendingApprovals.some(
-      (candidate) => !candidate.sessionId || !openSideChatParentSessionIds.has(candidate.sessionId)
-    )
-  )
+  const hasConnectorApproval = useSettingsStore((state) => state.pendingApprovals.length > 0)
   const enqueueConnectorApproval = useSettingsStore((state) => state.enqueueApproval)
   const dismissConnectorApproval = useSettingsStore((state) => state.dismissApproval)
   const hasSessionlessCredentialRequest = useSettingsStore((state) =>
@@ -106,16 +100,10 @@ const useApplicationEventBindings = ({
   const dismissCredentialRequest = useSettingsStore((state) => state.dismissCredentialRequest)
   const enqueueComputeApproval = useComputeStore((state) => state.enqueueApproval)
   const dismissComputeApproval = useComputeStore((state) => state.dismissApproval)
-  const hasComputeApproval = useComputeStore((state) =>
-    state.pendingApprovals.some(
-      (candidate) => !candidate.sessionId || !openSideChatParentSessionIds.has(candidate.sessionId)
-    )
-  )
+  const hasComputeApproval = useComputeStore((state) => state.pendingApprovals.length > 0)
   const enqueueSkillImport = useSkillImportStore((state) => state.enqueue)
   const dismissSkillImport = useSkillImportStore((state) => state.dismiss)
-  const hasSkillImportApproval = useSkillImportStore((state) =>
-    state.pending.some((candidate) => !openSideChatParentSessionIds.has(candidate.sessionId))
-  )
+  const hasSkillImportApproval = useSkillImportStore((state) => state.pending.length > 0)
   const applyJobUpdate = useSessionJobStore((state) => state.applyUpdate)
   const hydrateNonTerminalJobs = useSessionJobStore((state) => state.hydrateNonTerminal)
   const isUpdateDialogOpen = useUpdateStore((state) => state.isDialogOpen)
@@ -486,9 +474,9 @@ const useApplicationEventBindings = ({
   }, [hydrateNonTerminalJobs, sessionPersistence.isHydrated, startupView])
 
   return {
+    blockedApprovalSessionIds: new Set<string>(),
     presentation,
     webEventConnectionPhase,
-    blockedApprovalSessionIds: openSideChatParentSessionIds,
     lifecycle,
     notification: {
       unavailableToken: unavailableNotificationToken,

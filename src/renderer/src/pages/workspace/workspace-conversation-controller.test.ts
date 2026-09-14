@@ -1040,6 +1040,25 @@ describe('workspace conversation controller', () => {
     expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
   })
 
+  it('starts a captured draft only once while Side chat admission is pending', async () => {
+    let resolveAdmission!: (admitted: boolean) => void
+    const admission = new Promise<boolean>((resolve) => {
+      resolveAdmission = resolve
+    })
+    const input = options({ sideChat: { start: vi.fn(() => admission) } })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => {
+      hook.result.current.actions.sideChat.start()
+      hook.result.current.actions.sideChat.start()
+    })
+
+    expect(input.sideChat?.start).toHaveBeenCalledOnce()
+    await act(async () => resolveAdmission(true))
+    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledOnce()
+  })
+
   it('does not start Side chat for a Session without a prior main user message', () => {
     const input = options({
       activeSession: session({ messages: [] }),
@@ -1071,7 +1090,7 @@ describe('workspace conversation controller', () => {
     }
   )
 
-  it('blocks main submit, revise, resume, and cancel while Side chat owns the Session', async () => {
+  it('allows main submit, revise, resume, and cancel while Side chat is open', async () => {
     const input = options({ sideChatOpen: true })
     const hook = renderController(input)
     mounted.push(hook)
@@ -1084,14 +1103,14 @@ describe('workspace conversation controller', () => {
     await act(async () => hook.result.current.actions.cancel())
 
     expect(hook.result.current.availability).toMatchObject({
-      submit: false,
-      revise: false,
-      resume: false
+      submit: true,
+      revise: true,
+      resume: true
     })
-    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
-    expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
-    expect(input.runtime.resumeInterruptedSession).not.toHaveBeenCalled()
-    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).toHaveBeenCalled()
+    expect(input.runtime.resendEditedMessage).toHaveBeenCalled()
+    expect(input.runtime.resumeInterruptedSession).toHaveBeenCalled()
+    expect(input.runtime.cancelRun).toHaveBeenCalled()
   })
 
   it('orders Specialist preparation before draft clear and runtime submit', async () => {

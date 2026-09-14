@@ -35,6 +35,40 @@ afterEach(async () => {
 const hash = (data: string): string => createHash('sha256').update(data).digest('hex')
 
 describe('complete Artifact save over the production local RPC', () => {
+  it('delivers bounded redacted diagnostics with the committed Version identity over RPC and MCP', async () => {
+    const f = await setup()
+    const env = await f.environment()
+    vi.spyOn(
+      f.repository as unknown as { toArtifactVersionFile: () => Promise<never> },
+      'toArtifactVersionFile'
+    ).mockRejectedValueOnce(
+      new Error(
+        'projection failed password="ARTIFACT_SECRET"\n' + 'x'.repeat(20_000) + '\nprojection tail'
+      )
+    )
+    const error = await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
+      filename: 'receipt.txt',
+      content: 'saved bytes'
+    }).then(
+      () => {
+        throw new Error('Expected projection failure')
+      },
+      (failure: Error) => failure
+    )
+    const committed = await f.client.artifactVersion.findFirstOrThrow()
+    expect(committed.state).toBe('pending')
+    expect(error.message).toContain(committed.id)
+    expect(error.message).toContain('committed as pending')
+    expect(error.message).toContain('not yet a finalized Artifact')
+    expect(error.message).toMatch(/do not.*repeat/i)
+    expect(error.message).toContain('projection failed')
+    expect(error.message).toContain('projection tail')
+    expect(error.message).toContain('[redacted]')
+    expect(error.message).toContain('[diagnostic truncated]')
+    expect(error.message).not.toContain('ARTIFACT_SECRET')
+    expect(error.message.length).toBeLessThan(2_100)
+  })
+
   it('saves five mixed files on their first concurrent calls without MCP pending writes', async () => {
     const f = await setup()
     const workspace = join(f.storageRoot, 'workspace')

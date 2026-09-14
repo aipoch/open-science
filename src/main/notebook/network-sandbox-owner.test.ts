@@ -641,6 +641,73 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
+  it.each(['user-decision', 'aborted'] as const)(
+    'preserves the actual denial reason without granting access: %s',
+    async (decisionSource) => {
+      const requestDecision = vi.fn().mockResolvedValue('deny')
+      const persistAlwaysAllow = vi.fn()
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow,
+        requestDecision,
+        platform: 'linux'
+      })
+      const commandText = 'curl data.example.org/a'
+      let wrapped: Awaited<ReturnType<typeof owner.wrap>> | undefined
+      try {
+        wrapped = await owner.wrap({
+          executable: '/usr/bin/bash',
+          args: [],
+          env: {},
+          cwd: '/workspace',
+          commandText,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          runtime: 'bash',
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: ['/workspace'],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        const finishBlockedExecution = wrapped.beginExecution?.()
+        await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(
+          false
+        )
+        finishBlockedExecution?.()
+        const cancellation = new AbortController()
+        if (decisionSource === 'aborted') cancellation.abort()
+        const result = await owner.requestNetworkAccess({
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          hostname: 'data.example.org',
+          reason: 'Download the dataset.',
+          runtime: 'bash',
+          command: commandText,
+          signal: cancellation.signal
+        })
+        expect(result).toMatchObject({
+          hostname: 'data.example.org',
+          status: 'denied',
+          decisionSource,
+          message: expect.any(String)
+        })
+        expect(requestDecision).toHaveBeenCalledTimes(decisionSource === 'user-decision' ? 1 : 0)
+        expect(persistAlwaysAllow).not.toHaveBeenCalled()
+        const end = wrapped.beginExecution?.()
+        await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(
+          false
+        )
+        end?.()
+      } finally {
+        await wrapped?.cleanup('exit', { processesTerminated: true })
+        await owner.dispose()
+      }
+    }
+  )
+
   it('returns unavailable without creating a grant when no approval client is connected', async () => {
     const requestDecision = vi.fn().mockResolvedValue('unavailable')
     const { logger, records } = createCapturingLogger()
@@ -679,7 +746,12 @@ describe('NotebookNetworkSandboxOwner', () => {
         hostname: 'data.example.org',
         reason: 'Download private patient data.'
       })
-    ).resolves.toEqual({ hostname: 'data.example.org', status: 'unavailable' })
+    ).resolves.toEqual({
+      hostname: 'data.example.org',
+      status: 'unavailable',
+      decisionSource: 'approval-surface-unavailable',
+      message: expect.any(String)
+    })
     expect(requestDecision).toHaveBeenCalledOnce()
     await wrapped.cleanup('exit', { processesTerminated: true })
     await owner.dispose()
@@ -1426,7 +1498,12 @@ describe('NotebookNetworkSandboxOwner', () => {
     await vi.waitFor(() => expect(requestDecision).toHaveBeenCalledOnce())
     cancellation.abort(new Error('Notebook tool ended.'))
     expect(decisionSignal?.aborted).toBe(true)
-    await expect(result).resolves.toEqual({ hostname: 'data.example.org', status: 'denied' })
+    await expect(result).resolves.toEqual({
+      hostname: 'data.example.org',
+      status: 'denied',
+      decisionSource: 'aborted',
+      message: expect.any(String)
+    })
     expect(persistAlwaysAllow).not.toHaveBeenCalled()
     await wrapped.cleanup('exit', { processesTerminated: true })
     await owner.dispose()

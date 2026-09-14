@@ -612,6 +612,7 @@
           "src/main/settings/responses-response-adapter.architecture.test.ts",
           "src/main/settings/responses-response-adapter.test.ts",
           "src/main/settings/responses-bridge.test.ts",
+          "src/main/settings/responses-reasoning-replay.test.ts",
           "src/main/settings/responses-bridge.integration.test.ts",
           "src/main/settings/native-responses-compatibility.test.ts",
           "src/main/settings/anthropic-provider-bridge.test.ts",

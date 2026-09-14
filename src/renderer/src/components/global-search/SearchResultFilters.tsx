@@ -6,6 +6,7 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import { cn } from '@/lib/utils'
 import type { SearchSort } from '../../../../shared/search-text'
 import type { SearchCategory } from './search-result'
 
@@ -19,7 +20,8 @@ export const SearchResultFilters = ({
   onScope,
   onSort,
   onDays,
-  onSubtype
+  onSubtype,
+  stacked = false
 }: {
   category: SearchCategory | 'all'
   scope: 'all' | 'current'
@@ -31,6 +33,7 @@ export const SearchResultFilters = ({
   onSort: (value: SearchSort) => void
   onDays: (value: number) => void
   onSubtype: (value: string) => void
+  stacked?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const options =
@@ -57,7 +60,7 @@ export const SearchResultFilters = ({
             ]
           : []
   return (
-    <div className="search-subfilters">
+    <div className={cn('search-subfilters', stacked && 'search-subfilters-stacked')}>
       <Select value={scope} onValueChange={onScope}>
         <SelectTrigger
           aria-label={t('Search scope')}

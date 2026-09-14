@@ -711,7 +711,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
         resolvedInterpreter: { command: python3 as string }
       })
 
-      expect(result).toMatchObject({ status: 'failed' })
+      expect(result).toMatchObject({ status: 'failed', kernelDispatched: true })
       expect(result.stderr).toContain('Notebook kernel process exited with exit code 23.')
       expect(result.stderr).toContain('PowerShell FileSystem provider initialization failed.')
     } finally {
@@ -1287,7 +1287,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
         code: '__SLEEP__',
         timeoutMs: 100
       })
-      expect(timed.status).toBe('timeout')
+      expect(timed).toMatchObject({ status: 'timeout', kernelDispatched: true })
       expect(killSpy).toHaveBeenCalledWith('SIGINT')
       expect(killSpy).not.toHaveBeenCalledWith('SIGKILL')
 
@@ -1538,7 +1538,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       code: '__SLEEP__',
       timeoutMs: 100
     })
-    expect(timed.status).toBe('timeout')
+    expect(timed).toMatchObject({ status: 'timeout', kernelDispatched: true })
     // Node marks child.killed once the soft-timeout SIGINT is sent, even though the loop caught it
     // and is still alive (proven by reuse in the previous test) -- the process itself has not exited.
     expect(child.killed).toBe(true)
@@ -1565,7 +1565,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
         code: '__IGNORE_SIGINT__',
         timeoutMs: 100
       })
-      expect(timed.status).toBe('timeout')
+      expect(timed).toMatchObject({ status: 'timeout', kernelDispatched: true })
       // Soft interrupt is a direct SIGINT to the loop; the hard kill is routed through
       // terminateProcessTree (which enumerates descendants before killing), so it no longer shows up
       // as a direct child.kill('SIGKILL'). What matters is the wedged loop is gone and actually dead.
@@ -1625,7 +1625,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
         code: '__IGNORE_SIGINT__',
         timeoutMs: 100
       })
-      expect(timed.status).toBe('timeout')
+      expect(timed).toMatchObject({ status: 'timeout', kernelDispatched: true })
       // The hard-kill drop surfaces a 'terminated' kernel status, exactly once for the python kind.
       expect(terminated).toEqual(['python'])
     } finally {
@@ -4287,7 +4287,7 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
 // -- Readiness gate: no spawn, no python3 required. -------------------------------------------------
 
 describe('NotebookKernelExecutor readiness gate', () => {
-  it('fails clearly when R is requested but no rEnvPrefix is configured', async () => {
+  it('reports the missing default R interpreter without claiming preparation is running', async () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
     try {
       const result = await executor.execute({
@@ -4296,7 +4296,9 @@ describe('NotebookKernelExecutor readiness gate', () => {
         language: 'r'
       })
       expect(result.status).toBe('failed')
-      expect(result.stderr).toMatch(/r environment.*still being prepared/i)
+      expect(result.kernelDispatched).toBe(false)
+      expect(result.stderr).toMatch(/R interpreter.*default-r.*was not found/)
+      expect(result.stderr).toContain('does not establish whether preparation is running')
     } finally {
       await executor.shutdown()
     }
@@ -4310,7 +4312,9 @@ describe('NotebookKernelExecutor readiness gate', () => {
     try {
       const result = await executor.execute({ ...baseRequest('/tmp'), code: 'x' })
       expect(result.status).toBe('failed')
-      expect(result.stderr).toMatch(/python environment.*still being prepared/i)
+      expect(result.kernelDispatched).toBe(false)
+      expect(result.stderr).toMatch(/Python interpreter.*default-python.*was not found/)
+      expect(result.stderr).toContain('The cell was not dispatched')
     } finally {
       await executor.shutdown()
     }
@@ -4325,8 +4329,9 @@ describe('NotebookKernelExecutor readiness gate', () => {
         environment: 'ghost-env'
       })
       expect(result.status).toBe('failed')
-      // A missing NAMED env tells the agent to create it explicitly (defaults auto-provision instead).
-      expect(result.stderr).toMatch(/environment "ghost-env" does not exist.*manage_environments/i)
+      expect(result.kernelDispatched).toBe(false)
+      expect(result.stderr).toMatch(/interpreter for environment "ghost-env" was not found/)
+      expect(result.stderr).not.toMatch(/does not exist|Create it first|manage_environments/)
     } finally {
       await executor.shutdown()
     }

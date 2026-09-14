@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import {
   materializeSessionConversationGraph,
+  getPersistedSideChats,
   sanitizeSessionRuntimeContext,
   type PersistedChatMessage,
   type PersistedChatSession,
@@ -84,15 +85,11 @@ class SessionSideChatPersistenceOwner {
     const scan = await this.options.repository.loadAllWithDiagnostics({ mode: 'read-only' })
     return {
       sideChats: scan.result.sessions.flatMap((session) =>
-        session.runtimeContext?.sideChat
-          ? [
-              {
-                projectId: session.projectId,
-                parentSessionId: session.id,
-                sideChat: structuredClone(session.runtimeContext.sideChat)
-              }
-            ]
-          : []
+        getPersistedSideChats(session.runtimeContext).map((sideChat) => ({
+          projectId: session.projectId,
+          parentSessionId: session.id,
+          sideChat: structuredClone(sideChat)
+        }))
       ),
       relays: scan.result.sessions.flatMap((session) =>
         session.runtimeContext?.sideChatRelays?.length
@@ -112,15 +109,19 @@ class SessionSideChatPersistenceOwner {
   async saveProjection(command: SaveSideChatProjectionCommand): Promise<PersistedSideChat> {
     const session = await this.loadMutable(command.projectId, command.sessionId)
     const current = session.runtimeContext ?? emptyRuntimeContext()
-    if (current.sideChat && current.sideChat.id !== command.sideChat.id) {
-      throw new Error('A different Side chat already owns this parent Session.')
-    }
+    const chats = [...getPersistedSideChats(current)]
+    const index = chats.findIndex((chat) => chat.id === command.sideChat.id)
+    if (index >= 0) chats[index] = command.sideChat
+    else chats.push(command.sideChat)
     const candidate = sanitizeSessionRuntimeContext({
       ...current,
       revision: current.revision + 1,
-      sideChat: command.sideChat
+      sideChat: chats[0],
+      ...(chats.length > 1 ? { sideChats: chats.slice(1) } : {})
     })
-    const sideChat = candidate?.sideChat
+    const sideChat = getPersistedSideChats(candidate).find(
+      (chat) => chat.id === command.sideChat.id
+    )
     if (!candidate || !sideChat) throw new Error('Side chat projection is not JSON-safe.')
     await this.save(session, candidate)
     return structuredClone(sideChat)
@@ -129,7 +130,7 @@ class SessionSideChatPersistenceOwner {
   async appendRelay(command: AppendSideChatRelayCommand): Promise<void> {
     const session = await this.loadMutable(command.projectId, command.sessionId)
     const current = session.runtimeContext ?? emptyRuntimeContext()
-    const sideChat = this.requireSideChat(current, command.sideChatId, 'relay')
+    this.requireSideChat(current, command.sideChatId, 'relay')
     const relays = current.sideChatRelays ?? []
     if (relays.some((relay) => relay.id === command.relay.id)) {
       throw new Error('Side chat relay identity is already queued.')
@@ -137,7 +138,6 @@ class SessionSideChatPersistenceOwner {
     const candidate = sanitizeSessionRuntimeContext({
       ...current,
       revision: current.revision + 1,
-      sideChat,
       sideChatRelays: [...relays, { ...command.relay, sideChatId: command.sideChatId }]
     })
     if (!candidate?.sideChat || !candidate.sideChatRelays) {
@@ -204,10 +204,16 @@ class SessionSideChatPersistenceOwner {
   async clear(command: ClearSideChatCommand): Promise<boolean> {
     const session = await this.loadMutable(command.projectId, command.sessionId)
     const current = session.runtimeContext ?? emptyRuntimeContext()
-    if (!current.sideChat) return false
-    if (command.sideChatId && current.sideChat.id !== command.sideChatId) return false
+    const chats = getPersistedSideChats(current)
+    const remaining = command.sideChatId
+      ? chats.filter((chat) => chat.id !== command.sideChatId)
+      : []
+    if (chats.length === remaining.length) return false
     const candidate = { ...current, revision: current.revision + 1 }
     delete candidate.sideChat
+    delete candidate.sideChats
+    if (remaining.length) candidate.sideChat = remaining[0]
+    if (remaining.length > 1) candidate.sideChats = remaining.slice(1)
     const runtimeContext = sanitizeSessionRuntimeContext(candidate)
     if (!runtimeContext) throw new Error('Cleared Side chat state is not JSON-safe.')
     await this.save(session, runtimeContext)
@@ -231,10 +237,11 @@ class SessionSideChatPersistenceOwner {
     sideChatId: string,
     operation: string
   ): PersistedSideChat {
-    if (!context.sideChat || context.sideChat.id !== sideChatId) {
+    const chat = getPersistedSideChats(context).find((candidate) => candidate.id === sideChatId)
+    if (!chat) {
       throw new Error(`Side chat ${operation} does not match the durable parent Side chat.`)
     }
-    return context.sideChat
+    return chat
   }
 
   private async save(

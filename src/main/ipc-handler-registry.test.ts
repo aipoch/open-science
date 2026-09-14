@@ -237,6 +237,55 @@ describe('createIpcHandlerRegistry', () => {
     expect(removeHandler).toHaveBeenCalledWith('test:scoped')
   })
 
+  it.each(['uninstall', 'rollback', 'late completion'] as const)(
+    'preserves replacement handlers when a retired scope performs %s',
+    (operation) => {
+      const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
+      const registry = createIpcHandlerRegistry({
+        handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
+          if (nativeHandlers.has(channel)) throw new Error(`Duplicate handler: ${channel}`)
+          nativeHandlers.set(channel, handler)
+        },
+        removeHandler: (channel: string) => nativeHandlers.delete(channel)
+      } as never)
+      const sender = Object.assign(new EventEmitter(), { id: 42 })
+      const oldScope = registry.createInstallationScope()
+      registry.ipcMainHandle('test:scoped', (event) => callerLeaseForEvent(event))
+      const oldLease = nativeHandlers.get('test:scoped')?.({ sender }) as ApplicationCallerLease
+      const oldCleanup = vi.fn()
+      const oldInstallation = operation === 'uninstall' ? oldScope.complete(oldCleanup) : undefined
+
+      registry.dispose()
+      expect(oldLease.signal.aborted).toBe(true)
+
+      const currentScope = registry.createInstallationScope()
+      const currentHandler = vi.fn((event) => callerLeaseForEvent(event))
+      registry.ipcMainHandle('test:scoped', currentHandler)
+      registry.ipcMainHandle('test:replacement-only', () => 'current')
+      const currentCleanup = vi.fn()
+      const currentInstallation = currentScope.complete(currentCleanup)
+      const currentLease = nativeHandlers.get('test:scoped')?.({ sender }) as ApplicationCallerLease
+
+      if (operation === 'uninstall') oldInstallation!.uninstall()
+      else if (operation === 'rollback') oldScope.rollback()
+      else oldScope.complete(oldCleanup).uninstall()
+
+      expect(nativeHandlers.get('test:scoped')?.({ sender })).toBe(currentLease)
+      expect(nativeHandlers.get('test:replacement-only')?.({ sender })).toBe('current')
+      expect(currentHandler).toHaveBeenCalledTimes(2)
+      expect(currentLease.isCurrent()).toBe(true)
+      expect(oldCleanup).toHaveBeenCalledTimes(operation === 'rollback' ? 0 : 1)
+      expect(currentCleanup).not.toHaveBeenCalled()
+
+      currentInstallation.uninstall()
+      currentInstallation.uninstall()
+      expect(nativeHandlers.size).toBe(0)
+      expect(currentCleanup).toHaveBeenCalledOnce()
+      registry.dispose()
+      expect(currentLease.signal.aborted).toBe(true)
+    }
+  )
+
   it('rolls back handlers registered before an installation failure', () => {
     const removeHandler = vi.fn()
     const registry = createIpcHandlerRegistry({ handle: vi.fn(), removeHandler } as never)
@@ -246,6 +295,23 @@ describe('createIpcHandlerRegistry', () => {
     scope.rollback()
 
     expect(removeHandler).toHaveBeenCalledWith('test:partial')
+  })
+
+  it('still uninstalls its own epoch after registry removal fails without replacement', () => {
+    const failure = new Error('native removal failed')
+    const removeHandler = vi.fn().mockImplementationOnce(() => {
+      throw failure
+    })
+    const registry = createIpcHandlerRegistry({ handle: vi.fn(), removeHandler } as never)
+    const scope = registry.createInstallationScope()
+    registry.ipcMainHandle('test:first', vi.fn())
+    registry.ipcMainHandle('test:second', vi.fn())
+    const installation = scope.complete()
+
+    expect(() => registry.dispose()).toThrow(failure)
+    installation.uninstall()
+
+    expect(removeHandler.mock.calls).toEqual([['test:first'], ['test:first'], ['test:second']])
   })
 
   it('removes all registered handlers when the registry is disposed', () => {

@@ -57,10 +57,9 @@ function escapeXmlAttr(value: string): string {
     .replace(/>/g, '&gt;')
 }
 
-// Filter values may be a string, a number, a bool (BioMart's own only/excluded convention), or an
-// array (joined with commas) — mirrors upstream biomart_query.client.build_query_xml.
+// Value filters accept strings, numbers, or arrays (joined with commas). Boolean filters use
+// a separate `excluded` XML attribute, not a value of "only" or "excluded".
 function filterValue(value: unknown): string {
-  if (typeof value === 'boolean') return value ? 'only' : 'excluded'
   if (Array.isArray(value)) return value.map(String).join(',')
   return String(value)
 }
@@ -73,10 +72,13 @@ function buildQueryXml(
   filters: Record<string, unknown>
 ): string {
   const filterXml = Object.entries(filters)
-    .map(
-      ([name, value]) =>
-        `<Filter name="${escapeXmlAttr(name)}" value="${escapeXmlAttr(filterValue(value))}" />`
-    )
+    .map(([name, value]) => {
+      const attribute =
+        typeof value === 'boolean'
+          ? `excluded="${value ? '0' : '1'}"`
+          : `value="${escapeXmlAttr(filterValue(value))}"`
+      return `<Filter name="${escapeXmlAttr(name)}" ${attribute} />`
+    })
     .join('')
   const attrXml = attributes.map((a) => `<Attribute name="${escapeXmlAttr(a)}" />`).join('')
   return (

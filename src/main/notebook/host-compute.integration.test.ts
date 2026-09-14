@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { listenForLocalRpc } from '../local-rpc-transport'
 import { NotebookKernelExecutor } from './kernel-executor'
+import { ComputeRemoteOperationOwner } from '../compute/compute-remote-operation-owner'
 
 // host.compute lives ONLY in the control-plane repl kernel (a Node process), reached via the same
 // loopback computeCall RPC as host.mcp. Node is always available under vitest, so the sole gate is
@@ -49,7 +50,11 @@ const startStub = async (
     dropFirstListHostsBody?: boolean
     dropFirstSubmitResponse?: boolean
     dropFirstSubmitBody?: boolean
+    dropAllSubmitResponses?: boolean
+    omitSubmitReceipt?: boolean
     rejectSubmit?: boolean
+    structuredSubmitRejection?: boolean
+    commandError?: string
   } = {}
 ): Promise<{
   endpoint: string
@@ -67,6 +72,10 @@ const startStub = async (
       const request = body ? JSON.parse(body) : {}
       requests.push(request)
       const op = request.params?.op
+      if (op === 'call_command' && options.commandError) {
+        res.writeHead(400).end(JSON.stringify({ error: options.commandError }))
+        return
+      }
       if (op === 'list_hosts' && options.dropFirstListHostsBody && !droppedFirstSubmitResponse) {
         droppedFirstSubmitResponse = true
         const responseBody = JSON.stringify({
@@ -79,6 +88,14 @@ const startStub = async (
         res.flushHeaders()
         res.write(responseBody.slice(0, -1))
         setImmediate(() => res.destroy())
+        return
+      }
+      if (op === 'submit_job' && options.dropAllSubmitResponses) {
+        res.destroy()
+        return
+      }
+      if (op === 'submit_job' && options.omitSubmitReceipt) {
+        res.writeHead(200).end(JSON.stringify({ result: {} }))
         return
       }
       if (op === 'submit_job' && options.dropFirstSubmitResponse && !droppedFirstSubmitResponse) {
@@ -101,9 +118,17 @@ const startStub = async (
         return
       }
       if (op === 'submit_job' && options.rejectSubmit) {
-        res
-          .writeHead(409, { 'content-type': 'application/json' })
-          .end(JSON.stringify({ error: 'submission rejected' }))
+        res.writeHead(409, { 'content-type': 'application/json' }).end(
+          JSON.stringify({
+            error: options.structuredSubmitRejection
+              ? JSON.stringify({
+                  error_code: 'approval_denied',
+                  message: 'Submission was not approved; retry after approval.',
+                  retry_after_user_action: true
+                })
+              : 'submission rejected'
+          })
+        )
         return
       }
       const result =
@@ -149,6 +174,56 @@ const baseRequest = (
 })
 
 gate('repl kernel host.compute', () => {
+  it.each(['caught', 'uncaught'])(
+    'delivers real callCommand timeout execution uncertainty through %s REPL errors',
+    async (mode) => {
+      const owner = new ComputeRemoteOperationOwner(
+        {
+          acquire: async () => ({
+            run: async () => ({
+              exitCode: null,
+              stdout: '',
+              stderr: '',
+              timedOut: true,
+              truncated: false
+            })
+          })
+        } as never,
+        {
+          get: async () => ({ id: 'host-1', providerId: 'ssh:x', displayName: 'Test host' })
+        } as never,
+        { request: async () => 'once' } as never
+      )
+      const failure = await owner
+        .callCommand('ssh:x', 'write-output', 'test', true, 1)
+        .catch((error) => error)
+      const stub = await startStub({ commandError: JSON.stringify(failure.computeCallError) })
+      const exec = makeExecutor()
+      try {
+        const call = "await host.compute.create('ssh:x').callCommand('write-output', 'test')"
+        const result = await exec.execute(
+          baseRequest({
+            code:
+              mode === 'caught'
+                ? `try { ${call} } catch (error) { console.log(JSON.stringify({ message: error.message, retry: error.retry_after_user_action })) }`
+                : call,
+            mcpRpcEndpoint: stub.endpoint,
+            mcpRpcToken: 'tok'
+          })
+        )
+        const visible = mode === 'caught' ? JSON.parse(result.stdout).message : result.traceback
+        expect(visible).toContain('side effects are unconfirmed')
+        expect(visible).toContain('No Job receipt exists')
+        expect(visible).toContain('retry only if repeating the command is safe')
+        expect(result.status).toBe(mode === 'caught' ? 'completed' : 'failed')
+        if (mode === 'caught') expect(JSON.parse(result.stdout).retry).toBe(false)
+      } finally {
+        await exec.shutdown()
+        stub.close()
+      }
+    }
+  )
+
   it('keeps the kernel alive when a pipe listHosts response is interrupted', async () => {
     const stub = await startStub({ transport: 'pipe', dropFirstListHostsBody: true })
     if (!stub.socketPath) throw new Error('Expected pipe transport.')
@@ -374,6 +449,76 @@ gate('repl kernel host.compute', () => {
     expect(submissions).toHaveLength(2)
     expect(submissions[0]?.invocation_id).toEqual(expect.any(String))
     expect(submissions[1]?.invocation_id).toBe(submissions[0]?.invocation_id)
+  })
+
+  it.each(['dropAllSubmitResponses', 'omitSubmitReceipt', 'dropThenReject'] as const)(
+    'reports unknown submission after the same invocation cannot recover a receipt: %s',
+    async (failure) => {
+      const stub = await startStub(
+        failure === 'dropThenReject'
+          ? { dropFirstSubmitResponse: true, rejectSubmit: true }
+          : { [failure]: true }
+      )
+      const exec = makeExecutor()
+      try {
+        const result = await exec.execute(
+          baseRequest({
+            code: "await host.compute.create('ssh:x').submitJob('analyze', 'run')",
+            mcpRpcEndpoint: stub.endpoint,
+            mcpRpcToken: 'tok',
+            sessionId: 'session-7',
+            projectId: 'proj-x'
+          })
+        )
+        expect(result.status).toBe('failed')
+        expect(JSON.stringify(result)).toContain('submission outcome is unknown')
+        expect(JSON.stringify(result)).toContain('Do not submit the same work again')
+        const submissions = stub.received().filter((request) => request.params?.op === 'submit_job')
+        expect(submissions).toHaveLength(2)
+        expect(submissions[0].params?.invocation_id).toEqual(expect.any(String))
+        expect(submissions[1].params?.invocation_id).toBe(submissions[0].params?.invocation_id)
+      } finally {
+        await exec.shutdown()
+        stub.close()
+      }
+    }
+  )
+
+  it('preserves unknown outcome and stop guidance when a replay rejection is caught', async () => {
+    const stub = await startStub({
+      dropFirstSubmitResponse: true,
+      rejectSubmit: true,
+      structuredSubmitRejection: true
+    })
+    const exec = makeExecutor()
+    try {
+      const result = await exec.execute(
+        baseRequest({
+          code: `try {
+            await host.compute.create('ssh:x').submitJob('analyze', 'run')
+          } catch (error) {
+            console.log(JSON.stringify({ message: error.message, code: error.error_code, retry: error.retry_after_user_action }))
+          }`,
+          mcpRpcEndpoint: stub.endpoint,
+          mcpRpcToken: 'tok',
+          sessionId: 'session-caught',
+          projectId: 'proj-x'
+        })
+      )
+      expect(result.status).toBe('completed')
+      const caught = JSON.parse(result.stdout)
+      expect(caught.message).toContain('submission outcome is unknown')
+      expect(caught.message).toContain('Do not submit the same work again')
+      expect(caught.code).toBe('approval_denied')
+      expect(caught.message).not.toContain('retry after approval')
+      expect(caught.retry).toBe(false)
+      const submissions = stub.received().filter((request) => request.params?.op === 'submit_job')
+      expect(submissions).toHaveLength(2)
+      expect(submissions[1].params?.invocation_id).toBe(submissions[0].params?.invocation_id)
+    } finally {
+      await exec.shutdown()
+      stub.close()
+    }
   })
 
   it('does not retry submitJob HTTP errors', async () => {

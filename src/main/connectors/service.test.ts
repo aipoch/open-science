@@ -1756,6 +1756,109 @@ describe('ConnectorService', () => {
       expect(onCustomServerAvailabilityChanged).toHaveBeenCalledWith('oauth-1', 'unauthenticated')
     })
 
+    it.each([
+      { transport: 'stdio' as const, command: '' },
+      { transport: 'stdio' as const, command: '  ' },
+      { transport: 'streamable_http' as const, url: '' }
+    ])('explains incomplete configuration before external discovery: %j', async (endpoint) => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call, ['lookup'])
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'incomplete',
+              name: 'incomplete',
+              displayName: 'Incomplete',
+              enabled: true,
+              ...endpoint
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+      await expect(svc.call('incomplete', 'lookup', {}, internal)).rejects.toThrow(
+        'set the command or URL'
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
+    it('preserves identifiers and tail outcomes while redacting credentials and marking truncation', async () => {
+      const call = vi
+        .fn()
+        .mockRejectedValue(
+          new McpToolCallError(
+            `Job 123 submitted. RAW_ENV_SECRET RAW_HEADER_SECRET ${'detail '.repeat(500)}Job 123 outcome unconfirmed; do not resubmit.`
+          )
+        )
+      const svc = new ConnectorService({
+        mcpClientManager: manager(call, ['lookup']),
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'bounded',
+              name: 'bounded',
+              displayName: 'Bounded',
+              transport: 'stdio',
+              command: 'example-mcp',
+              enabled: true,
+              env: { DEBUG: '1', API_KEY: 'RAW_ENV_SECRET' },
+              headers: { 'X-API-Key': 'RAW_HEADER_SECRET', 'X-Version': '2' }
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+      const error = await svc.call('bounded', 'lookup', {}, internal).catch((error) => error)
+      if (!(error instanceof Error)) throw new Error('Expected a Connector failure')
+      expect(error.message).toContain('Job 123 submitted')
+      expect(error.message).toContain('Job 123 outcome unconfirmed; do not resubmit')
+      expect(error.message).toContain('[diagnostic truncated]')
+      expect(error.message).not.toContain('RAW_ENV_SECRET')
+      expect(error.message).not.toContain('RAW_HEADER_SECRET')
+      expect(error.message.length).toBeLessThan(2200)
+    })
+
+    it('retains a business diagnosis without declaring authentication failure or a disconnect', async () => {
+      const call = vi
+        .fn()
+        .mockRejectedValueOnce(
+          new McpToolCallError('403 Forbidden: resource outside allowed collection.')
+        )
+        .mockResolvedValueOnce({ ok: true })
+      const svc = new ConnectorService({
+        mcpClientManager: manager(call, ['lookup']),
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'business',
+              name: 'business',
+              displayName: 'Business',
+              transport: 'stdio',
+              command: 'business-mcp',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+      const error = await svc.call('business', 'lookup', {}, internal).catch((error) => error)
+      if (!(error instanceof Error)) throw new Error('Expected Connector tool failure')
+      expect(error.message).toContain('connector_tool_error')
+      expect(error.message).toContain('resource outside allowed collection')
+      expect(error.message).not.toContain('connector_unauthenticated')
+      expect(error.message).not.toContain('unavailable')
+      await expect(svc.call('business', 'lookup', {}, internal)).resolves.toEqual({ ok: true })
+    })
+
     it('keeps a connector-managed authentication tool reachable after a sign-in error', async () => {
       const call = vi
         .fn()
@@ -1781,7 +1884,7 @@ describe('ConnectorService', () => {
       })
 
       await expect(svc.call('content-service', 'status', {}, internal)).rejects.toThrow(
-        'connector_unauthenticated'
+        'this Connector’s loaded Skill'
       )
       await expect(svc.call('content-service', 'login', {}, internal)).resolves.toEqual({
         authenticated: true

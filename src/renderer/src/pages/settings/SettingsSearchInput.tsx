@@ -1,6 +1,8 @@
-import { Search } from 'lucide-react'
-import { useRef, type ComponentProps } from 'react'
+import { Search, X } from 'lucide-react'
+import { useRef, useState, type ChangeEvent, type ComponentProps } from 'react'
+import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 
@@ -11,16 +13,45 @@ import {
 
 type SettingsSearchInputProps = Omit<ComponentProps<typeof Input>, 'ref' | 'type'> & {
   containerClassName?: string
+  // ⌘K priority within the same topmost dialog; the dialog-wide settings search passes a higher
+  // value so panel-scoped fields that mounted later do not capture the shortcut.
+  shortcutPriority?: number
 }
 
 export const SettingsSearchInput = ({
   className,
   containerClassName,
+  shortcutPriority,
+  value,
+  defaultValue,
+  onChange,
   ...props
 }: SettingsSearchInputProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
   const isMac = window.api?.platform === 'darwin'
-  useSettingsSearchShortcut(inputRef)
+  useSettingsSearchShortcut(inputRef, true, shortcutPriority ?? 0)
+  const [uncontrolledText, setUncontrolledText] = useState(
+    typeof defaultValue === 'string' ? defaultValue : ''
+  )
+  const hasText = value !== undefined ? String(value).length > 0 : uncontrolledText.length > 0
+
+  const handleChange = (event: ChangeEvent<HTMLInputElement>): void => {
+    setUncontrolledText(event.target.value)
+    onChange?.(event)
+  }
+
+  const clearQuery = (): void => {
+    const input = inputRef.current
+    if (!input) return
+    // Route the clear through a real input event so controlled and uncontrolled parents both see
+    // a normal change, then keep focus in the field for continued typing.
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, '')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    setUncontrolledText('')
+    input.focus()
+  }
 
   return (
     <div className={cn('group relative flex-1', containerClassName)}>
@@ -34,8 +65,16 @@ export const SettingsSearchInput = ({
         type="search"
         // Keep :placeholder-shown available even when callers omit placeholder copy.
         placeholder={props.placeholder || ' '}
+        value={value}
+        defaultValue={defaultValue}
+        onChange={handleChange}
         aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
-        className={cn('peer pl-8 pr-2.5 [&:placeholder-shown:not(:focus)]:pr-20', className)}
+        className={cn(
+          'peer pl-8 pr-2.5 [&::-webkit-search-cancel-button]:hidden [&:placeholder-shown:not(:focus)]:pr-20',
+          // The clear button needs more room than the text-only padding once the field has text.
+          hasText && 'pr-8!',
+          className
+        )}
       />
       <span
         aria-hidden="true"
@@ -48,6 +87,21 @@ export const SettingsSearchInput = ({
           K
         </kbd>
       </span>
+      {hasText ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          data-slot="settings-search-clear"
+          aria-label={t('Clear search')}
+          title={t('Clear search')}
+          className="absolute inset-y-0 right-1.5 my-auto text-muted-foreground hover:text-foreground"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={clearQuery}
+        >
+          <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
+        </Button>
+      ) : null}
     </div>
   )
 }
