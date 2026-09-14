@@ -5,7 +5,10 @@ import type {
   ModelReasoningEffort
 } from '../../shared/reasoning-effort'
 import { resolveChatReasoningTransport } from './reasoning-transport'
-import type { ResponsesBridgeNamespacedTool } from './responses-protocol-types'
+import type {
+  ResponsesBridgeNamespacedTool,
+  ResponsesReplyReasoning
+} from './responses-protocol-types'
 
 // Responses and Chat Completions payloads are open-ended at this protocol seam. The adapter validates
 // the supported subset before producing an upstream request.
@@ -168,7 +171,7 @@ const chatToolName = (
 
 export const inputToMessages = (
   body: JsonObject,
-  reasoningByCallId?: Map<string, string>,
+  reasoningByItemId?: ReadonlyMap<string, ResponsesReplyReasoning>,
   namespacedTools: readonly ResponsesBridgeNamespacedTool[] = []
 ): JsonObject[] => {
   const messages: JsonObject[] = []
@@ -183,22 +186,17 @@ export const inputToMessages = (
   if (!Array.isArray(input)) return messages
 
   const droppedItemTypes = new Set<string>()
-  let pendingToolCalls: JsonObject[] = []
+  let pendingAssistant: JsonObject | undefined
   let pendingToolImages: JsonObject[] = []
   const flushToolImages = (): void => {
     if (pendingToolImages.length === 0) return
     messages.push({ role: 'user', content: pendingToolImages })
     pendingToolImages = []
   }
-  let pendingReasoning: string | undefined
-  const flushToolCalls = (): void => {
-    if (pendingToolCalls.length === 0) return
-    messages.push({
-      role: 'assistant',
-      ...(pendingReasoning ? { reasoning_content: pendingReasoning } : {}),
-      tool_calls: pendingToolCalls
-    })
-    pendingToolCalls = []
+  let pendingReasoning: ResponsesReplyReasoning | undefined
+  const flushAssistant = (): void => {
+    if (pendingAssistant) messages.push(pendingAssistant)
+    pendingAssistant = undefined
     pendingReasoning = undefined
   }
 
@@ -207,23 +205,44 @@ export const inputToMessages = (
     if (item.type === 'function_call') {
       flushToolImages()
       const callId = item.call_id ?? item.id
-      const reasoning = reasoningByCallId?.get(String(callId))
-      if (reasoning && !pendingReasoning) pendingReasoning = reasoning
-      pendingToolCalls.push({
+      const reasoning = reasoningByItemId?.get(JSON.stringify(['function_call', String(callId)]))
+      if (pendingReasoning !== reasoning) flushAssistant()
+      pendingReasoning = reasoning
+      pendingAssistant ??= {
+        role: 'assistant',
+        ...(reasoning ? { reasoning_content: reasoning.text } : {})
+      }
+      pendingAssistant.tool_calls ??= []
+      pendingAssistant.tool_calls.push({
         id: callId,
         type: 'function',
         function: { name: chatToolName(item, namespacedTools), arguments: item.arguments ?? '{}' }
       })
     } else if (item.type === 'message') {
-      flushToolCalls()
-      flushToolImages()
       const role = item.role === 'developer' ? 'system' : (item.role ?? 'user')
       if (!['system', 'user', 'assistant'].includes(role)) {
         throw new Error(`Unsupported Responses message role: ${String(item.role)}`)
       }
-      messages.push({ role, content: textFromContent(item.content) })
+      const reasoning =
+        role === 'assistant' && typeof item.id === 'string'
+          ? reasoningByItemId?.get(JSON.stringify(['message', item.id]))
+          : undefined
+      // Responses can emit text before or after tools. Merge only items from the same cached reply;
+      // never attach a neighbouring reply's reasoning to an uncached or independently sourced item.
+      if (!reasoning || pendingReasoning !== reasoning || pendingAssistant?.content !== undefined) {
+        flushAssistant()
+      }
+      flushToolImages()
+      const content = textFromContent(item.content)
+      if (reasoning) {
+        pendingReasoning = reasoning
+        pendingAssistant ??= { role, reasoning_content: reasoning.text }
+        pendingAssistant.content = content
+      } else {
+        messages.push({ role, content })
+      }
     } else if (item.type === 'function_call_output') {
-      flushToolCalls()
+      flushAssistant()
       const content = Array.isArray(item.output) ? textFromContent(item.output) : item.output
       messages.push({
         role: 'tool',
@@ -253,7 +272,7 @@ export const inputToMessages = (
       throw new Error(`Unsupported Responses input item: ${String(item.type)}`)
     }
   }
-  flushToolCalls()
+  flushAssistant()
   flushToolImages()
 
   if (droppedItemTypes.size > 0) {
@@ -366,7 +385,7 @@ const toolChoiceToChat = (toolChoice: unknown): unknown => {
 export const responsesToChatRequest = (
   body: JsonObject,
   upstreamModel?: string,
-  reasoningByCallId?: Map<string, string>,
+  reasoningByItemId?: ReadonlyMap<string, ResponsesReplyReasoning>,
   namespacedTools: readonly ResponsesBridgeNamespacedTool[] = [],
   options?: ResponsesRequestAdapterOptions
 ): JsonObject => {
@@ -446,7 +465,7 @@ export const responsesToChatRequest = (
 
   return {
     model: upstreamModel ?? body.model,
-    messages: inputToMessages(body, reasoningByCallId, namespacedTools),
+    messages: inputToMessages(body, reasoningByItemId, namespacedTools),
     ...(hasTools ? { tools } : {}),
     ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
     ...(!hasTools || body.parallel_tool_calls === undefined

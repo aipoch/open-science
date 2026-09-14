@@ -323,7 +323,9 @@ describe('Responses-compatible bridge conversion', () => {
   })
 
   it('re-attaches cached reasoning to a replayed assistant tool-call for thinking-mode providers', () => {
-    const reasoningByCallId = new Map([['call-1', 'let me look that up']])
+    const reasoningByCallId = new Map([
+      [JSON.stringify(['function_call', 'call-1']), { text: 'let me look that up' }]
+    ])
     expect(
       inputToMessages(
         {
@@ -1587,7 +1589,7 @@ describe('Responses-compatible bridge conversion', () => {
         callIds: string[]
       ) => void
       reconcileReasoningForRequest: (promptCacheKey: string | undefined, input: unknown) => void
-      reasoningByPromptCacheKey: Map<string, Map<string, string>>
+      reasoningByPromptCacheKey: Map<string, Map<string, { text: string }>>
       reasoningCacheEntryCount: number
       reasoningCacheCharacterCount: number
     }
@@ -1635,7 +1637,7 @@ describe('Responses-compatible bridge conversion', () => {
       { type: 'function_call', call_id: 'retained-call' }
     ])
     expect(reconciled.reasoningByPromptCacheKey.get('session-a')).toEqual(
-      new Map([['retained-call', 'aaa']])
+      new Map([[JSON.stringify(['function_call', 'retained-call']), { text: 'aaa' }]])
     )
     expect(reconciled.reasoningCacheEntryCount).toBe(1)
     expect(reconciled.reasoningCacheCharacterCount).toBe(3)
@@ -2006,13 +2008,16 @@ describe('Responses-compatible bridge conversion', () => {
     const bridge = new ResponsesBridge({ baseUrl: 'https://a.example/v1', model: 'm1', key: 'k1' })
     const cache = (
       bridge as unknown as {
-        reasoningByPromptCacheKey: Map<string, Map<string, string>>
+        reasoningByPromptCacheKey: Map<string, Map<string, { text: string }>>
       }
     ).reasoningByPromptCacheKey
-    cache.set('session-1', new Map([['call-1', 'thinking']]))
+    cache.set(
+      'session-1',
+      new Map([[JSON.stringify(['function_call', 'call-1']), { text: 'thinking' }]])
+    )
     // Same target (e.g. a skill-reload reconnect): cache is preserved so a resumed thinking session works.
     bridge.setTarget({ baseUrl: 'https://a.example/v1', model: 'm1', key: 'k1' })
-    expect(cache.get('session-1')?.has('call-1')).toBe(true)
+    expect(cache.get('session-1')?.has(JSON.stringify(['function_call', 'call-1']))).toBe(true)
     // Real provider switch: cache is cleared so stale reasoning can't leak across providers.
     bridge.setTarget({ baseUrl: 'https://b.example/v1', model: 'm2', key: 'k2' })
     expect(cache.size).toBe(0)
