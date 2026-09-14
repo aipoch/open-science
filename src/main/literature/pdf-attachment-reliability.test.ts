@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 import { createHash } from 'node:crypto'
 import { parseLiteratureDeletionError } from '../../shared/literature-deletion'
 import { transactLiterature } from './transact'
@@ -84,6 +85,7 @@ describe('Literature PDF attachment reliability', () => {
     coordinator: SessionPersistenceCoordinator
   }> => {
     root = await mkdtemp(join(tmpdir(), 'literature-pdf-reliability-'))
+    initDataRoot(root)
     client = createProjectDbClient(root)
     await migrateApplicationDatabase(client)
     const content = new ContentRepository({ storageRoot: root, getClient: async () => client! })

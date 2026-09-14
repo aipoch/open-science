@@ -325,7 +325,7 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
         <SettingsLoadNotice
           state={loadState}
           loadingLabel={t('Loading Connectors…')}
-          errorMessage={t('Open Science could not load Connectors.')}
+          errorMessage={t('Open-Science could not load Connectors.')}
           onRetry={() => {
             setLoadState('loading')
             setLoadAttempt((value) => value + 1)

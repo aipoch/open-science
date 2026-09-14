@@ -639,7 +639,7 @@ describe('OnboardingWizard flow', () => {
 
     expect(currentSection('Choose data location')).not.toBeNull()
     expect(container.textContent).toContain('/mnt/data/OpenScience')
-    expect(container.textContent).toContain('Open Science will restart to set this up')
+    expect(container.textContent).toContain('Open-Science will restart to set this up')
   })
 
   it('initializes (detects) the env store on mount without auto-provisioning python', async () => {
@@ -744,7 +744,7 @@ it('regression: step changes move focus to the new heading', async () => {
   })
   await clickButton(/^continue$/i)
   expect(currentSection('Choose data location')).not.toBeNull()
-  expect(document.activeElement?.textContent).toBe('Where should Open Science store your data?')
+  expect(document.activeElement?.textContent).toBe('Where should Open-Science store your data?')
   expect(document.activeElement?.tagName).toBe('H2')
   act(() => {
     findButton(/^back$/i)!.focus()
@@ -762,7 +762,7 @@ it('regression: every setup step exposes and focuses its own level-two heading',
     expect(document.activeElement?.textContent).toBe(title)
   }
   await clickButton(/^continue$/i)
-  expectHeading('Where should Open Science store your data?')
+  expectHeading('Where should Open-Science store your data?')
   await clickButton(/^continue$/i)
   expectHeading('Set up the agent runtime')
   await clickButton(/^continue$/i)
@@ -773,7 +773,7 @@ it('regression: every setup step exposes and focuses its own level-two heading',
   for (const title of [
     'Connect a model',
     'Set up the agent runtime',
-    'Where should Open Science store your data?',
+    'Where should Open-Science store your data?',
     'Prepare environment'
   ]) {
     await clickButton(/^back$/i)

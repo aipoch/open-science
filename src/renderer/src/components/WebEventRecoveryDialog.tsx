@@ -48,22 +48,22 @@ const WebEventRecoveryDialog = ({
   const title = authorizationRequired
     ? t('Pairing required')
     : phase === 'connecting'
-      ? t('Connecting to Open Science')
+      ? t('Connecting to Open-Science')
       : phase === 'reconnecting'
-        ? t('Reconnecting to Open Science')
+        ? t('Reconnecting to Open-Science')
         : phase === 'replaying'
           ? t('Restoring missed updates')
           : t('Reload required')
   const description = authorizationRequired
     ? t(
-        'Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.'
+        'Access authorization has expired. Reopen the Web link from Open-Science on the host computer, or return to the remote access entry page to pair again.'
       )
     : reloadRequired
       ? t(
-          'Open Science could not restore a complete, current view. Reload this page to reconnect safely.'
+          'Open-Science could not restore a complete, current view. Reload this page to reconnect safely.'
         )
       : t(
-          'Controls are paused while Open Science restores updates that may have arrived during the interruption.'
+          'Controls are paused while Open-Science restores updates that may have arrived during the interruption.'
         )
 
   return (

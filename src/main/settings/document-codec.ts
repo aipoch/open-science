@@ -336,6 +336,7 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
 
   // Keep absolute paths canonical without stripping a filesystem root on any supported platform.
   const dataRoot = asString(value.dataRoot)?.trim()
+  if (value.dataRootIsInitialDefault === true) settings.dataRootIsInitialDefault = true
   if (dataRoot && isAbsolute(dataRoot)) {
     const normalized = normalize(dataRoot)
     const { root } = parse(normalized)

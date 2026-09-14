@@ -67,7 +67,7 @@ describe('parseSha256Sums', () => {
 
 describe('extractHighlights', () => {
   const body = [
-    '# Open Science v0.2.0',
+    '# Open-Science v0.2.0',
     '',
     '> one-line tagline',
     '',

@@ -17,10 +17,10 @@ describe('Windows updater certification', () => {
   it('redacts packaged app tokens before output reaches CI diagnostics', () => {
     expect(
       redactPackagedAppOutput(
-        'Open Science Web: http://127.0.0.1:4321/?token=secret-token\nnext?mode=test&token=other'
+        'Open-Science Web: http://127.0.0.1:4321/?token=secret-token\nnext?mode=test&token=other'
       )
     ).toBe(
-      'Open Science Web: http://127.0.0.1:4321/?token=<redacted>\nnext?mode=test&token=<redacted>'
+      'Open-Science Web: http://127.0.0.1:4321/?token=<redacted>\nnext?mode=test&token=<redacted>'
     )
   })
 

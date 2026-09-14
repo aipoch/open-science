@@ -30,9 +30,9 @@ import { assertReviewSubmissionWithinLimits } from './submission-limits'
 import { decodeReviewScope, decodeReviewLog, requireReviewScope } from './review-json'
 
 const REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE =
-  'Review was interrupted because Open Science exited before it completed.'
+  'Review was interrupted because Open-Science exited before it completed.'
 const FIX_LOOP_INTERRUPTED_ON_STARTUP_MESSAGE =
-  'Fix Loop was interrupted because Open Science exited before it completed.'
+  'Fix Loop was interrupted because Open-Science exited before it completed.'
 
 // Legacy alias for callers still using FindingSeverity (now CheckStatus).
 type FindingSeverity = CheckStatus

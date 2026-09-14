@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 import { afterEach, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
@@ -68,6 +69,7 @@ it.each(['menu', 'drop', 'open'] as const)(
   'retries the original %s package and destination without reopening either picker',
   async (entry) => {
     const fixture = await createProvenanceTestFixture()
+    initDataRoot(fixture.storageRoot)
     fixtures.push(fixture)
     await fixture.client.project.create({ data: { id: 'source', name: 'Source' } })
     await fixture.client.project.create({ data: { id: 'target', name: 'Target' } })
@@ -155,6 +157,7 @@ it.each(['menu', 'drop', 'open'] as const)(
 
 it('keeps a missing original retryable and lets the user deliberately choose another package', async () => {
   const fixture = await createProvenanceTestFixture()
+  initDataRoot(fixture.storageRoot)
   fixtures.push(fixture)
   await fixture.client.project.create({ data: { id: 'target', name: 'Target' } })
   const service = new SessionPackageService({
@@ -226,6 +229,7 @@ it('validates dropped package commands without expanding the destination model',
 
 it('imports a dropped package into its Project without a picker or destination prompt', async () => {
   const fixture = await createProvenanceTestFixture()
+  initDataRoot(fixture.storageRoot)
   fixtures.push(fixture)
   await fixture.client.project.create({ data: { id: 'source', name: 'Source' } })
   await fixture.client.project.create({ data: { id: 'target', name: 'Target' } })
@@ -294,6 +298,7 @@ it.each([
   'closes the active $kind file before releasing the Session on $failure',
   async ({ kind, failure }) => {
     const fixture = await createProvenanceTestFixture()
+    initDataRoot(fixture.storageRoot)
     fixtures.push(fixture)
     await fixture.client.project.create({ data: { id: 'source', name: 'Cancellation' } })
     await new SessionRepository(fixture.storageRoot).saveSession({
@@ -428,6 +433,7 @@ it.each([
 
 it('keeps the import confirmation short and offers every omitted item on demand', async () => {
   const fixture = await createProvenanceTestFixture()
+  initDataRoot(fixture.storageRoot)
   fixtures.push(fixture)
   await fixture.client.project.create({ data: { id: 'source', name: 'Source' } })
   await new SessionRepository(fixture.storageRoot).saveSession({
@@ -481,6 +487,7 @@ it('keeps the import confirmation short and offers every omitted item on demand'
 
 it('rejects an import snapshot before reading the archive when temporary space is insufficient', async () => {
   const fixture = await createProvenanceTestFixture()
+  initDataRoot(fixture.storageRoot)
   fixtures.push(fixture)
   const archive = join(fixture.storageRoot, 'source.science')
   await writeFile(archive, 'Archive bytes must not be read')
@@ -516,6 +523,7 @@ it.each(['insufficient', 'exact', 'unavailable'] as const)(
   'checks the chosen export volume after the save picker with %s capacity',
   async (capacityResult) => {
     const fixture = await createProvenanceTestFixture()
+    initDataRoot(fixture.storageRoot)
     fixtures.push(fixture)
     await fixture.client.project.create({ data: { id: 'project-1', name: 'Capacity' } })
     await new SessionRepository(fixture.storageRoot).saveSession({
@@ -603,7 +611,9 @@ it.each([
   { kind: 'import', phase: 'importing', failure: 'ENOSPC' }
 ] as const)('cleans a partial $kind $phase write on $failure', async ({ kind, phase, failure }) => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(source, target)
   await source.client.project.create({ data: { id: 'project-1', name: 'Write failure' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -730,7 +740,9 @@ it.each([false, true])(
   'imports reviewed bytes and retains the destination (existing: %s)',
   async (existing) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
     fixtures.push(source, target)
     await source.client.project.create({ data: { id: 'project-1', name: 'Reviewed research' } })
     await new SessionRepository(source.storageRoot).saveSession({
@@ -797,6 +809,7 @@ it.each([false, true])(
 
 it('does not publish a project when the native file picker is cancelled', async () => {
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(target)
   vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: true, filePaths: [] })
   const afterImport = vi.fn(async () => undefined)
@@ -817,6 +830,7 @@ it('does not publish a project when the native file picker is cancelled', async 
 
 it('stops waiting for a native picker on shutdown and rejects later import admission', async () => {
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(target)
   vi.mocked(dialog.showOpenDialog).mockReturnValue(new Promise(() => undefined))
   const afterImport = vi.fn(async () => undefined)
@@ -871,6 +885,7 @@ it.each(['invalid', 'cancelled', 'rolled-back'] as const)(
   'retains cleanup retry after a failed or cancelled import (%s) without replacing its outcome',
   async (outcome) => {
     const fixture = await createProvenanceTestFixture()
+    initDataRoot(fixture.storageRoot)
     fixtures.push(fixture)
     await fixture.client.project.create({ data: { id: 'source', name: 'Research' } })
     await new SessionRepository(fixture.storageRoot).saveSession({
@@ -964,6 +979,7 @@ it.each(['import', 'dialog'] as const)(
   'keeps an imported Session successful when %s staging cleanup fails',
   async (scope) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     fixtures.push(source)
     await source.client.project.create({ data: { id: 'source', name: 'Research' } })
     await new SessionRepository(source.storageRoot).saveSession({
@@ -1030,6 +1046,7 @@ it.each(['none', 'dialog', 'export'] as const)(
   'reports the saved result despite %s cleanup failure',
   async (cleanupScope) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     fixtures.push(source)
     await source.client.project.create({ data: { id: 'project-1', name: 'Saved research' } })
     await new SessionRepository(source.storageRoot).saveSession({
@@ -1125,6 +1142,7 @@ it.each(['none', 'dialog', 'export'] as const)(
 
 it('confirms a selected import in the operation window without a native message box', async () => {
   const fixture = await createProvenanceTestFixture()
+  initDataRoot(fixture.storageRoot)
   fixtures.push(fixture)
   const input = join(fixture.storageRoot, 'review.science')
   await writeFile(input, 'fixture archive')
@@ -1177,6 +1195,7 @@ it('confirms a selected import in the operation window without a native message 
 
 it('queues OS files without reading payloads before project selection and cancels duplicates once', async () => {
   const fixture = await createProvenanceTestFixture()
+  initDataRoot(fixture.storageRoot)
   fixtures.push(fixture)
   const first = join(fixture.storageRoot, 'first.science')
   const second = join(fixture.storageRoot, 'second.science')
@@ -1237,6 +1256,7 @@ it('queues OS files without reading payloads before project selection and cancel
 
 it('checks project admission before copying an OS file and keeps a failed request retryable', async () => {
   const fixture = await createProvenanceTestFixture()
+  initDataRoot(fixture.storageRoot)
   fixtures.push(fixture)
   const input = join(fixture.storageRoot, 'research.science')
   await writeFile(input, 'not read before admission')
@@ -1283,6 +1303,7 @@ it('checks project admission before copying an OS file and keeps a failed reques
 
 it('retries the same opened file once when it is already queued after failure', async () => {
   const fixture = await createProvenanceTestFixture()
+  initDataRoot(fixture.storageRoot)
   fixtures.push(fixture)
   const service = new SessionPackageService({
     storageRoot: fixture.storageRoot,
@@ -1360,6 +1381,7 @@ it('retries the same opened file once when it is already queued after failure', 
 
 it('carries a new-project draft from OS file selection through confirmation without creating it early', async () => {
   const fixture = await createProvenanceTestFixture()
+  initDataRoot(fixture.storageRoot)
   fixtures.push(fixture)
   await fixture.client.project.create({ data: { id: 'source', name: 'Source' } })
   await new SessionRepository(fixture.storageRoot).saveSession({

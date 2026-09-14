@@ -408,7 +408,7 @@ export class SessionPackageDesktop {
                     const options = {
                       title: this.options.translate('Export Session package'),
                       defaultPath: `${sanitizeExportFilename(title || 'Session', 220)}-${date}.science`,
-                      filters: [{ name: 'Open Science Session', extensions: ['science'] }]
+                      filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
                     }
                     const selected = await this.nativeDialog(
                       parent
@@ -498,7 +498,7 @@ export class SessionPackageDesktop {
               const options = {
                 title: this.options.translate('Import Session package'),
                 properties: ['openFile'] as ['openFile'],
-                filters: [{ name: 'Open Science Session', extensions: ['science'] }]
+                filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
               }
               const selected = sourcePath
                 ? { canceled: false, filePaths: [sourcePath] }

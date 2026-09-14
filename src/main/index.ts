@@ -1,8 +1,15 @@
 import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
 import { configureCredentialStore } from './settings/credential-store-mode'
 import { createRequire } from 'node:module'
-import { isAbsolute } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { directoryHasFiles } from './storage/location-evidence'
+import {
+  pinFreshApplicationLocations,
+  profileHasHistory,
+  resolveBootstrapConfigRoot,
+  resolveElectronProfile
+} from './storage/electron-profile'
 
 // Only lightweight, Electron-free bootstrap modules are imported statically here. The MCP server
 // modules (and their heavy SDK graph) remain lazy inside the matching execution branch.
@@ -29,7 +36,7 @@ import {
   registerRendererDiagnosticsIpc
 } from './renderer-diagnostics'
 
-const APP_NAME = 'Open Science'
+const APP_NAME = 'Open-Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
 const shouldRunArtifactMcpServer = process.argv.includes(ARTIFACT_MCP_SERVER_ARG)
 const shouldRunNotebookMcpServer = process.argv.includes(NOTEBOOK_MCP_SERVER_ARG)
@@ -94,6 +101,14 @@ if (shouldRunArtifactMcpServer) {
       flush: startupFlush
     })
     const { app } = createRequire(import.meta.url)('electron') as typeof import('electron')
+    // Startup location/configuration errors must be visible even before the renderer can mount.
+    if (
+      error instanceof Error &&
+      /location|profile|dataRoot|settings document|Application brand upgrade/i.test(error.message)
+    ) {
+      const { dialog } = createRequire(import.meta.url)('electron') as typeof import('electron')
+      dialog.showErrorBox(APP_NAME, error.message)
+    }
     app.exit(1)
   })
 }
@@ -128,22 +143,50 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // Establish identity and single-writer ownership before opening main.log. A secondary launch must
   // never rotate or append to the primary process's file sink. These two modules are lightweight; all
   // backend imports remain behind the lock.
-  app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
-  // Unpackaged isolate: a second electron-vite from a worktree would otherwise lose the
-  // macOS bundle-id lock and attach to an already-running main `npm run dev`.
-  if (!app.isPackaged) {
-    const isolateUserData = process.env.OPEN_SCIENCE_USER_DATA?.trim()
-    if (isolateUserData) {
-      if (!isAbsolute(isolateUserData)) {
-        throw new Error('OPEN_SCIENCE_USER_DATA must be an absolute path.')
-      }
-      app.setPath('userData', isolateUserData)
-    }
-  }
+  // Electron initializes macOS/Linux OSCrypt after loading this entry and before ready. Preserve
+  // that credential identity synchronously; only the later display name changes. Never derive
+  // profile/cache/log paths from this legacy technical name for a fresh installation.
+  app.setName(app.isPackaged ? 'Open Science' : 'Open Science (DEV)')
+  const configRoot = resolveBootstrapConfigRoot(app.getPath('home'), app.isPackaged)
+  const profilePath = resolveElectronProfile({
+    appData: app.getPath('appData'),
+    configRoot,
+    packaged: app.isPackaged
+  })
+  // Capture before profile, logging, or locale bootstrap can create first-launch files.
+  const existingInstallation = directoryHasFiles(configRoot) || profileHasHistory(profilePath)
+  app.setPath('userData', profilePath)
+  app.setPath('sessionData', profilePath)
+  const isolated = Boolean(
+    process.env.OPEN_SCIENCE_USER_DATA ||
+    process.env.OPEN_SCIENCE_CONFIG_ROOT ||
+    process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT ||
+    (!app.isPackaged && process.env.OPEN_SCIENCE_STORAGE_ROOT)
+  )
   const allowMultiInstance =
     !app.isPackaged && process.env.OPEN_SCIENCE_ALLOW_MULTI_INSTANCE === '1'
+  const pendingSecondInstances: Array<[string[], string]> = []
+  let relaySecondInstance = (argv: string[], cwd: string): void => {
+    pendingSecondInstances.push([argv, cwd])
+  }
+  if (!allowMultiInstance && !app.requestSingleInstanceLock()) {
+    app.quit()
+    return
+  }
+  app.on('second-instance', (_event, argv, cwd) => relaySecondInstance(argv, cwd))
+  pinFreshApplicationLocations({
+    configRoot,
+    profilePath,
+    home: app.getPath('home'),
+    packaged: app.isPackaged,
+    existingInstallation
+  })
+  app.setAppLogsPath(
+    process.platform === 'darwin' && !isolated
+      ? join(app.getPath('home'), 'Library', 'Logs', basename(profilePath))
+      : join(profilePath, 'logs')
+  )
   const [
-    { acquireSingleInstanceLock },
     {
       createSecondInstanceRelay,
       createStartupWindowCloseOptions,
@@ -155,25 +198,23 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     { parseWebModeOptions },
     { installSystemLifecycleAdapters }
   ] = await Promise.all([
-    import('./single-instance'),
     import('./app-startup'),
     import('./web-service/options'),
     import('./system-lifecycle-adapters')
   ])
   const preStartupSecondInstanceRelay = createSecondInstanceRelay()
-  if (
-    !allowMultiInstance &&
-    !acquireSingleInstanceLock({
-      onSecondInstance: (argv, cwd) => {
-        for (const path of packagePathsFromArgv(argv, cwd)) packageFiles.receive(path)
-        preStartupSecondInstanceRelay.signal(argv)
-      }
-    })
-  ) {
-    app.quit()
-    return
+  relaySecondInstance = (argv, cwd) => {
+    for (const path of packagePathsFromArgv(argv, cwd)) packageFiles.receive(path)
+    preStartupSecondInstanceRelay.signal(argv)
   }
+  for (const [argv, cwd] of pendingSecondInstances) relaySecondInstance(argv, cwd)
   for (const path of packagePathsFromArgv(process.argv, process.cwd())) packageFiles.receive(path)
+  const { prepareApplicationLocations } = await import('./storage/initialize-location')
+  const bootstrapLocations = await prepareApplicationLocations({
+    configRoot,
+    profilePath,
+    existingInstallation
+  })
   const webMode = parseWebModeOptions(process.argv)
   configureCredentialStore(process.argv, process.platform, webMode.headless)
   let bindSystemShutdownWindow = (window: InstanceType<typeof BrowserWindow>): void => {
@@ -309,6 +350,24 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
 
       startupDiagnostics?.phase('electron-ready')
       await app.whenReady()
+      app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
+      // Electron created its default menu before ready, while OSCrypt still needed the old name.
+      // Rebuild standard roles now so About/Hide/app-menu labels use the display brand as well.
+      const { Menu } = createRequire(import.meta.url)('electron') as typeof import('electron')
+      if (process.platform === 'darwin')
+        Menu.setApplicationMenu(
+          Menu.buildFromTemplate([
+            { role: 'appMenu' },
+            { role: 'fileMenu' },
+            { role: 'editMenu' },
+            { role: 'viewMenu' },
+            { role: 'windowMenu' },
+            { role: 'help', submenu: [] }
+          ])
+        )
+      const { upgradeNativeBrandEntries } = await import('./brand-upgrade/native')
+      if (upgradeNativeBrandEntries())
+        throw new Error('Application restarting after brand upgrade.')
       installPowerMonitorListeners()
 
       startupDiagnostics?.phase('load-startup-shell-modules')
@@ -325,8 +384,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { buildStartupDiagnostics },
         { getProjectDbClient },
         { resolveConfigRoot },
-        { SettingsDocumentStore },
-        { SettingsRepository }
+        { initializeDataLocation }
       ] = await Promise.all([
         import('./managed-preview-protocol'),
         import('./windows'),
@@ -340,8 +398,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./database/startup-diagnostics'),
         import('./projects/prisma-client'),
         import('./storage-root'),
-        import('./settings/document-store'),
-        import('./settings/repository')
+        import('./storage/initialize-location')
       ])
 
       startupDiagnostics?.phase('prepare-shell')
@@ -352,8 +409,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // Create the settings document owner before any native surface. The startup locale repository
       // and the later application Settings repository share this store, so every settings.json
       // mutation uses one serialization queue and one atomic-write implementation.
-      const settingsStore = new SettingsDocumentStore(resolveConfigRoot())
-      const startupSettingsRepository = new SettingsRepository(settingsStore)
+      const settingsStore = bootstrapLocations.settingsStore
+      const startupSettingsRepository = bootstrapLocations.repository
+      await initializeDataLocation(startupSettingsRepository, existingInstallation)
       const startupSettings = await startupSettingsRepository.getSettings()
       const localeOwner = new LocalePreferenceOwner(
         app.getPreferredSystemLanguages(),

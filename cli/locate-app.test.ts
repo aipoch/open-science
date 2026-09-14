@@ -26,7 +26,7 @@ describe('locateApp', () => {
   })
 
   it('resolves an explicit --app-path to a packaged executable', async () => {
-    const exe = join(dir, 'Open Science')
+    const exe = join(dir, 'Open-Science')
     await writeFile(exe, '')
     // Empty env so repository discovery can't shadow the explicit override.
     const app = await locateApp({ appPath: exe, env: {} })
@@ -43,13 +43,13 @@ describe('locateApp', () => {
 
   it('prefers the Debian Electron executable over the system CLI wrapper', async () => {
     vi.stubGlobal('process', { ...process, platform: 'linux' })
-    const candidates = new Set(['/opt/Open Science/open-science', '/usr/bin/open-science'])
+    const candidates = new Set(['/opt/Open-Science/open-science', '/usr/bin/open-science'])
     vi.mocked(fs.access).mockImplementation(async (path) => {
       if (!candidates.has(String(path))) throw new Error('ENOENT')
     })
     const app = await locateApp({ env: {} })
     expect(app).toMatchObject({
-      command: '/opt/Open Science/open-science',
+      command: '/opt/Open-Science/open-science',
       args: [],
       packaged: true
     })
@@ -58,5 +58,18 @@ describe('locateApp', () => {
 
   it('throws a helpful error when the explicit path does not exist', async () => {
     await expect(locateApp({ appPath: join(dir, 'missing'), env: {} })).rejects.toThrow(/not found/)
+  })
+
+  it.each([
+    ['darwin', '/Applications/Open Science.app/Contents/MacOS/Open-Science'],
+    ['darwin', '/Applications/Open-Science.app/Contents/MacOS/Open Science'],
+    ['win32', '/fixture/Programs/Open Science/open-science.exe'],
+    ['linux', '/opt/Open Science/open-science']
+  ])('discovers mixed-name upgrade installations on %s: %s', async (platform, command) => {
+    vi.stubGlobal('process', { ...process, platform })
+    vi.mocked(fs.access).mockImplementation(async (path) => {
+      if (String(path) !== command) throw new Error('ENOENT')
+    })
+    expect((await locateApp({ env: { LOCALAPPDATA: '/fixture' } })).command).toBe(command)
   })
 })

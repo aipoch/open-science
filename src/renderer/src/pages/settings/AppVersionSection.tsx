@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: Settings About · macrostructure: identity + resource list
- * genre: modern-minimal · theme: Open Science Settings
+ * genre: modern-minimal · theme: Open-Science Settings
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: pass (semantic Settings tokens) · slop: pass
  */

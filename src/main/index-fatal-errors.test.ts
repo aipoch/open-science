@@ -1,3 +1,18 @@
+vi.mock('./storage/electron-profile', () => ({
+  resolveBootstrapConfigRoot: () => '/isolated-test',
+  resolveElectronProfile: () => '/isolated-test/profile',
+  profileHasHistory: () => false,
+  pinFreshApplicationLocations: vi.fn()
+}))
+vi.mock('./storage/location-evidence', () => ({ directoryHasFiles: () => false }))
+vi.mock('./storage/initialize-location', () => ({
+  prepareApplicationLocations: async () => ({
+    settingsStore: {},
+    repository: { getSettings: async () => ({}) }
+  }),
+  initializeDataLocation: vi.fn()
+}))
+vi.mock('./brand-upgrade/native', () => ({ upgradeNativeBrandEntries: () => false }))
 import { spawn } from 'node:child_process'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -12,6 +27,9 @@ const mocks = vi.hoisted(() => {
   const app = {
     isPackaged: false,
     setName: vi.fn(),
+    setPath: vi.fn(),
+    setAppLogsPath: vi.fn(),
+    requestSingleInstanceLock: vi.fn(() => true),
     getPath: vi.fn(() => 'test-logs'),
     getVersion: vi.fn(() => '0.0.0-test'),
     on: vi.fn(),

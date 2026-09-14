@@ -30,7 +30,7 @@ let disconnect: (() => Promise<void>) | undefined
 
 afterEach(async () => {
   sessionUploads.upgradeLegacySessionUploads.mockClear()
-  initDataRoot(undefined)
+  initDataRoot(undefined, false)
   await disconnect?.()
   disconnect = undefined
   if (configRoot) {

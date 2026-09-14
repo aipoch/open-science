@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
 import {
   RuntimeResourceProfiler,
@@ -47,6 +47,7 @@ const electronLaunchTarget = (
     args: [
       `--user-data-dir=${userDataRoot}`,
       ...(platform === 'linux' ? ['--password-store=basic'] : []),
+      ...(platform === 'darwin' ? ['--use-mock-keychain'] : []),
       ...(executablePath ? [] : [APP_ROOT])
     ],
     ...(executablePath ? { executablePath } : {})
@@ -121,7 +122,18 @@ const closeElectronApplicationForCleanup = async (
   }
 }
 
+type BrandState = {
+  name: string
+  packaged: boolean
+  profile: string
+  logs: string
+  title: string
+  menus: string[]
+}
 type ElectronApp = {
+  captureBrandState: () => Promise<BrandState>
+  restartWithBrandFixture: (mode: 'legacy' | 'custom' | 'onboarding') => Promise<Page>
+
   readonly page: Page
   openAdditionalRenderer: () => Promise<Page>
   authenticatedWebUrl: () => Promise<string>
@@ -181,18 +193,23 @@ const launchEnvironment = (
     if (value !== undefined && key !== 'ELECTRON_RENDERER_URL') environment[key] = value
   }
 
+  environment.OPEN_SCIENCE_CONFIG_ROOT = storageRoot
+  environment.OPEN_SCIENCE_USER_DATA = join(dirname(storageRoot), 'electron-profile')
   environment.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
   environment.OPEN_SCIENCE_E2E_STORAGE_ROOT = storageRoot
   environment.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT = join(storageRoot, 'e2e-handoff-captures')
   environment.OPEN_SCIENCE_E2E_WINDOW_MODE = windowMode
   if (process.platform === 'win32' && environment.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS) {
     // The production runner caches resolved tools under LocalAppData. Keep the controlled process
-    // fixture isolated from any micromamba selected by an ordinary Open Science session.
+    // fixture isolated from any micromamba selected by an ordinary Open-Science session.
     environment.LOCALAPPDATA = join(storageRoot, 'local-app-data')
   }
   if (sessionPerformanceTrace) environment.OPEN_SCIENCE_PERF_SESSION_TRACE = '1'
   if (fakeRemoteItRoot) {
-    environment.OPEN_SCIENCE_FAKE_REMOTEIT_STATE = join(storageRoot, 'fake-remoteit-state.json')
+    environment.OPEN_SCIENCE_FAKE_REMOTEIT_STATE = join(
+      dirname(storageRoot),
+      'fake-remoteit-state.json'
+    )
     environment.OPEN_SCIENCE_REMOTEIT_BIN = process.execPath
   }
   if (fakeAgentBinRoot) {
@@ -221,14 +238,18 @@ const launchOpenScience = async (
     ...electronLaunchTarget(userDataRoot),
     args: [...electronLaunchTarget(userDataRoot).args, ...(packagePath ? [packagePath] : [])],
     cwd: fakeRemoteItEnabled ? fakeRemoteItRoot : APP_ROOT,
-    env: launchEnvironment(
-      storageRoot,
-      fakeAgentEnabled ? fakeAgentBinRoot : undefined,
-      process.env,
-      fakeRemoteItEnabled ? fakeRemoteItRoot : undefined,
-      windowMode,
-      sessionPerformanceTrace
-    )
+    env: {
+      ...launchEnvironment(
+        storageRoot,
+        fakeAgentEnabled ? fakeAgentBinRoot : undefined,
+        process.env,
+        fakeRemoteItEnabled ? fakeRemoteItRoot : undefined,
+        windowMode,
+        sessionPerformanceTrace
+      ),
+      OPEN_SCIENCE_CONFIG_ROOT: storageRoot,
+      OPEN_SCIENCE_USER_DATA: userDataRoot
+    }
   })
 
   if (process.platform === 'linux') {
@@ -391,7 +412,7 @@ class ElectronAppHarness implements ElectronApp {
       {
         fakeAgentBinRoot: join(testRoot, 'fake-agent-bin'),
         fakeRemoteItRoot: join(testRoot, 'fake-remoteit'),
-        fakeRemoteItState: join(testRoot, 'storage', 'fake-remoteit-state.json'),
+        fakeRemoteItState: join(testRoot, 'fake-remoteit-state.json'),
         storageRoot: join(testRoot, 'storage'),
         userDataRoot: join(testRoot, 'electron-profile')
       },
@@ -853,7 +874,7 @@ class ElectronAppHarness implements ElectronApp {
   async mainWindowState(): Promise<{ minimized: boolean; visible: boolean }> {
     return this.runningApplication.evaluate(({ BrowserWindow }) => {
       const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      if (!mainWindow) throw new Error('Open-Science main window was not found.')
 
       return { minimized: mainWindow.isMinimized(), visible: mainWindow.isVisible() }
     })
@@ -862,7 +883,7 @@ class ElectronAppHarness implements ElectronApp {
   async showMainWindow(): Promise<void> {
     await this.runningApplication.evaluate(({ BrowserWindow }) => {
       const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      if (!mainWindow) throw new Error('Open-Science main window was not found.')
       mainWindow.show()
     })
     await expect.poll(() => this.mainWindowState()).toMatchObject({ visible: true })
@@ -871,7 +892,7 @@ class ElectronAppHarness implements ElectronApp {
   async setMainWindowZoomFactor(factor: number): Promise<void> {
     await this.runningApplication.evaluate(({ BrowserWindow }, nextFactor) => {
       const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      if (!mainWindow) throw new Error('Open-Science main window was not found.')
       mainWindow.webContents.setZoomFactor(nextFactor)
     }, factor)
   }
@@ -913,7 +934,7 @@ class ElectronAppHarness implements ElectronApp {
     await this.runningApplication.evaluate(
       ({ BrowserWindow }, input) => {
         const mainWindow = BrowserWindow.getAllWindows()[0]
-        if (!mainWindow) throw new Error('Open Science main window was not found.')
+        if (!mainWindow) throw new Error('Open-Science main window was not found.')
 
         mainWindow.webContents.focus()
         mainWindow.webContents.sendInputEvent({
@@ -934,7 +955,7 @@ class ElectronAppHarness implements ElectronApp {
   async requestMainWindowClose(): Promise<void> {
     await this.runningApplication.evaluate(({ BrowserWindow }) => {
       const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      if (!mainWindow) throw new Error('Open-Science main window was not found.')
       mainWindow.close()
     })
   }
@@ -942,7 +963,7 @@ class ElectronAppHarness implements ElectronApp {
   async emitPreviewContextMenuAtCssPoint(point: { x: number; y: number }): Promise<void> {
     await this.runningApplication.evaluate(({ BrowserWindow }, cssPoint) => {
       const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      if (!mainWindow) throw new Error('Open-Science main window was not found.')
       const { webContents } = mainWindow
       const frame = webContents.mainFrame.framesInSubtree.find(
         (candidate) =>
@@ -1019,6 +1040,46 @@ class ElectronAppHarness implements ElectronApp {
     if (!target) throw new Error(`No sabotaged delegated handoff exists for ${childName}.`)
     await rm(target, { force: true, recursive: true })
     this.sabotagedDelegatedHandoffs.delete(childName)
+  }
+
+  async captureBrandState(): Promise<BrandState> {
+    return this.runningApplication.evaluate(({ app, BrowserWindow, Menu }) => ({
+      name: app.getName(),
+      packaged: app.isPackaged,
+      profile: app.getPath('userData'),
+      logs: app.getPath('logs'),
+      title: BrowserWindow.getAllWindows()[0]?.getTitle() ?? '',
+      menus: Menu.getApplicationMenu()?.items.map((item) => item.label) ?? []
+    }))
+  }
+
+  async restartWithBrandFixture(mode: 'legacy' | 'custom' | 'onboarding'): Promise<Page> {
+    await this.close()
+    const { rename } = await import('node:fs/promises')
+    const settingsPath = join(this.roots.storageRoot, 'settings.json')
+    const settings = JSON.parse(await readFile(settingsPath, 'utf8'))
+    if (mode !== 'onboarding') {
+      await mkdir(join(settings.dataRoot, 'workspaces', 'historical'), { recursive: true })
+      await writeFile(
+        join(settings.dataRoot, 'workspaces', 'historical', 'evidence.txt'),
+        'Historical research data retained verbatim'
+      )
+      const next =
+        mode === 'legacy'
+          ? join(
+              this.roots.storageRoot,
+              process.env.OPEN_SCIENCE_E2E_EXECUTABLE ? 'OpenScience' : 'OpenScience-DEV'
+            )
+          : join(this.testRoot, 'My OpenScience research')
+      await rename(settings.dataRoot, next)
+      if (mode === 'legacy') delete settings.dataRoot
+      else settings.dataRoot = next
+      delete settings.dataRootIsInitialDefault
+    }
+    delete settings.onboardingCompletedAt
+    await writeFile(settingsPath, JSON.stringify(settings) + '\n')
+    await this.launch()
+    return this.page
   }
 
   async restart(options: { resourceProfilePhase?: string } = {}): Promise<Page> {

@@ -1,4 +1,4 @@
-# Contributing to Open Science
+# Contributing to Open-Science
 
 Thanks for your interest in contributing! This document explains how to set up
 the project, the workflow we follow, and the checks your change must pass before

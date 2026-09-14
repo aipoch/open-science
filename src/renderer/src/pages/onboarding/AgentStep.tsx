@@ -37,7 +37,7 @@ const AgentStep = ({ onBack, onContinue }: AgentStepProps): React.JSX.Element =>
           variant="onboarding"
           title={t('Set up the agent runtime')}
           description={t(
-            'Pick the agent Open Science drives, then install it. Only this agent needs to be installed to continue.'
+            'Pick the agent Open-Science drives, then install it. Only this agent needs to be installed to continue.'
           )}
         />
       </CardContent>

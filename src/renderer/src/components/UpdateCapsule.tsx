@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-/* Hallmark · component: update action · genre: modern-minimal · theme: existing Open Science
+/* Hallmark · component: update action · genre: modern-minimal · theme: existing Open-Science
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: existing project token pairs
  */

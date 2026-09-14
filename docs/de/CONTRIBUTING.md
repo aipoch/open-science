@@ -1,4 +1,4 @@
-# Zu Open Science beitragen
+# Zu Open-Science beitragen
 
 Vielen Dank für Ihr Interesse an einer Mitarbeit! Dieses Dokument erläutert, wie Sie das Projekt einrichten, welchen Arbeitsablauf wir verwenden und welche Prüfungen Ihre Änderung bestehen muss, bevor sie zusammengeführt werden kann.
 

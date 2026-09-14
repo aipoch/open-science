@@ -5222,7 +5222,7 @@ describe('session store', () => {
       eventId: 'event-1',
       toolKind: 'fetch',
       providerToolName: 'WebSearch',
-      title: '"open science repositories"',
+      title: '"open-science repositories"',
       status: 'pending'
     })
     useSessionStore.getState().upsertToolActivity({
@@ -5244,7 +5244,7 @@ describe('session store', () => {
         kind: 'tool',
         toolKind: 'fetch',
         providerToolName: 'WebSearch',
-        title: '"open science repositories"',
+        title: '"open-science repositories"',
         status: 'completed',
         eventIds: ['event-1', 'event-2']
       })
@@ -5361,7 +5361,7 @@ describe('session store', () => {
       eventId: 'event-1',
       toolKind: 'fetch',
       providerToolName: 'WebSearch',
-      title: '"open science repositories"',
+      title: '"open-science repositories"',
       status: 'pending',
       toolContent: [
         {
@@ -5477,7 +5477,7 @@ describe('session store', () => {
       eventId: 'event-1',
       timestamp: 10,
       toolKind: 'fetch',
-      title: '"open science repositories"',
+      title: '"open-science repositories"',
       status: 'in_progress'
     })
     useSessionStore.getState().upsertToolActivity({
@@ -5561,7 +5561,7 @@ describe('session store', () => {
       toolCallId: 'tool-web-1',
       eventId: 'event-1',
       toolKind: 'fetch',
-      title: '"open science repositories"',
+      title: '"open-science repositories"',
       status: 'pending'
     })
 
@@ -5571,7 +5571,7 @@ describe('session store', () => {
       expect.objectContaining({
         id: 'tool-web-1',
         kind: 'tool',
-        title: '"open science repositories"',
+        title: '"open-science repositories"',
         status: 'pending',
         toolKind: 'fetch'
       })

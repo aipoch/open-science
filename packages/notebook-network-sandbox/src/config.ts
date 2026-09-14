@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { readdirSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
 import { isIP } from 'node:net'
 import { domainToASCII } from 'node:url'
 
@@ -85,9 +86,42 @@ const normalizePolicy = (policy: NotebookNetworkPolicy): NotebookNetworkPolicy =
     : {})
 })
 
+// Receipts and ACL leases are durable security ownership records, not a cache to migrate.
+const containsOwnershipState = (root: string): boolean => {
+  try {
+    return readdirSync(root, { withFileTypes: true }).some((entry) =>
+      entry.isDirectory() ? containsOwnershipState(join(root, entry.name)) : true
+    )
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
+
+const resolveWindowsOwnershipRoot = (environment: NodeJS.ProcessEnv): string => {
+  const isolatedRoot =
+    environment.OPEN_SCIENCE_E2E_STORAGE_ROOT?.trim() ||
+    environment.OPEN_SCIENCE_CONFIG_ROOT?.trim()
+  if (isolatedRoot) {
+    if (!isAbsolute(isolatedRoot)) throw new Error('The config root must be an absolute path.')
+    return join(isolatedRoot, 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
+  }
+  const base = environment.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local')
+  const current = join(base, 'Aipoch', 'Open-Science', 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
+  const legacy = join(base, 'Aipoch', 'OpenScience', 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
+  const hasLegacy = containsOwnershipState(legacy)
+  if (hasLegacy && containsOwnershipState(current)) {
+    throw new Error(
+      `Notebook isolation ownership is ambiguous. Resolve the existing records at ${legacy} and ${current} before starting.`
+    )
+  }
+  return hasLegacy ? legacy : current
+}
+
 const createRuntimeConfig = (
   options: NotebookNetworkSandboxOptions,
-  architecture: NodeJS.Architecture = process.arch
+  architecture: NodeJS.Architecture = process.arch,
+  environment: NodeJS.ProcessEnv = process.env
 ): NetworkRuntimeConfig => {
   const arch = architectureDirectory(architecture)
   const policy = normalizePolicy(options.policy)
@@ -96,13 +130,7 @@ const createRuntimeConfig = (
   for (const domain of policy.deniedDomains) validateDomainPattern(domain, true)
   const resourceRoot = options.resources.root
   const installationId = WINDOWS_INSTALLATION_ID
-  const windowsOwnershipRoot = join(
-    process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'),
-    'Aipoch',
-    'OpenScience',
-    'notebook-sandbox',
-    installationId
-  )
+  const windowsOwnershipRoot = resolveWindowsOwnershipRoot(environment)
   return {
     allowedDomains: [...policy.allowedDomains],
     ...(policy.askDomains ? { askDomains: [...policy.askDomains] } : {}),

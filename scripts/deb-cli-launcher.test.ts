@@ -15,7 +15,7 @@ describe.skipIf(process.platform === 'win32')('Debian CLI launcher', () => {
   it('runs the bundled CLI through Electron Node mode and preserves arguments and exit status', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'deb-cli-')))
     roots.push(root)
-    const app = join(root, "Open Science ' 数据")
+    const app = join(root, "Open-Science ' 数据")
     const resources = join(app, 'resources')
     const bin = join(root, 'bin')
     await mkdir(resources, { recursive: true })
@@ -98,16 +98,16 @@ describe.skipIf(process.platform !== 'linux')('Debian alternatives lifecycle', (
     const bin = join(root, 'bin')
     const alternatives = join(root, 'etc/alternatives')
     const admin = join(root, 'var/lib/dpkg/alternatives')
-    const resources = join(root, 'opt/Open Science/resources')
+    const resources = join(root, 'opt/Open-Science/resources')
     for (const dir of [bin, alternatives, admin, resources, join(root, 'usr/bin')]) {
       await mkdir(dir, { recursive: true })
     }
-    const legacy = join(root, 'opt/Open Science/open-science')
+    const legacy = join(root, 'opt/Open-Science/open-science')
     const target = join(resources, 'open-science-cli')
     const command = join(root, 'usr/bin/open-science')
     await writeFile(legacy, 'legacy')
     await writeFile(target, 'cli')
-    await writeFile(join(root, 'opt/Open Science/chrome-sandbox'), '')
+    await writeFile(join(root, 'opt/Open-Science/chrome-sandbox'), '')
     await writeFile(
       join(bin, 'update-alternatives'),
       `#!/bin/sh\nexec /usr/bin/update-alternatives --altdir '${alternatives}' --admindir '${admin}' "$@"\n`,
@@ -128,7 +128,7 @@ describe.skipIf(process.platform !== 'linux')('Debian alternatives lifecycle', (
     for (const kind of ['install', 'remove']) {
       const text = (await readFile(`build/deb-after-${kind}.tpl`, 'utf8'))
         .replaceAll('${executable}', 'open-science')
-        .replaceAll('${sanitizedProductName}', 'Open Science')
+        .replaceAll('${sanitizedProductName}', 'Open-Science')
         .replaceAll('/usr/bin/', `${root}/usr/bin/`)
         .replaceAll('/etc/alternatives/', `${alternatives}/`)
         .replaceAll('/opt/', `${root}/opt/`)

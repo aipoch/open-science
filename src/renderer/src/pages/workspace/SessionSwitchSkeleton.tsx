@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-/* Hallmark · component: Session switch skeleton · genre: modern-minimal · theme: Open Science workspace · state: loading · contrast: pass · mobile: pass */
+/* Hallmark · component: Session switch skeleton · genre: modern-minimal · theme: Open-Science workspace · state: loading · contrast: pass · mobile: pass */
 
 const SessionSwitchSkeleton = (): React.JSX.Element => (
   <div

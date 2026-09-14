@@ -1,6 +1,6 @@
 ---
 name: self-awareness
-description: Inspect Open Science's JavaScript control REPL, discover managed Project files, Sessions, and Agent Frames, and safely feature-gate host.* calls with host.capabilities(). Use when an Agent needs to discover available host APIs, locate an Artifact or Upload Version, diagnose a Session, or read a Frame transcript in the current Project.
+description: Inspect Open-Science's JavaScript control REPL, discover managed Project files, Sessions, and Agent Frames, and safely feature-gate host.* calls with host.capabilities(). Use when an Agent needs to discover available host APIs, locate an Artifact or Upload Version, diagnose a Session, or read a Frame transcript in the current Project.
 ---
 
 # Self-awareness

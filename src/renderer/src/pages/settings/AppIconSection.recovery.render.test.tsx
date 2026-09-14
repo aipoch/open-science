@@ -41,8 +41,8 @@ describe('G03 built-in app icon translations', () => {
     const view = await mount()
     expect(view.getAllByRole('radio')).toHaveLength(2)
     for (const [language, light, dark, description] of [
-      ['zh-Hans', '浅色', '深色', '浅色 Open Science 标志。'],
-      ['zh-Hant', '淺色', '深色', '淺色 Open Science 標誌。']
+      ['zh-Hans', '浅色', '深色', '浅色 Open-Science 标志。'],
+      ['zh-Hant', '淺色', '深色', '淺色 Open-Science 標誌。']
     ]) {
       await act(async () => {
         await i18next.changeLanguage(language)

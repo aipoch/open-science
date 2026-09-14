@@ -7,7 +7,7 @@ const GITHUB_REPO = 'open-science'
 const GITHUB_REPO_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`
 
 export const APP = {
-  name: 'Open Science',
+  name: 'Open-Science',
   githubOwner: GITHUB_OWNER,
   githubRepo: GITHUB_REPO,
   links: {

@@ -119,7 +119,7 @@ jobs:
           sudo apt-get install --yes ./dist/*.deb
           xvfb-run -a node scripts/linux-package-smoke.mjs \
             --artifact-dir dist \
-            --installed-executable "/opt/Open Science/open-science" \
+            --installed-executable "/opt/Open-Science/open-science" \
             --installed-cli /usr/bin/open-science
 
       - name: Record platform certification evidence

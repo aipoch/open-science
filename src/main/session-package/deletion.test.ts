@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 import { afterEach, expect, it, vi } from 'vitest'
 import { dirname, join } from 'node:path'
 import { mkdir, mkdtemp, readFile, readdir, stat, writeFile, rm, symlink } from 'node:fs/promises'
@@ -55,7 +56,9 @@ const importedFixture = async (
   archive: string
 }> => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(source, target)
   const configRoot = separateConfig ? join(target.storageRoot, 'configuration') : target.storageRoot
   await mkdir(configRoot, { recursive: true })
@@ -565,6 +568,7 @@ it('recognizes the navigation manifest while retaining a live external reference
   // Exercise the persisted recovery boundary without a database migration: the live Session
   // reference must stop recovery before any native mutation is considered.
   const root = await mkdtemp(join(tmpdir(), 'open-science-package-navigation-'))
+  initDataRoot(root)
   const client = createProjectDbClient(root)
   const importId = randomUUID()
   const sessionId = `import-${randomUUID()}`

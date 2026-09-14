@@ -131,7 +131,7 @@ const NOTEBOOK_TOOLS: ResponsesBridgeNamespacedTool[] = NOTEBOOK_RPC_TOOLS.map((
   name: tool.name,
   description:
     tool.name === 'notebook_execute'
-      ? `${tool.description} For Open Science data connectors, the Python code MUST call host.mcp(server, method, arguments). Never use requests, urllib, httpx, curl, or a raw upstream API for connector data; those bypass app permissions, credentials, and rate limits. Codex MCP resource-list tools are not connector discovery.`
+      ? `${tool.description} For Open-Science data connectors, the Python code MUST call host.mcp(server, method, arguments). Never use requests, urllib, httpx, curl, or a raw upstream API for connector data; those bypass app permissions, credentials, and rate limits. Codex MCP resource-list tools are not connector discovery.`
       : tool.description,
   parameters: z.toJSONSchema(z.object(tool.inputSchema), {
     target: 'draft-7'
@@ -142,7 +142,7 @@ const ARTIFACT_TOOLS: ResponsesBridgeNamespacedTool[] = [
     namespace: namespaceFor(ARTIFACT_MCP_SERVER_NAME),
     name: 'write_artifact_file',
     description:
-      'Attach a generated image, chart, report, data export, or archive to the current Open Science response. The file must already exist before using a localPath source.',
+      'Attach a generated image, chart, report, data export, or archive to the current Open-Science response. The file must already exist before using a localPath source.',
     parameters: z.toJSONSchema(z.object(writeArtifactFileToolSchema), {
       target: 'draft-7'
     }) as ResponsesBridgeNamespacedTool['parameters']

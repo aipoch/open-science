@@ -54,7 +54,7 @@ const SettingsPanelLoadingBoundary = ({
             role="alert"
             tone="amber"
             title={t("Settings panel couldn't be loaded.")}
-            description={t('Reload Open Science to try loading this panel again.')}
+            description={t('Reload Open-Science to try loading this panel again.')}
             secondaryButton={{ label: t('Close'), onClick: onClose }}
             primaryButton={{
               label: t('Reload', { context: 'window', ns: 'common' }),

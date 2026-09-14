@@ -2,7 +2,7 @@
 
 - **Detalles de sesión generados y editables.** Las sesiones nuevas reciben un título y una descripción generados automáticamente a partir del primer mensaje, y puede editarlos en cualquier momento. Las tarjetas de Inicio ahora muestran de qué trata cada sesión en lugar de primeras líneas truncadas. (#1721)
 - **Información de uso por llamada.** Cuando el framework proporciona suficientes datos, se registran los tokens y la proporción de la ventana de contexto de cada llamada al modelo. La vista Llamadas del diálogo Ventana de contexto se convierte en un gráfico por llamada con detalles fijados y agrupación por turno, modelo o framework. (#1718, #1734, #1740)
-- **Importación y exportación de configuraciones de cliente MCP.** Importe el JSON estándar `mcpServers` que usan otros hosts MCP; los archivos con varios servidores permiten elegir uno. Exporte un conector de Open Science o una configuración de cliente MCP; las credenciales y cabeceras exportadas siempre se sustituyen por marcadores `${NAME}`. (#1698)
+- **Importación y exportación de configuraciones de cliente MCP.** Importe el JSON estándar `mcpServers` que usan otros hosts MCP; los archivos con varios servidores permiten elegir uno. Exporte un conector de Open-Science o una configuración de cliente MCP; las credenciales y cabeceras exportadas siempre se sustituyen por marcadores `${NAME}`. (#1698)
 - **Rehacer borradores del editor.** El atajo estándar para rehacer (`Cmd/Ctrl+Shift+Z`) vuelve a aplicar el estado de borrador deshecho más recientemente y completa el historial unificado que comparten el texto, el texto pegado y los archivos adjuntos. (#1699, #1694)
 
 ## 🚀 Nuevas funciones

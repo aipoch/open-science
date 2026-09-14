@@ -102,7 +102,7 @@ const makeJob = (overrides: Partial<ComputeJob> = {}): ComputeJob => ({
   output_manifest: undefined,
   harvest_config: undefined,
   timeout_seconds: 3600,
-  remote_workdir: '~/.openscience/jobs/job-1',
+  remote_workdir: '~/.open-science/jobs/job-1',
   remote_handle: undefined,
   exit_code: undefined,
   stdout_tail: undefined,
@@ -305,24 +305,24 @@ describe('hashCommand', () => {
 describe('computeRemoteWorkdir', () => {
   it('uses scratchRoot when set', () => {
     expect(computeRemoteWorkdir('/gpfs/scratch', 'job-123')).toBe(
-      '/gpfs/scratch/.openscience/jobs/job-123'
+      '/gpfs/scratch/.open-science/jobs/job-123'
     )
   })
 
   it('falls back to ~ when scratchRoot is undefined', () => {
-    expect(computeRemoteWorkdir(undefined, 'job-123')).toBe('~/.openscience/jobs/job-123')
+    expect(computeRemoteWorkdir(undefined, 'job-123')).toBe('~/.open-science/jobs/job-123')
   })
 })
 
 describe('quoteRemotePath', () => {
   it('keeps a leading ~/ outside the quotes so the shell expands it', () => {
     // A tilde inside double quotes is NOT expanded by bash; it must stay unquoted.
-    expect(quoteRemotePath('~/.openscience/jobs/job-1')).toBe("~/'.openscience/jobs/job-1'")
+    expect(quoteRemotePath('~/.open-science/jobs/job-1')).toBe("~/'.open-science/jobs/job-1'")
   })
 
   it('single-quotes an absolute path wholesale (no tilde to expand)', () => {
-    expect(quoteRemotePath('/gpfs/scratch/.openscience/jobs/job-1')).toBe(
-      "'/gpfs/scratch/.openscience/jobs/job-1'"
+    expect(quoteRemotePath('/gpfs/scratch/.open-science/jobs/job-1')).toBe(
+      "'/gpfs/scratch/.open-science/jobs/job-1'"
     )
   })
 
@@ -509,7 +509,7 @@ describe('dispatchJob', () => {
   })
 
   it('does not double-quote a leading ~ in the dispatch command (tilde must expand)', async () => {
-    const job = makeJob() // remote_workdir = ~/.openscience/jobs/job-1
+    const job = makeJob() // remote_workdir = ~/.open-science/jobs/job-1
     const runner = makeSshRunner({
       exitCode: 0,
       stdout: '12345\n',
@@ -527,8 +527,8 @@ describe('dispatchJob', () => {
 
     const dispatchCmd = (runner.run as ReturnType<typeof vi.fn>).mock.calls[0]![1] as string
     // The tilde must remain unquoted so bash expands it to $HOME.
-    expect(dispatchCmd).toContain("mkdir -p ~/'.openscience/jobs/job-1'")
-    expect(dispatchCmd).toContain("cd ~/'.openscience/jobs/job-1'")
+    expect(dispatchCmd).toContain("mkdir -p ~/'.open-science/jobs/job-1'")
+    expect(dispatchCmd).toContain("cd ~/'.open-science/jobs/job-1'")
     // Regression guard: never emit a double-quoted tilde.
     expect(dispatchCmd).not.toContain('"~/')
   })

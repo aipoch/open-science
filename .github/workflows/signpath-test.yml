@@ -91,7 +91,7 @@ jobs:
           Write-Host "Initial status message: $($signature.StatusMessage)"
           Write-Host "Signer: $($signature.SignerCertificate.Subject)"
 
-          $expectedTestCertificateSubject = "CN=Test certificate for 'Open Science [OSS]'"
+          $expectedTestCertificateSubject = "CN=Test certificate for 'Open-Science [OSS]'"
           $expectedUntrustedRootMessage = 'A certificate chain processed, but terminated in a root certificate which is not trusted by the trust provider.'
           $isExpectedSelfSignedTestCertificate = (
             $signature.SignerCertificate.Subject -eq $signature.SignerCertificate.Issuer -and

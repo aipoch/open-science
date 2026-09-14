@@ -35,11 +35,14 @@ import {
   loadSessionMutationAuthority
 } from './repository'
 
+import { initDataRoot } from '../storage-root'
+
 let storageRoot: string | undefined
 let externalRoot: string | undefined
 
 const createStorageRoot = async (): Promise<string> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-sessions-'))
+  initDataRoot(storageRoot)
   return storageRoot
 }
 

@@ -519,7 +519,7 @@ const HomePage = ({
         )
       }
       if (effectiveCatalogRecovery.kind === 'unsupported-version') {
-        return t('Update Open Science before archiving this project.')
+        return t('Update Open-Science before archiving this project.')
       }
       return t('Repair the project index before archiving.')
     }
@@ -652,7 +652,7 @@ const HomePage = ({
                   rel="noreferrer"
                   className="font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000 hover:text-text-100"
                 >
-                  Open Science
+                  Open-Science
                 </a>
                 {hasCompleteSessionCatalog &&
                 (activeSessionCounts.waiting > 0 || activeSessionCounts.running > 0) ? (
@@ -922,7 +922,7 @@ const HomePage = ({
               {loadError ? (
                 <ErrorNotice
                   role="alert"
-                  description={t('Open Science could not load projects. Retry to continue.')}
+                  description={t('Open-Science could not load projects. Retry to continue.')}
                   primaryButton={{
                     label: isRetryingProjects ? t('Retrying...') : t('Retry'),
                     loading: isRetryingProjects,

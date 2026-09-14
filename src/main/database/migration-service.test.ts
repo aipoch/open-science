@@ -643,7 +643,7 @@ describe('application database migrations', () => {
   })
 
   it('records the runtime baseline once for a fresh database', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 baseline-'))
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science 数据 baseline-'))
     client = createProjectDbClient(storageRoot)
     const compatibility: Array<{ sqliteVersion: string }> = []
 

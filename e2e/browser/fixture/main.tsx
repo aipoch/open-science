@@ -50,7 +50,7 @@ useProjectStore.setState({ isLoaded: true })
 useTagStore.setState({ load: async () => undefined, listen: unsubscribe })
 useMemoryStore.setState({ listen: unsubscribe })
 useUpdateStore.setState({
-  appInfo: { name: 'Open Science', version: '0.0.0', copyright: 'Test fixture' },
+  appInfo: { name: 'Open-Science', version: '0.0.0', copyright: 'Test fixture' },
   status: { state: 'up-to-date', current: '0.0.0', latest: '0.0.0' }
 })
 

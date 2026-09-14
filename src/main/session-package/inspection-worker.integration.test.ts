@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 import * as fsPromises from 'node:fs/promises'
 import { PackageCleanupPendingError } from './cleanup'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
@@ -73,6 +74,7 @@ const fixture = async (
   artifact = false
 ): Promise<{ source: (typeof fixtures)[number]; archive: string }> => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   fixtures.push(source)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   await new SessionRepository(source.storageRoot).saveSession({

@@ -1,4 +1,4 @@
-# Contribuir a Open Science
+# Contribuir a Open-Science
 
 Gracias por su interés en contribuir. Este documento explica cómo configurar el proyecto, el flujo de trabajo que seguimos y las comprobaciones que debe superar un cambio antes de poder fusionarse.
 

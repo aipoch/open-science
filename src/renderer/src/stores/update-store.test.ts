@@ -34,7 +34,7 @@ describe('useUpdateStore', () => {
       })
       ;(window as unknown as { api: unknown }).api = {
         update: {
-          getAppInfo: async () => ({ name: 'Open Science', version: '0.2.0', copyright: '' }),
+          getAppInfo: async () => ({ name: 'Open-Science', version: '0.2.0', copyright: '' }),
           getStatus: async () => ({ state: 'downloading', current: '0.2.0', progress: 10 }),
           onStatus: vi.fn(),
           onProgress: (listener: (progress: unknown) => void) => {
@@ -74,7 +74,7 @@ describe('useUpdateStore', () => {
       })
       ;(window as unknown as { api: unknown }).api = {
         update: {
-          getAppInfo: async () => ({ name: 'Open Science', version: '0.2.0', copyright: '' }),
+          getAppInfo: async () => ({ name: 'Open-Science', version: '0.2.0', copyright: '' }),
           getStatus: async () => ({ state: 'available', current: '0.2.0', latest: '0.3.0' }),
           onStatus: (listener: (status: UpdateStatus) => void) => {
             statusListener = listener
@@ -122,7 +122,7 @@ describe('useUpdateStore', () => {
       update: {
         getAppInfo: () =>
           Promise.resolve({
-            name: 'Open Science',
+            name: 'Open-Science',
             version: '0.2.0',
             copyright: '© 2026 AIPOCH. All rights reserved.'
           }),
@@ -180,7 +180,7 @@ describe('useUpdateStore', () => {
       update: {
         getAppInfo: () =>
           Promise.resolve({
-            name: 'Open Science',
+            name: 'Open-Science',
             version: '0.2.0',
             copyright: '© 2026 AIPOCH. All rights reserved.'
           }),
@@ -208,7 +208,7 @@ describe('useUpdateStore', () => {
       update: {
         getAppInfo: () =>
           Promise.resolve({
-            name: 'Open Science',
+            name: 'Open-Science',
             version: '0.2.0',
             copyright: '© 2026 AIPOCH. All rights reserved.'
           }),
@@ -305,7 +305,7 @@ describe('useUpdateStore', () => {
     ;(window as unknown as { api: unknown }).api = {
       update: {
         getAppInfo: () =>
-          Promise.resolve({ name: 'Open Science', version: '0.2.0', copyright: '' }),
+          Promise.resolve({ name: 'Open-Science', version: '0.2.0', copyright: '' }),
         getStatus: () => Promise.resolve({ state: 'idle', current: '0.2.0' }),
         onStatus: vi.fn(),
         onProgress: (listener: (progress: unknown) => void) => {
@@ -342,7 +342,7 @@ describe('useUpdateStore', () => {
     ;(window as unknown as { api: unknown }).api = {
       update: {
         getAppInfo: () =>
-          Promise.resolve({ name: 'Open Science', version: '0.2.0', copyright: '' }),
+          Promise.resolve({ name: 'Open-Science', version: '0.2.0', copyright: '' }),
         getStatus: () => Promise.resolve({ state: 'idle', current: '0.2.0' }),
         onStatus: (l: (status: unknown) => void) => {
           statusListener = l
