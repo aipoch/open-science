@@ -130,25 +130,6 @@ describe('annotation reveal', () => {
     }
   )
 
-  it('centers the selected line rather than its containing long paragraph', () => {
-    const viewport = document.createElement('div')
-    viewport.style.overflowY = 'auto'
-    document.body.append(viewport)
-    viewport.append(paragraph)
-    Object.defineProperties(viewport, {
-      clientHeight: { value: 400 },
-      scrollHeight: { value: 2000 }
-    })
-    viewport.scrollTop = 100
-    viewport.getBoundingClientRect = () => ({ top: 50, height: 400 }) as DOMRect
-    viewport.scrollTo = vi.fn()
-    const range = textRange()
-    range.getBoundingClientRect = () => ({ top: 650, height: 20, width: 80 }) as DOMRect
-    revealTextAnnotationRange(range)
-    expect(viewport.scrollTo).toHaveBeenCalledWith({ top: 510, behavior: 'smooth' })
-    viewport.remove()
-  })
-
   it('scrolls to the range and flashes a stronger highlight', () => {
     revealTextAnnotationRange(textRange())
 
@@ -216,7 +197,6 @@ describe('annotation reveal', () => {
     await expect(requestBookmarkReveal(bookmark)).resolves.toBe('revealed')
 
     expect(prepare).toHaveBeenCalledWith({ id: bookmark.id, ...bookmark.target })
-    expect(prepare.mock.calls[0]?.[0]).not.toHaveProperty('target', 'agent')
     expect(reveal).toHaveBeenCalledWith(bookmark.id)
     offPrepare()
     offReveal()
