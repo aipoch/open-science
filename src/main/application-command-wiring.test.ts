@@ -44,6 +44,34 @@ const dependencyBlock = compact(
 )
 
 describe('production application command wiring', () => {
+  it('constructs Session package desktop once with shared owners and retains lifecycle bindings', () => {
+    const phase = compact(
+      between(ipcSource, 'surfaceAdapters = afterAcpAdapters', 'const reviewerModelRuntime =')
+    )
+    expect(phase).toContain(
+      'const sessionPackageDesktop = createSessionPackageDesktop({ sessionPackageService, translate, archiveCoordinator, sessionPersistenceCoordinator, applicationEvents, projectRepository, sessionRepository, isPackageHandoffHeld: () => packageHandoffHeld })'
+    )
+    expect(occurrences(ipcSource, 'createSessionPackageDesktop(')).toBe(1)
+    expect(ipcSource).not.toContain('new SessionPackageDesktop')
+    expect(phase).toContain(
+      'sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active'
+    )
+    expect(phase).toContain(
+      'sessionPackageDesktopLifecycle.close = async () => { removePackageQuitGuard() await sessionPackageDesktop.close() }'
+    )
+    expect(compact(ipcSource)).toContain(
+      'await Promise.all([service.close(), sessionPackageDesktopLifecycle.close()])'
+    )
+    for (const call of [
+      'sessionPackageDesktop.respond(',
+      'sessionPackageDesktop.export(',
+      'sessionPackageDesktop.import(',
+      'sessionPackageDesktop.enqueueFile('
+    ]) {
+      expect(occurrences(ipcSource, call)).toBe(1)
+    }
+  })
+
   it('installs Session persistence once with shared owners after Notebook input preview', () => {
     const phase = compact(
       between(ipcSource, 'surfaceAdapters = afterAcpAdapters', 'const conversationExportService')

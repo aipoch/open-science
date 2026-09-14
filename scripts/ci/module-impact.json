@@ -1047,7 +1047,8 @@
         "src/main/ipc-surfaces/artifacts.ts",
         "src/main/ipc-surfaces/specialist.ts",
         "src/main/ipc-surfaces/session-persistence.ts",
-        "src/main/ipc-surfaces/office-preview.ts"
+        "src/main/ipc-surfaces/office-preview.ts",
+        "src/main/session-package/desktop-composition.ts"
       ],
       "interfacePaths": [
         "src/main/ipc-surfaces/adapter.ts",
@@ -1061,7 +1062,8 @@
         "src/main/ipc-surfaces/artifacts.ts",
         "src/main/ipc-surfaces/specialist.ts",
         "src/main/ipc-surfaces/session-persistence.ts",
-        "src/main/ipc-surfaces/office-preview.ts"
+        "src/main/ipc-surfaces/office-preview.ts",
+        "src/main/session-package/desktop-composition.ts"
       ],
       "consumerModules": [],
       "testFiles": {
@@ -1077,7 +1079,8 @@
           "src/main/ipc-surfaces/artifacts.test.ts",
           "src/main/ipc-surfaces/specialist.test.ts",
           "src/main/ipc-surfaces/session-persistence.test.ts",
-          "src/main/ipc-surfaces/office-preview.test.ts"
+          "src/main/ipc-surfaces/office-preview.test.ts",
+          "src/main/session-package/desktop-composition.test.ts"
         ],
         "contract": [
           "src/main/artifacts/ipc.test.ts",
@@ -1141,7 +1144,15 @@
           "src/main/managed-preview-ipc.test.ts",
           "src/main/reviewer/paged-preview-resolver.test.ts",
           "src/main/reviewer/paged-preview-electron.test.ts",
-          "src/shared/office-preview.test.ts"
+          "src/shared/office-preview.test.ts",
+          "src/shared/session-package.test.ts",
+          "src/main/session-package/desktop.test.ts",
+          "src/main/session-package/service.test.ts",
+          "src/main/session-package/operation.test.ts",
+          "src/main/session-package/quit-guard.test.ts",
+          "src/main/session-package/transfer.test.ts",
+          "src/main/archive/coordinator.test.ts",
+          "src/main/session-persistence/coordinator.test.ts"
         ],
         "consumer": [
           "src/main/application-runtime.test.ts",
@@ -1171,7 +1182,12 @@
           "src/renderer/src/office-preview/office-preview-frame-bridge.test.ts",
           "src/renderer/src/pages/workspace/previews/renderers/office-preview-lease.test.ts",
           "src/renderer/src/pages/workspace/previews/renderers/OfficePreview.test.tsx",
-          "src/renderer/src/reviewer-paged-preview/main.test.ts"
+          "src/renderer/src/reviewer-paged-preview/main.test.ts",
+          "src/renderer/src/lib/session-package-export.test.ts",
+          "src/renderer/src/lib/session-package-import.test.ts",
+          "src/renderer/src/components/SessionPackageOperation.test.tsx",
+          "src/renderer/src/components/PackageImportSelection.test.tsx",
+          "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
         ]
       },
       "capabilityOverlays": [],

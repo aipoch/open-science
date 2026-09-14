@@ -395,7 +395,7 @@ import { isDataRootMissing } from './storage/path-presence'
 import { SessionPackageService } from './session-package/service'
 import createInspectionWorker from './session-package/inspection-worker-entry?nodeWorker'
 import { createPackageInspector } from './session-package/inspection-worker'
-import { SessionPackageDesktop } from './session-package/desktop'
+import { createSessionPackageDesktop } from './session-package/desktop-composition'
 import { installSessionPackageQuitGuard } from './session-package/quit-guard'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import { createDataRootSourceCleanup, DataRootCleanupJournal } from './storage/data-root-cleanup'
@@ -4429,54 +4429,15 @@ const createApplicationModules = async (
   declareElectronAdapter('conversation-export', () =>
     registerConversationExportIpcHandler(conversationExportService)
   )
-  const sessionPackageDesktop = new SessionPackageDesktop({
-    service: sessionPackageService,
+  const sessionPackageDesktop = createSessionPackageDesktop({
+    sessionPackageService,
     translate,
-    withDataRootWrite,
-    assertCanStart: () => {
-      if (packageHandoffHeld || isMigrationInProgress() || isMigrationPending())
-        throw new Error('Wait for the application handoff to finish before transferring research.')
-    },
-    reserveExport: async (request, signal) => {
-      let releasePersistence: (() => void) | undefined
-      try {
-        const releaseAdmission = await archiveCoordinator.reserveSessionExport(
-          request.projectId,
-          request.sessionId,
-          async () => {
-            releasePersistence = await sessionPersistenceCoordinator.reserveSessionExport(
-              request.projectId,
-              request.sessionId
-            )
-            await sessionPackageService.assertExportIdle(request)
-          },
-          signal
-        )
-        return () => {
-          releasePersistence?.()
-          releaseAdmission()
-        }
-      } catch (error) {
-        releasePersistence?.()
-        throw error
-      }
-    },
-    reserveImport: (projectId, signal) =>
-      archiveCoordinator.reserveProjectImport(projectId, signal),
-    onOperationChanged: (snapshot) =>
-      applicationEvents.publish('sessions:package-operation-changed', snapshot),
-    afterImport: async (identity, originClientId, projectCreated) => {
-      const [project, importedSession] = await Promise.all([
-        projectRepository.get(identity.projectId),
-        sessionRepository.loadSession(identity.projectId, identity.sessionId)
-      ])
-      if (project && projectCreated) applicationEvents.publish('project:created', project)
-      if (importedSession)
-        applicationEvents.publish('session:created', {
-          session: importedSession,
-          originClientId: originClientId ?? 'session-package-import'
-        })
-    }
+    archiveCoordinator,
+    sessionPersistenceCoordinator,
+    applicationEvents,
+    projectRepository,
+    sessionRepository,
+    isPackageHandoffHeld: () => packageHandoffHeld
   })
   sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active
   const removePackageQuitGuard = installSessionPackageQuitGuard(
