@@ -215,7 +215,18 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
     argumentsList.push('--remount-ro', sensitiveRoot)
   }
   for (const root of layout.readWriteRoots) argumentsList.push('--bind', root, root)
-  for (const root of layout.deniedWriteRoots) argumentsList.push('--ro-bind', root, root)
+  // Only explicit grants may receive a read-only override. Binding an otherwise hidden deny-write path
+  // would expose host data and can require creating a target beneath a sealed private root.
+  for (const deniedRoot of layout.deniedWriteRoots) {
+    for (const grantedRoot of [...layout.readOnlyRoots, ...layout.readWriteRoots]) {
+      const root = contains(grantedRoot, deniedRoot)
+        ? deniedRoot
+        : contains(deniedRoot, grantedRoot)
+          ? grantedRoot
+          : undefined
+      if (root) argumentsList.push('--ro-bind', root, root)
+    }
+  }
   for (const root of layout.deniedReadRoots) {
     if (pathIsDirectory(root)) argumentsList.push('--tmpfs', root)
     else argumentsList.push('--ro-bind', '/dev/null', root)
