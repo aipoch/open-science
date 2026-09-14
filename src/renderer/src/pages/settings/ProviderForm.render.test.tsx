@@ -482,6 +482,23 @@ describe('ProviderForm field switching', () => {
     expect(container.textContent).toContain('deepseek-v4-flash-vision-exp')
   })
 
+  it.each([
+    {
+      vendorId: 'openrouter',
+      label: 'OpenRouter',
+      models: ['openrouter/free', 'google/gemma-4-31b-it:free']
+    },
+    { vendorId: 'opencode', label: 'OpenCode Zen', models: ['big-pickle', 'mimo-v2.5-free'] }
+  ] as const)(
+    'shows $label and its free models in the provider form',
+    ({ vendorId, label, models }) => {
+      render(createEmptyProviderFormValue({ type: 'official', vendorId }))
+
+      expect(container.querySelector('[aria-label="Provider type"]')?.textContent).toContain(label)
+      for (const model of models) expect(container.textContent).toContain(model)
+    }
+  )
+
   it('shows a region-specific "get a key" link for an official vendor', () => {
     render(createEmptyProviderFormValue({ type: 'official', vendorId: 'zhipu', region: 'china' }))
     const link = Array.from(container.querySelectorAll<HTMLAnchorElement>('a')).find((anchor) =>
