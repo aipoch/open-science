@@ -158,6 +158,7 @@ import {
 import { createLogsCommandOwner } from './logs-ipc'
 import { TaskNotificationService } from './notifications/task-notifications'
 import { createNotificationInboxController } from './notifications/notification-inbox-controller'
+import { createSessionPersistenceElectronSurface } from './ipc-surfaces/session-persistence'
 import { createArtifactElectronSurface } from './ipc-surfaces/artifacts'
 import { createSettingsElectronSurface } from './ipc-surfaces/settings'
 import { createDesktopUtilitiesElectronSurface } from './ipc-surfaces/desktop-utilities'
@@ -263,7 +264,6 @@ import {
   createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
   recoverProjectDeletionsForSessionRead,
-  registerSessionPersistenceIpcHandlers,
   withSessionDeletionCleanup
 } from './session-persistence/ipc'
 import {
@@ -4459,28 +4459,16 @@ const createApplicationModules = async (
         )
     }
   })
-  declareElectronAdapter('session-persistence', () => {
-    registerSessionPersistenceIpcHandlers(
+  surfaceAdapters.push(
+    createSessionPersistenceElectronSurface({
       sessionPersistenceBackend,
       reviewRepository,
       sessionPersistenceHandlers,
-      async (session) => {
-        sessionDetailsOwner.afterSessionSaved(session)
-        try {
-          await delegatedWork.root.wakeMessages?.(session.id)
-        } catch (error) {
-          createLogger('delegation:messages').warn(
-            'message wake after Session activation failed',
-            diagnosticErrorFields(error)
-          )
-        }
-      },
-      async (request) => {
-        const error = await shell.openPath(sessionRepository.recoveryFolderPath(request.projectId))
-        if (error) throw new Error('Session recovery folder could not be opened.')
-      }
-    )
-  })
+      sessionDetailsOwner,
+      delegatedWork,
+      sessionRepository
+    })
+  )
   const conversationExportService = createConversationExportService({
     translate,
     loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),

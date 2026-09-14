@@ -44,6 +44,22 @@ const dependencyBlock = compact(
 )
 
 describe('production application command wiring', () => {
+  it('installs Session persistence once with shared owners after Notebook input preview', () => {
+    const phase = compact(
+      between(ipcSource, 'surfaceAdapters = afterAcpAdapters', 'const conversationExportService')
+    )
+    expect(phase).toContain(
+      'createSessionPersistenceElectronSurface({ sessionPersistenceBackend, reviewRepository, sessionPersistenceHandlers, sessionDetailsOwner, delegatedWork, sessionRepository })'
+    )
+    expect(phase.indexOf("declareElectronAdapter('notebook-input-preview'")).toBeLessThan(
+      phase.indexOf('createSessionPersistenceElectronSurface(')
+    )
+    expect(occurrences(ipcSource, 'createSessionPersistenceElectronSurface(')).toBe(1)
+    expect(ipcSource).not.toContain('registerSessionPersistenceIpcHandlers')
+    expect(ipcSource).not.toContain('message wake after Session activation failed')
+    expect(ipcSource).not.toContain('Session recovery folder could not be opened.')
+  })
+
   it('installs Specialist once with shared owners before Notebook runtime in afterAcp', () => {
     const phase = compact(
       between(
@@ -247,7 +263,7 @@ describe('production application command wiring', () => {
       ],
       [
         'sessionPersistenceHandlers',
-        'reviewRepository, sessionPersistenceHandlers, async (session)',
+        'reviewRepository, sessionPersistenceHandlers, sessionDetailsOwner, delegatedWork, sessionRepository',
         '...sessionPersistenceHandlers'
       ],
       [
