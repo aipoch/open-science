@@ -35,8 +35,12 @@ export const resolvePdfContextTarget = (item: PreviewFileItem): PdfContextTarget
   }
   if (item.source === 'literature') {
     const versionId = parseLiteratureAttachmentVersionReference(item.path)
-    return versionId
-      ? { sourceKind: 'literature-attachment-version', sourceVersionId: versionId }
+    return versionId && item.managedFileId
+      ? {
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: item.managedFileId,
+          sourceVersionId: versionId
+        }
       : undefined
   }
   if (item.source === 'notebook-input') {

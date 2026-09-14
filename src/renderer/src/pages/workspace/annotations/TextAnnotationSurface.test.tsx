@@ -259,6 +259,7 @@ describe('TextAnnotationSurface highlight restoration', () => {
     })
     const active = [{ ...annotation('editable', 'repeat'), note: 'Check this wording' }]
     const onUpdateNote = vi.fn(() => undefined)
+    const onRemove = vi.fn()
     await act(async () =>
       root.render(
         <TextAnnotationSurface
@@ -266,6 +267,7 @@ describe('TextAnnotationSurface highlight restoration', () => {
           activeAnnotations={active}
           onAdd={vi.fn()}
           onUpdateNote={onUpdateNote}
+          onRemove={onRemove}
           onError={vi.fn()}
         >
           <p>repeat then repeat</p>
@@ -321,6 +323,12 @@ describe('TextAnnotationSurface highlight restoration', () => {
     )
     expect(document.querySelector('[data-source-annotation-note]')).toBeNull()
     expect(onUpdateNote).toHaveBeenCalledTimes(1)
+    await act(async () => pencil?.click())
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="Remove annotation"]')?.click()
+    )
+    expect(onRemove).toHaveBeenCalledWith('editable')
+    expect(document.querySelector('[data-source-annotation-note]')).toBeNull()
     Reflect.deleteProperty(Range.prototype, 'getClientRects')
   })
 })

@@ -17,6 +17,7 @@ import {
 } from '../../shared/session-persistence'
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import { BookmarkRepository } from '../bookmarks/repository'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { ManagedFileIndexRepository } from '../project-files/repository'
 import { ProjectDeletionCoordinator } from '../projects/deletion-coordinator'
@@ -143,6 +144,97 @@ describe('managed-file deletion integration', () => {
     await expect(readFile(uploadPath, 'utf8')).resolves.toBe('upload bytes')
     await expect(readFile(artifactPath, 'utf8')).resolves.toBe('artifact bytes')
     await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('deletes Bookmarks only after the authoritative Session deletion commits', async () => {
+    const bookmarks = new BookmarkRepository(() => Promise.resolve(client))
+    await bookmarks.create({
+      id: 'bookmark-1',
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      target: {
+        kind: 'text',
+        source: { kind: 'agent-message', sessionId: SESSION_ID, messageId: 'message-agent' },
+        quote: 'saved source'
+      },
+      note: ''
+    })
+    coordinator.setSessionDeletionHandlers({
+      commit: (sessionIds) => bookmarks.deleteSessions(sessionIds),
+      reconcile: (sessionIds) => bookmarks.reconcileSessions(sessionIds)
+    })
+
+    await coordinator.deleteSession(PROJECT_ID, SESSION_ID)
+
+    await expect(
+      bookmarks.list({ projectId: PROJECT_ID, sessionId: SESSION_ID })
+    ).resolves.toMatchObject({
+      total: 0
+    })
+  })
+
+  it('preserves Bookmarks when authority deletion does not commit', async () => {
+    const bookmarks = new BookmarkRepository(() => Promise.resolve(client))
+    await bookmarks.create({
+      id: 'bookmark-1',
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      target: {
+        kind: 'text',
+        source: { kind: 'agent-message', sessionId: SESSION_ID, messageId: 'message-agent' },
+        quote: 'saved source'
+      },
+      note: ''
+    })
+    coordinator.setSessionDeletionHandlers({
+      commit: (sessionIds) => bookmarks.deleteSessions(sessionIds),
+      reconcile: (sessionIds) => bookmarks.reconcileSessions(sessionIds)
+    })
+    vi.spyOn(sessions, 'deleteSession').mockRejectedValueOnce(new Error('disk locked'))
+
+    await expect(coordinator.deleteSession(PROJECT_ID, SESSION_ID)).rejects.toThrow('disk locked')
+
+    await expect(
+      bookmarks.list({ projectId: PROJECT_ID, sessionId: SESSION_ID })
+    ).resolves.toMatchObject({
+      total: 1
+    })
+  })
+
+  it('repairs committed Bookmark cleanup failure from the next complete Session scan', async () => {
+    const bookmarks = new BookmarkRepository(() => Promise.resolve(client))
+    await bookmarks.create({
+      id: 'bookmark-1',
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      target: {
+        kind: 'text',
+        source: { kind: 'agent-message', sessionId: SESSION_ID, messageId: 'message-agent' },
+        quote: 'saved source'
+      },
+      note: ''
+    })
+    coordinator.setSessionDeletionHandlers({
+      commit: async () => {
+        throw new Error('database temporarily unavailable')
+      },
+      reconcile: (sessionIds) => bookmarks.reconcileSessions(sessionIds)
+    })
+
+    await coordinator.deleteSession(PROJECT_ID, SESSION_ID)
+    await expect(
+      bookmarks.list({ projectId: PROJECT_ID, sessionId: SESSION_ID })
+    ).resolves.toMatchObject({
+      total: 1
+    })
+
+    await coordinator.loadAll()
+
+    await expect(
+      bookmarks.list({ projectId: PROJECT_ID, sessionId: SESSION_ID })
+    ).resolves.toMatchObject({
+      total: 0
+    })
   })
 
   it('rejects wrong-project deletion without reporting a commit or leaving a retry intent', async () => {

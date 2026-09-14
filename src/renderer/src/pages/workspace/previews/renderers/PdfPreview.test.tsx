@@ -11,7 +11,10 @@ import {
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { PdfPreviewContent, PdfPreviewRenderer } from './PdfPreview'
 import { PdfOutlineSidebar } from './PdfOutlineSidebar'
-import { requestAnnotationReveal } from '../../annotations/annotation-reveal'
+import { requestAnnotationReveal, requestBookmarkReveal } from '../../annotations/annotation-reveal'
+import { useSessionStore } from '@/stores/session-store'
+import { BookmarksProvider } from '../../bookmarks/BookmarksProvider'
+import type { Bookmark } from '../../../../../../shared/bookmarks'
 
 vi.mock('../managed-pdf-document', () => ({ createManagedPdfLoadingTask: vi.fn() }))
 const { cancelTextLayer, renderTextLayer } = vi.hoisted(() => ({
@@ -179,6 +182,7 @@ describe('PdfPreviewContent', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    useSessionStore.setState({ sessions: [], selectedSessionId: undefined } as never)
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
   })
 
@@ -638,6 +642,87 @@ describe('PdfPreviewContent', () => {
         versionId: 'artifact-v2'
       })
     )
+  })
+
+  it('resolves an exact bookmark source without a PDF Agent-context binding', async () => {
+    const resolvePdfSource = vi.fn().mockResolvedValue({ ok: false, reason: 'source-unavailable' })
+    window.api = {
+      ...window.api,
+      bookmarks: { resolvePdfSource }
+    } as unknown as Window['api']
+    useSessionStore.setState({
+      selectedSessionId: 'session-owner',
+      sessions: [{ id: 'session-owner', projectId: 'project-1' }]
+    } as never)
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewRenderer
+          item={{
+            id: 'artifact-1',
+            projectId: 'project-1',
+            sessionId: 'source-session',
+            title: 'report.pdf',
+            type: 'file',
+            source: 'artifact',
+            path: 'artifact-version:stale-projection',
+            name: 'report.pdf',
+            format: 'pdf',
+            managedFileId: 'artifact-1',
+            selectedVersionId: 'artifact-v2'
+          }}
+        />
+      )
+    })
+
+    await vi.waitFor(() =>
+      expect(resolvePdfSource).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        sessionId: 'session-owner',
+        sourceKind: 'artifact-version',
+        sourceFileId: 'artifact-1',
+        versionId: 'artifact-v2'
+      })
+    )
+    await vi.waitFor(() =>
+      expect(container.querySelector('[role="status"]')?.textContent).toBe(
+        'This PDF source could not be verified for bookmarks.'
+      )
+    )
+    const bookmark = {
+      id: 'bookmark-removed-version',
+      projectId: 'project-1',
+      sessionId: 'session-owner',
+      version: 1 as const,
+      note: '',
+      createdAt: '2026-09-14T00:00:00.000Z',
+      updatedAt: '2026-09-14T00:00:00.000Z',
+      target: {
+        kind: 'pdf' as const,
+        source: {
+          kind: 'artifact-version' as const,
+          projectId: 'project-1',
+          sessionId: 'source-session',
+          sourceFileId: 'artifact-1',
+          versionId: 'artifact-v2',
+          checksum: 'a'.repeat(64),
+          name: 'report.pdf',
+          path: 'artifact-version:project-1/source-session/artifact-1/artifact-v2'
+        },
+        selector: {
+          kind: 'region' as const,
+          pageNumber: 1,
+          pageRotation: 0,
+          coordinateVersion: 1 as const,
+          rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 }
+        }
+      }
+    } satisfies Bookmark
+    let revealOutcome: Awaited<ReturnType<typeof requestBookmarkReveal>> | undefined
+    await act(async () => {
+      revealOutcome = await requestBookmarkReveal(bookmark)
+    })
+    expect(revealOutcome).toBe('source-unavailable')
   })
 
   it('shows a native outline, expands nested sections, and navigates to their PDF pages', async () => {
@@ -2316,6 +2401,227 @@ describe('PdfPreviewContent', () => {
     })
     expect(container.querySelector('[data-pdf-region-draft="true"]')).toBeNull()
 
+    clientWidthSpy.mockRestore()
+  })
+
+  it('bookmarks a region on an intrinsic 270-degree page without creating a crop image', async () => {
+    const clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockReturnValue(400)
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(({ scale }: { scale: number }) => ({
+        width: 400 * scale,
+        height: 560 * scale,
+        scale,
+        rotation: 270
+      })),
+      getTextContent: vi.fn().mockResolvedValue({ items: [], styles: {} }),
+      render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+      cleanup: vi.fn()
+    })
+    const source = {
+      kind: 'upload-version' as const,
+      projectId: 'project-1',
+      sessionId: 'source-session',
+      sourceFileId: 'upload-1',
+      versionId: 'version-1',
+      name: 'rotated.pdf',
+      path: 'upload-version:project-1/source-session/upload-1/version-1',
+      checksum: 'a'.repeat(64)
+    }
+    const create = vi.fn(async (request) => ({
+      ...request,
+      version: 1 as const,
+      createdAt: '2026-09-14T00:00:00.000Z',
+      updatedAt: '2026-09-14T00:00:00.000Z'
+    }))
+    window.api = {
+      ...window.api,
+      bookmarks: {
+        list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+        create
+      }
+    } as unknown as Window['api']
+
+    await act(async () => {
+      root.render(
+        <BookmarksProvider projectId="project-1" sessionId="session-owner">
+          <PdfPreviewContent
+            path={source.path}
+            name={source.name}
+            source="upload"
+            projectId={source.projectId}
+            sessionId={source.sessionId}
+            managedFileId={source.sourceFileId}
+            selectedVersionId={source.versionId}
+            pdfBookmarkSource={source}
+            annotationProps={{
+              item: {
+                id: 'upload:version-1',
+                type: 'file',
+                format: 'pdf',
+                source: 'upload',
+                projectId: source.projectId,
+                sessionId: source.sessionId,
+                managedFileId: source.sourceFileId,
+                selectedVersionId: source.versionId,
+                path: source.path,
+                name: source.name,
+                title: source.name
+              }
+            }}
+          />
+        </BookmarksProvider>
+      )
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Area"]')?.click()
+    )
+    const selection = container.querySelector<HTMLElement>('[data-pdf-region-selection="true"]')!
+    expect(selection).not.toBeNull()
+    selection.setPointerCapture = vi.fn()
+    selection.hasPointerCapture = vi.fn(() => true)
+    selection.releasePointerCapture = vi.fn()
+    Object.defineProperty(selection, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ left: 0, top: 0, right: 400, bottom: 560, width: 400, height: 560 })
+    })
+    await act(async () =>
+      dispatchPointer(selection, 'pointerdown', { pointerId: 7, clientX: 40, clientY: 56 })
+    )
+    await act(async () =>
+      dispatchPointer(selection, 'pointerup', { pointerId: 7, clientX: 200, clientY: 280 })
+    )
+    const note = document.querySelector<HTMLTextAreaElement>('[data-pdf-bookmark-note]')
+    expect(note).not.toBeNull()
+    await act(async () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Bookmark')
+        ?.click()
+    )
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        sessionId: 'session-owner',
+        target: {
+          kind: 'pdf',
+          source,
+          selector: {
+            kind: 'region',
+            pageNumber: 1,
+            rect: { x: 0.1, y: 0.1, width: 0.4, height: 0.4 },
+            pageRotation: 270,
+            coordinateVersion: 1
+          }
+        }
+      })
+    )
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('target.selector.image')
+    clientWidthSpy.mockRestore()
+  })
+
+  it('reveals an exact PDF bookmark and rejects a stale intrinsic rotation', async () => {
+    const clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockReturnValue(400)
+    getPage.mockResolvedValue({
+      getViewport: vi.fn(({ scale }: { scale: number }) => ({
+        width: 400 * scale,
+        height: 560 * scale,
+        scale,
+        rotation: 90
+      })),
+      getTextContent: vi.fn().mockResolvedValue({ items: [], styles: {} }),
+      render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+      cleanup: vi.fn()
+    })
+    const source = {
+      kind: 'upload-version' as const,
+      projectId: 'project-1',
+      sessionId: 'source-session',
+      sourceFileId: 'upload-1',
+      versionId: 'version-1',
+      name: 'rotated.pdf',
+      path: 'upload-version:project-1/source-session/upload-1/version-1',
+      checksum: 'a'.repeat(64)
+    }
+    const bookmark = {
+      id: 'bookmark-rotation-90',
+      projectId: 'project-1',
+      sessionId: 'session-owner',
+      version: 1 as const,
+      note: '',
+      createdAt: '2026-09-14T00:00:00.000Z',
+      updatedAt: '2026-09-14T00:00:00.000Z',
+      target: {
+        kind: 'pdf' as const,
+        source,
+        selector: {
+          kind: 'region' as const,
+          pageNumber: 1,
+          rect: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+          pageRotation: 90,
+          coordinateVersion: 1 as const
+        }
+      }
+    } satisfies Bookmark
+    window.api = {
+      ...window.api,
+      bookmarks: {
+        list: vi.fn().mockResolvedValue({ items: [], total: 0 })
+      }
+    } as unknown as Window['api']
+
+    await act(async () => {
+      root.render(
+        <BookmarksProvider projectId="project-1" sessionId="session-owner">
+          <PdfPreviewContent
+            path={source.path}
+            name={source.name}
+            source="upload"
+            projectId={source.projectId}
+            sessionId={source.sessionId}
+            managedFileId={source.sourceFileId}
+            selectedVersionId={source.versionId}
+            pdfBookmarkSource={source}
+          />
+        </BookmarksProvider>
+      )
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
+
+    let outcome: Awaited<ReturnType<typeof requestBookmarkReveal>> | undefined
+    await act(async () => {
+      outcome = await requestBookmarkReveal(bookmark)
+    })
+    expect(outcome).toBe('revealed')
+    const highlight = container.querySelector<HTMLElement>(
+      '[data-pdf-bookmark-highlight="bookmark-rotation-90"]'
+    )
+    expect(highlight?.dataset.pdfBookmarkRevealed).toBe('true')
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
+      block: 'center',
+      inline: 'center',
+      behavior: 'smooth'
+    })
+
+    outcome = undefined
+    await act(async () => {
+      outcome = await requestBookmarkReveal({
+        ...bookmark,
+        id: 'bookmark-stale-rotation',
+        target: {
+          ...bookmark.target,
+          selector: { ...bookmark.target.selector, pageRotation: 270 }
+        }
+      })
+    })
+    expect(outcome).toBe('locator-unsupported')
+    expect(
+      container.querySelector('[data-pdf-bookmark-highlight="bookmark-stale-rotation"]')
+    ).toBeNull()
     clientWidthSpy.mockRestore()
   })
 

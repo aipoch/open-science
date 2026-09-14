@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { BookmarkMarker } from '../bookmarks/BookmarkMarker'
 
 import type {
   AnnotationValidationError,
@@ -7,10 +8,14 @@ import type {
   TextAnnotation,
   TextAnnotationSource
 } from '../../../../../shared/annotations'
+import type { Bookmark, TextBookmarkTarget } from '../../../../../shared/bookmarks'
+import { useBookmarks } from '../bookmarks/bookmark-context'
 import { isBackwardSelection } from './annotation-trigger-anchor'
 import { createAnnotationId } from './annotation-id'
 import {
   revealTextAnnotationRange,
+  subscribeBookmarkReveal,
+  subscribeBookmarkRevealPreparation,
   subscribeAnnotationReveal,
   subscribeAnnotationRevealPreparation,
   retryPendingAnnotationReveal
@@ -30,7 +35,9 @@ import {
 type SelectionDraft = { quote: string; backward: boolean; range: Range; occurrence: number }
 
 const DRAFT_HIGHLIGHT_NAME = 'agent-annotation-draft'
+const BOOKMARK_HIGHLIGHT_NAME = 'personal-bookmark'
 const draftHighlightRanges = new Map<string, Range>()
+const bookmarkHighlightRanges = new Map<string, Range>()
 
 const syncDraftHighlights = (): void => {
   if (typeof Highlight === 'undefined' || !globalThis.CSS?.highlights) return
@@ -40,6 +47,20 @@ const syncDraftHighlights = (): void => {
   }
   CSS.highlights.set(DRAFT_HIGHLIGHT_NAME, new Highlight(...draftHighlightRanges.values()))
 }
+
+const syncBookmarkHighlights = (): void => {
+  if (typeof Highlight === 'undefined' || !globalThis.CSS?.highlights) return
+  if (bookmarkHighlightRanges.size === 0) {
+    CSS.highlights.delete(BOOKMARK_HIGHLIGHT_NAME)
+    return
+  }
+  CSS.highlights.set(BOOKMARK_HIGHLIGHT_NAME, new Highlight(...bookmarkHighlightRanges.values()))
+}
+
+const createBookmarkId = (): string =>
+  globalThis.crypto?.randomUUID
+    ? `bookmark-${globalThis.crypto.randomUUID()}`
+    : `bookmark-${Date.now()}-${Math.random().toString(36).slice(2)}`
 
 // Pointer interactions owned by the annotate UI itself; a pointerdown inside
 // these must not clear the draft (the browser collapses the selection on any
@@ -68,21 +89,26 @@ const TextAnnotationSurface = ({
   activeAnnotations,
   onAdd,
   onUpdateNote,
+  onRemove,
   onError,
   isAnimating = false
 }: {
   children: React.ReactNode
   source: SessionTextAnnotationSource
-  activeAnnotations: readonly TextAnnotation[]
-  onAdd: (annotation: TextAnnotation) => AnnotationValidationError | undefined
+  activeAnnotations?: readonly TextAnnotation[]
+  onAdd?: (annotation: TextAnnotation) => AnnotationValidationError | undefined
+  onRemove?: (id: string) => void
   onUpdateNote?: (id: string, note: string) => AnnotationValidationError | undefined
-  onError: (error: AnnotationValidationError) => void
+  onError?: (error: AnnotationValidationError) => void
   isAnimating?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const bookmarkPort = useBookmarks()
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
   const ownedHighlightIds = useRef(new Set<string>())
+  const ownedBookmarkHighlightIds = useRef(new Set<string>())
+  const pendingBookmarkIdRef = useRef<string | undefined>(undefined)
   const suppressFollowingClickRef = useRef(false)
   const annotatePointerActiveRef = useRef(false)
   const preserveDraftForCollapsedSelectionRef = useRef(false)
@@ -95,10 +121,21 @@ const TextAnnotationSurface = ({
   const [note, setNote] = useState('')
   const [revealUnavailable, setRevealUnavailable] = useState(false)
   const [annotationControls, setAnnotationControls] = useState<readonly AnnotationControl[]>([])
+  const [bookmarkMarkers, setBookmarkMarkers] = useState<
+    readonly { id: string; left: number; top: number; note: string }[]
+  >([])
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string>()
   const matchingAnnotations = useMemo(
-    () => activeAnnotations.filter((annotation) => sourcesMatch(annotation.source, source)),
+    () => (activeAnnotations ?? []).filter((annotation) => sourcesMatch(annotation.source, source)),
     [activeAnnotations, source]
+  )
+  const matchingBookmarks = useMemo(
+    () =>
+      bookmarkPort.bookmarks.filter(
+        (bookmark): bookmark is Bookmark & { target: TextBookmarkTarget } =>
+          bookmark.target.kind === 'text' && sourcesMatch(bookmark.target.source, source)
+      ),
+    [bookmarkPort.bookmarks, source]
   )
 
   const measureAnnotationControls = useCallback((): void => {
@@ -124,7 +161,22 @@ const TextAnnotationSurface = ({
         ]
       })
     )
-  }, [matchingAnnotations])
+    setBookmarkMarkers(
+      matchingBookmarks.flatMap((bookmark) => {
+        const range = bookmarkHighlightRanges.get(bookmark.id)
+        const rect = Array.from(range?.getClientRects?.() ?? []).at(-1)
+        if (!rect || (rect.width === 0 && rect.height === 0)) return []
+        return [
+          {
+            id: bookmark.id,
+            left: rect.right - surfaceRect.left + 1,
+            top: rect.top - surfaceRect.top - 3,
+            note: bookmark.note
+          }
+        ]
+      })
+    )
+  }, [matchingAnnotations, matchingBookmarks])
 
   const trackAnnotatedTextHover = (event: React.PointerEvent<HTMLDivElement>): void => {
     const hovered = matchingAnnotations.find((annotation) => {
@@ -150,6 +202,7 @@ const TextAnnotationSurface = ({
     setSelection(undefined)
     setOpen(false)
     setNote('')
+    pendingBookmarkIdRef.current = undefined
   }, [open])
 
   const captureSelection = useCallback(
@@ -264,6 +317,7 @@ const TextAnnotationSurface = ({
 
   useLayoutEffect(() => {
     let prepared: TextAnnotation | undefined
+    let preparedBookmark: (Readonly<{ id: string }> & TextBookmarkTarget) | undefined
     const stopPreparation = subscribeAnnotationRevealPreparation((annotation) => {
       prepared =
         annotation.kind === 'text' && sourcesMatch(annotation.source, source)
@@ -292,11 +346,35 @@ const TextAnnotationSurface = ({
       revealTextAnnotationRange(range)
       return true
     })
+    const stopBookmarkPreparation = subscribeBookmarkRevealPreparation((target) => {
+      preparedBookmark =
+        target.kind === 'text' && sourcesMatch(target.source, source) ? target : undefined
+      setRevealUnavailable(false)
+    })
+    const stopBookmarkReveal = subscribeBookmarkReveal((target) => {
+      if (target.kind !== 'text' || !sourcesMatch(target.source, source)) return
+      const bookmark: TextBookmarkTarget | undefined =
+        matchingBookmarks.find((entry) => entry.id === target.id)?.target ??
+        (preparedBookmark?.id === target.id ? preparedBookmark : undefined)
+      const content = contentRef.current
+      if (!bookmark || !content) return
+      const range = reconcileTextAnnotationRanges(
+        content,
+        [{ id: target.id, ...bookmark }],
+        new Map()
+      ).get(target.id)
+      setRevealUnavailable(!range)
+      if (!range) return 'locator-unsupported'
+      revealTextAnnotationRange(range)
+      return true
+    })
     return () => {
       stopPreparation()
       stopReveal()
+      stopBookmarkPreparation()
+      stopBookmarkReveal()
     }
-  }, [matchingAnnotations, source])
+  }, [matchingAnnotations, matchingBookmarks, source])
 
   const reconcileAnnotationHighlights = useCallback((): void => {
     const existing = new Map<string, Range>()
@@ -313,15 +391,32 @@ const TextAnnotationSurface = ({
         ownedHighlightIds.current.add(id)
         draftHighlightRanges.set(id, range)
       }
+      const bookmarkRanges = reconcileTextAnnotationRanges(
+        content,
+        matchingBookmarks.map((bookmark) => ({ id: bookmark.id, ...bookmark.target })),
+        new Map(
+          Array.from(ownedBookmarkHighlightIds.current).flatMap((id) => {
+            const range = bookmarkHighlightRanges.get(id)
+            return range ? [[id, range] as const] : []
+          })
+        )
+      )
+      for (const id of ownedBookmarkHighlightIds.current) bookmarkHighlightRanges.delete(id)
+      ownedBookmarkHighlightIds.current.clear()
+      for (const [id, range] of bookmarkRanges) {
+        ownedBookmarkHighlightIds.current.add(id)
+        bookmarkHighlightRanges.set(id, range)
+      }
     }
     syncDraftHighlights()
+    syncBookmarkHighlights()
     if (!content) {
       setAnnotationControls([])
       return
     }
     measureAnnotationControls()
     retryPendingAnnotationReveal()
-  }, [matchingAnnotations, measureAnnotationControls])
+  }, [matchingAnnotations, matchingBookmarks, measureAnnotationControls])
 
   useLayoutEffect(() => {
     selectionRef.current = selection
@@ -401,15 +496,16 @@ const TextAnnotationSurface = ({
   useLayoutEffect(
     () => () => {
       for (const id of ownedHighlightIds.current) draftHighlightRanges.delete(id)
+      for (const id of ownedBookmarkHighlightIds.current) bookmarkHighlightRanges.delete(id)
       draftHighlightRanges.delete(pendingHighlightKey)
       syncDraftHighlights()
+      syncBookmarkHighlights()
     },
     [pendingHighlightKey]
   )
 
   // Opening the note editor collapses the native selection; the quoted text
-  // must stay visible through the draft highlight until the draft resolves,
-  // so the editor itself never needs to repeat the quote.
+  // stays highlighted while the compact editor also shows a source excerpt.
   useLayoutEffect(() => {
     if (open && selection) draftHighlightRanges.set(pendingHighlightKey, selection.range)
     else draftHighlightRanges.delete(pendingHighlightKey)
@@ -417,7 +513,7 @@ const TextAnnotationSurface = ({
   }, [open, selection, pendingHighlightKey])
 
   const add = (): void => {
-    if (!selection) return
+    if (!selection || !onAdd) return
     const annotation: TextAnnotation = {
       id: createAnnotationId(),
       kind: 'text',
@@ -429,7 +525,7 @@ const TextAnnotationSurface = ({
     }
     const error = onAdd(annotation)
     if (error) {
-      onError(error)
+      onError?.(error)
       return
     }
     ownedHighlightIds.current.add(annotation.id)
@@ -439,11 +535,27 @@ const TextAnnotationSurface = ({
     window.getSelection()?.removeAllRanges()
   }
 
+  const saveBookmark = async (bookmarkNote: string): Promise<void> => {
+    if (!selection) return
+    const id = pendingBookmarkIdRef.current ?? createBookmarkId()
+    pendingBookmarkIdRef.current = id
+    const target: TextBookmarkTarget = {
+      kind: 'text',
+      source,
+      quote: selection.quote,
+      anchor: textAnnotationAnchorForRange(contentRef.current!, selection.range)
+    }
+    await bookmarkPort.create(id, target, bookmarkNote)
+    clearDraft()
+    window.getSelection()?.removeAllRanges()
+  }
+
   return (
     <div
       ref={surfaceRef}
       data-annotation-surface="true"
       data-annotation-active={matchingAnnotations.length > 0 ? 'true' : undefined}
+      data-bookmark-active={matchingBookmarks.length > 0 ? 'true' : undefined}
       className="relative rounded-md"
       onMouseUp={(event) => {
         const target = event.target
@@ -484,11 +596,16 @@ const TextAnnotationSurface = ({
         hoveredAnnotationId={hoveredAnnotationId}
         variant="workspace"
         onUpdateNote={onUpdateNote}
+        onRemove={onRemove}
         onError={onError}
       />
+      {bookmarkMarkers.map((marker) => (
+        <BookmarkMarker key={marker.id} {...marker} />
+      ))}
       {matchingAnnotations.length > 0 ? (
         <span className="sr-only">{t('Annotated for Agent')}</span>
       ) : null}
+      {matchingBookmarks.length > 0 ? <span className="sr-only">{t('Bookmarked')}</span> : null}
       {selection ? (
         <AnnotationDraftEditor
           range={selection.range}
@@ -512,6 +629,7 @@ const TextAnnotationSurface = ({
           onCancel={() => setOpen(false)}
           onNoteChange={setNote}
           onAdd={add}
+          bookmark={{ available: bookmarkPort.available, onSave: saveBookmark }}
         />
       ) : null}
     </div>

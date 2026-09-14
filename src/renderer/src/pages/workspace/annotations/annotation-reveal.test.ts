@@ -3,10 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   requestAnnotationReveal,
+  requestBookmarkReveal,
   annotationRevealScrollBehavior,
   revealTextAnnotationRange,
   subscribeAnnotationReveal,
-  subscribeAnnotationRevealPreparation
+  subscribeAnnotationRevealPreparation,
+  subscribeBookmarkReveal,
+  subscribeBookmarkRevealPreparation
 } from './annotation-reveal'
 import {
   createInitialPreviewWorkbenchState,
@@ -18,6 +21,7 @@ import { createLiteratureAttachmentVersionReference } from '../../../../../share
 import type { Annotation } from '../../../../../shared/annotations'
 import { createUploadVersionReference } from '../../../../../shared/uploads'
 import { createManagedPreviewRequest } from '../previews/preview-file-reader'
+import type { Bookmark } from '../../../../../shared/bookmarks'
 
 class TestHighlight extends Set<Range> {}
 
@@ -126,6 +130,25 @@ describe('annotation reveal', () => {
     }
   )
 
+  it('centers the selected line rather than its containing long paragraph', () => {
+    const viewport = document.createElement('div')
+    viewport.style.overflowY = 'auto'
+    document.body.append(viewport)
+    viewport.append(paragraph)
+    Object.defineProperties(viewport, {
+      clientHeight: { value: 400 },
+      scrollHeight: { value: 2000 }
+    })
+    viewport.scrollTop = 100
+    viewport.getBoundingClientRect = () => ({ top: 50, height: 400 }) as DOMRect
+    viewport.scrollTo = vi.fn()
+    const range = textRange()
+    range.getBoundingClientRect = () => ({ top: 650, height: 20, width: 80 }) as DOMRect
+    revealTextAnnotationRange(range)
+    expect(viewport.scrollTo).toHaveBeenCalledWith({ top: 510, behavior: 'smooth' })
+    viewport.remove()
+  })
+
   it('scrolls to the range and flashes a stronger highlight', () => {
     revealTextAnnotationRange(textRange())
 
@@ -164,6 +187,129 @@ describe('annotation reveal', () => {
     unsubscribe()
     requestAnnotationReveal(agentAnnotation('annotation-2'))
     expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it('reveals a private text bookmark without fabricating an Agent annotation', async () => {
+    const bookmark: Bookmark = {
+      id: 'bookmark-1',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      version: 1,
+      target: {
+        kind: 'text',
+        quote: 'quoted evidence',
+        source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }
+      },
+      note: '',
+      createdAt: '2026-09-14T00:00:00.000Z',
+      updatedAt: '2026-09-14T00:00:00.000Z'
+    }
+    subscribeAnnotationReveal(() => true)()
+    const prepare = vi.fn()
+    const reveal = vi.fn<(id: string) => void>()
+    const offPrepare = subscribeBookmarkRevealPreparation(prepare)
+    const offReveal = subscribeBookmarkReveal((target) => {
+      reveal(target.id)
+      return true
+    })
+
+    await expect(requestBookmarkReveal(bookmark)).resolves.toBe('revealed')
+
+    expect(prepare).toHaveBeenCalledWith({ id: bookmark.id, ...bookmark.target })
+    expect(prepare.mock.calls[0]?.[0]).not.toHaveProperty('target', 'agent')
+    expect(reveal).toHaveBeenCalledWith(bookmark.id)
+    offPrepare()
+    offReveal()
+  })
+
+  it('reopens an unmanaged project file bookmark without requiring a Version', async () => {
+    const bookmark: Bookmark = {
+      id: 'bookmark-project-file',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      version: 1,
+      target: {
+        kind: 'text',
+        quote: 'quoted evidence',
+        source: {
+          kind: 'project-file',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          path: '/project/notes.md',
+          name: 'notes.md'
+        }
+      },
+      note: '',
+      createdAt: '2026-09-14T00:00:00.000Z',
+      updatedAt: '2026-09-14T00:00:00.000Z'
+    }
+    const stop = subscribeBookmarkReveal(() => true)
+
+    await expect(requestBookmarkReveal(bookmark)).resolves.toBe('revealed')
+
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([
+      expect.objectContaining({
+        type: 'file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        path: '/project/notes.md',
+        name: 'notes.md'
+      })
+    ])
+    stop()
+  })
+
+  it('reopens the exact immutable PDF version before asking its surface to reveal', async () => {
+    const sourcePath = createUploadVersionReference('version-7', {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      fileId: 'upload-1'
+    })
+    const bookmark: Bookmark = {
+      id: 'bookmark-pdf',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      version: 1,
+      target: {
+        kind: 'pdf',
+        source: {
+          kind: 'upload-version',
+          projectId: 'project-1',
+          sourceFileId: 'upload-1',
+          versionId: 'version-7',
+          sessionId: 'session-1',
+          checksum: 'a'.repeat(64),
+          name: 'paper.pdf',
+          path: sourcePath
+        },
+        selector: {
+          kind: 'text',
+          pageNumber: 3,
+          exact: 'quoted evidence',
+          position: { start: 0, end: 15 },
+          quads: [{ x: 0.1, y: 0.1, width: 0.3, height: 0.03 }],
+          extractorVersion: 'pdfjs-5.4.624',
+          pageRotation: 0,
+          coordinateVersion: 1
+        }
+      },
+      note: '',
+      createdAt: '2026-09-14T00:00:00.000Z',
+      updatedAt: '2026-09-14T00:00:00.000Z'
+    }
+    const stop = subscribeBookmarkReveal(() => true)
+
+    await expect(requestBookmarkReveal(bookmark)).resolves.toBe('revealed')
+
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([
+      expect.objectContaining({
+        type: 'file',
+        managedFileId: 'upload-1',
+        selectedVersionId: 'version-7',
+        path: sourcePath
+      })
+    ])
+    stop()
   })
 
   it('prepares session content with the complete annotation before publishing its id', () => {

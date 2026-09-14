@@ -65,11 +65,13 @@ vi.mock('pdfjs-dist', () => {
   }
 })
 
-const { agentMarkdownRenderMock, endScrollTargetMock, scrollToEndMock } = vi.hoisted(() => ({
-  agentMarkdownRenderMock: vi.fn(),
-  endScrollTargetMock: vi.fn(),
-  scrollToEndMock: vi.fn()
-}))
+const { agentMarkdownRenderMock, endScrollTargetMock, scrollToEndMock, scrollToMessageMock } =
+  vi.hoisted(() => ({
+    agentMarkdownRenderMock: vi.fn(),
+    endScrollTargetMock: vi.fn(),
+    scrollToEndMock: vi.fn(),
+    scrollToMessageMock: vi.fn()
+  }))
 const { flushSessionPersistenceMock } = vi.hoisted(() => ({
   flushSessionPersistenceMock: vi.fn(async (): Promise<void> => undefined)
 }))
@@ -215,7 +217,7 @@ vi.mock('@/components/ui/message-scroller', () => {
     MessageScrollerButton: Button,
     useMessageScroller: () => ({
       scrollToEnd: scrollToEndMock,
-      scrollToMessage: vi.fn(),
+      scrollToMessage: scrollToMessageMock,
       scrollToStart: vi.fn()
     })
   }
@@ -4538,6 +4540,57 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     } finally {
       errors.mockRestore()
     }
+  })
+
+  it('mounts a saved bookmark source on first entry without manual scrolling', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const { requestBookmarkReveal, subscribeBookmarkReveal } =
+      await import('./annotations/annotation-reveal')
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      createMessage({
+        id: `message-${index + 1}`,
+        role: index % 2 === 0 ? 'user' : 'agent',
+        content: `transcript message ${index + 1}`,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('[data-message-id="message-2"]')).toBeNull()
+    let pending: Promise<unknown> | undefined
+    await act(async () => {
+      pending = requestBookmarkReveal({
+        id: 'saved-bookmark',
+        projectId: 'default',
+        sessionId: 'session-1',
+        version: 1,
+        target: {
+          kind: 'text',
+          quote: 'transcript message 2',
+          source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message-2' }
+        },
+        note: '',
+        createdAt: '2026-09-14T00:00:00.000Z',
+        updatedAt: '2026-09-14T00:00:00.000Z'
+      })
+    })
+    const found = Boolean(container.querySelector('[data-message-id="message-2"]'))
+    const stop = subscribeBookmarkReveal(() => true)
+    await pending
+    stop()
+    expect(found).toBe(true)
+    expect(scrollToMessageMock).toHaveBeenCalledWith('message-2', {
+      align: 'center',
+      behavior: 'instant'
+    })
   })
 
   it('mounts a bounded long transcript and reveals an older run on demand', async () => {

@@ -82,6 +82,7 @@ import type { AnnotationPort } from './annotations/annotation-port'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
 import { requestPdfReadingReveal } from './pdf-reading-reveal'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
+import { useBookmarks } from './bookmarks/bookmark-context'
 import {
   validateAnnotations,
   type Annotation,
@@ -1360,6 +1361,7 @@ const WorkspaceMessageItemImpl = ({
   reviewerCorrectionState = 'failed'
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const bookmarks = useBookmarks()
   const isUserMessage = message.role === 'user'
   const isHumanUser = isHumanUserMessage(message)
   const reviewerCorrectionActive =
@@ -1921,17 +1923,18 @@ const WorkspaceMessageItemImpl = ({
               )}
             >
               {liveMessageContent ? (
-                annotationPort ? (
+                annotationPort || bookmarks.scoped ? (
                   <TextAnnotationSurface
                     source={{
                       kind: 'agent-message',
-                      sessionId: annotationPort.sessionId,
+                      sessionId: annotationPort?.sessionId ?? bookmarks.sessionId ?? '',
                       messageId: message.id
                     }}
-                    activeAnnotations={annotationPort.activeAnnotations}
-                    onAdd={annotationPort.onAdd}
-                    onUpdateNote={annotationPort.onUpdateNote}
-                    onError={annotationPort.onError}
+                    activeAnnotations={annotationPort?.activeAnnotations}
+                    onAdd={annotationPort?.onAdd}
+                    onUpdateNote={annotationPort?.onUpdateNote}
+                    onRemove={annotationPort?.onRemove}
+                    onError={annotationPort?.onError}
                     isAnimating={isAssistantPresenting}
                   >
                     <SessionMessageMarkdown

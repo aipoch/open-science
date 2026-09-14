@@ -11,13 +11,17 @@ import type {
 } from '../../../../../shared/annotations'
 import { createArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PdfBookmarkSource } from '../../../../../shared/pdf-bookmarks'
+import type { Bookmark } from '../../../../../shared/bookmarks'
 
 import {
   requestAnnotationReveal,
+  requestBookmarkReveal,
   subscribeAnnotationReveal
 } from '../annotations/annotation-reveal'
 import { HighlightedCodeLines } from '../HighlightedCodeLines'
 import { PreviewTextAnnotationSurface } from './PreviewTextAnnotationSurface'
+import { BookmarksProvider } from '../bookmarks/BookmarksProvider'
 
 const item = (overrides: Partial<PreviewFileItem> = {}): PreviewFileItem => ({
   id: 'preview-1',
@@ -129,7 +133,10 @@ describe('PreviewTextAnnotationSurface', () => {
     annotationVersionId,
     sourcePageNumber,
     pdfEvidenceSource,
+    pdfBookmarkSource,
+    pdfPageRotation,
     annotationBlockedByHistoricalVersion = false,
+    bookmarkApi,
     content = 'Experiment result: confidence intervals overlap.'
   }: {
     activeAnnotations?: readonly Annotation[]
@@ -141,26 +148,41 @@ describe('PreviewTextAnnotationSurface', () => {
     annotationVersionId?: string
     sourcePageNumber?: number
     pdfEvidenceSource?: PdfAnnotation['source']
+    pdfBookmarkSource?: PdfBookmarkSource
+    pdfPageRotation?: number
     annotationBlockedByHistoricalVersion?: boolean
+    bookmarkApi?: Pick<Window['api'], 'bookmarks'>['bookmarks']
     content?: string
   } = {}): Promise<void> => {
+    if (bookmarkApi) window.api = { bookmarks: bookmarkApi } as unknown as Window['api']
+    const surface = (
+      <PreviewTextAnnotationSurface
+        item={previewItem}
+        annotationVersionId={annotationVersionId}
+        activeAnnotations={activeAnnotations}
+        onAddAnnotation={onAddAnnotation}
+        onUpdateAnnotationNote={onUpdateAnnotationNote}
+        onAnnotationError={onAnnotationError}
+        onAnnotationAdded={onAnnotationAdded}
+        sourcePageNumber={sourcePageNumber}
+        pdfEvidenceSource={pdfEvidenceSource}
+        pdfBookmarkSource={pdfBookmarkSource}
+        pdfPageRotation={pdfPageRotation}
+        pdfExtractorVersion={pdfEvidenceSource || pdfBookmarkSource ? 'pdfjs-5.4.624' : undefined}
+        annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}
+      >
+        <p>{content}</p>
+      </PreviewTextAnnotationSurface>
+    )
     await act(async () => {
       root.render(
-        <PreviewTextAnnotationSurface
-          item={previewItem}
-          annotationVersionId={annotationVersionId}
-          activeAnnotations={activeAnnotations}
-          onAddAnnotation={onAddAnnotation}
-          onUpdateAnnotationNote={onUpdateAnnotationNote}
-          onAnnotationError={onAnnotationError}
-          onAnnotationAdded={onAnnotationAdded}
-          sourcePageNumber={sourcePageNumber}
-          pdfEvidenceSource={pdfEvidenceSource}
-          pdfExtractorVersion={pdfEvidenceSource ? 'pdfjs-5.4.624' : undefined}
-          annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}
-        >
-          <p>{content}</p>
-        </PreviewTextAnnotationSurface>
+        bookmarkApi ? (
+          <BookmarksProvider projectId="project-1" sessionId="session-1">
+            {surface}
+          </BookmarksProvider>
+        ) : (
+          surface
+        )
       )
     })
   }
@@ -279,6 +301,111 @@ describe('PreviewTextAnnotationSurface', () => {
     expect(registeredRanges.size).toBe(1)
   })
 
+  it('creates a private bookmark for selected preview text', async () => {
+    const create = vi.fn(async (request) => ({
+      ...request,
+      version: 1 as const,
+      createdAt: '2026-09-14T00:00:00.000Z',
+      updatedAt: '2026-09-14T00:00:00.000Z'
+    }))
+    await renderSurface({
+      bookmarkApi: {
+        list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+        create
+      } as unknown as Pick<Window['api'], 'bookmarks'>['bookmarks']
+    })
+    await selectQuote()
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[data-annotation-trigger]')?.click()
+    )
+    await act(async () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+        .find((tab) => tab.textContent === 'For me')
+        ?.click()
+    )
+    const note = document.querySelector<HTMLTextAreaElement>('[data-bookmark-note]')
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setter?.call(note, 'Revisit this result')
+      note?.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Bookmark')
+        ?.click()
+    )
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        note: 'Revisit this result',
+        target: {
+          kind: 'text',
+          quote: 'confidence intervals overlap',
+          source: expect.objectContaining({
+            kind: 'project-file',
+            projectId: 'project-1',
+            versionId: 'version-7'
+          }),
+          anchor: expect.objectContaining({ position: { start: 19, end: 47 } })
+        }
+      })
+    )
+  })
+
+  it('reveals an exact project-file bookmark and reports a missing quote', async () => {
+    await renderSurface({
+      bookmarkApi: {
+        list: vi.fn().mockResolvedValue({ items: [], total: 0 })
+      } as unknown as Pick<Window['api'], 'bookmarks'>['bookmarks']
+    })
+    const bookmark = {
+      id: 'bookmark-preview-text',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      version: 1 as const,
+      note: '',
+      createdAt: '2026-09-14T00:00:00.000Z',
+      updatedAt: '2026-09-14T00:00:00.000Z',
+      target: {
+        kind: 'text' as const,
+        source: {
+          kind: 'project-file' as const,
+          projectId: 'project-1',
+          path: '/project/notes.md',
+          name: 'notes.md',
+          versionId: 'version-7',
+          sessionId: 'session-1'
+        },
+        quote: 'confidence intervals overlap',
+        anchor: { position: { start: 19, end: 47 }, prefix: 'Experiment result: ' }
+      }
+    } satisfies Bookmark
+    const scroll = vi.fn()
+    container.querySelector('p')!.scrollIntoView = scroll
+
+    let outcome: Awaited<ReturnType<typeof requestBookmarkReveal>> | undefined
+    await act(async () => {
+      outcome = await requestBookmarkReveal(bookmark)
+    })
+    expect(outcome).toBe('revealed')
+    expect(scroll).toHaveBeenCalled()
+
+    await act(async () => {
+      outcome = await requestBookmarkReveal({
+        ...bookmark,
+        id: 'bookmark-missing-quote',
+        target: {
+          ...bookmark.target,
+          quote: 'missing bookmark quote',
+          anchor: { position: { start: 0, end: 22 } }
+        }
+      })
+    })
+    expect(outcome).toBe('locator-unsupported')
+  })
+
   it('captures the exact artifact Version from the managed locator', async () => {
     const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
     const path = createArtifactVersionLocator({
@@ -373,7 +500,7 @@ describe('PreviewTextAnnotationSurface', () => {
     const entry = document.querySelector<HTMLElement>('[data-annotation-trigger]')
     await act(async () => entry?.click())
 
-    expect(document.querySelector('[data-annotation-trigger]')).toBe(entry)
+    expect(document.querySelector('[data-annotation-trigger]')).toBeNull()
     expect(document.querySelector('textarea')).toBeNull()
     expect(document.querySelector('[role="alert"]')?.textContent).toBe(
       'Historical versions cannot be annotated. Switch to the latest version to annotate.'
@@ -449,6 +576,105 @@ describe('PreviewTextAnnotationSurface', () => {
           exact: 'confidence intervals overlap',
           extractorVersion: 'pdfjs-5.4.624'
         })
+      })
+    )
+  })
+
+  it('keeps a multiline PDF bookmark draft when native selection inserts visual line breaks', async () => {
+    const create = vi.fn(async (request) => ({
+      ...request,
+      version: 1,
+      createdAt: '',
+      updatedAt: ''
+    }))
+    await renderSurface({
+      pdfBookmarkSource: { ...pdfSource(), sourceFileId: 'artifact-1' },
+      sourcePageNumber: 3,
+      pdfPageRotation: 0,
+      bookmarkApi: {
+        list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+        create
+      } as unknown as Window['api']['bookmarks']
+    })
+    const paragraph = container.querySelector('p')!
+    paragraph.innerHTML = '<span>confidence intervals</span><br><span>overlap</span>'
+    const surface = container.querySelector<HTMLElement>('[data-preview-text-annotation-surface]')!
+    surface.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 400, bottom: 600, width: 400, height: 600 }) as DOMRect
+    const range = document.createRange()
+    range.setStart(paragraph.firstElementChild!.firstChild!, 0)
+    range.setEnd(paragraph.lastElementChild!.firstChild!, 7)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    const text = vi.spyOn(selection, 'toString').mockReturnValue('confidence intervals\noverlap')
+    await act(async () => paragraph.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[data-selection-action="bookmark"]')?.click()
+    )
+    await act(async () => {
+      paragraph.append(document.createElement('span'))
+    })
+    expect(document.querySelector('[data-bookmark-note]')).not.toBeNull()
+    expect(
+      document.querySelector('[role="tablist"][aria-label="Selection destination"]')
+    ).toBeNull()
+    expect(document.body.textContent).toContain('For me')
+    await act(async () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Bookmark')
+        ?.click()
+    )
+    expect(create).toHaveBeenCalledOnce()
+    text.mockRestore()
+  })
+
+  it('bookmarks historical PDF text in the intrinsic 90-degree viewport without Agent context', async () => {
+    const create = vi.fn(async (request) => ({
+      ...request,
+      version: 1 as const,
+      createdAt: '2026-09-14T00:00:00.000Z',
+      updatedAt: '2026-09-14T00:00:00.000Z'
+    }))
+    const bookmarkSource: PdfBookmarkSource = {
+      ...pdfSource(),
+      sourceFileId: 'artifact-1'
+    }
+    await renderSurface({
+      sourcePageNumber: 3,
+      pdfBookmarkSource: bookmarkSource,
+      annotationBlockedByHistoricalVersion: true,
+      pdfPageRotation: 90,
+      bookmarkApi: {
+        list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+        create
+      } as unknown as Pick<Window['api'], 'bookmarks'>['bookmarks']
+    })
+    await selectQuote()
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('[data-selection-action="bookmark"]')
+        ?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    )
+    await act(async () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Bookmark')
+        ?.click()
+    )
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: {
+          kind: 'pdf',
+          source: bookmarkSource,
+          selector: expect.objectContaining({
+            kind: 'text',
+            pageNumber: 3,
+            exact: 'confidence intervals overlap',
+            pageRotation: 90,
+            coordinateVersion: 1
+          })
+        }
       })
     )
   })
