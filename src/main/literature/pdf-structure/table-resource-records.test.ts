@@ -6,6 +6,9 @@ import { readPdfFixture } from './read-fixture'
 const { refineTable } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-refine.mjs')).href
 )
+const { repairWrappedTableRows } = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-row-repair.mjs')).href
+)
 const fixture = (name: string): ReturnType<typeof JSON.parse> =>
   readPdfFixture(
     resolve('src/main/literature/pdf-structure/fixtures/source-grids', `${name}.jsonl`)
@@ -119,3 +122,51 @@ it.each([
   if (mode === 'cross-column') tail.rect[2] = 600
   expect(refine(f).repairs).not.toContain(repair)
 })
+
+it.each([false, true])(
+  'handles resource continuation ownership without losing input (gutter: %s)',
+  (gutter) => {
+    const token = (text: string, x: number, y: number): ReturnType<typeof JSON.parse> => ({
+      text,
+      rect: [x, y, x + 20, y + 10],
+      height: 10,
+      baseline: y + 10,
+      horizontal: true
+    })
+    const record = (y: number): ReturnType<typeof JSON.parse>[] => [
+      token('Resource', 5, y),
+      token('Supplier', 125, y),
+      token('12345', 225, y)
+    ]
+    const items = [
+      token('RESOURCE', 5, 0),
+      token('SOURCE', 125, 0),
+      token('IDENTIFIER', 225, 0),
+      token('Section A', 5, 16),
+      ...record(32),
+      token('continued', 5, 44),
+      ...record(56),
+      ...record(68),
+      token('Section B', 5, 84),
+      ...record(100),
+      token('continued', gutter ? 101 : 125, 112),
+      ...record(124),
+      ...record(136)
+    ]
+    const columnRects = [
+      [0, 0, 100, 150],
+      [125, 0, 200, 150],
+      [220, 0, 300, 150]
+    ]
+    const rules = [11, 15, 27, 83, 95, 147].map((y) => [0, y, 300, y])
+    const original = structuredClone({ items, columnRects, rules })
+    const rows: { rect: number[] }[] = []
+    const repairs: string[] = []
+    expect(() =>
+      repairWrappedTableRows({ rows, items, columnRects, rules, right: 300, repairs })
+    ).not.toThrow()
+    expect(repairs).toEqual(gutter ? [] : [repair])
+    expect(rows).toHaveLength(gutter ? 0 : 9)
+    expect({ items, columnRects, rules }).toEqual(original)
+  }
+)

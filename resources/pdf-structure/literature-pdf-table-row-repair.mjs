@@ -75,6 +75,7 @@ function recoverResourceRows({ rows, items, columnRects, rules, repairs }) {
         hasHorizontalTableRuleBetween(rules, bounds[n - 1][3], rect[1]) ||
         line.some((item) => {
           const column = columnRects.findIndex((r) => inside(r, item))
+          if (column < 0) return true
           const anchors = previous.members.filter((anchor) => inside(columnRects[column], anchor))
           return (
             !anchors.length ||
