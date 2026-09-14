@@ -2,7 +2,7 @@
 
 Collect a redacted report for omitted Skills, failing Notebook/Bash/REPL tools, and Session recovery problems. This utility collects evidence; it does not repair the application or guarantee that existing logs reveal the root cause.
 
-**Collector version: 1.1.0. Report format: 2.** Version 1.1.0 fixes decoding of the persisted `{ version, session }` envelope. A version 1.0 report could say a Session was read without inspecting its tool activities. Zero errors in that report cannot rule out a failure; collect again with this version.
+**Collector version: 1.1.1. Report format: 2.** Version 1.1.1 recognizes canonical `server/tool` identities and the four execution paths' model-facing names, including Plan and Skill-import tools, while emitting only allowlisted categories. Version 1.1.0 fixed decoding of the persisted `{ version, session }` envelope. A version 1.0 report could say a Session was read without inspecting its tool activities. Zero errors in that report cannot rule out a failure; collect again with this version.
 
 ## Run the collector
 

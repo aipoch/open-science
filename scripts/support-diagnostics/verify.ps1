@@ -54,7 +54,7 @@ $beforeLog = (Get-FileHash -LiteralPath $log).Hash
 $beforeSession = (Get-FileHash -LiteralPath $sessionFile).Hash
 $report = RunCollector @('-LogPath',$log,'-SessionPath',$sessionFile)
 Assert ($report.signatureCounts.'invalid-notebook-rpc-token' -eq 2) 'graph duplicate projection or signature parsing wrong'
-Assert ($report.collectorVersion -eq '1.1.0' -and $report.reportVersion -eq 2) 'collector version missing'
+Assert ($report.collectorVersion -eq '1.1.1' -and $report.reportVersion -eq 2) 'collector version missing'
 $sessionInput = @($report.inputs | Where-Object {$_.kind -eq 'session'})[0]
 Assert ($sessionInput.decodeStatus -eq 'decoded' -and $sessionInput.format -eq 'envelope-v2') 'production envelope was not decoded'
 Assert ($sessionInput.activityCount -eq 2 -and $sessionInput.inspectedActivityCount -eq 2 -and $sessionInput.failedActivityCount -eq 2 -and $sessionInput.activitiesWithOutput -eq 2) 'activity coverage wrong'

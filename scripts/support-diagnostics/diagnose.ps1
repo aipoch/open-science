@@ -19,7 +19,8 @@ $utf8 = New-Object Text.UTF8Encoding($true)
 $toolNames = @('notebook_execute','bash_execute','repl_execute','notebook_state',
     'notebook_restart','notebook_shutdown','load_skill','write_artifact_file',
     'inspect_packages','manage_packages','manage_environments','request_network_access',
-    'list_notebook_runtimes','notebook_bind_runtime','notebook_switch_runtime','background_run')
+    'list_notebook_runtimes','notebook_bind_runtime','notebook_switch_runtime','background_run',
+    'request_skill_import','generate_plan','update_step_status')
 $eventNames = @{
     'app starting' = 'app-start'
     'agent initialized' = 'agent-initialized'
@@ -82,9 +83,10 @@ function Timestamp($Value) {
     return $null
 }
 function SafeTool($Value) {
-    if ($Value -isnot [string]) { return 'unknown' }
+    if ($Value -isnot [string] -or $Value.Length -gt 512) { return 'unknown' }
     foreach ($name in $toolNames) {
-        if ($Value -eq $name -or $Value -match ('^mcp__[a-z0-9_]+__' + $name + '$')) { return $name }
+        # Canonical and model-facing forms from app-mcp-names.ts. Emit only a fixed tool name.
+        if ($Value -match ('\A(?:mcp__[a-z0-9_-]+__|[a-z0-9_-]+/|mcp\.[a-z0-9_-]+\.|open_science_[a-z0-9_]+_)?' + [regex]::Escape($name) + '\z')) { return $name }
     }
     return 'unknown'
 }
@@ -369,7 +371,7 @@ try {
     foreach ($key in $signaturePatterns.Keys) { $counts[$key] = 0 }
     foreach ($event in $script:events) { foreach ($mark in $event.signatures) { $counts[$mark]++ } }
     $report = [ordered]@{
-        reportVersion=2; collectorVersion='1.1.0'; generatedAtUtc=[DateTime]::UtcNow.ToString('o'); collectorPowerShell=$PSVersionTable.PSVersion.ToString()
+        reportVersion=2; collectorVersion='1.1.1'; generatedAtUtc=[DateTime]::UtcNow.ToString('o'); collectorPowerShell=$PSVersionTable.PSVersion.ToString()
         privacy='allowlisted metadata and fixed signatures only; per-report aliases; no raw text, paths, credentials or uploads'
         latestLogTimeUtc=$latest; recentWindowStartUtc=$cutoff; observedAppVersions=@($versions.ToArray())
         coverage=@{ invalidOrOversizedLogLines=$badLines; omittedEvents=$script:omittedEvents; inputBytes=$script:readBytes;
@@ -382,7 +384,7 @@ try {
     }
     $lines = New-Object 'Collections.Generic.List[string]'
     $lines.Add('Open Science 脱敏诊断报告')
-    $lines.Add('诊断工具版本：1.1.0；报告格式：2')
+    $lines.Add('诊断工具版本：1.1.1；报告格式：2')
     $lines.Add('时间均为 UTC；北京时间需加 8 小时。请先检查报告，再发给支持人员。')
     $lines.Add('只读采集已结束。未修改应用配置/数据库，未执行工具命令，未上传任何数据。')
     $lines.Add('应用版本（日志观察值）：' + ($versions -join ', '))
