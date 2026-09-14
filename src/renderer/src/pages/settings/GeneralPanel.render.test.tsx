@@ -246,7 +246,7 @@ describe('GeneralPanel command line tool', () => {
     const alert = container.querySelector('[role="alert"]')
     expect(alert?.textContent).toBe('无法更新命令行工具。')
     expect(alert?.textContent).not.toContain('/private/bin/open-science')
-    const details = container.querySelector('details')
+    const details = alert?.parentElement?.querySelector('details')
     expect(details?.open).toBe(false)
     expect(details?.textContent).toContain('/private/bin/open-science')
   })

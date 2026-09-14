@@ -7,6 +7,8 @@
 import { CircleHelp, Download, FileText, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import licenseText from '../../../../../LICENSE?raw'
+import { license as licenseId } from '../../../../../package.json'
 import { AppLogo } from '@/components/AppLogo'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
@@ -174,6 +176,19 @@ const AppVersionSection = ({
           </span>
         </ExternalTextLink>
       </div>
+      <details className="text-sm text-muted-foreground">
+        <summary className="w-fit cursor-pointer rounded-sm py-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+          {t('Open-source license')} · {licenseId}
+        </summary>
+        <pre
+          lang="en"
+          tabIndex={0}
+          aria-label={t('Open-source license')}
+          className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted p-4 font-mono text-xs leading-relaxed text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          {licenseText}
+        </pre>
+      </details>
     </SettingsSection>
   )
 }

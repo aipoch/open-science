@@ -118,6 +118,7 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "El paquete original no está disponible. Puede que se haya movido, eliminado o que ya no se pueda leer. Seleccione otro paquete."
   },
   "renderer": {
+    "Open-source license": "Licencia de código abierto",
     "Old Shell launch records are blocking this update.": "Los registros antiguos de inicio de la línea de comandos bloquean esta actualización.",
     "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "La recuperación guardará una copia de los registros antiguos de inicio de la línea de comandos y volverá a intentar la actualización. Se conservarán los datos del proyecto y la configuración.",
     "Back up records and retry": "Respaldar registros y reintentar",

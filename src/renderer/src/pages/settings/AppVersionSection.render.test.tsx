@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -36,6 +38,24 @@ afterEach(() => {
 })
 
 describe('AppVersionSection', () => {
+  it('offers the complete bundled license in a collapsed, read-only disclosure', () => {
+    act(() => {
+      root.render(<AppVersionSection />)
+    })
+
+    const disclosure = container.querySelector('details')
+    expect(disclosure?.open).toBe(false)
+    expect(disclosure?.querySelector('summary')?.textContent).toBe(
+      'Open-source license · Apache-2.0'
+    )
+    expect(disclosure?.querySelector('pre')?.textContent).toBe(
+      readFileSync(join(__dirname, '../../../../../LICENSE'), 'utf8')
+    )
+    expect(disclosure?.querySelector('pre')?.lang).toBe('en')
+    expect(disclosure?.querySelector('pre')?.tabIndex).toBe(0)
+    expect(disclosure?.querySelector('button, input, form')).toBeNull()
+  })
+
   it('shows the app name, version, and copyright', () => {
     act(() => {
       root.render(<AppVersionSection />)

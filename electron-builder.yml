@@ -78,6 +78,9 @@ asarUnpack:
 # The micromamba binary is added per-platform below (mac/win/linux extraResources), not here, so
 # the two extraResources lists don't collide.
 extraResources:
+  # Keep the project license readable outside app.asar on every platform.
+  - from: LICENSE
+    to: LICENSE.txt
   - from: node_modules/.prisma
     to: node_modules/.prisma
   - from: node_modules/@prisma/client

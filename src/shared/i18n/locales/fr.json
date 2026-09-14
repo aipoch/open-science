@@ -118,6 +118,7 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Le paquet d’origine est indisponible. Il a peut-être été déplacé, supprimé ou est devenu illisible. Choisissez un autre paquet."
   },
   "renderer": {
+    "Open-source license": "Licence open source",
     "Old Shell launch records are blocking this update.": "D’anciens enregistrements de lancement du Terminal bloquent cette mise à jour.",
     "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "La récupération sauvegardera les anciens enregistrements de lancement du Terminal et relancera la mise à jour. Les données du projet et les paramètres seront conservés.",
     "Back up records and retry": "Sauvegarder les enregistrements et réessayer",
