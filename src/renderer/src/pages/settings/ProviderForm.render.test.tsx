@@ -38,7 +38,10 @@ const render = (
     supportedModels,
     hasStoredKey = false,
     showCodexSubscriptions = false,
-    showClaudeIsolated = false
+    showClaudeIsolated = false,
+    frameworkId,
+    frameworkEndpoints,
+    frameworkName
   }: {
     onChange?: () => void
     supportedModels?: string[]
@@ -46,6 +49,9 @@ const render = (
     hasStoredKey?: boolean
     showCodexSubscriptions?: boolean
     showClaudeIsolated?: boolean
+    frameworkId?: 'claude-code' | 'opencode' | 'codex' | 'codebuddy'
+    frameworkEndpoints?: readonly ('anthropic' | 'openai' | 'responses')[]
+    frameworkName?: string
   } = {}
 ): void => {
   act(() => {
@@ -58,12 +64,112 @@ const render = (
         hasStoredKey={hasStoredKey}
         showCodexSubscriptions={showCodexSubscriptions}
         showClaudeIsolated={showClaudeIsolated}
+        frameworkId={frameworkId}
+        frameworkEndpoints={frameworkEndpoints}
+        frameworkName={frameworkName}
       />
     )
   })
 }
 
 describe('ProviderForm field switching', () => {
+  it('quick-fills a local model preset, never overwrites typed fields, and taps again to clear', () => {
+    const onChange = vi.fn()
+    render(
+      createEmptyProviderFormValue({
+        type: 'custom',
+        name: 'My own name',
+        model: 'my-own-model'
+      }),
+      { onChange }
+    )
+
+    const ollama = container.querySelector<HTMLButtonElement>(
+      'button[aria-pressed="false"]:not([disabled])'
+    )
+    expect(ollama?.textContent).toContain('Ollama')
+    act(() => ollama?.click())
+    // An existing name and the model stay untouched; only the base URL and format are seeded —
+    // local model ids depend on what the user has pulled, so nothing is guessed for them.
+    expect(onChange).toHaveBeenCalledWith({
+      baseUrl: 'http://localhost:11434',
+      apiEndpoint: 'openai'
+    })
+
+    const empty = createEmptyProviderFormValue({ type: 'custom' })
+    onChange.mockClear()
+    render(empty, { onChange })
+    const preset = [
+      ...container.querySelectorAll<HTMLButtonElement>('button[aria-pressed="false"]')
+    ].find((button) => button.textContent?.includes('Ollama'))
+    act(() => preset?.click())
+    expect(onChange).toHaveBeenCalledWith({
+      baseUrl: 'http://localhost:11434',
+      apiEndpoint: 'openai',
+      name: 'Ollama'
+    })
+
+    // Tapping the now-active preset deselects it: the fields it filled revert, and the format
+    // falls back to the caller's framework default.
+    onChange.mockClear()
+    render(
+      createEmptyProviderFormValue({
+        type: 'custom',
+        baseUrl: 'http://localhost:11434',
+        name: 'Ollama',
+        apiEndpoint: 'openai'
+      }),
+      { onChange }
+    )
+    const active = container.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')
+    expect(active?.textContent).toContain('Ollama')
+    act(() => active?.click())
+    expect(onChange).toHaveBeenCalledWith({
+      baseUrl: '',
+      apiEndpoint: 'anthropic',
+      name: ''
+    })
+  })
+
+  it('marks the API key optional for a loopback custom gateway', () => {
+    render(
+      createEmptyProviderFormValue({
+        type: 'custom',
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3:14b'
+      })
+    )
+
+    const keyLabel = container.querySelector('label[for="provider-key"]')
+    expect(keyLabel?.textContent).toContain('(optional)')
+    expect(container.querySelector('#provider-key')?.getAttribute('aria-required')).toBeNull()
+  })
+
+  it('explains a framework the draft cannot drive while keeping the save unblocked', () => {
+    const value = createEmptyProviderFormValue({
+      type: 'custom',
+      baseUrl: 'http://localhost:11434',
+      model: 'qwen3:14b',
+      apiEndpoint: 'openai'
+    })
+    render(value, {
+      frameworkId: 'claude-code',
+      frameworkEndpoints: ['anthropic'],
+      frameworkName: 'Claude Code'
+    })
+
+    expect(container.textContent).toContain('Not usable with Claude Code')
+    expect(container.textContent).toContain('/v1/messages')
+
+    // The same draft under a framework that speaks its format shows no warning.
+    render(value, {
+      frameworkId: 'opencode',
+      frameworkEndpoints: ['anthropic', 'openai'],
+      frameworkName: 'OpenCode'
+    })
+    expect(container.textContent).not.toContain('Not usable with')
+  })
+
   it('shows the expanded SenseNova chat catalog and links directly to API keys', () => {
     render(createEmptyProviderFormValue({ type: 'official', vendorId: 'sensenova' }))
 

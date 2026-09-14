@@ -5791,6 +5791,14 @@
     "Could not move this annotation. It may have changed or the target is full.": "無法移動此批註。批註可能已變更，或目標已滿。",
     "Add to this Side chat": "新增至此側邊聊天",
     "Add to main conversation": "新增至主對話",
-    "Move to Side chat": "移至側邊聊天"
+    "Move to Side chat": "移至側邊聊天",
+    "Connection succeeded, but this provider is not usable by the active agent framework.": "連線成功，但此模型服務商無法用於目前智能體框架。",
+    "{{base}} {{detail}}": "{{base}} {{detail}}",
+    "Local model server": "本機模型服務",
+    "Local model servers do not require an API key.": "本機模型服務不需要 API 金鑰。",
+    "Leave blank for a local server": "本機服務可留空",
+    "Not usable with {{framework}}: it needs {{routes}}, but this gateway speaks {{providerRoutes}}. You can still save it — switch the agent framework to use this model.": "無法搭配 {{framework}} 使用：它需要 {{routes}}，而此閘道提供 {{providerRoutes}}。仍可儲存——切換智能體框架後即可使用此模型。",
+    "Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.": "快速填入基礎 URL 與 Chat Completions 格式。再次點按可清除。所有欄位仍可修改。",
+    "Not usable with {{framework}}": "無法搭配 {{framework}} 使用"
   }
 }

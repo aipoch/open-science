@@ -11,6 +11,23 @@ export const isSecureProviderUrl = (url: URL): boolean =>
       url.hostname === '[::1]' ||
       /^127\.\d+\.\d+\.\d+$/.test(url.hostname)))
 
+// True for a parseable http(s) base URL whose host is loopback — the shape every local model
+// server (Ollama, LM Studio, llama.cpp, vLLM) serves on. Local servers require no API key, so
+// validation surfaces use this to relax the key requirement for them.
+export const isLoopbackProviderBaseUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value)
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      (url.hostname === 'localhost' ||
+        url.hostname === '[::1]' ||
+        /^127\.\d+\.\d+\.\d+$/.test(url.hostname))
+    )
+  } catch {
+    return false
+  }
+}
+
 export type CustomProviderBaseUrlError =
   | typeof PROVIDER_TRANSPORT_ERROR
   | 'Base URL must be a valid HTTP or HTTPS URL.'

@@ -118,6 +118,9 @@ const ProviderStep = ({
   const [validationMessage, setValidationMessage] = useState<string | undefined>(undefined)
   const [validationOk, setValidationOk] = useState(false)
   const customApiEndpoint = defaultCustomApiEndpoint(frameworkEndpoints)
+  const frameworkName =
+    agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
+    agentFrameworkId
   // Mirrors the Settings teardown: a pending isolated sign-in lives in the main process for up to
   // five minutes, and its guard rejects a second attempt as "already in progress". If the wizard
   // unmounts mid-flow (app quit, relaunch, forced navigation), cancel it so the next attempt starts
@@ -448,6 +451,9 @@ const ProviderStep = ({
             showCodexSubscriptions={agentFrameworkId === 'codex'}
             showClaudeIsolated={agentFrameworkId === 'claude-code'}
             defaultCustomApiEndpoint={customApiEndpoint}
+            frameworkId={agentFrameworkId}
+            frameworkEndpoints={frameworkEndpoints}
+            frameworkName={frameworkName}
           />
           {formValue.type === 'claude-isolated' ? (
             <p className="mt-4 text-sm text-muted-foreground">

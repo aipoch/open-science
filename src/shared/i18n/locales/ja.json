@@ -5791,6 +5791,14 @@
     "Could not move this annotation. It may have changed or the target is full.": "この注釈を移動できませんでした。注釈が変更されたか、移動先が上限に達しています。",
     "Add to this Side chat": "このサイドチャットに追加",
     "Add to main conversation": "メインの会話に追加",
-    "Move to Side chat": "サイドチャットに移動"
+    "Move to Side chat": "サイドチャットに移動",
+    "Connection succeeded, but this provider is not usable by the active agent framework.": "接続に成功しましたが、このプロバイダーは現在のエージェントフレームワークでは使用できません。",
+    "{{base}} {{detail}}": "{{base}} {{detail}}",
+    "Local model server": "ローカルモデルサーバー",
+    "Local model servers do not require an API key.": "ローカルモデルサーバーは API キーを必要としません。",
+    "Leave blank for a local server": "ローカルサーバーの場合は空欄のままにしてください",
+    "Not usable with {{framework}}: it needs {{routes}}, but this gateway speaks {{providerRoutes}}. You can still save it — switch the agent framework to use this model.": "{{framework}} では使用できません：{{routes}} が必要ですが、このゲートウェイは {{providerRoutes}} を提供します。保存は可能です。エージェントフレームワークを切り替えるとこのモデルを使用できます。",
+    "Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.": "ベース URL と Chat Completions 形式を自動入力します。もう一度タップするとクリアできます。すべて後から編集できます。",
+    "Not usable with {{framework}}": "{{framework}}では使用できません"
   }
 }

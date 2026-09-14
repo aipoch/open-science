@@ -30,7 +30,10 @@ import {
   xaiSubscriptionProviderIdentity
 } from '../../shared/settings'
 import { defaultVendorModel, isOfficialVendorId } from '../../shared/provider-registry'
-import { getCustomProviderBaseUrlError } from '../../shared/provider-base-url'
+import {
+  getCustomProviderBaseUrlError,
+  isLoopbackProviderBaseUrl
+} from '../../shared/provider-base-url'
 import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
@@ -360,7 +363,10 @@ class ProviderAccountsModule {
       const baseUrlError = getCustomProviderBaseUrlError(baseUrl)
       if (baseUrlError) throw new Error(baseUrlError)
       if (!model) throw new Error('Model is required for a custom provider.')
-      if (!carryKey()) throw new Error('API key is required for a custom provider.')
+      // Local loopback gateways serve without a key; a remote gateway still requires one.
+      if (!carryKey() && !isLoopbackProviderBaseUrl(baseUrl)) {
+        throw new Error('API key is required for a custom provider.')
+      }
       provider.baseUrl = baseUrl
       provider.model = model
       Object.assign(provider, tokenLimits)
@@ -518,9 +524,12 @@ class ProviderAccountsModule {
       ? this.advanceProviderValidationGeneration(resolved.storedId)
       : undefined
     const framework = getAgentFramework(settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
+    // Subscription providers (Codex, both Claude modes) are framework-bound by credential, not by
+    // endpoint: under a foreign framework their auth-status check owns the verdict, and a pairing
+    // flag on top of it would only invite a probe against a base URL they do not have.
     const incompatibility =
       isCodexSubscriptionProvider(resolved.provider.type) ||
-      resolved.provider.type === 'claude-isolated'
+      isClaudeSubscriptionProvider(resolved.provider.type)
         ? undefined
         : this.frameworkIncompatibilityResult(resolved.provider, framework)
 
@@ -549,15 +558,20 @@ class ProviderAccountsModule {
         ? undefined
         : await this.auth.validateProviderAuth(resolved.provider, settings, storedValidationTarget)
     const usesCompatibilityTransport = requiresChatCompletionsBridge(resolved.provider, framework)
+    // An incompatible pairing no longer replaces the probe: compatibility is a derivable
+    // (provider, framework) relationship, not an endpoint-health fact. The probe still runs —
+    // framework-agnostic, against the provider's own declared routes (same as Codex) — so a
+    // passing test stays valid across framework switches; the mismatch rides along as a flag.
     const validationFrameworkEndpoints = isXaiSubscriptionProvider(resolved.provider.type)
       ? (['responses'] as const)
-      : framework.id === 'codebuddy' && usesCompatibilityTransport
-        ? providerEndpoints(resolved.provider)
-        : framework.id === 'codex'
-          ? undefined
-          : framework.supportedApiTypes
-    const result =
-      incompatibility ??
+      : incompatibility
+        ? undefined
+        : framework.id === 'codebuddy' && usesCompatibilityTransport
+          ? providerEndpoints(resolved.provider)
+          : framework.id === 'codex'
+            ? undefined
+            : framework.supportedApiTypes
+    const probeResult =
       xaiAuthResult ??
       authResult ??
       (await validateProviderTarget(validationProvider, {
@@ -568,6 +582,15 @@ class ProviderAccountsModule {
           requiresNativeResponsesCompatibility(resolved.provider, framework),
         frameworkEndpoints: validationFrameworkEndpoints
       }))
+    const result = incompatibility
+      ? {
+          ...probeResult,
+          frameworkIncompatible: true,
+          // A verified endpoint pairs its success with the specific route mismatch; a failed probe
+          // keeps its own actionable category message.
+          ...(probeResult.ok ? { message: incompatibility.message } : {})
+        }
+      : probeResult
 
     if (!resolved.storedId) return result
     if (this.providerValidationGenerations.get(resolved.storedId) !== validationGeneration) {

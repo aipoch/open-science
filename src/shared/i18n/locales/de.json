@@ -5951,6 +5951,14 @@
     "Could not move this annotation. It may have changed or the target is full.": "Diese Anmerkung konnte nicht verschoben werden. Sie wurde möglicherweise geändert oder das Ziel ist voll.",
     "Add to this Side chat": "Zu diesem Side-Chat hinzufügen",
     "Add to main conversation": "Zur Hauptkonversation hinzufügen",
-    "Move to Side chat": "In den Side-Chat verschieben"
+    "Move to Side chat": "In den Side-Chat verschieben",
+    "Connection succeeded, but this provider is not usable by the active agent framework.": "Verbindung erfolgreich, aber dieser Anbieter kann vom aktiven Agent-Framework nicht verwendet werden.",
+    "{{base}} {{detail}}": "{{base}} {{detail}}",
+    "Local model server": "Lokaler Modellserver",
+    "Local model servers do not require an API key.": "Lokale Modellserver benötigen keinen API-Schlüssel.",
+    "Leave blank for a local server": "Für einen lokalen Server leer lassen",
+    "Not usable with {{framework}}: it needs {{routes}}, but this gateway speaks {{providerRoutes}}. You can still save it — switch the agent framework to use this model.": "Nicht mit {{framework}} nutzbar: Es benötigt {{routes}}, aber dieses Gateway spricht {{providerRoutes}}. Sie können es trotzdem speichern — wechseln Sie den Agenten-Framework, um dieses Modell zu verwenden.",
+    "Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.": "Füllt die Basis-URL und das Chat-Completions-Format aus. Erneut tippen, um sie zu leeren. Alles bleibt bearbeitbar.",
+    "Not usable with {{framework}}": "Nicht mit {{framework}} nutzbar"
   }
 }

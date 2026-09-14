@@ -31,14 +31,31 @@ import {
 import { getApiKeySecurityCopyKeys } from './provider-key-security'
 import { ProviderKindIcon } from './provider-icons'
 import {
+  LOCAL_MODEL_PRESETS,
   PROVIDER_KIND_GROUPS,
   PROVIDER_KINDS,
+  localModelPresetPatch,
+  providerFormApiEndpoints,
   providerKindPatch,
   selectedKindKey,
   type ProviderFormErrors,
   type ProviderFormValue,
   type ProviderKind
 } from './provider-form-value'
+import { isLoopbackProviderBaseUrl } from '../../../../shared/provider-base-url'
+import {
+  isProviderUsableByFramework,
+  type AgentFrameworkId,
+  type ChatApiEndpoint
+} from '../../../../shared/settings'
+
+// Route paths shown in the framework-notice copy. Raw API paths stay untranslated so they match
+// every gateway's own documentation (same convention as API_FORMAT_LABELS).
+const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
+  anthropic: '/v1/messages',
+  openai: '/v1/chat/completions',
+  responses: '/v1/responses'
+}
 
 type ProviderFormProps = {
   value: ProviderFormValue
@@ -67,6 +84,12 @@ type ProviderFormProps = {
   showClaudeIsolated?: boolean
   // Preferred protocol for a newly selected Custom Gateway, derived from the active framework.
   defaultCustomApiEndpoint?: ProviderFormValue['apiEndpoint']
+  // Active agent framework context. When supplied and the draft's API format cannot drive the
+  // framework, the custom-gateway form explains the pairing (still savable) instead of staying
+  // silent until the post-save validation reports it.
+  frameworkId?: AgentFrameworkId
+  frameworkEndpoints?: readonly ChatApiEndpoint[]
+  frameworkName?: string
 }
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
@@ -242,7 +265,10 @@ const ProviderForm = ({
   encryptionAvailable = true,
   showCodexSubscriptions = false,
   showClaudeIsolated = false,
-  defaultCustomApiEndpoint = 'anthropic'
+  defaultCustomApiEndpoint = 'anthropic',
+  frameworkId,
+  frameworkEndpoints,
+  frameworkName
 }: ProviderFormProps): React.JSX.Element => {
   const { t } = useTranslation()
   const fileCredentialNotice = useFileCredentialNotice()
@@ -268,7 +294,19 @@ const ProviderForm = ({
     key: string
   }>()
   const keyVisible = revealedKeyDraft?.kind === selectedKey && revealedKeyDraft.key === value.key
-  const keyRequired = needsKey || !hasStoredKey
+  // A loopback custom gateway (local model server) serves without a key, so the key field reads as
+  // optional and the required-field guard below stays quiet for it.
+  const loopbackCustomGateway = isCustom && isLoopbackProviderBaseUrl(value.baseUrl.trim())
+  const keyRequired = !loopbackCustomGateway && (needsKey || !hasStoredKey)
+  // Whether the active framework can drive this draft as configured. Undefined while the caller
+  // supplies no framework context (compatibility feedback stays hidden then).
+  const frameworkCanDriveDraft =
+    frameworkId === undefined || frameworkEndpoints === undefined
+      ? undefined
+      : isProviderUsableByFramework(
+          { apiEndpoints: providerFormApiEndpoints(value), type: value.type },
+          { id: frameworkId, supportedApiTypes: frameworkEndpoints }
+        )
 
   const advancedVisible =
     advancedOpen || Boolean(errors.maxInputTokens) || Boolean(errors.maxOutputTokens)
@@ -285,7 +323,11 @@ const ProviderForm = ({
         <div className="flex items-center gap-1">
           <label className={fieldLabelClassName} htmlFor="provider-key">
             {t('API key')}
-            <RequiredMark />
+            {loopbackCustomGateway ? (
+              <span className="ml-0.5 font-normal text-muted-foreground">{t('(optional)')}</span>
+            ) : (
+              <RequiredMark />
+            )}
           </label>
           <FieldHelp
             content={
@@ -294,6 +336,11 @@ const ProviderForm = ({
                 <span className="block text-bg-000/80">
                   {fileCredentialNotice ?? t(securityCopyKeys.description)}
                 </span>
+                {loopbackCustomGateway ? (
+                  <span className="block text-bg-000/80">
+                    {t('Local model servers do not require an API key.')}
+                  </span>
+                ) : null}
               </>
             }
           />
@@ -319,7 +366,9 @@ const ProviderForm = ({
               ? t('{{masked}} — leave blank to keep', {
                   masked: maskedKey ?? t('stored key')
                 })
-              : t('Paste API key')
+              : loopbackCustomGateway
+                ? t('Leave blank for a local server')
+                : t('Paste API key')
           }
           className="pe-9"
           onChange={(event) => {
@@ -598,6 +647,43 @@ const ProviderForm = ({
       ) : isCustom ? (
         <>
           <div className="space-y-1.5">
+            <span className={fieldLabelClassName}>{t('Local model server')}</span>
+            <div className="flex flex-wrap gap-2" role="group" aria-label={t('Local model server')}>
+              {LOCAL_MODEL_PRESETS.map((preset) => {
+                const active = value.baseUrl.trim() === preset.baseUrl
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    aria-pressed={active}
+                    disabled={disabled}
+                    onClick={() =>
+                      onChange(
+                        localModelPresetPatch(preset, value, {
+                          defaultApiEndpoint: defaultCustomApiEndpoint
+                        })
+                      )
+                    }
+                    className={cn(
+                      'inline-flex min-h-8 items-center rounded-full border px-3 text-xs font-medium transition-colors duration-150 outline-none motion-reduce:transition-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50',
+                      active
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-transparent text-foreground hover:bg-muted/60'
+                    )}
+                  >
+                    {preset.label}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {t(
+                'Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.'
+              )}
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
             <div className="flex items-center gap-1">
               <label className={fieldLabelClassName} htmlFor="provider-base-url">
                 {t('Base URL')}
@@ -659,6 +745,26 @@ const ProviderForm = ({
               </SelectContent>
             </Select>
           </div>
+
+          {frameworkCanDriveDraft === false ? (
+            <p
+              role="status"
+              className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-foreground"
+            >
+              {t(
+                'Not usable with {{framework}}: it needs {{routes}}, but this gateway speaks {{providerRoutes}}. You can still save it — switch the agent framework to use this model.',
+                {
+                  framework: frameworkName ?? frameworkId,
+                  routes: frameworkEndpoints
+                    ?.map((endpoint) => ENDPOINT_PATHS[endpoint])
+                    .join(' / '),
+                  providerRoutes: providerFormApiEndpoints(value)
+                    .map((endpoint) => ENDPOINT_PATHS[endpoint])
+                    .join(' / ')
+                }
+              )}
+            </p>
+          ) : null}
 
           {keyField}
 

@@ -6258,6 +6258,14 @@
     "Could not move this annotation. It may have changed or the target is full.": "Не удалось переместить аннотацию. Возможно, она изменилась или целевой чат заполнен.",
     "Add to this Side chat": "Добавить в этот боковой чат",
     "Add to main conversation": "Добавить в основной диалог",
-    "Move to Side chat": "Переместить в боковой чат"
+    "Move to Side chat": "Переместить в боковой чат",
+    "Connection succeeded, but this provider is not usable by the active agent framework.": "Соединение успешно установлено, но этот поставщик нельзя использовать с активным агентским фреймворком.",
+    "{{base}} {{detail}}": "{{base}} {{detail}}",
+    "Local model server": "Локальный сервер моделей",
+    "Local model servers do not require an API key.": "Локальным серверам моделей API-ключ не требуется.",
+    "Leave blank for a local server": "Оставьте пустым для локального сервера",
+    "Not usable with {{framework}}: it needs {{routes}}, but this gateway speaks {{providerRoutes}}. You can still save it — switch the agent framework to use this model.": "Нельзя использовать с {{framework}}: требуется {{routes}}, а этот шлюз предоставляет {{providerRoutes}}. Всё равно можно сохранить — переключите агентский фреймворк, чтобы использовать эту модель.",
+    "Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.": "Автоматически заполняет базовый URL и формат Chat Completions. Нажмите ещё раз, чтобы очистить. Всё остаётся редактируемым.",
+    "Not usable with {{framework}}": "Нельзя использовать с {{framework}}"
   }
 }

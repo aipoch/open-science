@@ -113,6 +113,10 @@ const ProvidersPanel = ({
   )
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
+  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
+  const frameworkName =
+    agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
+    agentFrameworkId
   const subagentModel = useSettingsStore((state) => state.subagentModel)
   const reviewerModel = useSettingsStore((state) => state.reviewerModel)
   const sessionDetailsModel = useSettingsStore((state) => state.sessionDetailsModel)
@@ -518,6 +522,7 @@ const ProvidersPanel = ({
           activeModel={activeModel}
           agentFrameworkId={agentFrameworkId}
           frameworkEndpoints={frameworkEndpoints}
+          frameworkName={frameworkName}
           claudeSubscriptionProviderId={claudeSubscriptionProviderId}
           busyProviderId={busyProviderId}
           onEdit={onEditProvider}

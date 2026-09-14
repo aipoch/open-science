@@ -111,7 +111,13 @@ class ProviderRuntimeProjectionOwner {
       needsKey,
       lastValidatedAt: provider.lastValidatedAt,
       lastValidatedTarget: provider.lastValidatedTarget,
-      lastValidationFailure: provider.lastValidationFailure,
+      // A legacy 'incompatible' verdict is a derivable (provider, framework) relationship, not
+      // endpoint health; validation no longer records it. Strip stored copies so surfaces reading
+      // the field directly show the provider's real state instead of a stale failure.
+      lastValidationFailure:
+        provider.lastValidationFailure?.category === 'incompatible'
+          ? undefined
+          : provider.lastValidationFailure,
       ...(provider.expiresAt !== undefined ? { expiresAt: provider.expiresAt } : {})
     }
   }

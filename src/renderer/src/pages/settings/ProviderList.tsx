@@ -25,6 +25,7 @@ import {
   codexSubscriptionProviderIdentity,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
+  isProviderUsableByFramework,
   isXaiSubscriptionProvider,
   preferredEndpoint,
   providerEndpoints,
@@ -40,6 +41,7 @@ import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
 import { SettingsIconAction } from './SettingsLayout'
+import { incompatibilityReason } from '../workspace/composer-model-picker-utils'
 import { localizeProviderResourceMessage } from './validation-message'
 
 type ProviderListProps = {
@@ -50,6 +52,9 @@ type ProviderListProps = {
   activeModel?: string
   agentFrameworkId?: AgentFrameworkId
   frameworkEndpoints?: readonly ChatApiEndpoint[]
+  // Display name of the active agent framework, for the per-card "not usable" tag. Falls back to
+  // the framework id when omitted.
+  frameworkName?: string
   claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
   busyProviderId?: string
   onEdit: (provider: ProviderView) => void
@@ -154,6 +159,7 @@ const ProviderList = ({
   activeModel,
   agentFrameworkId = 'claude-code',
   frameworkEndpoints = DEFAULT_FRAMEWORK_ENDPOINTS,
+  frameworkName,
   claudeSubscriptionProviderId,
   busyProviderId,
   onEdit,
@@ -271,6 +277,14 @@ const ProviderList = ({
               providerRoutes.map((route) => ENDPOINT_PATHS[route]).join(' and ') +
               (providerRoutes.length > 1 ? ' endpoints' : ' endpoint')
           }
+          // A pairing the active framework cannot drive stays visible with a tag (and the route
+          // mismatch on hover): hiding the card would look like data loss, and the tag is the
+          // discoverable path to "switch the framework to use this provider".
+          const frameworkIncompatible = !isProviderUsableByFramework(
+            { apiEndpoints: provider.apiEndpoints, type: provider.type },
+            { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+          )
+          const frameworkLabel = frameworkName ?? agentFrameworkId
 
           return (
             <li
@@ -304,6 +318,27 @@ const ProviderList = ({
                         </TooltipTrigger>
                         <TooltipContent>
                           {t('Speaks the {{protocol}}', { protocol: endpoint.full })}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : null}
+                    {frameworkIncompatible ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                            aria-label={incompatibilityReason(
+                              provider,
+                              frameworkLabel,
+                              frameworkEndpoints,
+                              t
+                            )}
+                          >
+                            <TriangleAlert className="size-3" strokeWidth={2} aria-hidden="true" />
+                            {t('Not usable with {{framework}}', { framework: frameworkLabel })}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {incompatibilityReason(provider, frameworkLabel, frameworkEndpoints, t)}
                         </TooltipContent>
                       </Tooltip>
                     ) : null}

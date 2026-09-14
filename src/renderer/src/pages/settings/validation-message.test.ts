@@ -69,6 +69,23 @@ describe('describeValidation', () => {
     )
   })
 
+  it('pairs a verified endpoint with its route mismatch when the framework cannot drive it', () => {
+    expect(
+      describeValidation(
+        {
+          ok: true,
+          category: 'ok',
+          frameworkIncompatible: true,
+          message:
+            'Not compatible with Claude Code: it needs /v1/messages, but this provider speaks /v1/chat/completions. Change the API format or switch the agent framework.'
+        },
+        t
+      )
+    ).toBe(
+      'Connection succeeded, but this provider is not usable by the active agent framework. Not compatible with Claude Code: it needs /v1/messages, but this provider speaks /v1/chat/completions. Change the API format or switch the agent framework.'
+    )
+  })
+
   it('localizes an application-generated provider resource-limit message', () => {
     expect(
       describeValidation(

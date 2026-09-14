@@ -66,6 +66,20 @@ describe('getProviderFormErrors', () => {
     expect(hasProviderFormErrors(errors)).toBe(false)
   })
 
+  it('drops the key requirement for a loopback custom gateway', () => {
+    // Local model servers (Ollama, LM Studio, …) serve without a key; only the base URL and model
+    // stay required.
+    const errors = getProviderFormErrors(
+      createEmptyProviderFormValue({
+        type: 'custom',
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3:14b'
+      })
+    )
+
+    expect(errors).toEqual({})
+  })
+
   it.each([
     ['gateway.example/v1', 'Base URL must be a valid HTTP or HTTPS URL.'],
     ['ftp://gateway.example/v1', 'Base URL must be a valid HTTP or HTTPS URL.'],
