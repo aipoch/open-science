@@ -662,12 +662,24 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             void remoteAccess.restore()
 
             const disposeApplicationIpcHandlers = (): void => {
-              visibilityProbeBox.current?.dispose()
-              disposeTrayLocaleSubscription?.()
-              disposeLocalePreferenceIpc()
-              managedPreviewProtocolBridge.dispose()
-              disposeDatabaseStartupIpc()
-              disposeIpcHandlerRegistry()
+              const failures: unknown[] = []
+              for (const cleanup of [
+                () => visibilityProbeBox.current?.dispose(),
+                () => disposeTrayLocaleSubscription?.(),
+                disposeLocalePreferenceIpc,
+                () => managedPreviewProtocolBridge.dispose(),
+                disposeDatabaseStartupIpc,
+                disposeIpcHandlerRegistry
+              ]) {
+                try {
+                  cleanup()
+                } catch (error) {
+                  failures.push(error)
+                }
+              }
+              if (failures.length > 0) {
+                throw new AggregateError(failures, 'Application IPC cleanup failed.')
+              }
             }
             const shutdownApplicationSurfaces = createApplicationLifecycleShutdown({
               disposeApplicationRuntime,

@@ -21,6 +21,8 @@ const fixture = vi.hoisted(() => {
     disposeDatabaseGuard: vi.fn(),
     disposeDatabaseIpc: vi.fn(),
     disposePreviewProtocol: vi.fn(),
+    disposeTrayLocale: vi.fn(),
+    disposeRegistry: vi.fn(),
     headless: true,
     disposeRuntime: vi.fn(async () => {}),
     disposeWeb: vi.fn(async () => {}),
@@ -125,7 +127,7 @@ vi.mock('./windows', () => ({
 vi.mock('./locale/owner', () => ({
   LocalePreferenceOwner: class {
     t = (key: string): string => key
-    subscribe = (): ReturnType<typeof vi.fn> => vi.fn()
+    subscribe = (): ReturnType<typeof vi.fn> => fixture.disposeTrayLocale
   }
 }))
 vi.mock('./locale/ipc', () => ({ registerLocalePreferenceIpc: () => fixture.disposeLocaleIpc }))
@@ -188,7 +190,7 @@ vi.mock('./app-lifecycle', () => ({
     }
   }
 }))
-vi.mock('./ipc-handler-registry', () => ({ disposeIpcHandlerRegistry: vi.fn() }))
+vi.mock('./ipc-handler-registry', () => ({ disposeIpcHandlerRegistry: fixture.disposeRegistry }))
 vi.mock('./web-service', () => ({
   createWebServiceController: () => ({
     ensureStarted: async () => {
@@ -253,6 +255,8 @@ beforeEach(() => {
   fixture.disposeDatabaseGuard.mockReset()
   fixture.disposeDatabaseIpc.mockReset()
   fixture.disposePreviewProtocol.mockReset()
+  fixture.disposeTrayLocale.mockReset()
+  fixture.disposeRegistry.mockReset()
   startupWindow.destroy.mockReset()
   startupWindow.removeAllListeners()
   startupWindow.webContents.removeAllListeners()
@@ -463,4 +467,79 @@ it('stops visibility writes before runtime disposal and fails pending probes clo
   expect.soft(retired).toHaveBeenCalledExactlyOnceWith(false)
   expect.soft(fixture.sender.send).not.toHaveBeenCalled()
   expect(fixture.syncViewState).toHaveBeenCalledOnce()
+})
+
+it.each([
+  'tray locale',
+  'locale IPC',
+  'preview protocol',
+  'database IPC',
+  'registry',
+  'none'
+] as const)(
+  'attempts all IPC cleanup on lifecycle shutdown when %s cleanup fails',
+  async (stage) => {
+    fixture.failAt = 'none'
+    await import('./index')
+    await fixture.ready
+    const cleanupFailure = new Error(`${stage} cleanup failed`)
+    const cleanup = {
+      'tray locale': fixture.disposeTrayLocale,
+      'locale IPC': fixture.disposeLocaleIpc,
+      'preview protocol': fixture.disposePreviewProtocol,
+      'database IPC': fixture.disposeDatabaseIpc,
+      registry: fixture.disposeRegistry
+    }
+    if (stage !== 'none') {
+      cleanup[stage].mockImplementation(() => {
+        throw cleanupFailure
+      })
+    }
+
+    const expectedOutcome = stage === 'none' ? 'completed' : 'failed'
+    await expect(fixture.shutdownBackends!()).resolves.toBe(expectedOutcome)
+    await expect(fixture.shutdownBackends!()).resolves.toBe(expectedOutcome)
+
+    const orderedCleanup = [
+      fixture.disposeWeb,
+      fixture.disposeRuntime,
+      fixture.shutdownRemote,
+      ...Object.values(cleanup)
+    ]
+    for (const dispose of orderedCleanup) expect(dispose).toHaveBeenCalledOnce()
+    for (let i = 1; i < orderedCleanup.length; i++) {
+      expect(orderedCleanup[i - 1].mock.invocationCallOrder[0]).toBeLessThan(
+        orderedCleanup[i].mock.invocationCallOrder[0]
+      )
+    }
+    expect(fixture.startupFailure).not.toHaveBeenCalled()
+    if (stage !== 'none') {
+      expect(fixture.log.error).toHaveBeenCalledWith(
+        'application surface shutdown failed',
+        expect.objectContaining({ surface: 'ipc-handlers', result: 'failed' })
+      )
+    }
+  }
+)
+
+it('reports each IPC cleanup failure and still attempts registry disposal on lifecycle shutdown', async () => {
+  fixture.failAt = 'none'
+  await import('./index')
+  await fixture.ready
+  fixture.disposeLocaleIpc.mockImplementation(() => {
+    throw new Error('locale cleanup failed')
+  })
+  fixture.disposePreviewProtocol.mockImplementation(() => {
+    throw new Error('protocol cleanup failed')
+  })
+
+  await expect(fixture.shutdownBackends!()).resolves.toBe('failed')
+
+  expect(fixture.disposeRegistry).toHaveBeenCalledOnce()
+  expect(fixture.disposeDatabaseIpc).toHaveBeenCalledOnce()
+  const errors = fixture.log.error.mock.calls.filter(
+    ([message, fields]) =>
+      message === 'application surface shutdown failed' && fields?.surface === 'ipc-handlers'
+  )
+  expect(errors).toHaveLength(2)
 })
