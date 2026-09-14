@@ -754,3 +754,14 @@ it('keeps a connector spanning multiple panels on the same side of a flowchart c
     183.698453125, 55.607765625, 548.7700625, 469.5766875
   ])
 })
+
+it('associates dense vector marks without losing the panel envelope', () => {
+  const source = {
+    ...page,
+    graphicsBounds: Array.from({ length: 20_000 }, (_, n) =>
+      graphic('path', [0.1 + (n % 10) * 0.001, 0.1, 0.9, 0.6])
+    )
+  }
+  const caption = { page: 1, lines: ['Figure 1. Dense vector plot.'], rect: [60, 500, 540, 520] }
+  expect(associateFigures(source, [caption])[0].rect).toEqual([60, 80, 540, 480])
+})
