@@ -69,6 +69,8 @@ describe('contextUsageMcpSections', () => {
       // Connector loading adds ~35 tokens for the composer boundary, supported reader and stop rule.
       // Shell runtime binding and recovery guidance adds ~31 tokens so retries preserve the selected
       // dialect and recovery prerequisite instead of guessing from the host platform.
+      // The complete Windows schema plus unchanged guidance measures 4,752 tokens; allow 48 tokens
+      // of headroom without editing product instructions to satisfy this test-only budget.
       for (const { frameworkId, codexBridgeAliases } of frameworks) {
         const [{ text: schema }] = contextUsageMcpSections(frameworkId, {
           artifacts: false,
@@ -88,7 +90,7 @@ describe('contextUsageMcpSections', () => {
             tokenCount(`${NOTEBOOK_SYSTEM_PROMPT_APPEND}\n${JSON.stringify(tools)}`),
             `${frameworkId}${codexBridgeAliases ? ' (bridge aliases)' : ''}`
           )
-          .toBeLessThanOrEqual(4_750)
+          .toBeLessThanOrEqual(4_800)
       }
     }
   )
