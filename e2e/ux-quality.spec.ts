@@ -157,10 +157,14 @@ test('measures representative local workloads and verifies 200 percent project c
     .click()
   const browser = page.getByLabel('Local file browser')
   const address = browser.getByLabel('Directory path')
+  const contents = browser.getByRole('list', { name: 'Directory contents' })
+  // Finish the initial Home listing before editing its address: its completion canonicalizes
+  // the input. This workload measures navigation to our 1,000 files, not browser initialization.
+  await expect(contents).toBeVisible()
   const listingStart = performance.now()
   await address.fill(cwd)
   await address.press('Enter')
-  const contents = browser.getByRole('list', { name: 'Directory contents' })
+  await expect(address).toHaveValue(cwd)
   await expect(contents.getByRole('button')).toHaveCount(1000)
   sample('directory1000FirstListMs', performance.now() - listingStart)
   for (let i = 0; i < 3; i++) {

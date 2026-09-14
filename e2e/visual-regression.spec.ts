@@ -61,8 +61,14 @@ const pinConversationToEnd = async (page: Page): Promise<void> => {
   const conversationViewport = page.locator('[data-slot="message-scroller-viewport"]')
   await expect
     .poll(async () => {
-      await conversationViewport.evaluate((element) => {
+      await conversationViewport.evaluate(async (element) => {
+        // A programmatic scroll alone retains the last-prompt anchor; a later resize restores it.
+        // Declare reader input, as pinConversationToStart does, before choosing the capture anchor.
+        element.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, bubbles: true }))
         element.scrollTo({ top: element.scrollHeight })
+        // Measure after layout/ResizeObserver work, which can restore a message anchor.
+        await new Promise(requestAnimationFrame)
+        await new Promise(requestAnimationFrame)
       })
       return conversationViewport.evaluate(
         (element) => element.scrollHeight - element.clientHeight - element.scrollTop

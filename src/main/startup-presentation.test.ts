@@ -63,4 +63,19 @@ describe('continuous startup presentation', () => {
     expect(s.reveal).not.toHaveBeenCalled()
     s.owner.dispose()
   })
+  it('cleans a destroyed startup window without accessing its native webContents getter', () => {
+    const s = setup()
+    const webContents = s.window.webContents
+    Object.defineProperty(s.window, 'webContents', {
+      get: () => {
+        throw new Error('Object has been destroyed')
+      }
+    })
+    expect(() => s.window.emit('closed')).not.toThrow()
+    expect(webContents.listenerCount('render-process-gone')).toBe(0)
+    expect(s.ipc.listenerCount('startup-presentation:phase')).toBe(0)
+    // Recovery will attach the same presenter to the replacement window; keep the helper alive.
+    expect(s.presenter.complete).not.toHaveBeenCalled()
+    expect(s.presenter.fail).not.toHaveBeenCalled()
+  })
 })

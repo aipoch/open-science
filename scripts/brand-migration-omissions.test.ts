@@ -5,9 +5,11 @@ import { pathToFileURL } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RUNTIME_SCHEMA_TABLE_DDLS } from '../src/main/database/generated/runtime-schema'
+import { createSessionFile } from '../src/shared/session-persistence'
 import { runMigration, inventory } from '../resources/brand-migration/transaction.mjs'
 import { auditAliases } from '../resources/brand-migration/retirement.mjs'
 import { remapPath } from '../resources/brand-migration/paths.mjs'
+import { transformDocument } from '../resources/brand-migration/references.mjs'
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 30_000 })
 const roots: string[] = []
@@ -94,6 +96,143 @@ const notebook = (root: string): Record<string, unknown> => ({
 })
 
 describe('brand migration omission regressions', () => {
+  it.each(['bare', 'v1', 'current'])(
+    'migrates %s Session files before retiring aliases and preserves their research identity',
+    async (format) => {
+      const f = await fixture()
+      const path = join(f.old, 'uploads/paper.txt')
+      // Start with the production writer's envelope and graph. Historical uploads retain an
+      // absolute locator until their owning startup migration has adopted an immutable Version.
+      const document = JSON.parse(
+        JSON.stringify(
+          createSessionFile({
+            id: 's',
+            projectId: 'p',
+            title: 'Research',
+            cwd: f.old,
+            status: 'idle',
+            messages: [
+              {
+                id: 'm',
+                role: 'user',
+                content: `Do not replace this path: ${path}`,
+                status: 'complete',
+                eventIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                parts: [{ type: 'artifact', id: 'a', name: 'paper.txt', source: 'artifact', path }]
+              }
+            ],
+            artifacts: [{ id: 'a', kind: 'managed-file', path, fileUrl: pathToFileURL(path).href }],
+            createdAt: 1,
+            updatedAt: 1
+          })
+        )
+      )
+      for (const message of [
+        document.session.messages[0],
+        document.session.conversationGraph.messages[0]
+      ])
+        message.uploads = [{ id: 'u', sessionId: 's', name: 'paper.txt', path, size: 9 }]
+      const original =
+        format === 'bare'
+          ? document.session
+          : { ...document, version: format === 'v1' ? 1 : document.version }
+      const file = join(f.config, 'sessions/p/s.json')
+      await mkdir(dirname(file), { recursive: true })
+      const raw = JSON.stringify(original)
+      await writeFile(file, raw)
+      const db = database(f.config, 'GrantedLocalRoot')
+      grant(db, f.old)
+      const beforeGrant = db.prepare('SELECT * FROM GrantedLocalRoot').get()
+      db.close()
+
+      const journal = await runMigration({ ...f.options, execute: true })
+      const migrated = JSON.parse(await readFile(file, 'utf8'))
+      const session = format === 'bare' ? migrated : migrated.session
+      const nextPath = join(f.next, 'uploads/paper.txt')
+      expect(session.cwd).toBe(f.next)
+      expect(session.artifacts[0]).toEqual({
+        id: 'a',
+        kind: 'managed-file',
+        path: nextPath,
+        fileUrl: pathToFileURL(nextPath).href
+      })
+      for (const message of [session.messages[0], session.conversationGraph.messages[0]]) {
+        expect(message.uploads[0]).toEqual({
+          id: 'u',
+          sessionId: 's',
+          name: 'paper.txt',
+          path: nextPath,
+          size: 9
+        })
+        expect(message.parts[0].path).toBe(nextPath)
+        expect(message.content).toBe(`Do not replace this path: ${path}`)
+      }
+      if (format !== 'bare') expect(migrated.version).toBe(original.version)
+      const after = database(f.config)
+      expect(after.prepare('SELECT * FROM GrantedLocalRoot').get()).toEqual({
+        ...beforeGrant,
+        path: f.next
+      })
+      after.close()
+      const backup = journal.participants.find((p) => p.to === f.config).backup
+      expect(await readFile(join(backup, 'sessions/p/s.json'), 'utf8')).toBe(raw)
+
+      // A reintroduced legacy envelope must keep the alias alive, even when user text is the
+      // only remaining old spelling after the supported locator fields have been repaired.
+      await writeFile(file, raw)
+      expect((await auditAliases(journal, inventory)).blockers).toContainEqual({
+        path: file,
+        reason: 'unmigrated-document-reference'
+      })
+      await expect(runMigration({ ...f.options, retireAliases: true })).rejects.toThrow(
+        'Alias retirement blocked'
+      )
+      expect(await readFile(path, 'utf8')).toBe('research\n')
+      await writeFile(file, JSON.stringify(migrated))
+      expect((await auditAliases(journal, inventory)).blockers).toEqual([])
+      await runMigration({ ...f.options, retireAliases: true })
+      await expect(lstat(f.old)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(await readFile(session.messages[0].uploads[0].path, 'utf8')).toBe('research\n')
+    }
+  )
+
+  it.each([
+    { version: 3, session: { cwd: '/old', messages: [] } },
+    { version: 0, session: { cwd: '/old', messages: [] } },
+    { version: '2', session: { cwd: '/old', messages: [] } },
+    { version: 2 },
+    { session: { cwd: '/old', messages: [] } },
+    { version: 2, session: [] },
+    null
+  ])('rejects unknown or malformed Session envelopes: %j', (document) => {
+    expect(() =>
+      transformDocument(document, 'session', [{ from: '/old', to: '/new' }], process.platform)
+    ).toThrow(/Session.*(envelope|document)/)
+  })
+
+  it('keeps migration originals and retirement aliases when a future Session envelope is present', async () => {
+    const f = await fixture()
+    const file = join(f.config, 'sessions/p/s.json')
+    await mkdir(dirname(file), { recursive: true })
+    const raw = JSON.stringify({ version: 3, session: { cwd: f.old, messages: [] } })
+    await writeFile(file, raw)
+    await expect(runMigration({ ...f.options, execute: true })).rejects.toThrow(/Session.*envelope/)
+    expect((await lstat(f.old)).isSymbolicLink()).toBe(false)
+    await expect(lstat(f.next)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(file, 'utf8')).toBe(raw)
+    await rm(file)
+    await runMigration({ ...f.options, execute: true })
+    await writeFile(file, raw)
+    await expect(runMigration({ ...f.options, retireAliases: true })).rejects.toThrow(
+      /Session.*envelope/
+    )
+    expect((await lstat(f.old)).isSymbolicLink()).toBe(true)
+    expect(await readFile(join(f.old, 'uploads/paper.txt'), 'utf8')).toBe('research\n')
+    expect(await readFile(file, 'utf8')).toBe(raw)
+  })
+
   it('rechecks an unbundled database on resume while keeping rollback available', async () => {
     const f = await fixture()
     database(f.config, 'ManagedFileVersionWriteOperation').close()

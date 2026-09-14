@@ -161,6 +161,12 @@ legacy granted roots and disabled runtime entries), `sessions/<project>/<session
 upload/artifact paths and derived file URLs), `notebooks/<project>/<session>/run.json` (current roots,
 run cwd/working files/artifacts), its `frames/<frameId>/run.json` variants, and `task-runs.json`.
 Relative `$DATA/` values remain portable.
+Session adapters accept the released bare format and version-1/version-2 `{ version, session }`
+envelopes, using the same payload during migration and alias auditing. Envelope versions, record
+IDs, graph relationships and research text remain intact. Unknown or malformed envelopes stop
+migration and alias retirement rather than being treated as having no references. An older
+committed receipt may still contain such legacy references: keep its aliases and use the verified
+rollback/restart procedure below when eligible; never remove the receipt to bypass this check.
 Runtime operations must be settled. Installation authorizations are not transferred to a new runtime
 identity. User messages, tool inputs, historical frozen snapshots and provenance are not recursively
 rewritten. Arbitrary MCP commands/env and third-party databases require their own explicit repair;

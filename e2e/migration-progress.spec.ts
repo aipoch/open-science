@@ -59,7 +59,12 @@ for (const hostLanguage of ['en-US', 'zh-CN']) {
   })
 }
 
-for (const startupCase of ['normal', 'hidden', 'quit-before-interactive'] as const) {
+for (const startupCase of [
+  'normal',
+  'hidden',
+  'quit-before-interactive',
+  'load-failure'
+] as const) {
   const windowMode = startupCase === 'hidden' ? 'hidden' : 'normal'
   test(`retains migration UI until the real application paints an interactive page (${startupCase})`, async ({}, info) => {
     test.skip(
@@ -86,6 +91,11 @@ for (const startupCase of ['normal', 'hidden', 'quit-before-interactive'] as con
       releaseOnboarding = resolve
     })
     let onboardingRequested = false
+    let documentRequests = 0
+    let documentRequested!: () => void
+    const initialDocumentRequest = new Promise<void>((resolve) => {
+      documentRequested = resolve
+    })
     const assets = resolve('out/renderer')
     const mainHtml = await readFile(join(assets, 'index.html'), 'utf8')
     const mainScript = mainHtml.match(/src="\.\/(assets\/[^"\n]+\.js)"/)![1]
@@ -94,6 +104,16 @@ for (const startupCase of ['normal', 'hidden', 'quit-before-interactive'] as con
     const server = createServer(async (request, response) => {
       const pathname = new URL(request.url!, 'http://localhost').pathname
       const filename = pathname === '/' ? 'index.html' : pathname.slice(1)
+      if (filename === 'index.html') documentRequests += 1
+      if (filename === 'index.html' && documentRequests === 1) {
+        documentRequested()
+        if (startupCase === 'load-failure') {
+          // Fail an actual navigation only after the test observes the hidden startup window.
+          await mainGate
+          response.destroy()
+          return
+        }
+      }
       if (filename === mainScript) await mainGate
       if (/^assets\/OnboardingWizard-[^/]+\.js$/.test(filename)) {
         onboardingRequested = true
@@ -125,7 +145,9 @@ for (const startupCase of ['normal', 'hidden', 'quit-before-interactive'] as con
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     const address = server.address() as { port: number }
     let application: ElectronApplication | undefined
+    let applicationProcess: ReturnType<ElectronApplication['process']> | undefined
     let helperPid: number | undefined
+    let nativeQuitCompleted = false
     try {
       application = await electron.launch({
         args: [`--user-data-dir=${profile}`, root],
@@ -141,6 +163,7 @@ for (const startupCase of ['normal', 'hidden', 'quit-before-interactive'] as con
           ELECTRON_RENDERER_URL: `http://127.0.0.1:${address.port}`
         }
       })
+      applicationProcess = application.process()
       const channelDirectory = (await readdir(temporary)).find((name) =>
         name.startsWith('open-science-startup-')
       )!
@@ -148,6 +171,66 @@ for (const startupCase of ['normal', 'hidden', 'quit-before-interactive'] as con
         await readFile(join(temporary, channelDirectory, 'endpoint.json'), 'utf8')
       )
       helperPid = endpoint.pid
+      if (startupCase === 'load-failure') {
+        // Electron's firstWindow waits for document initialization. Observe the native window
+        // directly while its failing document is deliberately held at the HTTP server.
+        await initialDocumentRequest
+        await expect
+          .poll(() =>
+            application!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
+          )
+          .toBe(1)
+        const initialId = await application.evaluate(({ BrowserWindow }) => {
+          const initial = BrowserWindow.getAllWindows()[0]
+          if (initial.isVisible()) throw new Error('Startup window was revealed before loading')
+          return initial.id
+        })
+        releaseMain()
+        // The replacement's real document request confirms lifecycle recovery without querying
+        // Electron while the discarded renderer and heavy backend imports are being collected.
+        await expect.poll(() => documentRequests).toBe(2)
+        const replacement = await application.firstWindow()
+        expect(
+          await (await application.browserWindow(replacement)).evaluate((window) => window.id)
+        ).not.toBe(initialId)
+        await expect.poll(() => onboardingRequested).toBe(true)
+        await replacement.evaluate(async () => {
+          for (let i = 0; i < 3; i++) await new Promise(requestAnimationFrame)
+        })
+        expect(
+          await application.evaluate(({ BrowserWindow }) =>
+            BrowserWindow.getAllWindows()[0].isVisible()
+          )
+        ).toBe(false)
+        expect(() => process.kill(endpoint.pid, 0)).not.toThrow()
+        releaseOnboarding()
+        await expect(
+          replacement.getByRole('heading', { name: 'Set up your research workspace.' })
+        ).toBeVisible()
+        await expect
+          .poll(() =>
+            application!.evaluate(({ BrowserWindow }) =>
+              BrowserWindow.getAllWindows()[0].isVisible()
+            )
+          )
+          .toBe(true)
+        await expect
+          .poll(() => {
+            try {
+              process.kill(endpoint.pid, 0)
+              return true
+            } catch {
+              return false
+            }
+          })
+          .toBe(false)
+        await replacement.screenshot({ path: info.outputPath('continuous-startup-recovered.png') })
+        // Exercise the application's native quit before Playwright tears down its context.
+        await application.evaluate(({ app }) => app.quit())
+        await expect.poll(() => applicationProcess!.exitCode).toBe(0)
+        nativeQuitCompleted = true
+        return
+      }
       const page = await application.firstWindow()
       const before = await application.evaluate(({ BrowserWindow, app }) => {
         const main = BrowserWindow.getAllWindows()[0]
@@ -204,6 +287,8 @@ for (const startupCase of ['normal', 'hidden', 'quit-before-interactive'] as con
             }
           })
           .toBe(false)
+        await expect.poll(() => applicationProcess!.exitCode).toBe(0)
+        nativeQuitCompleted = true
         return
       }
       releaseOnboarding()
@@ -244,6 +329,21 @@ for (const startupCase of ['normal', 'hidden', 'quit-before-interactive'] as con
     } finally {
       releaseMain()
       releaseOnboarding()
+      // A broken startup close handler can prevent Electron's cooperative teardown on a red run.
+      // This fault-injection case owns the disposable process and must still release it.
+      if (
+        (startupCase === 'load-failure' || startupCase === 'quit-before-interactive') &&
+        !nativeQuitCompleted
+      ) {
+        for (const pid of [applicationProcess?.pid, helperPid]) {
+          if (!pid) continue
+          try {
+            process.kill(pid, 'SIGKILL')
+          } catch {
+            /* Already exited. */
+          }
+        }
+      }
       await application?.close().catch(() => {})
       // A deliberately failed owner retains a diagnostic window; this disposable fixture owns it.
       if (helperPid) {
@@ -409,8 +509,17 @@ test('shows an isolated progress window and retains a failure without opening th
     await application.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].setContentSize(460, 460)
     )
+    // Exercise a classic scrollbar gutter even on hosts configured to hide overlay scrollbars.
+    await page.addStyleTag({
+      content:
+        'html { overflow-y: scroll; scrollbar-gutter: stable; } ::-webkit-scrollbar { width: 15px; }'
+    })
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(460)
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(460)
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
+      )
+    ).toBe(true)
     await footer.scrollIntoViewIfNeeded()
     await expect(footer).toBeInViewport()
     await page.screenshot({

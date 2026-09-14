@@ -45,9 +45,22 @@ export function transformDocument(value, kind, mappings, platform, scanning = fa
     }
     list(v.grantedLocalRoots).forEach((r) => path(r, 'path'))
   } else if (kind === 'session') {
-    path(v, 'cwd')
-    list(v.artifacts).forEach(artifact)
-    for (const message of [...list(v.messages), ...list(v.conversationGraph?.messages)]) {
+    // Match decodeSessionEnvelope's released bare/v1/v2 formats without importing application
+    // recovery or sanitization: migration and retirement must inspect the same durable payload,
+    // while retaining the envelope, graph identities and all non-path research content verbatim.
+    if (!object(v)) throw new Error('Invalid Session document blocks migration or alias retirement')
+    const enveloped = Object.hasOwn(v, 'version') || Object.hasOwn(v, 'session')
+    if (enveloped && (![1, 2].includes(v.version) || !object(v.session)))
+      throw new Error(
+        'Unsupported or invalid Session envelope blocks migration or alias retirement'
+      )
+    const session = enveloped ? v.session : v
+    path(session, 'cwd')
+    list(session.artifacts).forEach(artifact)
+    for (const message of [
+      ...list(session.messages),
+      ...list(session.conversationGraph?.messages)
+    ]) {
       list(message.uploads).forEach((u) => path(u, 'path'))
       list(message.parts)
         .filter((p) => p.type === 'artifact')

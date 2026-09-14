@@ -426,9 +426,38 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           )
         }
       })
-      const startupWindowCloseOptions = {
-        ...createStartupWindowCloseOptions(() => app.quit()),
-        deferShow: !!startupPresenter
+      const startupWindowCloseOptions = createStartupWindowCloseOptions(() => app.quit())
+      // Electron otherwise treats disposal of the only failed startup window as an implicit quit.
+      // Keep the recovery gap alive until the regular lifecycle owns window-all-closed. Explicit
+      // user/system quit requests still go through the database startup guard as usual.
+      const keepStartupAlive = (): void => {}
+      if (!webMode.headless) app.on('window-all-closed', keepStartupAlive)
+      const releaseStartupWindowRecovery = (): void => {
+        if (!webMode.headless) app.removeListener('window-all-closed', keepStartupAlive)
+      }
+      let startupPresentationComplete = false
+      // The first document may fail before its first paint. The lifecycle then creates a replacement;
+      // keep that window behind the same helper and transfer the acknowledgement to its own renderer.
+      const createPresentedMainWindow = (
+        options: NonNullable<Parameters<typeof createMainWindow>[0]>
+      ): InstanceType<typeof BrowserWindow> => {
+        const deferShow = !!startupPresenter && !startupPresentationComplete
+        const window = createMainWindow({ ...options, deferShow }, translate)
+        if (deferShow && startupPresenter) {
+          startupPresentation?.dispose()
+          startupPresentation = createStartupPresentation({
+            ipc: ipcMain,
+            window,
+            presenter: startupPresenter,
+            failed: () => app.quit(),
+            reveal: () => {
+              startupPresentationComplete = true
+              if (process.platform === 'darwin') app.setActivationPolicy('regular')
+              if (process.env.OPEN_SCIENCE_E2E_WINDOW_MODE !== 'hidden') window.show()
+            }
+          })
+        }
+        return window
       }
       // The renderer probes connectivity as soon as it mounts, before the full application runtime
       // is composed. Install these handlers before creating the first BrowserWindow so that startup
@@ -446,19 +475,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       })
       const startupWindow = webMode.headless
         ? undefined
-        : createMainWindow(startupWindowCloseOptions, translate)
-      if (startupWindow && startupPresenter) {
-        startupPresentation = createStartupPresentation({
-          ipc: ipcMain,
-          window: startupWindow,
-          presenter: startupPresenter,
-          failed: () => app.quit(),
-          reveal: () => {
-            if (process.platform === 'darwin') app.setActivationPolicy('regular')
-            if (process.env.OPEN_SCIENCE_E2E_WINDOW_MODE !== 'hidden') startupWindow.show()
-          }
-        })
-      }
+        : createPresentedMainWindow(startupWindowCloseOptions)
       if (startupWindow) bindSystemShutdownWindow(startupWindow)
       // Yield the main-process event loop until Chromium has painted the startup shell. Evaluating the
       // 5 MB backend chunk immediately after BrowserWindow construction can otherwise delay
@@ -728,10 +745,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               openSessionPackageFile,
               installMigrationQuitGuard,
               isMigrationInProgress,
-              createMainWindow: (options: Parameters<typeof createMainWindow>[0]) =>
-                createMainWindow(options, translate),
+              createMainWindow: createPresentedMainWindow,
               configureMainWindow,
               startupWindow,
+              releaseStartupWindowRecovery,
               createAppTray,
               translate,
               buildAuthenticatedWebUrl,
@@ -818,6 +835,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           managedPreviewProtocolBridge.dispose()
           disposeDatabaseStartupIpc()
           if (startupWindow && !startupWindow.isDestroyed()) startupWindow.destroy()
+          releaseStartupWindowRecovery()
           // The outer failure handler retains diagnostics in the progress helper before exit.
           if (!startupPresenter) app.quit()
         }
@@ -896,6 +914,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         shutdownBackends: ctx.shutdownApplicationSurfaces
       })
       const { showMainWindow, getMainWindow, isMainWindowHidden, onSystemShutdown } = lifecycle
+      ctx.releaseStartupWindowRecovery()
       openPackageWindow = showMainWindow
 
       // Window lifecycle now exists: expose it to the restored controller, reapply any Windows

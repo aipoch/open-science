@@ -21,9 +21,12 @@ export function createStartupPresentation({
   failed?: () => void
 }): { focus: () => boolean; dispose: () => void } {
   let pending = true
+  // BrowserWindow's native getter is unavailable inside its closed event. Retain the event
+  // emitter so a failed startup document can be discarded and replaced without breaking cleanup.
+  const webContents = window.webContents
   const dispose = (): void => {
     ipc.removeListener(STARTUP_PRESENTATION_CHANNEL, onPhase)
-    window.webContents.removeListener('render-process-gone', onGone)
+    webContents.removeListener('render-process-gone', onGone)
     window.removeListener('closed', dispose)
   }
   const onGone = (): void => {
@@ -35,8 +38,8 @@ export function createStartupPresentation({
     if (
       !pending ||
       window.isDestroyed() ||
-      event.sender !== window.webContents ||
-      event.senderFrame !== window.webContents.mainFrame
+      event.sender !== webContents ||
+      event.senderFrame !== webContents.mainFrame
     )
       return
     if (phase === 'interactive' || phase === 'blocked') {
@@ -54,7 +57,7 @@ export function createStartupPresentation({
     }
   }
   ipc.on(STARTUP_PRESENTATION_CHANNEL, onPhase)
-  window.webContents.on('render-process-gone', onGone)
+  webContents.on('render-process-gone', onGone)
   window.on('closed', dispose)
   return {
     focus: () => {
