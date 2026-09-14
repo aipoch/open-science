@@ -578,3 +578,74 @@ it.each(['10.1000/example', 'https://doi.org/10.1000/EXAMPLE'])(
     expect(review.item.item.identifiers).toEqual(original.identifiers)
   }
 )
+
+it('keeps Crossref organizational and unsplit authors in source order with a year-only date', async () => {
+  const enricher = new LiteratureMetadataEnricher(
+    {
+      get: async () => view,
+      applyMetadata: vi.fn(),
+      getMetadataCommitReceipt: async () => null
+    },
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            message: {
+              DOI: '10.1000/example',
+              title: ['非拉丁标题 α²'],
+              author: [{ name: '研究協作組' }, { family: '李小明' }],
+              issued: { 'date-parts': [[2024]] }
+            }
+          })
+        )
+    )
+  )
+  const result = await enricher.complete({ mode: 'preview', itemId: view.id })
+  expect(result.item.item.creators).toMatchObject([
+    { nameMode: 'organization', literalName: '研究協作組' },
+    { nameMode: 'person', familyName: '李小明', givenName: '' }
+  ])
+  expect(result.item.item).toMatchObject({ issuedText: '2024', issuedYear: 2024, title: 'A paper' })
+  expect(result.conflicts).toContainEqual({
+    field: 'title',
+    currentValue: 'A paper',
+    value: '非拉丁标题 α²'
+  })
+})
+
+it('preserves PubMed seasonal dates and collective authors without inventing month or day', async () => {
+  const current = {
+    ...view,
+    item: {
+      ...item,
+      identifiers: [{ scheme: 'pmid' as const, value: '12345678', isPrimary: true }]
+    }
+  }
+  const enricher = new LiteratureMetadataEnricher(
+    {
+      get: async () => current,
+      applyMetadata: vi.fn(),
+      getMetadataCommitReceipt: async () => null
+    },
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            result: {
+              '12345678': {
+                uid: '12345678',
+                pubdate: '2024 Winter',
+                authors: [{ name: 'WHO Study Group', authtype: 'CollectiveAuthor' }]
+              }
+            }
+          })
+        )
+    )
+  )
+  const result = await enricher.complete({ mode: 'preview', itemId: view.id })
+  expect(result.item.item).toMatchObject({
+    issuedText: '2024 Winter',
+    issuedYear: 2024,
+    creators: [{ nameMode: 'organization', literalName: 'WHO Study Group' }]
+  })
+})

@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -63,6 +64,7 @@ describe('ProviderAuthLifecycleOwner', () => {
   let claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
   let claudeSharedAuth: ClaudeSharedAuthControllerPort
   let runClaudeSubscriptionProbe: ProviderAuthLifecycleOwnerOptions['runClaudeSubscriptionProbe']
+  let resolveCodexExecutable: ProviderAuthLifecycleOwnerOptions['resolveCodexExecutable']
   let owner: InstanceType<typeof ProviderAuthLifecycleOwner>
 
   beforeEach(async () => {
@@ -108,13 +110,14 @@ describe('ProviderAuthLifecycleOwner', () => {
       cancelLogin: vi.fn()
     }
     runClaudeSubscriptionProbe = vi.fn(async () => ({ ok: true, category: 'ok' as const }))
+    resolveCodexExecutable = vi.fn(async () => '/codex-acp')
     const projection = new ProviderRuntimeProjectionOwner()
     owner = new ProviderAuthLifecycleOwner({
       repository,
       storageRoot: dir,
       userClaudeDir: join(dir, 'user-claude'),
       userCodexDir: join(dir, 'user-codex'),
-      resolveCodexExecutable: vi.fn(async () => '/codex-acp'),
+      resolveCodexExecutable,
       resolveCodexProxyEnvironment: vi.fn(async () => undefined),
       runClaudeSubscriptionProbe,
       resolveProvider: (provider, model) => projection.resolveProvider(provider, model),
@@ -127,6 +130,109 @@ describe('ProviderAuthLifecycleOwner', () => {
   afterEach(async () => {
     vi.useRealTimers()
     await rm(dir, { recursive: true, force: true })
+  })
+
+  const storeCodexProvider = async (
+    authMode: 'isolated' | 'imported'
+  ): Promise<Awaited<ReturnType<typeof repository.getSettings>>['providers'][number]> => {
+    await repository.deleteProvider(CLAUDE_SHARED_PROVIDER_ID)
+    await repository.upsertProvider({
+      id: CODEX_SUBSCRIPTION_PROVIDER_ID,
+      type: 'codex-isolated',
+      codexAuthMode: authMode,
+      name: 'Codex subscription',
+      apiEndpoints: ['responses']
+    })
+    return (await repository.getSettings()).providers[0]
+  }
+
+  const storeAppCodexAuth = async (
+    content = JSON.stringify({
+      auth_mode: 'chatgpt',
+      tokens: {
+        id_token: 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0In0.signature',
+        access_token: 'access',
+        refresh_token: 'refresh'
+      },
+      last_refresh: '2026-09-11T00:00:00Z'
+    })
+  ): Promise<void> => {
+    const home = join(dir, 'codex-subscription')
+    await mkdir(home, { recursive: true })
+    await writeFile(join(home, 'auth.json'), content)
+  }
+
+  it('accepts a valid app-owned Codex credential', async () => {
+    await storeAppCodexAuth()
+    const stored = await storeCodexProvider('isolated')
+
+    await expect(owner.isProviderKeyUsable(stored)).resolves.toBe(true)
+    expect(codexAuth.getStatus).not.toHaveBeenCalled()
+    expect(resolveCodexExecutable).not.toHaveBeenCalled()
+  })
+
+  it('does not resolve the Codex executable while inspecting stored credentials', async () => {
+    await storeAppCodexAuth()
+    const stored = await storeCodexProvider('isolated')
+    const projection = new ProviderRuntimeProjectionOwner()
+    const runtimeResolver = vi.fn(async () => {
+      throw new Error('Codex runtime missing')
+    })
+    const defaultAuthOwner = new ProviderAuthLifecycleOwner({
+      repository,
+      storageRoot: dir,
+      userClaudeDir: join(dir, 'user-claude'),
+      userCodexDir: join(dir, 'user-codex'),
+      resolveCodexExecutable: runtimeResolver,
+      resolveCodexProxyEnvironment: vi.fn(async () => undefined),
+      runClaudeSubscriptionProbe,
+      resolveProvider: (provider, model) => projection.resolveProvider(provider, model),
+      claudeIsolatedAuth,
+      claudeSharedAuth
+    })
+
+    await expect(defaultAuthOwner.isProviderKeyUsable(stored)).resolves.toBe(true)
+    expect(runtimeResolver).not.toHaveBeenCalled()
+  })
+
+  it('rejects a missing app-owned Codex credential', async () => {
+    const stored = await storeCodexProvider('isolated')
+
+    await expect(owner.isProviderKeyUsable(stored)).resolves.toBe(false)
+    expect(existsSync(join(dir, 'codex-subscription'))).toBe(false)
+    expect(codexAuth.getStatus).not.toHaveBeenCalled()
+    expect(resolveCodexExecutable).not.toHaveBeenCalled()
+  })
+
+  it('rejects a malformed app-owned Codex credential', async () => {
+    await storeAppCodexAuth('{not-json')
+    const stored = await storeCodexProvider('isolated')
+
+    await expect(owner.isProviderKeyUsable(stored)).resolves.toBe(false)
+    expect(codexAuth.getStatus).not.toHaveBeenCalled()
+    expect(resolveCodexExecutable).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unreadable app-owned Codex credential', async () => {
+    await mkdir(join(dir, 'codex-subscription', 'auth.json'), { recursive: true })
+    const stored = await storeCodexProvider('isolated')
+
+    await expect(owner.isProviderKeyUsable(stored)).resolves.toBe(false)
+    expect(codexAuth.getStatus).not.toHaveBeenCalled()
+  })
+
+  it('keeps imported app-owned Codex credentials usable after external logout', async () => {
+    await storeAppCodexAuth()
+    vi.mocked(codexAuth.getStatus).mockResolvedValueOnce({
+      mode: 'shared',
+      supported: true,
+      authenticated: false
+    })
+    const stored = await storeCodexProvider('imported')
+
+    await expect(owner.isProviderKeyUsable(stored)).resolves.toBe(true)
+    expect(codexAuth.getStatus).not.toHaveBeenCalled()
+    expect(resolveCodexExecutable).not.toHaveBeenCalled()
   })
 
   it('coalesces shared status reads and invalidates them across logout and login', async () => {

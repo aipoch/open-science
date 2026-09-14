@@ -11,9 +11,10 @@ import { useTranslation } from 'react-i18next'
 import type { WorkspaceConversationTimelineItem } from './workspace-conversation-timeline'
 import {
   createRunMarks,
+  createRunMarkItemIndex,
   findMessageTarget,
   normalizePreviewText,
-  resolveCurrentRunMarkIndex,
+  resolveCurrentRunMarkPosition,
   runMarkIndicatorClassName,
   type RunMark
 } from './workspace-run-marks'
@@ -27,7 +28,8 @@ type WorkspaceRunMarksProps = {
 const RUN_MARK_HOVER_DELAY_MS = 200
 const RUN_MARK_INLINE_OFFSET_PX = 8
 const RUN_MARK_TOP_OFFSET_PX = 8
-const RUN_MARK_ROW_SIZE_PX = 10
+const RUN_MARK_ROW_SIZE_PX = 20
+const RUN_MARK_MIN_ROW_SIZE_PX = 12
 const RUN_MARK_MAX_RAIL_HEIGHT_PX = 480
 
 type RunMarkRailPosition = {
@@ -43,19 +45,61 @@ const WorkspaceRunMarks = ({
 }: WorkspaceRunMarksProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const marks = useMemo(() => createRunMarks(items), [items])
+  const markIndexByItemId = useMemo(() => createRunMarkItemIndex(items, marks), [items, marks])
+  const [visibleIndices, setVisibleIndices] = useState<number[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
   const [availableMessageIds, setAvailableMessageIds] = useState<Set<string>>(
     () => new Set(marks.map((mark) => mark.id))
   )
   const [railPosition, setRailPosition] = useState<RunMarkRailPosition | null>(null)
+  const railRef = useRef<HTMLOListElement | null>(null)
   const animationFrameRef = useRef<number | undefined>(undefined)
   const layoutAnimationFrameRef = useRef<number | undefined>(undefined)
 
+  const updateRailScroll = useCallback(
+    (position: number): void => {
+      const rail = railRef.current
+      if (!rail || rail.clientHeight === 0) return
+
+      // Match the bounded grid tracks: compact long lists, then follow reading beyond an edge.
+      // Fractional Run progress keeps movement continuous rather than jumping per message.
+      const rowSize = Math.max(
+        RUN_MARK_MIN_ROW_SIZE_PX,
+        Math.min(RUN_MARK_ROW_SIZE_PX, rail.clientHeight / marks.length)
+      )
+      const markTop = position * rowSize
+      const inset = Math.min(rowSize, rail.clientHeight / 4)
+      const nextTop = Math.max(
+        markTop + rowSize + inset - rail.clientHeight,
+        Math.min(rail.scrollTop, markTop - inset)
+      )
+      rail.scrollTop = Math.max(0, Math.min(nextTop, rail.scrollHeight - rail.clientHeight))
+    },
+    [marks.length]
+  )
+
   const updateCurrentIndex = useCallback((): void => {
     if (!viewport || marks.length === 0) return
-    setCurrentIndex(resolveCurrentRunMarkIndex(viewport, marks))
-  }, [marks, viewport])
+    const bounds = viewport.getBoundingClientRect()
+    const visible = new Set<number>()
+    for (const element of viewport.querySelectorAll<HTMLElement>('[data-message-id]')) {
+      const index = markIndexByItemId.get(element.dataset.messageId ?? '')
+      if (index === undefined) continue
+      const rect = element.getBoundingClientRect()
+      if (rect.bottom > bounds.top && rect.top < bounds.bottom) visible.add(index)
+    }
+    const nextVisible = [...visible].sort((a, b) => a - b)
+    setVisibleIndices((previous) =>
+      previous.length === nextVisible.length &&
+      previous.every((value, index) => value === nextVisible[index])
+        ? previous
+        : nextVisible
+    )
+    const position = Math.max(resolveCurrentRunMarkPosition(viewport, marks), nextVisible[0] ?? 0)
+    setCurrentIndex(Math.floor(position))
+    updateRailScroll(position)
+  }, [markIndexByItemId, marks, updateRailScroll, viewport])
 
   const updateRailPosition = useCallback((): void => {
     if (!viewport) return
@@ -119,6 +163,7 @@ const WorkspaceRunMarks = ({
     const resizeObserver =
       typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleLayoutUpdate)
     resizeObserver?.observe(viewport)
+    if (viewport.firstElementChild) resizeObserver?.observe(viewport.firstElementChild)
     if (panel && panel !== viewport) resizeObserver?.observe(panel)
 
     return () => {
@@ -135,6 +180,15 @@ const WorkspaceRunMarks = ({
       }
     }
   }, [marks, updateCurrentIndex, updateRailPosition, viewport])
+
+  // The portal is mounted after its first measurement; also follow after panel/window resizing.
+  useLayoutEffect(() => {
+    if (viewport) {
+      updateRailScroll(
+        Math.max(resolveCurrentRunMarkPosition(viewport, marks), visibleIndices[0] ?? 0)
+      )
+    }
+  }, [marks, railPosition, updateRailScroll, viewport, visibleIndices])
 
   const scrollToRun = (mark: RunMark, index: number): void => {
     if (!viewport) return
@@ -157,10 +211,10 @@ const WorkspaceRunMarks = ({
     setCurrentIndex(index)
   }
 
-  if (marks.length < 2 || !railPosition || typeof document === 'undefined') return null
+  if (marks.length < 4 || !railPosition || typeof document === 'undefined') return null
 
   const railStyle: CSSProperties = {
-    gridTemplateRows: `repeat(${marks.length}, minmax(0, 1fr))`,
+    gridTemplateRows: `repeat(${marks.length}, minmax(${RUN_MARK_MIN_ROW_SIZE_PX}px, 1fr))`,
     height: `${Math.min(marks.length * RUN_MARK_ROW_SIZE_PX, RUN_MARK_MAX_RAIL_HEIGHT_PX)}px`,
     maxHeight: 'calc(100vh - 6rem)'
   }
@@ -177,7 +231,11 @@ const WorkspaceRunMarks = ({
         className="pointer-events-none fixed z-20 hidden w-6 -translate-y-1/2 md:block"
         style={railPosition}
       >
-        <ol className="pointer-events-auto grid w-full" style={railStyle}>
+        <ol
+          ref={railRef}
+          className="pointer-events-auto grid w-full overflow-hidden"
+          style={railStyle}
+        >
           {marks.map((mark, index) => {
             const isCurrent = index === currentIndex
             const disabled = !onRevealMessage && !availableMessageIds.has(mark.id)
@@ -195,6 +253,7 @@ const WorkspaceRunMarks = ({
                     <button
                       type="button"
                       className="group/run-mark flex size-full min-h-1 items-center rounded-sm ps-1 outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring/60 disabled:cursor-not-allowed disabled:opacity-40"
+                      data-visible={visibleIndices.includes(index) || undefined}
                       aria-current={isCurrent ? 'location' : undefined}
                       aria-label={t('Go to run {{index}}: {{preview}}', {
                         index: index + 1,
@@ -213,7 +272,11 @@ const WorkspaceRunMarks = ({
                     >
                       <span
                         aria-hidden="true"
-                        className={runMarkIndicatorClassName(highlightedIndex, index)}
+                        className={runMarkIndicatorClassName(
+                          highlightedIndex,
+                          index,
+                          visibleIndices.includes(index)
+                        )}
                       />
                     </button>
                   </TooltipTrigger>

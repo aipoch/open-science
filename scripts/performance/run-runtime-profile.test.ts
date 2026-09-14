@@ -75,6 +75,8 @@ process.exit(0)
           'playwright',
           'test',
           'e2e/runtime-performance.spec.ts',
+          'e2e/transcript-capacity.spec.ts',
+          'e2e/startup-performance.spec.ts',
           '--workers=1',
           '--repeat-each=1',
           '--retries=0',

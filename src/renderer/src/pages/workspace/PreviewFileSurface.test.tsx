@@ -1471,6 +1471,55 @@ describe('PreviewFileSurface managed text versions', () => {
     )
   })
 
+  it.each([false, true])(
+    'copies the complete conflict draft without changing its baseline (clipboard failure: %s)',
+    async (failure) => {
+      const clipboard = vi.fn()
+      if (failure) clipboard.mockRejectedValue(new Error('denied'))
+      else clipboard.mockResolvedValue(undefined)
+      const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: clipboard }
+      })
+      try {
+        window.api.managedFileVersions.saveTextEdit = vi.fn().mockResolvedValue({
+          ok: true,
+          value: {
+            kind: 'conflict',
+            actualHead: { ...managedInspect.versions[1], id: 'upload-v3' }
+          }
+        })
+        await act(async () => {
+          root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+        })
+        await click(container.querySelector('[aria-label="Edit README.md"]'))
+        const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
+        const draft = '# Draft\nαβ 中文\r\n' + 'data '.repeat(5000)
+        await changeTextarea(textarea, draft)
+        const normalized = textarea.value
+        await click(container.querySelector('[aria-label="Save changes"]'))
+        const request = vi.mocked(window.api.managedFileVersions.saveTextEdit).mock.calls[0][0]
+        await click(
+          Array.from(container.querySelectorAll('button')).find(
+            (button) => button.textContent === 'Copy draft'
+          )!
+        )
+        expect(clipboard).toHaveBeenCalledExactlyOnceWith(normalized)
+        expect(container.querySelector('textarea')).toBe(textarea)
+        expect(textarea.value).toBe(normalized)
+        expect(container.textContent).toContain(
+          failure ? 'Could not copy the draft. Select the text and copy it manually.' : 'Copied!'
+        )
+        await click(container.querySelector('[aria-label="Save changes"]'))
+        expect(window.api.managedFileVersions.saveTextEdit).toHaveBeenLastCalledWith(request)
+      } finally {
+        if (original) Object.defineProperty(navigator, 'clipboard', original)
+        else Reflect.deleteProperty(navigator, 'clipboard')
+      }
+    }
+  )
+
   it('ignores a save result that arrives after the surface moves to another file', async () => {
     let resolveSave!: (value: unknown) => void
     window.api.managedFileVersions.saveTextEdit = vi.fn().mockReturnValue(

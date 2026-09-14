@@ -284,7 +284,9 @@ describe('managed preview protocol', () => {
       )
       const reader = response.body!.getReader()
       await reader.read()
-      const changed = new Uint8Array(192 * 1024)
+      // Overwriting in place on Windows often keeps the same file ID and timestamp
+      // quantum; a size change is visible to the open-handle fstat on every platform.
+      const changed = new Uint8Array(64 * 1024)
       changed[0] = 1
       await writeFile(filePath, changed)
 

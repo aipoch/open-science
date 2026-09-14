@@ -257,6 +257,19 @@ describe('provider-kind helpers', () => {
     expect(providerFormModelForFramework(minimax, ['openai'])).toBe('MiniMax-M3')
   })
 
+  it('defaults SenseNova to China and selects the Global model for every API path', () => {
+    expect(providerKindPatch('official:sensenova')).toMatchObject({ region: 'china', model: '' })
+    const value = createEmptyProviderFormValue({
+      type: 'official',
+      vendorId: 'sensenova',
+      region: 'global'
+    })
+    expect(providerFormApiEndpoints(value)).toEqual(['anthropic', 'openai'])
+    for (const endpoint of ['anthropic', 'openai', 'responses'] as const) {
+      expect(providerFormModelForFramework(value, [endpoint])).toBe('sensenova-6.8-flash-lite')
+    }
+  })
+
   it('groups each subscription on its own, official vendors under API, and custom under Other', () => {
     const groupKeys = (group: string): string[] =>
       PROVIDER_KINDS.filter((kind) => kind.group === group).map((kind) => kind.key)

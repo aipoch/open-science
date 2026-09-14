@@ -1801,7 +1801,7 @@ describe('SpecialistsPanel', () => {
   // Concurrency and reload (Findings 1, 2, 3)
   // ---------------------------------------------------------------------------
 
-  it('F1: save payload carries the original revision even after a catalog-changed refreshes props', async () => {
+  it('F1: blocks stale saves and preserves input after a catalog-changed refreshes props', async () => {
     // rev 1 at mount
     const updateMock = vi.fn().mockResolvedValue(specialistItems[0])
     useSpecialistStore.setState({
@@ -1839,14 +1839,18 @@ describe('SpecialistsPanel', () => {
       })
     }
 
-    // Click Save — payload must still carry revision 1 (the pinned base revision).
+    // The pinned revision conflicts with the new catalog: do not submit or discard the draft.
     await act(async () => {
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
         .find((btn) => btn.textContent === 'Save changes')
         ?.click()
     })
 
-    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ revision: 1 }))
+    expect(updateMock).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[aria-label="Revision conflict"]')).not.toBeNull()
+    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe(
+      'RNA Reviewer Edited'
+    )
   })
 
   it('F2: Reload actually replaces form content with the latest profile data', async () => {

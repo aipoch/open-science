@@ -310,3 +310,22 @@ describe('NotebookRunOutputs', () => {
     expect(container.querySelector('[data-testid="notebook-run-outputs"]')).toBeNull()
   })
 })
+
+it('distinguishes cancellation intent, pre-dispatch failure and incomplete evidence', () => {
+  render([], { status: 'queued', cancellationRequestedAt: 1, kernelDispatched: false })
+  expect(container.textContent).toContain('Cancellation requested. Waiting for the executor')
+  expect(container.textContent).not.toContain('Code was not dispatched')
+  render([], { status: 'failed', kernelDispatched: false })
+  expect(container.textContent).toContain('Code was not dispatched to the kernel.')
+  render([], {
+    status: 'completed',
+    environmentCapture: { state: 'unavailable', reason: 'environment-manifest-publication-failed' }
+  })
+  expect(container.textContent).toContain(
+    'Code completed, but environment evidence could not be saved.'
+  )
+  render([], { status: 'interrupted', interruptionReason: 'app-terminated' })
+  expect(container.textContent).toContain('Execution may have had effects')
+  render([], { status: 'failed' })
+  expect(container.textContent).not.toContain('Code was not dispatched')
+})

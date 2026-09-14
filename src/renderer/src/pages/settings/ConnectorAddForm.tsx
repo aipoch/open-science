@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { ChevronDown, Copy } from 'lucide-react'
 import { RadioGroup } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
@@ -717,12 +718,11 @@ export function ConnectorAddForm({
           </div>
         ) : null}
         {editTargetMissing ? (
-          <p
-            className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+          <ErrorNotice
             role="alert"
-          >
-            {t('This Connector no longer exists. Your draft has not been saved.')}
-          </p>
+            tone="amber"
+            description={t('This Connector no longer exists. Your draft has not been saved.')}
+          />
         ) : null}
         <RadioGroup.Root
           aria-label={t('Connector type')}

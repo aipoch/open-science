@@ -60,6 +60,63 @@ const projection = {
   skippedRunCount: 0
 }
 
+const scenario = new URLSearchParams(location.search).get('package')
+const scope = {
+  projectId: 'import-project',
+  appSessionId: 'import-session',
+  artifactId: 'local-artifact',
+  versionId: 'local-version'
+}
+const sourceScope = {
+  projectId: 'source',
+  appSessionId: 'source-session',
+  artifactId: 'source-artifact',
+  versionId: 'source-version'
+}
+const sourceReceipt = {
+  schemaVersion: 1,
+  receiptId: 'source-check',
+  receiptChecksum: 'f'.repeat(64),
+  artifactVersion: { ...sourceScope, targetChecksum: 'a'.repeat(64) },
+  startedAt: '2026-09-10T00:00:00.000Z',
+  completedAt: '2026-09-10T00:01:00.000Z',
+  outcome: 'matched',
+  frontier: { frontierId: 'original-inputs', claimScope: 'end-to-end' },
+  recipe: { recipeId: 'b'.repeat(64), graphChecksum: 'c'.repeat(64) },
+  environmentLocks: [],
+  completedStepIds: ['run-1', 'run-2'],
+  comparisons: [
+    {
+      stepId: 'run-2',
+      entityId: 'output',
+      relativePath: 'result.csv',
+      expectedChecksum: 'a'.repeat(64),
+      actualChecksum: 'a'.repeat(64),
+      expectedSizeBytes: 20,
+      actualSizeBytes: 20,
+      status: 'matched'
+    }
+  ]
+}
+if (scenario) {
+  window.api = {
+    ...window.api,
+    artifacts: {
+      ...window.api?.artifacts,
+      startReproducibilityCheck: async () => {
+        throw new Error('Fixture must not execute')
+      },
+      cancelReproducibilityCheck: async () => undefined,
+      onReproducibilityCheckChanged: () => () => undefined,
+      getReproducibilityCheck: async () => undefined,
+      listReproducibilityReceipts: async () => ({
+        receipts: scenario === 'import' ? [sourceReceipt] : [],
+        ...(scenario === 'import' ? { sourceArtifactVersion: sourceScope } : {})
+      })
+    }
+  }
+}
+
 export const PreviewFileSurface = forwardRef(function Surface({ tooltipClassName }, ref) {
   useImperativeHandle(ref, () => ({
     requestLeave(action) {
@@ -69,7 +126,12 @@ export const PreviewFileSurface = forwardRef(function Surface({ tooltipClassName
   }))
   return (
     <div className="min-w-0 w-full overflow-auto p-4 @container">
-      <ArtifactReproducibilityPanel projection={projection} tooltipClassName={tooltipClassName} />
+      <ArtifactReproducibilityPanel
+        projection={projection}
+        tooltipClassName={tooltipClassName}
+        artifactVersion={scenario ? scope : undefined}
+        executionAvailable={Boolean(scenario)}
+      />
     </div>
   )
 })

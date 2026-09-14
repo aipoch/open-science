@@ -41,9 +41,16 @@ it('assigns every discovered Electron spec to a workflow-reachable command', () 
   expect(readFileSync('scripts/performance/run-runtime-profile.mjs', 'utf8')).toContain(
     'e2e/runtime-performance.spec.ts'
   )
+  expect(readFileSync('scripts/performance/run-runtime-profile.mjs', 'utf8')).toContain(
+    'e2e/startup-performance.spec.ts'
+  )
   const selected = new Set([
     ...commands.flatMap(([, command]) => collect(command.split(/\s+/).slice(2))),
-    ...collect(['e2e/accessibility.spec.ts', 'e2e/runtime-performance.spec.ts'])
+    ...collect([
+      'e2e/accessibility.spec.ts',
+      'e2e/runtime-performance.spec.ts',
+      'e2e/startup-performance.spec.ts'
+    ])
   ])
   expect([...new Set(collect([]))].filter((file) => !selected.has(file))).toEqual([])
 }, 90_000)

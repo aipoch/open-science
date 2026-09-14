@@ -122,6 +122,7 @@ const LiteratureMetadataEditor = ({
   }))
   const [year, setYear] = useState(String(item.issuedYear ?? ''))
   const [publicationDate, setPublicationDate] = useState(item.issuedText)
+  const [useOriginalDate, setUseOriginalDate] = useState(false)
   const [accessDate, setAccessDate] = useState(() => accessDateText(item.accessedAt))
   const [invalidField, setInvalidField] = useState<'year' | 'publication' | 'access'>()
   const yearRef = useRef<HTMLInputElement>(null)
@@ -151,7 +152,7 @@ const LiteratureMetadataEditor = ({
   const updateYear = (value: string): void => {
     setYear(value)
     setInvalidField(undefined)
-    if (value !== '' && !/^\d{1,4}$/u.test(value)) return
+    if (useOriginalDate || (value !== '' && !/^\d{1,4}$/u.test(value))) return
     setPublicationDate((current) => {
       // Opaque historical text requires an explicit decision at Publication date.
       if (current && !/^(\d{4})(?:-\d{1,2}(?:-\d{1,2})?)?$/u.test(current.trim())) return current
@@ -161,6 +162,7 @@ const LiteratureMetadataEditor = ({
   const updatePublicationDate = (value: string): void => {
     setPublicationDate(value)
     setInvalidField(undefined)
+    if (useOriginalDate) return
     if (!value.trim()) setYear('')
     else {
       const parts = publicationDateParts(value)
@@ -220,7 +222,12 @@ const LiteratureMetadataEditor = ({
     }
     const issuedYear = year === '' ? undefined : Number(year)
     const parts = publicationDateParts(publicationDate)
-    if (datesChanged && publicationDate.trim() && (!parts || parts[0] !== issuedYear)) {
+    if (
+      !useOriginalDate &&
+      datesChanged &&
+      publicationDate.trim() &&
+      (!parts || parts[0] !== issuedYear)
+    ) {
       setInvalidField('publication')
       publicationRef.current?.focus()
       return
@@ -354,10 +361,25 @@ const LiteratureMetadataEditor = ({
             ) : null}
           </label>
         </div>
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={useOriginalDate}
+            onChange={(event) => {
+              setUseOriginalDate(event.target.checked)
+              setInvalidField(undefined)
+            }}
+          />
+          {t('Use original date text')}
+        </label>
         <p id={`${id}-date-help`} className="text-xs text-muted-foreground">
-          {t(
-            'Use YYYY, YYYY-MM, or YYYY-MM-DD. Year and date stay in sync; clearing either clears both.'
-          )}
+          {useOriginalDate
+            ? t(
+                'Keep uncertain or seasonal dates as written. Set the searchable year separately, if known.'
+              )
+            : t(
+                'Use YYYY, YYYY-MM, or YYYY-MM-DD. Year and date stay in sync; clearing either clears both.'
+              )}
         </p>
         {legacyDateConflict ? (
           <p className="text-xs text-status-warning-foreground">

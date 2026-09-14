@@ -1,3 +1,7 @@
+import {
+  configureComposerDraftStorage,
+  preserveComposerDraftsForRecovery
+} from '@/pages/workspace/composer-draft-storage'
 import { flushSync } from 'react-dom'
 import {
   unwrapApplicationCommandOutcome,
@@ -25,7 +29,7 @@ import {
 } from '../../shared/file-save'
 import type { AcquireManagedPreviewRequest } from '../../shared/preview-resources'
 import { installWebRendererContracts } from './api-installer'
-import { i18next, initI18n } from '@/i18n'
+import { i18next, initI18n, prepareI18nLocale } from '@/i18n'
 import { applyHtmlLang, resolveInitialLocale } from '@/lib/locale-preference'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
 import openScienceLogoSvg from '../../main/remote-access/open-science-logo.svg?raw'
@@ -38,14 +42,14 @@ applyTheme(resolveInitialTheme())
 // Language, for the same reason. Detection reads the *browser's* language list, which describes the
 // person reading the page — the backend host's OS locale may be something else entirely.
 const initialLocale = resolveInitialLocale()
-initI18n(initialLocale)
 const t = i18next.t.bind(i18next)
 applyHtmlLang(initialLocale)
 document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
 
-const AUTHORIZATION_EXPIRED_MESSAGE = t(
-  'Access authorization has expired. Reopen the Web link from Open-Science on the host computer, or return to the remote access entry page to pair again.'
-)
+const authorizationExpiredMessage = (): string =>
+  t(
+    'Access authorization has expired. Reopen the Web link from Open-Science on the host computer, or return to the remote access entry page to pair again.'
+  )
 
 class AuthorizationExpiredError extends Error {}
 
@@ -87,8 +91,6 @@ const setConnectionMessage = (message: string): void => {
   if (element) element.textContent = message
 }
 
-setConnectionMessage(t('Connecting to remote computer…'))
-
 const connectionLogo = document.getElementById('open-science-connection-logo')
 if (connectionLogo) {
   connectionLogo.innerHTML = openScienceLogoSvg.replace(
@@ -123,7 +125,10 @@ const withRequestTimeout = async <T>(
 }
 
 const responseError = (response: Response, body: string, fallback: string): Error => {
-  if (response.status === 401) return new AuthorizationExpiredError(AUTHORIZATION_EXPIRED_MESSAGE)
+  if (response.status === 401) {
+    requireAuthorization()
+    return new AuthorizationExpiredError(authorizationExpiredMessage())
+  }
   try {
     const payload = JSON.parse(body) as {
       error?: string | { message?: string }
@@ -301,6 +306,7 @@ type EventCursor = {
 let eventCursor: EventCursor
 let eventReconnectAttempt = 0
 let eventRecoveryRequired = false
+let activeEventSocket: WebSocket | undefined
 
 const publishEventConnectionPhase = (phase: WebEventConnectionPhase): void => {
   window.dispatchEvent(
@@ -308,6 +314,14 @@ const publishEventConnectionPhase = (phase: WebEventConnectionPhase): void => {
       detail: { phase }
     })
   )
+}
+
+const requireAuthorization = (): void => {
+  preserveComposerDraftsForRecovery()
+  eventRecoveryRequired = true
+  eventConnectionController.abort(new AuthorizationExpiredError(authorizationExpiredMessage()))
+  publishEventConnectionPhase('authorization-required')
+  activeEventSocket?.close(1000, 'Authorization required')
 }
 
 const requireEventReload = (socket: WebSocket): void => {
@@ -331,6 +345,9 @@ const connectEvents = (): void => {
   url.searchParams.set('after', String(eventCursor.latestSequence))
   url.searchParams.set('liveness', '1')
   const socket = new WebSocket(url.toString())
+  activeEventSocket = socket
+  let closed = false
+  const isCurrent = (): boolean => !closed && eventConnectionController === connectionLease
   const expireConnection = (): void => {
     if (eventConnectionController === connectionLease && !connectionLease.signal.aborted) {
       connectionLease.abort(new DOMException('Event stream liveness timed out.', 'TimeoutError'))
@@ -344,10 +361,12 @@ const connectEvents = (): void => {
   }
 
   socket.addEventListener('open', () => {
+    if (!isCurrent() || eventRecoveryRequired || connectionLease.signal.aborted) return
     armIdleTimeout()
     publishEventConnectionPhase('replaying')
   })
   socket.addEventListener('message', (event) => {
+    if (!isCurrent() || eventRecoveryRequired || connectionLease.signal.aborted) return
     armIdleTimeout()
     let decoded: unknown
     try {
@@ -398,8 +417,14 @@ const connectEvents = (): void => {
     flushSync(() => publishEventConnectionPhase('live'))
     window.dispatchEvent(new Event(WEB_EVENTS_OPEN_EVENT))
   })
-  socket.addEventListener('close', () => {
+  socket.addEventListener('close', (event) => {
+    if (!isCurrent()) return
+    closed = true
     window.clearTimeout(idleTimeout)
+    if (event.code === 1008) {
+      requireAuthorization()
+      return
+    }
     if (eventConnectionController === connectionLease && !connectionLease.signal.aborted) {
       connectionLease.abort(new DOMException('Event stream disconnected.', 'NetworkError'))
     }
@@ -453,6 +478,7 @@ const installWebApi = async (): Promise<EventCursor> => {
     )
   }
   const bootstrap = parsedBootstrap.data
+  configureComposerDraftStorage(bootstrap.draftScope)
   const callerLocation =
     bootstrap.webCallerLocation ??
     (bootstrap.rpcCapabilities?.includes(WEB_RPC_CAPABILITY_UPDATE_CLI_V1) ? 'local' : 'remote')
@@ -564,11 +590,15 @@ const eventConsumersReady = new Promise<void>((resolve) => {
 })
 
 try {
+  await prepareI18nLocale(initialLocale)
+  initI18n(initialLocale)
+  setConnectionMessage(t('Connecting to remote computer…'))
   eventCursor = await installWebApi()
   await import('../src/main')
   await eventConsumersReady
   publishEventConnectionPhase('connecting')
   connectEvents()
 } catch (error) {
+  if (!i18next.isInitialized) initI18n('en')
   showConnectionFailure(error)
 }

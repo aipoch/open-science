@@ -25,6 +25,7 @@ import { terminateProcessTree } from '../../src/main/process-tree'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
 import type { DatabaseStartupState } from '../../src/shared/database-startup'
 import { RendererFailureGate } from './renderer-failure-gate'
+import type { PackageOperationSnapshot } from '../../src/shared/session-package'
 
 const APP_ROOT = resolve(process.cwd())
 const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs')
@@ -100,6 +101,12 @@ const settlesWithin = async (promise: Promise<void>, timeoutMs: number): Promise
     )
   })
 
+// Allow platform-specific shutdown latency while keeping each cleanup phase bounded.
+const CLEANUP_GRACEFUL_TIMEOUT_MS =
+  process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
+const CLEANUP_FORCED_TIMEOUT_MS =
+  process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
+
 const closeElectronApplicationForCleanup = async (
   target: ElectronCleanupTarget,
   { gracefulTimeoutMs, forcedTimeoutMs, requireGraceful = false }: ElectronCleanupOptions
@@ -151,6 +158,10 @@ type ElectronApp = {
     identityBefore: unknown
     identityAfter: unknown
   }>
+  configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
+  restartWithPackage: (path: string) => Promise<Page>
+  emitPackageFileOpen: (path: string) => Promise<void>
+  emitSessionPackageProgress: (snapshot: PackageOperationSnapshot) => Promise<void>
   enableFakeRemoteIt: () => Promise<Page>
   findOverlayIsVisible: () => Promise<boolean>
   launchSecondInstance: () => Promise<Page>
@@ -168,6 +179,8 @@ type ElectronApp = {
   restartAfterCrash: () => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
+  recordResourceTiming: (name: string, durationMs: number) => void
+  captureResourceTimings: (prefix?: string) => Promise<void>
   sampleResourceProfileNow: () => Promise<void>
   setMainWindowZoomFactor: (factor: number) => Promise<void>
   finishResourceProfile: () => Promise<RuntimeProfileResult>
@@ -223,10 +236,12 @@ const launchOpenScience = async (
   fakeRemoteItEnabled: boolean,
   fakeRemoteItRoot: string,
   windowMode: E2eWindowMode,
-  sessionPerformanceTrace: boolean
+  sessionPerformanceTrace: boolean,
+  packagePath?: string
 ): Promise<ElectronApplication> => {
   const application = await electron.launch({
     ...electronLaunchTarget(userDataRoot),
+    args: [...electronLaunchTarget(userDataRoot).args, ...(packagePath ? [packagePath] : [])],
     cwd: fakeRemoteItEnabled ? fakeRemoteItRoot : APP_ROOT,
     env: launchEnvironment(
       storageRoot,
@@ -287,6 +302,24 @@ const writeFakeRemoteItCommands = async (root: string): Promise<void> => {
   )
 }
 
+const removeTreeForCleanup = async (root: string): Promise<void> => {
+  // Keep retries outside recursive rm so they cannot multiply with directory depth.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rm(root, { force: true, maxRetries: 0, recursive: true })
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (
+        !['EBUSY', 'ENOTEMPTY', 'EMFILE', 'ENFILE', 'EPERM'].includes(code ?? '') ||
+        attempt === 4
+      )
+        throw error
+      await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)))
+    }
+  }
+}
+
 const makeTreeWritable = async (root: string): Promise<void> => {
   await chmod(root, 0o700).catch(() => undefined)
   const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
@@ -300,7 +333,10 @@ const makeTreeWritable = async (root: string): Promise<void> => {
   )
 }
 
-const waitForRendererReady = async (page: Page, timeout = 90_000): Promise<void> => {
+const waitForRendererReady = async (
+  page: Page,
+  timeout = process.platform === 'win32' ? 180_000 : 90_000
+): Promise<void> => {
   const deadline = performance.now() + timeout
   const remainingTimeout = (): number => Math.max(1, deadline - performance.now())
   await page.waitForLoadState('domcontentloaded', { timeout: remainingTimeout() })
@@ -350,11 +386,13 @@ const applyHiddenWindowPresentation = async (
 const openMainWindow = async (
   page: Page,
   rendererFailures: RendererFailureGate,
-  windowMode: E2eWindowMode
+  windowMode: E2eWindowMode,
+  onFirstReady?: (page: Page) => Promise<void>
 ): Promise<Page> => {
   await applyHiddenWindowPresentation(page, windowMode)
   await rendererFailures.observe(page)
   await waitForRendererReady(page)
+  await onFirstReady?.(page)
   // Writing the cooldown after first paint does not cancel a timer GitHubStarBadge already
   // scheduled. Reload so the workspace variant remounts with the cooldown already set.
   await suppressWorkspaceStarNudge(page)
@@ -574,6 +612,43 @@ class ElectronAppHarness implements ElectronApp {
     await this.resourceProfiler.sampleNow()
   }
 
+  recordResourceTiming(name: string, durationMs: number): void {
+    this.resourceProfiler?.recordTiming(name, durationMs)
+  }
+
+  async captureResourceTimings(prefix = ''): Promise<void> {
+    if (!this.resourceProfiler) return
+    const collect = (): { name: string; duration: number }[] => {
+      const names = new Set([
+        'open-science:ipc-registration',
+        'open-science:renderer-bootstrap',
+        'open-science:i18n-init',
+        'open-science:i18n-locale-switch',
+        'open-science:persistence-runtime-lookup-fallback',
+        'open-science:persistence-runtime-lookup-catalog',
+        'open-science:persistence-runtime-lookup-ownership',
+        'open-science:persistence-runtime-lookup-read',
+        'open-science:persistence-runtime-lookup-targeted'
+      ])
+      const timings = performance
+        .getEntriesByType('measure')
+        .filter((entry) => names.has(entry.name))
+        .map(({ name, duration }) => ({ name, duration }))
+      for (const name of names) performance.clearMeasures(name)
+      for (const entry of performance.getEntriesByType('paint')) {
+        if (entry.name === 'first-paint' || entry.name === 'first-contentful-paint') {
+          timings.push({ name: entry.name, duration: entry.startTime })
+        }
+      }
+      return timings
+    }
+    for (const timing of [
+      ...(await this.runningApplication.evaluate(collect)),
+      ...(await this.page.evaluate(collect))
+    ])
+      this.resourceProfiler.recordTiming(prefix + timing.name, timing.duration)
+  }
+
   async sampleResourceProfileNow(): Promise<void> {
     if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
     await this.resourceProfiler.sampleNow()
@@ -772,6 +847,49 @@ class ElectronAppHarness implements ElectronApp {
     return path
   }
 
+  async emitSessionPackageProgress(snapshot: PackageOperationSnapshot): Promise<void> {
+    // Presentation fixtures use the existing native event boundary, without a production test seam.
+    await this.runningApplication.evaluate(({ BrowserWindow }, snapshot) => {
+      BrowserWindow.getAllWindows()[0].webContents.send(
+        'sessions:package-operation-changed',
+        snapshot
+      )
+    }, snapshot)
+  }
+
+  async restartWithPackage(path: string): Promise<Page> {
+    await this.close()
+    await this.launch(path)
+    return this.page
+  }
+
+  async emitPackageFileOpen(path: string): Promise<void> {
+    await this.runningApplication.evaluate(({ app }, path) => {
+      app.emit('open-file', { preventDefault: () => undefined }, path)
+    }, path)
+  }
+
+  async configureSessionPackageDialogs(options?: { availableBytes?: number }): Promise<string> {
+    const archive = join(this.testRoot, 'research.science')
+    if (options?.availableBytes !== undefined)
+      await this.runningApplication.evaluate((_electron, freeBytes) => {
+        const fs = process.getBuiltinModule('node:fs/promises')
+        fs.statfs = new Proxy(fs.statfs, {
+          apply: async (original, receiver, args) => {
+            const stats = await Reflect.apply(original, receiver, args)
+            stats.bavail = typeof stats.bavail === 'bigint' ? BigInt(freeBytes) : freeBytes
+            stats.bsize = typeof stats.bsize === 'bigint' ? 1n : 1
+            return stats
+          }
+        })
+      }, options.availableBytes)
+    await this.runningApplication.evaluate(({ dialog }, archive) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: archive })
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [archive] })
+    }, archive)
+    return archive
+  }
+
   async enableFakeRemoteIt(): Promise<Page> {
     this.fakeRemoteItEnabled = true
     return this.restart()
@@ -966,7 +1084,10 @@ class ElectronAppHarness implements ElectronApp {
       if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
       this.resourceProfiler.markPhase(options.resourceProfilePhase)
     }
-    await this.launch()
+    await this.launch(
+      undefined,
+      options.resourceProfilePhase === 'recovery' ? 'recovery-startup-ready' : 'startup-ready'
+    )
     return this.page
   }
 
@@ -1140,7 +1261,7 @@ class ElectronAppHarness implements ElectronApp {
     try {
       await this.closeForCleanup()
       await makeTreeWritable(this.testRoot)
-      await rm(this.testRoot, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 })
+      await removeTreeForCleanup(this.testRoot)
     } catch (error) {
       errors.push(error)
     }
@@ -1158,20 +1279,54 @@ class ElectronAppHarness implements ElectronApp {
     }
   }
 
-  private async launch(): Promise<void> {
+  private async launch(packagePath?: string, timingName = 'startup-ready'): Promise<void> {
+    const launchStartedAt = performance.now()
     this.application = await launchOpenScience(
       this.roots,
       this.fakeAgentEnabled,
       this.fakeRemoteItEnabled,
       this.roots.fakeRemoteItRoot,
       this.windowMode,
-      this.resourceProfiler !== undefined
+      this.resourceProfiler !== undefined,
+      packagePath
     )
     await this.resourceProfiler?.attach(this.application)
     // Wait for the first window before querying main-process paths on Windows.
     try {
       const page = await this.application.firstWindow()
-      this.currentPage = await openMainWindow(page, this.rendererFailures, this.windowMode)
+      if (process.env.OPEN_SCIENCE_E2E_EXECUTABLE) {
+        const evidence = await this.application.evaluate(({ app }) => ({
+          packaged: app.isPackaged,
+          appPath: app.getAppPath(),
+          executable: process.execPath,
+          version: app.getVersion()
+        }))
+        const revision = process.env.OPEN_SCIENCE_E2E_EXPECTED_BUILD_SHA
+        if (
+          !evidence.packaged ||
+          !evidence.appPath.endsWith('app.asar') ||
+          evidence.executable !== process.env.OPEN_SCIENCE_E2E_EXECUTABLE ||
+          (revision && !evidence.version.endsWith(`-nightly.${revision.slice(0, 7)}`))
+        ) {
+          throw new Error(`Packaged Electron identity mismatch: ${JSON.stringify(evidence)}`)
+        }
+        console.info('Packaged Electron identity:', JSON.stringify(evidence))
+      }
+      this.currentPage = await openMainWindow(
+        page,
+        this.rendererFailures,
+        this.windowMode,
+        this.resourceProfiler
+          ? async (page) => {
+              this.currentPage = page
+              this.recordResourceTiming('first-' + timingName, performance.now() - launchStartedAt)
+              await this.captureResourceTimings(
+                timingName === 'recovery-startup-ready' ? 'first-recovery:' : 'first:'
+              )
+            }
+          : undefined
+      )
+      this.recordResourceTiming(timingName, performance.now() - launchStartedAt)
     } finally {
       this.mainLogDirectory = await this.application
         .evaluate(({ app }) => app.getPath('logs'))
@@ -1261,7 +1416,11 @@ class ElectronAppHarness implements ElectronApp {
             throw new Error('Electron E2E forced close did not reap the process tree.')
         }
       },
-      { gracefulTimeoutMs: 10_000, forcedTimeoutMs: 10_000, requireGraceful }
+      {
+        gracefulTimeoutMs: CLEANUP_GRACEFUL_TIMEOUT_MS,
+        forcedTimeoutMs: CLEANUP_FORCED_TIMEOUT_MS,
+        requireGraceful
+      }
     )
   }
 }
@@ -1274,44 +1433,50 @@ const test = base.extend<{
   windowMode: ['hidden', { option: true }],
   fakeAgentOnLaunch: [false, { option: true }],
   // Playwright fixture callbacks require an object pattern even when no base fixture is needed.
-  app: async ({ windowMode, fakeAgentOnLaunch }, install, testInfo) => {
-    const attachFailureLog = async (app: ElectronApp, name = 'main-process-log'): Promise<void> => {
-      // Attach bytes directly so concurrent jobs/tests cannot overwrite a shared evidence file.
-      const path = await app.captureMainLog(
-        `failure-${(testInfo.testId ?? 'fixture').replace(/[^a-z0-9-]/giu, '-')}-${testInfo.retry}.log`
-      )
-      await testInfo.attach(name, {
-        body: await readFile(path),
-        contentType: 'text/plain'
-      })
-    }
-    const app = await ElectronAppHarness.create(
-      windowMode,
-      (app) => attachFailureLog(app, 'startup-main-process-log'),
-      fakeAgentOnLaunch
-    )
-
-    let bodyError: unknown
-    try {
-      await install(app)
-    } catch (error) {
-      bodyError = error
-    }
-    if (testInfo.status !== testInfo.expectedStatus) {
-      // Preserve the original test failure even if shutdown left no readable log.
-      await attachFailureLog(app).catch(() => undefined)
-    }
-    try {
-      await app.dispose()
-    } catch (cleanupError) {
-      await attachFailureLog(app, 'cleanup-main-process-log').catch(() => undefined)
-      if (bodyError !== undefined) {
-        throw new AggregateError([bodyError, cleanupError], 'Electron test and cleanup failed.')
+  app: [
+    async ({ windowMode, fakeAgentOnLaunch }, install, testInfo) => {
+      const attachFailureLog = async (
+        app: ElectronApp,
+        name = 'main-process-log'
+      ): Promise<void> => {
+        // Attach bytes directly so concurrent jobs/tests cannot overwrite a shared evidence file.
+        const path = await app.captureMainLog(
+          `failure-${(testInfo.testId ?? 'fixture').replace(/[^a-z0-9-]/giu, '-')}-${testInfo.retry}.log`
+        )
+        await testInfo.attach(name, {
+          body: await readFile(path),
+          contentType: 'text/plain'
+        })
       }
-      throw cleanupError
-    }
-    if (bodyError !== undefined) throw bodyError
-  }
+      const app = await ElectronAppHarness.create(
+        windowMode,
+        (app) => attachFailureLog(app, 'startup-main-process-log'),
+        fakeAgentOnLaunch
+      )
+
+      let bodyError: unknown
+      try {
+        await install(app)
+      } catch (error) {
+        bodyError = error
+      }
+      if (testInfo.status !== testInfo.expectedStatus) {
+        // Preserve the original test failure even if shutdown left no readable log.
+        await attachFailureLog(app).catch(() => undefined)
+      }
+      try {
+        await app.dispose()
+      } catch (cleanupError) {
+        await attachFailureLog(app, 'cleanup-main-process-log').catch(() => undefined)
+        if (bodyError !== undefined) {
+          throw new AggregateError([bodyError, cleanupError], 'Electron test and cleanup failed.')
+        }
+        throw cleanupError
+      }
+      if (bodyError !== undefined) throw bodyError
+    },
+    process.platform === 'win32' ? { timeout: 240_000 } : {}
+  ]
 })
 
 export {
@@ -1319,6 +1484,7 @@ export {
   ElectronAppHarness,
   electronLaunchTarget,
   launchEnvironment,
+  removeTreeForCleanup,
   STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
   suppressWorkspaceStarNudge,
   waitForRendererReady,

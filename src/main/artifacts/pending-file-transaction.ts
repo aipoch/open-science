@@ -24,6 +24,7 @@ type PendingFileTransactionOptions = {
   maxFileBytes?: number
   maxInlineBytes?: number
   diskReserveBytes?: number
+  preserveRecoveryState?: () => Promise<boolean>
   signal?: AbortSignal
   reserveFile?: (fileBytes: number) => Promise<{ id: string; fileBytes: number }>
   releaseFileReservation?: (reservationId: string) => Promise<void>
@@ -208,6 +209,23 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
     return result
   } catch (error) {
     const recoveryErrors: unknown[] = []
+    let preserveReplacement = versionRoutingPublished
+    // Durable staging owns these pending bytes even if publishing its routing was interrupted.
+    // A failed ownership lookup must also preserve the evidence for later recovery.
+    try {
+      if (
+        !versionRoutingPublished &&
+        replacementPublished &&
+        (await options.writeOptions.preserveRecoveryState?.())
+      ) {
+        preserveReplacement = true
+      }
+    } catch (ownershipError) {
+      preserveReplacement = true
+      preserveFileBackup = true
+      preserveMetadataBackup = true
+      recoveryErrors.push(ownershipError)
+    }
     if (reservation && options.writeOptions.releaseFileReservation) {
       try {
         await options.writeOptions.releaseFileReservation(reservation.id)
@@ -216,13 +234,13 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
       }
     }
     await rm(temporaryPath, { force: true }).catch(() => undefined)
-    if (replacementPublished && !versionRoutingPublished) {
+    if (replacementPublished && !preserveReplacement) {
       await Promise.all([
         rm(filePath, { force: true }).catch(() => undefined),
         rm(metadataPath, { force: true }).catch(() => undefined)
       ])
     }
-    if (fileBackedUp && !versionRoutingPublished) {
+    if (fileBackedUp && !preserveReplacement) {
       try {
         await rename(backupPath, filePath)
       } catch (recoveryError) {
@@ -230,7 +248,7 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
         recoveryErrors.push(recoveryError)
       }
     }
-    if (metadataBackedUp && !versionRoutingPublished) {
+    if (metadataBackedUp && !preserveReplacement) {
       try {
         await mkdir(dirname(metadataPath), { recursive: true })
         await rename(metadataBackupPath, metadataPath)

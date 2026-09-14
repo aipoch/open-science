@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import './migration-progress.css'
 import { useTranslation } from 'react-i18next'
+import { initI18n, prepareI18nLocale } from '@/i18n'
 import { ErrorNotice } from '@/components/error-notice'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { isLocale } from '../../../shared/locale'
@@ -22,11 +23,20 @@ export const MigrationProgress = ({
   useEffect(() => {
     let received = false
     let disposed = false
+    let requestedLocale: string | undefined
     const apply = (next: MigrationProgressState): void => {
       if (disposed) return
       setState(next)
-      if (isLocale(next.locale) && i18n.language !== next.locale)
-        void i18n.changeLanguage(next.locale)
+      if (isLocale(next.locale) && i18n.language !== next.locale) {
+        const locale = next.locale
+        requestedLocale = locale
+        void Promise.resolve(prepareI18nLocale(locale))
+          .then(() => {
+            if (!disposed && requestedLocale === locale) initI18n(locale)
+          })
+          // A missing translation chunk must not strand the offline worker before its paint gate.
+          .catch(() => undefined)
+      }
     }
     const unsubscribe = bridge.subscribe((next) => {
       received = true

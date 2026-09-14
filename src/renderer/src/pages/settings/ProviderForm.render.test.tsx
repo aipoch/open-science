@@ -35,11 +35,13 @@ const render = (
   {
     onChange = vi.fn(),
     errors,
+    supportedModels,
     hasStoredKey = false,
     showCodexSubscriptions = false,
     showClaudeIsolated = false
   }: {
     onChange?: () => void
+    supportedModels?: string[]
     errors?: ProviderFormErrors
     hasStoredKey?: boolean
     showCodexSubscriptions?: boolean
@@ -52,6 +54,7 @@ const render = (
         value={value}
         onChange={onChange}
         errors={errors}
+        supportedModels={supportedModels}
         hasStoredKey={hasStoredKey}
         showCodexSubscriptions={showCodexSubscriptions}
         showClaudeIsolated={showClaudeIsolated}
@@ -61,6 +64,42 @@ const render = (
 }
 
 describe('ProviderForm field switching', () => {
+  it('shows the expanded SenseNova chat catalog and links directly to API keys', () => {
+    render(createEmptyProviderFormValue({ type: 'official', vendorId: 'sensenova' }))
+
+    for (const model of [
+      'sensenova-6.8-flash-lite',
+      'deepseek-v4-pro',
+      'deepseek-v4-flash',
+      'glm-5.2',
+      'kimi-k3',
+      'sensenova-6.7-flash-lite'
+    ]) {
+      expect(container.textContent).toContain(model)
+    }
+    expect(container.textContent).not.toContain('sensenova-u1')
+    expect(container.textContent).not.toContain('Refresh from vendor')
+    expect(
+      container.querySelector('a[href="https://platform.sensenova.cn/console/keys"]')?.textContent
+    ).toBe('Get an API key')
+  })
+
+  it('shows only the Global chat model even when an edit carries the China catalog', () => {
+    render(
+      createEmptyProviderFormValue({ type: 'official', vendorId: 'sensenova', region: 'global' }),
+      {
+        supportedModels: ['deepseek-v4-pro', 'sensenova-6.7-flash-lite']
+      }
+    )
+    expect(container.querySelector('[aria-label="Endpoint"]')?.textContent).toBe('Global')
+    expect(container.textContent).toContain('sensenova-6.8-flash-lite')
+    expect(container.textContent).not.toContain('deepseek-v4-pro')
+    expect(container.textContent).not.toContain('sensenova-6.7-flash-lite')
+    expect(
+      container.querySelector('a[href="https://platform.sensenova.ai/console/keys"]')?.textContent
+    ).toBe('Get an API key')
+  })
+
   it('describes unencrypted file storage without claiming OS protection', () => {
     useSettingsStore.setState({ credentialStore: 'file' })
     render(createEmptyProviderFormValue({ type: 'custom' }))

@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { AlertTriangle, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
@@ -157,15 +158,22 @@ const PermissionRow = ({
           : grant.qualifierLabel
   const summary = grant.approvalSummary ? t(grant.approvalSummary) : undefined
   const createdLabel =
-    grant.qualifierKind === 'command_group' && grant.createdAt !== undefined
+    typeof grant.createdAt === 'number' && Number.isFinite(grant.createdAt)
       ? t('Approved {{date}}', {
           date: new Intl.DateTimeFormat(i18n.language, {
             dateStyle: 'medium',
             timeStyle: 'medium'
           }).format(grant.createdAt)
         })
-      : undefined
-  const revokeName = [title, summary, scopeLabel, createdLabel].filter(Boolean).join(' · ')
+      : t('Approval time unknown')
+  const revokeName = [
+    title,
+    summary,
+    scopeLabel,
+    grant.qualifierKind === 'command_group' ? createdLabel : undefined
+  ]
+    .filter(Boolean)
+    .join(' · ')
   const policyHint =
     grant.effectiveState === 'blocked_by_policy'
       ? t('Blocked in Connectors; this permission is currently inactive')
@@ -202,9 +210,9 @@ const PermissionRow = ({
         {grant.qualifierKind === 'command_group' ? (
           <p className="mt-0.5 text-xs text-muted-foreground">
             {summary ?? t('Command details unavailable for this permission')}
-            {createdLabel ? <span className="ml-2">{createdLabel}</span> : null}
           </p>
         ) : null}
+        <p className="mt-0.5 text-xs text-muted-foreground">{createdLabel}</p>
         {grant.coveredBy ? (
           <p className="mt-0.5 text-xs text-muted-foreground">
             {t('Also allowed {{scope}}', {
@@ -438,24 +446,12 @@ const PermissionsPanel = ({
         ) : null}
 
         {error ? (
-          <div
+          <ErrorNotice
             role="alert"
-            className="mb-4 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-          >
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-              <p>{t(error)}</p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="mt-3"
-              onClick={() => void load({ force: true })}
-            >
-              {t('Try again')}
-            </Button>
-          </div>
+            className="mb-4"
+            description={t(error)}
+            primaryButton={{ label: t('Try again'), onClick: () => void load({ force: true }) }}
+          />
         ) : null}
 
         <div className="scroll-pb-24">

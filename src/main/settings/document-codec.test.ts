@@ -7,6 +7,24 @@ import { sanitizeSettings } from './document-codec'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 
 describe('settings document codec', () => {
+  it('round-trips library consent without converting historical booleans to library grants', () => {
+    const input = {
+      notebookRuntimeEnablement: {
+        r: {
+          enabled: {},
+          installAuthorized: { current: true, historical: true },
+          installLibraries: { current: '/user/R/library', invalid: 42, empty: '' }
+        }
+      }
+    }
+    const document = sanitizeSettings(input)
+    expect(document.notebookRuntimeEnablement?.r).toEqual({
+      enabled: {},
+      installAuthorized: { current: true, historical: true },
+      installLibraries: { current: '/user/R/library' }
+    })
+    expect(sanitizeSettings(JSON.parse(JSON.stringify(document)))).toEqual(document)
+  })
   it('exposes one pure document boundary', async () => {
     expect(Object.keys(await import('./document-codec')).sort()).toEqual([
       'sanitizeSessionDetailsModel',

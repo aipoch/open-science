@@ -24,6 +24,7 @@ import {
 } from '../shared/application-command-contract'
 import * as Artifacts from '../shared/artifacts'
 import type * as ConversationExport from '../shared/conversation-export'
+import * as SessionPackage from '../shared/session-package'
 import {
   LIFECYCLE_CHANNELS,
   MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID
@@ -129,6 +130,16 @@ type InvocationOwner<Owner> = Readonly<{
 // T2h0 injects this adapter; it resolves native window/progress targets without putting Electron
 // objects in transport-neutral application invocations.
 type ElectronDataContentApplicationCommandAdapter = InvocationOwner<{
+  exportSessionPackage: (
+    request: SessionPackage.SessionPackageRequest
+  ) => Promise<SessionPackage.SessionPackageExportResult>
+  importSessionPackage: (
+    request?: SessionPackage.SessionPackageImportRequest,
+    sourcePath?: string
+  ) => Promise<SessionPackage.SessionPackageImportResult>
+  sessionPackageOperation: (
+    request: SessionPackage.PackageOperationRequest
+  ) => Promise<SessionPackage.PackageOperationSnapshot | null>
   exportConversationFromInvokingWindow: (
     request: ConversationExport.ExportConversationRequest
   ) => Promise<ConversationExport.ExportConversationResult>
@@ -140,6 +151,7 @@ type ElectronDataContentApplicationCommandAdapter = InvocationOwner<{
 type ManagedPreviewApplicationCommandOwner = ManagedPreviewOwnerRegistry
 
 type UploadApplicationCommandOwner = InvocationOwner<{
+  recoverDraft: (request: { receipt: string }) => Promise<Uploads.UploadedAttachment | null>
   claimLocalFile: (request: Uploads.UploadTransferRequest) => void
   stageLocalPath: (
     request: Uploads.StageLocalPathUploadRequest
@@ -325,6 +337,21 @@ const dataContentApplicationCommands = Object.freeze({
     'sessions:export-conversation',
     'exportConversationFromInvokingWindow'
   ),
+  sessionExportPackage: electronCommand(
+    'sessions:export-package',
+    'exportSessionPackage',
+    SessionPackage.sessionPackageCommandContracts.export
+  ),
+  sessionImportPackage: electronCommand(
+    'sessions:import-package',
+    'importSessionPackage',
+    SessionPackage.sessionPackageCommandContracts.import
+  ),
+  sessionPackageOperation: electronCommand(
+    'sessions:package-operation',
+    'sessionPackageOperation',
+    SessionPackage.sessionPackageCommandContracts.operation
+  ),
   sessionList: sessionCommand('sessions:list', 'list'),
   sessionFilterPdfContextCandidates: sessionCommand(
     'sessions:filter-pdf-context-candidates',
@@ -405,6 +432,11 @@ const dataContentApplicationCommands = Object.freeze({
     Uploads.uploadApplicationCommandContracts.finalizeSession
   ),
   uploadFinishTransfer: uploadCommand('uploads:finish-transfer', 'finishTransfer'),
+  uploadRecoverDraft: uploadCommand(
+    'uploads:recover-draft',
+    'recoverDraft',
+    Uploads.uploadApplicationCommandContracts.recoverDraft
+  ),
   uploadReadPreview: uploadCommand('uploads:read-preview', 'readPreview'),
   uploadStageLocalFile: electronCommand('uploads:stage-local-file', 'stageLocalFileWithProgress'),
   uploadStageLocalPath: uploadCommand('uploads:stage-local-path', 'stageLocalPath'),
@@ -464,6 +496,9 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionDelete,
     dataContentApplicationCommands.sessionEditDetails,
     dataContentApplicationCommands.sessionExportConversation,
+    dataContentApplicationCommands.sessionExportPackage,
+    dataContentApplicationCommands.sessionImportPackage,
+    dataContentApplicationCommands.sessionPackageOperation,
     dataContentApplicationCommands.sessionFilterPdfContextCandidates,
     dataContentApplicationCommands.sessionLinkPdfContext,
     dataContentApplicationCommands.sessionList,
@@ -490,6 +525,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.uploadFinalizeSession,
     dataContentApplicationCommands.uploadFinishTransfer,
     dataContentApplicationCommands.uploadReadPreview,
+    dataContentApplicationCommands.uploadRecoverDraft,
     dataContentApplicationCommands.uploadStageLocalFile,
     dataContentApplicationCommands.uploadStageLocalPath,
     dataContentApplicationCommands.uploadTransferStatus
@@ -721,6 +757,21 @@ const registerDataContentApplicationCommands = (
         )
         return dependencies.electron.exportConversationFromInvokingWindow(invocation)
       },
+      'sessions:export-package': (invocation) => {
+        assertElectronCaller(invocation, dataContentApplicationCommands.sessionExportPackage.name)
+        return dependencies.electron.exportSessionPackage(invocation)
+      },
+      'sessions:import-package': (invocation) => {
+        assertElectronCaller(invocation, dataContentApplicationCommands.sessionImportPackage.name)
+        return dependencies.electron.importSessionPackage(invocation)
+      },
+      'sessions:package-operation': (invocation) => {
+        assertElectronCaller(
+          invocation,
+          dataContentApplicationCommands.sessionPackageOperation.name
+        )
+        return dependencies.electron.sessionPackageOperation(invocation)
+      },
       'sessions:filter-pdf-context-candidates': ({ args }) =>
         dependencies.withDataRootWrite(() =>
           dependencies.sessions.filterPdfContextCandidates(args[0])
@@ -913,6 +964,7 @@ const registerDataContentApplicationCommands = (
       'uploads:delete': (invocation) => dependencies.uploads.deleteUpload(invocation),
       'uploads:finalize-session': (invocation) => dependencies.uploads.finalizeSession(invocation),
       'uploads:finish-transfer': (invocation) => dependencies.uploads.finishTransfer(invocation),
+      'uploads:recover-draft': (invocation) => dependencies.uploads.recoverDraft(invocation),
       'uploads:read-preview': (invocation) => dependencies.uploads.readPreview(invocation),
       'uploads:stage-local-file': (invocation) => {
         assertElectronCaller(invocation, dataContentApplicationCommands.uploadStageLocalFile.name)

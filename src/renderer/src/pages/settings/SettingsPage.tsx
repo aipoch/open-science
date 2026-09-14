@@ -1,7 +1,8 @@
+import { ConnectorBulkManageView } from './ConnectorBulkManageView'
+import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 /* Hallmark · component: settings side rail · genre: modern-minimal · theme: existing Open-Science tokens · slop: pass */
 import {
-  AlertTriangle,
   Archive,
   ArrowLeft,
   ArrowRight,
@@ -68,6 +69,7 @@ import {
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
 import { ProvidersPanel } from './ProvidersPanel'
+import { ModelPanel } from './ModelPanel'
 import type { SkillsView } from './SkillsPanel'
 import type { ConnectorsView } from './ConnectorsPanel'
 import type { SpecialistsView } from './SpecialistsPanel'
@@ -408,6 +410,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
+  const [providerBase, setProviderBase] = useState<ProviderView>()
   const [isSaving, setIsSaving] = useState(false)
   const [isRefreshingModels, setIsRefreshingModels] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
@@ -669,6 +672,33 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     leaf: string
   } | null => {
     if (activePanel === 'skills' && skillsView.kind !== 'list') {
+      if (
+        skillsView.kind === 'marketplace' ||
+        skillsView.kind === 'marketplace-detail' ||
+        skillsView.kind === 'marketplace-batch'
+      ) {
+        return {
+          rootLabelKey: 'Skills',
+          rootTo: { panel: 'skills', view: { kind: 'list' } },
+          ...(skillsView.kind !== 'marketplace'
+            ? {
+                parents: [
+                  {
+                    label: t('Marketplace'),
+                    to: { panel: 'skills', view: { kind: 'marketplace' } },
+                    ariaLabel: t('Back to {{panel}}', { panel: t('Marketplace') })
+                  }
+                ]
+              }
+            : {}),
+          leaf:
+            skillsView.kind === 'marketplace-detail'
+              ? skillsView.displayName
+              : skillsView.kind === 'marketplace-batch'
+                ? t('Batch manage')
+                : t('Marketplace')
+        }
+      }
       const leaf =
         skillsView.kind === 'create'
           ? t('New skill')
@@ -690,7 +720,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         leaf
       }
     }
-    if (activePanel === 'model' && modelView.kind !== 'list') {
+    if (activePanel === 'model' && (modelView.kind === 'create' || modelView.kind === 'edit')) {
       const name =
         modelView.kind === 'edit'
           ? (providers.find((provider) => provider.id === modelView.providerId)?.name ?? '')
@@ -756,21 +786,24 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         }
       }
       const leaf =
-        connectorsView.kind === 'add'
-          ? t('Add connector')
-          : connectorsView.kind === 'import'
-            ? t('Import Connector or MCP configuration')
-            : connectorsView.kind === 'export'
-              ? t('Export {{name}}', {
-                  name:
-                    customServers.find((s) => s.id === connectorsView.id)?.name ?? t('connector')
-                }).trim()
-              : connectorsView.kind === 'edit'
-                ? t('Edit {{name}}', {
+        connectorsView.kind === 'manage'
+          ? t('Manage connectors')
+          : connectorsView.kind === 'add'
+            ? t('Add connector')
+            : connectorsView.kind === 'import'
+              ? t('Import Connector or MCP configuration')
+              : connectorsView.kind === 'export'
+                ? t('Export {{name}}', {
                     name:
                       customServers.find((s) => s.id === connectorsView.id)?.name ?? t('connector')
                   }).trim()
-                : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
+                : connectorsView.kind === 'edit'
+                  ? t('Edit {{name}}', {
+                      name:
+                        customServers.find((s) => s.id === connectorsView.id)?.name ??
+                        t('connector')
+                    }).trim()
+                  : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
       return {
         rootLabelKey: 'Connectors',
         rootTo: { panel: 'connectors', view: { kind: 'list' } },
@@ -944,7 +977,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const providerEditTargetMissing = modelView.kind === 'edit' && editingProvider === undefined
   // Required-field errors for the open draft; a custom provider must be complete before it can save.
   const formErrors = getProviderFormErrors(formValue, { hasStoredKey: editingProvider?.hasKey })
-  const canSave = !isSaving && !providerEditTargetMissing && !hasProviderFormErrors(formErrors)
+  const providerConflict =
+    editingProvider &&
+    providerBase &&
+    (editingProvider.configRevision ?? 0) !== (providerBase.configRevision ?? 0)
+  const canSave =
+    !isSaving &&
+    !providerEditTargetMissing &&
+    !providerConflict &&
+    !hasProviderFormErrors(formErrors)
 
   // Seed the form value when entering a create/edit sub-view (adjust-state-during-render, keyed on the
   // sub-view so typing isn't clobbered by background store updates; edit guards until the provider
@@ -961,6 +1002,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     } else if (modelView.kind === 'edit') {
       const provider = providers.find((entry) => entry.id === modelView.providerId)
       if (provider) setFormValue(toFormValue(provider))
+      setProviderBase(provider)
     }
     setStatusMessage(undefined)
   }
@@ -987,7 +1029,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const closeForm = (): void => navigate({ panel: 'model', view: { kind: 'list' } })
 
   const handleSave = async (): Promise<void> => {
-    if (providerEditTargetMissing) return
+    if (!canSave) return
     postSaveValidationGeneration.current += 1
     postSaveValidationProviderId.current = undefined
     setBusyProviderId(undefined)
@@ -1001,7 +1043,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       // warning) lands on the provider's card.
       const providerId = await persistProvider({
         ...toUpsertRequest(formValue, editingProvider?.id),
-        ...(modelView.kind === 'edit' ? { requireExisting: true } : {})
+        ...(modelView.kind === 'edit'
+          ? { requireExisting: true, expectedConfigRevision: providerBase?.configRevision ?? 0 }
+          : {})
       })
 
       navigate({ panel: 'model', view: { kind: 'list' } })
@@ -1029,6 +1073,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           })
       }
     } catch (error) {
+      await load().catch(() => undefined)
       setStatusOk(false)
       setStatusMessage(
         error instanceof Error
@@ -1101,6 +1146,16 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           // closed intentionally via the ✕ button or Escape.
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => {
+            // Radix observes Escape in capture, before the inline review can cancel itself.
+            if (
+              event.target instanceof Element &&
+              event.target.closest(
+                '[data-slot="skill-marketplace-batch-review"], [data-slot="batch-manage-review"]'
+              )
+            ) {
+              event.preventDefault()
+              return
+            }
             if (!isMobileNavOpen) return
             event.preventDefault()
             setIsMobileNavOpen(false)
@@ -1377,33 +1432,20 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               ) : null}
 
               {settingsWriteError ? (
-                <div
-                  data-slot="settings-write-error"
-                  role="alert"
-                  className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-                >
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                  <p className="min-w-0 flex-1 break-words py-0.5">
-                    {settingsWriteError ===
-                    'Could not save Vision model. Refresh the model catalog and try again.'
-                      ? t('Could not save Vision model. Refresh the model catalog and try again.')
-                      : settingsWriteError}
-                  </p>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={t('Dismiss settings error')}
-                        className="-my-1 -mr-1 shrink-0 rounded-md text-danger-000 hover:bg-danger-000/10 hover:text-danger-000"
-                        onClick={clearSettingsWriteError}
-                      >
-                        <X className="size-3.5" aria-hidden="true" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{t('Close')}</TooltipContent>
-                  </Tooltip>
+                <div data-slot="settings-write-error" className="mx-3 mt-3">
+                  <ErrorNotice
+                    role="alert"
+                    description={
+                      settingsWriteError ===
+                      'Could not save Vision model. Refresh the model catalog and try again.'
+                        ? t('Could not save Vision model. Refresh the model catalog and try again.')
+                        : settingsWriteError
+                    }
+                    dismissButton={{
+                      label: t('Dismiss settings error'),
+                      onClick: clearSettingsWriteError
+                    }}
+                  />
                 </div>
               ) : null}
             </TooltipProvider>
@@ -1411,17 +1453,32 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             <div data-slot="settings-content-scroll" className="min-h-0 flex-1 overflow-y-auto">
               <div
                 className={cn(
-                  'mx-auto w-full max-w-[880px]',
-                  activePanel === 'memory' || activePanel === 'tags' ? 'h-full' : 'min-h-full'
+                  'mx-auto w-full',
+                  activePanel === 'skills' &&
+                    (skillsView.kind === 'marketplace' || skillsView.kind === 'marketplace-batch')
+                    ? 'max-w-none'
+                    : 'max-w-[880px]',
+                  activePanel === 'memory' ||
+                    activePanel === 'tags' ||
+                    (activePanel === 'skills' &&
+                      (skillsView.kind === 'marketplace-batch' || skillsView.kind === 'manage')) ||
+                    (activePanel === 'connectors' && connectorsView.kind === 'manage')
+                    ? 'h-full'
+                    : 'min-h-full'
                 )}
               >
                 <SettingsPanelLoadingBoundary
                   panelKey={
-                    activePanel === 'connectors' &&
-                    (connectorsView.kind === 'add' || connectorsView.kind === 'edit') &&
-                    connectorsView.credentialView === 'create'
-                      ? `${activePanel}:${Math.max(0, historyIndex - 1)}`
-                      : `${activePanel}:${historyIndex}`
+                    activePanel === 'skills' &&
+                    (skillsView.kind === 'marketplace' ||
+                      skillsView.kind === 'marketplace-detail' ||
+                      skillsView.kind === 'marketplace-batch')
+                      ? 'skills:marketplace'
+                      : activePanel === 'connectors' &&
+                          (connectorsView.kind === 'add' || connectorsView.kind === 'edit') &&
+                          connectorsView.credentialView === 'create'
+                        ? `${activePanel}:${Math.max(0, historyIndex - 1)}`
+                        : `${activePanel}:${historyIndex}`
                   }
                   onClose={onClose}
                 >
@@ -1517,7 +1574,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       }}
                     />
                   ) : activePanel === 'connectors' ? (
-                    connectorsView.kind === 'detail' ? (
+                    connectorsView.kind === 'manage' ? (
+                      <ConnectorBulkManageView />
+                    ) : connectorsView.kind === 'detail' ? (
                       <div>
                         <ResourceTagSummary
                           reference={{
@@ -1601,12 +1660,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     ) : (
                       <ConnectorsPanel
                         onNavigate={navigateConnectors}
-                        onOpenCredentials={() =>
-                          navigate({
-                            panel: 'credentials',
-                            view: { kind: 'service', serviceId: 'literature' }
-                          })
-                        }
                         onOpenTag={navigateTag}
                         onOpenSpecialist={(usage) =>
                           navigate({
@@ -1705,19 +1758,89 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     <div className="p-5">
                       {/* Secret writes fail closed when the OS keychain is unavailable. */}
                       {!encryptionAvailable ? (
-                        <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-                          {t(
+                        <ErrorNotice
+                          role="alert"
+                          tone="amber"
+                          className="mb-4"
+                          description={t(
                             'Secure key storage is unavailable. API keys cannot be saved until the system keychain is unlocked or authorized.'
                           )}
-                        </p>
+                        />
                       ) : null}
                       {providerEditTargetMissing ? (
-                        <p
-                          className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+                        <ErrorNotice
                           role="alert"
+                          tone="amber"
+                          className="mb-4"
+                          description={t(
+                            'This Provider no longer exists. Your draft has not been saved.'
+                          )}
+                        />
+                      ) : null}
+                      {providerConflict ? (
+                        <ErrorNotice
+                          role="alert"
+                          className="mb-4"
+                          description={t(
+                            'Provider configuration changed. Your draft has not been saved.'
+                          )}
                         >
-                          {t('This Provider no longer exists. Your draft has not been saved.')}
-                        </p>
+                          <details>
+                            <summary>{t('Latest saved configuration')}</summary>
+                            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+                              {[
+                                [t('Provider type'), editingProvider.type],
+                                [t('Name'), editingProvider.name],
+                                [t('Base URL'), editingProvider.baseUrl],
+                                [t('Model'), editingProvider.model],
+                                [t('API format'), editingProvider.apiEndpoints?.join(', ')],
+                                [t('Context window'), editingProvider.contextWindow],
+                                [t('Maximum input tokens'), editingProvider.maxInputTokens],
+                                [t('Maximum output tokens'), editingProvider.maxOutputTokens],
+                                [
+                                  t('Image input'),
+                                  editingProvider.supportsImageInput ? t('Enabled') : t('Disabled')
+                                ],
+                                [
+                                  t('Supported effort levels'),
+                                  editingProvider.reasoningEffortPreset
+                                ],
+                                [
+                                  t('Reasoning request format'),
+                                  editingProvider.reasoningEffortTransport
+                                ],
+                                [t('Transport'), editingProvider.codexTransport],
+                                [t('Vendor'), editingProvider.vendorId],
+                                [t('Region'), editingProvider.region]
+                              ].map(([label, value]) => (
+                                <div key={label} className="contents">
+                                  <dt>{label}</dt>
+                                  <dd className="break-all">
+                                    {value ?? t('Use provider default')}
+                                  </dd>
+                                </div>
+                              ))}
+                            </dl>
+                          </details>
+                          <Button
+                            type="button"
+                            disabled={isSaving}
+                            onClick={() => {
+                              const base = toFormValue(providerBase)
+                              const latest = toFormValue(editingProvider)
+                              const changes = Object.fromEntries(
+                                Object.entries(formValue).filter(
+                                  ([key, value]) => value !== base[key as keyof ProviderFormValue]
+                                )
+                              )
+                              setFormValue({ ...latest, ...changes })
+                              setProviderBase(editingProvider)
+                              setStatusMessage(undefined)
+                            }}
+                          >
+                            {t('Reapply my changes to the latest configuration')}
+                          </Button>
+                        </ErrorNotice>
                       ) : null}
                       <ProviderForm
                         value={formValue}
@@ -1726,7 +1849,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         maskedKey={editingProvider?.maskedKey}
                         needsKey={editingProvider?.needsKey}
                         errors={formErrors}
-                        supportedModels={editingProvider?.models}
+                        supportedModels={
+                          editingProvider?.type === formValue.type &&
+                          editingProvider?.vendorId === formValue.vendorId &&
+                          editingProvider?.region === formValue.region
+                            ? editingProvider?.models
+                            : undefined
+                        }
                         onRefreshModels={
                           editingProvider?.type === 'official' &&
                           editingProvider.hasKey &&
@@ -1769,7 +1898,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       </div>
                     </div>
                   ) : (
-                    <>
+                    <ModelPanel
+                      local={modelView.kind === 'local-models'}
+                      onChange={(local) =>
+                        navigate({
+                          panel: 'model',
+                          view: { kind: local ? 'local-models' : 'list' }
+                        })
+                      }
+                    >
                       {postSaveValidationFailed ? (
                         <p className="mx-5 mt-5 text-sm text-destructive" role="alert">
                           {t('Could not test the provider connection.')}
@@ -1788,7 +1925,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           }
                         }}
                       />
-                    </>
+                    </ModelPanel>
                   )}
                 </SettingsPanelLoadingBoundary>
               </div>

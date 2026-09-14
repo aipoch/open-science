@@ -7,6 +7,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
 
+import { useSettingsStore } from '@/stores/settings-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialMemoryState, useMemoryStore } from '@/stores/memory-store'
 import {
@@ -252,6 +253,38 @@ describe('WorkspacePage send gate while compacting', () => {
       )
     })
   }
+
+  it.each(['codex-shared', 'codex-isolated'] as const)(
+    'keeps Side chat available when the global main provider changes to %s',
+    async (type) => {
+      useSessionStore.setState({ sessions: [createReviewableSession()] })
+      await renderPage()
+      await act(async () => {
+        conversationProps.composer.actions.changeDoc(textDoc('Ask on the side'))
+      })
+      expect(conversationProps.view.sideChatDisabledReason).toBeUndefined()
+
+      await act(async () => {
+        useSettingsStore.setState({
+          activeProviderId: 'builtin-codex-subscription',
+          activeModel: 'gpt-5.6-luna',
+          providers: [
+            {
+              id: 'builtin-codex-subscription',
+              type,
+              name: 'Codex subscription',
+              models: ['gpt-5.6-luna'],
+              hasKey: true,
+              needsKey: false,
+              supportsImageInput: true
+            }
+          ]
+        })
+      })
+
+      expect(conversationProps.view.sideChatDisabledReason).toBeUndefined()
+    }
+  )
 
   it('saves the selected branch before stopping its Subagents', async () => {
     let releaseSave: (() => void) | undefined

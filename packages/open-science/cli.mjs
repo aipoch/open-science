@@ -29,11 +29,18 @@ const MAX_DOWNLOAD_SYMLINK_HOPS = 40
 const usage = `Usage: open-science <command> [options]
 
 Commands:
+  init        Create the local CLI configuration directory
   start       Start the headless backend and localhost web UI
   stop        Gracefully stop the backend
   status      Show backend status
   url         Print the authenticated web URL
   update      Check, download, and apply an application update
+  doctor --json  Inspect headless readiness
+  runtime list          List detected Agent runtimes
+  runtime install codex   Prepare the app-managed Codex runtime
+  provider add --type official --vendor openai --model <id> --api-key-env <ENV>
+  connector configure literature --openalex-key-env <ENV>
+  cli install            Install the PATH launcher
   codex login [--force]
   connector list | show <id> | enable <id> | disable <id>
   connector add | update <id>      Read configuration JSON from stdin
@@ -64,6 +71,7 @@ Options:
   --port <port>          Web service port (default: 44100)
   --app-path <path>      Installed Open-Science executable
   --config-root <path>   Config directory override
+  --profile <path>       Alias for --config-root (portable CLI profile)
   --data-root <path>     Current Data Root override (rollback only)
   --project <id-or-name> Project id or exact name
   --session <id>         Resume an existing session
@@ -115,6 +123,11 @@ const VALUE_OPTIONS = {
   '--port': 'port',
   '--app-path': 'appPath',
   '--config-root': 'configRoot',
+  '--profile': 'configRoot',
+  '--type': 'providerType',
+  '--vendor': 'vendor',
+  '--api-key-env': 'apiKeyEnv',
+  '--openalex-key-env': 'openAlexKeyEnv',
   '--data-root': 'dataRoot',
   '--project': 'project',
   '--session': 'session',
@@ -146,6 +159,8 @@ const VALUE_OPTIONS = {
 }
 
 const TASK_COMMANDS = new Set([
+  'doctor',
+  'runtime',
   'project',
   'run',
   'session',
@@ -153,21 +168,34 @@ const TASK_COMMANDS = new Set([
   'plan',
   'artifacts',
   'connector',
-  'credential'
+  'credential',
+  'runtime',
+  'provider',
+  'cli'
 ])
 const GROUP_COMMANDS = new Set([
   'codex',
+  'runtime',
   'project',
   'session',
   'settings',
   'plan',
   'artifacts',
   'connector',
-  'credential'
+  'credential',
+  'runtime',
+  'provider',
+  'cli'
 ])
 // Project create, update, and session-defaults intentionally remain unbounded because their
 // positional Project names may contain multiple unquoted words.
 const POSITIONAL_LIMITS = new Map([
+  ['doctor', 0],
+  ['runtime list', 0],
+  ['runtime install', 1],
+  ['provider add', 0],
+  ['connector configure', 1],
+  ['cli install', 0],
   ['connector list', 0],
   ['connector show', 1],
   ['connector enable', 1],
@@ -181,6 +209,7 @@ const POSITIONAL_LIMITS = new Map([
   ['credential update', 1],
 
   ['start', 0],
+  ['init', 0],
   ['stop', 0],
   ['status', 0],
   ['url', 0],
@@ -379,6 +408,12 @@ export const parseCliArgs = (argv) => {
   if (options.json && options.jsonl) {
     throw new CliUsageError('Use only one of --json or --jsonl.')
   }
+  if (command === 'doctor' && !options.json) {
+    throw new CliUsageError('doctor requires --json.')
+  }
+  if (command === 'runtime' && subcommand !== 'list' && subcommand !== 'install') {
+    throw new CliUsageError(`Unknown command: runtime ${subcommand ?? ''}`.trimEnd())
+  }
   if (options.json && (command === 'start' || command === 'url')) {
     throw new CliUsageError(`--json is not supported for ${command}.`)
   }
@@ -489,7 +524,7 @@ export const parseCliArgs = (argv) => {
   }
   const sessionOptionPresent =
     options.provider !== undefined ||
-    options.model !== undefined ||
+    (options.model !== undefined && !(command === 'provider' && subcommand === 'add')) ||
     options.providerDefaultModel ||
     options.reasoningEffort !== undefined ||
     options.approvalProfile !== undefined ||
@@ -558,6 +593,22 @@ export const isProcessAlive = (pid) => {
   } catch (error) {
     return error.code === 'EPERM'
   }
+}
+
+export const initCommand = async (options, deps = DEFAULT_DEPS) => {
+  const app = await (deps.locateApp ?? locateApp)({ appPath: options.appPath })
+  if (app.packaged && options.configRoot) {
+    throw new Error('--config-root is only supported for development builds.')
+  }
+  const configRoot = resolveConfigRoot({
+    override: options.configRoot,
+    packaged: app.packaged,
+    env: app.packaged ? {} : process.env
+  })
+  await mkdir(configRoot, { recursive: true, mode: 0o700 })
+  const result = { configRoot, initialized: true }
+  deps.log(options.json ? JSON.stringify(result) : `Open-Science is initialized at ${configRoot}.`)
+  return result
 }
 
 const authenticatedUrl = async (state, deps = DEFAULT_DEPS) => {
@@ -702,8 +753,17 @@ const readLogTail = async (logPath) => {
 
 export const openLaunchLog = (logPath) => openSync(logPath, 'w')
 
-export const buildAppLaunchArgs = (appArgs, options, port) => [
+export const buildAppLaunchArgs = (
+  appArgs,
+  options,
+  port,
+  { platform = process.platform, env = process.env } = {}
+) => [
   ...(options.noSandbox ? ['--no-sandbox'] : []),
+  // No-window mode alone still initializes X11. Select Ozone's display-free backend on servers.
+  ...(platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY
+    ? ['--ozone-platform=headless']
+    : []),
   ...appArgs,
   ...(options.credentialStore ? [`--credential-store=${options.credentialStore}`] : []),
   // `--open-science-headless` instead of `--headless`: Chromium consumes `--headless` and renders
@@ -1437,7 +1497,82 @@ const assertNoClearConflict = (clear, present, label) => {
 export const runTaskCommand = async (parsed, dependencies = {}) => {
   const deps = { ...TASK_DEPS, ...dependencies }
   const { command, subcommand, positionals = [], options } = parsed
-  const client = await deps.connect({ configRoot: options.configRoot })
+  let client
+  try {
+    client = await deps.connect({ configRoot: options.configRoot })
+  } catch (error) {
+    if (command !== 'doctor' || error?.code !== 'daemon_unavailable' || error?.status !== undefined)
+      throw error
+    deps.log(
+      JSON.stringify({
+        ready: false,
+        checks: { daemon: { status: 'missing' } },
+        next: [{ code: 'daemon_unavailable', argv: ['start', '--no-open'] }]
+      })
+    )
+    deps.setExitCode(3)
+    return
+  }
+
+  if (command === 'doctor') {
+    deps.log(JSON.stringify(await client.doctor()))
+    return
+  }
+
+  if (command === 'runtime' && subcommand === 'list') {
+    const runtimes = await client.listRuntimes()
+    if (options.json) {
+      deps.log(JSON.stringify(runtimes))
+    } else {
+      deps.log('FRAMEWORK\tSTATUS\tVERSION\tSOURCE')
+      for (const runtime of runtimes) {
+        deps.log(
+          `${runtime.framework}\t${runtime.status}\t${runtime.version ?? '-'}\t${runtime.source ?? '-'}`
+        )
+      }
+    }
+    return
+  }
+
+  if (command === 'cli' && subcommand === 'install') {
+    outputValue(await client.installCli(), options, deps)
+    return
+  }
+  if (
+    command === 'runtime' ||
+    command === 'provider' ||
+    (command === 'connector' && subcommand === 'configure')
+  ) {
+    const readSecret = (name) => {
+      if (!name || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+        throw new CliUsageError('Name a credential environment variable.')
+      const key = (dependencies.env ?? process.env)[name]?.trim()
+      if (!key) throw new CliUsageError('The credential environment variable is empty.')
+      return key
+    }
+    let request
+    if (command === 'runtime' && subcommand === 'install' && positionals[0] === 'codex')
+      request = { action: 'runtime' }
+    else if (
+      command === 'provider' &&
+      subcommand === 'add' &&
+      options.providerType === 'official' &&
+      options.vendor === 'openai' &&
+      options.model
+    ) {
+      request = { action: 'provider', key: readSecret(options.apiKeyEnv), model: options.model }
+    } else if (command === 'connector' && positionals[0] === 'literature')
+      request = { action: 'openalex', key: readSecret(options.openAlexKeyEnv) }
+    else
+      throw new CliUsageError(
+        'Supported setup commands: runtime install codex; provider add --type official --vendor openai --model <id> --api-key-env <ENV>; connector configure literature --openalex-key-env <ENV>.'
+      )
+    const result = await client.bootstrap(request, { timeoutMs: 600_000 })
+    if (!result.ok)
+      throw Object.assign(new Error(`Setup failed: ${result.code}.`), { code: result.code })
+    outputValue(result, options, deps)
+    return
+  }
 
   if (command === 'connector' || command === 'credential') {
     const id = positionals[0]
@@ -1892,7 +2027,8 @@ export const runCli = async (argv = process.argv.slice(2), dependencies = {}) =>
     console.log(usage)
     return
   }
-  if (command === 'start') await startCommand(options)
+  if (command === 'init') await initCommand(options)
+  else if (command === 'start') await startCommand(options)
   else if (command === 'stop') await stopCommand(options)
   else if (command === 'status') await statusCommand(options)
   else if (command === 'url') await urlCommand(options)

@@ -1,10 +1,10 @@
-import { sessionRevision, type PersistedChatSession } from '../../shared/session-persistence'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 
 type RevisionedSessionRepository = {
   saveSession(
     session: PersistedChatSession,
     expectedRevision?: number
-  ): Promise<PersistedChatSession | void>
+  ): Promise<PersistedChatSession>
 }
 
 export const saveSessionWithRevision = async (
@@ -12,11 +12,7 @@ export const saveSessionWithRevision = async (
   session: PersistedChatSession,
   expectedRevision?: number
 ): Promise<PersistedChatSession> => {
-  const revision = expectedRevision ?? sessionRevision(session)
-  const persisted = await (expectedRevision === undefined
+  return expectedRevision === undefined
     ? repository.saveSession(session)
-    : repository.saveSession(session, expectedRevision))
-  if (persisted) return persisted
-  if (expectedRevision === undefined) return session
-  return { ...session, revision: revision + 1 }
+    : repository.saveSession(session, expectedRevision)
 }

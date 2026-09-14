@@ -1,3 +1,4 @@
+import { LiteratureProviderError } from './provider-error'
 import { lookup } from 'node:dns/promises'
 import { Agent, get } from 'node:https'
 import { connect as connectTls } from 'node:tls'
@@ -150,7 +151,7 @@ export const downloadFullText = async (
         retryAfterByOrigin.set(url.origin, retryAt)
         throw new FullTextRateLimitError(retryAt)
       }
-      throw new Error(`Full-text download failed with HTTP ${response.statusCode}.`)
+      throw new LiteratureProviderError(response.statusCode ?? 0)
     }
     if (Number(response.headers['content-length']) > maxBytes) {
       response.destroy()

@@ -78,7 +78,8 @@ const openProjectSession = async (
   if (await heading.isVisible()) return
   const session = page
     .getByRole('navigation', { name: 'Sessions' })
-    .getByRole('button', { name: new RegExp(promptPrefix, 'u') })
+    .locator('button[data-slot="session-open-button"]')
+    .filter({ hasText: promptPrefix })
   await expect(session).toBeVisible({ timeout: 60_000 })
   await session.click()
 }

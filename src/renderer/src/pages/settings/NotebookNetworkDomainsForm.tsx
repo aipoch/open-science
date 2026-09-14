@@ -388,7 +388,7 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
 
       {message?.kind === 'error' ? (
         <p
-          className="rounded-lg border border-status-failure-border bg-status-failure-subtle/50 px-3 py-2 text-xs text-status-failure-strong"
+          className="text-xs text-destructive whitespace-pre-wrap [overflow-wrap:anywhere]"
           role="alert"
         >
           {message.text}

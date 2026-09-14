@@ -32,6 +32,14 @@ type NotificationOpenIntent = {
   userNavigationRevision: number
 }
 
+const PENDING_NOTIFICATION_HANDLER_RETRY_MS = 100
+
+const isPendingNotificationCommandUnavailable = (error: unknown): boolean =>
+  error instanceof Error &&
+  /(?:No handler registered for|Unknown application command:|Unknown Web RPC channel:).*notifications:(?:peek|take)-pending-open-session/i.test(
+    error.message
+  )
+
 type ApplicationEventBindingsInput = Readonly<{
   startupView: StartupView | undefined
   sessionPersistence: Readonly<{
@@ -122,6 +130,11 @@ const useApplicationEventBindings = ({
   const [unavailableNotificationToken, setUnavailableNotificationToken] = useState<number>()
   const deferredNotification = useRef<OpenSessionFromNotificationRequest | undefined>(undefined)
   const pendingNotificationOpenQueue = useRef<Promise<void>>(Promise.resolve())
+  const pendingNotificationRetryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const pendingNotificationRetryEpoch = useRef(0)
+  const openPendingNotificationSessionRef = useRef<
+    (intent?: NotificationOpenIntent) => Promise<void>
+  >(async () => undefined)
   const notificationOpenIntent = useRef<NotificationOpenIntent>({
     generation: 0,
     userNavigationRevision: useNavigationStore.getState().userNavigationRevision
@@ -340,7 +353,26 @@ const useApplicationEventBindings = ({
     (intent: NotificationOpenIntent = notificationOpenIntent.current): Promise<void> => {
       const attempt = async (): Promise<void> => {
         if (intent.generation !== notificationOpenIntent.current.generation) return
-        const pending = await window.api.notifications.peekPendingOpenSession()
+        const retryEpoch = pendingNotificationRetryEpoch.current
+        if (pendingNotificationRetryTimer.current !== undefined) {
+          clearTimeout(pendingNotificationRetryTimer.current)
+          pendingNotificationRetryTimer.current = undefined
+        }
+        let pending: OpenSessionFromNotificationRequest | null
+        try {
+          pending = await window.api.notifications.peekPendingOpenSession()
+        } catch (error) {
+          // The startup window mounts before full IPC adapters are installed (index.ts).
+          if (!isPendingNotificationCommandUnavailable(error)) throw error
+          if (pendingNotificationRetryEpoch.current !== retryEpoch) return
+          pendingNotificationRetryTimer.current = setTimeout(() => {
+            pendingNotificationRetryTimer.current = undefined
+            if (pendingNotificationRetryEpoch.current !== retryEpoch) return
+            if (intent.generation !== notificationOpenIntent.current.generation) return
+            void openPendingNotificationSessionRef.current(intent)
+          }, PENDING_NOTIFICATION_HANDLER_RETRY_MS)
+          return
+        }
         if (!pending || intent.generation !== notificationOpenIntent.current.generation) return
 
         const sessionExists =
@@ -393,7 +425,9 @@ const useApplicationEventBindings = ({
         const deferred = deferredNotification.current
         if (!deferred) return
         deferredNotification.current = undefined
-        void window.api.notifications.takePendingOpenSession(deferred.token)
+        void window.api.notifications.takePendingOpenSession(deferred.token).catch((error) => {
+          if (!isPendingNotificationCommandUnavailable(error)) throw error
+        })
       }),
     []
   )
@@ -410,7 +444,17 @@ const useApplicationEventBindings = ({
     [openPendingNotificationSession]
   )
   useEffect(() => {
+    const epoch = ++pendingNotificationRetryEpoch.current
+    openPendingNotificationSessionRef.current = openPendingNotificationSession
     void openPendingNotificationSession()
+    return () => {
+      if (pendingNotificationRetryEpoch.current === epoch)
+        pendingNotificationRetryEpoch.current += 1
+      if (pendingNotificationRetryTimer.current !== undefined) {
+        clearTimeout(pendingNotificationRetryTimer.current)
+        pendingNotificationRetryTimer.current = undefined
+      }
+    }
   }, [openPendingNotificationSession])
 
   useEffect(() => {

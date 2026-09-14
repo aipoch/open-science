@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { LITERATURE_TOOLS } from './literature'
 
 // Integration: the aggregate "Literature Graph" tool set. Per-tool behavior is covered in
-// literature-openalex.test.ts and literature-arxiv.test.ts.
+// literature-openalex.test.ts, literature-arxiv.test.ts and literature-doi.test.ts.
 const EXPECTED_IDS = [
   'openalex_search_works',
   'openalex_get_work',
@@ -12,11 +12,15 @@ const EXPECTED_IDS = [
   'openalex_get_author',
   'openalex_venue_info',
   'arxiv_search',
-  'arxiv_get_papers'
+  'arxiv_get_papers',
+  'crossref_get_work',
+  'crossref_get_updates',
+  'datacite_search_records',
+  'datacite_get_record'
 ]
 
 describe('literature / aggregate', () => {
-  it('exposes exactly the 9 Literature Graph tools in order', () => {
+  it('exposes exactly the 13 Literature Graph tools in order', () => {
     expect(LITERATURE_TOOLS.map((t) => t.id)).toEqual(EXPECTED_IDS)
   })
 

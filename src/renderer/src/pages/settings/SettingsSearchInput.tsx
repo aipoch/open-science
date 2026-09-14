@@ -32,12 +32,14 @@ export const SettingsSearchInput = ({
         {...props}
         ref={inputRef}
         type="search"
+        // Keep :placeholder-shown available even when callers omit placeholder copy.
+        placeholder={props.placeholder || ' '}
         aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
-        className={cn('pl-8 pr-20', className)}
+        className={cn('peer pl-8 pr-2.5 [&:placeholder-shown:not(:focus)]:pr-20', className)}
       />
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1 group-focus-within:hidden"
+        className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 items-center gap-1 peer-[:placeholder-shown:not(:focus)]:flex"
       >
         <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-border bg-muted px-1 font-mono text-[10px] leading-none text-muted-foreground shadow-sm">
           {isMac ? '⌘' : 'Ctrl'}

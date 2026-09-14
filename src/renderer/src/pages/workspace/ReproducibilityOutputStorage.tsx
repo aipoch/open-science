@@ -15,11 +15,13 @@ export const ReproducibilityOutputStorage = ({
   scope: requestedScope,
   receiptKey,
   running,
+  readOnly = false,
   children
 }: {
   scope?: ArtifactReproducibilityReceiptScope
   receiptKey: string
   running: boolean
+  readOnly?: boolean
   children: ReactNode
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -68,7 +70,13 @@ export const ReproducibilityOutputStorage = ({
     }
   }, [scope, receiptKey, revision, t])
   const clear = async (): Promise<void> => {
-    if (!scope || !window.api.artifacts.clearReproducibilityOutputs || busy.current || running)
+    if (
+      !scope ||
+      !window.api.artifacts.clearReproducibilityOutputs ||
+      busy.current ||
+      running ||
+      readOnly
+    )
       return
     busy.current = true
     ++generation.current
@@ -117,6 +125,7 @@ export const ReproducibilityOutputStorage = ({
               )}
             </p>
             {storage &&
+            !readOnly &&
             storage.fileCount > 0 &&
             window.api.artifacts.clearReproducibilityOutputs ? (
               <Button

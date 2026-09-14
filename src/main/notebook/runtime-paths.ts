@@ -16,7 +16,7 @@ import type { NotebookLanguage } from '../../shared/notebook'
 //   3. run stage-runtime-bundle with the matching explicit version before releasing the app. A
 //      deliberate republish replaces that version, and build.yml verifies the matching platform
 //      manifest is live before packaging an installer.
-export const DEFAULT_ENV_VERSION = 1
+export const DEFAULT_ENV_VERSION = 2
 
 export const DEFAULT_RUNTIME_CDN_BASE = 'https://statics.aipoch.com/open-science'
 

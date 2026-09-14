@@ -2,7 +2,11 @@ import { FileText, LoaderCircle, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
 
-import type { SkillImportPreviewContent } from '../../../../shared/settings'
+import type {
+  SkillImportPreviewContent,
+  SkillReplacementPreview
+} from '../../../../shared/settings'
+import { ErrorNotice } from '@/components/error-notice'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { Button } from '@/components/ui/button'
 import {
@@ -17,6 +21,62 @@ type SkillImportCandidatePreviewProps = {
   loading: boolean
   error: string | null
   content: SkillImportPreviewContent | null
+}
+
+export const SkillReplacementSummary = ({
+  replacement
+}: {
+  replacement: SkillReplacementPreview
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <div className="my-3 rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+      <p className="font-medium text-foreground">
+        {t('Replace {{target}}', { target: replacement.targetId })}
+      </p>
+      <p className="mt-1">
+        {t(
+          'The installed folder will be replaced, including local edits and files absent from this package. Cancel to keep the current copy.'
+        )}
+      </p>
+      <p className="mt-1">
+        {replacement.sourceLabel
+          ? t('Installed source: {{source}}', { source: replacement.sourceLabel })
+          : t('Installed source unknown')}
+      </p>
+      {replacement.comparisonUnavailable ? (
+        <p className="mt-2">
+          {t(
+            'The installed files could not be compared. Review or copy the current folder before replacing it.'
+          )}
+        </p>
+      ) : (
+        <details className="mt-2">
+          <summary className="cursor-pointer">
+            {t('File changes: +{{added}} / ~{{modified}} / −{{removed}}', {
+              added: replacement.added.length,
+              modified: replacement.modified.length,
+              removed: replacement.removed.length
+            })}
+          </summary>
+          <ul className="mt-2 break-all font-mono">
+            {replacement.added.map((path) => (
+              <li key={`+${path}`}>+ {path}</li>
+            ))}
+            {replacement.modified.map((path) => (
+              <li key={`~${path}`}>~ {path}</li>
+            ))}
+            {replacement.removed.map((path) => (
+              <li key={`-${path}`}>− {path}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <p className="mt-2">
+        {t('Compared at preview time. Files or the remote source may change before import.')}
+      </p>
+    </div>
+  )
 }
 
 const metadataLabel = (key: string): string =>
@@ -81,14 +141,12 @@ const SkillImportCandidatePreview = ({
                 {t('Loading preview…')}
               </div>
             ) : error ? (
-              <div
-                className="rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-sm text-danger-000"
-                role="alert"
-              >
-                {error}
-              </div>
+              <ErrorNotice role="alert" tone="amber" description={error} />
             ) : content ? (
               <>
+                {content.replacement ? (
+                  <SkillReplacementSummary replacement={content.replacement} />
+                ) : null}
                 {content.description ? (
                   <p className="text-sm leading-6 text-muted-foreground [text-wrap:pretty]">
                     {content.description}

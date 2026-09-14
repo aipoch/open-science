@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { isImportedResearchSession } from '../storage/session-package-state'
 import type {
   NotebookCell,
   AbortNotebookCodeCellRequest,
@@ -209,6 +210,7 @@ type McpRpcConnectionBinding = {
 }
 
 type NotebookRuntimeServiceOptions = ProjectIdScope & {
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void
   // Config root: source of the app-owned claude config dir (protected from the kernel). Never relocated.
   configRoot: string
   // Data root: where notebook workspaces, data, and the runtime install live (user-relocatable).
@@ -531,10 +533,14 @@ class NotebookRuntimeService {
         this.sessions.get(this.sessionLifecycle.rootLane(sessionId, projectId)),
       runtimeBindings: (session) => this.runtimeBindingOwner.snapshot(session),
       runtimeEnvironment: (session, language) => this.resolveRunEnv(session, language),
-      isRestartRecommended: (processKey) =>
-        this.environmentOperations.isRestartRecommended(processKey)
+      isRestartRecommended: (processKey, session) =>
+        this.environmentOperations.isRestartRecommended(
+          processKey,
+          this.restartRecommendationScope(session, processKey)
+        )
     })
     this.sessionLifecycle = new NotebookSessionLifecycleOwner({
+      admitSessionWork: options.admitSessionWork,
       storageRoot: options.dataRoot,
       defaultProjectId,
       repository: this.repository,
@@ -810,6 +816,17 @@ class NotebookRuntimeService {
     return language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
   }
 
+  private restartRecommendationScope(
+    session: RuntimeSession,
+    key: string
+  ): { sessionId: string; runtimeId: string } | undefined {
+    if (key !== dataProcessKey('r', DEFAULT_R_ENV)) return undefined
+    const binding = session.runtimeBinding('r')
+    return binding?.source === 'external'
+      ? { sessionId: session.id, runtimeId: binding.runtimeId }
+      : undefined
+  }
+
   // The Session binding picks the run's conda env. External or missing bindings use the language's
   // default env key, even when an external binding overrides the interpreter.
   private resolveRunEnv(session: RuntimeSession, language: NotebookLanguage): string {
@@ -951,6 +968,9 @@ class NotebookRuntimeService {
   ): Promise<void> {
     const processKey = dataProcessKey(language, env)
     await this.sessionLifecycle.clearPersistedKernelTermination(session, processKey)
+    const restartScope = this.restartRecommendationScope(session, processKey)
+    if (restartScope)
+      this.environmentOperations.clearRestartRecommendations([processKey], restartScope)
     session.clearProcessState(processKey)
   }
 
@@ -1783,6 +1803,16 @@ class NotebookRuntimeService {
         throw new Error('Notebook history limit must be 1-100.')
       if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
         throw new Error('Notebook state history cursor is invalid.')
+      const projectId = resolveProjectId(request, resolveProjectId(this.options))
+      if (await isImportedResearchSession(this.options.dataRoot, projectId, request.sessionId)) {
+        return this.sessionReadModel.importedState(
+          request,
+          runIds,
+          request.historySummaryFrameId,
+          request.historyBefore,
+          historyLimit
+        )
+      }
       const session = await this.sessionLifecycle.ensure(request)
       // Project durable history only after the lane's binding commit settles, including reads
       // that arrived just before shutdown closed session creation admission.
@@ -1888,7 +1918,10 @@ class NotebookRuntimeService {
               await this.sessionLifecycle.persistKernelStatus(session, 'idle', processKey)
             }
             session.clearKernelTerminated(processKey)
-            this.environmentOperations.clearRestartRecommendations([processKey])
+            this.environmentOperations.clearRestartRecommendations(
+              [processKey],
+              this.restartRecommendationScope(session, processKey)
+            )
           } catch (error) {
             if (hasTargetState) {
               const failureStatus =
@@ -1943,7 +1976,12 @@ class NotebookRuntimeService {
 
       try {
         await session.restartExecutor(() => this.sessionLifecycle.createExecutor(session.lane))
-        this.environmentOperations.clearRestartRecommendations(envKeys)
+        for (const key of envKeys) {
+          this.environmentOperations.clearRestartRecommendations(
+            [key],
+            this.restartRecommendationScope(session, key)
+          )
+        }
         await this.repository.clearKernelTerminations({
           projectId: session.projectId,
           sessionId: session.sessionId,
@@ -2144,6 +2182,10 @@ class NotebookRuntimeService {
   // once recovery has settled, and when recovery was never kicked off (e.g. tests). Public so the
   // startup env gate and UI provision/repair handlers can share the SAME barrier (they touch prefixes
   // too, not just materialize/install).
+  recoveryStatus(): import('../../shared/notebook-env').NotebookRecoveryStatus {
+    return this.recoveryCoordinator.status()
+  }
+
   async ensureRecovered(): Promise<void> {
     if (this.runLifecycleRecovery) await this.recoverInterruptedOperations()
     await this.kernelProcessLifecycle.ensureReady()
@@ -2158,7 +2200,8 @@ class NotebookRuntimeService {
       throw new Error(
         `RUNTIME_RECOVERY_BLOCKED: a previous operation on "${prefix}" was interrupted and its worker ` +
           'process could not be confirmed stopped, so writing this environment now could corrupt it. ' +
-          'Restart the app to re-check and recover it, then try again.'
+          'Use Recheck in Settings → Runtimes. If the block remains, wait for the old worker to exit. ' +
+          'Restarting the app does not prove that the worker stopped.'
       )
     }
   }

@@ -30,6 +30,38 @@ describe('SettingsService provider facade', () => {
     }
   })
 
+  it('builds read-only bootstrap recovery for the selected active model', async () => {
+    await repository.setAgentFramework('codex')
+    await repository.upsertProvider({
+      id: 'cli-openai',
+      name: 'OpenAI',
+      type: 'official',
+      vendorId: 'openai',
+      model: 'gpt-5.4'
+    })
+    await repository.setActiveProvider('cli-openai', 'gpt-5.4-mini')
+    const before = await repository.getSettings()
+    expect(await service.bootstrap({ action: 'status' }, () => {})).toMatchObject({
+      ok: true,
+      next: {
+        provider: [
+          'provider',
+          'add',
+          '--type',
+          'official',
+          '--vendor',
+          'openai',
+          '--model',
+          'gpt-5.4-mini',
+          '--api-key-env',
+          'OPENAI_API_KEY',
+          '--json'
+        ]
+      }
+    })
+    expect(await repository.getSettings()).toEqual(before)
+  })
+
   it('projects file storage capability and leaves legacy refs unchanged', async () => {
     configureCredentialStore(['--credential-store=file'], 'linux', true)
     try {

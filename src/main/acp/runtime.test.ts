@@ -1,3 +1,5 @@
+import { createFrameNotebookLane } from '../notebook/lane-identity'
+import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 import sharp from 'sharp'
 import * as attachmentMedia from '../uploads/attachment-media'
 import * as acp from '@agentclientprotocol/sdk'
@@ -20,6 +22,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AcpRuntime } from './runtime.test-utils'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import { createAcpTaskAgentPort } from './task-agent-port'
+import { loadManagedCodexErrorHandler } from '../settings/codex-error.test-utils'
 import type { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
 import { composeAcpRuntimePlanWorkflow } from './runtime-plan-composition'
@@ -1185,6 +1188,108 @@ afterEach(async () => {
 })
 
 describe('ACP runtime migration write-gate', () => {
+  it('propagates a normalized Codex capacity error through the ACP wire', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acp-codex-capacity-'))
+    const capacityError = 'Selected model is at capacity. Please try a different model.'
+    const process = new FakeAgentProcess()
+    const runtime = new AcpRuntime({
+      appVersion: '0.28.0',
+      defaultCwd: root,
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {}
+      }),
+      framework: codexFramework
+    })
+    try {
+      const adapter = await loadManagedCodexErrorHandler(root)
+      startFakeAgent(process, ['capacity-session'], {
+        modes: {
+          currentModeId: 'read-only',
+          availableModes: ['read-only', 'agent', 'agent-full-access'].map((id) => ({
+            id,
+            name: id
+          }))
+        },
+        onPrompt: async () => {
+          await adapter.createErrorEvent({
+            turnId: 'turn-1',
+            willRetry: false,
+            error: {
+              message: capacityError,
+              codexErrorInfo: 'serverOverloaded',
+              additionalDetails: null
+            }
+          })
+          const failure = adapter.getFailure()
+          if (failure) throw failure
+          return { stopReason: 'end_turn' }
+        }
+      })
+      const created = await runtime.createSession({ cwd: root })
+      await expect(
+        runtime.sendPrompt({ sessionId: created.sessionId, text: 'Write FINAL_ANSWER.txt.' })
+      ).rejects.toThrow(capacityError)
+      expect(runtime.getSnapshot().events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'error',
+            text: expect.stringContaining(capacityError),
+            providerError: true
+          })
+        ])
+      )
+    } finally {
+      await runtime.disconnect()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not infer failure from a Codex assistant message quoting a capacity error', async () => {
+    // Wire shape from codex-acp v1.6.2 createErrorEvent (no AIR capability):
+    // a non-auth, non-quota terminal error becomes assistant text plus end_turn.
+    const capacityError = 'Selected model is at capacity. Please try a different model.'
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['capacity-session'], {
+      modes: {
+        currentModeId: 'read-only',
+        availableModes: ['read-only', 'agent', 'agent-full-access'].map((id) => ({ id, name: id }))
+      },
+      replyForPrompt: () => `${capacityError}\n\n`,
+      onPrompt: () => ({ stopReason: 'end_turn' })
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.28.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/codex-acp',
+        env: {}
+      }),
+      framework: codexFramework
+    })
+    try {
+      const created = await runtime.createSession({ cwd: '/workspace' })
+      await expect(
+        runtime.sendPrompt({ sessionId: created.sessionId, text: 'Write FINAL_ANSWER.txt.' })
+      ).resolves.toMatchObject({ stopReason: 'end_turn' })
+      expect(fakeAgent.initializeRequests[0].clientCapabilities?._meta).toBeUndefined()
+      expect(runtime.getSnapshot().events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'message',
+            role: 'assistant',
+            text: `${capacityError}\n\n`
+          })
+        ])
+      )
+      expect(runtime.getSnapshot().events.filter((event) => event.kind === 'error')).toEqual([])
+    } finally {
+      await runtime.disconnect()
+    }
+  })
+
   afterEach(() => {
     // migration-state is a module singleton; clear it so a pending gate can't leak between tests.
     clearMigrationPending()
@@ -10192,7 +10297,9 @@ describe('ACP runtime session management', () => {
     // under a pre-start alias, but kernels write under the FINAL ACP session id. The per-turn handoff
     // must pin the kernel dir/root by that final id so a relative/bare artifact write resolves — and
     // the write must succeed even though the static allowedImportRoots only knew the alias.
-    const root = await createTemporaryRoot()
+    const fixture = await createArtifactSaveFixture()
+    temporaryDisconnections.push(() => fixture.dispose())
+    const root = fixture.storageRoot
     const artifactRepository = new ArtifactRepository(root)
     const finalSessionId = 'remote-session-1'
     // The kernel's real cwd for this session, keyed by the FINAL id (not the notebook alias).
@@ -10216,6 +10323,51 @@ describe('ACP runtime session management', () => {
           const currentRunFile = join(projectDir, artifactSessionId, '.pending', 'current-run.json')
           capturedContext = JSON.parse(await readFile(currentRunFile, 'utf8'))
 
+          const graph = capturedContext as {
+            rootFrameId: string
+            agentFrameId: string
+            messageBranchId: string
+            runtimeSegmentId: string
+            promptMessageId: string
+          }
+          const sourcePath = join(notebookDataDir, 'sine.png')
+          const observed = await stat(sourcePath)
+          await fixture.notebookRepository.loadOrCreate({
+            projectId: 'default-project',
+            sessionId: finalSessionId,
+            lane: createFrameNotebookLane('default-project', finalSessionId, graph.agentFrameId),
+            workspaceCwd: '/workspace'
+          })
+          await fixture.notebookRepository.appendRun({
+            projectId: 'default-project',
+            sessionId: finalSessionId,
+            lane: createFrameNotebookLane('default-project', finalSessionId, graph.agentFrameId),
+            run: {
+              ...graph,
+              runId: 'notebook-source-run',
+              cellId: 'plot-cell',
+              script: 'save_plot()',
+              source: 'agent',
+              kernelKind: 'python',
+              status: 'completed',
+              startedAt: observed.mtimeMs - 100,
+              endedAt: observed.mtimeMs + 100,
+              text: { stdout: '', stderr: '', traceback: '', plain: [] },
+              outputs: [],
+              artifacts: [],
+              inputFiles: [],
+              workingFiles: [
+                {
+                  path: sourcePath,
+                  relativePath: 'data/sine.png',
+                  kind: 'other',
+                  size: observed.size,
+                  mtimeMs: observed.mtimeMs,
+                  createdByRunId: 'notebook-source-run'
+                }
+              ]
+            }
+          })
           // A bare filename with no source must resolve against the handoff's notebook data dir.
           const artifact = await writeArtifactFileForCurrentRun(
             artifactRepository,
@@ -10224,6 +10376,7 @@ describe('ACP runtime session management', () => {
               projectId: 'default-project',
               sessionId: artifactSessionId,
               currentRunFile,
+              rpcEndpoint: fixture.connection.endpoint,
               allowedImportRoots: [] // authorization must come from the handoff session root
             },
             { filename: 'sine.png', mimeType: 'image/png' }
@@ -10248,7 +10401,11 @@ describe('ACP runtime session management', () => {
         dataRoot: root,
         projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
-        repository: artifactRepository
+        repository: artifactRepository,
+        provenance: fixture.repository,
+        getRpcConnection: () => Promise.resolve(fixture.connection),
+        issueRpcCapability: (binding) => fixture.server.issueArtifactRunCapability(binding),
+        revokeRpcCapability: (token) => fixture.server.revokeArtifactRunCapability(token)
       }
     })
 
@@ -10335,12 +10492,7 @@ describe('ACP runtime session management', () => {
         appSessionId: session.sessionId,
         artifactRunId: capturedContext?.artifactRunId,
         rootFrameId: 'root-frame-1',
-        allowedMethods: [
-          'artifactReserveWrite',
-          'artifactReleaseWrite',
-          'artifactCreateVersion',
-          'artifactReplayVersion'
-        ]
+        allowedMethods: ['artifactSaveVersion']
       })
     ])
     expect(revokedTokens).toEqual(['run-capability-1'])
@@ -21832,10 +21984,11 @@ describe('ACP runtime session management', () => {
     const rpcServer = new NotebookLocalRpcServer(notebookService, {
       transport: 'tcp',
       artifactProvenance: {
-        createVersion: async (request, signal) => {
+        createVersion: (request, signal) => durableProvenance.createVersion(request, signal),
+        saveVersion: async (request, sourceScope, signal) => {
           rpcWriteStarted.resolve()
           await releaseRpcWrite.promise
-          return durableProvenance.createVersion(request, signal)
+          return durableProvenance.saveVersion(request, sourceScope, signal)
         },
         reserveWrite: (request) => durableProvenance.reserveWrite(request),
         releaseWriteReservation: (request) => durableProvenance.releaseWriteReservation(request),
@@ -21851,8 +22004,6 @@ describe('ACP runtime session management', () => {
     let currentRunFile = ''
     const rpcFilename = 'rpc-late.txt'
     const rpcContent = 'accepted RPC bytes'
-    const rpcSizeBytes = Buffer.byteLength(rpcContent)
-    const rpcChecksum = createHash('sha256').update(rpcContent).digest('hex')
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'], {
       onPrompt: async ({ sessionId }) => {
@@ -21870,34 +22021,6 @@ describe('ACP runtime session management', () => {
           fakeAgent.newSessions[0].mcpServers[0],
           'OPEN_SCIENCE_ARTIFACT_SESSION_ID'
         )
-        await repository.writePendingFile({
-          projectId: 'project-1',
-          sessionId: artifactStorageSessionId,
-          runId: context.artifactRunId,
-          filename: rpcFilename,
-          source: { kind: 'inline', content: rpcContent, encoding: 'utf8' }
-        })
-        const reservationResponse = await fetch(rpcConnection.endpoint, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${context.rpcCapabilityToken}`,
-            'content-type': 'application/json'
-          },
-          body: JSON.stringify({
-            method: 'artifactReserveWrite',
-            params: {
-              projectId: 'project-1',
-              appSessionId: sessionId,
-              artifactStorageSessionId,
-              artifactRunId: context.artifactRunId,
-              writeOperationId: 'write-rpc-late',
-              filename: rpcFilename,
-              fileBytes: rpcSizeBytes
-            }
-          })
-        })
-        expect(reservationResponse.status).toBe(200)
-        const reservation = (await reservationResponse.json()) as { result: { id: string } }
         rpcWrite = fetch(rpcConnection.endpoint, {
           method: 'POST',
           headers: {
@@ -21905,17 +22028,18 @@ describe('ACP runtime session management', () => {
             'content-type': 'application/json'
           },
           body: JSON.stringify({
-            method: 'artifactCreateVersion',
+            method: 'artifactSaveVersion',
             params: {
               projectId: 'project-1',
               appSessionId: sessionId,
               artifactStorageSessionId,
               artifactRunId: context.artifactRunId,
               writeOperationId: 'write-rpc-late',
-              writeRequestChecksum: 'c'.repeat(64),
-              resourceReservationId: reservation.result.id,
-              resourceSizeBytes: rpcSizeBytes,
-              resourceChecksum: rpcChecksum,
+              source: {
+                kind: 'inline',
+                content: Buffer.from(rpcContent).toString('base64'),
+                encoding: 'base64'
+              },
               rootFrameId: context.rootFrameId,
               agentFrameId: context.agentFrameId,
               messageBranchId: context.messageBranchId,
@@ -21941,6 +22065,8 @@ describe('ACP runtime session management', () => {
         repository,
         provenance: {
           listRunVersions,
+          withSessionMutation: (scope, operation) =>
+            durableProvenance.withSessionMutation(scope, operation),
           writeAppGeneratedVersion: (request) => durableProvenance.writeAppGeneratedVersion(request)
         },
         getRpcConnection: () => Promise.resolve(rpcConnection),

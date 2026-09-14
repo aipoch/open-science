@@ -15,7 +15,7 @@ import { hasLegacySessionUpload } from './legacy-upload'
 import { saveSessionWithRevision } from './save-session'
 
 type SessionReconciliationRepository = {
-  saveSession(session: PersistedChatSession): Promise<PersistedChatSession | void>
+  saveSession(session: PersistedChatSession): Promise<PersistedChatSession>
 }
 
 type SessionReconciliationFileIndex = {

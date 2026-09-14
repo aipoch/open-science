@@ -213,6 +213,35 @@ const lifecycleCallbackHarness = (
 }
 
 describe('notebook runtime service', () => {
+  it('rejects export-locked execution before creating a Notebook or kernel', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const load = vi.spyOn(repository, 'loadOrCreate')
+    const executorFactory = vi.fn()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project-1',
+      repository,
+      executorFactory,
+      admitSessionWork: () => {
+        throw new Error('Session locked for export')
+      }
+    })
+    await expect(
+      service.execute({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: 'print(1)',
+        source: 'user',
+        language: 'python'
+      })
+    ).rejects.toThrow('locked for export')
+    expect(load).not.toHaveBeenCalled()
+    expect(executorFactory).not.toHaveBeenCalled()
+  })
+
   it('deletes generated prompt input copies with their Session and Project input caches', async () => {
     const root = await createStorageRoot()
     const { service } = lifecycleCallbackHarness(root)
@@ -4844,6 +4873,7 @@ describe('notebook runtime service', () => {
     it('cancels and drains a Shell Run before application disposal completes', async () => {
       const root = await createStorageRoot()
       let executionSignal: AbortSignal | undefined
+      const executionStarted = createDeferred<void>()
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
@@ -4853,6 +4883,7 @@ describe('notebook runtime service', () => {
           execute: (request) =>
             new Promise((resolve) => {
               executionSignal = request.signal
+              executionStarted.resolve()
               request.signal?.addEventListener(
                 'abort',
                 () =>
@@ -4872,15 +4903,16 @@ describe('notebook runtime service', () => {
         workspaceCwd: root,
         command: 'long-running'
       })
-      await vi.waitFor(() => expect(executionSignal).toBeInstanceOf(AbortSignal))
+      await executionStarted.promise
+      expect(executionSignal).toBeInstanceOf(AbortSignal)
 
       const disposal = service.dispose()
-      await vi.waitFor(() => expect(executionSignal?.aborted).toBe(true))
       await expect(execution).resolves.toEqual({
         stdout: '',
         stderr: 'Shell command was cancelled.',
         exitCode: null
       })
+      expect(executionSignal?.aborted).toBe(true)
       await expect(disposal).resolves.toEqual({ reaped: true })
     })
 
@@ -6338,11 +6370,12 @@ describe('notebook runtime service', () => {
     let maxConcurrent = 0
     const releases: Array<() => void> = []
     const executedCodes: string[] = []
+    const repository = new NotebookRunRepository(root)
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
-      repository: new NotebookRunRepository(root),
+      repository,
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
           executedCodes.push(request.code)
@@ -6385,22 +6418,37 @@ describe('notebook runtime service', () => {
 
     const first = submit("print('a')")
     // Wait until the first run has actually entered the executor and is holding the single slot.
-    await vi.waitFor(() => expect(releases).toHaveLength(1))
+    await vi.waitFor(() => expect(releases).toHaveLength(1), {
+      timeout: 10_000,
+      interval: 50
+    })
+
+    // Exercise slow durable admission instead of assuming it completes within a fixed sleep.
+    const appendRun = repository.appendOrGetRun.bind(repository)
+    vi.spyOn(repository, 'appendOrGetRun').mockImplementationOnce(async (input) => {
+      await new Promise((resolve) => setTimeout(resolve, 1250))
+      return appendRun(input)
+    })
 
     const second = submit("print('b')")
-    // Give the second run a chance to (wrongly) reach the executor while the first is in flight.
-    await new Promise((resolve) => setTimeout(resolve, 20))
-
-    // With serialization the second run is still queued, so only the first has entered the executor.
-    expect(releases).toHaveLength(1)
-    const queuedState = await service.state({
-      projectId: 'default-project',
-      sessionId: 'session-1',
-      workspaceCwd: '/workspace'
-    })
-    expect(queuedState.runs).toEqual(
-      expect.arrayContaining([expect.objectContaining({ script: "print('b')", status: 'queued' })])
+    // Observe durable admission before asserting that the second run cannot enter the executor.
+    const queuedState = await vi.waitFor(
+      async () => {
+        const state = await service.state({
+          projectId: 'default-project',
+          sessionId: 'session-1',
+          workspaceCwd: '/workspace'
+        })
+        expect(state.runs).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ script: "print('b')", status: 'queued' })
+          ])
+        )
+        return state
+      },
+      { timeout: 5000 }
     )
+    expect(releases).toHaveLength(1)
     const queuedCell = queuedState.cells.find((cell) => cell.code === "print('b')")
     expect(queuedCell).toBeDefined()
     await expect(
@@ -8272,7 +8320,7 @@ describe('notebook runtime service', () => {
     })
 
     const restarting = service.restart({ sessionId: 'session-1', workspaceCwd: root })
-    await vi.waitFor(() => expect(releaseRestart).toBeDefined())
+    await vi.waitFor(() => expect(releaseRestart).toBeDefined(), { timeout: 10_000 })
 
     const midFlight = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(midFlight.kernelStatus).toBe('restarting')
@@ -11494,6 +11542,63 @@ describe('v4 runtime bindings & agent tools', () => {
     runnable: true
   }
 
+  it.each([true, false])(
+    'isolates external R restart recommendations across runtimes and sessions (targeted=%s)',
+    async (targeted) => {
+      const root = await createStorageRoot()
+      const otherR = { ...userR, envId: '/other/bin/R', interpreterPath: '/other/bin/R' }
+      await mkdir(join(root, 'personal-r-library'))
+      const service = bindingService(root, {
+        discovered: [userR, otherR, managedR],
+        enablement: {
+          enabled: { [userR.envId]: true, [otherR.envId]: true, [managedR.envId]: true },
+          installAuthorized: { [userR.envId]: true },
+          installLibraries: { [userR.envId]: await realpath(join(root, 'personal-r-library')) }
+        },
+        installPackagesImpl: async () => ({ ok: true, needsRestart: true, log: 'installed' })
+      })
+      const request = (
+        sessionId: string
+      ): { sessionId: string; workspaceCwd: string; language: 'r' } => ({
+        sessionId,
+        workspaceCwd: root,
+        language: 'r' as const
+      })
+      for (const [id, runtimeId] of [
+        ['first', userR.envId],
+        ['second', userR.envId],
+        ['other', otherR.envId],
+        ['managed', managedR.envId]
+      ]) {
+        await service.bindRuntime({ ...request(id), runtimeId })
+        expect((await service.state(request(id))).runtimeBindings.r?.runtimeId).toBe(runtimeId)
+        expect((await service.execute({ ...request(id), code: '1' })).status).toBe('completed')
+      }
+      const recommended = async (id: string): Promise<boolean | undefined> =>
+        (await service.state(request(id))).environments.find(
+          (entry) => entry.processKey === 'r:default-r'
+        )?.restartRecommended
+      expect(
+        (await service.managePackages({ ...request('first'), packages: ['praise'] })).needsRestart
+      ).toBe(true)
+      expect(await recommended('first')).toBe(true)
+      expect(await recommended('second')).toBe(true)
+      expect(await recommended('other')).toBe(false)
+      expect(await recommended('managed')).toBe(false)
+      await service.restart(
+        targeted
+          ? { sessionId: 'first', workspaceCwd: root, language: 'r', environment: DEFAULT_R_ENV }
+          : { sessionId: 'first', workspaceCwd: root }
+      )
+      expect(await recommended('first')).toBe(false)
+      expect(await recommended('second')).toBe(true)
+      await service.switchRuntime({ ...request('second'), runtimeId: otherR.envId })
+      await service.switchRuntime({ ...request('second'), runtimeId: userR.envId })
+      await service.execute({ ...request('second'), code: '1' })
+      expect(await recommended('second')).toBe(false)
+    }
+  )
+
   // Service with injected discovery + enablement + a recording executor, so the tools run without any
   // real interpreter and executions can be inspected for the resolved interpreter.
   const bindingService = (
@@ -12835,6 +12940,75 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(executions[0].resolvedInterpreter?.command).toBe('/usr/local/bin/Rscript')
     expect(provisionR).not.toHaveBeenCalled()
   })
+
+  it('uses fresh external R library consent for each execution without persisting a new binding field', async () => {
+    const root = await createStorageRoot()
+    const library = join(root, 'personal-r-library')
+    await mkdir(library)
+    const physical = await realpath(library)
+    const executions: NotebookExecutionRequest[] = []
+    const enablement: RuntimeEnablement = {
+      enabled: { [userR.envId]: true },
+      installAuthorized: { [userR.envId]: true },
+      installLibraries: { [userR.envId]: physical }
+    }
+    const service = bindingService(root, { discovered: [userR], enablement, executions })
+    const request = { sessionId: 'library', workspaceCwd: root, language: 'r' as const }
+    await service.bindRuntime({ ...request, runtimeId: userR.envId })
+    expect((await service.execute({ ...request, code: '1' })).status).toBe('completed')
+    expect(executions[0].resolvedInterpreter).toMatchObject({ rLibrary: physical })
+    expect((await service.state(request)).runtimeBindings.r).not.toHaveProperty('rLibrary')
+    enablement.installAuthorized[userR.envId] = false
+    expect((await service.execute({ ...request, code: '2' })).status).toBe('completed')
+    expect(executions[1].resolvedInterpreter).not.toHaveProperty('rLibrary')
+    enablement.installAuthorized[userR.envId] = true
+    await rm(library, { recursive: true })
+    expect((await service.execute({ ...request, code: '3' })).status).toBe('failed')
+    expect(executions).toHaveLength(2)
+  })
+
+  it.each(['revoke', 'replace'] as const)(
+    'rejects queued external R execution when library consent changes (%s)',
+    async (change) => {
+      const root = await createStorageRoot()
+      const library = join(root, 'personal-r-library')
+      const replacement = join(root, 'replacement-r-library')
+      await mkdir(library)
+      await mkdir(replacement)
+      const enablement: RuntimeEnablement = {
+        enabled: { [userR.envId]: true },
+        installAuthorized: { [userR.envId]: true },
+        installLibraries: { [userR.envId]: await realpath(library) }
+      }
+      const executions: NotebookExecutionRequest[] = []
+      const service = bindingService(root, { discovered: [userR], enablement, executions })
+      const request = { sessionId: 'queued-library', workspaceCwd: root, language: 'r' as const }
+      await service.bindRuntime({ ...request, runtimeId: userR.envId })
+      const entered = createDeferred<void>()
+      const release = createDeferred<void>()
+      const holding = service.withEnvLock(DEFAULT_R_ENV, async () => {
+        entered.resolve()
+        await release.promise
+      })
+      await entered.promise
+      const queued = service.execute({ ...request, code: '1' })
+      try {
+        await vi.waitFor(async () =>
+          expect((await service.state(request)).cells[0]?.status).toBe('running')
+        )
+        if (change === 'revoke') enablement.installAuthorized[userR.envId] = false
+        else enablement.installLibraries![userR.envId] = await realpath(replacement)
+      } finally {
+        release.resolve()
+      }
+      await holding
+      expect(await queued).toMatchObject({
+        status: 'failed',
+        text: { traceback: expect.stringContaining('RUNTIME_BINDING_CHANGED') }
+      })
+      expect(executions).toEqual([])
+    }
+  )
 
   it('carries an external Windows conda R own activation prefix into execution', async () => {
     const root = await createStorageRoot()

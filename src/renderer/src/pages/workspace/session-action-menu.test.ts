@@ -181,3 +181,36 @@ describe('session action menu', () => {
     ).toMatchObject({ disabled: true })
   })
 })
+
+it('groups conversation and package exports while keeping package admission independent of active-branch messages', async () => {
+  const onExportPackage = vi.fn(async () => undefined)
+  const bindings = createSessionActionBindings({
+    canMutateConversations: true,
+    canDeleteConversations: true,
+    canDownloadArtifacts: false,
+    onTogglePin: vi.fn(),
+    onRenameSession: vi.fn(),
+    onDownloadArtifacts: vi.fn(),
+    onViewNotebook: vi.fn(),
+    onExportSession: vi.fn(),
+    onExportPackage,
+    onDeleteSession: vi.fn()
+  })
+  const context = invocation(createSession({ messages: [] }))
+  const entries = resolveActionMenuEntries(
+    {
+      identityKey: 'session',
+      catalog: SESSION_ACTION_CATALOG,
+      recipe: SESSION_ACTION_RECIPE,
+      bindings
+    },
+    context
+  )
+  const exports = entries.filter((entry) => entry.kind === 'action' && entry.submenu)
+  expect(exports).toMatchObject([
+    { action: 'export', disabled: true, submenu: { labelKey: 'Export' } },
+    { action: 'export-package', disabled: false, submenu: { labelKey: 'Export' } }
+  ])
+  await bindings['export-package'].execute(context)
+  expect(onExportPackage).toHaveBeenCalledWith(context.session)
+})

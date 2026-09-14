@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { packageOriginSchema } from './session-package'
 
 import {
   defineApplicationCommandContract,
@@ -777,6 +778,8 @@ export type EditSessionDetailsRequest = EditSessionDetailsRequestBase &
   )
 
 export type PersistedChatSession = {
+  // Imported history has no execution authority. Absence preserves existing local Session behavior.
+  packageOrigin?: import('./session-package').SessionPackageOrigin
   id: string
   // App-wide, one-based sequence allocated by SQLite. Historical Session files omit it until the
   // one-time projection backfill assigns numbers in createdAt/id order and rewrites their JSON.
@@ -4424,6 +4427,11 @@ const sanitizeSession = (
   if (taskRunCommitId) sanitized.taskRunCommitId = taskRunCommitId
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
   if (branchSource) sanitized.branchSource = branchSource
+  if (session.packageOrigin !== undefined) {
+    const origin = packageOriginSchema.safeParse(session.packageOrigin)
+    if (!origin.success) return undefined
+    sanitized.packageOrigin = origin.data
+  }
   if (pendingHistoryReplay) sanitized.pendingHistoryReplay = pendingHistoryReplay
   if (session.branchContextResetRequired === true) sanitized.branchContextResetRequired = true
   if (error) sanitized.error = error

@@ -198,6 +198,7 @@ const createDependencies = () => {
     size: 10
   }
   const uploads = {
+    recoverDraft: vi.fn(async () => null),
     claimLocalFile: vi.fn(),
     stageLocalPath: vi.fn(async () => attachment),
     beginTransfer: vi.fn(),
@@ -210,6 +211,9 @@ const createDependencies = () => {
     readPreview: vi.fn()
   }
   const electron = {
+    exportSessionPackage: vi.fn(async () => ({ saved: false })),
+    sessionPackageOperation: vi.fn(async () => null),
+    importSessionPackage: vi.fn(async () => null),
     exportConversationFromInvokingWindow: vi.fn(async () => ({ saved: false as const })),
     stageLocalFileWithProgress: vi.fn(async () => attachment)
   }
@@ -256,6 +260,9 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionDelete',
   'sessionEditDetails',
   'sessionExportConversation',
+  'sessionExportPackage',
+  'sessionImportPackage',
+  'sessionPackageOperation',
   'sessionFilterPdfContextCandidates',
   'sessionLinkPdfContext',
   'sessionList',
@@ -339,6 +346,9 @@ describe('Data and content application commands', () => {
         'sessions:delete-session',
         'sessions:edit-details',
         'sessions:export-conversation',
+        'sessions:export-package',
+        'sessions:import-package',
+        'sessions:package-operation',
         'sessions:filter-pdf-context-candidates',
         'sessions:link-pdf-context',
         'sessions:list',
@@ -363,6 +373,7 @@ describe('Data and content application commands', () => {
         'uploads:finalize-session',
         'uploads:finish-transfer',
         'uploads:read-preview',
+        'uploads:recover-draft',
         'uploads:stage-local-file',
         'uploads:stage-local-path',
         'uploads:transfer-status'
@@ -576,6 +587,12 @@ describe('Data and content application commands', () => {
         key: 'uploadFinishTransfer',
         args: [request('upload-finish')],
         owner: deps.uploads.finishTransfer,
+        passInvocation: true
+      },
+      {
+        key: 'uploadRecoverDraft',
+        args: [{ receipt: 'receipt' }],
+        owner: deps.uploads.recoverDraft,
         passInvocation: true
       },
       {

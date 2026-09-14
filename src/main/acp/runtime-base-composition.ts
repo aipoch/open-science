@@ -181,6 +181,32 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
       producer
     })
   }
+  const pdfElementContext = (appSessionId: string, projectId: string, signal: AbortSignal) => {
+    const interaction = sessionInteractions.current(appSessionId)
+    if (
+      interaction?.kind !== 'prompt' ||
+      !interaction.promptMessageId ||
+      interaction.signal.aborted
+    )
+      throw new Error(
+        'NO_LINKED_PDF_CONTEXT: PDF element tools require an active message with a linked PDF snapshot.'
+      )
+    const currentSignal = AbortSignal.any([signal, interaction.signal])
+    currentSignal.throwIfAborted()
+    return {
+      context: {
+        projectId,
+        sessionId: appSessionId,
+        promptMessageId: interaction.promptMessageId,
+        signal: currentSignal
+      },
+      check: () => {
+        currentSignal.throwIfAborted()
+        if (sessionInteractions.current(appSessionId) !== interaction)
+          throw new Error('NO_LINKED_PDF_CONTEXT: The active PDF message has changed.')
+      }
+    }
+  }
   const sessionCapabilities = new AcpSessionCapabilityOwner({
     artifacts: options.artifacts,
     notebook: options.notebook,
@@ -192,6 +218,26 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
       ? {
           isEnabled: options.literature.isEnabled,
           handlerFor: (appSessionId, projectId) => ({
+            ...(options.literature!.elements
+              ? {
+                  elements: {
+                    list: async (input, signal) => {
+                      const guard = pdfElementContext(appSessionId, projectId, signal)
+                      const result = await options.literature!.elements!.list(guard.context, input)
+                      guard.check()
+                      return result
+                    },
+                    read: async (input, signal) => {
+                      const guard = pdfElementContext(appSessionId, projectId, signal)
+                      const result = await options.literature!.elements!.read(guard.context, input)
+                      guard.check()
+                      return result
+                    }
+                  } satisfies NonNullable<
+                    import('../literature/mcp-server').LiteratureMcpHandler['elements']
+                  >
+                }
+              : {}),
             readDocument: (input) => {
               const interaction = sessionInteractions.current(appSessionId)
               if (interaction?.kind !== 'prompt' || !interaction.promptMessageId) {

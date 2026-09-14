@@ -335,6 +335,7 @@ export type NotebookRunEnvironmentCapture =
     }
 
 export type NotebookEnvironmentLockPartialReason =
+  | 'external-interpreter-required'
   | 'environment-manifest-partial'
   | 'non-conda-package-detected'
   | 'non-conda-installer-detected'
@@ -383,7 +384,9 @@ export type NotebookEnvironmentLockComponent =
     }
 
 export type NotebookEnvironmentLock = {
-  schemaVersion: 1
+  schemaVersion: 1 | 2
+  // v2 native-only locks restore packages conditionally; they do not provision this runtime.
+  externalRuntime?: { version: string; installerVersion: string }
   format: 'environment-lock-bundle'
   kernelKind: NotebookLanguage
   environmentName: string

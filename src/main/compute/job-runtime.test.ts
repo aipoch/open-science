@@ -32,6 +32,7 @@ describe('createComputeJobRuntime', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated,
           handleJobCancellationConfirmed,
           startQueueReconciliation,
@@ -79,6 +80,87 @@ describe('createComputeJobRuntime', () => {
     expect(unbind).toHaveBeenCalledOnce()
   })
 
+  it('scopes manual collection retries, coalesces with automatic work, and refuses retries during deletion', async () => {
+    let retry!: (
+      request: import('../../shared/compute').RetryComputeJobHarvestRequest
+    ) => Promise<void>
+    let deletionRuntime!: { pause(): Promise<void>; resume(): void }
+    let pollerDeps!: JobPollerDeps
+    const job = {
+      job_id: 'job-1',
+      project_id: 'p',
+      session_id: 's',
+      provider_id: 'ssh:h',
+      status: 'success',
+      remote_workdir: '/scratch/job-1'
+    } as ComputeJob
+    const request = { jobId: job.job_id, projectId: 'p', sessionId: 's', providerId: 'ssh:h' }
+    let release!: () => void
+    const harvest = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve
+        })
+    )
+    const runtime = createComputeJobRuntime(
+      {
+        computeService: {
+          bindJobHarvestRetry: (callback) => {
+            retry = callback
+            return vi.fn()
+          },
+          handleJobUpdated: vi.fn(),
+          handleJobCancellationConfirmed: vi.fn(),
+          startQueueReconciliation: vi.fn(),
+          stopQueueReconciliation: vi.fn()
+        },
+        jobDeletionOwner: {
+          bindRuntime: (bound) => {
+            deletionRuntime = bound
+            return vi.fn()
+          }
+        },
+        hostRepository: {} as ComputeHostRepository,
+        jobRepository: { get: async () => job } as unknown as ComputeJobRepository,
+        connectionBroker: {} as ComputeConnectionBroker,
+        storageRoot: '/data'
+      },
+      {
+        harvest,
+        createPoller: (deps) => {
+          pollerDeps = deps
+          return {
+            start: vi.fn(),
+            stop: async () => undefined,
+            pause: async () => undefined,
+            resume: vi.fn()
+          }
+        }
+      }
+    )
+    await expect(retry({ ...request, sessionId: 'other' })).rejects.toThrow('unavailable')
+    job.status = 'running'
+    await expect(retry(request)).rejects.toThrow('no confirmed execution result')
+    job.status = 'success'
+    const automatic = pollerDeps.harvestScheduler!.schedule(job)
+    const manual = retry(request)
+    await vi.waitFor(() => expect(harvest).toHaveBeenCalledOnce())
+    release()
+    await Promise.all([automatic, manual])
+    expect(harvest).toHaveBeenCalledOnce()
+    job.harvested_at = 123
+    await retry(request)
+    expect(harvest).toHaveBeenCalledOnce()
+    job.harvested_at = undefined
+    await deletionRuntime.pause()
+    await expect(retry(request)).rejects.toThrow('paused')
+    deletionRuntime.resume()
+    job.remote_cleanup_disposition = 'cleaned'
+    await expect(retry(request)).rejects.toThrow('Remote results are unavailable')
+    await runtime.stop()
+    await expect(retry(request)).rejects.toThrow('paused')
+  })
+
   it('keeps queued promotion stopped when Session limit restoration fails', async () => {
     const start = vi.fn()
     const stop = vi.fn(async () => undefined)
@@ -88,6 +170,7 @@ describe('createComputeJobRuntime', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated: vi.fn(),
           handleJobCancellationConfirmed: vi.fn(async () => undefined),
           startQueueReconciliation,
@@ -130,6 +213,7 @@ describe('createComputeJobRuntime', () => {
     } as unknown as ComputeJobRepository
     const runtime = createComputeJobRuntime({
       computeService: {
+        bindJobHarvestRetry: vi.fn(() => () => undefined),
         handleJobUpdated: vi.fn(),
         handleJobCancellationConfirmed: vi.fn(async () => undefined),
         startQueueReconciliation: vi.fn(),
@@ -176,6 +260,7 @@ describe('createComputeJobRuntime', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated: vi.fn(),
           handleJobCancellationConfirmed: vi.fn(async () => undefined),
           startQueueReconciliation: vi.fn(),
@@ -218,6 +303,7 @@ describe('createComputeJobRuntime', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated: vi.fn(),
           handleJobCancellationConfirmed: vi.fn(async () => undefined),
           startQueueReconciliation,
@@ -308,6 +394,7 @@ describe('createComputeJobRuntime', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated: vi.fn(),
           handleJobCancellationConfirmed: vi.fn(async () => undefined),
           startQueueReconciliation: vi.fn(),
@@ -361,6 +448,7 @@ it('stops independent Compute resources when queue draining rejects', async () =
   const runtime = createComputeJobRuntime(
     {
       computeService: {
+        bindJobHarvestRetry: vi.fn(() => () => undefined),
         handleJobUpdated: vi.fn(),
         handleJobCancellationConfirmed: vi.fn(),
         startQueueReconciliation: vi.fn(),
@@ -398,6 +486,7 @@ it.each(['startup', 'poller-stop'] as const)(
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated: vi.fn(),
           handleJobCancellationConfirmed: vi.fn(),
           startQueueReconciliation: vi.fn(),

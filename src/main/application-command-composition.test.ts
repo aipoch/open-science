@@ -45,6 +45,35 @@ import { LocalFsService } from './local-fs/service'
 import type { ManagedPreviewResource, ManagedPreviewRangeResult } from '../shared/preview-resources'
 
 const EMPTY_OWNER = Object.freeze({})
+
+it('exposes bootstrap only to local Task callers without widening renderer management', async () => {
+  const bootstrap = vi.fn(async () => ({ ok: true }))
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    settingsCore: {
+      service: { bootstrap },
+      emitInstallEvent: vi.fn(),
+      snapshotCommits: { projectAfter: (pending: Promise<unknown>) => pending }
+    } as never
+  })
+  expect(composition.localWeb.commandNames()).not.toContain('settings:bootstrap')
+  expect(composition.remoteWeb.commandNames()).not.toContain('settings:bootstrap')
+  await expect(
+    composition.task.invoke('settings:bootstrap', {
+      ...invocation('remote'),
+      args: [{ action: 'runtime' }]
+    })
+  ).resolves.toEqual({ ok: false, code: 'invalid_request' })
+  expect(bootstrap).not.toHaveBeenCalled()
+  await expect(
+    composition.task.invoke('settings:bootstrap', {
+      ...invocation(),
+      args: [{ action: 'runtime' }]
+    })
+  ).resolves.toEqual({ ok: true })
+  expect(bootstrap).toHaveBeenCalledOnce()
+  composition.dispose()
+})
 const unexpectedCommand = defineApplicationCommand<'test:unexpected', readonly [], void>(
   'test:unexpected'
 )
@@ -231,6 +260,11 @@ describe('application command composition', () => {
       'memory:snapshot',
       'memory:update-category',
       'memory:update-entry',
+      'pdf-structure:cancel',
+      'pdf-structure:clear-cache',
+      'pdf-structure:parse',
+      'pdf-structure:read-cached',
+      'pdf-structure:read-thumbnail',
       'projects:create',
       'projects:delete',
       'projects:get',
@@ -241,8 +275,11 @@ describe('application command composition', () => {
       'projects:update-archive',
       'sessions:delete-session',
       'sessions:edit-details',
+      'sessions:export-package',
       'sessions:filter-pdf-context-candidates',
+      'sessions:import-package',
       'sessions:link-pdf-context',
+      'sessions:package-operation',
       'sessions:set-delegation-policy',
       'sessions:unlink-pdf-context',
       'sessions:update-archive',
@@ -252,7 +289,8 @@ describe('application command composition', () => {
       'tags:set-assignment',
       'tags:snapshot',
       'tags:update',
-      'uploads:finalize-session'
+      'uploads:finalize-session',
+      'uploads:recover-draft'
     ])
   })
 
@@ -308,6 +346,10 @@ describe('application command composition', () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.task.commandNames()).toEqual([
+      'settings:bootstrap',
+      'cli:install',
+      'settings:get-preflight',
+      'settings:list-skills',
       'settings:list-connectors',
       'settings:get-connector-detail',
       'settings:set-connector-enabled',
@@ -339,6 +381,7 @@ describe('application command composition', () => {
       'reviewer:get-for-session',
       'reviewer:run',
       'artifacts:finalize-run',
+      'artifacts:resolve-version-descriptors',
       'preview-resources:acquire',
       'preview-resources:release'
     ])
@@ -607,6 +650,33 @@ it('routes Task Connector reads to the existing Settings owner without adding We
   expect(listConnectors).toHaveBeenCalledOnce()
   expect(composition.localWeb.commandNames()).not.toContain('settings:test-custom-server')
   expect(composition.remoteWeb.commandNames()).not.toContain('settings:test-custom-server')
+  composition.dispose()
+})
+
+it('routes Task doctor prerequisites to the existing Settings owners', async () => {
+  const preflight = {
+    claudeReady: false,
+    opencodeReady: false,
+    codebuddyReady: false,
+    codexReady: true,
+    agentFrameworkId: 'codex',
+    agentReady: true,
+    activeProviderReady: true
+  }
+  const skills = [{ id: 'literature-review' }]
+  const getPreflight = vi.fn(async () => preflight)
+  const listSkills = vi.fn(async () => skills)
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    settingsCore: { service: { getPreflight, listSkills } } as never
+  })
+
+  await expect(composition.task.invoke('settings:get-preflight', invocation())).resolves.toEqual(
+    preflight
+  )
+  await expect(composition.task.invoke('settings:list-skills', invocation())).resolves.toEqual(
+    skills
+  )
   composition.dispose()
 })
 

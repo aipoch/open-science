@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
+import { BootstrapError } from '../../shared/bootstrap'
 import type {
   AgentFrameworkId,
   AppIconVariant,
@@ -95,16 +96,113 @@ class SettingsRepository {
     return this.store.read()
   }
 
+  async selectBootstrapCodex(): Promise<void> {
+    await this.mutate((settings) => {
+      if (settings.agentFrameworkId && settings.agentFrameworkId !== 'codex')
+        throw new BootstrapError('configuration_conflict')
+      if (!settings.agentFrameworkId && settings.providers.length > 0)
+        throw new BootstrapError('configuration_conflict')
+      return settings.agentFrameworkId === 'codex'
+        ? settings
+        : { ...settings, agentFrameworkId: 'codex' }
+    })
+  }
+
+  async publishBootstrapProvider(
+    expected: StoredSettings,
+    provider: StoredProvider,
+    activate: boolean
+  ): Promise<void> {
+    await this.mutate((settings) => {
+      if (
+        settings.agentFrameworkId !== 'codex' ||
+        !isDeepStrictEqual(settings.providers, expected.providers) ||
+        settings.activeProviderId !== expected.activeProviderId ||
+        settings.activeModel !== expected.activeModel ||
+        (settings.activeProviderId && settings.activeProviderId !== provider.id)
+      )
+        throw new BootstrapError('configuration_conflict')
+      const providers = settings.providers.some(({ id }) => id === provider.id)
+        ? settings.providers.map((entry) => (entry.id === provider.id ? provider : entry))
+        : [...settings.providers, provider]
+      return {
+        ...settings,
+        providers,
+        ...(activate
+          ? {
+              activeProviderId: provider.id,
+              activeModel:
+                settings.activeProviderId === provider.id ? settings.activeModel : provider.model
+            }
+          : {})
+      }
+    })
+  }
+
+  async publishBootstrapOpenAlex(
+    expected: StoredConnectors | undefined,
+    apiKeyRef: string
+  ): Promise<void> {
+    await this.mutate((settings) => {
+      if (!isDeepStrictEqual(settings.connectors, expected))
+        throw new BootstrapError('configuration_conflict')
+      return {
+        ...settings,
+        connectors: {
+          enabledIds: [],
+          autoAllowIds: [],
+          ...settings.connectors,
+          openAlexApiKeyRef: apiKeyRef,
+          disabledConnectorIds: (settings.connectors?.disabledConnectorIds ?? []).filter(
+            (id) => id !== 'literature'
+          )
+        }
+      }
+    })
+  }
+
   // Inserts or replaces a provider without reordering existing entries. existingId, when supplied,
   // is checked in the same mutation so stale edits cannot append a deleted provider.
-  async upsertProvider(provider: StoredProvider, existingId?: string): Promise<StoredSettings> {
+  async upsertProvider(
+    provider: StoredProvider,
+    existingId?: string,
+    configEdit?: { expectedConfigRevision?: number }
+  ): Promise<StoredSettings> {
     return this.mutate((settings) => {
       const index = settings.providers.findIndex((existing) => existing.id === provider.id)
       if (existingId && !settings.providers.some(({ id }) => id === existingId))
         throw new Error('Provider no longer exists.')
+      const source = settings.providers.find(({ id }) => id === (existingId ?? provider.id))
+      if (
+        configEdit?.expectedConfigRevision !== undefined &&
+        (!source || (source.configRevision ?? 0) !== configEdit.expectedConfigRevision)
+      )
+        throw new Error('Provider configuration changed. Your draft has not been saved.')
+      const revision = Math.max(
+        source?.configRevision ?? 0,
+        settings.providers[index]?.configRevision ?? 0
+      )
+      if (configEdit && revision >= Number.MAX_SAFE_INTEGER)
+        throw new Error('Provider revision limit reached.')
+      provider = {
+        ...provider,
+        ...(configEdit
+          ? { configRevision: revision + 1 }
+          : source?.configRevision !== undefined
+            ? { configRevision: source.configRevision }
+            : {})
+      }
       const providers = [...settings.providers]
       if (index >= 0) {
         const existing = providers[index]
+        if (
+          existing.type === provider.type &&
+          existing.vendorId === provider.vendorId &&
+          existing.region === provider.region &&
+          existing.keyRef === provider.keyRef &&
+          existing.fetchedModels
+        )
+          provider = { ...provider, fetchedModels: existing.fetchedModels }
         // Full-provider saves can be based on a snapshot read before the runtime learned its Auto
         // fallback. Keep that main-owned state across Auto-to-Auto replacement; explicit transport
         // changes still clear it because either side of this guard is no longer Auto.
@@ -770,7 +868,8 @@ class SettingsRepository {
       const current = settings.notebookRuntimeEnablement?.[language]
       const enablement = update({
         enabled: { ...current?.enabled },
-        installAuthorized: { ...current?.installAuthorized }
+        installAuthorized: { ...current?.installAuthorized },
+        ...(current?.installLibraries ? { installLibraries: { ...current.installLibraries } } : {})
       })
       const sanitized = sanitizeSettings({ notebookRuntimeEnablement: { [language]: enablement } })
         .notebookRuntimeEnablement?.[language]

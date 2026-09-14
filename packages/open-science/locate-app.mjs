@@ -57,7 +57,13 @@ const defaultInstalledCandidates = (env = process.env) => {
       )
     )
   }
-  return ['/usr/bin/open-science', '/usr/local/bin/open-science']
+  // Debian's public command is a CLI wrapper, not the Electron executable.
+  return [
+    '/opt/Open-Science/open-science',
+    '/opt/Open Science/open-science',
+    '/usr/bin/open-science',
+    '/usr/local/bin/open-science'
+  ]
 }
 
 const locateDevelopmentApp = async () => {

@@ -133,6 +133,25 @@ describe('compute handlers', () => {
     })
   })
 
+  it('passes the complete owner tuple to result collection without submitting a new job', async () => {
+    const retryJobHarvest = vi.fn(async () => undefined)
+    const submitJob = vi.fn()
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({ retryJobHarvest, submitJob })
+    )
+    const request = {
+      jobId: 'job',
+      providerId: 'ssh:test',
+      sessionId: 'session',
+      projectId: 'project'
+    }
+    await handlers.jobsRetryHarvest(request)
+    expect(retryJobHarvest).toHaveBeenCalledExactlyOnceWith(request)
+    expect(submitJob).not.toHaveBeenCalled()
+  })
+
   it('passes the complete renderer owner tuple to cancellation', async () => {
     const cancelJob = vi.fn(async () => ({
       job_id: 'job-1',
@@ -2651,6 +2670,7 @@ describe('installComputeIpcHandlers', () => {
       'compute:jobs:set-remote-cleanup',
       COMPUTE_JOBS_LIST_CHANNEL,
       'compute:jobs:pending-notification',
+      'compute:jobs:retry-harvest',
       'compute:jobs:mark-consumed',
       'compute:jobs:transition-analysis',
       'compute:enabled-hosts:get',

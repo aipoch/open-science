@@ -20,6 +20,8 @@ import {
 import type { TaskRun } from '../../shared/task-api'
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
+import { loadManagedCodexErrorHandler } from '../settings/codex-error.test-utils'
+import { isProviderPromptError } from '../acp/prompt-error'
 import { FileTaskRunJournal, type TaskRunJournalEntry } from './task-run-journal'
 import {
   TASK_RUN_DISPOSAL_BUDGET_MS,
@@ -98,7 +100,11 @@ const configuredSettings: SettingsSnapshot = {
 
 class RetainedRunEventPayload {}
 
-type TaskRunnerOverrides = Omit<Partial<TaskRunnerDependencies>, 'agent' | 'sessions'> & {
+type TaskRunnerOverrides = Omit<
+  Partial<TaskRunnerDependencies>,
+  'agent' | 'sessions' | 'artifacts'
+> & {
+  artifacts?: Partial<TaskRunnerDependencies['artifacts']>
   agent?: Partial<TaskAgentPort>
   sessions?: Omit<
     Partial<TaskSessionPort>,
@@ -195,9 +201,6 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
       acquire: async () => ({ id: 'resource-1', url: 'preview://resource-1', size: 0 }),
       release: async () => undefined
     },
-    artifacts: {
-      finalizeRun: async () => ({ ok: true, artifacts: [] })
-    },
     runtimeEvents: { subscribe: () => () => undefined },
     settings: { get: async () => settings },
     specialists: { resolve: async (reference) => ({ id: reference }) },
@@ -212,6 +215,11 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
     createId: () => 'generated-id',
     now: () => 1,
     ...overrides,
+    artifacts: {
+      finalizeRun: async () => ({ ok: true, artifacts: [] }),
+      resolveVersionDescriptors: async () => [],
+      ...overrides.artifacts
+    },
     agent: { ...defaultAgent, ...overrides.agent },
     sessions: {
       ...defaultSessions,
@@ -225,6 +233,93 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
   })
 }
 describe('TaskRunner', () => {
+  it.each(['terminal-error', 'retryable-error', 'foreign-error', 'assistant-quotation'] as const)(
+    'reports the pinned Codex capacity outcome correctly for %s',
+    async (delivery) => {
+      const capacityError = 'Selected model is at capacity. Please try a different model.'
+      const root = await mkdtemp(join(tmpdir(), 'codex-capacity-'))
+      temporaryRoots.push(root)
+      const adapter = await loadManagedCodexErrorHandler(root)
+      const savedSessions: PersistedChatSession[] = []
+      let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+      const runner = createRunner({
+        sessions: {
+          save: async (saved) => {
+            savedSessions.push(structuredClone(saved))
+          }
+        },
+        runtimeEvents: {
+          subscribe: (listener) => {
+            emitEvent = listener
+            return () => undefined
+          }
+        },
+        agent: {
+          prompt: async ({ sessionId, promptMessageId }, observer) => {
+            await observer?.onPromptAdmitted?.()
+            observer?.onProviderPromptAccepted?.()
+            const update =
+              delivery === 'assistant-quotation'
+                ? {
+                    sessionUpdate: 'agent_message_chunk',
+                    content: { type: 'text', text: capacityError }
+                  }
+                : await adapter.createErrorEvent({
+                    turnId: delivery === 'foreign-error' ? 'old-turn' : 'turn-1',
+                    willRetry: delivery === 'retryable-error',
+                    error: {
+                      message: capacityError,
+                      codexErrorInfo: 'serverOverloaded',
+                      additionalDetails: null
+                    }
+                  })
+            // Match the adapter's prompt boundary: publish its update, then propagate getFailure().
+            emitEvent?.({
+              id: 'capacity-probe',
+              timestamp: 2,
+              sessionId,
+              promptMessageId,
+              kind: 'message',
+              level: 'info',
+              role: 'assistant',
+              text:
+                update?.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text'
+                  ? update.content.text
+                  : 'Retrieved references successfully.'
+            })
+            const failure = adapter.getFailure()
+            if (failure) {
+              emitEvent?.({
+                id: 'capacity-error',
+                timestamp: 3,
+                sessionId,
+                promptMessageId,
+                kind: 'error',
+                level: 'error',
+                text: failure.message,
+                providerError: isProviderPromptError(failure)
+              })
+              throw failure
+            }
+          }
+        }
+      })
+      const started = await runner.startRun({
+        project: project.id,
+        prompt: 'Find relevant papers and write the final answer to FINAL_ANSWER.txt.'
+      })
+      const result = await runner.waitForRun(started.id)
+      expect(result.status).toBe(delivery === 'terminal-error' ? 'failed' : 'completed')
+      if (delivery === 'terminal-error') {
+        expect(result.error).toContain(capacityError)
+        expect(savedSessions.at(-1)).toMatchObject({
+          status: 'error',
+          errorReportable: false
+        })
+      }
+    }
+  )
+
   it.each([
     ['claude-sonnet-4-6', 'claude-opus-4-6'],
     ['claude-opus-4-6', 'claude-sonnet-4-6']
@@ -3120,6 +3215,10 @@ describe('TaskRunner', () => {
           artifacts: [
             {
               id: 'artifact-file',
+              artifactId: 'artifact-lineage',
+              versionId: 'artifact-file',
+              versionNumber: 2,
+              checksum: 'a'.repeat(64),
               projectId: project.id,
               sessionId: 'session-artifact',
               messageId: 'artifact-agent',
@@ -3158,7 +3257,14 @@ describe('TaskRunner', () => {
       artifactIds: ['artifact-file']
     })
     expect(savedSessions.at(-1)?.artifacts).toEqual([
-      expect.objectContaining({ id: 'artifact-file', createdAt: 10 })
+      expect.objectContaining({
+        id: 'artifact-file',
+        createdAt: 10,
+        artifactId: 'artifact-lineage',
+        versionId: 'artifact-file',
+        versionNumber: 2,
+        sha256: 'a'.repeat(64)
+      })
     ])
   })
 

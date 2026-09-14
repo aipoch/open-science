@@ -9,6 +9,27 @@ import { optimizer, type shortcutOptions } from '@electron-toolkit/utils'
 const installWindowShortcuts = (app: App, options?: Omit<shortcutOptions, 'zoom'>): void => {
   app.on('browser-window-created', (_event: unknown, window: BrowserWindow) => {
     optimizer.watchWindowShortcuts(window, { ...options, zoom: true })
+
+    if (process.platform !== 'win32') return
+    window.webContents.on('before-input-event', (event, input) => {
+      if (
+        input.type !== 'keyDown' ||
+        !input.control ||
+        input.shift ||
+        input.alt ||
+        input.meta ||
+        !(
+          (input.key === '=' && input.code === 'Equal') ||
+          (input.key === '+' && input.code === 'NumpadAdd')
+        )
+      )
+        return
+
+      // Windows' native Plus accelerator covers Ctrl+Shift+=, but not these aliases.
+      // Match Electron's zoomIn role step and suppress a second renderer/menu action.
+      event.preventDefault()
+      window.webContents.setZoomLevel(window.webContents.getZoomLevel() + 0.5)
+    })
   })
 }
 

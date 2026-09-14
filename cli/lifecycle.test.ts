@@ -421,24 +421,37 @@ describe('headless startup', () => {
     expect(() =>
       parseCliArgs(['start', '--credential-store=file', '--credential-store', 'os'])
     ).toThrow()
-    expect(buildAppLaunchArgs(['app-root'], { credentialStore: 'file' }, 44100)).toEqual([
-      'app-root',
-      '--credential-store=file',
-      '--open-science-headless',
-      '--serve=44100'
-    ])
+    expect(
+      buildAppLaunchArgs(['app-root'], { credentialStore: 'file' }, 44100, { platform: 'darwin' })
+    ).toEqual(['app-root', '--credential-store=file', '--open-science-headless', '--serve=44100'])
     expect(buildAppLaunchArgs([], {}, 44100).join(' ')).not.toContain('credential-store')
   })
 
   it('places the no-sandbox runtime switch before the development app path', () => {
-    expect(buildAppLaunchArgs(['app-root'], { noSandbox: true }, 44100)).toEqual([
-      '--no-sandbox',
-      'app-root',
-      '--open-science-headless',
-      '--serve=44100'
-    ])
+    expect(
+      buildAppLaunchArgs(['app-root'], { noSandbox: true }, 44100, { platform: 'darwin' })
+    ).toEqual(['--no-sandbox', 'app-root', '--open-science-headless', '--serve=44100'])
     expect(buildAppLaunchArgs(['app-root'], {}, 44100)).not.toContain('--no-sandbox')
   })
+
+  it.each([
+    ['linux', {}, true],
+    ['linux', { DISPLAY: ':0' }, false],
+    ['linux', { WAYLAND_DISPLAY: 'wayland-0' }, false],
+    ['darwin', {}, false],
+    ['win32', {}, false]
+  ] as const)(
+    'selects display-free Ozone only for Linux without a display: %s %j',
+    (platform, env, expected) => {
+      const args = buildAppLaunchArgs(['app-root'], {}, 44100, { platform, env })
+      expect(args.includes('--ozone-platform=headless')).toBe(expected)
+      expect(args).not.toContain('--no-sandbox')
+      expect(args).not.toContain('--headless')
+      expect(args).toContain('--open-science-headless')
+      if (expected)
+        expect(args.indexOf('--ozone-platform=headless')).toBeLessThan(args.indexOf('app-root'))
+    }
+  )
 
   it('stops waiting as soon as the packaged app exits', async () => {
     const child = new EventEmitter()

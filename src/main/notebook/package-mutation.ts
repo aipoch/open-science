@@ -61,6 +61,9 @@ type NotebookPackageMutationOwnerOptions = {
   recheckRepair: (
     target: NotebookPackageAdmittedTarget
   ) => Extract<NotebookPackageAdmission, { status: 'refused' }> | undefined
+  recheckAuthorization: (
+    target: NotebookPackageAdmittedTarget
+  ) => Promise<Extract<NotebookPackageAdmission, { status: 'refused' }> | undefined>
   runtimeRepair: Pick<
     NotebookRuntimeRepairOwner,
     'quarantineProtectedIdentity' | 'completeInterruptedInstall'
@@ -186,6 +189,11 @@ class NotebookPackageMutationOwner {
           const mirror =
             typeof requestedMirror === 'function' ? await requestedMirror() : requestedMirror
           signal?.throwIfAborted()
+          const authorizationRefusal = await this.options.recheckAuthorization(target)
+          if (authorizationRefusal) {
+            result = authorizationRefusal.result
+            return result
+          }
           releaseWorkingCache = archiveCacheTransaction
             ? await this.options.retainWorkingCache?.(runtimeRoot, operationId)
             : undefined

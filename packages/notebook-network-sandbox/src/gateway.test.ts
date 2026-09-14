@@ -4,10 +4,11 @@ import { createServer, connect, type Socket } from 'node:net'
 import { createServer as createHttpServer, request } from 'node:http'
 import { createServer as createTlsServer } from 'node:tls'
 import { execFile, spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -30,17 +31,21 @@ const runResetTunnelChild = (
   resetPoint: 'before-routing' | 'client' | 'destination'
 ): Promise<ChildResult> =>
   new Promise((resolve, reject) => {
-    const gatewayModuleUrl = `data:text/javascript;base64,${Buffer.from(
+    const bundleRoot = mkdtempSync(join(tmpdir(), 'notebook-gateway-bundle-'))
+    const bundlePath = join(bundleRoot, 'command-gateway.mjs')
+    writeFileSync(
+      bundlePath,
       buildSync({
         entryPoints: [
-          new URL('../runtime/src/gateway/command-gateway.ts', import.meta.url).pathname
+          fileURLToPath(new URL('../runtime/src/gateway/command-gateway.ts', import.meta.url))
         ],
         bundle: true,
         platform: 'node',
         format: 'esm',
         write: false
       }).outputFiles[0]!.text
-    ).toString('base64')}`
+    )
+    const gatewayModuleUrl = pathToFileURL(bundlePath).href
     const script = `
       import { once } from 'node:events'
       import { connect, createServer } from 'node:net'
@@ -106,8 +111,17 @@ const runResetTunnelChild = (
     child.stdout.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => (stderr += chunk))
     child.stdout.on('data', (chunk: string) => (stdout += chunk))
-    child.once('error', reject)
-    child.once('close', (exitCode, signal) => resolve({ exitCode, signal, stderr, stdout }))
+    const removeBundle = (): void => {
+      rmSync(bundleRoot, { recursive: true, force: true })
+    }
+    child.once('error', (error) => {
+      removeBundle()
+      reject(error)
+    })
+    child.once('close', (exitCode, signal) => {
+      removeBundle()
+      resolve({ exitCode, signal, stderr, stdout })
+    })
   })
 
 afterEach(async () => {

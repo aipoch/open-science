@@ -1,65 +1,62 @@
-import {
-  COMMON_NAMESPACE,
-  createNamespacedResource,
-  NATIVE_NAMESPACE
-} from '../../shared/i18n/core'
-import { common as deCommon, native as deNative } from '../../shared/i18n/locales/de.json'
-import { common as esCommon, native as esNative } from '../../shared/i18n/locales/es.json'
-import { common as frCommon, native as frNative } from '../../shared/i18n/locales/fr.json'
-import { common as jaCommon, native as jaNative } from '../../shared/i18n/locales/ja.json'
-import { common as koCommon, native as koNative } from '../../shared/i18n/locales/ko.json'
-import { common as ruCommon, native as ruNative } from '../../shared/i18n/locales/ru.json'
-import {
-  common as zhHansCommon,
-  native as zhHansNative
-} from '../../shared/i18n/locales/zh-Hans.json'
-import {
-  common as zhHantCommon,
-  native as zhHantNative
-} from '../../shared/i18n/locales/zh-Hant.json'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
-export const nativeResources = {
-  de: createNamespacedResource({
-    [COMMON_NAMESPACE]: deCommon,
-    [NATIVE_NAMESPACE]: deNative
-  }),
-  es: createNamespacedResource({
-    [COMMON_NAMESPACE]: esCommon,
-    [NATIVE_NAMESPACE]: esNative
-  }),
-  fr: createNamespacedResource({
-    [COMMON_NAMESPACE]: frCommon,
-    [NATIVE_NAMESPACE]: frNative
-  }),
-  ja: createNamespacedResource({
-    [COMMON_NAMESPACE]: jaCommon,
-    [NATIVE_NAMESPACE]: jaNative
-  }),
-  ko: createNamespacedResource({
-    [COMMON_NAMESPACE]: koCommon,
-    [NATIVE_NAMESPACE]: koNative
-  }),
-  ru: createNamespacedResource({
-    [COMMON_NAMESPACE]: ruCommon,
-    [NATIVE_NAMESPACE]: ruNative
-  }),
-  'zh-Hans': createNamespacedResource({
-    [COMMON_NAMESPACE]: zhHansCommon,
-    [NATIVE_NAMESPACE]: zhHansNative
-  }),
-  'zh-Hant': createNamespacedResource({
-    [COMMON_NAMESPACE]: zhHantCommon,
-    [NATIVE_NAMESPACE]: zhHantNative
-  })
-} as const
+import { createNamespacedResource } from '../../shared/i18n/core'
+import { LOCALES, type Locale } from '../../shared/locale'
 
-export const nativeCatalogs = {
-  de: deNative,
-  es: esNative,
-  fr: frNative,
-  ja: jaNative,
-  ko: koNative,
-  ru: ruNative,
-  'zh-Hans': zhHansNative,
-  'zh-Hant': zhHantNative
-} as const
+// The Electron build emits only common/native catalogs beside its main-process chunks.
+// Source runners (Vitest) read the canonical shared catalogs instead.
+declare const __OPEN_SCIENCE_NATIVE_LOCALE_DIRECTORY__: string
+const catalogDirectory =
+  typeof __OPEN_SCIENCE_NATIVE_LOCALE_DIRECTORY__ === 'undefined'
+    ? join(__dirname, '../../shared/i18n/locales')
+    : join(__dirname, __OPEN_SCIENCE_NATIVE_LOCALE_DIRECTORY__)
+
+type TranslatedLocale = Exclude<Locale, 'en'>
+type Catalog = Record<string, string>
+type NativeResource = { common: Catalog; native: Catalog }
+const catalogs = new Map<TranslatedLocale, NativeResource>()
+const sanitizedResources = new Map<TranslatedLocale, NativeResource>()
+
+const readCatalog = (locale: TranslatedLocale): NativeResource => {
+  let catalog = catalogs.get(locale)
+  if (!catalog) {
+    const { common, native } = JSON.parse(
+      readFileSync(join(catalogDirectory, `${locale}.json`), 'utf8')
+    ) as NativeResource
+    catalog = { common, native }
+    catalogs.set(locale, catalog)
+  }
+  return catalog
+}
+
+const getResource = (locale: TranslatedLocale): NativeResource => {
+  let resource = sanitizedResources.get(locale)
+  if (!resource) {
+    resource = createNamespacedResource(readCatalog(locale))
+    sanitizedResources.set(locale, resource)
+  }
+  return resource
+}
+
+// Preserve the catalog inspection API without reading unused languages at module import time.
+const translatedLocales = LOCALES.filter((locale): locale is TranslatedLocale => locale !== 'en')
+export const nativeResources = Object.defineProperties(
+  {},
+  Object.fromEntries(
+    translatedLocales.map((locale) => [
+      locale,
+      { enumerable: true, get: () => getResource(locale) }
+    ])
+  )
+) as Record<TranslatedLocale, NativeResource>
+
+export const nativeCatalogs = Object.defineProperties(
+  {},
+  Object.fromEntries(
+    translatedLocales.map((locale) => [
+      locale,
+      { enumerable: true, get: () => readCatalog(locale).native }
+    ])
+  )
+) as Record<TranslatedLocale, Catalog>

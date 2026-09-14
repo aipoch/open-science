@@ -18,47 +18,50 @@ const environment = (): NodeJS.ProcessEnv => {
   return env
 }
 
-test('continues localized startup stages in the same isolated helper and retains owner failure', async ({}, info) => {
-  const progress = prepareStartupPresenter()
-  const application = await electron.launch({
-    args: [root, '--brand-migration-progress-window'],
-    env: {
-      ...environment(),
-      OPEN_SCIENCE_STARTUP_CHANNEL: progress.environment,
-      OPEN_SCIENCE_MIGRATION_LOCALE: 'zh-Hans'
+for (const hostLanguage of ['en-US', 'zh-CN']) {
+  test(`continues localized startup stages in the same isolated helper and retains owner failure (${hostLanguage})`, async ({}, info) => {
+    const progress = prepareStartupPresenter()
+    const application = await electron.launch({
+      args: [`--lang=${hostLanguage}`, root, '--brand-migration-progress-window'],
+      env: {
+        ...environment(),
+        OPEN_SCIENCE_STARTUP_CHANNEL: progress.environment,
+        OPEN_SCIENCE_MIGRATION_LOCALE: 'zh-Hans'
+      }
+    })
+    try {
+      const page = await application.firstWindow()
+      const presenter = progress.attach()
+      for (const [phase, label] of [
+        ['startup-database', '正在检查数据库…'],
+        ['startup-settings', '正在加载设置…'],
+        ['startup-sessions', '正在加载已保存的对话…']
+      ]) {
+        presenter.update(phase)
+        await expect(page.getByRole('status')).toHaveText(label)
+        await expect(page.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
+        expect(application.windows()).toHaveLength(1)
+        await expect(page.getByText('迁移后请重新添加模型密钥')).toHaveCount(0)
+      }
+      await page.screenshot({ path: info.outputPath('continuous-startup-progress.png') })
+      presenter.fail('Fixture startup failed after migration')
+      await expect(page.getByText('Fixture startup failed after migration')).toBeVisible()
+      await expect(page.getByText('迁移在应用打开数据前已停止。')).toHaveCount(0)
+      await page.screenshot({ path: info.outputPath('continuous-startup-failure.png') })
+      await page.getByRole('button', { name: '关闭', exact: true }).click()
+    } finally {
+      await application
+        .evaluate(() => (process as NodeJS.EventEmitter).emit('message', { type: 'complete' }))
+        .catch(() => {})
+      await application.close().catch(() => {})
+      progress.cleanup()
     }
   })
-  try {
-    const page = await application.firstWindow()
-    const presenter = progress.attach()
-    for (const [phase, label] of [
-      ['startup-database', '正在检查数据库…'],
-      ['startup-settings', '正在加载设置…'],
-      ['startup-sessions', '正在加载已保存的对话…']
-    ]) {
-      presenter.update(phase)
-      await expect(page.getByRole('status')).toHaveText(label)
-      await expect(page.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
-      expect(application.windows()).toHaveLength(1)
-      await expect(page.getByText('迁移后请重新添加模型密钥')).toHaveCount(0)
-    }
-    await page.screenshot({ path: info.outputPath('continuous-startup-progress.png') })
-    presenter.fail('Fixture startup failed after migration')
-    await expect(page.getByText('Fixture startup failed after migration')).toBeVisible()
-    await expect(page.getByText('迁移在应用打开数据前已停止。')).toHaveCount(0)
-    await page.screenshot({ path: info.outputPath('continuous-startup-failure.png') })
-    await page.getByRole('button', { name: '关闭', exact: true }).click()
-  } finally {
-    await application
-      .evaluate(() => (process as NodeJS.EventEmitter).emit('message', { type: 'complete' }))
-      .catch(() => {})
-    await application.close().catch(() => {})
-    progress.cleanup()
-  }
-})
+}
 
-for (const windowMode of ['normal', 'hidden'] as const) {
-  test(`retains migration UI until the real application paints an interactive page (${windowMode})`, async ({}, info) => {
+for (const startupCase of ['normal', 'hidden', 'quit-before-interactive'] as const) {
+  const windowMode = startupCase === 'hidden' ? 'hidden' : 'normal'
+  test(`retains migration UI until the real application paints an interactive page (${startupCase})`, async ({}, info) => {
     test.skip(
       process.platform === 'win32',
       'Historical migration needs the native Windows occupancy provider'
@@ -78,6 +81,11 @@ for (const windowMode of ['normal', 'hidden'] as const) {
     const mainGate = new Promise<void>((resolve) => {
       releaseMain = resolve
     })
+    let releaseOnboarding!: () => void
+    const onboardingGate = new Promise<void>((resolve) => {
+      releaseOnboarding = resolve
+    })
+    let onboardingRequested = false
     const assets = resolve('out/renderer')
     const mainHtml = await readFile(join(assets, 'index.html'), 'utf8')
     const mainScript = mainHtml.match(/src="\.\/(assets\/[^"\n]+\.js)"/)![1]
@@ -87,6 +95,10 @@ for (const windowMode of ['normal', 'hidden'] as const) {
       const pathname = new URL(request.url!, 'http://localhost').pathname
       const filename = pathname === '/' ? 'index.html' : pathname.slice(1)
       if (filename === mainScript) await mainGate
+      if (/^assets\/OnboardingWizard-[^/]+\.js$/.test(filename)) {
+        onboardingRequested = true
+        await onboardingGate
+      }
       const path = resolve(assets, filename)
       if (!path.startsWith(assets + '/')) {
         response.writeHead(403).end()
@@ -169,6 +181,32 @@ for (const windowMode of ['normal', 'hidden'] as const) {
         )
       ).toBe(false)
       releaseMain()
+      await expect.poll(() => onboardingRequested).toBe(true)
+      // A lazy route's loading fallback is not an interactive application page.
+      await page.evaluate(async () => {
+        for (let i = 0; i < 3; i++) await new Promise(requestAnimationFrame)
+      })
+      expect(
+        await application.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows()[0].isVisible()
+        )
+      ).toBe(false)
+      expect(() => process.kill(endpoint.pid, 0)).not.toThrow()
+      if (startupCase === 'quit-before-interactive') {
+        await application.evaluate(({ app }) => app.quit())
+        await expect
+          .poll(() => {
+            try {
+              process.kill(endpoint.pid, 0)
+              return true
+            } catch {
+              return false
+            }
+          })
+          .toBe(false)
+        return
+      }
+      releaseOnboarding()
       await expect(
         page.getByRole('heading', { name: 'Set up your research workspace.' })
       ).toBeVisible()
@@ -205,6 +243,7 @@ for (const windowMode of ['normal', 'hidden'] as const) {
       throw error
     } finally {
       releaseMain()
+      releaseOnboarding()
       await application?.close().catch(() => {})
       // A deliberately failed owner retains a diagnostic window; this disposable fixture owns it.
       if (helperPid) {

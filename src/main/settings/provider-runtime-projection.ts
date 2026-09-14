@@ -71,7 +71,7 @@ class ProviderRuntimeProjectionOwner {
     if (provider.type === 'official' && provider.vendorId) {
       return resolveVendorModelApiEndpoints(
         provider.vendorId,
-        activeModel ?? defaultVendorModel(provider.vendorId)
+        activeModel ?? defaultVendorModel(provider.vendorId, provider.region)
       )
     }
 
@@ -86,6 +86,7 @@ class ProviderRuntimeProjectionOwner {
 
     return {
       id: provider.id,
+      configRevision: provider.configRevision,
       type: provider.type,
       codexAuthMode: provider.codexAuthMode,
       codexTransport: provider.codexTransport,
@@ -229,7 +230,7 @@ class ProviderRuntimeProjectionOwner {
       }
     }
     if (provider.type === 'official' && provider.vendorId) {
-      const model = modelOverride ?? defaultVendorModel(provider.vendorId)
+      const model = modelOverride ?? defaultVendorModel(provider.vendorId, provider.region)
       const contextWindow = resolveModelContextWindow(provider.vendorId, model)
       return {
         type: 'custom',
@@ -284,7 +285,7 @@ class ProviderRuntimeProjectionOwner {
     if (provider.type === 'official' && provider.vendorId) {
       return isVendorModelMultimodal(
         provider.vendorId,
-        activeModel ?? defaultVendorModel(provider.vendorId)
+        activeModel ?? defaultVendorModel(provider.vendorId, provider.region)
       )
     }
     return false
@@ -300,10 +301,7 @@ class ProviderRuntimeProjectionOwner {
         : getOfficialVendorModelIds('xai')
     }
     if (provider.type === 'official' && provider.vendorId) {
-      if (provider.fetchedModels && provider.fetchedModels.length > 0) {
-        return provider.fetchedModels
-      }
-      return getOfficialVendorModelIds(provider.vendorId)
+      return getOfficialVendorModelIds(provider.vendorId, provider.region, provider.fetchedModels)
     }
     return provider.model ? [provider.model] : []
   }

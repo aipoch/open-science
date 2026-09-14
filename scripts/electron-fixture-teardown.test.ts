@@ -1,14 +1,24 @@
+import * as filesystem from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rm: vi.fn(actual.rm) }
+})
+
 const boundary = vi.hoisted(() => ({
   fixture: undefined as unknown as (
     options: unknown,
-    use: (app: { restartAfterCrash: () => Promise<unknown> }) => Promise<void>,
+    use: (app: {
+      restartAfterCrash: () => Promise<unknown>
+      restart: () => Promise<unknown>
+    }) => Promise<void>,
     info: unknown
   ) => Promise<void>,
+  fixtureTimeout: undefined as number | undefined,
   launch: vi.fn(),
   reap: vi.fn(),
   rendererFailure: vi.fn(),
@@ -22,8 +32,8 @@ vi.mock('@playwright/test', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@playwright/test')>()
   return {
     test: {
-      extend: (fixtures: { app: typeof boundary.fixture }) => {
-        boundary.fixture = fixtures.app
+      extend: (fixtures: { app: [typeof boundary.fixture, { timeout?: number }] }) => {
+        ;[boundary.fixture, { timeout: boundary.fixtureTimeout }] = fixtures.app
         return {}
       }
     },
@@ -41,7 +51,11 @@ vi.mock('../e2e/fixtures/renderer-failure-gate', () => ({
     assertNoFailures = boundary.rendererFailure
   }
 }))
-import '../e2e/fixtures/electron-app'
+import { removeTreeForCleanup } from '../e2e/fixtures/electron-app'
+
+const startupBudget = process.platform === 'win32' ? 180_000 : 90_000
+const forcedCleanupBudget =
+  process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
 
 let root: string
 const close = vi.fn()
@@ -84,7 +98,14 @@ beforeEach(() => {
 })
 afterEach(async () => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  vi.mocked(filesystem.rm).mockReset().mockImplementation(actual.rm)
   if (root) await rm(root, { recursive: true, force: true })
+})
+
+it('gives Windows startup an independent bounded fixture budget', () => {
+  expect(boundary.fixtureTimeout).toBe(process.platform === 'win32' ? 240_000 : undefined)
 })
 
 it('removes the owned root after successful fixture teardown', async () => {
@@ -114,7 +135,7 @@ it.each(['not reaped', 'rejected', 'timeout'])(
     const rejected = expect(operation).rejects.toThrow(/reap|forced/i)
     if (failure === 'timeout') {
       await vi.waitFor(() => expect(boundary.reap).toHaveBeenCalled())
-      await vi.advanceTimersByTimeAsync(10_000)
+      await vi.advanceTimersByTimeAsync(forcedCleanupBudget)
     }
     await rejected
     expect(existsSync(join(root, 'logs', 'main.log'))).toBe(true)
@@ -188,10 +209,10 @@ it('attaches startup diagnostics before disposing a failed renderer launch', asy
   expect(existsSync(root)).toBe(false)
 })
 
-it('allows a fresh profile to finish initialization after a minute of migration work', async () => {
+it('allows a fresh profile to finish initialization within its platform budget', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
   boundary.realPolling = true
-  boundary.readyAt = 65_000
+  boundary.readyAt = process.platform === 'win32' ? 100_000 : 65_000
   const install = vi.fn(async () => undefined)
   const operation = boundary
     .fixture({ windowMode: 'hidden' }, install, {
@@ -204,7 +225,7 @@ it('allows a fresh profile to finish initialization after a minute of migration 
       (error: unknown) => error
     )
   await vi.waitFor(() => expect(boundary.evaluated).toHaveBeenCalled())
-  await vi.advanceTimersByTimeAsync(70_000)
+  await vi.advanceTimersByTimeAsync(boundary.readyAt + 5_000)
   expect(await operation).toBeUndefined()
   expect(install).toHaveBeenCalledOnce()
 })
@@ -225,7 +246,7 @@ it('still fails with diagnostics when initialization never finishes', async () =
       (error: unknown) => error
     )
   await vi.waitFor(() => expect(boundary.evaluated).toHaveBeenCalled())
-  await vi.advanceTimersByTimeAsync(100_000)
+  await vi.advanceTimersByTimeAsync(startupBudget + 10_000)
   const failure = (await operation) as Error
   expect(failure.message).toContain('Startup transitions:')
   expect(String(failure.cause)).toContain('while waiting on the predicate')
@@ -259,7 +280,7 @@ it.each([true, false])(
   async (finishes) => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
     boundary.realPolling = true
-    boundary.readyAt = 80_000
+    boundary.readyAt = startupBudget - 10_000
     boundary.settingsWait.mockImplementationOnce(
       ({ timeout }: { timeout: number }) =>
         new Promise<void>((resolve, reject) => {
@@ -288,7 +309,7 @@ it.each([true, false])(
         (error: unknown) => error
       )
     await vi.waitFor(() => expect(boundary.evaluated).toHaveBeenCalled())
-    await vi.advanceTimersByTimeAsync(110_000)
+    await vi.advanceTimersByTimeAsync(startupBudget + 20_000)
     expect(boundary.settingsWait).toHaveBeenCalled()
     if (finishes) {
       expect(await operation).toBeUndefined()
@@ -301,5 +322,59 @@ it.each([true, false])(
         expect.objectContaining({ contentType: 'text/plain' })
       )
     }
+  }
+)
+
+it('restarts without passing the timing label as a package file argument', async () => {
+  await boundary.fixture(
+    { windowMode: 'hidden' },
+    async (app) => {
+      await app.restart()
+    },
+    { status: 'passed', expectedStatus: 'passed', attach }
+  )
+  expect(boundary.launch).toHaveBeenCalledTimes(2)
+  expect(boundary.launch.mock.calls[1][0].args).toEqual(boundary.launch.mock.calls[0][0].args)
+})
+
+// Fault injection checks the retry bound without depending on OS-specific file locks or ACLs.
+it.each(['EACCES', 'EIO'])('does not retry non-transient removal error %s', async (code) => {
+  const error = Object.assign(new Error('cannot remove fixture'), { code })
+  const remove = vi.mocked(filesystem.rm).mockRejectedValue(error)
+  await expect(removeTreeForCleanup('owned-fixture')).rejects.toBe(error)
+  expect(remove).toHaveBeenCalledExactlyOnceWith('owned-fixture', {
+    force: true,
+    recursive: true,
+    maxRetries: 0
+  })
+})
+
+it.each(['EBUSY', 'ENOTEMPTY', 'EMFILE', 'ENFILE', 'EPERM'])(
+  'recovers from a transient removal error %s',
+  async (code) => {
+    vi.useFakeTimers()
+    const remove = vi
+      .spyOn(filesystem, 'rm')
+      .mockRejectedValueOnce(Object.assign(new Error('temporary lock'), { code }))
+      .mockResolvedValue(undefined)
+    const cleanup = removeTreeForCleanup('owned-fixture')
+    await vi.advanceTimersByTimeAsync(200)
+    await cleanup
+    expect(remove).toHaveBeenCalledTimes(2)
+    expect(vi.getTimerCount()).toBe(0)
+  }
+)
+
+it.each(['EBUSY', 'EPERM'])(
+  'stops %s removal retries after five attempts and leaves no retry timer',
+  async (code) => {
+    vi.useFakeTimers()
+    const error = Object.assign(new Error('still locked'), { code })
+    const remove = vi.mocked(filesystem.rm).mockRejectedValue(error)
+    const rejected = expect(removeTreeForCleanup('owned-fixture')).rejects.toBe(error)
+    await vi.advanceTimersByTimeAsync(200 + 400 + 600 + 800)
+    await rejected
+    expect(remove).toHaveBeenCalledTimes(5)
+    expect(vi.getTimerCount()).toBe(0)
   }
 )

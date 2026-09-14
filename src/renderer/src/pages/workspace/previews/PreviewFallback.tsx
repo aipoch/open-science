@@ -1,8 +1,8 @@
-import { FileWarning, FileX, RefreshCw } from 'lucide-react'
+import { ErrorNotice } from '@/components/error-notice'
+import { FileWarning, FileX } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { Button } from '@/components/ui/button'
 import type { PreviewFileFormat, PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { LocalFileFallbackAction } from '../LocalFileHeaderActions'
@@ -176,29 +176,19 @@ export const PreviewFallbackCard = ({
       data-preview-status="error"
       className="flex size-full items-center justify-center px-6 py-8"
     >
-      <div className="grid w-full max-w-[19rem] grid-cols-[2.25rem_minmax(0,1fr)] items-start gap-x-3">
-        <div className="grid size-9 place-items-center rounded-lg border border-danger-000/15 bg-danger-900/45 text-danger-000">
-          <Icon className="size-4" aria-hidden />
-        </div>
-        <div className="min-w-0 pt-px">
-          <div className="text-[12px] font-medium text-text-000">{cardTitle}</div>
-          <p className="mt-0.5 text-[10px] leading-4 text-text-100">{message}</p>
-          {retryable && runtime ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="mt-3"
-              onClick={runtime.retry}
-            >
-              <RefreshCw aria-hidden />
-              {t('Retry')}
-            </Button>
-          ) : null}
-          {action}
-          <span className="sr-only">{name}</span>
-        </div>
-      </div>
+      <ErrorNotice
+        role="alert"
+        className="w-full max-w-md"
+        icon={Icon}
+        title={cardTitle}
+        description={message}
+        primaryButton={
+          retryable && runtime ? { label: t('Retry'), onClick: runtime.retry } : undefined
+        }
+      >
+        {action}
+        <span className="sr-only">{name}</span>
+      </ErrorNotice>
     </div>
   )
 }

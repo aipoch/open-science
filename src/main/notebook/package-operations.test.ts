@@ -728,6 +728,7 @@ describe('NotebookPackageOperations', () => {
   it('uses the runtime label as the environment name for an external binding', async () => {
     const external = {
       ...binding('python', '/opt/research/bin/python', 'external'),
+      resolvedInterpreter: { command: '/opt/research/bin/python' },
       label: 'Research Python'
     }
     const { owner } = harness(session('session-1', external), {

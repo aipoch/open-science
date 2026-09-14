@@ -1,3 +1,4 @@
+import { literatureFailureSchema } from './literature-failure'
 import { z } from 'zod'
 
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
@@ -984,6 +985,7 @@ const literatureFullTextResultSchema = z.discriminatedUnion('mode', [
     .object({
       mode: z.literal('search'),
       candidates: z.array(literatureFullTextCandidateSchema).max(10),
+      failures: z.array(literatureFailureSchema).max(10).optional(),
       notices: z.array(
         z.enum([
           'missing-identifiers',

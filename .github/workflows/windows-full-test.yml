@@ -57,18 +57,55 @@ jobs:
             echo "Latest successful Windows full coverage is ${last_successful_sha:-unavailable}; testing $GITHUB_SHA."
           fi
 
-  windows_full_test:
-    name: Windows full test (${{ matrix.shard }}/3)
+  windows_dependencies:
+    name: Prepare Windows test dependencies
     needs: plan
-    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'notebook-mutation') }}
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      node_version: ${{ steps.node.outputs.node-version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        id: node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Pack dependencies
+        # Windows defaults to pwsh, which does not expand $RUNNER_TEMP. Pack into the same
+        # runner.temp directory that upload-artifact reads, matching PR Gate's Windows E2E setup.
+        shell: bash
+        run: node scripts/ci/e2e-setup-snapshot.mjs pack-dependencies "$RUNNER_TEMP/windows-dependencies"
+      - name: Upload dependencies
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-dependencies-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/windows-dependencies/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  windows_full_test:
+    name: Windows full test (${{ matrix.shard }}/5)
+    needs: [plan, windows_dependencies]
+    if: ${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}
+    runs-on: windows-latest
+    timeout-minutes: 60
     env:
       VITEST_WINDOWS_FULL_TEST: '1'
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3]') }}
+        shard: ${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -76,21 +113,29 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: ${{ needs.windows_dependencies.outputs.node_version }}
+          package-manager-cache: false
 
-          cache: npm
+      - name: Download dependencies
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.windows_dependencies.outputs.artifact_id }}
+          path: ${{ runner.temp }}/windows-dependencies/
+          merge-multiple: true
 
-      - name: Install dependencies
-        run: node scripts/ci/npm-ci.mjs
+      - name: Restore dependencies
+        shell: bash
+        run: node scripts/ci/e2e-setup-snapshot.mjs restore-dependencies "$RUNNER_TEMP/windows-dependencies"
 
       - name: Test complete suite shard
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
         # SQLite-heavy integration suites contend heavily for Windows disk I/O when Vitest uses
         # every available core, and hosted-runner disk latency occasionally exceeds the default
         # per-test/hook budgets. Keep files serial and use bounded 60-second budgets; individual
-        # tests still fail at that bound. The 35-minute job timeout covers checkout, npm ci, and a
-        # slow serial suite without treating a still-progressing shard as a hang.
-        run: npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
+        # tests still fail at that bound. Five shards keep a still-progressing serial suite inside
+        # the 60-minute job timeout after checkout and npm ci. GitHub annotations keep the failing
+        # test visible if the job is later cancelled.
+        run: npm test -- --shard=${{ matrix.shard }}/5 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions
 
       - name: Test recent Windows regressions
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}
@@ -104,9 +149,32 @@ jobs:
           src/main/database/database-null-and-version-bounds.test.ts
           src/main/database/migration-service.test.ts
           src/main/notebook/runtime-service.test.ts
+          src/main/notebook/source-file-access-analysis.test.ts
+          src/main/notebook/source-file-access-analysis.additional-omics.test.ts
+          src/main/notebook/source-file-access-analysis.clinical-formats.test.ts
+          src/main/notebook/source-file-access-analysis.workflow-orchestration.test.ts
+          src/main/session-package/archive.test.ts
+          src/main/session-package/service.test.ts
+          src/main/notebook/package-manager.test.ts
+          src/main/notebook/package-process-sandbox.test.ts
+          src/main/notebook/network-sandbox-owner.test.ts
+          src/main/notebook/dependency-analysis.test.ts
+          src/main/notebook/dependency-analysis.chord.test.ts
+          src/main/notebook/dependency-analysis.path-plot.test.ts
+          src/main/notebook/dependency-analysis.anndata.test.ts
+          src/main/artifacts/artifact-reproducibility-outputs.test.ts
+          src/main/acp/context-usage-static-context.test.ts
+          src/main/notebook/provisioner.test.ts
+          src/main/notebook/reproduction-runtime.test.ts
+          src/main/notebook/recovery-coordinator.test.ts
           src/main/artifacts/provenance-repository.test.ts
           src/main/artifacts/provenance-write-contract.test.ts
+          src/main/artifacts/artifact-reproducibility-export.test.ts
+          src/main/agent-framework/opencode.test.ts
+          src/main/logger.test.ts
           src/main/delegation/production-composition.test.ts
+          packages/notebook-network-sandbox/src/gateway.test.ts
+          packages/notebook-network-sandbox/src/public-read-lifecycle.test.ts
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
 
   notebook_sandbox:
@@ -163,8 +231,8 @@ jobs:
 
   notebook_mutation:
     name: Windows Notebook controlled mutations
-    needs: plan
-    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'notebook-mutation') }}
+    needs: [plan, windows_dependencies]
+    if: ${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'notebook-mutation') }}
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
@@ -175,10 +243,17 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: node scripts/ci/npm-ci.mjs
+          node-version: ${{ needs.windows_dependencies.outputs.node_version }}
+          package-manager-cache: false
+      - name: Download dependencies
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.windows_dependencies.outputs.artifact_id }}
+          path: ${{ runner.temp }}/windows-dependencies/
+          merge-multiple: true
+      - name: Restore dependencies
+        shell: bash
+        run: node scripts/ci/e2e-setup-snapshot.mjs restore-dependencies "$RUNNER_TEMP/windows-dependencies"
       - name: Build Electron application
         run: npm run build:e2e
       - name: Run controlled mutations

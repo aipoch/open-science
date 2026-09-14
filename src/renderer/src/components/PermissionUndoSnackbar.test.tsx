@@ -144,14 +144,12 @@ describe('PermissionUndoSnackbar', () => {
     expect(container.textContent).not.toContain('Revoked Local compute')
   })
 
-  it('keeps the shared Undo stack at the top center after Settings has closed', async () => {
+  it('leaves Undo positioning to the application stack after Settings has closed', async () => {
     await act(async () => root.render(<PermissionUndoSnackbar />))
 
     const stack = container.querySelector<HTMLElement>('[data-testid="permission-undo-stack"]')
 
-    expect(stack?.className).toContain('top-[max(1.5rem,env(safe-area-inset-top))]')
-    expect(stack?.className).toContain('left-1/2')
-    expect(stack?.className).toContain('max-h-[min(70svh,32rem)]')
+    expect(stack?.className).toContain('w-full')
     expect(stack?.className).toContain('overflow-y-auto')
     expect(stack?.querySelector('[data-slot="scroll-area-viewport"]')).toBeNull()
   })
@@ -164,9 +162,9 @@ describe('PermissionUndoSnackbar', () => {
     await act(async () => root.render(<PermissionUndoSnackbar />))
 
     const snackbar = container.querySelector<HTMLElement>('[data-testid="archive-undo-snackbar"]')
-    expect(snackbar?.className).toContain('rounded-2xl')
-    expect(snackbar?.className).toContain('shadow-card')
-    expect(snackbar?.className).not.toContain('border-border')
+    expect(snackbar?.className).toContain('rounded-lg')
+    expect(snackbar?.className).toContain('shadow-dialog')
+    expect(snackbar?.className).toContain('border-border')
     expect(snackbar?.className).not.toContain('shadow-lg')
     // The notice carries a key plus params, so the interpolated text proves it is translated at
     // render time rather than frozen into the store when the project was archived.

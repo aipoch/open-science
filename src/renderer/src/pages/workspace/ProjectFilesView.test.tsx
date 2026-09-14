@@ -1023,12 +1023,14 @@ describe('ProjectFilesView', () => {
     })
 
     const alert = container.querySelector<HTMLElement>('[role="alert"]')
-    const errorText = alert?.querySelector('span')
+    const errorText = alert?.querySelector('p')
     expect(alert?.getAttribute('aria-atomic')).toBe('true')
     expect(errorText?.className).toContain('whitespace-pre-wrap')
-    expect(errorText?.className).toContain('break-words')
+    expect(errorText?.className).toContain('[overflow-wrap:anywhere]')
     expect(errorText?.className).not.toContain('truncate')
-    expect(alert?.querySelector<HTMLButtonElement>('button')?.textContent).toBe('Retry')
+    expect(alert?.closest('section')?.querySelector<HTMLButtonElement>('button')?.textContent).toBe(
+      'Retry'
+    )
   })
 
   it('renders uploaded files under Your uploads without a session group', async () => {

@@ -21,6 +21,8 @@ import { createGzip } from 'node:zlib'
 
 const archiveName = 'setup.tar.gz'
 const manifestName = 'setup.json'
+const dependenciesArchiveName = 'dependencies.tar.gz'
+const dependenciesManifestName = 'dependencies.json'
 
 // npm's Windows junctions carry absolute producer paths. Archive the package targets and recreate
 // only these lockfile-owned links in the consumer, while tar preserves other links and file modes.
@@ -113,6 +115,82 @@ export async function packSnapshot(cwd, directory, env = process.env) {
   return (await stat(archive)).size
 }
 
+async function packArchive(cwd, directory, env, { archiveName, manifestName, paths }) {
+  const metadata = await identity(cwd, env)
+  const links = localPackageLinks(
+    JSON.parse(await readFile(join(cwd, 'package-lock.json'), 'utf8'))
+  )
+  for (const path of paths) {
+    if (!(await lstat(join(cwd, path))).isDirectory()) {
+      throw new Error(`Snapshot input must be a real directory: ${path}`)
+    }
+  }
+  await mkdir(directory, { recursive: true })
+  const archive = join(directory, archiveName)
+  const { child, completed } = tarProcess(
+    ['-cf', '-', ...links.map(({ path }) => `--exclude=${path}`), ...paths],
+    cwd,
+    env
+  )
+  child.stdin.end()
+  await Promise.all([
+    completed,
+    pipeline(child.stdout, createGzip({ level: 1 }), createWriteStream(archive, { flags: 'wx' }))
+  ])
+  await writeFile(
+    join(directory, manifestName),
+    JSON.stringify({ ...metadata, sha256: await digest(archive) }) + '\n',
+    { flag: 'wx' }
+  )
+  return (await stat(archive)).size
+}
+
+export async function packDependencies(cwd, directory, env = process.env) {
+  const links = localPackageLinks(
+    JSON.parse(await readFile(join(cwd, 'package-lock.json'), 'utf8'))
+  )
+  return packArchive(cwd, directory, env, {
+    archiveName: dependenciesArchiveName,
+    manifestName: dependenciesManifestName,
+    paths: ['node_modules', ...links.map(({ target }) => target)]
+  })
+}
+
+export async function restoreDependencies(cwd, directory, env = process.env) {
+  const metadata = JSON.parse(await readFile(join(directory, dependenciesManifestName), 'utf8'))
+  validateIdentity(metadata, await identity(cwd, env))
+  const archive = join(directory, dependenciesArchiveName)
+  if ((await digest(archive)) !== metadata.sha256)
+    throw new Error('Dependencies snapshot checksum mismatch')
+  try {
+    await lstat(join(cwd, 'node_modules'))
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      const { child, completed } = tarProcess(['-xzf', archive], cwd, env)
+      child.stdin.end()
+      child.stdout.resume()
+      await completed
+      const links = localPackageLinks(
+        JSON.parse(await readFile(join(cwd, 'package-lock.json'), 'utf8'))
+      )
+      for (const { path, target } of links) {
+        const link = join(cwd, path)
+        await mkdir(dirname(link), { recursive: true })
+        await symlink(
+          process.platform === 'win32'
+            ? resolve(cwd, target)
+            : relative(dirname(link), join(cwd, target)),
+          link,
+          process.platform === 'win32' ? 'junction' : 'dir'
+        )
+      }
+      return (await stat(archive)).size
+    }
+    throw error
+  }
+  throw new Error('Dependencies snapshot restore requires an absent node_modules')
+}
+
 export async function restoreSnapshot(cwd, directory, env = process.env) {
   const metadata = JSON.parse(await readFile(join(directory, manifestName), 'utf8'))
   validateIdentity(metadata, await identity(cwd, env))
@@ -168,13 +246,26 @@ export async function verifySnapshot(cwd, web = false) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [mode, directory] = process.argv.slice(2)
-  if (!['pack', 'restore'].includes(mode) || !directory) {
-    throw new Error('Usage: node scripts/ci/e2e-setup-snapshot.mjs <pack|restore> <directory>')
+  if (
+    !['pack', 'restore', 'pack-dependencies', 'restore-dependencies'].includes(mode) ||
+    !directory
+  ) {
+    throw new Error(
+      'Usage: node scripts/ci/e2e-setup-snapshot.mjs <pack|restore|pack-dependencies|restore-dependencies> <directory>'
+    )
   }
   const started = performance.now()
   const cwd = process.cwd()
   if (mode === 'pack') await verifySnapshot(cwd, process.platform === 'darwin')
-  const bytes = await (mode === 'pack' ? packSnapshot : restoreSnapshot)(cwd, resolve(directory))
+  const operation =
+    mode === 'pack'
+      ? packSnapshot
+      : mode === 'restore'
+        ? restoreSnapshot
+        : mode === 'pack-dependencies'
+          ? packDependencies
+          : restoreDependencies
+  const bytes = await operation(cwd, resolve(directory))
   if (mode === 'restore') await verifySnapshot(cwd, process.platform === 'darwin')
   const summary = `E2E setup ${mode}: ${(bytes / 1024 / 1024).toFixed(1)} MiB, ${((performance.now() - started) / 1000).toFixed(1)} seconds`
   console.log(summary)

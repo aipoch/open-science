@@ -55,6 +55,9 @@ describe('OpenScienceClient', () => {
     expect(Object.getOwnPropertyNames(OpenScienceClient.prototype).sort()).toEqual(
       [
         'constructor',
+        'doctor',
+        'bootstrap',
+        'installCli',
         'health',
         'listConnectors',
         'getConnector',
@@ -67,6 +70,7 @@ describe('OpenScienceClient', () => {
         'createCredential',
         'updateCredential',
         'listProjects',
+        'listRuntimes',
         'createProject',
         'updateProject',
         'getProjectSessionDefaults',
@@ -92,7 +96,7 @@ describe('OpenScienceClient', () => {
     )
   })
 
-  it('uses versioned endpoints for Session, Project-default, and Agent-routing configuration', async () => {
+  it('uses versioned endpoints for Doctor, Runtime, Session, Project-default, and Agent-routing reads', async () => {
     const fetch = vi.fn().mockImplementation(async () => response(200, { data: { ok: true } }))
     const client = new OpenScienceClient({
       baseUrl: 'http://127.0.0.1:44100',
@@ -100,6 +104,8 @@ describe('OpenScienceClient', () => {
       fetch
     })
 
+    await client.doctor()
+    await client.listRuntimes()
     await client.getProjectSessionDefaults('project/1')
     await client.updateProjectSessionDefaults('project/1', {
       expectedUpdatedAt: 2,
@@ -114,6 +120,8 @@ describe('OpenScienceClient', () => {
     await client.updateAgentRouting({ framework: 'codex' })
 
     expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      'http://127.0.0.1:44100/api/v1/doctor',
+      'http://127.0.0.1:44100/api/v1/runtimes',
       'http://127.0.0.1:44100/api/v1/projects/project%2F1/session-defaults',
       'http://127.0.0.1:44100/api/v1/projects/project%2F1/session-defaults',
       'http://127.0.0.1:44100/api/v1/sessions/session%2F1/config',
@@ -122,6 +130,8 @@ describe('OpenScienceClient', () => {
       'http://127.0.0.1:44100/api/v1/settings/agent-routing'
     ])
     expect(fetch.mock.calls.map(([, options]) => options?.method ?? 'GET')).toEqual([
+      'GET',
+      'GET',
       'GET',
       'PATCH',
       'GET',
@@ -328,6 +338,49 @@ describe('OpenScienceClient', () => {
         code: 'timeout',
         message: 'Timed out waiting for run run-1.'
       })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([0, -1, NaN, Infinity, -Infinity, '250'])(
+    'rejects invalid pollIntervalMs %s before polling',
+    async (pollIntervalMs) => {
+      const fetch = vi.fn()
+      const client = new OpenScienceClient({ baseUrl: 'http://localhost', token: 'test', fetch })
+      await expect(client.waitForRun('run-1', { pollIntervalMs })).rejects.toThrow(
+        'pollIntervalMs must be a positive number.'
+      )
+      expect(fetch).not.toHaveBeenCalled()
+    }
+  )
+
+  it('preserves the single-request deadline inside a longer total wait', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetch = vi.fn(
+        (_input: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+              once: true
+            })
+          })
+      )
+      const client = new OpenScienceClient({
+        baseUrl: 'http://localhost',
+        token: 'test',
+        fetch,
+        requestTimeoutMs: 100
+      })
+      const outcome = client
+        .waitForRun('run-1', { timeoutMs: 1000 })
+        .catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(100)
+      expect(await Promise.race([outcome, Promise.resolve('pending')])).toMatchObject({
+        code: 'timeout',
+        message: 'Open-Science request timed out after 100 milliseconds.'
+      })
+      expect(fetch).toHaveBeenCalledOnce()
     } finally {
       vi.useRealTimers()
     }
@@ -1096,6 +1149,24 @@ describe('OpenScienceClient', () => {
 
     await expect(iterator.next()).rejects.toMatchObject({ code: 'event_stream_overflow' })
     expect(ControllableWebSocket.instance.closed).toBe(true)
+  })
+
+  it('reports unavailable when a stale state file points at a refused connection', async () => {
+    const configRoot = await mkdtemp(join(tmpdir(), 'open-science-stale-sdk-'))
+    roots.push(configRoot)
+    await writeFile(
+      join(configRoot, 'web-service.json'),
+      JSON.stringify({ pid: process.pid, port: 44100, startedAt: new Date().toISOString() })
+    )
+    await writeFile(join(configRoot, 'web-token'), 'fixture-token')
+    const fetch = vi.fn().mockRejectedValue(
+      new TypeError('fetch failed', {
+        cause: Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' })
+      })
+    )
+    await expect(connectToOpenScience({ configRoot, fetch })).rejects.toMatchObject({
+      code: 'daemon_unavailable'
+    })
   })
 
   it('discovers a daemon from its state and token files before returning a client', async () => {

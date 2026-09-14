@@ -3034,7 +3034,7 @@ describe('Russian catalog quality', () => {
       'Some selected Skills could not be deleted. They remain selected.',
       'Не удалось удалить некоторые выбранные навыки. Они остались выбранными.'
     ],
-    ['Delete selected ({{selectedCount}})', 'Удалить выбранные ({{selectedCount}})'],
+    ['Delete…', 'Удалить…'],
     ['Delete selected Skills?', 'Удалить выбранные навыки?'],
     [
       'Deleted Skills are removed from this device and cannot be recovered.',

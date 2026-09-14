@@ -71,6 +71,24 @@ const manifest = JSON.parse(
 ) as { bundleOrder: string[]; laneBundles: Record<string, string>; laneOrder: string[] }
 
 describe('PR Gate workflow', () => {
+  it('includes portable Session journeys in both native functional lanes', () => {
+    const { scripts } = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
+      scripts: Record<string, string>
+    }
+    for (const platform of ['macos', 'windows']) {
+      const command = workflow.jobs[`${platform}_e2e`].steps?.find(
+        ({ id }) => id === `e2e_functional_${platform}`
+      )?.run
+      const script = command?.match(/^npm run (\S+)/)?.[1]
+      expect(script, `${platform} functional lane must invoke a registered script`).toBeDefined()
+      for (const spec of ['e2e/session-package.spec.ts', 'e2e/session-package-drop.spec.ts'])
+        expect(
+          scripts[script!]?.split(/\s+/),
+          `${platform} must exercise Session packages`
+        ).toContain(spec)
+    }
+  })
+
   it('keeps release certification and Linux E2E out of ordinary pull requests', () => {
     expect(workflow.jobs).not.toHaveProperty('linux_e2e')
     expect(manifest.bundleOrder).not.toContain('linux_e2e')
@@ -120,7 +138,7 @@ describe('PR Gate workflow', () => {
           required: false,
           default: 'classified',
           type: 'choice',
-          options: ['classified', 'unit-coverage', 'i18n', 'windows-e2e', 'e2e']
+          options: ['classified', 'unit-coverage', 'i18n', 'runtime-bundle', 'windows-e2e', 'e2e']
         }
       }
     })
@@ -157,6 +175,22 @@ describe('PR Gate workflow', () => {
     }
   })
 
+  it('does not make the renderer layout pilot an unrelated blocking check', () => {
+    const macos = workflow.jobs.macos_e2e.steps?.find(
+      ({ name }) => name === 'Run renderer layout pilot'
+    )
+    const windows = workflow.jobs.windows_e2e.steps?.find(
+      ({ name }) => name === 'Run renderer layout pilot'
+    )
+
+    expect(macos?.if).toContain(
+      "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos')"
+    )
+    // Keep the existing Windows font pilot reachable for Windows-only plans.
+    expect(windows?.if).toBe('${{ matrix.shard == 1 }}')
+    expect(workflowText).toContain('--fail-on-flaky-tests')
+  })
+
   it('plans with the trusted base classifier and fails closed during bootstrap', () => {
     const prepare = workflow.jobs.preflight.steps?.find(
       ({ name }) => name === 'Prepare trusted classifier'
@@ -179,6 +213,9 @@ describe('PR Gate workflow', () => {
     expect(classify?.run).toContain(
       '[[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "i18n" ]]'
     )
+    expect(classify?.run).toContain(
+      '[[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "runtime-bundle" ]]'
+    )
     expect(classify?.run).toContain('"lanes":["policy","unit_macos"]')
     expect(classify?.run).toContain('"bundles":["policy","unit"]')
     expect(classify?.run).toContain('"lanes":["policy","i18n"]')
@@ -187,6 +224,7 @@ describe('PR Gate workflow', () => {
       'node "$TRUSTED_CLASSIFIER_DIR/module-impact-authority.mjs" --base "$BASE_SHA" --head "$HEAD_SHA"'
     )
     expect(classify?.run).toContain("mode: 'full'")
+    expect(classify?.run).toContain("'runtime_bundle'")
     expect(classify?.run).not.toContain(
       'node scripts/ci/classify-pr-changes.mjs --base "$BASE_SHA" --head "$HEAD_SHA"'
     )
@@ -386,6 +424,33 @@ describe('PR Gate workflow', () => {
     expect(manifest.laneOrder).toContain('i18n')
   })
 
+  it('verifies the published runtime bundle as a named static check', () => {
+    const runtimeBundle = workflow.jobs.static.steps?.find(
+      ({ name }) => name === 'Verify published runtime bundle'
+    )
+    const enforce = workflow.jobs.static.steps?.find(
+      ({ name }) => name === 'Enforce selected static checks'
+    )
+
+    expect(runtimeBundle).toMatchObject({
+      id: 'runtime_bundle',
+      'continue-on-error': true,
+      run: 'node scripts/verify-runtime-bundle.mjs linux-64 osx-arm64 osx-64 win-64'
+    })
+    expect(runtimeBundle?.if).toContain("'runtime_bundle'")
+    expect(runtimeBundle?.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'full'")
+    expect(enforce?.env).toMatchObject({
+      RUNTIME_BUNDLE_OUTCOME: '${{ steps.runtime_bundle.outcome }}'
+    })
+    expect(enforce?.run).toContain('check runtime_bundle "$RUNTIME_BUNDLE_OUTCOME"')
+    expect(manifest.laneBundles.runtime_bundle).toBe('static')
+    expect(manifest.laneOrder).toContain('runtime_bundle')
+    const classify = workflow.jobs.preflight.steps?.find(
+      ({ name }) => name === 'Classify change impact'
+    )
+    expect(classify?.run).toContain("'runtime_bundle'")
+  })
+
   it('shards full portable tests on Ubuntu and merges coverage into the stable unit bundle', () => {
     const unit = workflow.jobs.unit
     const shards = workflow.jobs.unit_shard
@@ -456,6 +521,7 @@ describe('PR Gate workflow', () => {
         '--testTimeout=30000',
         '--shard=${{ matrix.shard }}/3',
         '--reporter=blob',
+        '--reporter=github-actions',
         '--outputFile=vitest-reports/blob-${{ matrix.shard }}.json'
       ].join(' ')
     })

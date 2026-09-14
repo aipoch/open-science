@@ -34,7 +34,7 @@ beforeEach(async () => {
   await migrateApplicationDatabase(client)
   await client.project.create({ data: { id: 'project', name: 'Project' } })
   projection = new SessionProjectionRepository(async () => client)
-  const session = await projection.prepareSave({
+  const { session: session } = await projection.prepareSave({
     id: 'session',
     projectId: 'project',
     title: 'Session',

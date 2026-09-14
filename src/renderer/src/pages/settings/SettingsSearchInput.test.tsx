@@ -33,6 +33,31 @@ const pressSearchShortcut = (init: KeyboardEventInit): KeyboardEvent => {
 }
 
 describe('SettingsSearchInput', () => {
+  it.each([undefined, '', 'Search skills…'])(
+    'reserves shortcut space only while an unfocused search is empty (placeholder: %s)',
+    (placeholder) => {
+      act(() => {
+        root.render(
+          <SettingsSearchInput
+            aria-label="Search skills"
+            placeholder={placeholder}
+            defaultValue="abst"
+          />
+        )
+      })
+      const input = container.querySelector('input')!
+      const hint = input.nextElementSibling!
+      expect(input.type).toBe('search')
+      expect(input.value).toBe('abst')
+      expect(input.placeholder).toBe(placeholder || ' ')
+      expect(input.classList.contains('pr-20')).toBe(false)
+      expect(input.classList.contains('pr-2.5')).toBe(true)
+      expect(input.classList.contains('[&:placeholder-shown:not(:focus)]:pr-20')).toBe(true)
+      expect(hint.classList.contains('hidden')).toBe(true)
+      expect(hint.classList.contains('peer-[:placeholder-shown:not(:focus)]:flex')).toBe(true)
+    }
+  )
+
   it('shows the macOS shortcut and focuses the field with Cmd+K', () => {
     ;(window as unknown as { api: unknown }).api = { platform: 'darwin' }
     act(() => {

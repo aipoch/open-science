@@ -54,6 +54,8 @@ export type VendorRegion = {
   apiKeyUrl?: string
   // Full URL of the vendor's model-list endpoint for this region; falls back to the vendor-level one.
   modelsListUrl?: string
+  // An authoritative curated subset when this region serves fewer models than the vendor catalog.
+  modelIds?: readonly string[]
 }
 
 export type OfficialModel = {
@@ -474,11 +476,11 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     apiKeyUrl: 'https://www.kimi.com/code/docs',
     models: [
       { id: 'kimi-k3', contextWindow: 1_000_000, reasoningEffort: 'standard-5' },
-      { id: 'kimi-for-coding', contextWindow: 256_000 },
+      { id: 'kimi-for-coding', contextWindow: 1_048_576 },
       { id: 'kimi-for-coding-highspeed', contextWindow: 256_000 }
     ],
     // Only the k3 model in this plan is vision-capable; the coding-tuned ids are text-only.
-    multimodal: { multimodalModels: ['kimi-k3'] }
+    multimodal: { multimodalModels: ['kimi-k3', 'kimi-for-coding'] }
   },
   {
     id: 'minimax',
@@ -597,20 +599,43 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     label: 'SenseNova',
     reasoningEffort: 'unsupported',
     // SenseTime's SenseNova serves both routes on one host: the Anthropic-compatible /v1/messages
-    // at the bare root and the OpenAI-compatible /v1/chat/completions under /v1. The same model ids
-    // work on both. No modelsListUrl: the live /v1/models list also serves the image-generation-only
-    // sensenova-u1-fast (POST /v1/images/generations, not a chat model), and the refresh has no
-    // modality filter — so the catalog stays curated to the two chat ids.
+    // at the bare root and the OpenAI-compatible /v1/chat/completions under /v1.
+    // https://platform.sensenova.cn/docs documents the newer hosted models on Chat Completions;
+    // do not infer Messages support (including Kimi vision) from their original vendors.
+    // Keep the catalog curated: /v1/models also includes image-only U1 models and refresh does
+    // not filter output modalities.
     apiEndpoints: ['anthropic', 'openai'],
-    baseUrl: 'https://token.sensenova.cn',
-    openaiBaseUrl: 'https://token.sensenova.cn/v1',
-    apiKeyUrl: 'https://platform.sensenova.cn/token-plan',
-    models: [
-      { id: 'sensenova-6.7-flash-lite', contextWindow: 256_000 },
-      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 }
+    regions: [
+      // Keep China first: pre-region provider records must retain their original endpoint.
+      {
+        id: 'china',
+        label: 'China',
+        baseUrl: 'https://token.sensenova.cn',
+        openaiBaseUrl: 'https://token.sensenova.cn/v1',
+        apiKeyUrl: 'https://platform.sensenova.cn/console/keys'
+      },
+      {
+        id: 'global',
+        label: 'Global',
+        baseUrl: 'https://token.sensenova.ai',
+        openaiBaseUrl: 'https://token.sensenova.ai/v1',
+        apiKeyUrl: 'https://platform.sensenova.ai/console/keys',
+        // https://platform.sensenova.ai/docs lists only Flash Lite as a chat model.
+        modelIds: ['sensenova-6.8-flash-lite']
+      }
     ],
-    // Only sensenova-6.7-flash-lite accepts image input; deepseek-v4-flash is text-only.
-    multimodal: { multimodalModels: ['sensenova-6.7-flash-lite'] }
+    models: [
+      { id: 'sensenova-6.8-flash-lite', contextWindow: 262_144 },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000, apiEndpoint: 'openai' },
+      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
+      { id: 'glm-5.2', contextWindow: 1_000_000, apiEndpoint: 'openai' },
+      { id: 'kimi-k3', contextWindow: 1_000_000, apiEndpoint: 'openai' },
+      // Preserve pinned selections without silently migrating them to a different model.
+      { id: 'sensenova-6.7-flash-lite', contextWindow: 256_000 }
+    ],
+    multimodal: {
+      multimodalModels: ['sensenova-6.8-flash-lite', 'kimi-k3', 'sensenova-6.7-flash-lite']
+    }
   },
   {
     id: 'volcengine',
@@ -1239,9 +1264,22 @@ export const isOfficialVendorId = (value: unknown): value is OfficialVendorId =>
 export const getOfficialVendor = (id: OfficialVendorId): OfficialVendor | undefined =>
   VENDORS_BY_ID.get(id)
 
-// Projects the structured bundled catalog into the string ids used by settings persistence and UI.
-export const getOfficialVendorModelIds = (id: OfficialVendorId): string[] =>
-  VENDORS_BY_ID.get(id)?.models.map((model) => model.id) ?? []
+// Resolve the catalog for the selected endpoint. A regional restriction takes precedence over
+// cached model discovery so changing regions cannot expose models served only by the old endpoint.
+export const getOfficialVendorModelIds = (
+  id: OfficialVendorId,
+  regionId?: string,
+  fetchedModels?: readonly string[]
+): string[] => {
+  const vendor = VENDORS_BY_ID.get(id)
+  if (!vendor) return []
+  const region =
+    vendor.regions?.find((candidate) => candidate.id === regionId) ?? vendor.regions?.[0]
+  return [
+    ...(region?.modelIds ??
+      (fetchedModels?.length ? fetchedModels : vendor.models.map((model) => model.id)))
+  ]
+}
 
 // Resolves the bundled, model-specific effort capability. Unknown/live-fetched model ids use the
 // vendor default; a vendor without an explicit declaration keeps the product's standard five-level
@@ -1333,8 +1371,8 @@ export const resolveVendorModelsUrl = (
 }
 
 // The default model for a freshly added vendor (first catalog entry).
-export const defaultVendorModel = (id: OfficialVendorId): string | undefined =>
-  VENDORS_BY_ID.get(id)?.models[0]?.id
+export const defaultVendorModel = (id: OfficialVendorId, regionId?: string): string | undefined =>
+  getOfficialVendorModelIds(id, regionId)[0]
 
 // The chat APIs a vendor speaks, defaulting to Anthropic /v1/messages when unset.
 export const resolveVendorApiEndpoints = (id: OfficialVendorId): ChatApiEndpoint[] => {

@@ -31,6 +31,7 @@ type ArtifactTurnProvenanceContext = {
 
 type OpenExecutionArtifactTurnRequest = {
   executionId: string
+  workspaceCwd?: string
   appSessionId: string
   artifactStorageSessionId: string
   projectId: string
@@ -86,6 +87,10 @@ type NotebookArtifactSourceScopeProvider = (
 ) => NotebookArtifactSourceScope
 
 type ArtifactTurnProvenance = {
+  withSessionMutation?<Result>(
+    scope: { projectId: string; appSessionId: string },
+    operation: () => Promise<Result>
+  ): Promise<Result>
   listRunVersions: (request: {
     projectId: string
     appSessionId: string
@@ -147,6 +152,7 @@ type ArtifactTurnOwnerOptions = {
 
 type ArtifactTurn = {
   executionId: string
+  workspaceCwd?: string
   updatesSessionNotebookContext: boolean
   appSessionId: string
   artifactStorageSessionId: string
@@ -232,12 +238,18 @@ class ArtifactTurnOwner {
         ...(turn.notebookArtifactSourceScope
           ? { notebookSessionId: turn.notebookArtifactSourceScope.notebookSessionId }
           : {}),
-        allowedMethods: [
-          'artifactReserveWrite',
-          'artifactReleaseWrite',
-          'artifactCreateVersion',
-          'artifactReplayVersion'
-        ]
+        sourceScope: {
+          allowedImportRoots: [
+            ...(turn.workspaceCwd ? [turn.workspaceCwd] : []),
+            ...(turn.notebookArtifactSourceScope
+              ? [turn.notebookArtifactSourceScope.notebookSessionRoot]
+              : [])
+          ],
+          workspaceCwd: turn.workspaceCwd,
+          notebookDataDir: turn.notebookArtifactSourceScope?.notebookDataDir,
+          notebookSessionRoot: turn.notebookArtifactSourceScope?.notebookSessionRoot
+        },
+        allowedMethods: ['artifactSaveVersion']
       })
       if (turn.rpcCapabilityToken) runContext.rpcCapabilityToken = turn.rpcCapabilityToken
 
@@ -444,6 +456,7 @@ class ArtifactTurnOwner {
     )
     const turn: ArtifactTurn = {
       executionId: request.executionId,
+      workspaceCwd: request.workspaceCwd,
       updatesSessionNotebookContext: rootTransport,
       appSessionId: request.appSessionId,
       artifactStorageSessionId: request.artifactStorageSessionId,
@@ -520,7 +533,19 @@ class ArtifactTurnOwner {
 
   private async finalizeTurn(turn: ArtifactTurn): Promise<ArtifactTurnPublication | undefined> {
     await this.closeWrites(turn)
+    const prepare = (): Promise<ArtifactTurnPublication | undefined> =>
+      this.prepareFinalization(turn)
+    return this.options.provenance?.withSessionMutation
+      ? this.options.provenance.withSessionMutation(
+          { projectId: turn.projectId, appSessionId: turn.appSessionId },
+          prepare
+        )
+      : prepare()
+  }
 
+  private async prepareFinalization(
+    turn: ArtifactTurn
+  ): Promise<ArtifactTurnPublication | undefined> {
     let artifacts: ArtifactFile[]
     let artifactVersionIds: string[] | undefined
     if (this.options.provenance) {

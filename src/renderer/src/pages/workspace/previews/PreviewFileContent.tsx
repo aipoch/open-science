@@ -1,4 +1,5 @@
 import { renderPreviewFile } from './preview-registry'
+import { Suspense } from 'react'
 import { PreviewUnsupportedContent } from './PreviewFallback'
 import { PreviewRuntimeBoundary } from './preview-runtime'
 import type { PreviewDownloadVersionContext } from './preview-runtime-context'
@@ -46,16 +47,18 @@ export const PreviewFileContent = ({
       downloadVersionContext={downloadVersionContext}
       onRetry={onRetry}
     >
-      {content ?? (
-        <PreviewUnsupportedContent
-          path={item.path}
-          name={item.name}
-          source={item.source}
-          projectId={item.projectId}
-          fileId={item.managedFileId}
-          versionId={item.selectedVersionId}
-        />
-      )}
+      <Suspense fallback={null}>
+        {content ?? (
+          <PreviewUnsupportedContent
+            path={item.path}
+            name={item.name}
+            source={item.source}
+            projectId={item.projectId}
+            fileId={item.managedFileId}
+            versionId={item.selectedVersionId}
+          />
+        )}
+      </Suspense>
     </PreviewRuntimeBoundary>
   )
 }

@@ -194,7 +194,8 @@ class ArtifactProvenanceVersionWriter {
 
   async withSessionWrite<Result>(
     request: Pick<CreateArtifactVersionRequest, 'projectId' | 'appSessionId'>,
-    operation: (writeVersion: WriteVersionWithinSession) => Promise<Result>
+    operation: (writeVersion: WriteVersionWithinSession) => Promise<Result>,
+    signal?: AbortSignal
   ): Promise<Result> {
     const sessionKey = `${this.options.storageRoot}\0${request.projectId}\0${request.appSessionId}`
     const previous =
@@ -205,16 +206,35 @@ class ArtifactProvenanceVersionWriter {
     })
     const tail = previous.then(() => current)
     ArtifactProvenanceVersionWriter.sessionWrites.set(sessionKey, tail)
-    await previous
-
-    try {
-      return await operation((...args) => this.writeVersionWithinSession(...args))
-    } finally {
-      release()
-      if (ArtifactProvenanceVersionWriter.sessionWrites.get(sessionKey) === tail) {
-        ArtifactProvenanceVersionWriter.sessionWrites.delete(sessionKey)
+    let queuedOperation: typeof operation | undefined = operation
+    // Cancellation drops the queued payload immediately, but its place in the chain remains
+    // behind the running writer. Never release a predecessor's transaction early.
+    return new Promise<Result>((resolve, reject) => {
+      const abort = (): void => {
+        queuedOperation = undefined
+        reject(signal!.reason)
       }
-    }
+      if (signal?.aborted) abort()
+      else signal?.addEventListener('abort', abort, { once: true })
+      void previous.then(async () => {
+        const execute = queuedOperation
+        queuedOperation = undefined
+        signal?.removeEventListener('abort', abort)
+        try {
+          if (execute) {
+            signal?.throwIfAborted()
+            resolve(await execute((...args) => this.writeVersionWithinSession(...args)))
+          }
+        } catch (error) {
+          reject(error)
+        } finally {
+          release()
+          if (ArtifactProvenanceVersionWriter.sessionWrites.get(sessionKey) === tail) {
+            ArtifactProvenanceVersionWriter.sessionWrites.delete(sessionKey)
+          }
+        }
+      })
+    })
   }
 
   private async writeVersionWithinSession(

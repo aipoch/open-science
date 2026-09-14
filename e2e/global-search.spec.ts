@@ -246,6 +246,7 @@ test('searches projects, sessions, message bodies and Library with paged disclos
     await Promise.all(el.getAnimations().map((animation) => animation.finished))
   })
   await expect(details).toHaveAttribute('data-open', 'true')
+  await dialog.getByRole('button', { name: 'Filters', exact: true }).click()
   const order = dialog.getByRole('combobox', { name: 'Result order' })
   await order.focus()
   await order.press('Enter')
@@ -359,6 +360,7 @@ test('searches projects, sessions, message bodies and Library with paged disclos
   const target = page.locator('[data-message-id="search-message-8"]').first()
   await expect(target).toBeVisible()
   await expect(target).toBeInViewport()
+  await page.screenshot({ path: testInfo.outputPath('global-search-message-revealed.png') })
   expect(
     await page.evaluate(
       async (id) =>
@@ -526,6 +528,7 @@ test('keeps saved Notebook output and structured file previews visible inside se
   const search = dialog.getByRole('combobox', { name: 'Global search' })
   await search.fill('search-')
   await dialog.locator('[data-category="uploads"]').click()
+  await dialog.getByRole('button', { name: 'Filters', exact: true }).click()
   await dialog.getByRole('combobox', { name: 'Refine category' }).click()
   await page.getByRole('option', { name: 'Notebook', exact: true }).click()
   await expect(dialog.getByRole('listbox').getByRole('option')).toHaveCount(1)

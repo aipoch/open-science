@@ -1,3 +1,5 @@
+import { BootstrapError } from '../../shared/bootstrap'
+import { ensureCodexAuthHome } from './codex-auth'
 import type {
   ChatApiEndpoint,
   ProviderDraft,
@@ -118,6 +120,108 @@ class ProviderAccountsModule {
     await Promise.all([this.auth.dispose(), Promise.resolve().then(() => this.xai.cancelLogin())])
   }
 
+  async prepareBootstrapCodex(): Promise<void> {
+    await this.auth.serializeAccountMutation(async () => {
+      const settings = await this.repository.getSettings()
+      const identity = codexSubscriptionProviderIdentity()
+      const existing = settings.providers.find(({ id }) => id === identity.id)
+      if (
+        (settings.providers.length > 0 && !existing) ||
+        (existing &&
+          (existing.type !== 'codex-isolated' || existing.codexAuthMode !== 'isolated')) ||
+        (settings.activeProviderId && settings.activeProviderId !== identity.id)
+      )
+        throw new BootstrapError('configuration_conflict')
+      // The historical CLI may have already signed in to this app-owned home. Creating the
+      // provider through ordinary upsert would clear that authentication; never import or clear it.
+      await ensureCodexAuthHome('isolated', this.options.storageRoot, existing?.codexTransport)
+      if (!existing)
+        await this.repository.publishBootstrapProvider(
+          settings,
+          {
+            ...identity,
+            type: 'codex-isolated',
+            codexAuthMode: 'isolated',
+            apiEndpoints: ['responses']
+          },
+          false
+        )
+    })
+  }
+
+  async completeBootstrapCodex(): Promise<string> {
+    return this.auth.serializeAccountMutation(async () => {
+      const settings = await this.repository.getSettings()
+      const identity = codexSubscriptionProviderIdentity()
+      const provider = settings.providers.find(({ id }) => id === identity.id)
+      if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated')
+        throw new BootstrapError('configuration_conflict')
+      const result = await this.auth.validateProviderAuth(
+        this.resolveProvider(provider),
+        settings,
+        provider
+      )
+      if (!result?.ok || !(await this.auth.isProviderKeyUsable(provider)))
+        throw new BootstrapError('credential_invalid')
+      await this.repository.publishBootstrapProvider(
+        settings,
+        {
+          ...provider,
+          ...buildProviderValidationPatch(provider, result, undefined)
+        },
+        true
+      )
+      return provider.id
+    })
+  }
+
+  async bootstrapOpenAi(key: string, model: string): Promise<string> {
+    const settings = await this.repository.getSettings()
+    const id = 'cli-openai'
+    const existing = settings.providers.find((provider) => provider.id === id)
+    if (
+      settings.agentFrameworkId !== 'codex' ||
+      settings.providers.some((provider) => provider.id !== id) ||
+      (settings.activeProviderId && settings.activeProviderId !== id) ||
+      (existing &&
+        (existing.type !== 'official' ||
+          existing.vendorId !== 'openai' ||
+          (settings.activeModel ?? existing.model) !== model ||
+          !existing.keyRef ||
+          tryDecryptKey(existing.keyRef) !== key))
+    )
+      throw new BootstrapError('configuration_conflict')
+    if (
+      this.resolveActiveModel(
+        existing ?? { id, type: 'official', vendorId: 'openai', name: 'OpenAI', model },
+        model
+      ) !== model
+    )
+      throw new BootstrapError('invalid_request')
+    const draft = { type: 'official' as const, vendorId: 'openai' as const, model, key }
+    const result = await this.validateProvider({ draft })
+    if (!result.ok) throw new BootstrapError('credential_invalid')
+    const provider: StoredProvider = {
+      ...existing,
+      id,
+      type: 'official',
+      vendorId: 'openai',
+      name: existing?.name ?? 'OpenAI',
+      model: existing?.model ?? model,
+      keyRef: existing?.keyRef ?? encryptKey(key),
+      keyMask: maskKey(key)
+    }
+    await this.repository.publishBootstrapProvider(
+      settings,
+      {
+        ...provider,
+        ...buildProviderValidationPatch(provider, result, { model, endpoint: 'responses' })
+      },
+      true
+    )
+    return id
+  }
+
   // Keeps provider-before-Connector ordering in SettingsService's whole-settings migration path.
   async migrateLegacyKeyRefs(providers: readonly StoredProvider[]): Promise<boolean> {
     let changed = false
@@ -141,6 +245,16 @@ class ProviderAccountsModule {
       (!request.id || !settings.providers.some((provider) => provider.id === request.id))
     ) {
       throw new Error('Provider no longer exists.')
+    }
+    if (request.expectedConfigRevision !== undefined) {
+      const source = settings.providers.find(({ id }) => id === request.id)
+      if (
+        !Number.isSafeInteger(request.expectedConfigRevision) ||
+        request.expectedConfigRevision < 0 ||
+        !source ||
+        (source.configRevision ?? 0) !== request.expectedConfigRevision
+      )
+        throw new Error('Provider configuration changed. Your draft has not been saved.')
     }
     const subscriptionIdentity = isCodexSubscriptionProvider(request.type)
       ? codexSubscriptionProviderIdentity()
@@ -280,14 +394,18 @@ class ProviderAccountsModule {
         provider.type === 'claude-shared' ? CLAUDE_ISOLATED_PROVIDER_ID : CLAUDE_SHARED_PROVIDER_ID
       const collapsedCardWasActive =
         settings.activeProviderId === provider.id || settings.activeProviderId === outgoingId
-      await this.repository.upsertProvider(provider, editId)
+      await this.repository.upsertProvider(provider, editId, {
+        expectedConfigRevision: request.expectedConfigRevision
+      })
       if (collapsedCardWasActive) {
         await this.repository.setActiveProvider(provider.id, this.resolveActiveModel(provider))
       }
       return
     }
 
-    await this.repository.upsertProvider(provider, editId)
+    await this.repository.upsertProvider(provider, editId, {
+      expectedConfigRevision: request.expectedConfigRevision
+    })
   }
 
   async deleteProvider(

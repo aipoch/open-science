@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { cn } from '@/lib/utils'
 import { flushSync } from 'react-dom'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
@@ -27,6 +28,7 @@ import {
   type SearchMessageFocus
 } from '@/stores/search-message-focus-store'
 import { findMessageTarget } from './workspace-run-marks'
+import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import { useSessionStore, type ChatMessage, type ChatSession } from '@/stores/session-store'
 import {
   Fragment,
@@ -60,7 +62,7 @@ import { CompletedJobCard } from '@/components/CompletedJobCard'
 import { JobDetailModal } from '@/components/JobDetailModal'
 import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
-import { Button } from '@/components/ui/button'
+
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ReviewerCard } from '@/components/ReviewerCard'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
@@ -241,10 +243,12 @@ const VisibleMessageSnapshotCommit = ({
 
 const SearchMessageReveal = ({
   target,
-  viewport
+  viewport,
+  onRevealed
 }: {
   target?: SearchMessageFocus
   viewport: HTMLDivElement | null
+  onRevealed: () => void
 }): null => {
   const { scrollToMessage } = useMessageScroller()
   useEffect(() => {
@@ -258,10 +262,13 @@ const SearchMessageReveal = ({
           { duration: 1800 }
         )
       }
+      // Save the explicit position before consuming focus causes another layout pass.
+      // The browser's scroll event can arrive after transcript window restoration.
+      onRevealed()
       useSearchMessageFocusStore.getState().consume(target)
     })
     return () => cancelAnimationFrame(frame)
-  }, [target, viewport, scrollToMessage])
+  }, [target, viewport, scrollToMessage, onRevealed])
   return null
 }
 
@@ -497,6 +504,9 @@ const WorkspaceMessageScrollerImpl = ({
   reportPresentationRevealing = false
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const packageLocked = usePackageOperationStore((state) =>
+    sessionExportLocked(state.operation, activeSession)
+  )
   const editAnnotationTargetRef = useRef<EditAnnotationTarget | undefined>(undefined)
   const handleEditAnnotationTargetChange = useCallback(
     (messageId: string, target: EditAnnotationTarget | undefined): void => {
@@ -1199,11 +1209,17 @@ const WorkspaceMessageScrollerImpl = ({
     const byIndex = new Map<number, JobSummary[]>()
     const trailing: JobSummary[] = []
 
+    let conversationIndex = 0
     for (const job of sorted) {
-      // Find the first conversation item strictly after this job's timestamp.
-      const insertBeforeIndex = conversationItems.findIndex(
-        (item) => item.createdAt > job.created_at
-      )
+      // Both arrays are chronological, so advance one cursor instead of rescanning the timeline.
+      while (
+        conversationIndex < conversationItems.length &&
+        conversationItems[conversationIndex].createdAt <= job.created_at
+      ) {
+        conversationIndex += 1
+      }
+      const insertBeforeIndex =
+        conversationIndex < conversationItems.length ? conversationIndex : -1
       if (insertBeforeIndex === -1) {
         // No later item — job goes in the trailing slot.
         trailing.push(job)
@@ -1433,6 +1449,7 @@ const WorkspaceMessageScrollerImpl = ({
                 : undefined
             }
             viewport={messageScrollerViewport}
+            onRevealed={handleMessageScrollerScroll}
           />
           <WorkspaceRunMarks
             items={presentedConversationItems}
@@ -1479,24 +1496,18 @@ const WorkspaceMessageScrollerImpl = ({
                   messageId={`review-load-error-${currentSessionId ?? 'unknown'}`}
                   className="min-w-0"
                 >
-                  <div
+                  <ErrorNotice
                     role="alert"
-                    className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-lg bg-danger-900 px-3 py-2 text-xs text-danger-000 ring-1 ring-inset ring-danger-000/25 md:mx-6"
-                  >
-                    <span>{t('Could not load review history.')}</span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => {
-                        if (currentSessionId) {
+                    className="mx-4 mb-2 w-auto md:mx-6"
+                    description={t('Could not load review history.')}
+                    primaryButton={{
+                      label: t('Retry'),
+                      onClick: () => {
+                        if (currentSessionId)
                           void loadReviewsForSession(currentSessionId, currentProjectId)
-                        }
-                      }}
-                    >
-                      {t('Retry')}
-                    </Button>
-                  </div>
+                      }
+                    }}
+                  />
                 </MessageScrollerItem>
               ) : null}
               {jobHydration.error ? (
@@ -1504,15 +1515,12 @@ const WorkspaceMessageScrollerImpl = ({
                   messageId={`job-load-error-${currentSessionId ?? 'unknown'}`}
                   className="min-w-0"
                 >
-                  <div
+                  <ErrorNotice
                     role="alert"
-                    className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-lg bg-danger-900 px-3 py-2 text-xs text-danger-000 ring-1 ring-inset ring-danger-000/25 md:mx-6"
-                  >
-                    <span>{t('Unable to load remote jobs.')}</span>
-                    <Button type="button" variant="ghost" size="xs" onClick={jobHydration.retry}>
-                      {t('Retry')}
-                    </Button>
-                  </div>
+                    className="mx-4 mb-2 w-auto md:mx-6"
+                    description={t('Unable to load remote jobs.')}
+                    primaryButton={{ label: t('Retry'), onClick: jobHydration.retry }}
+                  />
                 </MessageScrollerItem>
               ) : null}
               <VisibleMessageSnapshotCommit
@@ -1561,6 +1569,7 @@ const WorkspaceMessageScrollerImpl = ({
                     (message) => message.id === item.message.id
                   )
                   const activateRevision = (index: number): (() => void) | undefined => {
+                    if (packageLocked) return undefined
                     const revision = revisions[index]
                     return revision && activeSession
                       ? () =>
@@ -1618,7 +1627,8 @@ const WorkspaceMessageScrollerImpl = ({
                         activeSession.status !== 'error'
                       if (runIsActive) return response ? 'responding' : 'waiting'
                       return 'failed'
-                    })()
+                    })(),
+                    disableScrollAnchor: windowFindOpen
                   }
                   if (item.message.role === 'agent') {
                     const nextConversationItem = conversationItems[itemIndex + 1]
@@ -1917,6 +1927,7 @@ const WorkspaceMessageScrollerImpl = ({
               {optimisticMessage ? (
                 <WorkspaceMessageItem
                   message={optimisticMessage}
+                  disableScrollAnchor={windowFindOpen}
                   projectId={currentProjectId}
                   onPreviewArtifact={onPreviewArtifact}
                   onPreviewArtifactModal={onPreviewArtifactModal}

@@ -67,8 +67,10 @@ const registerRuntimeIpcHandlers = (
 
   ipcMainHandle(
     'runtime:set-install-authorized',
-    (_event, request: { language: NotebookLanguage; envId: string; authorized: boolean }) =>
-      workflows.setInstallAuthorized(request)
+    (
+      _event,
+      request: { language: NotebookLanguage; envId: string; authorized: boolean; library?: string }
+    ) => workflows.setInstallAuthorized(request)
   )
 
   ipcMainHandle(

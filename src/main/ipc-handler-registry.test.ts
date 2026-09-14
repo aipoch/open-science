@@ -248,6 +248,20 @@ describe('createIpcHandlerRegistry', () => {
     expect(removeHandler).toHaveBeenCalledWith('test:partial')
   })
 
+  it('removes all registered handlers when the registry is disposed', () => {
+    const removeHandler = vi.fn()
+    const registry = createIpcHandlerRegistry({ handle: vi.fn(), removeHandler } as never)
+
+    registry.ipcMainHandle('test:first', vi.fn())
+    registry.ipcMainHandle('test:second', vi.fn())
+
+    registry.dispose()
+
+    expect(removeHandler).toHaveBeenCalledTimes(2)
+    expect(removeHandler).toHaveBeenCalledWith('test:first')
+    expect(removeHandler).toHaveBeenCalledWith('test:second')
+  })
+
   it('records a rejected native handler once without retaining its payload', async () => {
     const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
     const handle = vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {

@@ -9,6 +9,12 @@ import {
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import {
+  discoverExternalRLibraries,
+  resolveExternalRLibrary,
+  externalRInstallScript
+} from './external-r-library'
+import { condaActivatedPath } from './runtime-paths'
 import { Transform, type TransformCallback } from 'node:stream'
 import { finished } from 'node:stream/promises'
 
@@ -69,6 +75,18 @@ import {
 import { toErrorMessage } from '../error-message'
 import { buildManagedRuntimeProcessEnvironment } from './process-environment'
 import { withPipInstallEvidence } from './pip-install-evidence'
+
+const terminatedPackageProcessErrors = new WeakSet<object>()
+
+export const packageProcessTreeTerminated = (error: unknown): boolean =>
+  Boolean(error && typeof error === 'object' && terminatedPackageProcessErrors.has(error))
+
+const markPackageProcessTreeTerminated = <T>(error: T): T => {
+  if (error && typeof error === 'object') {
+    terminatedPackageProcessErrors.add(error)
+  }
+  return error
+}
 
 export type InstallRequest = OptionalProjectIdScope & {
   language: NotebookLanguage
@@ -204,7 +222,7 @@ export type InstallDeps = {
   // Set for an EXTERNAL (BYO) runtime: install with THIS interpreter's own pip (`<command> [args] -m
   // pip install …`) instead of the app-managed prefix. The bundled micromamba never touches a foreign
   // environment. Absent -> managed install into the app prefix (today's behavior).
-  interpreter?: { command: string; args?: string[] }
+  interpreter?: { command: string; args?: string[]; library?: string; condaPrefix?: string }
   // Invoked with each spawned installer's PID so the caller (managePackages) can journal it for
   // crash-recovery supervision of a surviving installer after a hard quit.
   onChild?: (pid: number) => void
@@ -1197,13 +1215,17 @@ export const defaultSpawn = (
           if (!confirmed) return
           if (terminationReason === 'abort') {
             rejectOnce(
-              signal?.reason ?? new DOMException('Package operation cancelled.', 'AbortError')
+              markPackageProcessTreeTerminated(
+                signal?.reason ?? new DOMException('Package operation cancelled.', 'AbortError')
+              )
             )
           } else {
             rejectOnce(
-              Object.assign(new Error(`Package operation timed out after ${timeoutMs}ms.`), {
-                code: 'PACKAGE_OPERATION_TIMEOUT'
-              })
+              markPackageProcessTreeTerminated(
+                Object.assign(new Error(`Package operation timed out after ${timeoutMs}ms.`), {
+                  code: 'PACKAGE_OPERATION_TIMEOUT'
+                })
+              )
             )
           }
         })
@@ -1220,14 +1242,18 @@ export const defaultSpawn = (
         if (!confirmed) return
         if (terminationReason === 'abort') {
           rejectOnce(
-            signal?.reason ?? new DOMException('Package operation cancelled.', 'AbortError')
+            markPackageProcessTreeTerminated(
+              signal?.reason ?? new DOMException('Package operation cancelled.', 'AbortError')
+            )
           )
           return
         }
         rejectOnce(
-          Object.assign(new Error(`Package operation timed out after ${timeoutMs}ms.`), {
-            code: 'PACKAGE_OPERATION_TIMEOUT'
-          })
+          markPackageProcessTreeTerminated(
+            Object.assign(new Error(`Package operation timed out after ${timeoutMs}ms.`), {
+              code: 'PACKAGE_OPERATION_TIMEOUT'
+            })
+          )
         )
       })
     })
@@ -1341,7 +1367,7 @@ export async function installPackages(
       deps.onChild,
       deps.onBeforeSpawn,
       undefined,
-      undefined,
+      deps.interpreter ? req.workspaceCwd : undefined,
       spawnOptions
     )
 
@@ -1629,6 +1655,78 @@ export async function installPackages(
       }
     }
     const { command, args = [] } = deps.interpreter
+    if (req.language === 'r') {
+      const library = deps.interpreter.library
+      if (
+        !library ||
+        req.packages.some((name) => !R_PACKAGE_NAME.test(name)) ||
+        req.installer ||
+        req.usePip
+      )
+        return {
+          ok: false,
+          needsRestart: false,
+          log: '',
+          error: 'External R installation requires an authorized library and CRAN package names.'
+        }
+      if ((await resolveExternalRLibrary(library)) !== library)
+        return {
+          ok: false,
+          needsRestart: false,
+          log: '',
+          error: 'The authorized R library changed. Authorize its new location before installing.'
+        }
+      // Revalidate in the same profile-visible context used for consent before projecting the
+      // one authorized library into the restricted installer environment.
+      try {
+        const libraries = await discoverExternalRLibraries(command)
+        const samePath = (path: string): string =>
+          process.platform === 'win32' ? path.toLowerCase() : path
+        if (!libraries.some((candidate) => samePath(candidate) === samePath(library)))
+          return {
+            ok: false,
+            needsRestart: false,
+            log: '',
+            error:
+              'The authorized library is no longer a personal library visible to this R runtime.'
+          }
+      } catch {
+        return {
+          ok: false,
+          needsRestart: false,
+          log: '',
+          error:
+            'Could not revalidate the authorized R package library. Check the selected R runtime.'
+        }
+      }
+      deps.signal?.throwIfAborted()
+      spawnEnv.R_LIBS_USER = library
+      if (deps.interpreter.condaPrefix)
+        spawnEnv.PATH = condaActivatedPath(deps.interpreter.condaPrefix, spawnEnv.PATH)
+      const result = await run(command, [
+        ...args,
+        '--slave',
+        '-e',
+        externalRInstallScript(
+          library,
+          req.packages,
+          deps.cranMirror ?? 'https://cloud.r-project.org'
+        )
+      ])
+      return {
+        ok: result.code === 0,
+        needsRestart: result.code === 0,
+        log: mergeLog(result),
+        ...installLogTruncation(result),
+        method: 'cran',
+        attempts: [installerAttempt(0, 'r-install-packages', req.packages, result)],
+        fallbackUsed: false,
+        error:
+          result.code === 0
+            ? undefined
+            : 'R package installation failed. Inspect the log before retrying.'
+      }
+    }
     const pipArgs = [
       ...args,
       '-m',

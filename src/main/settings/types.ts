@@ -46,6 +46,7 @@ import type { OAuthDiscoveryState } from '@modelcontextprotocol/sdk/client/auth.
 // is a non-secret display hint recomputed whenever the key changes. For official providers the base
 // URL and model catalog come from the registry (via vendorId/region), so `baseUrl` stays unset.
 export type StoredProvider = {
+  configRevision?: number
   id: string
   type: ProviderType
   // Records whether the app-owned Codex profile came from an import or an in-app sign-in. Runtime

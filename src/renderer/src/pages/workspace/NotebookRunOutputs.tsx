@@ -334,10 +334,37 @@ const NotebookRunOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Elem
       ))
   const hasFigures = resolveNotebookRunFigures(run).length > 0
 
-  if (!hasText && !hasFigures && !run.truncated) return null
+  const active = run.status === 'queued' || run.status === 'running'
+  const notice =
+    active && run.cancellationRequestedAt !== undefined
+      ? t('Cancellation requested. Waiting for the executor to confirm the outcome.')
+      : run.status === 'queued'
+        ? t('Request accepted and queued. Code has not started.')
+        : run.status === 'running'
+          ? t('Execution is in progress. Background execution still depends on this app process.')
+          : run.kernelDispatched === false
+            ? t('Code was not dispatched to the kernel.')
+            : run.interruptionReason === 'app-terminated'
+              ? t(
+                  'The app stopped before a final outcome was saved. Execution may have had effects; check before retrying.'
+                )
+              : run.status === 'completed' &&
+                  run.environmentCapture?.state === 'unavailable' &&
+                  run.environmentCapture.reason !== 'environment-not-supported'
+                ? t(
+                    'Code completed, but environment evidence could not be saved. This does not mean the code failed.'
+                  )
+                : undefined
+
+  if (!hasText && !hasFigures && !run.truncated && !notice) return null
 
   return (
     <div data-testid="notebook-run-outputs">
+      {notice ? (
+        <p className="mt-2 text-xs text-text-300" data-testid="notebook-run-outcome">
+          {notice}
+        </p>
+      ) : null}
       <NotebookRunTextOutputs run={run} />
       <NotebookRunFigureOutputs run={run} />
       {run.truncated ? (

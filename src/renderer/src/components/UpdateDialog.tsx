@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { Trans, useTranslation } from 'react-i18next'
@@ -56,6 +57,21 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
   const isBackgroundProcessError =
     dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_ERROR ||
     dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
+  const isForceableGateError =
+    dialogStatus?.error ===
+      'Research work is still running. Stop it before restarting to update.' ||
+    dialogStatus?.error ===
+      'Subagents are still running. Return to their tasks and stop them before restarting to update.' ||
+    dialogStatus?.error === UPDATE_SETTINGS_INSTALL_ERROR
+  const forceUpdate = (): void => {
+    if (
+      window.confirm(
+        t('Force update will interrupt active tasks and may lose unsaved work. Continue?')
+      )
+    ) {
+      void apply({ force: true })
+    }
+  }
   const activeLanguage = i18n.resolvedLanguage ?? i18n.language
   const locale = isLocale(activeLanguage) ? activeLanguage : 'en'
   const localizedNotes = locale === 'en' ? undefined : dialogStatus?.localizedNotes?.[locale]
@@ -75,7 +91,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
           <Dialog.Content
             onInteractOutside={(event) => event.preventDefault()}
             className={dialogPanelClassName(
-              'z-[60] flex max-h-[calc(100svh-2rem)] flex-col w-[min(560px,calc(100vw-2rem))] p-0'
+              'z-[60] flex max-h-[calc(100svh-2rem)] flex-col w-[min(560px,calc(100vw-2rem))] overflow-hidden p-0'
             )}
           >
             <div className={cn(dialogHeaderClassName, 'shrink-0')}>
@@ -134,23 +150,6 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                   </div>
                 )}
 
-                {isDownloading ? (
-                  <div className="mt-4">
-                    <DownloadProgressLine
-                      progress={
-                        dialogStatus.downloadProgress ?? {
-                          phase: 'downloading',
-                          transferred: dialogStatus.downloadedBytes ?? 0,
-                          total: dialogStatus.totalBytes,
-                          percent: dialogStatus.progress ?? 0,
-                          bytesPerSecond: 0,
-                          attempt: 0
-                        }
-                      }
-                    />
-                  </div>
-                ) : null}
-
                 {isApplying ? (
                   <div className="mt-4 rounded-lg border border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
                     {dialogStatus.applyKind === 'installer'
@@ -162,9 +161,11 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                 ) : null}
 
                 {dialogStatus.error ? (
-                  <div className="mt-3" role="alert">
-                    <p className="text-xs text-destructive">
-                      {dialogStatus.error === UPDATE_BACKGROUND_PROCESS_ERROR
+                  <ErrorNotice
+                    role="alert"
+                    className="mt-3"
+                    description={
+                      dialogStatus.error === UPDATE_BACKGROUND_PROCESS_ERROR
                         ? t(
                             'Could not stop background processes before updating. Please try again.'
                           )
@@ -191,8 +192,9 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                                   ? t(
                                       'The installer is missing or has changed. Download the update again.'
                                     )
-                                  : (dialogStatus.error ?? t('Update failed'))}
-                    </p>
+                                  : (dialogStatus.error ?? t('Update failed'))
+                    }
+                  >
                     {isBackgroundProcessError ? (
                       <p className="mt-2 text-xs text-muted-foreground">
                         <Trans
@@ -212,7 +214,16 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                     <ExternalTextLink href={APP.update.downloadPage} className="mt-1 text-xs">
                       {t('Download manually')}
                     </ExternalTextLink>
-                  </div>
+                    {isForceableGateError && isReady ? (
+                      <button
+                        type="button"
+                        onClick={forceUpdate}
+                        className="mt-2 block text-xs text-destructive underline"
+                      >
+                        {t('Continue with force update')}
+                      </button>
+                    ) : null}
+                  </ErrorNotice>
                 ) : null}
                 {isInstallerUnavailable ? (
                   <p className="mt-3 text-xs text-muted-foreground">
@@ -223,6 +234,22 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                 ) : null}
               </div>
             </ScrollArea>
+            {isDownloading ? (
+              <div className="shrink-0 px-5 pb-5">
+                <DownloadProgressLine
+                  progress={
+                    dialogStatus.downloadProgress ?? {
+                      phase: 'downloading',
+                      transferred: dialogStatus.downloadedBytes ?? 0,
+                      total: dialogStatus.totalBytes,
+                      percent: dialogStatus.progress ?? 0,
+                      bytesPerSecond: 0,
+                      attempt: 0
+                    }
+                  }
+                />
+              </div>
+            ) : null}
             <div className={cn(dialogFooterClassName, 'shrink-0 flex-wrap')}>
               <button
                 type="button"

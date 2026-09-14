@@ -5,6 +5,7 @@ import { basename, dirname, join } from 'node:path'
 import type { AgentHomeSkillRef, AgentHomeSkillSource, SkillSource } from '../../shared/settings'
 import { createLogger } from '../logger'
 import { type SkillMutationOwner, skillMutationOwnerFor } from './skill-mutation-owner'
+import { marketplaceReceiptSchema, type MarketplaceReceipt } from './marketplace-package'
 
 export type { SkillMutationOwner } from './skill-mutation-owner'
 
@@ -27,6 +28,7 @@ export type ImportedSourceManifest = {
   url?: string
   signature?: string
   agentHome?: AgentHomeSkillRef
+  marketplace?: MarketplaceReceipt
 }
 
 export type StagedSkillPackage = Readonly<{
@@ -125,18 +127,37 @@ export class SkillPackageTransactionOwner {
             await rename(backup, live)
           } catch (rollbackError) {
             throw new Error(
-              `Skill replace failed to swap and could not roll back; the previous copy is preserved at ${basename(backup)} and will be restored on the next operation. swap error: ${String(swapError)}; rollback error: ${String(rollbackError)}`
+              `Skill replace failed to swap and could not roll back; the previous copy is preserved at ${basename(backup)} and recovery will be retried on the next operation. swap error: ${String(swapError)}; rollback error: ${String(rollbackError)}`
             )
           }
         }
+        if (hadExisting)
+          throw new Error(
+            `Skill update failed. The previous copy was restored. ${String(swapError)}`,
+            { cause: swapError }
+          )
         throw swapError
       }
 
       try {
         await this.validatePromoted?.(staged)
       } catch (validationError) {
-        await rm(live, { recursive: true, force: true })
-        if (hadExisting) await rename(backup, live)
+        try {
+          await rm(live, { recursive: true, force: true })
+          if (hadExisting) await rename(backup, live)
+        } catch (rollbackError) {
+          throw new Error(
+            hadExisting
+              ? `Skill update failed validation and recovery is pending. The previous copy is preserved at ${basename(backup)}. Retry after restoring filesystem access. ${String(rollbackError)}`
+              : `Skill installation failed validation and cleanup is pending. Retry after restoring filesystem access. ${String(rollbackError)}`,
+            { cause: validationError }
+          )
+        }
+        if (hadExisting)
+          throw new Error(
+            `Skill update failed. The previous copy was restored. ${String(validationError)}`,
+            { cause: validationError }
+          )
         throw validationError
       }
 
@@ -164,6 +185,8 @@ export class SkillPackageTransactionOwner {
       const manifest: ImportedSourceManifest = {}
       if (typeof record.url === 'string') manifest.url = record.url
       if (typeof record.signature === 'string') manifest.signature = record.signature
+      const receipt = marketplaceReceiptSchema.safeParse(record.marketplace)
+      if (receipt.success) manifest.marketplace = receipt.data
 
       if (typeof record.agentHome === 'object' && record.agentHome !== null) {
         const agentHome = record.agentHome as Record<string, unknown>

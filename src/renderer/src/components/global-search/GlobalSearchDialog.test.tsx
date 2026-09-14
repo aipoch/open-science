@@ -67,7 +67,66 @@ vi.mock('@/pages/workspace/FilePreviewDialog', () => ({
 beforeEach(setupSearch)
 afterEach(teardownSearch)
 
+it('ignores saved search history and no longer records queries when opening a result', async () => {
+  const history = JSON.stringify(['previous search'])
+  localStorage.setItem('open-science-recent-searches', history)
+  const read = vi.spyOn(Storage.prototype, 'getItem')
+  const write = vi.spyOn(Storage.prototype, 'setItem')
+  await renderSearch()
+  expect(document.querySelector('.search-recent-queries')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'previous search' })).toBeNull()
+  expect(read).not.toHaveBeenCalledWith('open-science-recent-searches')
+  await search('Alpha')
+  await waitFor(() => expect(rows('projects').length).toBeGreaterThan(0))
+  act(() => fireEvent.doubleClick(rows('projects')[0]))
+  expect(write.mock.calls.some(([key]) => key === 'open-science-recent-searches')).toBe(false)
+  expect(localStorage.getItem('open-science-recent-searches')).toBe(history)
+})
+
+it('toggles filters, retains effective values while collapsed, and collapses on reopen', async () => {
+  await renderSearch()
+  const toggle = screen.getByRole('button', { name: 'Filters' })
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  expect(screen.queryByRole('combobox', { name: 'Time range' })).toBeNull()
+  fireEvent.click(toggle)
+  expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  expect(document.getElementById(toggle.getAttribute('aria-controls')!)?.hidden).toBe(false)
+  await selectFilter('Time range', 'Last 7 days')
+  await selectFilter('Result order', 'Recently updated')
+  expect(toggle.textContent).toBe('Filters2')
+  fireEvent.click(toggle)
+  expect(screen.queryByRole('combobox', { name: 'Time range' })).toBeNull()
+  expect(toggle.textContent).toBe('Filters2')
+  await search('retained filters')
+  expect(window.api.sessions.searchMessages).toHaveBeenLastCalledWith(
+    expect.objectContaining({ sort: 'recent', updatedAfter: expect.any(Number) })
+  )
+  fireEvent.click(toggle)
+  expect(screen.getByRole('combobox', { name: 'Time range' }).textContent).toBe('Last 7 days')
+  await renderSearch(false)
+  await renderSearch()
+  expect(screen.getByRole('button', { name: /^Filters/ }).getAttribute('aria-expanded')).toBe(
+    'false'
+  )
+  await selectFilter('Time range', 'Any time')
+  await selectFilter('Result order', 'Relevance within categories')
+  expect(screen.getByRole('button', { name: 'Filters' }).textContent).toBe('Filters')
+})
+
+it('counts only the refinement that applies to the selected category', async () => {
+  await renderSearch()
+  act(() => button('Messages').click())
+  await selectFilter('Refine category', 'Sent by me')
+  expect(screen.getByRole('button', { name: /^Filters/ }).textContent).toBe('Filters1')
+  act(() => button('Projects').click())
+  expect(screen.getByRole('button', { name: 'Filters' }).textContent).toBe('Filters')
+  expect(screen.queryByRole('combobox', { name: 'Refine category' })).toBeNull()
+})
+
 const selectFilter = async (name: string, option: string): Promise<void> => {
+  if (!screen.queryByRole('combobox', { name })) {
+    fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
+  }
   const trigger = screen.getByRole('combobox', { name })
   fireEvent.keyDown(trigger, { key: 'Enter' })
   fireEvent.click(await screen.findByRole('option', { name: option }))
@@ -481,6 +540,7 @@ describe('GlobalSearchDialog', () => {
         expect.objectContaining({ projectIds: ['project-a'] })
       )
     )
+    expect(screen.getByRole('button', { name: /^Filters/ }).textContent).toBe('Filters1')
     act(() => useNavigationStore.setState({ view: 'home' }))
     await waitFor(() =>
       expect(window.api.sessions.searchMessages).toHaveBeenLastCalledWith(
@@ -490,11 +550,13 @@ describe('GlobalSearchDialog', () => {
     expect(screen.getByRole('combobox', { name: 'Search scope' }).textContent).toBe(
       'All projects and Library'
     )
+    expect(screen.getByRole('button', { name: 'Filters' }).textContent).toBe('Filters')
   })
   it('applies sender, time and sorting filters before loading a category page', async () => {
     await renderSearch()
     act(() => document.querySelector<HTMLButtonElement>('[data-category="messages"]')!.click())
     await selectFilter('Refine category', 'Sent by me')
+    expect(screen.getByRole('button', { name: /^Filters/ }).textContent).toBe('Filters1')
     await selectFilter('Result order', 'Recently updated')
     await selectFilter('Time range', 'Last 7 days')
     await waitFor(() =>

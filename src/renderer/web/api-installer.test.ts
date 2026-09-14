@@ -32,6 +32,26 @@ function surface<Electron, Web>(electron: Electron, web: Web): Surface<Electron,
 }
 
 describe('installWebRendererContracts', () => {
+  it('forwards external R library consent through the Web contract', async () => {
+    const api: Record<string, unknown> = {}
+    const invoke = vi.fn()
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['runtime:set-install-authorized']),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    await methodAt(api, 'runtime.setInstallAuthorized')!('r', 'external-r', true, '/user/R/library')
+    expect(invoke).toHaveBeenCalledWith('runtime:set-install-authorized', [
+      {
+        language: 'r',
+        envId: 'external-r',
+        authorized: true,
+        library: '/user/R/library'
+      }
+    ])
+  })
   it('preserves recoverable deletion diagnostics without turning rejection into success', async () => {
     const diagnostic = {
       reason: 'scan-incomplete' as const,
@@ -67,6 +87,33 @@ describe('installWebRendererContracts', () => {
     ).catch((error) => error)
     expect(result).toBeInstanceOf(Error)
     expect(parseLiteratureDeletionError(result)).toEqual(diagnostic)
+  })
+
+  it('returns a cache miss locally and installs a rejecting cache lookup remotely', async () => {
+    const channel = 'pdf-structure:read-cached'
+    const request = { attachmentVersionId: 'version-1', page: 1 }
+    const invoke = vi.fn().mockResolvedValue(undefined)
+    const local: Record<string, unknown> = {}
+    installWebRendererContracts(local, {
+      availableRpcChannels: new Set([channel]),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    await expect(methodAt(local, 'pdfStructure.readCached')?.(request)).resolves.toBeUndefined()
+    expect(invoke).toHaveBeenCalledWith(channel, [request])
+    invoke.mockClear()
+    const remote: Record<string, unknown> = {}
+    installWebRendererContracts(remote, {
+      availableRpcChannels: new Set(),
+      restrictedRpcChannels: new Set([channel]),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    await expect(methodAt(remote, 'pdfStructure.readCached')?.(request)).rejects.toThrow()
+    expect(invoke).not.toHaveBeenCalled()
   })
 
   it('forwards the Session delegation mutation unchanged and returns the authoritative Session', async () => {

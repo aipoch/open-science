@@ -6,7 +6,8 @@ import {
   Pin,
   PinOff,
   Trash2,
-  PackageCheck
+  PackageCheck,
+  Package
 } from 'lucide-react'
 
 import type {
@@ -23,6 +24,7 @@ export type SessionActionId =
   | 'check-artifacts'
   | 'view-notebook'
   | 'export'
+  | 'export-package'
   | 'archive'
   | 'delete'
 
@@ -38,6 +40,7 @@ export const SESSION_ACTION_CATALOG = {
   'check-artifacts': { labelKey: 'Check session artifacts', icon: PackageCheck },
   'view-notebook': { labelKey: 'View notebook', icon: BookOpen },
   export: { labelKey: 'Export conversation…', icon: Download },
+  'export-package': { labelKey: 'Export Session package', icon: Package },
   archive: { labelKey: 'Archive', icon: Archive },
   delete: { labelKey: 'Delete', icon: Trash2, danger: true }
 } satisfies Record<SessionActionId, ActionMenuDefinition>
@@ -49,7 +52,7 @@ export const SESSION_ACTION_RECIPE = [
   { kind: 'action', action: 'download-artifacts' },
   { kind: 'action', action: 'check-artifacts' },
   { kind: 'action', action: 'view-notebook' },
-  { kind: 'action', action: 'export' },
+  { kind: 'submenu', labelKey: 'Export', icon: Download, actions: ['export', 'export-package'] },
   { kind: 'action', action: 'archive' },
   { kind: 'separator' },
   { kind: 'action', action: 'delete' }
@@ -66,6 +69,8 @@ type SessionActionOptions = {
   onCheckArtifacts?: (session: ChatSession) => void
   onViewNotebook: (session: ChatSession) => void
   onExportSession?: (session: ChatSession) => void
+  onExportPackage?: (session: ChatSession) => Promise<void>
+  packageBusy?: boolean
   onArchiveSession?: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
 }
@@ -106,6 +111,15 @@ export const createSessionActionBindings = (
     execute: ({ session }) => options.onExportSession?.(session),
     hidden: !options.onExportSession,
     disabled: isExportDisabled
+  },
+  'export-package': {
+    execute: ({ session }) => options.onExportPackage?.(session),
+    hidden: !options.onExportPackage,
+    disabled: ({ session, presentedStatus }) =>
+      !options.canMutateConversations ||
+      Boolean(options.packageBusy) ||
+      session.status !== 'idle' ||
+      presentedStatus !== 'idle'
   },
   archive: {
     execute: ({ session }) => options.onArchiveSession?.(session),

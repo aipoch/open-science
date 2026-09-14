@@ -21,6 +21,10 @@ vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn() }
 }))
 
+vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
+  drainWorkspaceRuntimeEventsForPersistence: vi.fn(async () => undefined)
+}))
+
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const createSession = (overrides: Partial<ChatSession> = {}): ChatSession => ({
@@ -194,6 +198,19 @@ describe('ConversationExportDialog', () => {
     })
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
     expect(onExport).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the conversation dialog focused on PDF and Markdown', () => {
+    const session = createSession()
+    vi.stubGlobal('api', { sessions: { exportPackage: vi.fn() } })
+    act(() =>
+      root.render(
+        <ConversationExportDialog session={session} currentSession={session} onClose={vi.fn()} />
+      )
+    )
+    expect(document.body.textContent).not.toContain('Export Session package')
+    expect(findControl('radio', 'PDF')).toBeDefined()
+    expect(findControl('radio', 'Markdown')).toBeDefined()
   })
 
   it('defaults to the whole PDF export and omits a selection field', async () => {

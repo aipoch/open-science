@@ -20,7 +20,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   localPackageLinks,
+  packDependencies,
   packSnapshot,
+  restoreDependencies,
   restoreSnapshot,
   validateIdentity
 } from './e2e-setup-snapshot.mjs'
@@ -78,6 +80,19 @@ async function fixture(): Promise<{ producer: string; consumer: string; archive:
 }
 
 describe('same-run E2E setup snapshots', () => {
+  it('packs and restores dependencies without requiring a build output', async () => {
+    const { producer, consumer, archive } = await fixture()
+    await rm(join(producer, 'out'), { recursive: true })
+    expect(await packDependencies(producer, archive, environment)).toBeGreaterThan(0)
+    await restoreDependencies(consumer, archive, environment)
+    expect(await readFile(join(consumer, 'node_modules/.prisma/client/index.js'), 'utf8')).toBe(
+      'generated Prisma fixture'
+    )
+    expect(await realpath(join(consumer, 'node_modules/@local/native'))).toBe(
+      await realpath(join(consumer, 'packages/native'))
+    )
+  })
+
   it('accepts a valid archive when tar finishes before consuming its trailing padding', async () => {
     const { producer, consumer, archive } = await fixture()
     await packSnapshot(producer, archive, environment)

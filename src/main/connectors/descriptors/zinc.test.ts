@@ -21,6 +21,9 @@ const ctx: ToolContext = {
   fetchJsonWithHeaders: async () => {
     throw new Error('zinc tools must not use ctx.fetchJsonWithHeaders')
   },
+  postForm: async () => {
+    throw new Error('unused multipart transport')
+  },
   postJson: async () => {
     throw new Error('zinc tools must not use ctx.postJson (JSON body, not form-encoded)')
   }

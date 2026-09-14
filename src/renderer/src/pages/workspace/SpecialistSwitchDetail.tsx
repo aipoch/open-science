@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { ArrowUpRight } from 'lucide-react'
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -98,15 +99,14 @@ const SpecialistSwitchDetail = ({
   // Approval will fail main-side name validation; surface that before the user decides.
   if (!profile || profile.kind !== 'custom') {
     return (
-      <div className="flex flex-col gap-2 rounded-xl border border-destructive/40 bg-destructive/10 p-3">
-        <div className="text-sm font-semibold text-destructive">{targetName}</div>
-        <p className="text-xs leading-relaxed text-destructive">
-          {t(
-            'This Specialist can no longer be resolved by name — it was renamed or removed since the request started. Approving will be rejected.'
-          )}
-        </p>
+      <ErrorNotice
+        title={targetName}
+        description={t(
+          'This Specialist can no longer be resolved by name — it was renamed or removed since the request started. Approving will be rejected.'
+        )}
+      >
         {direction}
-      </div>
+      </ErrorNotice>
     )
   }
 

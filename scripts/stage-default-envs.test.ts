@@ -58,7 +58,7 @@ describe('curated version matrix', () => {
     expect(py311).toMatchObject({ language: 'python', version: '3.11' })
     expect(py311?.packages).toEqual(['python=3.11', 'matplotlib-base', 'nomkl'])
     const r43 = matrix.find((p) => p.id === 'r-4.3')
-    expect(r43?.packages).toEqual(['r-base=4.3', 'r-jsonlite'])
+    expect(r43?.packages).toEqual(['r-base=4.3', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2'])
   })
 })
 

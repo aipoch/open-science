@@ -44,6 +44,162 @@ const deferred = <T>(): {
 }
 
 describe('ProviderAccountsModule', () => {
+  it('publishes only validated API credentials, repeats safely, and refuses replacement', async () => {
+    await repository.setAgentFramework('codex')
+    const validate = vi
+      .spyOn(module, 'validateProvider')
+      .mockResolvedValue({ ok: true, category: 'ok' })
+    await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
+    const first = await repository.getSettings()
+    await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
+    const restored = await new SettingsRepository(dir).getSettings()
+    expect(restored.providers).toHaveLength(1)
+    expect(restored.providers[0].keyRef).toBe(first.providers[0].keyRef)
+    expect(restored.providers[0].lastValidatedTarget).toEqual({
+      model: 'gpt-5.4',
+      endpoint: 'responses'
+    })
+    expect(restored.activeProviderId).toBe('cli-openai')
+    await expect(module.bootstrapOpenAi('different-key', 'gpt-5.4')).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    expect(await repository.getSettings()).toEqual(restored)
+    expect(validate).toHaveBeenCalledTimes(2)
+  })
+
+  it('revalidates the selected model without replacing the provider default or key', async () => {
+    await repository.setAgentFramework('codex')
+    const validate = vi
+      .spyOn(module, 'validateProvider')
+      .mockResolvedValue({ ok: true, category: 'ok' })
+    await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
+    const existing = (await repository.getSettings()).providers[0]
+    const keyRef = existing.keyRef
+    await repository.upsertProvider({ ...existing, name: 'My research account' })
+    await repository.setActiveProvider('cli-openai', 'gpt-5.4-mini')
+    await expect(module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4-mini')
+    expect(validate).toHaveBeenLastCalledWith({
+      draft: { type: 'official', vendorId: 'openai', model: 'gpt-5.4-mini', key: 'synthetic-key' }
+    })
+    const saved = await new SettingsRepository(dir).getSettings()
+    expect(saved.activeModel).toBe('gpt-5.4-mini')
+    expect(saved.providers[0]).toMatchObject({
+      model: 'gpt-5.4',
+      name: 'My research account',
+      keyRef,
+      lastValidatedTarget: { model: 'gpt-5.4-mini', endpoint: 'responses' }
+    })
+    validate.mockImplementation(async () => {
+      await repository.setActiveProvider('cli-openai', 'gpt-5.4')
+      return { ok: true, category: 'ok' }
+    })
+    await expect(module.bootstrapOpenAi('synthetic-key', 'gpt-5.4-mini')).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    expect((await repository.getSettings()).activeModel).toBe('gpt-5.4')
+  })
+
+  it.each([undefined, 'cli-openai'])(
+    'rejects bootstrap with coexisting providers when active provider is %s',
+    async (activeProviderId) => {
+      await repository.setAgentFramework('codex')
+      const validate = vi
+        .spyOn(module, 'validateProvider')
+        .mockResolvedValue({ ok: true, category: 'ok' })
+      await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
+      await repository.upsertProvider({
+        id: 'other-openai',
+        name: 'Existing account',
+        type: 'official',
+        vendorId: 'openai',
+        model: 'gpt-5.4'
+      })
+      await repository.setActiveProvider(activeProviderId)
+      const before = await repository.getSettings()
+      validate.mockClear()
+      await expect(module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')).rejects.toMatchObject({
+        code: 'configuration_conflict'
+      })
+      expect(validate).not.toHaveBeenCalled()
+      expect(await new SettingsRepository(dir).getSettings()).toEqual(before)
+    }
+  )
+
+  it('does not publish API credentials if Settings changes during the probe', async () => {
+    await repository.setAgentFramework('codex')
+    vi.spyOn(module, 'validateProvider').mockImplementation(async () => {
+      await repository.setAgentFramework('opencode')
+      return { ok: true, category: 'ok' }
+    })
+    await expect(module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    expect((await repository.getSettings()).providers).toEqual([])
+  })
+  it('bootstraps an app-owned CLI login without deleting authentication and restores it after restart', async () => {
+    await repository.setAgentFramework('codex')
+    const home = codexSubscriptionStorageDir(dir)
+    await mkdir(home, { recursive: true })
+    const auth = JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'synthetic-cli-token' })
+    await writeFile(join(home, 'auth.json'), auth)
+    await module.prepareBootstrapCodex()
+    expect((await repository.getSettings()).activeProviderId).toBeUndefined()
+    expect(await readFile(join(home, 'auth.json'), 'utf8')).toBe(auth)
+    await module.completeBootstrapCodex()
+    await module.prepareBootstrapCodex()
+    await module.completeBootstrapCodex()
+    const restored = await new SettingsRepository(dir).getSettings()
+    expect(restored.providers).toHaveLength(1)
+    expect(restored.activeProviderId).toBe('builtin-codex-subscription')
+    expect(restored.providers[0].lastValidatedAt).toEqual(expect.any(Number))
+    expect(await readFile(join(home, 'auth.json'), 'utf8')).toBe(auth)
+  })
+
+  it('does not activate rejected subscription credentials', async () => {
+    await repository.setAgentFramework('codex')
+    await module.prepareBootstrapCodex()
+    vi.mocked(codexAuth.getStatus).mockResolvedValue({
+      mode: 'isolated',
+      supported: true,
+      authenticated: false
+    })
+    await expect(module.completeBootstrapCodex()).rejects.toMatchObject({
+      code: 'credential_invalid'
+    })
+    expect((await repository.getSettings()).activeProviderId).toBeUndefined()
+  })
+
+  it('does not activate a login if Settings changed during validation', async () => {
+    await repository.setAgentFramework('codex')
+    await module.prepareBootstrapCodex()
+    await writeFile(
+      join(codexSubscriptionStorageDir(dir), 'auth.json'),
+      JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'synthetic' })
+    )
+    vi.mocked(codexAuth.getStatus).mockImplementation(async () => {
+      await repository.setAgentFramework('opencode')
+      return { mode: 'isolated', supported: true, authenticated: true }
+    })
+    await expect(module.completeBootstrapCodex()).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    expect((await repository.getSettings()).activeProviderId).toBeUndefined()
+  })
+
+  it('validates an API key before any provider or credential publication', async () => {
+    await repository.setAgentFramework('codex')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('invalid key', { status: 401 })))
+    await expect(module.bootstrapOpenAi('synthetic-invalid-key', 'gpt-5.4')).rejects.toMatchObject({
+      code: 'credential_invalid'
+    })
+    const restored = await new SettingsRepository(dir).getSettings()
+    expect(restored.providers).toEqual([])
+    expect(restored.activeProviderId).toBeUndefined()
+    vi.unstubAllGlobals()
+  })
   let dir: string
   let repository: InstanceType<typeof SettingsRepository>
   let codexAuth: CodexAuthControllerPort
@@ -128,6 +284,85 @@ describe('ProviderAccountsModule', () => {
     return async () => {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  it('rejects stale human edits while preserving credentials and allowing background catalog changes', async () => {
+    const draft = {
+      id: 'cas-provider',
+      type: 'custom' as const,
+      name: 'Original',
+      baseUrl: 'https://old.example',
+      model: 'test',
+      key: 'secret'
+    }
+    await module.upsertProvider(draft)
+    const original = (await repository.getSettings()).providers[0]
+    await module.upsertProvider({
+      ...draft,
+      key: undefined,
+      baseUrl: 'https://new.example',
+      requireExisting: true,
+      expectedConfigRevision: original.configRevision
+    })
+    await expect(
+      module.upsertProvider({
+        ...draft,
+        key: undefined,
+        name: 'Stale edit',
+        requireExisting: true,
+        expectedConfigRevision: original.configRevision
+      })
+    ).rejects.toThrow('Provider configuration changed')
+    const latest = (await repository.getSettings()).providers[0]
+    expect(latest).toMatchObject({
+      baseUrl: 'https://new.example',
+      keyRef: original.keyRef,
+      configRevision: 2
+    })
+    await repository.updateProviderModelCatalogIfTargetMatches(latest, ['fresh-model'])
+    await module.upsertProvider({
+      ...draft,
+      key: undefined,
+      baseUrl: latest.baseUrl,
+      name: 'Reapplied',
+      requireExisting: true,
+      expectedConfigRevision: latest.configRevision
+    })
+    expect((await repository.getSettings()).providers[0]).toMatchObject({
+      name: 'Reapplied',
+      fetchedModels: ['fresh-model'],
+      configRevision: 3,
+      keyRef: original.keyRef
+    })
+    await repository.deleteProvider(draft.id)
+    await expect(module.upsertProvider({ ...draft, expectedConfigRevision: 3 })).rejects.toThrow(
+      'Provider configuration changed'
+    )
+  })
+
+  it('accepts the zero revision of a legacy provider and rejects a second old form', async () => {
+    await repository.upsertProvider({
+      id: 'legacy',
+      type: 'custom',
+      name: 'Legacy',
+      baseUrl: 'https://example.com',
+      model: 'test',
+      keyRef: 'plain:secret'
+    })
+    await module.upsertProvider({
+      id: 'legacy',
+      type: 'custom',
+      name: 'First',
+      expectedConfigRevision: 0
+    })
+    await expect(
+      module.upsertProvider({
+        id: 'legacy',
+        type: 'custom',
+        name: 'Second',
+        expectedConfigRevision: 0
+      })
+    ).rejects.toThrow('Provider configuration changed')
   })
 
   it('owns custom provider persistence, projection, selection, and deletion', async () => {
@@ -866,6 +1101,41 @@ describe('ProviderAccountsModule', () => {
         }
       })
     ).resolves.toMatchObject({ ok: false, category: 'incompatible' })
+  })
+
+  it('persists SenseNova regions through the existing settings field without rewriting legacy records', async () => {
+    await module.upsertProvider({
+      type: 'official',
+      vendorId: 'sensenova',
+      name: 'SenseNova',
+      key: 'synthetic-key'
+    })
+    const original = (await new SettingsRepository(dir).getSettings()).providers[0]
+    expect(original.region).toBeUndefined()
+    expect(
+      module.resolveRuntimeTarget(
+        original,
+        { kind: 'provider-default' },
+        getAgentFramework('codex')
+      ).provider.baseUrl
+    ).toBe('https://token.sensenova.cn')
+    await module.upsertProvider({
+      id: original.id,
+      requireExisting: true,
+      type: 'official',
+      vendorId: 'sensenova',
+      name: 'SenseNova',
+      region: 'global'
+    })
+    const restored = (await new SettingsRepository(dir).getSettings()).providers[0]
+    expect(restored).toMatchObject({ region: 'global', keyRef: original.keyRef })
+    expect(
+      module.resolveRuntimeTarget(
+        restored,
+        { kind: 'provider-default' },
+        getAgentFramework('codex')
+      ).provider.openaiBaseUrl
+    ).toBe('https://token.sensenova.ai/v1')
   })
 
   it('discards a model catalog fetched for a provider target changed during refresh', async () => {

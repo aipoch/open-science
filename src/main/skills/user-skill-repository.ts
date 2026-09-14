@@ -18,10 +18,13 @@ import {
   type SkillMutationOwner
 } from './skill-package-transaction-owner'
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
+import type { MarketplacePackage } from './marketplace-package'
+import type { SkillMarketplaceInstallation } from '../../shared/skill-marketplace'
 import { UserSkillCompatibilityIndex } from './user-skill-compatibility-index'
 import {
   SAFE_SKILL_DIRECTORY_NAME,
   SAFE_SKILL_NAME,
+  type UserSkillSource,
   UserSkillStore,
   assertUsableSkillName,
   frontmatterBlock,
@@ -32,6 +35,7 @@ import {
 } from './user-skill-store'
 
 export type { ImportOutcome } from './user-skill-import-contracts'
+export { MarketplaceInstallConflict } from './skill-bundle-import-owner'
 
 // Reads and writes user-authored (personal) and imported skills under `<storageRoot>/skills/`.
 class UserSkillRepository {
@@ -121,8 +125,24 @@ class UserSkillRepository {
   }
 
   // Deletes a personal or imported skill directory.
-  async delete(id: string, guard?: (skillId: string) => Promise<void>): Promise<void> {
-    return this.store.delete(id, guard)
+  async delete(id: string, guard?: Parameters<UserSkillStore['delete']>[3]): Promise<void>
+  async delete(
+    id: string,
+    source?: UserSkillSource,
+    directoryName?: string,
+    guard?: Parameters<UserSkillStore['delete']>[3]
+  ): Promise<void>
+  async delete(
+    id: string,
+    sourceOrGuard?: UserSkillSource | Parameters<UserSkillStore['delete']>[3],
+    directoryNameOrGuard?: string | Parameters<UserSkillStore['delete']>[3],
+    guard?: Parameters<UserSkillStore['delete']>[3]
+  ): Promise<void> {
+    if (typeof sourceOrGuard === 'function')
+      return this.store.delete(id, undefined, undefined, sourceOrGuard)
+    if (typeof directoryNameOrGuard === 'function')
+      return this.store.delete(id, sourceOrGuard, undefined, directoryNameOrGuard)
+    return this.store.delete(id, sourceOrGuard, directoryNameOrGuard, guard)
   }
 
   async importFromGitHub(
@@ -144,6 +164,22 @@ class UserSkillRepository {
 
   async previewZip(zip: Buffer): Promise<SkillBundlePreviewResult> {
     return this.bundleImports.previewZip(zip)
+  }
+
+  marketplaceInstallation(
+    id: string,
+    version: string,
+    reservedNames: readonly string[]
+  ): Promise<SkillMarketplaceInstallation> {
+    return this.bundleImports.marketplaceInstallation(id, version, reservedNames)
+  }
+
+  installMarketplace(
+    pkg: MarketplacePackage,
+    expectedVersion: string | null,
+    reservedNames: readonly string[]
+  ): Promise<ImportOutcome> {
+    return this.bundleImports.installMarketplace(pkg, expectedVersion, reservedNames)
   }
 
   async importFromZip(
@@ -182,8 +218,12 @@ class UserSkillRepository {
     return this.agentHomeSkills.listAgentHomeSkills(homeSkillsDir, source)
   }
 
-  async previewAgentHomeSkill(root: string): Promise<ParsedSkillPreview> {
-    return this.agentHomeSkills.previewAgentHomeSkill(root)
+  async previewAgentHomeSkill(
+    root: string,
+    skill?: AgentHomeSkillRef,
+    aliases: readonly AgentHomeSkillRef[] = []
+  ): Promise<ParsedSkillPreview> {
+    return this.agentHomeSkills.previewAgentHomeSkill(root, skill, aliases)
   }
 
   async importAgentHomeSkill(

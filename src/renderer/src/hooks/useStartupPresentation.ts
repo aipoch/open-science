@@ -17,3 +17,10 @@ export function useStartupPresentation(phase: StartupPresentationPhase | undefin
     return () => cancelAnimationFrame(frame)
   }, [phase])
 }
+
+// Place inside the same Suspense boundary as the interactive content. A lazy loading fallback
+// must not acknowledge readiness on behalf of the page that has not committed yet.
+export function StartupPresentationReady(): null {
+  useStartupPresentation('interactive')
+  return null
+}

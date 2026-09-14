@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
@@ -14,6 +17,8 @@ const discoveryState = vi.hoisted(() => ({
 
 vi.mock('./environment-discovery', async (importOriginal) => ({
   rscriptFor: (await importOriginal<typeof import('./environment-discovery')>()).rscriptFor,
+  windowsCondaPrefixForR: (await importOriginal<typeof import('./environment-discovery')>())
+    .windowsCondaPrefixForR,
   defaultDiscoveryDeps: (
     runtimeRoot: string,
     getManualInterpreters: (language: NotebookLanguage) => string[]
@@ -103,6 +108,72 @@ beforeEach(() => {
 })
 
 describe('runtime workflows', () => {
+  it('discovers personal libraries only for runnable external R and tolerates probe failure', async () => {
+    const runtime = {
+      language: 'r',
+      provenance: 'user-own',
+      envId: 'r-one',
+      interpreterPath: '/r-one/R',
+      label: 'R',
+      runnable: true
+    } as const
+    discoveryState.r = [
+      runtime,
+      { ...runtime, envId: 'r-two', interpreterPath: '/r-two/R' },
+      { ...runtime, envId: 'r-managed', provenance: 'app-managed' },
+      { ...runtime, envId: 'r-broken', runnable: false }
+    ]
+    const discoverRLibraries = vi
+      .fn()
+      .mockResolvedValueOnce(['/personal/R'])
+      .mockRejectedValueOnce(new Error('probe failed'))
+    const workflows = createRuntimeWorkflows({
+      settingsService: fakeSettingsService(),
+      runtimeRoot: () => '/runtime',
+      discoverRLibraries
+    })
+    const result = await workflows.listEnvironments()
+    expect(result.r[0].personalRLibraries).toEqual(['/personal/R'])
+    expect(result.r.slice(1).every((env) => env.personalRLibraries === undefined)).toBe(true)
+    expect(discoverRLibraries).toHaveBeenCalledTimes(2)
+  })
+
+  it('rechecks a chosen R library before persisting consent but revokes without probing', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'r-consent-'))
+    try {
+      const library = await realpath(directory)
+      discoveryState.r = [
+        {
+          language: 'r',
+          provenance: 'user-own',
+          envId: 'external-r',
+          interpreterPath: '/external/R',
+          label: 'R',
+          runnable: true
+        }
+      ]
+      const settingsService = fakeSettingsService()
+      const persist = vi.spyOn(settingsService, 'setInstallAuthorized')
+      const discoverRLibraries = vi.fn().mockResolvedValue([])
+      const workflows = createRuntimeWorkflows({
+        settingsService,
+        runtimeRoot: () => '/runtime',
+        discoverRLibraries
+      })
+      const request = { language: 'r' as const, envId: 'external-r', authorized: true, library }
+      await expect(workflows.setInstallAuthorized(request)).rejects.toThrow('visible')
+      expect(persist).not.toHaveBeenCalled()
+      discoverRLibraries.mockResolvedValue([library])
+      await workflows.setInstallAuthorized(request)
+      expect(persist).toHaveBeenCalledWith('r', 'external-r', true, library)
+      discoverRLibraries.mockClear()
+      await workflows.setInstallAuthorized({ ...request, authorized: false, library: undefined })
+      expect(discoverRLibraries).not.toHaveBeenCalled()
+      expect(persist).toHaveBeenLastCalledWith('r', 'external-r', false, undefined)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   it('blocks R authorization once data-root handoff preparation starts', async () => {
     discoveryState.r = [
       {

@@ -360,6 +360,9 @@ describe('UpdateDialog', () => {
       }
     })
     act(() => root.render(<UpdateDialog />))
+    const viewport = document.querySelector('[data-slot="scroll-area-viewport"]')!
+    const progress = document.querySelector('[role="progressbar"]')!
+    expect(viewport.contains(progress)).toBe(false)
     expect(document.body.textContent).toContain('4.1 KB')
     expect(document.body.textContent).toContain('9.8 KB')
     expect(document.body.textContent).toContain('42%')

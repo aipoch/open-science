@@ -1737,6 +1737,29 @@ it('does not repeat a cancelled UAC prompt and reports cancellation before cell 
 })
 
 describe('R startup authorization admission', () => {
+  it('reproduces R verification refusal before authorization when protection is not ready', async () => {
+    backend.status.mockResolvedValue({
+      kind: 'setupRequired',
+      platform: 'win32',
+      reasons: ['windowsProfileMissing']
+    })
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: tmpdir(),
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      await expect(owner.setWindowsRuntimeAccess(process.execPath, true)).rejects.toThrow(
+        'Enable protected mode before verifying R access.'
+      )
+      expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
+    } finally {
+      await owner.dispose()
+    }
+  })
+
   const request = { runtime: 'r' as const, executable: process.execPath, sessionId: 'r-admission' }
   const createOwner = (
     platform: NodeJS.Platform = 'win32',
@@ -1761,6 +1784,7 @@ describe('R startup authorization admission', () => {
         env: process.env,
         annotateStderr: (stderr: string) => stderr,
         resetNetworkConnections: backend.resetNetworkConnections,
+        setExecutionActive: backend.setExecutionActive,
         confirmProcessTreeTermination: async () => true,
         cleanup: async () => {
           fixtureDirectories.push(command.cwd)

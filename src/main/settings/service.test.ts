@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import {
   chmod,
   mkdir,
@@ -31,8 +32,12 @@ import type { UserSkillRepository as UserSkillRepositoryType } from '../skills/u
 import type { SystemProxyEnvironment } from './system-proxy'
 import type { AgentBackendResolutionContext } from './backend-resolver'
 import type { Logger } from '../logger'
+import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import type { SettingsServiceOptions } from './service'
 import { SettingsInstallCoordinator } from './settings-install-coordinator'
+import { SkillMarketplaceService } from '../skills/marketplace-service'
+import { SkillCatalogModule } from './skill-catalog'
+import { marketplaceCatalog } from '../../shared/__fixtures__/skill-marketplace'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -326,6 +331,206 @@ afterEach(async () => {
   vi.unstubAllEnvs()
   await makeTreeWritable(storageRoot)
   await rm(storageRoot, { recursive: true, force: true })
+})
+
+describe('SettingsService: Marketplace installation projection', () => {
+  it('aborts batch downloads on disposal and never commits a late download', async () => {
+    const pending =
+      Promise.withResolvers<Awaited<ReturnType<SkillMarketplaceService['download']>>>()
+    const retain = vi
+      .spyOn(SkillMarketplaceService.prototype, 'retainSnapshot')
+      .mockReturnValue(vi.fn())
+    const download = vi
+      .spyOn(SkillMarketplaceService.prototype, 'download')
+      .mockReturnValue(pending.promise)
+    const write = vi.spyOn(SkillCatalogModule.prototype, 'installMarketplacePackage')
+    const refresh = vi.spyOn(SkillCatalogModule.prototype, 'refreshMarketplace')
+    try {
+      const service = createService()
+      const request = {
+        snapshotId: 'a'.repeat(64),
+        items: [
+          { id: 'one', version: '1.0.0', expectedVersion: null },
+          { id: 'two', version: '1.0.0', expectedVersion: null }
+        ]
+      }
+      expect(service.startSkillMarketplaceBatch(request, vi.fn()).ok).toBe(true)
+      const signal = download.mock.calls[0][1]!
+      let disposed = false
+      const disposal = service.dispose().then(() => {
+        disposed = true
+      })
+      expect(signal.aborted).toBe(true)
+      await Promise.resolve()
+      expect(disposed).toBe(false)
+      // Even an adapter that ignores cancellation cannot commit after shutdown starts.
+      pending.resolve({
+        ok: true,
+        value: {
+          files: [],
+          receipt: {
+            marketplace: 'openscience-skills',
+            id: 'one',
+            version: '1.0.0',
+            snapshotId: request.snapshotId,
+            revision: 'b'.repeat(64),
+            descriptorSha256: 'c'.repeat(64),
+            artifactSha256: 'd'.repeat(64),
+            contentSha256: 'e'.repeat(64)
+          }
+        }
+      })
+      await disposal
+      expect(download).toHaveBeenCalledTimes(1)
+      expect(write).not.toHaveBeenCalled()
+      expect(refresh).not.toHaveBeenCalled()
+      expect(service.getSkillMarketplaceBatch()?.items.map(({ status }) => status)).toEqual([
+        'stopped',
+        'stopped'
+      ])
+      expect(service.startSkillMarketplaceBatch(request, vi.fn())).toEqual({
+        ok: false,
+        error: 'busy'
+      })
+    } finally {
+      pending.resolve({ ok: false, error: 'network' })
+      retain.mockRestore()
+      download.mockRestore()
+      write.mockRestore()
+      refresh.mockRestore()
+    }
+  })
+
+  it('reports a committed direct installation as successful when runtime refresh fails', async () => {
+    const pkg = {
+      files: [],
+      receipt: {
+        marketplace: 'openscience-skills' as const,
+        id: 'one',
+        version: '1.0.0',
+        snapshotId: 'a'.repeat(64),
+        revision: 'b'.repeat(64),
+        descriptorSha256: 'c'.repeat(64),
+        artifactSha256: 'd'.repeat(64),
+        contentSha256: 'e'.repeat(64)
+      }
+    }
+    const download = vi
+      .spyOn(SkillMarketplaceService.prototype, 'download')
+      .mockResolvedValue({ ok: true, value: pkg })
+    const write = vi
+      .spyOn(SkillCatalogModule.prototype, 'installMarketplacePackage')
+      .mockResolvedValue({ id: 'imported-one', status: 'imported' })
+    const refresh = vi
+      .spyOn(SkillCatalogModule.prototype, 'refreshMarketplace')
+      .mockRejectedValueOnce(new Error('runtime unavailable'))
+      .mockResolvedValue(undefined)
+    try {
+      const service = createService()
+      const request = { snapshotId: pkg.receipt.snapshotId, id: 'one', expectedVersion: null }
+      expect(await service.installSkillMarketplace(request)).toEqual({
+        ok: true,
+        value: { id: 'imported-one', status: 'imported', version: '1.0.0', refreshFailed: true }
+      })
+      write.mockResolvedValueOnce({ id: 'imported-one', status: 'unchanged' })
+      expect(
+        await service.installSkillMarketplace({ ...request, expectedVersion: '1.0.0' })
+      ).toEqual({
+        ok: true,
+        value: { id: 'imported-one', status: 'unchanged', version: '1.0.0' }
+      })
+      expect(refresh).toHaveBeenCalledTimes(2)
+    } finally {
+      download.mockRestore()
+      write.mockRestore()
+      refresh.mockRestore()
+    }
+  })
+
+  it('keeps an admitted queue alive independently of callers and uses verified package writes', async () => {
+    const release = vi.fn()
+    const retain = vi
+      .spyOn(SkillMarketplaceService.prototype, 'retainSnapshot')
+      .mockReturnValue(release)
+    const download = vi.spyOn(SkillMarketplaceService.prototype, 'download')
+    const write = vi
+      .spyOn(SkillCatalogModule.prototype, 'installMarketplacePackage')
+      .mockResolvedValue({ id: 'imported-one', status: 'imported' })
+    const refresh = vi
+      .spyOn(SkillCatalogModule.prototype, 'refreshMarketplace')
+      .mockResolvedValue(undefined)
+    const notify = vi.fn()
+    try {
+      const service = createService()
+      let finish!: (value: Awaited<ReturnType<SkillMarketplaceService['download']>>) => void
+      download.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          })
+      )
+      download.mockResolvedValueOnce({ ok: false, error: 'integrity' })
+      const request = {
+        snapshotId: 'a'.repeat(64),
+        items: [
+          { id: 'one', version: '1.0.0', expectedVersion: null },
+          { id: 'two', version: '1.0.0', expectedVersion: null }
+        ]
+      }
+      expect(service.startSkillMarketplaceBatch(request, notify).ok).toBe(true)
+      expect(service.getSkillMarketplaceBatch()?.items[0].status).toBe('installing')
+      expect(write).not.toHaveBeenCalled()
+      const pkg = {
+        files: [],
+        receipt: {
+          marketplace: 'openscience-skills' as const,
+          id: 'one',
+          version: '1.0.0',
+          snapshotId: request.snapshotId,
+          revision: 'b'.repeat(64),
+          descriptorSha256: 'c'.repeat(64),
+          artifactSha256: 'd'.repeat(64),
+          contentSha256: 'e'.repeat(64)
+        }
+      }
+      finish({ ok: true, value: pkg })
+      await vi.waitFor(() => expect(service.getSkillMarketplaceBatch()?.status).toBe('completed'))
+      expect(write).toHaveBeenCalledExactlyOnceWith(pkg, null)
+      expect(service.getSkillMarketplaceBatch()?.items.map(({ status }) => status)).toEqual([
+        'succeeded',
+        'failed'
+      ])
+      expect(refresh).toHaveBeenCalledOnce()
+      expect(notify).toHaveBeenCalledOnce()
+      expect(release).toHaveBeenCalledOnce()
+    } finally {
+      retain.mockRestore()
+      download.mockRestore()
+      write.mockRestore()
+      refresh.mockRestore()
+    }
+  })
+  it('adds local installation state only after successful catalog verification', async () => {
+    const list = vi.spyOn(SkillMarketplaceService.prototype, 'list')
+    const project = vi.spyOn(SkillCatalogModule.prototype, 'marketplaceInstallations')
+    try {
+      const service = createService()
+      list.mockResolvedValueOnce({ ok: false, error: 'integrity' })
+      expect(await service.listSkillMarketplace()).toEqual({ ok: false, error: 'integrity' })
+      expect(project).not.toHaveBeenCalled()
+      list.mockResolvedValueOnce({ ok: true, value: marketplaceCatalog })
+      project.mockResolvedValueOnce({})
+      expect(await service.listSkillMarketplace()).toEqual({
+        ok: true,
+        value: { ...marketplaceCatalog, installations: {} }
+      })
+      expect(project).toHaveBeenCalledExactlyOnceWith(marketplaceCatalog.entries)
+      expect(marketplaceCatalog).not.toHaveProperty('installations')
+    } finally {
+      list.mockRestore()
+      project.mockRestore()
+    }
+  })
 })
 
 describe('SettingsService: Local Shell runtime', () => {
@@ -2162,7 +2367,9 @@ describe('SettingsService: preflight & spawn config', () => {
       codebuddyReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
-      activeProviderReady: true
+      activeProviderReady: true,
+      runtimeReadiness: { status: 'ready' },
+      providerReadiness: { status: 'ready' }
     })
   })
 
@@ -2185,7 +2392,10 @@ describe('SettingsService: preflight & spawn config', () => {
       lastValidatedAt: 1
     })
 
-    await expect(service.getPreflight()).resolves.toMatchObject({ activeProviderReady: false })
+    await expect(service.getPreflight()).resolves.toMatchObject({
+      activeProviderReady: false,
+      providerReadiness: { status: 'not_ready', reason: 'model-not-found' }
+    })
   })
 
   it('closes the provider gate when the active shared Claude session is signed out', async () => {
@@ -2459,6 +2669,58 @@ describe('SettingsService: preflight & spawn config', () => {
       expect(snapshot.codex.nativeManaged).toBe(expected)
       expect((await repository.getSettings()).codex).not.toHaveProperty('nativeManaged')
     }
+  })
+
+  it('returns structured Codex readiness without starting auth when the runtime is incomplete', async () => {
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    const authHome = codexSubscriptionStorageDir(storageRoot)
+    const authPath = join(authHome, 'auth.json')
+    const configPath = join(authHome, 'config.toml')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await mkdir(authHome, { recursive: true })
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    const authContent = JSON.stringify({
+      auth_mode: 'chatgpt',
+      tokens: {
+        id_token: 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0In0.signature',
+        access_token: 'app-owned',
+        refresh_token: 'refresh'
+      },
+      last_refresh: '2026-09-11T00:00:00Z'
+    })
+    await writeFile(authPath, authContent)
+    await writeFile(configPath, 'model = "account-default"\n')
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      managedCodexAdapterPath: adapterPath
+    })
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.6.2' })
+    await repository.setAgentFramework('codex')
+    await repository.upsertProvider({
+      id: CODEX_ISOLATED_PROVIDER_ID,
+      type: 'codex-isolated',
+      name: 'codex-isolated',
+      apiEndpoints: ['responses'],
+      lastValidatedAt: 100
+    })
+    await service.setActiveProvider(CODEX_ISOLATED_PROVIDER_ID, 'gpt-5.6-terra')
+
+    await expect(service.getPreflight()).resolves.toMatchObject({
+      runtimeReadiness: { status: 'not_ready' },
+      providerReadiness: { status: 'ready' }
+    })
+    expect(await readFile(adapterPath, 'utf8')).toBe(MANAGED_CODEX_ADAPTER_FIXTURE)
+    expect(await readFile(authPath, 'utf8')).toBe(authContent)
+    expect(await readFile(configPath, 'utf8')).toBe('model = "account-default"\n')
+
+    await writeFile(authPath, '{}')
+    await expect(service.getPreflight()).resolves.toMatchObject({
+      activeProviderReady: false,
+      providerReadiness: { status: 'not_ready', reason: 'credential_invalid' }
+    })
+    expect(await readFile(authPath, 'utf8')).toBe('{}')
+    expect(await readFile(adapterPath, 'utf8')).toBe(MANAGED_CODEX_ADAPTER_FIXTURE)
+    expect(await readFile(configPath, 'utf8')).toBe('model = "account-default"\n')
   })
 
   it('detects Codex and exposes readiness for its selected adapter', async () => {
@@ -2901,8 +3163,19 @@ describe('SettingsService: preflight & spawn config', () => {
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: false
+      }),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' }
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexAuth
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
@@ -2919,8 +3192,14 @@ describe('SettingsService: preflight & spawn config', () => {
       lastValidatedAt: 100
     })
     await service.setActiveProvider(CODEX_SHARED_PROVIDER_ID, 'gpt-5.6-terra')
+    const authHome = codexSubscriptionStorageDir(storageRoot)
 
-    expect(await service.getPreflight()).toMatchObject({ activeProviderReady: false })
+    expect(await service.getPreflight()).toMatchObject({
+      activeProviderReady: false,
+      providerReadiness: { status: 'not_ready', reason: 'credential_invalid' }
+    })
+    expect(codexAuth.getStatus).not.toHaveBeenCalled()
+    expect(existsSync(authHome)).toBe(false)
     const migratedProviders = (await repository.getSettings()).providers
 
     expect(migratedProviders).toEqual([
@@ -2937,8 +3216,19 @@ describe('SettingsService: preflight & spawn config', () => {
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: true
+      }),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
     const service = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexAuth,
       resolveCodexProxyEnvironment: () =>
         Promise.resolve({
           HTTP_PROXY: 'http://proxy.example.test:3128',
@@ -2964,6 +3254,20 @@ describe('SettingsService: preflight & spawn config', () => {
       lastValidatedAt: 100
     })
     await service.setActiveProvider(CODEX_ISOLATED_PROVIDER_ID, 'gpt-5.6-terra')
+    const authHome = codexSubscriptionStorageDir(storageRoot)
+    await mkdir(authHome, { recursive: true })
+    await writeFile(
+      join(authHome, 'auth.json'),
+      JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: {
+          id_token: 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0In0.signature',
+          access_token: 'app-owned',
+          refresh_token: 'refresh'
+        },
+        last_refresh: '2026-09-11T00:00:00Z'
+      })
+    )
     const configPath = join(storageRoot, 'codex', 'config.toml')
     await mkdir(dirname(configPath), { recursive: true })
     await writeFile(
@@ -4279,7 +4583,7 @@ describe('SettingsService: skills', () => {
     await expect(service.deleteSkill({ id: 'personal-my-skill' })).rejects.toMatchObject({
       code: 'protected-skill'
     })
-    expect(guard).toHaveBeenCalledWith('personal-my-skill')
+    expect(guard).toHaveBeenCalledWith({ id: 'personal-my-skill' })
     await expect(service.getSkillDetail('personal-my-skill')).resolves.toBeDefined()
   })
 
@@ -6625,8 +6929,10 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
       repository,
       configRoot: storageRoot,
       userClaudeDir,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      userSkills: { previewAgentHomeSkill } as any
+      userSkills: {
+        previewAgentHomeSkill,
+        listAgentHomeSkills: vi.fn().mockResolvedValue([])
+      } as unknown as UserSkillRepositoryType
     })
     await repository.setAgentFramework('claude-code')
 

@@ -1,9 +1,9 @@
 import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-composer-drafts'
-import { memo, useCallback, useRef } from 'react'
+import { lazy, memo, Suspense, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
-import { ActionToast } from '@/components/ActionToast'
+import { ActionToast, ActionToastStack } from '@/components/ActionToast'
 import { ConnectorAuthToast } from '@/components/ConnectorAuthToast'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
 import { ErrorNotice } from '@/components/error-notice'
@@ -21,25 +21,58 @@ import { UpdateDialog } from '@/components/UpdateDialog'
 import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
 import { useApplicationEventBindings } from '@/hooks/useApplicationEventBindings'
 import { useApplicationStartup } from '@/hooks/useApplicationStartup'
-import { useStartupPresentation } from '@/hooks/useStartupPresentation'
+import { StartupPresentationReady, useStartupPresentation } from '@/hooks/useStartupPresentation'
 import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { WorkspaceComputeRecoveryBridge } from '@/lib/compute/WorkspaceComputeRecoveryBridge'
 import { HomePage } from '@/pages/home/HomePage'
-import { LiteratureLibraryPage } from '@/pages/literature/LiteratureLibraryPage'
-import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
-import { ComputeApprovalDialog } from '@/pages/settings/ComputeApprovalDialog'
-import { ConnectorApprovalDialog } from '@/pages/settings/ConnectorApprovalDialog'
-import { ConnectorCredentialDialog } from '@/pages/settings/ConnectorCredentialDialog'
-import { SettingsPage, type SettingsPageHandle } from '@/pages/settings/SettingsPage'
-import { SkillImportApprovalDialog } from '@/pages/settings/SkillImportApprovalDialog'
+import type { SettingsPageHandle } from '@/pages/settings/SettingsPage'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
-import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
 import {
   WorkspaceMessageQueueProvider,
   WorkspaceMessageQueueRuntimeBridge
 } from '@/pages/workspace/workspace-message-queue-controller'
 
+const WorkspacePage = lazy(() =>
+  import('@/pages/workspace/WorkspacePage').then(({ WorkspacePage }) => ({
+    default: WorkspacePage
+  }))
+)
+const LiteratureLibraryPage = lazy(() =>
+  import('@/pages/literature/LiteratureLibraryPage').then(({ LiteratureLibraryPage }) => ({
+    default: LiteratureLibraryPage
+  }))
+)
+
 const StableLiteratureLibraryPage = memo(LiteratureLibraryPage)
+
+const OnboardingWizard = lazy(() =>
+  import('@/pages/onboarding/OnboardingWizard').then(({ OnboardingWizard }) => ({
+    default: OnboardingWizard
+  }))
+)
+const SettingsPage = lazy(() =>
+  import('@/pages/settings/SettingsPage').then(({ SettingsPage }) => ({ default: SettingsPage }))
+)
+const ComputeApprovalDialog = lazy(() =>
+  import('@/pages/settings/ComputeApprovalDialog').then(({ ComputeApprovalDialog }) => ({
+    default: ComputeApprovalDialog
+  }))
+)
+const ConnectorApprovalDialog = lazy(() =>
+  import('@/pages/settings/ConnectorApprovalDialog').then(({ ConnectorApprovalDialog }) => ({
+    default: ConnectorApprovalDialog
+  }))
+)
+const ConnectorCredentialDialog = lazy(() =>
+  import('@/pages/settings/ConnectorCredentialDialog').then(({ ConnectorCredentialDialog }) => ({
+    default: ConnectorCredentialDialog
+  }))
+)
+const SkillImportApprovalDialog = lazy(() =>
+  import('@/pages/settings/SkillImportApprovalDialog').then(({ SkillImportApprovalDialog }) => ({
+    default: SkillImportApprovalDialog
+  }))
+)
 
 const ApplicationPresentationHost = (): React.JSX.Element => {
   const { t } = useTranslation()
@@ -65,10 +98,10 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
         : 'startup-settings'
       : startup.settings.startupView === 'onboarding' ||
           (startup.storageRecovery.missingDataRoot !== undefined && !sessions.isHydrated)
-        ? 'interactive'
+        ? undefined
         : !sessions.isHydrated && sessions.isLoading
           ? 'startup-sessions'
-          : 'interactive'
+          : undefined
   )
 
   if (loadingSettings) {
@@ -113,7 +146,10 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           ui={startup.environment.ui}
           onRetry={() => void startup.environment.retry()}
         />
-        <OnboardingWizard loadStorageInfo={startup.storageRecovery.loadInfo} />
+        <Suspense fallback={<OpenScienceLogoLoader />}>
+          <OnboardingWizard loadStorageInfo={startup.storageRecovery.loadInfo} />
+          <StartupPresentationReady />
+        </Suspense>
       </>
     )
   }
@@ -122,11 +158,14 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
   // before the session-loading branch so reconnect/relocate/accept-empty can release that gate.
   if (startup.storageRecovery.missingDataRoot !== undefined && !startup.sessions.isHydrated) {
     return (
-      <DataRootMissingDialog
-        open
-        dataRoot={startup.storageRecovery.missingDataRoot}
-        onResolved={startup.storageRecovery.resolveMissingDataRoot}
-      />
+      <>
+        <DataRootMissingDialog
+          open
+          dataRoot={startup.storageRecovery.missingDataRoot}
+          onResolved={startup.storageRecovery.resolveMissingDataRoot}
+        />
+        <StartupPresentationReady />
+      </>
     )
   }
 
@@ -151,6 +190,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
         data-testid="session-persistence-startup-error"
         className="flex min-h-svh items-center justify-center bg-background p-6 text-foreground"
       >
+        <StartupPresentationReady />
         <SessionPersistenceAlert
           title={t('Saved conversations could not be loaded')}
           message={sessions.loadError}
@@ -214,31 +254,6 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           ui={startup.environment.ui}
           onRetry={() => void startup.environment.retry()}
         />
-        {sessions.catalogRecovery.kind !== 'ready' ? (
-          <SessionCatalogRecoveryAlert
-            recovery={sessions.catalogRecovery}
-            onRetry={sessions.retryLoad}
-            onOpenRecoveryFolder={window.api.sessions.openRecoveryFolder}
-          />
-        ) : sessions.loadError ? (
-          <SessionPersistenceAlert
-            title={t('Saved conversations could not be loaded')}
-            message={sessions.loadError}
-            onRetry={sessions.retryLoad}
-          />
-        ) : startup.quitPersistence.notice ? null : writeErrorAlert ? (
-          writeErrorAlert
-        ) : sessions.loadWarning ? (
-          <SessionPersistenceAlert
-            title={t('Saved conversation data was damaged')}
-            message={sessions.loadWarning}
-            variant="warning"
-            onDismiss={sessions.dismissLoadWarning}
-          />
-        ) : null}
-        {sessions.catalogRecovery.kind !== 'ready' && !startup.quitPersistence.notice
-          ? writeErrorAlert
-          : null}
         <WorkspaceAgentRuntimeProvider onSessionSizeLimit={sessions.reportSessionSizeLimit}>
           <WorkspaceComposerDraftsProvider>
             <WorkspaceMessageQueueProvider>
@@ -246,78 +261,112 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
               <WorkspaceMessageQueueRuntimeBridge
                 persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
               />
-              {events.navigation.view === 'home' ? (
-                <HomePage
-                  canDeleteProjects={sessions.canDeleteSessionsAndProjects}
-                  hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
-                  catalogRecovery={sessions.catalogRecovery}
-                  onOpenGlobalSearch={events.globalSearch.open}
-                />
-              ) : events.navigation.view === 'library' ? (
-                <StableLiteratureLibraryPage />
-              ) : (
-                <WorkspacePage
-                  isSessionPersistenceHydrated={sessions.isHydrated}
-                  isSessionPersistenceReady={sessions.isReady}
-                  persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
-                  onSessionSizeLimit={sessions.reportSessionSizeLimit}
-                  canDeleteConversations={sessions.canDeleteSessionsAndProjects}
-                  isPreviewPresentationActive={isBasePresentationActive}
-                />
-              )}
+              <Suspense fallback={null}>
+                <StartupPresentationReady />
+                {events.navigation.view === 'home' ? (
+                  <HomePage
+                    canDeleteProjects={sessions.canDeleteSessionsAndProjects}
+                    hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
+                    catalogRecovery={sessions.catalogRecovery}
+                    onOpenGlobalSearch={events.globalSearch.open}
+                  />
+                ) : events.navigation.view === 'library' ? (
+                  <StableLiteratureLibraryPage />
+                ) : (
+                  <WorkspacePage
+                    isSessionPersistenceHydrated={sessions.isHydrated}
+                    isSessionPersistenceReady={sessions.isReady}
+                    persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
+                    onSessionSizeLimit={sessions.reportSessionSizeLimit}
+                    canDeleteConversations={sessions.canDeleteSessionsAndProjects}
+                    isPreviewPresentationActive={isBasePresentationActive}
+                  />
+                )}
+              </Suspense>
             </WorkspaceMessageQueueProvider>
           </WorkspaceComposerDraftsProvider>
         </WorkspaceAgentRuntimeProvider>
-        <LifecycleToast
-          notice={events.lifecycle.notice}
-          onDismiss={events.lifecycle.dismissNotice}
-          onView={events.lifecycle.viewNotice}
-        />
-        <ConnectorAuthToast />
-        {isBasePresentationActive ? <LanguageSaveToast /> : null}
-        <StorageCleanupToast />
-        <NotificationLiveToast />
-        <PermissionUndoSnackbar allowsArchiveShortcut={events.allowsArchiveUndoShortcut} />
-        {events.notification.unavailableToken !== undefined ? (
-          <ActionToast
-            key={events.notification.unavailableToken}
-            title={t('This session was deleted or is unavailable.')}
-            dismissLabel={t('Close')}
-            onDismiss={events.notification.dismissUnavailable}
-            autoDismissMs={6000}
-            className="top-44"
-            testId="notification-target-unavailable-toast"
+        {sessions.catalogRecovery.kind !== 'ready' ? (
+          <SessionCatalogRecoveryAlert
+            recovery={sessions.catalogRecovery}
+            onRetry={sessions.retryLoad}
+            onOpenRecoveryFolder={window.api.sessions.openRecoveryFolder}
           />
         ) : null}
+        <ActionToastStack>
+          {sessions.catalogRecovery.kind !== 'ready' ? null : sessions.loadError ? (
+            <SessionPersistenceAlert
+              title={t('Saved conversations could not be loaded')}
+              message={sessions.loadError}
+              onRetry={sessions.retryLoad}
+            />
+          ) : startup.quitPersistence.notice ? null : writeErrorAlert ? (
+            writeErrorAlert
+          ) : sessions.loadWarning ? (
+            <SessionPersistenceAlert
+              title={t('Saved conversation data was damaged')}
+              message={sessions.loadWarning}
+              variant="warning"
+              onDismiss={sessions.dismissLoadWarning}
+            />
+          ) : null}
+          {sessions.catalogRecovery.kind !== 'ready' && !startup.quitPersistence.notice
+            ? writeErrorAlert
+            : null}
+          <LifecycleToast
+            notice={events.lifecycle.notice}
+            onDismiss={events.lifecycle.dismissNotice}
+            onView={events.lifecycle.viewNotice}
+          />
+          <ConnectorAuthToast />
+          <StorageCleanupToast />
+          {events.notification.unavailableToken !== undefined ? (
+            <ActionToast
+              key={events.notification.unavailableToken}
+              title={t('This session was deleted or is unavailable.')}
+              dismissLabel={t('Close')}
+              onDismiss={events.notification.dismissUnavailable}
+              autoDismissMs={6000}
+              testId="notification-target-unavailable-toast"
+            />
+          ) : null}
+          {isBasePresentationActive ? <LanguageSaveToast /> : null}
+          <PermissionUndoSnackbar allowsArchiveShortcut={events.allowsArchiveUndoShortcut} />
+        </ActionToastStack>
+        <NotificationLiveToast />
       </div>
       {quitPersistenceAlert}
       <WebEventRecoveryDialog
         active={activePresentation === 'webEventRecovery'}
         phase={events.webEventConnectionPhase}
       />
-      <SettingsPage
-        ref={settingsPageRef}
-        open={activePresentation === 'settings'}
-        onClose={events.settings.close}
-        onOpenSession={events.settings.openSession}
-        canDeleteProjects={sessions.canDeleteSessionsAndProjects}
-        hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
-        catalogRecovery={sessions.catalogRecovery}
-        onRetryCatalogRecovery={sessions.retryLoad}
-      />
-      <ConnectorApprovalDialog
-        active={activePresentation === 'connectorApproval'}
-        blockedSessionIds={events.blockedApprovalSessionIds}
-      />
-      <ConnectorCredentialDialog active={activePresentation === 'credentialRequest'} />
-      <SkillImportApprovalDialog
-        active={activePresentation === 'skillImportApproval'}
-        blockedSessionIds={events.blockedApprovalSessionIds}
-      />
-      <ComputeApprovalDialog
-        active={activePresentation === 'computeApproval'}
-        blockedSessionIds={events.blockedApprovalSessionIds}
-      />
+      <Suspense fallback={null}>
+        <SettingsPage
+          ref={settingsPageRef}
+          open={activePresentation === 'settings'}
+          onClose={events.settings.close}
+          onOpenSession={events.settings.openSession}
+          canDeleteProjects={sessions.canDeleteSessionsAndProjects}
+          hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
+          catalogRecovery={sessions.catalogRecovery}
+          onRetryCatalogRecovery={sessions.retryLoad}
+        />
+      </Suspense>
+      <Suspense fallback={null}>
+        <ConnectorApprovalDialog
+          active={activePresentation === 'connectorApproval'}
+          blockedSessionIds={events.blockedApprovalSessionIds}
+        />
+        <ConnectorCredentialDialog active={activePresentation === 'credentialRequest'} />
+        <SkillImportApprovalDialog
+          active={activePresentation === 'skillImportApproval'}
+          blockedSessionIds={events.blockedApprovalSessionIds}
+        />
+        <ComputeApprovalDialog
+          active={activePresentation === 'computeApproval'}
+          blockedSessionIds={events.blockedApprovalSessionIds}
+        />
+      </Suspense>
       <UpdateDialog active={activePresentation === 'update'} />
       <CloseConfirmModal
         active={activePresentation === 'closeConfirmation'}

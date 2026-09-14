@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { assertResearchSessionWritable } from '../storage/session-package-state'
 import { readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 
@@ -211,6 +212,8 @@ export class ComputeJobWorkflowOwner {
     context: { sessionId: string; projectId: string; producerRunId?: string },
     signal?: AbortSignal
   ): Promise<SubmitJobResult> {
+    if (this.storageRoot)
+      await assertResearchSessionWritable(this.storageRoot, context.projectId, context.sessionId)
     if (!this.jobRepository) {
       throw new Error('ComputeJobRepository is required to call submitJob.')
     }

@@ -25,6 +25,7 @@ import {
   createProvenanceTestFixture
 } from './provenance-test-fixtures'
 import { createRootNotebookLane } from '../notebook/lane-identity'
+import { migrateApplicationDatabase } from '../projects/prisma-client'
 
 type Fixture = Awaited<ReturnType<typeof createProvenanceTestFixture>>
 
@@ -118,6 +119,29 @@ const withoutTerminalMessage = (input: PersistedChatSession): PersistedChatSessi
 }
 
 describe('artifact provenance durable lifecycle contract', () => {
+  it('reopens the database after finalizing both same-turn artifact revisions (issue 2544)', async () => {
+    const value = await fixture()
+    const session = durableSession(value.storageRoot)
+    const repository = new ArtifactProvenanceRepository({
+      ...value.repositoryOptions,
+      loadSession: async () => session
+    })
+    await value.stagePng('first revision')
+    const first = await repository.createVersion(versionRequest(session))
+    await value.stagePng('second revision')
+    const second = await repository.createVersion({
+      ...versionRequest(session),
+      writeOperationId: 'write-2',
+      writeRequestChecksum: 'b'.repeat(64)
+    })
+    await repository.finalizeRun({
+      ...finalizationRequest(first.versionId, session),
+      artifactVersionIds: [first.versionId, second.versionId]
+    })
+    await value.client.$disconnect()
+    await expect(migrateApplicationDatabase(value.client)).resolves.toMatchObject({ applied: [] })
+  })
+
   it('distinguishes a persistence race, then finalizes and replays one exact Message owner', async () => {
     const value = await fixture()
     const session = durableSession(value.storageRoot)
@@ -147,10 +171,19 @@ describe('artifact provenance durable lifecycle contract', () => {
     ).rejects.toMatchObject({ name: 'ArtifactFinalizationProofError' })
   })
 
-  it.each(['staging-files', 'renamed-files'] as const)(
-    'recovers the %s crash window through exact operation replay',
-    async (crashWindow) => {
+  it.each([
+    ['staging-files', false],
+    ['renamed-files', false],
+    ['staging-files', true],
+    ['renamed-files', true]
+  ] as const)(
+    'recovers the %s crash window after startup (pending parent: %s)',
+    async (crashWindow, pendingParent) => {
       const value = await fixture()
+      if (pendingParent) {
+        await value.stagePng('first revision')
+        await value.repository.createVersion(createArtifactVersionRequest())
+      }
       let failedFinalDirectoryBarrier = false
       const crashingRepository = new ArtifactProvenanceRepository({
         ...value.repositoryOptions,
@@ -184,6 +217,9 @@ describe('artifact provenance durable lifecycle contract', () => {
       })
       expect(staging.state).toBe('staging')
 
+      await value.client.$disconnect()
+      await expect(migrateApplicationDatabase(value.client)).resolves.toMatchObject({ applied: [] })
+
       const recovered = await value.repository.replayVersion({
         projectId: request.projectId,
         appSessionId: request.appSessionId,
@@ -198,6 +234,7 @@ describe('artifact provenance durable lifecycle contract', () => {
         value.client.artifactVersion.findUniqueOrThrow({ where: { id: staging.id } })
       ).resolves.toMatchObject({ state: 'pending' })
       await expect(readFile(recovered!.path)).resolves.toBeTruthy()
+      await expect(migrateApplicationDatabase(value.client)).resolves.toMatchObject({ applied: [] })
     }
   )
 

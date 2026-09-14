@@ -1,11 +1,11 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ApplicationInvocation } from '../application-command-router'
-import { createElectronCallerContext } from '../caller-context'
+import { createElectronCallerContext, createWebCallerContext } from '../caller-context'
 import { ApplicationCallerLeaseRegistry } from '../caller-lifecycle'
 import type { DataContentApplicationCommandDependencies } from '../data-content-application-commands'
 import { createUploadVersionReference, DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
@@ -51,6 +51,43 @@ describe('upload command owner', () => {
   afterEach(async () => {
     clearMigrationPending()
     await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true })))
+  })
+
+  it('revalidates completed draft uploads only for the original Web client and current file identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'draft-receipt-'))
+    temporaryRoots.push(root)
+    const repository = new UploadRepository(root)
+    const owner = createUploadCommandOwner(repository)
+    const leases = new ApplicationCallerLeaseRegistry()
+    const context = createWebCallerContext('paired-browser/tab')
+    const caller = { context, ownedLease: leases.acquire(context) }
+    await owner.beginTransfer(
+      invocationFor(caller, [{ transferId: 'draft-upload', name: 'draft.txt', size: 4 }])
+    )
+    await owner.appendTransfer(
+      invocationFor(caller, [
+        { transferId: 'draft-upload', offset: 0, chunk: new TextEncoder().encode('test') }
+      ])
+    )
+    const completed = await owner.finishTransfer(
+      invocationFor(caller, [{ transferId: 'draft-upload' }])
+    )
+    const request = { receipt: completed.draftReceipt! }
+    expect(request.receipt).toBeTruthy()
+    await expect(owner.recoverDraft(invocationFor(caller, [request]))).resolves.toEqual({
+      ...completed,
+      path: await realpath(completed.path)
+    })
+    const otherContext = createWebCallerContext('another-pairing/tab')
+    const other = { context: otherContext, ownedLease: leases.acquire(otherContext) }
+    await expect(owner.recoverDraft(invocationFor(other, [request]))).resolves.toBeNull()
+    await expect(
+      owner.recoverDraft(invocationFor(caller, [{ receipt: request.receipt + 'x' }]))
+    ).resolves.toBeNull()
+    const restarted = createUploadCommandOwner(repository)
+    await expect(restarted.recoverDraft(invocationFor(caller, [request]))).resolves.toBeNull()
+    await writeFile(completed.path, 'changed bytes')
+    await expect(owner.recoverDraft(invocationFor(caller, [request]))).resolves.toBeNull()
   })
 
   it('keeps one transfer owner across application command calls', async () => {
