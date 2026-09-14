@@ -700,8 +700,8 @@ const createAcpRuntime = ({
             : {
                 registerSessionAlias: (aliasSessionId, sessionId) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-                releaseSessionCapabilities: (sessionId) =>
-                  notebookRpcServer.releaseSessionCapabilities(sessionId),
+                releaseSessionCapabilities: (sessionId, capabilityTokens) =>
+                  notebookRpcServer.releaseSessionCapabilitiesIfOwned(sessionId, capabilityTokens),
                 registerSessionSpecialist: (sessionId, specialistId) =>
                   notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
                 authorizeExecution: (authorization) =>
@@ -725,8 +725,11 @@ const createAcpRuntime = ({
                   notebookRpcServer.issueSkillImportConnection(sessionId),
                 registerSessionAlias: (aliasSessionId: string, sessionId: string) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-                releaseSessionCapabilities: (sessionId: string) =>
-                  notebookRpcServer.releaseSessionCapabilities(sessionId),
+                releaseSessionCapabilities: (
+                  sessionId: string,
+                  capabilityTokens: readonly string[]
+                ) =>
+                  notebookRpcServer.releaseSessionCapabilitiesIfOwned(sessionId, capabilityTokens),
                 authorizeReferencedUploads: authorizeSkillImportReferencedUploads
               }
             }),
