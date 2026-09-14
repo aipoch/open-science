@@ -172,7 +172,7 @@ test('restores text and region bookmarks on intrinsically rotated PDF pages', as
     .getByRole('button', { name: /Summarize the deterministic fixture/u })
     .click()
   await page.getByRole('button', { name: 'Bookmarks (2)' }).click()
-  const bookmarks = page.getByRole('region', { name: 'Bookmarks' })
+  const bookmarks = page.getByRole('region', { name: 'Bookmarks', exact: true })
   const textRevealButton = bookmarks
     .getByRole('listitem')
     .filter({ hasText: selection.text })

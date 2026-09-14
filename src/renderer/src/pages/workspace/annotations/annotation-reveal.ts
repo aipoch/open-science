@@ -338,7 +338,8 @@ const requestBookmarkReveal = async (bookmark: Bookmark): Promise<BookmarkReveal
     // Reuse the exact-Version tab: replacing it with a minimal item discards metadata and
     // remounts its renderer after the old renderer has already acknowledged this reveal.
     const existing = workbench.items.find(
-      (item): item is PreviewFileItem => item.type === 'file' && fileSourceMatchesItem(target, item)
+      (item): item is Extract<typeof item, { type: 'file' }> =>
+        item.type === 'file' && fileSourceMatchesItem(target, item)
     )
     const item = existing ?? createBookmarkPreviewItem(target)
     if (!item) return 'source-unavailable'
