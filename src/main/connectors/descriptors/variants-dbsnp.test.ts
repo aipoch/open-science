@@ -142,6 +142,54 @@ const rs7412Payload = {
 }
 
 describe('dbsnp_get_rsids', () => {
+  it.each([
+    { label: 'real rs121913529 counts below 1e-5', ac: 1, tc: 101828, expected: 1 / 101828 },
+    { label: 'synthetic rare nonzero frequency', ac: 1, tc: 3000000, expected: 1 / 3000000 },
+    { label: 'zero observations', ac: 0, tc: 100, expected: 0 },
+    { label: 'missing allele count', ac: undefined, tc: 100, expected: null },
+    { label: 'missing total count', ac: 1, tc: undefined, expected: null },
+    { label: 'zero total count', ac: 1, tc: 0, expected: null }
+  ])('preserves frequency semantics: $label', async ({ ac, tc, expected }) => {
+    // The surrounding variant is a fixture; 1/101828 comes from the live rs121913529
+    // dbGaP_PopFreq record. The very rare frequency is a synthetic boundary case.
+    const payload = {
+      ...rs7412Payload,
+      primary_snapshot_data: {
+        ...rs7412Payload.primary_snapshot_data,
+        allele_annotations: [
+          {},
+          {
+            frequency: [
+              { study_name: 'precision-test', study_version: 1, allele_count: ac, total_count: tc }
+            ]
+          }
+        ]
+      }
+    }
+    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes(payload))
+    const out = (await new ParserEngine({ fetchImpl }).call(
+      getRsids,
+      { rsids: ['rs7412'] },
+      { ncbiEmail: 'x@y.org' }
+    )) as {
+      records: Array<{
+        alleles: Array<{
+          frequencies: Array<{ af: number | null; allele_count?: number; total_count?: number }>
+        }>
+      }>
+    }
+    const frequency = out.records[0].alleles[0].frequencies[0]
+    expect(frequency).toEqual({
+      study: 'precision-test',
+      study_version: 1,
+      allele_count: ac,
+      total_count: tc,
+      af: expected
+    })
+    if (ac === 1 && tc === 101828) expect(frequency.af).toBeLessThan(1e-5)
+    if (ac === 1 && tc === 3000000) expect(frequency.af).toBeGreaterThan(0)
+  })
+
   it('distills a live RefSNP record: placements, alleles, frequencies, clinvar, genes', async () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes(rs7412Payload))
     const out = (await new ParserEngine({ fetchImpl }).call(
