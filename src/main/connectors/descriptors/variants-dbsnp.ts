@@ -187,7 +187,8 @@ function assemblyPlacements(psd: PrimarySnapshotData): Placement[] {
         spdis
           .filter((s) => s.inserted_sequence !== s.deleted_sequence)
           .map((s) => s.inserted_sequence)
-          .filter((x): x is string => Boolean(x))
+          // Empty inserted sequences represent deletions, not missing alleles.
+          .filter((x): x is string => typeof x === 'string')
       )
     ].sort()
     out.push({
@@ -350,7 +351,7 @@ export const VARIANTS_DBSNP_TOOLS: ToolDescriptor[] = [
     id: 'dbsnp_get_rsids',
     connector: 'variants',
     description:
-      "Canonical dbSNP RefSNP records for a batch of rsIDs: GRCh38+GRCh37 placements, alleles, gene context, per-study allele frequencies, and ClinVar cross-references. Requires a contact email (Settings → Privacy → 'Share contact email with research data services') per NCBI E-utilities usage policy; without one the tool returns {error: 'contact_email_required', message}. Args: rsids (up to 20 rs<digits>, case-insensitive) — each costs one paced NCBI Variation Services request, so large batches take ~1 s per rsID. Returns {n_requested, records, not_found (rs numbers dbSNP doesn't know), not_processed (rsIDs skipped when the wall-clock budget ran out — re-request just those)}. Each record: {rsid, status, create_date, last_update_date, last_update_build_id, n_citations, citations_pmids (capped at 20; citations_truncated flags the cap), variant_type, mane_select_ids, placements, alleles}. status is 'live', 'merged' (record instead carries merged_into — re-query those rsIDs) or 'no_data' (withdrawn/unsupported). placements give 1-based chromosome coordinates with ref/alts per assembly (GRCh38 first, is_primary true). Each alt-allele entry: {allele, ref, spdi (0-based interbase), hgvs, frequencies: [{study, study_version, allele_count, total_count, af}] (ALFA, 1000Genomes, TOPMED, gnomAD...), clinvar: [{rcv_accession, clinical_significances, review_status, last_evaluated_date, disease_names}], genes: [{symbol, gene_id, name, orientation, consequences (SO terms), mane_select: [{transcript_hgvs, protein_spdi}]}]}.",
+      "Canonical dbSNP RefSNP records for a batch of rsIDs: GRCh38+GRCh37 placements, alleles, gene context, per-study allele frequencies, and ClinVar cross-references. Requires a contact email (Settings → Privacy → 'Share contact email with research data services') per NCBI E-utilities usage policy; without one the tool returns {error: 'contact_email_required', message}. Args: rsids (up to 20 rs<digits>, case-insensitive) — each costs one paced NCBI Variation Services request, so large batches take ~1 s per rsID. Returns {n_requested, records, not_found (rs numbers dbSNP doesn't know), not_processed (rsIDs skipped when the wall-clock budget ran out — re-request just those)}. Each record: {rsid, status, create_date, last_update_date, last_update_build_id, n_citations, citations_pmids (capped at 20; citations_truncated flags the cap), variant_type, mane_select_ids, placements, alleles}. status is 'live', 'merged' (record instead carries merged_into — re-query those rsIDs) or 'no_data' (withdrawn/unsupported). placements give 1-based chromosome coordinates with ref/alts per assembly (GRCh38 first, is_primary true); an empty string in alts denotes a deletion allele. Each alt-allele entry: {allele, ref, spdi (0-based interbase), hgvs, frequencies: [{study, study_version, allele_count, total_count, af}] (ALFA, 1000Genomes, TOPMED, gnomAD...), clinvar: [{rcv_accession, clinical_significances, review_status, last_evaluated_date, disease_names}], genes: [{symbol, gene_id, name, orientation, consequences (SO terms), mane_select: [{transcript_hgvs, protein_spdi}]}]}.",
     input: {
       type: 'object',
       properties: {
