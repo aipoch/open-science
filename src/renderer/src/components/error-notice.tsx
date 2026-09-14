@@ -131,6 +131,7 @@ const ErrorNotice = ({
     (primaryButton || secondaryButton) &&
     !primaryButton?.description &&
     !secondaryButton?.description &&
+    !dismissButton &&
     !children &&
     !help
   const describedActions = compact && (primaryButton?.description || secondaryButton?.description)

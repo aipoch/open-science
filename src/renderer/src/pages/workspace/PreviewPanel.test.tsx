@@ -102,6 +102,15 @@ const createSourceItem = (overrides: Partial<PreviewSourceItem> = {}): PreviewSo
 })
 
 describe('PreviewPanel', () => {
+  const getRetryButton = (): HTMLButtonElement => {
+    const button = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="preview-tab-action-error"] button'
+      )
+    ).find((button) => button.textContent === 'Retry')
+    if (!button) throw new Error('Retry button not found')
+    return button
+  }
   let container: HTMLDivElement
   let root: Root
   let sourcePreviewListener: ((state: Record<string, unknown>) => void) | undefined
@@ -2353,9 +2362,7 @@ describe('PreviewPanel', () => {
       await renderPanel()
       await openTabContextMenu(0)
       await clickMenuCommand(command)
-      const retry = container.querySelector<HTMLButtonElement>(
-        '[data-testid="preview-tab-action-error"] button:last-child'
-      )!
+      const retry = getRetryButton()
       await act(async () => retry.click())
       expect(operation).toHaveBeenCalledTimes(2)
       try {
@@ -2470,9 +2477,7 @@ describe('PreviewPanel', () => {
     await renderPanel()
     await openTabContextMenu(0)
     await clickMenuCommand('save-as-artifact')
-    const retry = container.querySelector<HTMLButtonElement>(
-      '[data-testid="preview-tab-action-error"] button'
-    )!
+    const retry = getRetryButton()
     expect(retry).not.toBeNull()
     await act(async () => {
       useNavigationStore.setState({ activeProjectId: 'project-b' })
@@ -2511,24 +2516,22 @@ describe('PreviewPanel', () => {
         })
       )
     }
-    const retryButton = (): HTMLButtonElement =>
-      container.querySelector<HTMLButtonElement>('[data-testid="preview-tab-action-error"] button')!
     openProject('project-a')
     await renderPanel()
     try {
       await openTabContextMenu(0)
       await clickMenuCommand('save-as-artifact')
-      await act(async () => retryButton().click())
+      await act(async () => getRetryButton().click())
       expect(save).toHaveBeenCalledTimes(2)
       await act(async () => openProject('project-b'))
       await openTabContextMenu(0)
       await clickMenuCommand('save-as-artifact')
       expect(save).toHaveBeenCalledTimes(3)
-      expect(retryButton().disabled).toBe(false)
-      await act(async () => retryButton().click())
+      expect(getRetryButton().disabled).toBe(false)
+      await act(async () => getRetryButton().click())
       expect(save).toHaveBeenCalledTimes(4)
       await act(async () => finishA?.())
-      expect(retryButton().disabled).toBe(true)
+      expect(getRetryButton().disabled).toBe(true)
       await act(async () => finishB?.())
       expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
     } finally {
@@ -2570,16 +2573,14 @@ describe('PreviewPanel', () => {
       })
     )
     await renderPanel()
-    const retryButton = (): HTMLButtonElement =>
-      container.querySelector<HTMLButtonElement>('[data-testid="preview-tab-action-error"] button')!
 
     try {
       await openTabContextMenu(0)
       await clickMenuCommand('save-as-artifact')
-      await act(async () => retryButton().click())
+      await act(async () => getRetryButton().click())
       await openTabContextMenu(1)
       await clickMenuCommand('save-as-artifact')
-      await act(async () => retryButton().click())
+      await act(async () => getRetryButton().click())
 
       await openTabContextMenu(0)
       expect(

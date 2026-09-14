@@ -364,6 +364,7 @@ test('keeps representative conversation, project, and recovery states visually s
   })
   // ErrorNotice puts the title in a heading and the body in a single description paragraph.
   const recoveryMessage = recoveryAlert.locator('p')
+  const recoveryDismiss = recoveryNotice.getByTestId('session-persistence-dismiss')
   for (const width of [320, 375, 414, 768]) {
     await setViewport(page, width)
     await expect(recoveryAction).toBeVisible()
@@ -381,6 +382,10 @@ test('keeps representative conversation, project, and recovery states visually s
     expect(actionBox.y).toBeGreaterThanOrEqual(messageBox.y + messageBox.height)
     expect(actionBox.x).toBeGreaterThanOrEqual(0)
     expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(width)
+    const dismissBox = await recoveryDismiss.boundingBox()
+    if (!dismissBox) throw new Error(`Recovery dismiss button was not measurable at ${width}px`)
+    expect(dismissBox.y).toBeLessThanOrEqual(alertBox.y + 1)
+    expect(dismissBox.x).toBeGreaterThanOrEqual(alertBox.x + alertBox.width)
     // Compact ErrorNotice actions may wrap; their text must remain readable without clipping.
     expect(
       await recoveryAction.evaluate(
