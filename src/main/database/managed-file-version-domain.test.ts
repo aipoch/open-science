@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
+import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
 import {
   createArtifactVersionRequest,
   createProvenanceTestFixture
@@ -13,7 +14,11 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()))
 })
 
-const createPendingChain = async () => {
+const createPendingChain = async (): Promise<{
+  client: Fixture['client']
+  parent: ArtifactVersionFile
+  child: ArtifactVersionFile
+}> => {
   const fixture = await createProvenanceTestFixture()
   fixtures.push(fixture)
   await fixture.stagePng('first revision')
