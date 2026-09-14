@@ -6,16 +6,13 @@ import { PdfStructureSourceAuthority } from './literature/pdf-structure/source'
 import { PdfStructureReader } from './literature/pdf-structure/reader'
 import { createSpecialistApplicationOwner } from './specialist/application-commands'
 import { dirname, join } from 'node:path'
-import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 
 import {
   app,
   BrowserWindow,
   dialog,
-  net,
   Notification,
-  protocol,
   session,
   shell,
   webContents,
@@ -158,6 +155,7 @@ import {
 import { createLogsCommandOwner } from './logs-ipc'
 import { TaskNotificationService } from './notifications/task-notifications'
 import { createNotificationInboxController } from './notifications/notification-inbox-controller'
+import { createOfficePreviewElectronSurfaces } from './ipc-surfaces/office-preview'
 import { createSessionPersistenceElectronSurface } from './ipc-surfaces/session-persistence'
 import { createArtifactElectronSurface } from './ipc-surfaces/artifacts'
 import { createSettingsElectronSurface } from './ipc-surfaces/settings'
@@ -192,21 +190,8 @@ import {
 } from './managed-preview-ipc'
 import { ManagedPreviewResources } from './managed-preview-resources'
 import type { PreviewProtocolRegistrar } from './managed-preview-protocol'
-import type {
-  AcquireManagedPreviewRequest,
-  ManagedPreviewSource
-} from '../shared/preview-resources'
+import type { ManagedPreviewSource } from '../shared/preview-resources'
 import { resolveEffectiveSpecialistSkills } from '../shared/specialist'
-import {
-  createOfficePreviewFrameProcessResolver,
-  createOfficePreviewProcessMemoryReader
-} from './office-preview/office-preview-electron'
-import { registerOfficePreviewIpcHandlers } from './office-preview/office-preview-ipc'
-import {
-  createOfficePreviewRuntimeUrl,
-  registerOfficePreviewRuntimeProtocol
-} from './office-preview/office-preview-runtime-protocol'
-import { OfficePreviewSupervisor } from './office-preview/office-preview-supervisor'
 import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { registerRuntimeIpcHandlers } from './notebook/runtime-ipc'
 import { NotebookRunRepository, getRuntimeRoot } from './notebook/repository'
@@ -240,10 +225,6 @@ import type {
 } from '../shared/artifact-reproducibility'
 import type { NotebookLanguage } from '../shared/notebook'
 import { MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID } from '../shared/lifecycle-events'
-import {
-  OFFICE_PREVIEW_STATE_CHANNEL,
-  type OfficePreviewOpenRequest
-} from '../shared/office-preview'
 import {
   createDefaultPreviewStateRepository,
   createDefaultProjectRepository,
@@ -4156,46 +4137,11 @@ const createApplicationModules = async (
       managedPreviewOwners
     )
   )
-  declareElectronAdapter('office-preview-runtime', () =>
-    registerOfficePreviewRuntimeProtocol(
-      {
-        runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html'),
-        devServerUrl: process.env['ELECTRON_RENDERER_URL'],
-        fetchRuntime: (targetUrl, request) =>
-          net.fetch(targetUrl, {
-            // Runtime assets are public application files. Forwarding custom-protocol headers or its
-            // abort signal makes Chromium treat the local fetch as a cross-site renderer request.
-            method: request.method
-          })
-      },
-      protocol
-    )
-  )
-  const toManagedPreviewRequest = (
-    request: OfficePreviewOpenRequest
-  ): AcquireManagedPreviewRequest =>
-    request.source === 'notebook-input'
-      ? { source: request.source, path: request.path }
-      : {
-          source: request.source,
-          projectId: request.projectId,
-          fileId: request.fileId,
-          ...(request.versionId ? { versionId: request.versionId } : {})
-        }
-  const officePreviewSupervisor = new OfficePreviewSupervisor({
-    inspectResource: (request) => previewResources.inspect(toManagedPreviewRequest(request)),
-    acquireResource: (ownerId, request, snapshot, maxBytes) =>
-      previewResources.acquire(ownerId, toManagedPreviewRequest(request), { snapshot, maxBytes }),
-    releaseResource: (ownerId, resourceId) => previewResources.release(ownerId, { resourceId }),
-    createSessionId: randomUUID,
-    createRuntimeUrl: createOfficePreviewRuntimeUrl,
-    resolveFrameProcess: createOfficePreviewFrameProcessResolver(webContents),
-    getProcessMemoryUsageBytes: createOfficePreviewProcessMemoryReader(app),
-    publishState: (ownerId, state) =>
-      webContents.fromId(ownerId)?.send(OFFICE_PREVIEW_STATE_CHANNEL, state)
-  })
-  declareElectronAdapter('office-preview', () =>
-    registerOfficePreviewIpcHandlers(officePreviewSupervisor)
+  surfaceAdapters.push(
+    ...createOfficePreviewElectronSurfaces({
+      previewResources,
+      runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html')
+    })
   )
 
   // Resolve the shared conda base under the app data root (relocatable, where the runtime install

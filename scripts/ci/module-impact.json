@@ -1044,7 +1044,8 @@
         "src/main/ipc-surfaces/settings.ts",
         "src/main/ipc-surfaces/artifacts.ts",
         "src/main/ipc-surfaces/specialist.ts",
-        "src/main/ipc-surfaces/session-persistence.ts"
+        "src/main/ipc-surfaces/session-persistence.ts",
+        "src/main/ipc-surfaces/office-preview.ts"
       ],
       "interfacePaths": [
         "src/main/ipc-surfaces/adapter.ts",
@@ -1057,7 +1058,8 @@
         "src/main/ipc-surfaces/settings.ts",
         "src/main/ipc-surfaces/artifacts.ts",
         "src/main/ipc-surfaces/specialist.ts",
-        "src/main/ipc-surfaces/session-persistence.ts"
+        "src/main/ipc-surfaces/session-persistence.ts",
+        "src/main/ipc-surfaces/office-preview.ts"
       ],
       "consumerModules": [],
       "testFiles": {
@@ -1072,7 +1074,8 @@
           "src/main/ipc-surfaces/settings.test.ts",
           "src/main/ipc-surfaces/artifacts.test.ts",
           "src/main/ipc-surfaces/specialist.test.ts",
-          "src/main/ipc-surfaces/session-persistence.test.ts"
+          "src/main/ipc-surfaces/session-persistence.test.ts",
+          "src/main/ipc-surfaces/office-preview.test.ts"
         ],
         "contract": [
           "src/main/artifacts/ipc.test.ts",
@@ -1130,7 +1133,13 @@
           "src/main/session-persistence/ipc.test.ts",
           "src/main/storage/migration-state.test.ts",
           "src/main/session-details/owner.test.ts",
-          "src/main/delegation/production-composition.test.ts"
+          "src/main/delegation/production-composition.test.ts",
+          "src/main/managed-preview-resources.test.ts",
+          "src/main/managed-preview-protocol.test.ts",
+          "src/main/managed-preview-ipc.test.ts",
+          "src/main/reviewer/paged-preview-resolver.test.ts",
+          "src/main/reviewer/paged-preview-electron.test.ts",
+          "src/shared/office-preview.test.ts"
         ],
         "consumer": [
           "src/main/application-runtime.test.ts",
@@ -1154,7 +1163,13 @@
           "src/main/app-lifecycle.test.ts",
           "src/renderer/src/hooks/useUnreadTaskViewSync.test.tsx",
           "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
-          "src/renderer/src/lib/session-persistence/session-persistence.render.test.tsx"
+          "src/renderer/src/lib/session-persistence/session-persistence.render.test.tsx",
+          "src/renderer/src/office-preview/office-preview-runtime.test.ts",
+          "src/renderer/src/office-preview/office-preview-controller.test.ts",
+          "src/renderer/src/office-preview/office-preview-frame-bridge.test.ts",
+          "src/renderer/src/pages/workspace/previews/renderers/office-preview-lease.test.ts",
+          "src/renderer/src/pages/workspace/previews/renderers/OfficePreview.test.tsx",
+          "src/renderer/src/reviewer-paged-preview/main.test.ts"
         ]
       },
       "capabilityOverlays": [],

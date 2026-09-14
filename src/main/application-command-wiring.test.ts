@@ -83,7 +83,7 @@ describe('production application command wiring', () => {
     expect(ipcSource).not.toContain('createContributionTemplateExporter')
   })
 
-  it('returns Office preview cleanup to its scoped afterAcp installation', () => {
+  it('installs Office preview once with shared resources between managed preview and environment', () => {
     const phase = compact(
       between(
         ipcSource,
@@ -92,14 +92,16 @@ describe('production application command wiring', () => {
       )
     )
     expect(phase).toContain(
-      "declareElectronAdapter('office-preview', () => registerOfficePreviewIpcHandlers(officePreviewSupervisor) )"
+      "...createOfficePreviewElectronSurfaces({ previewResources, runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html') })"
     )
-    expect(
-      occurrences(ipcSource, 'registerOfficePreviewIpcHandlers(officePreviewSupervisor)')
-    ).toBe(1)
-    expect(phase.indexOf("declareElectronAdapter('office-preview-runtime'")).toBeLessThan(
-      phase.indexOf("declareElectronAdapter('office-preview',")
+    expect(phase).toContain("declareElectronAdapter('managed-preview'")
+    expect(phase.indexOf("declareElectronAdapter('managed-preview'")).toBeLessThan(
+      phase.indexOf('createOfficePreviewElectronSurfaces(')
     )
+    expect(occurrences(ipcSource, 'createOfficePreviewElectronSurfaces(')).toBe(1)
+    expect(ipcSource).not.toContain('new OfficePreviewSupervisor')
+    expect(ipcSource).not.toContain('registerOfficePreviewIpcHandlers')
+    expect(ipcSource).not.toContain('registerOfficePreviewRuntimeProtocol')
   })
 
   it('installs Settings once with shared owners before Notebook in afterAcp', () => {
