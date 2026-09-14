@@ -4228,13 +4228,13 @@ const createApplicationModules = async (
     }
   )
   const waitForRecovery = (): Promise<void> => notebookService.ensureRecovered()
-  // Lets UI provision/repair refuse when recovery left the default env's prefix blocked (an
-  // unknown-liveness orphan may still be writing it) — throws with an actionable message.
+  // Recovery can retain a target for worker uncertainty, cache publication, or journal failure.
+  // A block alone does not identify its cause; detailed reasons are available in Runtimes.
   const assertProvisionAllowed = (language: NotebookLanguage): void => {
     if (notebookService.isDefaultEnvRecoveryBlocked(language)) {
       throw new Error(
-        `The ${language} runtime is recovering from an interrupted operation whose process could not be ` +
-          'confirmed stopped. Use Recheck in Settings → Runtimes. Restarting the app does not prove that the worker stopped.'
+        `RUNTIME_RECOVERY_BLOCKED: recovery of a previous operation on the ${language} runtime has not completed. ` +
+          'Use Recheck in Settings → Runtimes to retry safe recovery and review the remaining recovery requirements.'
       )
     }
   }

@@ -26,6 +26,7 @@ import { WorkspaceComputeRecoveryBridge } from '@/lib/compute/WorkspaceComputeRe
 import { HomePage } from '@/pages/home/HomePage'
 import type { SettingsPageHandle } from '@/pages/settings/SettingsPage'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
+import { useSettingsStore } from '@/stores/settings-store'
 import {
   WorkspaceMessageQueueProvider,
   WorkspaceMessageQueueRuntimeBridge
@@ -75,6 +76,7 @@ const SkillImportApprovalDialog = lazy(() =>
 
 const ApplicationPresentationHost = (): React.JSX.Element => {
   const { t } = useTranslation()
+  const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
   const settingsPageRef = useRef<SettingsPageHandle>(null)
   const closeActiveSettingsPane = useCallback(() => settingsPageRef.current?.closeActivePane(), [])
   const startup = useApplicationStartup()
@@ -235,6 +237,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
         <EnvStatusBanner
           ui={startup.environment.ui}
           onRetry={() => void startup.environment.retry()}
+          onOpenRuntimes={() => openSettingsToPanel('runtimes')}
         />
         <WorkspaceAgentRuntimeProvider onSessionSizeLimit={sessions.reportSessionSizeLimit}>
           <WorkspaceComposerDraftsProvider>

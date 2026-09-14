@@ -11,10 +11,12 @@ import type { ProvisionUiState } from './provisioning-view'
 // the viewport and clip it (issue #244).
 const EnvStatusBanner = ({
   ui,
-  onRetry
+  onRetry,
+  onOpenRuntimes
 }: {
   ui: ProvisionUiState
   onRetry?: () => void
+  onOpenRuntimes?: () => void
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
   const show = (ui.kind === 'preparing' && ui.scope === 'upgrade') || ui.kind === 'error'
@@ -38,6 +40,8 @@ const EnvStatusBanner = ({
   // than clamping lines, which could hide the actionable tail. The source excerpt is already short
   // (provisioner-runtime.briefTail); full diagnostics also live in the logs.
   const isError = ui.kind === 'error'
+  const recoveryBlocked = ui.kind === 'error' && ui.recoveryBlocked
+  const onAction = recoveryBlocked ? (onOpenRuntimes ?? onRetry) : onRetry
 
   return (
     <>
@@ -55,19 +59,29 @@ const EnvStatusBanner = ({
         {ui.kind === 'error' ? (
           <>
             <div className="min-w-0 flex-1">
-              <p className="font-medium text-foreground">{t('Environment update failed')}</p>
+              <p className="font-medium text-foreground">
+                {recoveryBlocked ? t('Runtime recovery blocked') : t('Environment update failed')}
+              </p>
               <p className="mt-0.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-muted-foreground">
-                {ui.message}
+                {recoveryBlocked
+                  ? t(
+                      'Use Recheck to retry safe recovery. Only confirmed stopped operations can be reconciled; permissions and repair requirements remain in force.'
+                    )
+                  : ui.message}
               </p>
             </div>
-            {onRetry ? (
+            {onAction ? (
               <button
                 type="button"
                 data-testid="env-status-banner-retry"
-                onClick={onRetry}
+                onClick={onAction}
                 className="shrink-0 rounded-lg border border-border px-2 py-0.5 text-xs text-foreground hover:bg-muted"
               >
-                {t('Retry')}
+                {recoveryBlocked
+                  ? onOpenRuntimes
+                    ? t('Open Settings')
+                    : t('Recheck')
+                  : t('Retry')}
               </button>
             ) : null}
           </>

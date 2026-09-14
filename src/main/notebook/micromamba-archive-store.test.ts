@@ -33,6 +33,23 @@ afterEach(async () => {
 })
 
 describe('publishMicromambaArchives', () => {
+  it.each([false, true])(
+    'diagnoses unavailable archives with candidate evidence (exists: %s)',
+    async (present) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-archive-diagnostic-'))
+      roots.push(root)
+      const working = join(root, 'working')
+      await mkdir(working)
+      if (present) await writeFile(join(working, 'xlrd-2.0.2-pyhd8ed1ab_0.conda'), 'invalid bytes')
+      await expect(
+        publishMicromambaArchives(join(root, 'runtime'), working, [
+          authorization('xlrd-2.0.2-pyhd8ed1ab_0.conda', 'verified bytes')
+        ])
+      ).rejects.toMatchObject({
+        data: { candidateCount: present ? 1 : 0, archiveFile: 'xlrd-2.0.2-pyhd8ed1ab_0.conda' }
+      })
+    }
+  )
   it.skipIf(process.platform === 'win32')(
     'rejects an archive replaced by a symlink after enumeration',
     async () => {

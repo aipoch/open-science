@@ -94,10 +94,11 @@ export const reconcileInterruptedOperations = async (
 
   for (const raw of pending) {
     if (deps.operationIds && !deps.operationIds.has(raw.operationId)) continue
+    let record = raw
     try {
       // Fill in the childPid from the synchronous sidecar if the journal's async update was lost to a
       // crash, so the checks below act on the child that actually spawned.
-      const record = deps.hydrateInterruptedChild?.(raw) ?? raw
+      record = deps.hydrateInterruptedChild?.(raw) ?? raw
       // Decide liveness from the spawn-lifecycle sidecar (hydrated above), never a wall-clock guess:
       //   - childPid present            -> probe it ('dead' | 'unknown').
       //   - spawnAttempted, no childPid -> reached the spawn stage but the PID was never recorded (a
@@ -172,6 +173,11 @@ export const reconcileInterruptedOperations = async (
       deps.onRetained?.(raw, 'recovery-failed')
       log.error('operation recovery failed; leaving journal entry', {
         operationId: raw.operationId,
+        operationKind: raw.kind,
+        phase: raw.phase,
+        archivePublicationCount: raw.archivePublications?.length ?? 0,
+        childPid: record.childPid,
+        spawnAttempted: record.spawnAttempted ?? false,
         ...errorLogFields(error)
       })
     }

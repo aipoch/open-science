@@ -25,7 +25,14 @@ export type ProvisionUiState =
       sessionId?: string
       download?: DownloadProgress
     }
-  | { kind: 'error'; message: string; scope?: PreparingScope; sessionId?: string }
+  | {
+      kind: 'error'
+      message: string
+      scope?: PreparingScope
+      sessionId?: string
+      // Derived from authoritative status; never infer recovery from an error string.
+      recoveryBlocked?: boolean
+    }
 
 export const hasActiveRuntimeTarget = (
   binding: Pick<NotebookRuntimeBinding, 'status'> | undefined
@@ -59,6 +66,7 @@ export function deriveProvisionUi(
     return {
       kind: 'error',
       message: error,
+      ...(status.pythonRecoveryBlocked ? { recoveryBlocked: true } : {}),
       ...(failedProgress?.scope ? { scope: failedProgress.scope } : {}),
       ...(failedProgress?.sessionId ? { sessionId: failedProgress.sessionId } : {})
     }
