@@ -100,8 +100,23 @@ const createSkillImportMcpServer = (handler: SkillImportMcpHandler): ModelContex
       const result = github_url
         ? await handler.requestGitHubImport(github_url)
         : await handler.requestImport(attachment_uri!, turn_token!)
+      // Keep every affected Skill name, but state identical batch failure guidance only once.
+      const groupedErrors = new Map<string, string[]>()
+      for (const entry of result.errors ?? []) {
+        const names = groupedErrors.get(entry.error) ?? []
+        names.push(entry.name)
+        groupedErrors.set(entry.error, names)
+      }
+      const compact = result.errors
+        ? {
+            ...result,
+            errors: [...groupedErrors].map(([error, names]) =>
+              names.length === 1 ? { name: names[0], error } : { names, error }
+            )
+          }
+        : result
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+        content: [{ type: 'text', text: JSON.stringify(compact, null, 2) }]
       }
     }
   )

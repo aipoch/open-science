@@ -49,6 +49,48 @@ const referenceMessage = (content: string): PersistedChatMessage => ({
 })
 
 describe('buildSessionHistoryReplay', () => {
+  it.each(['claude-code', 'opencode', 'codex-response', 'codex-bridge'] as const)(
+    'retains the original constraint and recent unresolved Job across bounded replay for %s',
+    (target) => {
+      const message = (
+        id: string,
+        role: 'user' | 'agent',
+        content: string
+      ): PersistedChatMessage => ({
+        id,
+        role,
+        content,
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      })
+      const messages = [
+        message('goal', 'user', 'Analyze the supplied data. Do not upload the original files.'),
+        message('ack', 'agent', 'I will keep the source files local.'),
+        ...Array.from({ length: 12 }, (_, index) => [
+          message(`middle-user-${index}`, 'user', `Inspect section ${index}.`),
+          message(`middle-agent-${index}`, 'agent', 'Intermediate findings. '.repeat(100))
+        ]).flat(),
+        message('latest', 'user', 'Continue observing the submitted analysis.'),
+        message(
+          'unresolved',
+          'agent',
+          'The Job job-existing-42 was accepted, but observation timed out. ' +
+            'Its final outcome is unknown. Query the existing Job; do not submit the same work again.'
+        )
+      ]
+      const replay = buildSessionHistoryReplay(messages, { target, budget: 2000 })!
+      expect(replay.historyPreamble).toContain('Do not upload the original files.')
+      expect(replay.historyPreamble).toContain('job-existing-42')
+      expect(replay.historyPreamble).toContain('observation timed out')
+      expect(replay.historyPreamble).toContain('final outcome is unknown')
+      expect(replay.historyPreamble).toContain('do not submit the same work again')
+      expect(replay.historyPreamble).toContain('middle turns omitted')
+      expect(estimateHistoryTokens(replay.historyPreamble)).toBeLessThanOrEqual(2000)
+    }
+  )
+
   it.each(['', 'Long message text '.repeat(1000)])(
     'keeps fitting compact identities without reserving a text omission marker (%#)',
     (content) => {

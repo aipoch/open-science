@@ -251,13 +251,15 @@ describe('HostSessionsService', () => {
       sessions: [expect.objectContaining({ session_id: 'session-special-identity' })]
     })
     await expect(service.list({ limit: 2, cursor: first.next_cursor }, context)).rejects.toThrow(
-      'cursor does not match'
+      /cursor does not match.*Restart host\.(frames|sessions)\.(list|get).*omit (cursor|before)/u
     )
 
     sessions[1].updatedAt += 1
     await expect(
       service.list({ search: 'gen', limit: 1, cursor: first.next_cursor }, context)
-    ).rejects.toThrow('cursor is no longer valid')
+    ).rejects.toThrow(
+      /cursor is no longer valid.*Restart host\.(frames|sessions)\.(list|get).*omit (cursor|before)/u
+    )
   })
 
   it('inspects one exact Session without scanning or returning transcript content', async () => {

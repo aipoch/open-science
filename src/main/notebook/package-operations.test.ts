@@ -201,7 +201,10 @@ describe('NotebookPackageOperations', () => {
     'delivers the actual failed installer output through the MCP projection: %s',
     async (diagnosis) => {
       const { owner } = harness(
-        session('session-1', binding('python', '/external/python', 'external')),
+        session('session-1', {
+          ...binding('python', '/external/python', 'external'),
+          resolvedInterpreter: { command: '/external/python' }
+        }),
         {
           resolveRuntimeEnablement: async () => ({
             enabled: { '/external/python': true },

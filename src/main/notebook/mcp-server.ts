@@ -56,7 +56,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
-  'For kernel-process failures, retry once at most; repeated kernel-process failures mean stop Notebook tools and report the failure.',
+  'kernelDispatched:false means the cell was not sent; true means sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before replaying. Retry at most once when safe; repeated kernel failures mean stop Notebook tools and report the failure.',
   'Beyond restricted reads, call `request_network_access`. A failed connection is not required.',
   'Follow recovery guidance; never bypass protection/TLS. Check settings for setup failures.',
   'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
@@ -826,6 +826,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
       'executionInvocationId',
       'cellId',
       'kernelKind',
+      'kernelDispatched',
       'status',
       'executionCount',
       'environment',
@@ -988,6 +989,7 @@ const compactStateRun = (
       'runId',
       'cellId',
       'kernelKind',
+      'kernelDispatched',
       'status',
       'executionCount',
       'environment',
@@ -1404,7 +1406,15 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
   // Keep both edges: setup errors may be first, while the final installer diagnosis is often last.
   const failureLog =
     result.ok === false && typeof result.log === 'string'
-      ? redactRuntimeDiagnosticText(result.log).trim()
+      ? redactRuntimeDiagnosticText(result.log)
+          // pip ends a missing-distribution error with a second, less informative summary.
+          // Match adjacent lines for the exact same requirement; retain version candidates,
+          // index context, and all other diagnostics rather than deduplicating arbitrary logs.
+          .replace(
+            /^(ERROR: Could not find a version that satisfies the requirement (.+) \(from versions: [^\r\n]*\))\r?\nERROR: No matching distribution found for \2(?=\r?$)/gm,
+            '$1'
+          )
+          .trim()
       : ''
   const diagnostics =
     failureLog.length > 2_400
@@ -1432,6 +1442,9 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
     needsRestart: result.needsRestart,
     ...(diagnostics ? { diagnostics } : {}),
     ...(attempts.length ? { attempts } : {}),
+    ...(result.ok === false && Array.isArray(result.attempts) && result.attempts.length > 8
+      ? { omittedAttempts: result.attempts.length - 8 }
+      : {}),
     ...(result.environmentName !== undefined ? { environmentName: result.environmentName } : {}),
     ...(result.method !== undefined ? { method: result.method } : {}),
     ...(asRecord(result.source)

@@ -300,8 +300,10 @@ describe('notebook MCP server config', () => {
   })
 
   it('bounds recovery after repeated kernel-process failures', () => {
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/repeated kernel-process failures/i)
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/retry once at most/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/repeated kernel failures/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/retry at most once when safe/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('check possible side effects before replaying')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('absent means unknown')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/stop Notebook tools/i)
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/report the failure/i)
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('then revise/rerun')
@@ -1989,6 +1991,47 @@ describe('inspect_packages tool', () => {
 })
 
 describe('compactManagePackagesResult', () => {
+  it('delivers one pip missing-distribution diagnosis with index and version context', () => {
+    const index = 'Looking in indexes: https://pypi.tuna.tsinghua.edu.cn/simple'
+    const cause =
+      'ERROR: Could not find a version that satisfies the requirement scikit (from versions: none)'
+    const raw = {
+      ok: false,
+      needsRestart: false,
+      method: 'pip',
+      error: 'pip install failed.',
+      log: `${index}\n${cause}\nERROR: No matching distribution found for scikit`,
+      attempts: [{ groupOrdinal: 0, installer: 'pip', status: 'failed', mutationRisk: 'possible' }]
+    }
+    const projected = compactManagePackagesResult(raw)
+    expect(projected).toMatchObject({ diagnostics: `${index}\n${cause}`, attempts: raw.attempts })
+    const delivered = serializeNotebookToolResult(projected, NOTEBOOK_MCP_CONTROL_RESULT_LIMIT)
+    expect(delivered).toContain('from versions: none')
+    expect(delivered).not.toContain('No matching distribution found')
+    expect(raw.log).toContain('No matching distribution found')
+  })
+
+  it.each([
+    'ERROR: Could not find a version that satisfies the requirement pkg>=2 (from versions: 1.0)\nERROR: No matching distribution found for other',
+    'ERROR: Could not find a version that satisfies the requirement pkg (from versions: none)\nWARNING: retrying another index\nERROR: No matching distribution found for pkg',
+    'ERROR: No matching distribution found for pkg'
+  ])('retains independent installer evidence: %s', (log) => {
+    expect(compactManagePackagesResult({ ok: false, log })).toMatchObject({ diagnostics: log })
+  })
+
+  it('marks incomplete attempt coverage without implying later installers were not attempted', () => {
+    const attempts = Array.from({ length: 10 }, (_, groupOrdinal) => ({
+      groupOrdinal,
+      installer: 'pip',
+      status: 'failed',
+      mutationRisk: 'possible'
+    }))
+    expect(compactManagePackagesResult({ ok: false, attempts })).toMatchObject({
+      attempts: attempts.slice(0, 8),
+      omittedAttempts: 2
+    })
+  })
+
   it('preserves an external target alongside a changed package outcome', () => {
     expect(
       compactManagePackagesResult({
@@ -2162,7 +2205,8 @@ describe('compactManagePackagesResult', () => {
       fallbackUsed: true,
       error: 'conda and pip install both failed.',
       log:
-        'https://user:credential@example.org/simple?token=private ' +
+        'password="FAKE_TEST_SECRET"\nghp_FAKEtest1234567890\n' +
+        'https://user:credential@example.org/t/FAKE_PATH_SECRET/simple?channel=FAKE_QUERY_SECRET#FAKE_FRAGMENT_SECRET\n' +
         'x'.repeat(20000) +
         '\nERROR: No matching distribution found for unavailable-package',
       attempts: [
@@ -2179,7 +2223,9 @@ describe('compactManagePackagesResult', () => {
     expect(result.attempts).toHaveLength(2)
     expect(result.diagnostics).toContain('No matching distribution found')
     expect(result.diagnostics).toContain('omitted')
-    expect(JSON.stringify(result)).not.toMatch(/credential|private/)
+    expect(JSON.stringify(result)).not.toMatch(
+      /credential|FAKE_TEST_SECRET|ghp_FAKEtest1234567890|FAKE_PATH_SECRET|FAKE_QUERY_SECRET|FAKE_FRAGMENT_SECRET/
+    )
     expect(JSON.stringify(result, null, 2).length).toBeLessThan(NOTEBOOK_MCP_CONTROL_RESULT_LIMIT)
   })
 
@@ -2480,6 +2526,31 @@ describe('manage_environments tool', () => {
 })
 
 describe('compactNotebookExecutionResult', () => {
+  it.each([false, true, undefined])(
+    'preserves dispatch evidence without inferring legacy state: %s',
+    (kernelDispatched) => {
+      const run = {
+        runId: 'failed-run',
+        status: 'timeout',
+        kernelDispatched,
+        stderr: 'kernel stopped'
+      }
+      const foreground = compactNotebookExecutionResult(run)
+      const background = NOTEBOOK_RPC_TOOLS.find((tool) => tool.name === 'background_run')!
+        .mapResult!({ run }, { action: 'result' })
+      const state = compactNotebookStateResult({ recentRuns: [run] }) as { recentRuns: unknown[] }
+      for (const result of [foreground, background, state.recentRuns[0]]) {
+        const received = JSON.parse(
+          serializeNotebookToolResult(result, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+        )
+        if (kernelDispatched === undefined) expect(received).not.toHaveProperty('kernelDispatched')
+        else expect(received.kernelDispatched).toBe(kernelDispatched)
+        expect(received.runId).toBe('failed-run')
+        expect(received.status).toBe('timeout')
+      }
+    }
+  )
+
   it('preserves recovery prerequisites ahead of truncated output for foreground and background failures', () => {
     const recovery = { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
     const run = {

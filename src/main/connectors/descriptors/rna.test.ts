@@ -499,7 +499,7 @@ describe('rna / rfam', () => {
     }
   )
 
-  it('search_sequence still stops an unfinished job at its default polling deadline', async () => {
+  it('search_sequence stops polling at its deadline without claiming the remote job stopped', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(0)
     try {
@@ -514,10 +514,16 @@ describe('rna / rfam', () => {
         .call(tool('search_sequence'), { sequence: 'GGUUCC' }, {})
         .catch((error: unknown) => ({ error, finishedAt: Date.now() }))
       await vi.advanceTimersByTimeAsync(300_000)
-      expect(await result).toMatchObject({
+      const outcome = await result
+      expect(outcome).toMatchObject({
         error: { message: expect.stringContaining('Rfam sequence search not finished after 300s') },
         finishedAt: 300_000
       })
+      const message = (outcome as { error: Error }).error.message
+      expect(message).toContain('Job job-1 was submitted and may still be running')
+      expect(message).toContain('cannot resume polling an existing job')
+      expect(message).toContain('creates new work and does not stop this job')
+      expect(fetchImpl.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
       expect(vi.getTimerCount()).toBe(0)
     } finally {
       vi.useRealTimers()

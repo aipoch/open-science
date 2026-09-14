@@ -147,6 +147,11 @@ describe('Agent-facing collect contract', () => {
     expect(COLLECT_AGENT_CONTRACT.returns.items.oneOf[0].required).toContain('attemptId')
   })
 
+  it('reports invalid selectors using public handle names', () => {
+    expect(() => parseCollectRpcCall({ selectors: [] })).toThrow('{frameId, attemptId}')
+    expect(() => parseCollectRpcCall({ selectors: [42] })).toThrow('{frameId, attemptId}')
+  })
+
   it('parses private snake-case wire selectors with bounded options', () => {
     expect(
       parseCollectRpcCall({

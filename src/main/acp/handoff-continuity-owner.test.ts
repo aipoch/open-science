@@ -14,6 +14,35 @@ const switchReadBack = {
 }
 
 describe('AcpHandoffContinuityOwner', () => {
+  it('preserves task constraints and an unresolved execution receipt during provider replacement', () => {
+    const owner = new AcpHandoffContinuityOwner()
+    owner.recordAdmittedPrompt({
+      sessionId: 'session-1',
+      text: 'Finish the analysis without uploading source data.',
+      provenanceContext: {
+        promptMessageId: 'original-task',
+        messageBranchAncestry: ['branch-original']
+      }
+    })
+    owner.stageClaudeReplay({
+      sessionId: 'session-1',
+      capturedCompletion: {
+        kind: 'returned',
+        value: { jobId: 'job-existing-42', status: 'unknown', submitted: true }
+      },
+      switchReadBack
+    })
+    const continuation = owner.createClaudeContinuation({ sessionId: 'session-1', switchReadBack })
+    expect(continuation.provenanceContext?.messageBranchAncestry).toEqual(['branch-original'])
+    expect(continuation.suppressUserMessage).toBe(true)
+    const replay = owner.peekClaudeReplay('session-1')!
+    expect(replay).toContain('without uploading source data')
+    expect(replay).toContain('"jobId":"job-existing-42"')
+    expect(replay).toContain('"status":"unknown"')
+    expect(replay).toContain('"submitted":true')
+    expect(replay).toContain('not as new user or assistant messages')
+  })
+
   it('constructs an app-owned continuation from the latest admitted prompt context', () => {
     const owner = new AcpHandoffContinuityOwner()
     const attachments = [

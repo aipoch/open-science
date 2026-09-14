@@ -17,6 +17,7 @@ import type { ComputeHostRepository } from './repository'
 import { quoteRemotePath } from './remote-path-security'
 import type { SessionCacheOwner } from './session-cache-owner'
 import { withDataRootWrite } from '../storage/migration-state'
+import { redactSensitiveText } from '../diagnostic-redaction'
 import {
   MAX_DOWNLOAD_BYTES,
   MAX_IMPORT_BYTES,
@@ -68,16 +69,24 @@ const remoteConnectionError = (
   return failure
 }
 
+const UNCONFIRMED_COMMAND_GUIDANCE =
+  'Remote execution and side effects are unconfirmed. No Job receipt exists for callCommand. Check the intended effects before retrying; retry only if repeating the command is safe.'
+
 const computeCallConnectionError = (
-  error: unknown
+  error: unknown,
+  runInvoked: boolean
 ): Error & { computeCallError: ComputeCallError } => {
-  if (error instanceof Error && error.name === 'AbortError') throw error
-  const message = error instanceof Error ? error.message : String(error)
+  const raw = redactSensitiveText(error instanceof Error ? error.message : String(error))
+  const diagnostic = raw.length > 1000 ? `${raw.slice(0, 1000)}…[diagnostic truncated]` : raw
+  const message = runInvoked
+    ? `callCommand failed after requesting execution. ${UNCONFIRMED_COMMAND_GUIDANCE} Diagnostic: ${diagnostic}`
+    : `callCommand could not acquire a connection. The command was not sent for execution. Diagnostic: ${diagnostic}`
   const failure = new Error(message) as Error & { computeCallError: ComputeCallError }
+  if (error instanceof Error && error.name === 'AbortError') failure.name = 'AbortError'
   failure.computeCallError = {
     error_code: error instanceof ComputeConnectionError ? error.code : 'host_unreachable',
     message,
-    retry_after_user_action: true
+    retry_after_user_action: !runInvoked
   }
   return failure
 }
@@ -217,7 +226,8 @@ export class ComputeRemoteOperationOwner {
       ) as Error & { computeCallError: ComputeCallError }
       error.computeCallError = {
         error_code: 'approval_denied',
-        message: `Approval denied for call_command on ${host.displayName}.`,
+        message:
+          'Approval denied for callCommand. The command was not sent for execution. Do not repeat the request or bypass the denial.',
         retry_after_user_action: false
       }
       throw error
@@ -230,7 +240,7 @@ export class ComputeRemoteOperationOwner {
         ...(signal ? { signal } : {})
       })
     } catch (error) {
-      throw computeCallConnectionError(error)
+      throw computeCallConnectionError(error, false)
     }
 
     const cwdExpression = host.scratchRoot
@@ -250,32 +260,28 @@ export class ComputeRemoteOperationOwner {
         ...(signal ? { signal } : {})
       })
     } catch (error) {
-      throw computeCallConnectionError(error)
+      throw computeCallConnectionError(error, true)
     }
 
     if (runResult.timedOut) {
       const callError = new Error(
-        `call_command on "${host.displayName}" timed out after ${timeoutMs}ms.`
+        `callCommand timed out after ${timeoutMs / 1000}s. ${UNCONFIRMED_COMMAND_GUIDANCE}`
       ) as Error & { computeCallError: ComputeCallError }
       callError.computeCallError = {
         error_code: 'timeout',
-        message: `Command timed out after ${timeoutMs / 1000}s.`,
+        message: callError.message,
         retry_after_user_action: false
       }
       throw callError
     }
 
     if (runResult.exitCode === 255) {
-      const tail = errorTail(runResult.stderr, runResult.stdout)
-      const callError = new Error(
-        `SSH connection to "${host.displayName}" failed: ${tail || 'exit 255'}`
-      ) as Error & { computeCallError: ComputeCallError }
-      callError.computeCallError = {
-        error_code: 'host_unreachable',
-        message: tail || 'SSH exit 255: connection failed.',
-        retry_after_user_action: true
-      }
-      throw callError
+      throw computeCallConnectionError(
+        new Error(
+          `Exit 255 may indicate an SSH failure or the remote command exit status. ${errorTail(runResult.stderr, runResult.stdout)}`
+        ),
+        true
+      )
     }
 
     return {

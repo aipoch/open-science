@@ -8,7 +8,9 @@ import type { LiteratureFullTextProgress } from '../../shared/literature'
 
 export class FullTextRateLimitError extends Error {
   constructor(readonly retryAt: number) {
-    super('Full-text source is rate limited. Try again later.')
+    super(
+      `Full-text source is rate limited. Retry no earlier than ${new Date(retryAt).toISOString()}.`
+    )
   }
 }
 const retryAfterByOrigin = new Map<string, number>()

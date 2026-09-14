@@ -148,7 +148,7 @@ export type NotebookSessionExecutionResult = {
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
   environmentLock?: NotebookRunEnvironmentLockCapture
-  // Internal execution evidence persisted onto data runs. Optional keeps injected/legacy executors
+  // Dispatch evidence persisted onto data runs and exposed in Agent results. Optional keeps injected/legacy executors
   // source-compatible; the execution owner treats a missing value after dispatch conservatively.
   kernelDispatched?: boolean
   // Exact helper initializations acknowledged by the persistent loop before producer dispatch.

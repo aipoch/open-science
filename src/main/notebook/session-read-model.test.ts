@@ -326,7 +326,7 @@ describe('NotebookSessionReadModel', () => {
     expect(state.latestRunEnvironments).toEqual({ python: 'historical-python' })
     expect(state.runs).toHaveLength(100)
     expect(state.runs[0]?.runId).toBe('run-25')
-    expect(state.runs[0]).not.toHaveProperty('kernelDispatched')
+    expect(state.runs[0]).toHaveProperty('kernelDispatched', true)
     expect(state.runs[0]).not.toHaveProperty('runtimeId')
     expect(state.recentRuns).toHaveLength(20)
     expect(state.cells).toHaveLength(100)

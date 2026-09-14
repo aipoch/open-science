@@ -3339,8 +3339,45 @@ gate('repl_loop.js host.compute', () => {
       const uncaught = await send("await host.compute.create('ssh:x').callCommand('id', 'probe')")
       expect(uncaught.error).toContain('"error_code":"host_unreachable"')
       expect(uncaught.error).toContain('"retry_after_user_action":true')
-      expect(uncaught.error).toContain('SSH connect failed')
+      expect(uncaught.error?.match(/SSH connect failed/g)).toHaveLength(1)
       expect(uncaught.error).not.toContain('private-compute-secret')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('preserves the Compute reason and recovery fields when an uncaught diagnostic is clipped', async () => {
+    next = {
+      status: 500,
+      body: {
+        error: JSON.stringify({
+          error_code: 'host_unreachable',
+          message:
+            'SSH transport failed. ' +
+            '診断'.repeat(2000) +
+            ' Execution outcome unknown. No Job receipt is available; do not submit the same work again.',
+          retry_after_user_action: false
+        })
+      }
+    }
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok',
+      OPEN_SCIENCE_NOTEBOOK_TEXT_LIMIT_BYTES: '512'
+    })
+    try {
+      const result = await send("await host.compute.create('ssh:x').callCommand('id', 'probe')")
+      expect(result.error).toContain('SSH transport failed.')
+      expect(result.error).toContain('Execution outcome unknown.')
+      expect(result.error).toContain(
+        'No Job receipt is available; do not submit the same work again.'
+      )
+      expect(result.error).toContain('"error_code":"host_unreachable"')
+      expect(result.error).toContain('"retry_after_user_action":false')
+      expect(result.error).toContain('[diagnostic truncated]')
+      expect(result.outputTruncated).toBe(true)
+      expect(Buffer.byteLength(result.error ?? '', 'utf8')).toBeLessThanOrEqual(512)
+      expect(result.error).not.toContain('�')
     } finally {
       child.kill()
     }

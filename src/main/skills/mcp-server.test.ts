@@ -16,7 +16,11 @@ describe('Skill import MCP server', () => {
       skills: [{ id: 'imported-first', name: 'First', status: 'imported' as const }],
       errors: [
         { name: 'Second', error: 'Interrupted: commit state unknown.' },
-        { name: 'Third', error: 'Not attempted.' }
+        { name: 'Third', error: 'Not attempted.' },
+        { name: 'Fourth', error: 'Not attempted.' }
+      ],
+      warnings: [
+        'Successful Skill imports remain committed, but requesting catalog refresh failed. Do not reimport to retry refresh; availability in agent contexts is unconfirmed.'
       ]
     }
     const server = createSkillImportMcpServer({
@@ -33,7 +37,19 @@ describe('Skill import MCP server', () => {
         name: REQUEST_SKILL_IMPORT_TOOL_NAME,
         arguments: { github_url: 'https://github.com/acme/skills/tree/main/first' }
       })
-      expect(result.content).toEqual([{ type: 'text', text: JSON.stringify(partial, null, 2) }])
+      expect(result.content).toEqual([
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              ...partial,
+              errors: [partial.errors[0], { names: ['Third', 'Fourth'], error: 'Not attempted.' }]
+            },
+            null,
+            2
+          )
+        }
+      ])
       const rejected = await client.callTool({
         name: REQUEST_SKILL_IMPORT_TOOL_NAME,
         arguments: {

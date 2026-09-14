@@ -96,7 +96,9 @@ const decodeCursor = (value: string, queryKey: string): ListCursor => {
   try {
     cursor = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as unknown
   } catch {
-    throw new Error('host.sessions.list cursor is invalid.')
+    throw new Error(
+      'host.sessions.list cursor is invalid. Restart host.sessions.list with the intended filters and omit cursor; use the new pagination cursor returned by that read.'
+    )
   }
   if (
     !isRecord(cursor) ||
@@ -106,7 +108,9 @@ const decodeCursor = (value: string, queryKey: string): ListCursor => {
     !Number.isInteger(cursor.offset) ||
     (cursor.offset as number) < 0
   ) {
-    throw new Error('host.sessions.list cursor does not match the requested filters.')
+    throw new Error(
+      'host.sessions.list cursor does not match the requested filters. Restart host.sessions.list with the intended filters and omit cursor; use the new pagination cursor returned by that read.'
+    )
   }
   return cursor as ListCursor
 }
@@ -250,11 +254,15 @@ class HostSessionsService {
     const snapshotKey = fingerprint(projections)
     const cursor = normalized.cursor ? decodeCursor(normalized.cursor, queryKey) : undefined
     if (cursor && cursor.snapshotKey !== snapshotKey) {
-      throw new Error('host.sessions.list cursor is no longer valid.')
+      throw new Error(
+        'host.sessions.list cursor is no longer valid. Restart host.sessions.list with the intended filters and omit cursor; use the new pagination cursor returned by that read.'
+      )
     }
     const offset = cursor?.offset ?? 0
     if (offset > projections.length) {
-      throw new Error('host.sessions.list cursor is no longer valid.')
+      throw new Error(
+        'host.sessions.list cursor is no longer valid. Restart host.sessions.list with the intended filters and omit cursor; use the new pagination cursor returned by that read.'
+      )
     }
     const page = projections.slice(offset, offset + normalized.limit)
     const nextOffset = offset + page.length

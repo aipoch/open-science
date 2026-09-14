@@ -500,11 +500,12 @@ class ConversationSkillImporter {
       const changed = skills.some(
         (skill) => skill.status === 'imported' || skill.status === 'updated'
       )
-      if (changed) this.options.onSkillsChanged?.()
+      const warnings = changed ? this.notifySkillsChanged() : []
 
       return {
         status: errors.length > 0 ? 'partial' : changed ? 'imported' : 'unchanged',
         skills,
+        ...(warnings.length > 0 ? { warnings } : {}),
         ...(errors.length > 0 ? { errors } : {})
       }
     } finally {
@@ -609,11 +610,23 @@ class ConversationSkillImporter {
     if (cancellation.isCancelled() && skills.length === 0 && errors.length === 0) {
       return { status: 'cancelled', skills: [] }
     }
-    if (changed) this.options.onSkillsChanged?.()
+    const warnings = changed ? this.notifySkillsChanged() : []
     return {
       status: errors.length > 0 ? 'partial' : changed ? 'imported' : 'unchanged',
       skills,
+      ...(warnings.length > 0 ? { warnings } : {}),
       ...(errors.length > 0 ? { errors } : {})
+    }
+  }
+
+  private notifySkillsChanged(): string[] {
+    try {
+      this.options.onSkillsChanged?.()
+      return []
+    } catch {
+      return [
+        'Successful Skill imports remain committed, but requesting catalog refresh failed. Do not reimport to retry refresh; availability in agent contexts is unconfirmed.'
+      ]
     }
   }
 }

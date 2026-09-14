@@ -9,6 +9,7 @@ import type {
   CreateArtifactVersionRequest
 } from '../../shared/artifact-provenance'
 import type { ArtifactDurability } from './durability'
+import { artifactFailureDiagnostic } from './pending-file-transaction'
 import type {
   ArtifactVersionProducerCapture,
   PreparedArtifactVersionPersistence
@@ -675,7 +676,7 @@ class ArtifactProvenanceVersionWriter {
         throw error
       }
       throw new Error(
-        `Artifact Version ${versionId}: ${error instanceof Error ? error.message : String(error)}. ` +
+        `Artifact Version ${versionId}: ${artifactFailureDiagnostic(error)}. ` +
           (versionCommitted
             ? 'The Version was committed as pending before the response failed. It is not yet a finalized Artifact available through Host discovery; do not assume the write was rolled back or repeat it to recover this response.'
             : 'A staging record and recovery copy were saved, but this write did not confirm a readable Version. Do not treat it as a completed Artifact or edit provenance metadata.'),

@@ -97,6 +97,72 @@ const createActiveCancellationGuard = (): {
 })
 
 describe('ConversationSkillImporter', () => {
+  it.each(['github', 'attachment'] as const)(
+    'retains %s import receipts when catalog refresh throws',
+    async (source) => {
+      const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+      roots.push(root)
+      const uploads = new UploadRepository(root)
+      const store = new UserSkillRepository(root)
+      const bundle = buildNamedSkillZip('retained')
+      const [staged] = await stageUploadFixtures(uploads, {
+        files: [
+          {
+            name: 'retained.skill',
+            content: bundle.toString('base64'),
+            mimeType: 'application/zip'
+          }
+        ]
+      })
+      const [attachment] = await uploads.finalizePendingSessionUploads('session-1', [staged])
+      const importer = new ConversationSkillImporter({
+        uploads,
+        createCancellationGuard: createActiveCancellationGuard,
+        createSessionCancellationGuard: createActiveCancellationGuard,
+        previewBundle: (bytes) => store.previewZip(bytes),
+        importBundle: (bytes, items) => store.importFromZipBatch(bytes, items),
+        scanGitHub: async () => [
+          {
+            name: 'retained',
+            path: '.',
+            url: 'https://github.com/acme/skills',
+            alreadyImported: false
+          }
+        ],
+        importGitHub: async () => {
+          const preview = await store.previewZip(bundle)
+          const [entry] = await store.importFromZipBatch(bundle, [
+            { subPath: preview.previews[0].subPath }
+          ])
+          return { ...entry.outcome!, skills: [] }
+        },
+        requestApproval: async (request) => ({
+          id: 'approved',
+          items: request.previews.map((entry) => ({ subPath: entry.subPath }))
+        }),
+        onSkillsChanged: () => {
+          throw new Error('refresh-secret must not escape')
+        }
+      })
+      const result = await importer.request(
+        source === 'github'
+          ? { sessionId: 'session-1', githubUrl: 'https://github.com/acme/skills' }
+          : {
+              sessionId: 'session-1',
+              turnToken: 'turn-1',
+              attachmentUri: pathToFileURL(attachment.path).href
+            }
+      )
+      expect(result).toMatchObject({
+        status: 'imported',
+        skills: [{ id: 'imported-retained', status: 'imported' }],
+        warnings: [expect.stringContaining('Do not reimport')]
+      })
+      expect((await store.list()).map((skill) => skill.id)).toEqual(['imported-retained'])
+      expect(JSON.stringify(result)).not.toContain('refresh-secret')
+    }
+  )
+
   it.each(['cancelled', 'timed out'] as const)(
     'retains committed, uncertain, and unattempted Skills when a batch is %s',
     async (interruption) => {
