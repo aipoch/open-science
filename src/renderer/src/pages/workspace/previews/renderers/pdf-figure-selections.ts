@@ -9,6 +9,18 @@ export type Selection = {
 
 type Table = NonNullable<Selection['combinedTable']>
 
+// Native superscript letters annotate a number; keep the original runs for display/copy.
+const numericRecordText = (cell: Table['cells'][number]): string =>
+  (cell.textRuns?.length
+    ? cell.textRuns
+        .filter(
+          (run) => !(run.position === 'superscript' && /^[a-z](?:,[a-z])*$/.test(run.text.trim()))
+        )
+        .map((run) => run.text)
+        .join('')
+    : cell.text
+  ).trim()
+
 // Match a complete repeated header, optionally followed by a measurement-units row.
 // Unrecognized multi-level headers retain their separate source selections.
 const header = (table: Table): { key: string; rows: number } | undefined => {
@@ -71,7 +83,7 @@ const header = (table: Table): { key: string; rows: number } | undefined => {
       (cell) =>
         cell.column > 0 &&
         cell.text.trim() &&
-        !/^[<>≤≥−+-]?\s*(?:\d|\.\d)[\d\s.,()%–−±/+-]*$/.test(cell.text.trim()) &&
+        !/^[<>≤≥−+-]?\s*(?:\d|\.\d)[\d\s.,()%–−±/+-]*$/.test(numericRecordText(cell)) &&
         !(
           /^Statistics?$/i.test(cells[cell.column]?.text.trim() ?? '') &&
           /^(?:t|F|χ[²2]?)\s*=\s*[−+-]?\d+(?:\.\d+)?$/i.test(cell.text.trim())

@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
+import { readPdfFixture } from './read-fixture'
 
 const {
   captionKind,
@@ -233,4 +234,21 @@ it('places a delayed native subscript beside its source anchor before following 
     expect(joinPdfSmallCapsLine([...items.slice(0, 3), marker])).toBe(
       items.map((i) => i.str).join('')
     )
+})
+
+it('excludes a figure reference continuing a double-spaced manuscript paragraph', () => {
+  const page = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/wrapped-figure-reference.jsonl')
+  )
+  expect(findCaptionCandidates([page])).toEqual([])
+  const withoutReference = {
+    ...page,
+    lines: page.lines.filter((line: { text: string }) => !line.text.endsWith('as shown in'))
+  }
+  expect(findCaptionCandidates([withoutReference])).toHaveLength(1)
+  const differentFont = structuredClone(page)
+  differentFont.lines.find((line: { text: string }) =>
+    line.text.endsWith('as shown in')
+  ).fontSize += 2
+  expect(findCaptionCandidates([differentFont])).toHaveLength(1)
 })

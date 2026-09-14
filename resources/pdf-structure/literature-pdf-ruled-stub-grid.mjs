@@ -1,21 +1,14 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { clusterTableRulePositions, classifyTableRuleEdge } from './literature-pdf-table-rules.mjs'
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import { tableSourceItems } from './literature-pdf-source-records.mjs'
-
-const clusterRules = (values) => {
-  const groups = []
-  for (const value of [...new Set(values)].sort((a, b) => a - b)) {
-    const last = groups.at(-1)
-    if (last && value - last[0] <= 1) last.push(value)
-    else groups.push([value])
-  }
-  return groups.map((g) => (g[0] + g.at(-1)) / 2)
-}
 
 // A closed two-tier header supplies its own columns, including parent spans.
 // Reuse the same face traversal as ruled stubs; require individually enclosed
 // numeric body cells before overriding a detector's extra or missing column.
 export function recoverRuledHeaderGrid(table, items, captions, rules) {
+  const cohort = recoverClosedCohortGrid(table, items, captions, rules)
+  if (cohort) return cohort
   const crop = [...table.cropRect]
   const native = tableSourceItems(items, crop)
   if (!native.length) return
@@ -23,12 +16,49 @@ export function recoverRuledHeaderGrid(table, items, captions, rules) {
   const heights = native.map((i) => i.height).sort((a, b) => a - b)
   const font = heights[Math.floor(heights.length / 2)]
   crop[3] += font * 1.5
-  crop[0] -= font * 0.5
-  crop[2] += font * 0.5
-  const local = rules.filter(
+  crop[0] -= font * 1.5
+  crop[2] += font * 1.5
+  let local = rules.filter(
     (r) => r[0] >= crop[0] && r[1] >= crop[1] && r[2] <= crop[2] && r[3] <= crop[3]
   )
-  const xs = clusterRules(local.filter((r) => r[0] === r[2]).map((r) => r[0]))
+  // Double/triple strokes describe one separator when their narrow strip
+  // contains no source text. Normalize only repeated parallel spans; nearby
+  // independent borders and text-bearing narrow columns remain distinct.
+  const vertical = local.filter((r) => r[0] === r[2])
+  const positions = [...new Set(vertical.map((r) => r[0]))].sort((a, b) => a - b)
+  const groups = []
+  for (const x of positions) {
+    const group = groups.at(-1)
+    if (
+      group &&
+      x - group[0] <= Math.min(3.5, font * 0.22) &&
+      !items.some(
+        (i) =>
+          i.rect[0] >= group[0] && i.rect[2] <= x && i.rect[1] >= crop[1] && i.rect[3] <= crop[3]
+      ) &&
+      vertical.filter(
+        (r) =>
+          r[0] === x &&
+          vertical.some(
+            (p) => p[0] === group[0] && Math.abs(p[1] - r[1]) < 1 && Math.abs(p[3] - r[3]) < 1
+          )
+      ).length >= Math.max(4, vertical.filter((r) => r[0] === x).length * 0.8)
+    )
+      group.push(x)
+    else groups.push([x])
+  }
+  const normalized = new Map(groups.flatMap((g) => g.map((x) => [x, (g[0] + g.at(-1)) / 2])))
+  const snap = (x) => {
+    const g = groups.find((g) => g.length > 1 && x >= g[0] - 1 && x <= g.at(-1) + 1)
+    return g ? normalized.get(g[0]) : x
+  }
+  local = local.map((r) =>
+    r[0] === r[2]
+      ? [normalized.get(r[0]), r[1], normalized.get(r[0]), r[3]]
+      : [snap(r[0]), r[1], snap(r[2]), r[3]]
+  )
+  rules = local
+  const xs = clusterTableRulePositions(local.filter((r) => r[0] === r[2]).map((r) => r[0]))
   const ys = local.filter((r) => r[1] === r[3]).map((r) => r[1])
   if (xs.length < 4 || xs.length > 11 || !ys.length) return
   const narrative = xs.length === 4
@@ -99,6 +129,44 @@ export function recoverRuledHeaderGrid(table, items, captions, rules) {
   const grouped = Boolean(grid)
   if (!grid) {
     grid = readRuledGrid(crop, columns, source, rules, 'records')
+    const statistical =
+      grid &&
+      columns.length === 4 &&
+      grid.cells
+        .filter((c) => c.row === 0)
+        .some(
+          (c) =>
+            c.column === 3 &&
+            /^P[- ]?value/.test(
+              source
+                .filter(
+                  (i) =>
+                    i.rect[0] >= c.rect[0] &&
+                    i.rect[2] <= c.rect[2] &&
+                    (i.rect[1] + i.rect[3]) / 2 > c.rect[1] &&
+                    (i.rect[1] + i.rect[3]) / 2 < c.rect[3]
+                )
+                .map((i) => i.text)
+                .join('')
+                .replace(/\s/g, '')
+            )
+        ) &&
+      [1, 2].every(
+        (column) =>
+          grid.cells.filter(
+            (c) =>
+              c.column === column &&
+              c.colSpan === 1 &&
+              source.some(
+                (i) =>
+                  /^\d/.test(i.text.trim()) &&
+                  i.rect[0] >= c.rect[0] &&
+                  i.rect[2] <= c.rect[2] &&
+                  (i.rect[1] + i.rect[3]) / 2 > c.rect[1] &&
+                  (i.rect[1] + i.rect[3]) / 2 < c.rect[3]
+              )
+          ).length >= 6
+      )
     if (
       !grid ||
       grid.cells.some((cell) => {
@@ -111,6 +179,16 @@ export function recoverRuledHeaderGrid(table, items, captions, rules) {
           .map((i) => i.text)
           .join(' ')
           .trim()
+        if (statistical) {
+          // Native faces own the exact strings, including malformed source
+          // values. Shared text headers may span data columns; numeric faces
+          // may span rows only in the final test-statistic column.
+          if (cell.row === 0) return !/\p{L}/u.test(text)
+          if (cell.column === 0) return cell.rowSpan !== 1 || !/\p{L}/u.test(text)
+          if (cell.colSpan > 1) return cell.rowSpan !== 1 || /\d/.test(text) || !/\p{L}/u.test(text)
+          if (cell.rowSpan > 1 && cell.column !== 3) return true
+          return text !== '' && !/^(?:[<>≤≥−+-]?\s*\d|Mean|Median|Mann|Fisher|Chi)/.test(text)
+        }
         if (cell.row === 0)
           return (
             cell.colSpan !== 1 || cell.rowSpan !== 1 || (cell.column > 0 && !/\p{L}/u.test(text))
@@ -154,6 +232,12 @@ export function recoverRuledHeaderGrid(table, items, captions, rules) {
       return
   }
   return {
+    cropRect: [
+      Math.min(table.cropRect[0], xs[0]),
+      table.cropRect[1],
+      Math.max(table.cropRect[2], xs.at(-1)),
+      Math.max(table.cropRect[3], bottom)
+    ],
     rows: grid.ys.slice(1).map((y, r) => [xs[0], grid.ys[r], xs.at(-1), y]),
     columns: columns.map((c) => c.rect),
     spans: grid.cells.filter((c) => c.colSpan > 1 || c.rowSpan > 1),
@@ -177,8 +261,8 @@ function readRuledGrid(crop, columns, items, rules, groupedHeaders) {
   )
   const vertical = local.filter((r) => r[0] === r[2])
   const horizontal = local.filter((r) => r[1] === r[3])
-  const xs = clusterRules(vertical.map((r) => r[0]))
-  const ys = clusterRules(horizontal.map((r) => r[1]))
+  const xs = clusterTableRulePositions(vertical.map((r) => r[0]))
+  const ys = clusterTableRulePositions(horizontal.map((r) => r[1]))
   if (xs.length !== columns.length + 1 || ys.length < 5 || ys.length > 81) return undefined
   if (
     columns.some((c, i) => {
@@ -187,24 +271,12 @@ function readRuledGrid(crop, columns, items, rules, groupedHeaders) {
     })
   )
     return undefined
-  // Classify an edge as fully drawn, absent, or incomplete. Partial lines are
-  // ambiguous and must not be interpreted as permission to merge.
-  const edge = (segments, axis, position, start, end) => {
-    const ranges = segments
-      .filter((r) => Math.abs(r[axis] - position) < 1)
-      .map((r) => [Math.max(start, r[1 - axis]), Math.min(end, r[3 - axis])])
-      .filter(([a, b]) => b - a > 1)
-      .sort((a, b) => a[0] - b[0])
-    if (!ranges.length) return 0
-    let covered = start
-    for (const [a, b] of ranges) {
-      if (a > covered + 1) return -1
-      covered = Math.max(covered, b)
-    }
-    return covered >= end - 1 ? 1 : -1
-  }
-  const h = ys.map((y) => xs.slice(1).map((x, c) => edge(horizontal, 1, y, xs[c], x)))
-  const v = ys.slice(1).map((y, r) => xs.map((x) => edge(vertical, 0, x, ys[r], y)))
+  const h = ys.map((y) =>
+    xs.slice(1).map((x, c) => classifyTableRuleEdge(horizontal, 1, y, xs[c], x))
+  )
+  const v = ys
+    .slice(1)
+    .map((y, r) => xs.map((x) => classifyTableRuleEdge(vertical, 0, x, ys[r], y)))
   if (
     [...h.flat(), ...v.flat()].includes(-1) ||
     h[0].includes(0) ||
@@ -332,4 +404,108 @@ function readRuledGrid(crop, columns, items, rules, groupedHeaders) {
     )
   if (numericRows.length < 3) return undefined
   return { xs, ys, cells }
+}
+
+// Boxed cohort summaries use the same native face traversal as directories.
+// Repeated sample-size headers and paired numeric cells distinguish them from
+// prose forms. The caption and closing note remain outside the recovered grid.
+function recoverClosedCohortGrid(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const crop = table.cropRect
+  const headers = items
+    .filter(
+      (i) =>
+        i.horizontal &&
+        /^[A-Z][\p{L}\s-]+\(n\s*=\s*\d+\)$/u.test(i.text.trim()) &&
+        i.rect[0] >= crop[0] &&
+        i.rect[2] <= crop[2] + 30 &&
+        i.rect[1] >= crop[1] - 24 &&
+        i.rect[3] <= crop[1] + 60
+    )
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (headers.length !== 2 || Math.abs(headers[0].baseline - headers[1].baseline) > 1) return
+  const height = headers[0].height
+  const vertical = rules.filter(
+    (r) =>
+      r[0] === r[2] &&
+      r[0] >= crop[0] - height &&
+      r[0] <= crop[2] + height * 2 &&
+      r[3] > headers[0].rect[1] &&
+      r[1] < crop[3]
+  )
+  const edges = clusterTableRulePositions(vertical.map((r) => r[0]))
+  if (edges.length !== 4) return
+  const snap = (x) => edges.find((e) => Math.abs(e - x) < height * 0.12) ?? x
+  rules = rules.map((r) => (r[1] === r[3] ? [snap(r[0]), r[1], snap(r[2]), r[3]] : r))
+  const segments = rules.filter((r) => r[1] === r[3])
+  const horizontal = clusterTableRulePositions(segments.map((r) => r[1]))
+    .filter((y) => classifyTableRuleEdge(segments, 1, y, edges[0], edges[3]) === 1)
+    .map((y) => [edges[0], y, edges[3], y])
+  const upper = horizontal.findLast(
+    (r) => r[1] < headers[0].rect[1] + height * 0.25 && headers[0].rect[1] - r[1] < height * 2
+  )
+  const note = items.find(
+    (i) =>
+      i.horizontal &&
+      /^Data are mean \(SD\)/.test(i.text) &&
+      i.rect[1] > headers[0].baseline &&
+      Math.abs(i.rect[0] - crop[0]) < height * 2 &&
+      Math.abs(i.rect[1] - crop[3]) < height * 2
+  )
+  const footer = note && horizontal.find((r) => Math.abs(r[1] - note.rect[1]) < height * 0.25)
+  if (!upper || !footer) return
+  const bounds = [upper[0] - 1, upper[1] - 0.5, upper[2] + 1, footer[1] + 0.5]
+  const local = rules.filter(
+    (r) => r[0] >= bounds[0] && r[2] <= bounds[2] && r[1] >= bounds[1] && r[3] <= bounds[3]
+  )
+  const xs = clusterTableRulePositions(local.filter((r) => r[0] === r[2]).map((r) => r[0]))
+  if (xs.length !== 4) return
+  const source = items.filter(
+    (i) =>
+      i.horizontal &&
+      i.rect[0] >= xs[0] &&
+      i.rect[2] <= xs[3] &&
+      (i.rect[1] + i.rect[3]) / 2 > upper[1] &&
+      (i.rect[1] + i.rect[3]) / 2 < footer[1]
+  )
+  const columns = xs.slice(1).map((x, c) => ({ rect: [xs[c], upper[1], x, footer[1]] }))
+  const grid = readRuledGrid(bounds, columns, source, local, 'narrative')
+  if (!grid) return
+  const contents = grid.cells.map((c) =>
+    source.filter(
+      (i) =>
+        (i.rect[0] + i.rect[2]) / 2 > c.rect[0] &&
+        (i.rect[0] + i.rect[2]) / 2 < c.rect[2] &&
+        (i.rect[1] + i.rect[3]) / 2 > c.rect[1] &&
+        (i.rect[1] + i.rect[3]) / 2 < c.rect[3]
+    )
+  )
+  let counts = 0
+  for (const [n, c] of grid.cells.entries()) {
+    const text = contents[n]
+      .map((i) => i.text)
+      .join(' ')
+      .trim()
+    if (c.rowSpan !== 1) return
+    if (c.row === 0) {
+      if (c.colSpan !== 1 || (c.column > 0 && !/\(n\s*=\s*\d+\)/.test(text))) return
+      continue
+    }
+    if (c.column === 0) {
+      if (!/\p{L}/u.test(text) || ![1, 3].includes(c.colSpan)) return
+      continue
+    }
+    if (c.colSpan !== 1 || !/^[\d.,]+\s*(?:\([\d.,]+\)|\[[\d\s–-]+\])$/.test(text)) return
+    counts++
+  }
+  if (counts < 12) return
+  return {
+    cropRect: [xs[0] - 1, upper[1] - 0.5, xs[3] + 1, footer[1] + 0.5],
+    rows: grid.ys.slice(1).map((y, r) => [xs[0], grid.ys[r], xs[3], y]),
+    columns: columns.map((c) => c.rect),
+    spans: grid.cells.filter((c) => c.colSpan > 1),
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    repair: 'closed-record-grid-recovered'
+  }
 }

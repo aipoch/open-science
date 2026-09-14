@@ -643,6 +643,9 @@ export function collectGraphicsBounds(renderTask, boxes) {
       OPS.paintImageMaskXObjectRepeat
     ].includes(operation)
     if ((!image && operation !== OPS.constructPath) || boxes.isEmpty(index)) continue
+    // PDF.js also records dependency bounds for W/W* followed by n. Those
+    // paths only change clipping; endPath never paints visible figure content.
+    if (operation === OPS.constructPath && operators.argsArray[index]?.[0] === OPS.endPath) continue
     const normalizedRect = [
       boxes.minX(index),
       boxes.minY(index),

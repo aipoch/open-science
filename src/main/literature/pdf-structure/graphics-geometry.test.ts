@@ -166,7 +166,7 @@ it('recognizes alternating publisher lettering while preserving real margin imag
 it('uses the same optimized instruction stream as the recorded image bounds', async () => {
   const content =
     Array.from({ length: 5 }, (_, i) => `q 20 0 0 20 ${20 + i * 30} 100 cm /Im Do Q`).join('\n') +
-    '\n0 0 1 rg 30 20 80 40 re f\nq 20 0 0 5 20 190 cm /Im Do Q'
+    '\nq 0 0 200 200 re W n 0 0 1 rg 30 20 80 40 re f Q\nq 20 0 0 5 20 190 cm /Im Do Q'
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
@@ -198,6 +198,20 @@ it('uses the same optimized instruction stream as the recorded image bounds', as
       recordOperations: true
     })
     await render.promise
+    // PDF.js 5.4.624 CanvasGraphics.constructPath(opIdx, op, data, minMax)
+    // receives a scalar paint operation first, not the older path-op array.
+    // Assert the real render stream and its nonempty clip dependency box so
+    // the collector cannot pass merely because the clipping path was absent.
+    const operators = render._internalRenderTask.operatorList
+    const nativePaths = operators.fnArray.flatMap((op: number, index: number) =>
+      op === OPS.constructPath ? [{ index, args: operators.argsArray[index] }] : []
+    )
+    expect(nativePaths.map((p: { args: unknown[] }) => p.args[0])).toEqual([OPS.endPath, OPS.fill])
+    for (const path of nativePaths) {
+      expect(path.args).toHaveLength(3)
+      expect(Array.isArray(path.args[1])).toBe(true)
+      expect(page.recordedBBoxes.isEmpty(path.index)).toBe(false)
+    }
     const result = collectGraphicsBounds(render, page.recordedBBoxes)
     expect(result.graphicsBounds.filter((g: { imageHash?: string }) => g.imageHash)).toHaveLength(3)
     const images = result.graphicsBounds.filter(
@@ -213,6 +227,8 @@ it('uses the same optimized instruction stream as the recorded image bounds', as
       Math.max(...rects.map((r: number[]) => r[3]))
     ]
     const paths = result.graphicsBounds.filter((g: { kind: string }) => g.kind === 'path')
+    // A clip-only endPath records a dependency box but paints no figure.
+    expect(paths).toHaveLength(1)
     expect(
       paths.some((g: { normalizedRect: number[] }) =>
         [0.15, 0.7, 0.55, 0.9].every((value, i) => Math.abs(g.normalizedRect[i] - value) < 0.01)

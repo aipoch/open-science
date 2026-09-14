@@ -43,6 +43,45 @@ export function hasTableEvidence(table, caption, pageItems = []) {
   )
     return false
   const measurement = (text) => /^[-+−]?\d+(?:\.\d+)?(?:\s*\([^)]*\))?$/.test(text.trim())
+  if (
+    /Full protocol available at:/i.test(cropText) &&
+    /Raw data available at:/i.test(cropText) &&
+    /\S+@\S+/.test(cropText) &&
+    !table.grid.some((r) => r.some(measurement))
+  )
+    return false
+  // Tiny detections across two prose columns contain clipped sentences rather
+  // than independently measured records. Require source overhang on both sides.
+  if (
+    table.cropRect &&
+    table.grid.length <= 3 &&
+    table.grid.every((r) => r.length <= 2 && !r.some(measurement))
+  ) {
+    const prose = pageItems.filter(
+      (i) =>
+        i.horizontal &&
+        i.rect[1] >= table.cropRect[1] - i.height &&
+        i.rect[3] <= table.cropRect[3] &&
+        i.text.trim().split(/\s+/).length >= 7
+    )
+    if (
+      prose.some(
+        (i) => i.rect[0] < table.cropRect[0] - i.height && i.rect[2] > table.cropRect[0]
+      ) &&
+      prose.some((i) => i.rect[0] < table.cropRect[2] && i.rect[2] > table.cropRect[2] + i.height)
+    )
+      return false
+  }
+
+  // Short metadata and bibliography fragments may produce plausible-looking
+  // columns. Require explicit publication anchors and no measured data pairs.
+  if (
+    table.grid.every((row) => row.length <= 3 && row.filter(measurement).length < 2) &&
+    ((/\bKey words?:/i.test(cropText) && table.grid.length <= 3) ||
+      ((cropText.match(/\((?:19|20)\d{2}\)\s*:/g) ?? []).length >= 3 &&
+        /\b(?:Ophthalmol|Cancer|Journ?al)\b/i.test(cropText)))
+  )
+    return false
   // Disclosure directories align names and relationship labels in columns.
   // Require several explicit relationship labels and no measurement columns;
   // a captioned research table has already been accepted above.
@@ -91,10 +130,10 @@ export function hasTableEvidence(table, caption, pageItems = []) {
     return false
   // Small fragments of a bibliography may contain only one citation. Require
   // multiple complete journal references in the source and no numeric columns.
-  const journalReference = /\b(?:19|20)\d{2}\s*;\s*\d+\s*:\s*\d+/g
+  const journalReference = /\b(?:19|20)\d{2}\s*;\s*\d+(?:\(\d+\))?\s*:\s*\d+/g
   if (
     table.grid.length <= 3 &&
-    table.grid.every((r) => r.length <= 2) &&
+    table.grid.every((r) => r.length <= 3) &&
     (sourceText.match(journalReference) ?? []).length >= 3 &&
     journalReference.test(cropText) &&
     /\bet al\b/i.test(cropText) &&
@@ -106,7 +145,7 @@ export function hasTableEvidence(table, caption, pageItems = []) {
     /Updated version/i.test(sourceText) &&
     /Reprints and/i.test(sourceText) &&
     /Permissions/i.test(sourceText) &&
-    /(?:most recent version|free email-alerts)/i.test(cropText)
+    /(?:most recent (?:version|supplemental material)|free email-alerts)/i.test(cropText)
   )
     return false
   if (
@@ -178,7 +217,8 @@ export function hasTableEvidence(table, caption, pageItems = []) {
   )
     return false
   if (
-    /\bPII\s*:/i.test(cropText) &&
+    (/\bPII\s*:/i.test(cropText) ||
+      (cropText.match(/\b(?:Received|Revised|Accepted) Date:/g) ?? []).length >= 2) &&
     /\bDOI\s*:/i.test(cropText) &&
     /\b(?:Reference|To appear in)\s*:/i.test(cropText)
   )
@@ -517,6 +557,41 @@ export function hasTableEvidence(table, caption, pageItems = []) {
     ).length >= 2
   )
     return false
+  // A crop starting inside a native prose column can leave an unrelated
+  // paragraph or list marker in its second model column. Reassemble only
+  // word-spaced source lines, and require repeated long lines crossing the
+  // left crop edge; isolated overhanging labels remain eligible.
+  if (
+    table.cropRect &&
+    table.issues.includes('text-crosses-crop-boundary') &&
+    table.grid.every((row) => row.length === 2 && !row.some(measurement))
+  ) {
+    const [left, top, right, bottom] = table.cropRect
+    const lines = []
+    for (const item of pageItems
+      .filter((i) => i.horizontal && i.rect[1] >= top && i.rect[3] <= bottom)
+      .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+      const line = lines.find((g) => Math.abs(g[0].baseline - item.baseline) < item.height * 0.3)
+      if (line) line.push(item)
+      else lines.push([item])
+    }
+    const crossed = lines.filter((line) => {
+      const chunks = []
+      for (const item of line.sort((a, b) => a.rect[0] - b.rect[0])) {
+        const prior = chunks.at(-1)
+        if (prior && item.rect[0] - prior.at(-1).rect[2] < item.height) prior.push(item)
+        else chunks.push([item])
+      }
+      return chunks.some(
+        (g) =>
+          g[0].rect[0] < left - 1 &&
+          g.at(-1).rect[2] > left + (right - left) * 0.6 &&
+          g.at(-1).rect[2] < right - g[0].height * 2 &&
+          words(g.map((i) => i.text).join(' ')) >= 6
+      )
+    })
+    if (crossed.length >= 2 && crossed.length >= lines.length * 0.6) return false
+  }
   const proseRecords = table.grid.filter((row) => row.filter((text) => text.trim()).length >= 2)
   const dividedProse =
     proseRecords.length >= 2 &&

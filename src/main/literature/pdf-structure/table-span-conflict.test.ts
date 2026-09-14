@@ -150,3 +150,43 @@ it.each([0, 1])(
     expect(result.issues).toContain('span-conflicts-with-source-rows')
   }
 )
+
+it.each([false, true])(
+  'reconciles a ruled header/body boundary in either source order: %s',
+  async (reverse) => {
+    const { reconcileUnresolvedTableSpans } = await import(
+      pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-cell-merges.mjs')).href
+    )
+    const header = { text: 'Treatment', rect: [0, 0, 30, 10] },
+      value = { text: '4.13', rect: [0, 20, 30, 30] }
+    const cells = [
+      { row: 0, column: 0, text: 'Treatment', sourceTokens: [header] },
+      { row: 1, column: 0, text: '4.13', sourceTokens: [value] }
+    ]
+    const check = (
+      items: (typeof header)[],
+      rules: number[][]
+    ): { issues: Set<string>; repairs: string[] } => {
+      const issues = new Set<string>(),
+        repairs: string[] = []
+      reconcileUnresolvedTableSpans({
+        spans: [{ rect: [0, 0, 40, 40] }],
+        cells,
+        items,
+        rows: [],
+        rules,
+        issues,
+        repairs
+      })
+      return { issues, repairs }
+    }
+    const items = reverse ? [value, header] : [header, value]
+    expect(check(items, [[0, 15, 40, 15]]).issues.size).toBe(0)
+    expect(check(items, []).issues.has('unresolved-spanning-cells')).toBe(true)
+    const wrapped = { text: 'continued', rect: [0, 16, 30, 26] }
+    cells[0].sourceTokens.push(wrapped)
+    expect(
+      check([...items, wrapped], [[0, 15, 40, 15]]).issues.has('unresolved-spanning-cells')
+    ).toBe(true)
+  }
+)

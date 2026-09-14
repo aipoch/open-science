@@ -55,6 +55,78 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 describe('worker result boundary', () => {
+  it.each([false, true])(
+    'normalizes auxiliary-page notes independently and caches their provenance (grouped: %s)',
+    async (grouped) => {
+      const notes = [{ text: 'a Two-sample t test.', page: 2, rect: [30, 40, 270, 80] }]
+      const data = {
+        sourceViewport: { width: 900, height: 1200 },
+        grid: [['Value']],
+        cells: [
+          {
+            row: 0,
+            column: 0,
+            rowSpan: 1,
+            colSpan: 1,
+            text: 'Value',
+            sourceRects: [[90, 120, 450, 600]]
+          }
+        ],
+        unassigned: [],
+        issues: [],
+        notes
+      }
+      const table = {
+        id: 'p1-figure-1',
+        page: 1,
+        region: [0.1, 0.1, 0.5, 0.5],
+        thumbnail: 'thumbnails/p1-figure-1.png',
+        caption: { text: 'Table 1. Sample data.', rect: [60, 80, 300, 90] },
+        ...(grouped
+          ? {
+              parts: [
+                { ...data, title: 'A' },
+                { ...data, title: 'B' }
+              ],
+              notes
+            }
+          : data)
+      }
+      const value = {
+        ...raw(),
+        pageCount: 2,
+        auxiliaryPages: [2],
+        pages: [
+          { page: 1, width: 600, height: 800, rotation: 0 },
+          { page: 2, width: 300, height: 400, rotation: 90 }
+        ],
+        figures: [],
+        tables: [table]
+      }
+      await save(value)
+      const images = new Map<string, Uint8Array>()
+      const result = await readWorkerResult(root, identity, images)
+      const element = result.elements[0]
+      const expected = [
+        { text: notes[0].text, regions: [{ page: 2, x: 0.1, y: 0.1, width: 0.8, height: 0.1 }] }
+      ]
+      expect(grouped ? element.tableNotes : element.table?.notes).toEqual(expected)
+      if (grouped)
+        for (const part of element.tableParts!) expect(part.table.notes).toEqual(expected)
+      expect(result.requestedPages).toEqual([1])
+      expect(result.processedPages).toEqual([1])
+      const cache = new PdfStructureCache({ dataRoot: () => join(root, 'cache') })
+      await mkdir(join(root, 'cache'))
+      await cache.publish(result, images, new AbortController().signal)
+      await expect(cache.read(identity)).resolves.toEqual(result)
+      for (const page of [0, 1.5, 3]) {
+        notes[0].page = page
+        await save(value)
+        await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow()
+      }
+    }
+  )
+
   it('persists one parent table with independent part grids and shared notes', async () => {
     const parts = [5, 7].map((columns, index) => ({
       title: index ? 'B. Dewa data' : 'A. Tricco data',

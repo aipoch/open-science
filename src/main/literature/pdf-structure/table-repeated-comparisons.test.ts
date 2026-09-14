@@ -9,19 +9,24 @@ const load = (name: string): ReturnType<typeof JSON.parse> =>
   readPdfFixture(resolve(`src/main/literature/pdf-structure/fixtures/source-grids/${name}.jsonl`))
 const parse = (x: ReturnType<typeof load>): ReturnType<typeof refineTable> =>
   refineTable(x.table, x.tokens, x.captions, [], x.rules)
-it.each([1, 2, 3, 4])(
+it.each([
+  ['repeated-comparisons-quality-of-life', 12],
+  ['repeated-comparisons-continuation', 3],
+  ['repeated-comparisons-wrapped-symptoms', 8],
+  ['repeated-comparisons-empowerment', 5]
+])(
   'recovers repeated arm/comparison records and shared outcomes in layout %s',
-  (n) => {
-    const x = load(`repeated-comparisons-${n}`),
+  (name, outcomes) => {
+    const x = load(String(name)),
       t = parse(x)
     expect(t.repairs).toContain('repeated-comparison-grid-recovered')
     expect(
       t.cells.filter((c: { rowSpan: number; column: number }) => c.column === 0 && c.rowSpan === 3)
         .length
-    ).toBe([12, 3, 8, 5][n - 1])
+    ).toBe(outcomes)
     expect(t.unassigned).toEqual([])
     expect(t.grid[1][1]).toBe('Group')
-    expect(x).toEqual(load(`repeated-comparisons-${n}`))
+    expect(x).toEqual(load(String(name)))
   }
 )
 it('keeps amounts with their native deviations and interval punctuation', () => {
@@ -75,7 +80,7 @@ it('associates an isolated centered table number with the larger prose title abo
   ).toBe(true)
 })
 it('preserves the source-closed category-wide P value without repeating it on each category', () => {
-  const t = parse(load('closed-category-1'))
+  const t = parse(load('closed-category-shared-p-value'))
   expect(t.repairs).toContain('closed-record-grid-recovered')
   const p = t.cells.find((c: { text: string }) => c.text === '0.89')
   expect(p && [p.row, p.column, p.rowSpan, p.colSpan]).toEqual([3, 3, 6, 1])
@@ -95,7 +100,7 @@ it.each(['no-caption', 'missing-arm', 'missing-value', 'extra-comparison-value']
     const { recoverRepeatedComparisonGrid } = await import(
       pathToFileURL(resolve('resources/pdf-structure/literature-pdf-wrapped-summary-grid.mjs')).href
     )
-    const x = load('repeated-comparisons-2')
+    const x = load('repeated-comparisons-continuation')
     if (condition === 'no-caption') x.captions = []
     else {
       const t = parse(x),
@@ -141,7 +146,7 @@ it.each(['no-rule', 'partial-border'])(
     const { recoverRuledHeaderGrid } = await import(
       pathToFileURL(resolve('resources/pdf-structure/literature-pdf-ruled-stub-grid.mjs')).href
     )
-    const x = load('closed-category-1')
+    const x = load('closed-category-shared-p-value')
     if (condition === 'no-rule') x.rules = []
     else {
       const horizontal = x.rules

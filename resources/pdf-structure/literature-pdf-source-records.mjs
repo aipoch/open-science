@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { inside, union } from './literature-pdf-table-geometry.mjs'
+import { inside, union, isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
 
 // Record recognizers share strict source containment, while each recognizer
 // retains its own anchors, row tolerances and statistical expressions.
@@ -52,6 +52,24 @@ export function hasUniqueRecordTokens(items, groups) {
     for (const item of group) if (!remaining.delete(item)) return false
   }
   return remaining.size === 0
+}
+
+// Source is already in baseline order. Callers choose their row tolerance;
+// small scripts must have exactly one row owner instead of creating a new row.
+export function groupSourceRowsWithScripts(source, height, tolerance) {
+  if (!(height > 0) || !(tolerance > 0)) return
+  const groups = []
+  for (const item of source.filter((i) => i.height >= height * 0.8)) {
+    const last = groups.at(-1)
+    if (last && Math.abs(item.baseline - last[0].baseline) < height * tolerance) last.push(item)
+    else groups.push([item])
+  }
+  for (const item of source.filter((i) => i.height < height * 0.8)) {
+    const owners = groups.filter((group) => group.some((i) => isAdjacentTableScript(item, i)))
+    if (owners.length !== 1) return
+    owners[0].push(item)
+  }
+  return hasUniqueRecordTokens(source, groups) ? groups : undefined
 }
 
 // Split only a uniquely owned model row. Unlike strict column containment in

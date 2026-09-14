@@ -259,9 +259,13 @@ for (const reducedMotion of ['reduce', 'no-preference'] as const) {
     await expect(toolGroup).toBeVisible()
     await expect(conversation.getByText('Interacting with tools', { exact: true })).toBeVisible()
     const scrollToEndButton = page.getByRole('button', { name: 'Scroll to end' })
-    // Begin above the bottom even when reduced motion has already completed automatic scrolling.
-    await conversation.hover()
-    await page.mouse.wheel(0, -100_000)
+    // Establish the layout precondition in one turn, without native scroll animation racing
+    // automatic following. Real wheel input is covered by message-scroll-release.spec.ts.
+    await conversation.evaluate((element) => {
+      element.dispatchEvent(new WheelEvent('wheel', { deltaY: -1000, bubbles: true }))
+      element.scrollTo({ top: 0, behavior: 'instant' })
+    })
+    await expect.poll(() => conversation.evaluate((element) => element.scrollTop)).toBe(0)
     await expect(scrollToEndButton).toHaveAttribute('data-active', 'true')
     await scrollToEndButton.click()
     await expect

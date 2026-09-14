@@ -935,6 +935,71 @@ describe('NotebookPackageMutationOwner', () => {
     ])
   })
 
+  it.each([false, true])(
+    'settles child journal writes before releasing a failed mutation (journal update rejects: %s)',
+    async (updateRejects) => {
+      const childFailure = new Error(`install failed: ${CHILD_UNCONFIRMED}`)
+      const release = vi.fn().mockResolvedValue(false)
+      let allowWrite!: () => void
+      const writeGate = new Promise<void>((resolve) => {
+        allowWrite = resolve
+      })
+      let reportRead!: () => void
+      const readStarted = new Promise<void>((resolve) => {
+        reportRead = resolve
+      })
+      const { owner, options, target, runtimeRoot } = ownerHarness({
+        retainWorkingCache: vi.fn(() => release),
+        installPackages: vi.fn(async (_request, deps) => {
+          // Delay the real queued update after its read, before its mkdir/write/rename.
+          // This makes a slow filesystem deterministic without fabricating ENOTEMPTY.
+          vi.spyOn(journal, 'readState').mockImplementationOnce(async () => {
+            const state = await readState()
+            reportRead()
+            await writeGate
+            if (updateRejects) throw new Error('child journal update failed')
+            return state
+          })
+          deps?.onBeforeSpawn?.()
+          deps?.onChild?.(process.pid)
+          await readStarted
+          throw childFailure
+        })
+      })
+      const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+      const readState = journal.readState.bind(journal)
+      const update = vi.spyOn(journal, 'update')
+      let settled = false
+      const mutation = owner
+        .mutate({ target, mirror: {} })
+        .catch((error: unknown) => error)
+        .finally(() => {
+          settled = true
+          // Reproduce the suite's teardown boundary with real files, not a mocked rm error.
+          rmSync(options.storageRoot, { recursive: true, force: true })
+        })
+      let settledBeforeWrite = false
+      let releasedBeforeWrite = false
+      try {
+        await readStarted
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target)
+        settledBeforeWrite = settled
+        releasedBeforeWrite = release.mock.calls.length > 0
+      } finally {
+        allowWrite()
+        await mutation
+        // Drain on the broken implementation too, so a failing assertion cannot race teardown.
+        await Promise.allSettled(update.mock.results.map((result) => result.value))
+      }
+      expect(existsSync(options.storageRoot)).toBe(false)
+      expect(settledBeforeWrite).toBe(false)
+      expect(releasedBeforeWrite).toBe(false)
+      expect(await mutation).toBe(childFailure)
+      expect(release).toHaveBeenCalledWith(expect.objectContaining({ retainForRecovery: true }))
+    }
+  )
+
   it('retains sidecar and journal and blocks the target for an unconfirmed child', async () => {
     let operationId = ''
     const childFailure = new Error(`install failed: ${CHILD_UNCONFIRMED}`)

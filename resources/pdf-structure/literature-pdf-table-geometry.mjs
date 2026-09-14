@@ -34,3 +34,19 @@ export function isAdjacentTableScript(item, anchor) {
     gap <= anchor.height * 0.35
   )
 }
+
+// Model boxes are crop-relative. Keep their page-space positions invariant
+// whenever native source evidence corrects a detector crop.
+export function rebaseTableCrop(table, cropRect) {
+  return {
+    ...table,
+    cropRect,
+    structure: {
+      ...table.structure,
+      objects: table.structure.objects.map((object) => ({
+        ...object,
+        rect: object.rect.map((v, i) => v + table.cropRect[i % 2] - cropRect[i % 2])
+      }))
+    }
+  }
+}

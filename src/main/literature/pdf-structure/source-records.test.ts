@@ -2,9 +2,32 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, it } from 'vitest'
 
-const { tableSourceItems, readSourceRow, hasUniqueRecordTokens } = await import(
-  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-source-records.mjs')).href
-)
+const { tableSourceItems, readSourceRow, hasUniqueRecordTokens, groupSourceRowsWithScripts } =
+  await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-source-records.mjs')).href
+  )
+
+it('groups source rows using the caller tolerance while keeping raised scripts with one owner', () => {
+  const first = { ...token('Value', 1, 20, 20), height: 10, rect: [1, 10, 20, 20] },
+    other = { ...token('2', 40, 45, 22.5), height: 10, rect: [40, 12.5, 45, 22.5] },
+    script = { ...token('a', 20, 23, 17), height: 5, rect: [20, 12, 23, 17] }
+  const source = [script, first, other],
+    before = structuredClone(source)
+  expect(groupSourceRowsWithScripts(source, 10, 0.3)).toEqual([[first, other, script]])
+  expect(groupSourceRowsWithScripts(source, 10, 0.2)).toEqual([[first, script], [other]])
+  expect(source).toEqual(before)
+})
+
+it('declines unattached or ambiguously owned scripts without losing a source token', () => {
+  const first = { ...token('Value', 1, 20, 20), height: 10, rect: [1, 10, 20, 20] },
+    second = { ...first, baseline: 24, rect: [1, 14, 20, 24] },
+    script = { ...token('a', 20, 23, 22), height: 5, rect: [20, 17, 23, 22] }
+  expect(groupSourceRowsWithScripts([first, script, second], 10, 0.2)).toBeUndefined()
+  expect(
+    groupSourceRowsWithScripts([{ ...script, rect: [60, 17, 63, 22] }, first], 10, 0.2)
+  ).toBeUndefined()
+  expect(groupSourceRowsWithScripts([first, first], 10, 0.2)).toBeUndefined()
+})
 
 function token(
   text: string,

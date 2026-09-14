@@ -263,12 +263,23 @@ export const parsePdfStructureResult = (
     const regions = [
       ...element.regions,
       ...tables.flatMap((table) => table.cells.flatMap(({ regions }) => regions)),
-      ...tables.flatMap((table) => table.unassignedText.flatMap(({ regions }) => regions)),
-      ...tables.flatMap((table) => table.notes?.flatMap(({ regions }) => regions) ?? []),
-      ...(element.tableNotes?.flatMap(({ regions }) => regions) ?? [])
+      ...tables.flatMap((table) => table.unassignedText.flatMap(({ regions }) => regions))
     ]
     if (regions.some(({ page }) => !processed.has(page)))
       throw new Error('PDF element refers to an unprocessed page.')
+    const noteRegions = [
+      ...tables.flatMap((table) => table.notes?.flatMap(({ regions }) => regions) ?? []),
+      ...(element.tableNotes?.flatMap(({ regions }) => regions) ?? [])
+    ]
+    if (
+      noteRegions.some(
+        ({ page }) =>
+          !coveredPages.includes(page) ||
+          (!processed.has(page) && !element.regions.some((r) => r.page + 1 === page))
+      )
+    )
+      throw new Error('PDF table note refers to an unread or unsupported source page.')
+
     if (
       element.caption?.regions.some(
         ({ page }) =>

@@ -720,6 +720,7 @@ jobs:
         continue-on-error: true
         run: >-
           npx vitest run
+          scripts/ci/run-windows-browser-diagnostics.test.ts
           src/main/windows.test.ts
           src/main/windows-icon-assets.test.ts
           src/main/windows-powershell.test.ts
@@ -1115,6 +1116,7 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout-windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/renderer-layout-windows.json
+        shell: node scripts/ci/run-windows-browser-diagnostics.mjs {0}
         run: npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=180000
       - name: Run functional journeys
         id: e2e_functional_windows

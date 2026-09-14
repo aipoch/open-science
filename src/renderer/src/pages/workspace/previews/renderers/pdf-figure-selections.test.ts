@@ -263,3 +263,27 @@ it('joins a repeated header with explicitly named statistics in the first record
     expect(groupPdfFigureSelections([invalid, following])).toHaveLength(2)
   }
 })
+
+it('joins numeric records with native superscript footnotes while preserving their display and copy', () => {
+  const first = batch(5),
+    second = batch(6)
+  const cell = first.elements[0].table!.cells[4]
+  cell.text = '44c'
+  cell.textRuns = [
+    { text: '44', position: 'normal' },
+    { text: 'c', position: 'superscript' }
+  ]
+  const original = structuredClone([first, second])
+  const entries = groupPdfFigureSelections([first, second])
+  expect(entries).toHaveLength(1)
+  expect(entries[0].combinedTable!.cells[4]).toEqual(cell)
+  expect(copyPdfTable(entries[0].combinedTable!, 'html', '')).toContain('44<sup>c</sup>')
+  expect([first, second]).toEqual(original)
+  delete cell.textRuns
+  expect(groupPdfFigureSelections([first, second])).toHaveLength(2)
+  cell.textRuns = [
+    { text: '44', position: 'normal' },
+    { text: 'c', position: 'subscript' }
+  ]
+  expect(groupPdfFigureSelections([first, second])).toHaveLength(2)
+})
