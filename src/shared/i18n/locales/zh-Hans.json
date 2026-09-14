@@ -5780,6 +5780,15 @@
     "Could not save files filter preference. Try again.": "无法保存文件过滤设置。请重试。",
     "Could not save the default permission mode. Try again.": "无法保存默认权限模式。请重试。",
     "Could not switch active provider or model. Try again.": "无法切换当前模型服务商或模型。请重试。",
-    "Could not switch agent framework. Try again.": "无法切换智能体框架。请重试。"
+    "Could not switch agent framework. Try again.": "无法切换智能体框架。请重试。",
+    "Revoke trusted browser?": "撤销受信任的浏览器？",
+    "{{browser}} must complete two-step verification again on its next visit. The 180-day trust ends immediately.": "{{browser}} 下次访问时必须重新完成两步验证。180 天信任将立即终止。",
+    "Revoke": "撤销",
+    "Code expires in {{time}}": "验证码将于 {{time}} 后过期",
+    "Code expired": "验证码已过期",
+    "Approve only if you started this sign-in and the six-digit code matches the one shown in the requesting browser.": "仅当你发起了此次登录，且发出请求的浏览器中显示的六位验证码与此处一致时才批准。",
+    "Revoke all trusted browsers?": "撤销所有受信任的浏览器？",
+    "Every trusted browser must complete two-step verification again on its next visit. The 180-day trust ends immediately.": "每个受信任的浏览器在下次访问时都必须重新完成两步验证。180 天信任将立即终止。",
+    "{{browser}} trusted for 180 days.": "已信任 {{browser}}，有效期 180 天。"
   }
 }

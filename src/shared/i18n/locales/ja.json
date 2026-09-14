@@ -5780,6 +5780,15 @@
     "Could not save files filter preference. Try again.": "ファイルフィルターの設定を保存できませんでした。再試行してください。",
     "Could not save the default permission mode. Try again.": "デフォルトの権限モードを保存できませんでした。再試行してください。",
     "Could not switch active provider or model. Try again.": "アクティブなプロバイダーまたはモデルを切り替えられませんでした。再試行してください。",
-    "Could not switch agent framework. Try again.": "エージェントフレームワークを切り替えられませんでした。再試行してください。"
+    "Could not switch agent framework. Try again.": "エージェントフレームワークを切り替えられませんでした。再試行してください。",
+    "Revoke trusted browser?": "信頼済みブラウザーを取り消しますか？",
+    "{{browser}} must complete two-step verification again on its next visit. The 180-day trust ends immediately.": "{{browser}} は次回アクセス時に再度 2 段階認証を完了する必要があります。180 日間の信頼は直ちに終了します。",
+    "Revoke": "取り消す",
+    "Code expires in {{time}}": "コードは {{time}} で期限切れになります",
+    "Code expired": "コードは期限切れです",
+    "Approve only if you started this sign-in and the six-digit code matches the one shown in the requesting browser.": "このサインインを開始し、リクエスト元のブラウザーに表示されている 6 桁のコードがここに表示されているものと一致する場合のみ承認してください。",
+    "Revoke all trusted browsers?": "信頼済みブラウザーをすべて取り消しますか？",
+    "Every trusted browser must complete two-step verification again on its next visit. The 180-day trust ends immediately.": "すべての信頼済みブラウザーは次回アクセス時に再度 2 段階認証を完了する必要があります。180 日間の信頼は直ちに終了します。",
+    "{{browser}} trusted for 180 days.": "{{browser}} を 180 日間信頼しました。"
   }
 }

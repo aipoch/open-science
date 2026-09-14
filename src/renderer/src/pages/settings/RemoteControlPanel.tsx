@@ -13,33 +13,56 @@ import {
   LoaderCircle,
   RadioTower,
   RefreshCw,
+  ShieldCheck,
   Smartphone,
+  Timer,
   Trash2
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation, Trans } from 'react-i18next'
+import { AlertDialog } from 'radix-ui'
 
 import type {
   RemoteAccessMode,
   RemoteAccessSnapshot,
-  RemotePairingDecision
+  RemotePairingDecision,
+  TrustedRemoteBrowserView
 } from '../../../../shared/remote-access'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { ActionToast, ActionToastStack } from '@/components/ActionToast'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
   dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { SettingsIconAction, SettingsSection } from './SettingsLayout'
+import {
+  getSettingsPreviewState,
+  setSettingsPreviewState,
+  simulatePreviewCall,
+  useSettingsPreviewState
+} from './visual-preview/preview-store'
 
 const REMOTE_IT_DOWNLOAD_URL = 'https://www.remote.it/download/'
 const REMOTE_ACCESS_FRESH_MS = 60_000
+const PAIRING_EXPIRING_SOON_MS = 120_000
+
+const formatPairingCountdown = (remainingMs: number): string => {
+  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1_000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
 type CopyStatus = 'idle' | 'copied' | 'error'
 type RemoteControlPanelComponent = {
   (): React.JSX.Element
@@ -211,12 +234,19 @@ const BrowserAccessSteps = ({ t }: { t: TFunction }): React.JSX.Element => (
 export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
+  // Visual-preview seam (see visual-preview/preview-store.ts): the snapshot starts from fixtures
+  // and no real remoteAccess call is issued; null in normal operation.
+  const preview = useSettingsPreviewState()
 
-  const initialSnapshot = freshRemoteAccessSnapshot()
+  const initialSnapshot = preview ? preview.remote.snapshot : freshRemoteAccessSnapshot()
   const [snapshot, setSnapshot] = useState<RemoteAccessSnapshot | null>(initialSnapshot ?? null)
   const [busy, setBusy] = useState<string | null>(initialSnapshot ? null : 'loading')
   const [actionError, setActionError] = useState<string | undefined>()
   const [copyStatus, setCopyStatus] = useState<CopyStatus>('idle')
+  const [browserToRevoke, setBrowserToRevoke] = useState<TrustedRemoteBrowserView | null>(null)
+  const [revokeAllArmed, setRevokeAllArmed] = useState(false)
+  const [trustNotice, setTrustNotice] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
 
   const operationTriggerRef = useRef<HTMLElement | null>(null)
   const offModeRef = useRef<HTMLInputElement | null>(null)
@@ -249,6 +279,9 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   }
 
   useEffect(() => {
+    // Visual preview: the fixture snapshot is already in state; skip the real load and the
+    // change subscription entirely so no remoteAccess IPC can escape.
+    if (preview) return
     let active = true
     remoteAccessPanelMounts += 1
     mountedRef.current = true
@@ -287,7 +320,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
       }
       unsubscribe()
     }
-  }, [])
+  }, [preview])
 
   useEffect(() => {
     if (busy !== null || !operationTriggerRef.current) return
@@ -295,10 +328,18 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
     operationTriggerRef.current = null
   }, [busy])
 
+  // Ticking clock for pairing-code countdowns; only runs while requests are pending.
+  const pendingRequestCount = snapshot?.pendingRequests.length ?? 0
+  useEffect(() => {
+    if (pendingRequestCount === 0) return
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(interval)
+  }, [pendingRequestCount])
+
   const run = async (
     name: string,
     action: (generation: number) => Promise<RemoteAccessSnapshot>
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const generation = beginRemoteAccessRequest()
     setBusy(name)
     setActionError(undefined)
@@ -308,8 +349,10 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
       const commitGeneration = beginRemoteAccessRequest()
       cacheRemoteAccessSnapshot(next, commitGeneration)
       setSnapshot(next)
+      return true
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error))
+      return false
     } finally {
       setBusy(null)
     }
@@ -326,7 +369,119 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   }
 
   const approve = (requestId: string, decision: RemotePairingDecision): void => {
-    void run(`approve:${requestId}`, () => window.api.remoteAccess.approve({ requestId, decision }))
+    const request = snapshot?.pendingRequests.find((entry) => entry.id === requestId)
+    const requestLabel = request ? `${request.browser} · ${request.platform}` : null
+    if (preview) {
+      setBusy(`approve:${requestId}`)
+      void simulatePreviewCall(`remoteAccess.approve (${decision})`).then(() => {
+        const nextSnapshot = (current: RemoteAccessSnapshot): RemoteAccessSnapshot => {
+          const approved = current.pendingRequests.find((entry) => entry.id === requestId)
+          return {
+            ...current,
+            pendingRequests: current.pendingRequests.filter((entry) => entry.id !== requestId),
+            trustedBrowsers:
+              decision === 'always' && approved
+                ? [
+                    {
+                      id: approved.id,
+                      browser: approved.browser,
+                      platform: approved.platform,
+                      createdAt: Date.now(),
+                      lastSeenAt: Date.now(),
+                      expiresAt: Date.now() + 180 * 86_400_000
+                    },
+                    ...current.trustedBrowsers
+                  ]
+                : current.trustedBrowsers
+          }
+        }
+        setSnapshot((current) => (current ? nextSnapshot(current) : current))
+        setSettingsPreviewState({
+          remote: { snapshot: nextSnapshot(getSettingsPreviewState().remote.snapshot) }
+        })
+        setBusy(null)
+        if (decision === 'always' && requestLabel) setTrustNotice(requestLabel)
+      })
+      return
+    }
+    void run(`approve:${requestId}`, () =>
+      window.api.remoteAccess.approve({ requestId, decision })
+    ).then((ok) => {
+      if (ok && decision === 'always' && requestLabel) setTrustNotice(requestLabel)
+    })
+  }
+
+  const confirmRevokeAll = (): void => {
+    if (preview) {
+      setBusy('revokeAll')
+      void simulatePreviewCall('remoteAccess.revokeBrowser (all)').then(() => {
+        const nextSnapshot = (current: RemoteAccessSnapshot): RemoteAccessSnapshot => ({
+          ...current,
+          trustedBrowsers: []
+        })
+        setSnapshot((current) => (current ? nextSnapshot(current) : current))
+        setSettingsPreviewState({
+          remote: { snapshot: nextSnapshot(getSettingsPreviewState().remote.snapshot) }
+        })
+        setBusy(null)
+        setRevokeAllArmed(false)
+      })
+      return
+    }
+    const browserIds = snapshot?.trustedBrowsers.map((browser) => browser.id) ?? []
+    // Sequential so each revoke operates on the snapshot returned by the previous one.
+    void run('revokeAll', async () => {
+      let next = await window.api.remoteAccess.getSnapshot()
+      for (const browserId of browserIds) {
+        next = await window.api.remoteAccess.revokeBrowser({ browserId })
+      }
+      return next
+    }).finally(() => setRevokeAllArmed(false))
+  }
+
+  const reject = (requestId: string): void => {
+    if (preview) {
+      setBusy(`reject:${requestId}`)
+      void simulatePreviewCall('remoteAccess.reject').then(() => {
+        const nextSnapshot = (current: RemoteAccessSnapshot): RemoteAccessSnapshot => ({
+          ...current,
+          pendingRequests: current.pendingRequests.filter((entry) => entry.id !== requestId)
+        })
+        setSnapshot((current) => (current ? nextSnapshot(current) : current))
+        setSettingsPreviewState({
+          remote: { snapshot: nextSnapshot(getSettingsPreviewState().remote.snapshot) }
+        })
+        setBusy(null)
+      })
+      return
+    }
+    void run(`reject:${requestId}`, () => window.api.remoteAccess.reject({ requestId }))
+  }
+
+  // Revoking a trusted browser ends a 180-day trust, so the trash action only arms the
+  // AlertDialog below; the actual revoke happens here on explicit confirmation.
+  const confirmRevoke = (): void => {
+    const browser = browserToRevoke
+    if (!browser) return
+    if (preview) {
+      setBusy(`revoke:${browser.id}`)
+      void simulatePreviewCall(`remoteAccess.revokeBrowser (${browser.browser})`).then(() => {
+        const nextSnapshot = (current: RemoteAccessSnapshot): RemoteAccessSnapshot => ({
+          ...current,
+          trustedBrowsers: current.trustedBrowsers.filter((entry) => entry.id !== browser.id)
+        })
+        setSnapshot((current) => (current ? nextSnapshot(current) : current))
+        setSettingsPreviewState({
+          remote: { snapshot: nextSnapshot(getSettingsPreviewState().remote.snapshot) }
+        })
+        setBusy(null)
+        setBrowserToRevoke(null)
+      })
+      return
+    }
+    void run(`revoke:${browser.id}`, () =>
+      window.api.remoteAccess.revokeBrowser({ browserId: browser.id })
+    ).finally(() => setBrowserToRevoke(null))
   }
 
   const copyUrl = async (): Promise<void> => {
@@ -778,12 +933,145 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
           </SettingsSection>
         ) : null}
 
+        {snapshot.canManagePairing && accessUsesPairing ? (
+          <SettingsSection
+            data-visual-change="remote-pairing-first"
+            title={
+              <>
+                {t('Pairing requests')}
+                {snapshot.pendingRequests.length > 0 ? (
+                  <>
+                    <Badge variant="secondary">{snapshot.pendingRequests.length}</Badge>
+                    <Badge className="border-0 bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground">
+                      {t('Action needed')}
+                    </Badge>
+                  </>
+                ) : null}
+              </>
+            }
+            description={t(
+              'Two-step verification uses a six-digit code. Approve a new remote session only when its code matches the request shown here.'
+            )}
+          >
+            {snapshot.pendingRequests.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+                {t('No browsers are waiting for approval.')}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {snapshot.pendingRequests.map((request) => {
+                  const remainingMs = request.expiresAt - now
+                  const expiringSoon = remainingMs > 0 && remainingMs <= PAIRING_EXPIRING_SOON_MS
+                  return (
+                    <div
+                      key={request.id}
+                      className={cn(
+                        'rounded-xl border p-4',
+                        expiringSoon ? 'border-status-warning-foreground/45' : 'border-border'
+                      )}
+                    >
+                      <div className="flex flex-wrap items-start gap-3">
+                        <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-muted">
+                          <Laptop className="size-5 text-muted-foreground" aria-hidden="true" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-foreground">
+                            {request.browser} · {request.platform}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {t('Requested {{time}}', {
+                              time: formatDate(request.requestedAt, 'dateTime')
+                            })}
+                            {request.address ? ` · ${request.address}` : ''}
+                          </div>
+                          <span
+                            className={cn(
+                              'mt-1.5 inline-flex h-5 items-center gap-1 rounded-4xl px-2 text-xs font-medium',
+                              expiringSoon || remainingMs <= 0
+                                ? 'bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground'
+                                : 'bg-secondary text-secondary-foreground'
+                            )}
+                            data-testid={`pairing-expiry-${request.id}`}
+                          >
+                            <Timer className="size-3" aria-hidden="true" />
+                            {remainingMs > 0
+                              ? t('Code expires in {{time}}', {
+                                  time: formatPairingCountdown(remainingMs)
+                                })
+                              : t('Code expired')}
+                          </span>
+                        </div>
+                        <div className="rounded-lg bg-muted px-3 py-2 font-mono text-lg font-semibold tracking-[0.18em] text-foreground">
+                          {request.code}
+                        </div>
+                      </div>
+                      <div className="mt-3 flex items-start gap-2 rounded-lg bg-muted/50 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                        <ShieldCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                        <span>
+                          {t(
+                            'Approve only if you started this sign-in and the six-digit code matches the one shown in the requesting browser.'
+                          )}
+                        </span>
+                      </div>
+                      <div className="mt-4 flex flex-wrap justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={busy !== null}
+                          onClick={() => reject(request.id)}
+                        >
+                          {t('Reject')}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={busy !== null}
+                          onClick={() => approve(request.id, 'once')}
+                        >
+                          {t('Allow for up to 12 hours')}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={busy !== null}
+                          onClick={() => approve(request.id, 'always')}
+                        >
+                          {t('Trust this browser for 180 days')}
+                        </Button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </SettingsSection>
+        ) : null}
+
         {showTrustedBrowsers ? (
           <SettingsSection
             title={t('Trusted browsers')}
+            data-visual-change="remote-revoke-confirmation"
             description={t(
               'Trusted browsers can reconnect until their listed expiration while the same remote address remains available. They remain stored but inactive while remote access is off. Revoking one takes effect on its next request or WebSocket reconnect.'
             )}
+            action={
+              snapshot.trustedBrowsers.length > 1 ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  data-slot="remote-revoke-all-trigger"
+                  disabled={busy !== null}
+                  onClick={() => setRevokeAllArmed(true)}
+                  className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="size-3.5" aria-hidden="true" />
+                  {t('Revoke all')}
+                </Button>
+              ) : undefined
+            }
           >
             {snapshot.trustedBrowsers.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
@@ -814,85 +1102,8 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                       icon={Trash2}
                       danger
                       disabled={busy !== null}
-                      onClick={() =>
-                        void run(`revoke:${browser.id}`, () =>
-                          window.api.remoteAccess.revokeBrowser({ browserId: browser.id })
-                        )
-                      }
+                      onClick={() => setBrowserToRevoke(browser)}
                     />
-                  </div>
-                ))}
-              </div>
-            )}
-          </SettingsSection>
-        ) : null}
-
-        {snapshot.canManagePairing && accessUsesPairing ? (
-          <SettingsSection
-            title={`${t('Pairing requests')}${snapshot.pendingRequests.length ? ` (${snapshot.pendingRequests.length})` : ''}`}
-            description={t(
-              'Two-step verification uses a six-digit code. Approve a new remote session only when its code matches the request shown here.'
-            )}
-          >
-            {snapshot.pendingRequests.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
-                {t('No browsers are waiting for approval.')}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {snapshot.pendingRequests.map((request) => (
-                  <div key={request.id} className="rounded-xl border border-border p-4">
-                    <div className="flex flex-wrap items-start gap-3">
-                      <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-muted">
-                        <Laptop className="size-5 text-muted-foreground" aria-hidden="true" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-foreground">
-                          {request.browser} · {request.platform}
-                        </div>
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {t('Requested {{time}}', {
-                            time: formatDate(request.requestedAt, 'dateTime')
-                          })}
-                          {request.address ? ` · ${request.address}` : ''}
-                        </div>
-                      </div>
-                      <div className="rounded-lg bg-muted px-3 py-2 font-mono text-lg font-semibold tracking-[0.18em] text-foreground">
-                        {request.code}
-                      </div>
-                    </div>
-                    <div className="mt-4 flex flex-wrap justify-end gap-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={busy !== null}
-                        onClick={() =>
-                          void run(`reject:${request.id}`, () =>
-                            window.api.remoteAccess.reject({ requestId: request.id })
-                          )
-                        }
-                      >
-                        {t('Reject')}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={busy !== null}
-                        onClick={() => approve(request.id, 'once')}
-                      >
-                        {t('Allow for up to 12 hours')}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={busy !== null}
-                        onClick={() => approve(request.id, 'always')}
-                      >
-                        {t('Trust this browser for 180 days')}
-                      </Button>
-                    </div>
                   </div>
                 ))}
               </div>
@@ -905,6 +1116,119 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
             'Remote.It is a third-party service. Open Science only calls its user-installed desktop CLI and does not include, redistribute, register, or create an account for it.'
           )}
         </p>
+
+        <AlertDialog.Root
+          open={browserToRevoke !== null}
+          onOpenChange={(open) => {
+            if (!open && busy === null) setBrowserToRevoke(null)
+          }}
+        >
+          <AlertDialog.Portal>
+            <AlertDialog.Overlay className={dialogOverlayClassName} />
+            <AlertDialog.Content
+              className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+              data-visual-change="remote-revoke-confirmation"
+            >
+              <div className={dialogHeaderClassName}>
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  {t('Revoke trusted browser?')}
+                </AlertDialog.Title>
+              </div>
+              <div className={dialogBodyClassName}>
+                <AlertDialog.Description className={dialogDescriptionClassName}>
+                  {t(
+                    '{{browser}} must complete two-step verification again on its next visit. The 180-day trust ends immediately.',
+                    {
+                      browser: browserToRevoke
+                        ? `${browserToRevoke.browser} · ${browserToRevoke.platform}`
+                        : ''
+                    }
+                  )}
+                </AlertDialog.Description>
+              </div>
+              <div className={dialogFooterClassName}>
+                <AlertDialog.Cancel asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className={dialogCancelButtonClassName}
+                    disabled={busy !== null}
+                  >
+                    {t('Cancel')}
+                  </Button>
+                </AlertDialog.Cancel>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={busy !== null}
+                  onClick={confirmRevoke}
+                >
+                  {busy?.startsWith('revoke:') ? t('Removing…') : t('Revoke')}
+                </Button>
+              </div>
+            </AlertDialog.Content>
+          </AlertDialog.Portal>
+        </AlertDialog.Root>
+
+        <AlertDialog.Root
+          open={revokeAllArmed}
+          onOpenChange={(open) => {
+            if (!open && busy === null) setRevokeAllArmed(false)
+          }}
+        >
+          <AlertDialog.Portal>
+            <AlertDialog.Overlay className={dialogOverlayClassName} />
+            <AlertDialog.Content
+              className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+              data-visual-change="remote-revoke-all"
+            >
+              <div className={dialogHeaderClassName}>
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  {t('Revoke all trusted browsers?')}
+                </AlertDialog.Title>
+              </div>
+              <div className={dialogBodyClassName}>
+                <AlertDialog.Description className={dialogDescriptionClassName}>
+                  {t(
+                    'Every trusted browser must complete two-step verification again on its next visit. The 180-day trust ends immediately.'
+                  )}
+                </AlertDialog.Description>
+              </div>
+              <div className={dialogFooterClassName}>
+                <AlertDialog.Cancel asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className={dialogCancelButtonClassName}
+                    disabled={busy !== null}
+                  >
+                    {t('Cancel')}
+                  </Button>
+                </AlertDialog.Cancel>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={busy !== null}
+                  onClick={confirmRevokeAll}
+                >
+                  {busy === 'revokeAll' ? t('Removing…') : t('Revoke all')}
+                </Button>
+              </div>
+            </AlertDialog.Content>
+          </AlertDialog.Portal>
+        </AlertDialog.Root>
+
+        {trustNotice ? (
+          <ActionToastStack>
+            <ActionToast
+              title={t('{{browser}} trusted for 180 days.', { browser: trustNotice })}
+              dismissLabel={t('Dismiss')}
+              onDismiss={() => setTrustNotice(null)}
+              autoDismissMs={5_000}
+              testId="remote-trust-toast"
+            />
+          </ActionToastStack>
+        ) : null}
       </div>
     </TooltipProvider>
   )

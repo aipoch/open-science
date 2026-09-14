@@ -6108,6 +6108,15 @@
     "Could not save files filter preference. Try again.": "La préférence de filtre de fichiers n'a pas pu être enregistrée. Réessayez.",
     "Could not save the default permission mode. Try again.": "Le mode d'autorisation par défaut n'a pas pu être enregistré. Réessayez.",
     "Could not switch active provider or model. Try again.": "Le fournisseur ou le modèle actif n'a pas pu être changé. Réessayez.",
-    "Could not switch agent framework. Try again.": "Le framework d'agents n'a pas pu être changé. Réessayez."
+    "Could not switch agent framework. Try again.": "Le framework d'agents n'a pas pu être changé. Réessayez.",
+    "Revoke trusted browser?": "Révoquer ce navigateur de confiance ?",
+    "{{browser}} must complete two-step verification again on its next visit. The 180-day trust ends immediately.": "{{browser}} devra à nouveau effectuer la vérification en deux étapes lors de sa prochaine visite. La confiance de 180 jours prend fin immédiatement.",
+    "Revoke": "Révoquer",
+    "Code expires in {{time}}": "Le code expire dans {{time}}",
+    "Code expired": "Le code a expiré",
+    "Approve only if you started this sign-in and the six-digit code matches the one shown in the requesting browser.": "N'approuvez que si vous êtes à l'origine de cette connexion et que le code à six chiffres affiché dans le navigateur à l'origine de la demande correspond à celui indiqué ici.",
+    "Revoke all trusted browsers?": "Révoquer tous les navigateurs de confiance ?",
+    "Every trusted browser must complete two-step verification again on its next visit. The 180-day trust ends immediately.": "Chaque navigateur de confiance devra à nouveau effectuer la vérification en deux étapes lors de sa prochaine visite. La confiance de 180 jours prend fin immédiatement.",
+    "{{browser}} trusted for 180 days.": "{{browser}} est désormais approuvé pour 180 jours."
   }
 }
