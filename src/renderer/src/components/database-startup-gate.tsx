@@ -14,6 +14,7 @@ import {
 import { ErrorNotice, type ErrorNoticeTone } from '@/components/error-notice'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { StartupIssueDialog } from '@/components/startup-issue-dialog'
+import { useStartupPresentation } from '@/hooks/useStartupPresentation'
 import type {
   DatabaseStartupErrorCode,
   DatabaseStartupState
@@ -101,6 +102,15 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
   const [retrying, setRetrying] = useState(false)
   const [issueDraftOpen, setIssueDraftOpen] = useState(false)
   const subscription = useRef<{ events: number } | null>(null)
+  useStartupPresentation(
+    state.phase === 'ready'
+      ? undefined
+      : state.phase === 'blocked'
+        ? 'blocked'
+        : state.phase === 'starting'
+          ? 'startup-runtime'
+          : 'startup-database'
+  )
 
   useEffect(() => {
     if (!databaseStartup) return

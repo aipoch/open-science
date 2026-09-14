@@ -37,6 +37,27 @@ it('shows an indeterminate bar until the whole migration workload is counted', a
   expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBeNull()
   expect(screen.getByText('/fixture/workspaces')).toBeTruthy()
 })
+it.each([
+  ['startup-database', 'Checking database…'],
+  ['startup-runtime', 'Starting Open-Science…'],
+  ['startup-settings', 'Loading settings…'],
+  ['startup-sessions', 'Loading saved conversations…']
+])(
+  'continues the startup surface through %s without stale migration progress',
+  async (phase, label) => {
+    render(<MigrationProgress bridge={bridge} />)
+    act(() =>
+      publish({
+        ...initial,
+        phase,
+        overall: { completed: 100, total: 100, entries: 10, bytes: 30 }
+      })
+    )
+    expect(screen.getByRole('status').textContent).toBe(label)
+    expect(screen.queryByText('100%')).toBeNull()
+    expect(screen.queryByText('Add model keys again after migration')).toBeNull()
+  }
+)
 it('shows whole-operation progress independently of the current directory count', async () => {
   render(<MigrationProgress bridge={bridge} />)
   act(() =>

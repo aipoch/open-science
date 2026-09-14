@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ApplicationErrorBoundary } from './application-error-boundary'
 import { NotificationErrorBoundary } from './NotificationErrorBoundary'
@@ -11,6 +11,21 @@ const BrokenView = (): never => {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  delete window.startupPresentation
+})
+
+it('reveals a painted recovery page when initial application rendering fails', async () => {
+  const phase = vi.fn()
+  window.startupPresentation = { phase }
+  window.api = {} as Window['api']
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  render(
+    <ApplicationErrorBoundary>
+      <BrokenView />
+    </ApplicationErrorBoundary>
+  )
+  await waitFor(() => expect(phase).toHaveBeenCalledWith('blocked'))
+  expect(screen.getByRole('button', { name: 'Reload page' })).toBeTruthy()
 })
 
 it('reports only a projected failure and keeps private error content out of the recovery page', () => {

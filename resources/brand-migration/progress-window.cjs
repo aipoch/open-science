@@ -18,6 +18,10 @@ app.setName('Open-Science')
 let window
 let finished = false
 let readySent = false
+let handedOff = false
+let startupChannel
+let handoffTimer
+const continuous = process.env.OPEN_SCIENCE_STARTUP_CHANNEL
 let state = {
   phase: 'checking',
   startedAt: Date.now(),
@@ -35,6 +39,38 @@ const blocked = (error) => {
   state = { ...state, phase: 'failed', error, updatedAt: Date.now() }
   broadcast()
 }
+const startupCommand = (message) => {
+  clearTimeout(handoffTimer)
+  if (message.type === 'complete') {
+    finished = true
+    app.quit()
+  } else if (message.type === 'failed') {
+    state = { ...state, startup: true }
+    blocked(String(message.error))
+  } else if (message.type === 'focus' && window && !window.isDestroyed()) {
+    if (window.isMinimized()) window.restore()
+    if (process.env.OPEN_SCIENCE_E2E_WINDOW_MODE !== 'hidden') window.show()
+    window.focus()
+  } else if (
+    message.type === 'progress' &&
+    !finished &&
+    ['startup-database', 'startup-runtime', 'startup-settings', 'startup-sessions'].includes(
+      message.phase
+    )
+  ) {
+    state = {
+      ...state,
+      phase: message.phase,
+      startup: true,
+      path: undefined,
+      completed: undefined,
+      total: undefined,
+      overall: undefined,
+      updatedAt: Date.now()
+    }
+    broadcast()
+  }
+}
 process.on('message', (message) => {
   if (message?.type === 'progress' && !finished) {
     state = {
@@ -46,6 +82,11 @@ process.on('message', (message) => {
       updatedAt: Date.now()
     }
     broadcast()
+  } else if (message?.type === 'handoff' && startupChannel && !finished) {
+    handedOff = true
+    startupCommand({ type: 'progress', phase: 'startup-runtime' })
+    handoffTimer = setTimeout(() => blocked('startup-owner-disconnected'), 30000)
+    send({ type: 'handed-off' })
   } else if (message?.type === 'failed') blocked(String(message.error))
   else if (message?.type === 'complete') {
     finished = true
@@ -54,12 +95,14 @@ process.on('message', (message) => {
 })
 // A hard interruption leaves the error surface visible and the on-disk transaction recoverable.
 process.on('disconnect', () => {
-  if (!finished) blocked('migration-worker-disconnected')
+  if (!finished && !handedOff) blocked('migration-worker-disconnected')
 })
 app.on('before-quit', (event) => {
   if (!finished) event.preventDefault()
 })
 app.on('will-quit', () => {
+  clearTimeout(handoffTimer)
+  startupChannel?.close()
   // Only this helper's freshly created temporary tree is ever removed.
   try {
     rmSync(temporary, { recursive: true, force: true })
@@ -70,9 +113,18 @@ app.on('will-quit', () => {
 app
   .whenReady()
   .then(async () => {
+    if (continuous) {
+      const { openStartupChannel } = require('./startup-channel.cjs')
+      startupChannel = await openStartupChannel(JSON.parse(continuous), {
+        message: startupCommand,
+        disconnected: () => {
+          if (!finished) blocked('startup-owner-disconnected')
+        }
+      })
+    }
     window = new BrowserWindow({
-      width: 720,
-      height: 720,
+      width: continuous ? 1280 : 720,
+      height: continuous ? 960 : 720,
       minWidth: 460,
       minHeight: 460,
       show: false,
@@ -111,7 +163,7 @@ app
     ipcMain.on('migration-progress:painted', (event) => {
       if (!owns(event) || readySent) return
       readySent = true
-      window.show()
+      if (!continuous || process.env.OPEN_SCIENCE_E2E_WINDOW_MODE !== 'hidden') window.show()
       send({ type: 'processes', pids: app.getAppMetrics().map((m) => m.pid) })
       process.stderr.write('[brand-migration-ui] ready\n')
       send({ type: 'ready' })

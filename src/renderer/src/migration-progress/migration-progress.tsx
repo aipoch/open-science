@@ -84,7 +84,14 @@ export const MigrationProgress = ({
       case 'before-commit':
         return t('Finishing data migration…')
       case 'completed':
+      case 'startup-runtime':
         return t('Starting Open-Science…')
+      case 'startup-database':
+        return t('Checking database…')
+      case 'startup-settings':
+        return t('Loading settings…')
+      case 'startup-sessions':
+        return t('Loading saved conversations…')
       default:
         return t('Checking local data…')
     }
@@ -98,21 +105,29 @@ export const MigrationProgress = ({
         <ErrorNotice
           fullPage
           tone="red"
-          title={t('Local data migration could not finish')}
+          title={
+            state.startup
+              ? t("Open-Science couldn't start")
+              : t('Local data migration could not finish')
+          }
           description={
             state.error === 'migration-worker-disconnected'
               ? t('Migration progress is unavailable.')
               : state.error
           }
           errorCode={state.error === 'migration-worker-disconnected' ? state.error : undefined}
-          help={{
-            whyLabel: t('Why this happened'),
-            why: t('Migration stopped before the application opened its data.'),
-            howLabel: t('How to fix'),
-            how: t(
-              'Keep the migration journal and backups. Close other app and runtime processes, then restart to resume. If the error persists, copy the diagnostics for help.'
-            )
-          }}
+          help={
+            state.startup
+              ? undefined
+              : {
+                  whyLabel: t('Why this happened'),
+                  why: t('Migration stopped before the application opened its data.'),
+                  howLabel: t('How to fix'),
+                  how: t(
+                    'Keep the migration journal and backups. Close other app and runtime processes, then restart to resume. If the error persists, copy the diagnostics for help.'
+                  )
+                }
+          }
           secondaryButton={{
             label: t('Copy diagnostics'),
             onClick: () => {
@@ -123,7 +138,8 @@ export const MigrationProgress = ({
         />
       </main>
     )
-  const overall = state.overall
+  const starting = state.phase.startsWith('startup-')
+  const overall = starting ? undefined : state.overall
   const percentage =
     overall &&
     Number.isFinite(overall.completed) &&
@@ -142,7 +158,9 @@ export const MigrationProgress = ({
         <div className="migration-progress-logo" aria-hidden="true">
           <OpenScienceLogoLoader />
         </div>
-        <h1 className="mt-4 text-xl font-medium">{t('Upgrading local data')}</h1>
+        <h1 className="mt-4 text-xl font-medium">
+          {starting ? t('Starting Open-Science…') : t('Upgrading local data')}
+        </h1>
         <div className="mt-7 w-full">
           <div className="flex min-h-6 items-start justify-between gap-4 text-sm">
             <p role="status" className="text-left text-muted-foreground">
@@ -154,7 +172,7 @@ export const MigrationProgress = ({
           </div>
           <div
             role="progressbar"
-            aria-label={t('Overall migration progress')}
+            aria-label={starting ? phase : t('Overall migration progress')}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percentage}
@@ -167,7 +185,7 @@ export const MigrationProgress = ({
           </div>
           <div className="mt-3 flex min-h-5 items-start justify-between gap-4 text-xs tabular-nums text-muted-foreground">
             <p className="text-left">
-              {state.completed !== undefined
+              {!starting && state.completed !== undefined
                 ? state.total === undefined
                   ? t('Items checked: {{completed}}', { completed: state.completed })
                   : t('Items checked: {{completed}} / {{total}}', {
@@ -183,17 +201,21 @@ export const MigrationProgress = ({
             </p>
           </div>
         </div>
-        <ErrorNotice
-          className="mt-6 border-status-warning-foreground/30 bg-status-warning-surface/45 dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/25"
-          icon={TriangleAlert}
-          tone="amber"
-          title={t('Add model keys again after migration')}
-          description={t(
-            'Configuration migration invalidates encrypted keys. Add your model keys again after migration finishes.'
-          )}
-        />
+        {!starting && (
+          <ErrorNotice
+            className="mt-6 border-status-warning-foreground/30 bg-status-warning-surface/45 dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/25"
+            icon={TriangleAlert}
+            tone="amber"
+            title={t('Add model keys again after migration')}
+            description={t(
+              'Configuration migration invalidates encrypted keys. Add your model keys again after migration finishes.'
+            )}
+          />
+        )}
         <div className="mt-5 flex w-full flex-col gap-3 text-left text-xs leading-5 text-muted-foreground">
-          {state.path ? <p className="[overflow-wrap:anywhere]">{state.path}</p> : null}
+          {!starting && state.path ? (
+            <p className="[overflow-wrap:anywhere]">{state.path}</p>
+          ) : null}
           {now - state.updatedAt >= 10000 ? (
             <p role="status">{t('Waiting for the current operation to report progress…')}</p>
           ) : null}

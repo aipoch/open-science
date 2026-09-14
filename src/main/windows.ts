@@ -92,7 +92,10 @@ const loadRenderer = (window: BrowserWindow): Promise<void> => {
   return window.loadFile(rendererEntry)
 }
 
-const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindow => {
+const createAppWindow = (
+  options: BrowserWindowConstructorOptions,
+  deferShow = false
+): BrowserWindow => {
   const e2eWindowMode = process.env[E2E_WINDOW_MODE_ENV]
   const window = new BrowserWindow({
     show: false,
@@ -109,7 +112,7 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
   })
 
   window.on('ready-to-show', () => {
-    if (e2eWindowMode === 'hidden') return
+    if (deferShow || e2eWindowMode === 'hidden') return
     window.show()
   })
 
@@ -254,6 +257,7 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
 // flushes it, 'confirm' = ask via resolveCloseAction).
 // resolveCloseAction is awaited only for 'confirm'; requestQuit is called when the choice is quit.
 type MainWindowCloseOptions = {
+  deferShow?: boolean
   classifyClose: () => CloseClassification
   resolveCloseAction: () => Promise<CloseConfirmChoice>
   requestQuit: (confirmed?: boolean) => void
@@ -271,16 +275,19 @@ const createMainWindow = (
   opts?: MainWindowCloseOptions,
   translate: NativeTranslator = englishNativeTranslator
 ): BrowserWindow => {
-  const window = createAppWindow({
-    width: 1280,
-    // The first-run environment summary needs enough vertical space to keep its Continue action
-    // visible at the default size. Electron still clamps this to the display work area on smaller
-    // screens, where the onboarding surface provides its own vertical scroll fallback.
-    height: 960,
-    minWidth: 1100,
-    minHeight: 720,
-    title: 'Open-Science'
-  })
+  const window = createAppWindow(
+    {
+      width: 1280,
+      // The first-run environment summary needs enough vertical space to keep its Continue action
+      // visible at the default size. Electron still clamps this to the display work area on smaller
+      // screens, where the onboarding surface provides its own vertical scroll fallback.
+      height: 960,
+      minWidth: 1100,
+      minHeight: 720,
+      title: 'Open-Science'
+    },
+    opts?.deferShow
+  )
   if (opts) configureMainWindow(window, opts)
 
   // The renderer decides pane-vs-window, but only once it has a live, responsive listener. If main

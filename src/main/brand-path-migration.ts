@@ -3,6 +3,7 @@ import { readFileSync, rmSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { App } from 'electron'
+import { prepareStartupPresenter, type StartupPresenter } from './startup-presenter'
 
 type BrandMigrationApp = Pick<
   App,
@@ -12,8 +13,14 @@ type BrandMigrationApp = Pick<
 // Synchronous on purpose: Electron must not reach ready (and open Chromium databases/logs) while
 // the offline child prepares the profile. The child has no Electron imports or application writers.
 export const prepareBrandPathMigration = (
-  app: BrandMigrationApp
-): { userData?: string; logs?: string; reconcileProtectedPaths: () => Promise<void> } => {
+  app: BrandMigrationApp,
+  options: { continuousProgress?: boolean } = {}
+): {
+  userData?: string
+  logs?: string
+  presenter?: StartupPresenter
+  reconcileProtectedPaths: () => Promise<void>
+} => {
   const isolatedRoot =
     process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT?.trim() ||
     (!app.isPackaged ? process.env.OPEN_SCIENCE_STORAGE_ROOT?.trim() : undefined)
@@ -70,8 +77,17 @@ export const prepareBrandPathMigration = (
   // This owner cannot process macOS launch events while spawnSync waits. The independent progress
   // window owns the visible Dock presence until this process actually reaches ready.
   if (process.platform === 'darwin') app.setActivationPolicy('accessory')
+  const progress =
+    options.continuousProgress && !app.commandLine.hasSwitch('open-science-headless')
+      ? prepareStartupPresenter()
+      : undefined
   const result = spawnSync(process.execPath, args, {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: '' },
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      NODE_OPTIONS: '',
+      OPEN_SCIENCE_STARTUP_CHANNEL: progress?.environment ?? ''
+    },
     encoding: 'utf8',
     // Keep the receipt machine-readable, but do not buffer live diagnostics until migration ends.
     stdio: ['ignore', 'pipe', 'inherit'],
@@ -79,6 +95,7 @@ export const prepareBrandPathMigration = (
     maxBuffer: 8 * 1024 * 1024
   })
   if (result.error || result.status !== 0) {
+    progress?.cleanup()
     throw new Error(
       result.stderr?.trim() || result.error?.message || 'Brand path migration failed.'
     )
@@ -88,7 +105,10 @@ export const prepareBrandPathMigration = (
     relayOnly?: boolean
     lease?: { path: string; token: string }
   }
-  if (process.platform === 'darwin') app.once('ready', () => app.setActivationPolicy('regular'))
+  const presenter = progress?.attach()
+  if (presenter) app.on('quit', () => presenter.complete())
+  if (!presenter && process.platform === 'darwin')
+    app.once('ready', () => app.setActivationPolicy('regular'))
   if (receipt.lease) {
     const lease = receipt.lease
     app.on('quit', () => {
@@ -102,6 +122,7 @@ export const prepareBrandPathMigration = (
     })
   }
   return {
+    presenter,
     userData: receipt.userData,
     // Electron macOS logs do not follow --user-data-dir. Keep disposable E2E runs off real logs.
     logs: process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT?.trim()

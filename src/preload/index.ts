@@ -4,6 +4,10 @@ import { unwrapApplicationCommandOutcome } from '../shared/application-command-c
 import { announceWindowFindReady, subscribeCloseActivePane } from '../shared/window-controls'
 import { createElectronRendererApi } from './electron-renderer-api'
 import { createElectronRendererContractAdapter } from './electron-renderer-contract-adapter'
+import {
+  STARTUP_PRESENTATION_CHANNEL,
+  type StartupPresentationPhase
+} from '../shared/startup-presentation'
 
 const electronRendererContracts = createElectronRendererContractAdapter({
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
@@ -47,6 +51,11 @@ const api = createElectronRendererApi(electronRendererContracts, {
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('api', api)
+    // Bootstrap lifecycle signal only: no application data or arbitrary IPC access.
+    contextBridge.exposeInMainWorld('startupPresentation', {
+      phase: (phase: StartupPresentationPhase) =>
+        ipcRenderer.send(STARTUP_PRESENTATION_CHANNEL, phase)
+    })
   } catch (error) {
     console.error(error)
   }

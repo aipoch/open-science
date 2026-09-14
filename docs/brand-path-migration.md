@@ -423,7 +423,7 @@ its plan and inventory. This window uses the existing brand animation, translati
 `ErrorNotice` presentation, but never imports the business application bootstrap. Its Electron
 `userData`, `sessionData`, logs, crash dumps and disk cache point to a newly created temporary tree;
 the window uses a nonpersistent session partition. The formal application remains before `ready`
-until migration and the progress helper have finished, so displaying progress does not open the
+until offline migration has finished, so displaying progress does not open the
 profile being moved. Packaged startup routes the helper before normal application initialization.
 
 The window displays the current phase, root, actual inventory count, elapsed time and overall
@@ -450,8 +450,13 @@ Closing the window or quitting its helper is prevented while migration is active
 failure, the original transaction remains recoverable and the error stays visible with **Copy
 diagnostics** and **Close**. The page advises retaining the journal/backups and using the recovery
 procedures above; it does not execute a reset, rollback or deletion. An unexpected worker disconnect
-also leaves an error surface. Successful completion closes the helper and allows the formal app to
-continue. Temporary UI files are removed on a normal helper exit; forced OS termination can leave
+also leaves an error surface. Normal UI startup retains the same helper across database checks,
+runtime initialization, settings loading and conversation hydration. The real main window paints
+in the background; a trusted main-frame acknowledgement of an interactive page or actionable error
+reveals it and closes the helper. Database readiness or the first Chromium paint alone does not
+reveal it. The standalone progress CLI retains its original completion/close behavior.
+See [Continuous application startup](migration-progress.md#continuous-application-startup).
+Temporary UI files are removed on a normal helper exit; forced OS termination can leave
 an isolated `open-science-migration-ui-*` temporary directory, containing UI caches only.
 
 ## Restarting a preparing snapshot after logs were appended

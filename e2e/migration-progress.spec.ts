@@ -6,12 +6,219 @@ import { join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { spawn } from 'node:child_process'
 import { build } from 'esbuild'
+import { createServer } from 'node:http'
+import { extname } from 'node:path'
+import type { ElectronApplication } from '@playwright/test'
+import { prepareStartupPresenter } from '../src/main/startup-presenter'
 
 const root = process.cwd()
 const environment = (): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = { ...process.env, ELECTRON_RENDERER_URL: '' }
   delete env.ELECTRON_RUN_AS_NODE
   return env
+}
+
+test('continues localized startup stages in the same isolated helper and retains owner failure', async ({}, info) => {
+  const progress = prepareStartupPresenter()
+  const application = await electron.launch({
+    args: [root, '--brand-migration-progress-window'],
+    env: {
+      ...environment(),
+      OPEN_SCIENCE_STARTUP_CHANNEL: progress.environment,
+      OPEN_SCIENCE_MIGRATION_LOCALE: 'zh-Hans'
+    }
+  })
+  try {
+    const page = await application.firstWindow()
+    const presenter = progress.attach()
+    for (const [phase, label] of [
+      ['startup-database', '正在检查数据库…'],
+      ['startup-settings', '正在加载设置…'],
+      ['startup-sessions', '正在加载已保存的对话…']
+    ]) {
+      presenter.update(phase)
+      await expect(page.getByRole('status')).toHaveText(label)
+      await expect(page.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
+      expect(application.windows()).toHaveLength(1)
+      await expect(page.getByText('迁移后请重新添加模型密钥')).toHaveCount(0)
+    }
+    await page.screenshot({ path: info.outputPath('continuous-startup-progress.png') })
+    presenter.fail('Fixture startup failed after migration')
+    await expect(page.getByText('Fixture startup failed after migration')).toBeVisible()
+    await expect(page.getByText('迁移在应用打开数据前已停止。')).toHaveCount(0)
+    await page.screenshot({ path: info.outputPath('continuous-startup-failure.png') })
+    await page.getByRole('button', { name: '关闭', exact: true }).click()
+  } finally {
+    await application
+      .evaluate(() => (process as NodeJS.EventEmitter).emit('message', { type: 'complete' }))
+      .catch(() => {})
+    await application.close().catch(() => {})
+    progress.cleanup()
+  }
+})
+
+for (const windowMode of ['normal', 'hidden'] as const) {
+  test(`retains migration UI until the real application paints an interactive page (${windowMode})`, async ({}, info) => {
+    test.skip(
+      process.platform === 'win32',
+      'Historical migration needs the native Windows occupancy provider'
+    )
+    const fixture = await mkdtemp(join(tmpdir(), 'open-science-continuous-startup-'))
+    const storage = join(fixture, 'config')
+    const temporary = join(fixture, 'tmp')
+    const profile = join(fixture, 'profile')
+    const old = join(storage, 'OpenScience-DEV')
+    for (const path of [old, temporary, profile]) await mkdir(path, { recursive: true })
+    await writeFile(join(old, 'history.txt'), 'preserved through continuous startup')
+    await writeFile(
+      join(storage, 'settings.json'),
+      JSON.stringify({ version: 2, providers: [], localePreference: 'en' })
+    )
+    let releaseMain!: () => void
+    const mainGate = new Promise<void>((resolve) => {
+      releaseMain = resolve
+    })
+    const assets = resolve('out/renderer')
+    const mainHtml = await readFile(join(assets, 'index.html'), 'utf8')
+    const mainScript = mainHtml.match(/src="\.\/(assets\/[^"\n]+\.js)"/)![1]
+    // Hold only the application entry script. The real migration UI can paint, run the real offline
+    // transaction and transfer ownership while main has not yet rendered anything interactive.
+    const server = createServer(async (request, response) => {
+      const pathname = new URL(request.url!, 'http://localhost').pathname
+      const filename = pathname === '/' ? 'index.html' : pathname.slice(1)
+      if (filename === mainScript) await mainGate
+      const path = resolve(assets, filename)
+      if (!path.startsWith(assets + '/')) {
+        response.writeHead(403).end()
+        return
+      }
+      try {
+        const content = await readFile(path)
+        response.setHeader(
+          'Content-Type',
+          (
+            {
+              '.html': 'text/html',
+              '.js': 'text/javascript',
+              '.css': 'text/css',
+              '.wasm': 'application/wasm'
+            } as Record<string, string>
+          )[extname(path)] ?? 'application/octet-stream'
+        )
+        response.end(content)
+      } catch {
+        response.writeHead(404).end()
+      }
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address() as { port: number }
+    let application: ElectronApplication | undefined
+    let helperPid: number | undefined
+    try {
+      application = await electron.launch({
+        args: [`--user-data-dir=${profile}`, root],
+        env: {
+          ...environment(),
+          OPEN_SCIENCE_USER_DATA: profile,
+          OPEN_SCIENCE_CONFIG_ROOT: storage,
+          OPEN_SCIENCE_STORAGE_ROOT: storage,
+          OPEN_SCIENCE_E2E_STORAGE_ROOT: storage,
+          OPEN_SCIENCE_ALLOW_MULTI_INSTANCE: '1',
+          OPEN_SCIENCE_E2E_WINDOW_MODE: windowMode,
+          TMPDIR: temporary,
+          ELECTRON_RENDERER_URL: `http://127.0.0.1:${address.port}`
+        }
+      })
+      const channelDirectory = (await readdir(temporary)).find((name) =>
+        name.startsWith('open-science-startup-')
+      )!
+      const endpoint = JSON.parse(
+        await readFile(join(temporary, channelDirectory, 'endpoint.json'), 'utf8')
+      )
+      helperPid = endpoint.pid
+      const page = await application.firstWindow()
+      const before = await application.evaluate(({ BrowserWindow, app }) => {
+        const main = BrowserWindow.getAllWindows()[0]
+        ;(globalThis as typeof globalThis & { startupShows: number }).startupShows = 0
+        // macOS activation-policy changes can reveal a window without a native show event.
+        // Observe the actual show command while retaining the real native call and visibility checks.
+        const show = main.show.bind(main)
+        main.show = () => {
+          ;(globalThis as typeof globalThis & { startupShows: number }).startupShows++
+          show()
+        }
+        return {
+          visible: main.isVisible(),
+          ready: app.isReady(),
+          count: BrowserWindow.getAllWindows().length
+        }
+      })
+      expect(before).toEqual({ visible: false, ready: true, count: 1 })
+      expect(() => process.kill(endpoint.pid, 0)).not.toThrow()
+      expect(await readFile(join(storage, 'Open-Science-DEV', 'history.txt'), 'utf8')).toBe(
+        'preserved through continuous startup'
+      )
+      // OS activation and a second launch must focus the retained helper, not reveal an empty main.
+      await application.evaluate(({ app }) => {
+        app.emit('activate', {}, false)
+        app.emit('second-instance', {}, [], '')
+      })
+      expect(
+        await application.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows()[0].isVisible()
+        )
+      ).toBe(false)
+      releaseMain()
+      await expect(
+        page.getByRole('heading', { name: 'Set up your research workspace.' })
+      ).toBeVisible()
+      await expect
+        .poll(() =>
+          application!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible())
+        )
+        .toBe(windowMode === 'normal')
+      await expect
+        .poll(() =>
+          application!.evaluate(
+            () => (globalThis as typeof globalThis & { startupShows: number }).startupShows
+          )
+        )
+        .toBe(windowMode === 'normal' ? 1 : 0)
+      expect(await page.getByTestId('settings-startup-loading').count()).toBe(0)
+      expect(await page.getByTestId('session-persistence-startup-loading').count()).toBe(0)
+      await expect
+        .poll(() => {
+          try {
+            process.kill(endpoint.pid, 0)
+            return true
+          } catch {
+            return false
+          }
+        })
+        .toBe(false)
+      await page.screenshot({ path: info.outputPath('continuous-startup-ready.png') })
+    } catch (error) {
+      const mainLog = await readFile(join(storage, 'electron-logs', 'main.log'), 'utf8').catch(
+        () => ''
+      )
+      await info.attach('startup-main-log', { body: mainLog, contentType: 'text/plain' })
+      throw error
+    } finally {
+      releaseMain()
+      await application?.close().catch(() => {})
+      // A deliberately failed owner retains a diagnostic window; this disposable fixture owns it.
+      if (helperPid) {
+        try {
+          process.kill(helperPid, 'SIGTERM')
+        } catch {
+          /* Already exited. */
+        }
+      }
+      server.closeAllConnections()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await rm(fixture, { recursive: true, force: true })
+    }
+  })
 }
 
 test('macOS startup hides the blocked owner Dock icon until ready without opening the real profile', async () => {

@@ -1,5 +1,7 @@
 import { configureCredentialStore } from './settings/credential-store-mode'
 import { prepareBrandPathMigration } from './brand-path-migration'
+import { createStartupPresentation } from './startup-presentation'
+import type { StartupPresenter } from './startup-presenter'
 import { createRequire } from 'node:module'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -39,6 +41,7 @@ const shouldRunSkillRuntimeMcpServer = process.argv.includes(SKILL_RUNTIME_MCP_S
 const shouldRunPlanMcpServer = process.argv.includes(PLAN_MCP_SERVER_ARG)
 const bootstrapLog = createLogger('bootstrap')
 let startupDiagnostics: DiagnosticOperation | undefined
+let startupPresenter: StartupPresenter | undefined
 let startupFlush: import('./diagnostics/flush').DiagnosticFlush = flushLogs
 
 if (process.argv.includes('--brand-migration-progress-window')) {
@@ -99,6 +102,7 @@ if (process.argv.includes('--brand-migration-progress-window')) {
     })
 } else {
   void startElectronApp(fileURLToPath(import.meta.url)).catch(async (error: unknown) => {
+    startupPresenter?.fail(error instanceof Error ? error.message : String(error))
     bootstrapLog.error('application startup failed', diagnosticErrorFields(error))
     await reportApplicationStartupFailure({
       operation: startupDiagnostics,
@@ -134,7 +138,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // never rotate or append to the primary process's file sink. These two modules are lightweight; all
   // backend imports remain behind the lock.
   // Complete filesystem and reference migration before Chromium, logging or backend writers open.
-  const migratedBrandPaths = prepareBrandPathMigration(app)
+  const migratedBrandPaths = prepareBrandPathMigration(app, { continuousProgress: true })
+  startupPresenter = migratedBrandPaths.presenter
+  let startupPresentation: ReturnType<typeof createStartupPresentation> | undefined
   if (migratedBrandPaths.logs) app.setAppLogsPath(migratedBrandPaths.logs)
   if (!app.commandLine.hasSwitch('user-data-dir')) {
     app.setPath(
@@ -146,7 +152,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
   // Unpackaged isolate: a second electron-vite from a worktree would otherwise lose the
   // macOS bundle-id lock and attach to an already-running main `npm run dev`.
-  if (!app.isPackaged) {
+  // Keep the profile selected by the migration helper authoritative for Chromium writers too.
+  if (!app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
     const isolateUserData = process.env.OPEN_SCIENCE_USER_DATA?.trim()
     if (isolateUserData) {
       if (!isAbsolute(isolateUserData)) {
@@ -406,7 +413,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           )
         }
       })
-      const startupWindowCloseOptions = createStartupWindowCloseOptions(() => app.quit())
+      const startupWindowCloseOptions = {
+        ...createStartupWindowCloseOptions(() => app.quit()),
+        deferShow: !!startupPresenter
+      }
       // The renderer probes connectivity as soon as it mounts, before the full application runtime
       // is composed. Install these handlers before creating the first BrowserWindow so that startup
       // probe cannot race the desktop utility adapter installation.
@@ -424,6 +434,18 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       const startupWindow = webMode.headless
         ? undefined
         : createMainWindow(startupWindowCloseOptions, translate)
+      if (startupWindow && startupPresenter) {
+        startupPresentation = createStartupPresentation({
+          ipc: ipcMain,
+          window: startupWindow,
+          presenter: startupPresenter,
+          failed: () => app.quit(),
+          reveal: () => {
+            if (process.platform === 'darwin') app.setActivationPolicy('regular')
+            if (process.env.OPEN_SCIENCE_E2E_WINDOW_MODE !== 'hidden') startupWindow.show()
+          }
+        })
+      }
       if (startupWindow) bindSystemShutdownWindow(startupWindow)
       // Yield the main-process event loop until Chromium has painted the startup shell. Evaluating the
       // 5 MB backend chunk immediately after BrowserWindow construction can otherwise delay
@@ -438,7 +460,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         preStartupSecondInstanceRelay.bind(
           createStartupWindowSecondInstanceHandler(
             startupWindow,
-            forwardSecondInstanceDuringStartup
+            forwardSecondInstanceDuringStartup,
+            () => startupPresentation?.focus() ?? false
           )
         )
       }
@@ -773,7 +796,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           managedPreviewProtocolBridge.dispose()
           disposeDatabaseStartupIpc()
           if (startupWindow && !startupWindow.isDestroyed()) startupWindow.destroy()
-          app.quit()
+          // The outer failure handler retains diagnostics in the progress helper before exit.
+          if (!startupPresenter) app.quit()
         }
       })
     },
@@ -791,6 +815,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         createMainWindow: ctx.createMainWindow,
         configureMainWindow: ctx.configureMainWindow,
         initialWindow: ctx.startupWindow,
+        focusStartup: () => startupPresentation?.focus() ?? false,
         createTray: (handlers) => {
           const webPort = ctx.webController.runningPort()
           const headlessWeb = ctx.webMode.headless && webPort !== undefined

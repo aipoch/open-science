@@ -188,6 +188,9 @@ const launchEnvironment = (
   }
 
   environment.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
+  environment.OPEN_SCIENCE_CONFIG_ROOT = storageRoot
+  // Each launch already supplies its own --user-data-dir. A task wrapper must not override it.
+  delete environment.OPEN_SCIENCE_USER_DATA
   environment.OPEN_SCIENCE_E2E_STORAGE_ROOT = storageRoot
   environment.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT = join(storageRoot, 'e2e-handoff-captures')
   environment.OPEN_SCIENCE_E2E_WINDOW_MODE = windowMode

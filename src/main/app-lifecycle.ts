@@ -51,6 +51,8 @@ export type AppLifecycleDeps = {
   ) => void
   // A database-startup shell that the lifecycle adopts instead of creating a second window.
   initialWindow?: BrowserWindow
+  // A retained progress helper owns presentation until the initial renderer is interactive.
+  focusStartup?: () => boolean
   // Receives the resolved renderer Theme. Optional so headless/tests and older compositions remain
   // decoupled from platform icon behavior.
   onAppearanceChanged?: (appearance: WindowFindAppearance) => void
@@ -279,6 +281,7 @@ export const installAppLifecycle = (
   // the app alive with no window; the tray Show item and a second launch must be able to bring it back).
   // Returns the window so callers can target it directly instead of guessing by focus or window order.
   const showMainWindow = (): BrowserWindow => {
+    if (mainWindow && !mainWindow.isDestroyed() && deps.focusStartup?.()) return mainWindow
     if (!mainWindow || mainWindow.isDestroyed()) {
       mainWindow = openWindow()
       return mainWindow

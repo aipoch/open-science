@@ -4,9 +4,11 @@ import { RefreshCw } from 'lucide-react'
 
 import { ErrorNotice } from '@/components/error-notice'
 import { projectRendererFailure } from '../renderer-diagnostics'
+import { useStartupPresentation } from '@/hooks/useStartupPresentation'
 
 const ApplicationErrorFallback = (): React.JSX.Element => {
   const { t } = useTranslation()
+  useStartupPresentation('blocked')
   return (
     <main className="flex min-h-svh items-center justify-center bg-background px-6 text-foreground">
       <div className="w-full max-w-lg">

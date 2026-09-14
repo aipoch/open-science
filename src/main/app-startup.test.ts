@@ -203,6 +203,27 @@ describe('createSecondInstanceRelay', () => {
     expect(quit).toHaveBeenCalledOnce()
     expect(options.classifyClose()).toBe('close')
   })
+
+  it('forwards launch intent while the retained progress helper owns focus', () => {
+    const window = {
+      focus: vi.fn(),
+      show: vi.fn(),
+      restore: vi.fn(),
+      isDestroyed: () => false,
+      isMinimized: () => true
+    }
+    const forward = vi.fn()
+    const focusStartup = vi.fn(() => true)
+    createStartupWindowSecondInstanceHandler(
+      window,
+      forward,
+      focusStartup
+    )(['app', '--serve=44100'])
+    expect(focusStartup).toHaveBeenCalledOnce()
+    expect(window.show).not.toHaveBeenCalled()
+    expect(window.restore).not.toHaveBeenCalled()
+    expect(forward).toHaveBeenCalledWith(['app', '--serve=44100'])
+  })
 })
 
 describe('orchestrateAppStartup', () => {

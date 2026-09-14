@@ -167,6 +167,7 @@ const setup = (
       | 'createInitialWindow'
       | 'onAppearanceChanged'
       | 'initialWindow'
+      | 'focusStartup'
       | 'configureMainWindow'
     >
   > & {
@@ -210,6 +211,7 @@ const setup = (
         return asWindow(w)
       },
       initialWindow: overrides.initialWindow,
+      focusStartup: overrides.focusStartup,
       configureMainWindow: overrides.configureMainWindow,
       createTray: (handlers) => {
         trayHandlers = handlers
@@ -268,6 +270,23 @@ const installWithCapturedOpts = (opts: {
 }
 
 describe('installAppLifecycle', () => {
+  it('keeps activation and tray focus on the startup helper until presentation handoff', () => {
+    const window = makeFakeWindow()
+    window.visible = false
+    const focusStartup = vi.fn(() => true)
+    const { app, trayHandlers, showMainWindow } = setup({
+      initialWindow: asWindow(window),
+      focusStartup
+    })
+    app.emit('activate')
+    trayHandlers!.onShow()
+    expect(window.visible).toBe(false)
+    expect(window.focused).toBe(false)
+    focusStartup.mockReturnValue(false)
+    showMainWindow()
+    expect(window.visible).toBe(true)
+    expect(window.focused).toBe(true)
+  })
   it('creates the first window and tray on install', () => {
     const { windows, trayHandlers } = setup()
     expect(windows).toHaveLength(1)

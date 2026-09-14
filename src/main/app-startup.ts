@@ -38,9 +38,13 @@ type StartupWindowSurface = {
 }
 
 export const createStartupWindowSecondInstanceHandler =
-  (window: StartupWindowSurface, forward: (argv: string[]) => void): ((argv: string[]) => void) =>
+  (
+    window: StartupWindowSurface,
+    forward: (argv: string[]) => void,
+    focusStartup?: () => boolean
+  ): ((argv: string[]) => void) =>
   (argv) => {
-    if (!window.isDestroyed()) {
+    if (!focusStartup?.() && !window.isDestroyed()) {
       if (window.isMinimized()) window.restore()
       window.show()
       window.focus()

@@ -228,6 +228,18 @@ vi.mock('../../resources/icon.png?asset', () => ({ default: 'icon-path' }))
 
 const { createMainWindow } = await import('./windows')
 
+it('does not reveal an unfinished startup window on its first paint', () => {
+  createMainWindow({
+    deferShow: true,
+    classifyClose: () => 'close',
+    resolveCloseAction: async () => 'quit',
+    requestQuit: vi.fn()
+  })
+  const window = lastWindow!
+  for (const handler of window.handlers.get('ready-to-show') ?? []) handler({} as CloseEvent)
+  expect(window.showMock).not.toHaveBeenCalled()
+})
+
 // A keyDown close chord for the host platform: Cmd+W on macOS, Ctrl+W elsewhere. Built off
 // process.platform so the interception test passes on every CI runner (windows, linux, macOS).
 const closeChord = (overrides: Partial<KeyChordInput> = {}): KeyChordInput => ({

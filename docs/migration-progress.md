@@ -3,7 +3,7 @@
 The startup helper displays the current phase, an overall progress bar, elapsed time and a reminder
 to add model keys again after configuration migration. The reminder uses the shared amber warning
 palette in both themes. This UI change does not clear or rewrite credentials. The existing startup
-adapter still launches a disposable UI before the offline migration worker, before application
+adapter still lets the offline worker launch a disposable UI before migration, before application
 writers open. The normal application starts only after the existing migration protocol succeeds.
 
 ## Meaning of the percentage
@@ -57,3 +57,53 @@ node scripts/migrate-brand-paths.mjs --home /tmp/migration-fixture --app-data /t
 
 The first command is read-only dry-run. Execute/resume/rollback mutate the specified test home.
 Never delete a journal or backups to reset the percentage, and never use real user data for UI tests.
+
+## Continuous application startup
+
+Normal desktop startup, in both development and packaged mode, retains that progress window after
+the filesystem transaction commits. The same page then displays database checking, runtime startup,
+settings loading and saved-conversation loading. These later phases are indeterminate: migration's
+100% counter, scanned path and model-key warning are no longer displayed as current startup work.
+The helper initially uses the main window's dimensions to reduce the visual jump at handoff.
+
+The worker still communicates with its helper through child-process IPC throughout migration.
+Only successful migration transfers presentation to main, through an authenticated loopback TCP
+connection. Its random token stays in the launch environment; a private temporary
+`open-science-startup-*` directory contains only endpoint metadata. The protocol accepts fixed
+progress/focus/completion/failure messages, with bounded frames and one authenticated owner; it
+exposes no filesystem or application APIs. TCP avoids Unix socket path limits in nested worktrees.
+The offline worker exits after handoff, so Electron's real profile remains unopened until migration
+has completed. No transaction logic, database schema or version 1/2/3 journal format changes.
+
+Main creates its normal window hidden and preserves the existing database startup gate. The renderer
+reports loading stages, then acknowledges two animation frames after committing an interactive
+page: onboarding, the hydrated application, missing-data-root recovery, or an actionable startup
+error. The top-level React recovery page also participates. Main verifies the sending window and
+main frame before revealing it, then releases the helper. Activation, tray Show and second-launch
+requests focus the helper while that handoff is pending. Once revealed, normal navigation, explicit
+retries, reloads and later window creation use their existing behavior; the helper is not reopened.
+
+Headless startup has no helper; standalone CLI execute/resume/rollback and their backups remain as
+documented above. An offline failure still keeps migration diagnostics and prevents application
+writers from opening. A later main-process or renderer-process failure keeps a startup error in the
+helper. An authenticated owner disconnect is an error; if main never attaches after the worker's
+handoff, the helper reports a lost owner after 30 seconds. Closing the error does not modify a
+journal, roll back data or delete backups. Normal exits remove owned temporary UI/endpoint files;
+forced termination or an OS-held cache can leave disposable temporary files. Durable migration
+backups and recovery commands are unchanged.
+
+For a manual development preview with isolated data in the current worktree:
+
+```sh
+mkdir -p .codex/startup-preview/config .codex/startup-preview/profile .codex/startup-preview/tmp
+OPEN_SCIENCE_USER_DATA="$PWD/.codex/startup-preview/profile" \
+OPEN_SCIENCE_CONFIG_ROOT="$PWD/.codex/startup-preview/config" \
+OPEN_SCIENCE_STORAGE_ROOT="$PWD/.codex/startup-preview/config" \
+OPEN_SCIENCE_E2E_STORAGE_ROOT="$PWD/.codex/startup-preview/config" \
+OPEN_SCIENCE_ALLOW_MULTI_INSTANCE=1 TMPDIR="$PWD/.codex/startup-preview/tmp" npm run dev
+```
+
+`CONFIG_ROOT` scopes CLI discovery; desktop storage currently consumes `STORAGE_ROOT`.
+`E2E_STORAGE_ROOT` also keeps Electron logs and migration discovery under the disposable tree.
+E2E fixtures replace these roots per test and retain their own explicit `--user-data-dir` instead of
+inheriting a task wrapper's profile. Do not point preview/test commands at a real user-data directory.

@@ -64,6 +64,23 @@ export async function openProgressWindow(locale) {
     },
     async complete() {
       settled = true
+      if (env.OPEN_SCIENCE_STARTUP_CHANNEL) {
+        // Transfer the existing helper to the main owner. The worker's IPC stays authoritative
+        // throughout migration; only a successful transaction may relinquish it.
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('Startup UI handoff timed out')), 10000)
+          child.on('message', function handoff(message) {
+            if (message?.type !== 'handed-off') return
+            clearTimeout(timer)
+            child.removeListener('message', handoff)
+            resolve()
+          })
+          send({ type: 'handoff' })
+        })
+        child.disconnect()
+        child.unref()
+        return
+      }
       send({ type: 'complete' })
       await closed
     },

@@ -7,10 +7,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   closeElectronApplicationForCleanup,
   ElectronAppHarness,
+  launchEnvironment,
   STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
   suppressWorkspaceStarNudge,
   waitForRendererReady
 } from '../e2e/fixtures/electron-app'
+
+it('isolates task config overrides and keeps the per-test --user-data-dir authoritative', () => {
+  const env = launchEnvironment('/fixture/storage', undefined, {
+    OPEN_SCIENCE_USER_DATA: '/another/task/profile',
+    OPEN_SCIENCE_CONFIG_ROOT: '/another/task/config'
+  })
+  expect(env.OPEN_SCIENCE_USER_DATA).toBeUndefined()
+  expect(env.OPEN_SCIENCE_CONFIG_ROOT).toBe('/fixture/storage')
+})
 
 describe('Electron E2E startup failure evidence', () => {
   afterEach(() => vi.restoreAllMocks())

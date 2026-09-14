@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -166,6 +167,7 @@ const bootUntilFailureHandlersAreInstalled = async (): Promise<
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
 
 describe('main-process fatal errors', () => {
@@ -188,7 +190,9 @@ describe('main-process fatal errors', () => {
     }
   )
 
-  it('respects an explicit Chromium user-data-dir instead of replacing the profile', async () => {
+  it('keeps an explicit Chromium user-data-dir authoritative over the inherited task profile', async () => {
+    // Migration already selects the CLI profile; writers must not switch to the inherited root.
+    vi.stubEnv('OPEN_SCIENCE_USER_DATA', join(tmpdir(), 'inherited-task-profile'))
     mocks.app.commandLine.hasSwitch.mockReturnValue(true)
     try {
       await bootUntilFailureHandlersAreInstalled()

@@ -21,6 +21,7 @@ import { UpdateDialog } from '@/components/UpdateDialog'
 import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
 import { useApplicationEventBindings } from '@/hooks/useApplicationEventBindings'
 import { useApplicationStartup } from '@/hooks/useApplicationStartup'
+import { useStartupPresentation } from '@/hooks/useStartupPresentation'
 import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { WorkspaceComputeRecoveryBridge } from '@/lib/compute/WorkspaceComputeRecoveryBridge'
 import { HomePage } from '@/pages/home/HomePage'
@@ -54,11 +55,23 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
   })
   const { sessions } = startup
   const { presentation } = events
-
-  if (
+  const loadingSettings =
     !startup.settings.isLoaded ||
     (startup.settings.startupView === 'onboarding' && startup.settings.isLoading)
-  ) {
+  useStartupPresentation(
+    loadingSettings
+      ? startup.settings.loadError
+        ? 'blocked'
+        : 'startup-settings'
+      : startup.settings.startupView === 'onboarding' ||
+          (startup.storageRecovery.missingDataRoot !== undefined && !sessions.isHydrated)
+        ? 'interactive'
+        : !sessions.isHydrated && sessions.isLoading
+          ? 'startup-sessions'
+          : 'interactive'
+  )
+
+  if (loadingSettings) {
     if (startup.settings.loadError) {
       return (
         <main

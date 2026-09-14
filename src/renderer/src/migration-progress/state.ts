@@ -1,5 +1,6 @@
 // This surface deliberately has no business application API or storage dependency.
 export type MigrationProgressState = {
+  startup?: boolean
   phase: string
   path?: string
   completed?: number
