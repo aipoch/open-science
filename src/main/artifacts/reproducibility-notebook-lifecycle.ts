@@ -1,9 +1,10 @@
 import type { ArtifactReproducibilityAttemptOwner } from './artifact-reproducibility-lifecycle'
+import type { NotebookShutdownOptions, NotebookShutdownResult } from '../lifecycle-shutdown'
 
 type NotebookLifecycle = {
   getActiveNotebookSessions(): { projectId: string; sessionId: string }[]
-  dispose(): Promise<{ reaped: boolean }>
-  shutdownAll(): Promise<{ reaped: boolean }>
+  dispose(): Promise<NotebookShutdownResult>
+  shutdownAll(options?: NotebookShutdownOptions): Promise<NotebookShutdownResult>
 }
 
 // Reproduction runs use their own isolated kernels. Include them in the existing Notebook
@@ -12,14 +13,22 @@ export const withReproducibilityNotebookLifecycle = (
   notebook: NotebookLifecycle,
   getReproducibility: () => ArtifactReproducibilityAttemptOwner | undefined
 ): NotebookLifecycle => {
-  const stop = async (method: 'dispose' | 'shutdownAll'): Promise<{ reaped: boolean }> => {
+  const stop = async (
+    method: 'dispose' | 'shutdownAll',
+    options?: NotebookShutdownOptions
+  ): Promise<NotebookShutdownResult> => {
     const [kernels, checks] = await Promise.allSettled([
-      notebook[method](),
+      notebook[method](options),
       getReproducibility()?.[method]()
     ])
     return {
       reaped:
-        kernels.status === 'fulfilled' && kernels.value.reaped && checks.status === 'fulfilled'
+        kernels.status === 'fulfilled' && kernels.value.reaped && checks.status === 'fulfilled',
+      ...(kernels.status === 'fulfilled' &&
+      checks.status === 'fulfilled' &&
+      kernels.value.legacyShellRecovery
+        ? { legacyShellRecovery: kernels.value.legacyShellRecovery }
+        : {})
     }
   }
   return {
@@ -32,6 +41,6 @@ export const withReproducibilityNotebookLifecycle = (
       ).values()
     ],
     dispose: () => stop('dispose'),
-    shutdownAll: () => stop('shutdownAll')
+    shutdownAll: (options) => stop('shutdownAll', options)
   }
 }

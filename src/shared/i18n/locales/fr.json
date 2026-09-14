@@ -118,6 +118,10 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Le paquet d’origine est indisponible. Il a peut-être été déplacé, supprimé ou est devenu illisible. Choisissez un autre paquet."
   },
   "renderer": {
+    "Old Shell launch records are blocking this update.": "D’anciens enregistrements de lancement du Terminal bloquent cette mise à jour.",
+    "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "La récupération sauvegardera les anciens enregistrements de lancement du Terminal et relancera la mise à jour. Les données du projet et les paramètres seront conservés.",
+    "Back up records and retry": "Sauvegarder les enregistrements et réessayer",
+    "Open Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?": "Open Science ne peut pas vérifier si des commandes d’une session précédente sont encore en cours. Si c’est le cas, leurs résultats risquent d’être perdus pendant la mise à jour. Sauvegarder les anciens enregistrements de lancement et réessayer ?",
     "Click to enter a page number": "Cliquez pour saisir un numéro de page",
     "Only stable releases can be installed.": "Seules les versions stables peuvent être installées.",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "La vérification de l’accès à R nécessite une protection réseau opérationnelle. Consultez les paramètres réseau, puis vérifiez à nouveau les environnements d’exécution.",

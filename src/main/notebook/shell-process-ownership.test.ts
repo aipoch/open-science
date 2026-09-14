@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, rename } from 'node:fs/promises'
 import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -45,6 +45,174 @@ describe.runIf(process.platform === 'linux')('Shell process ownership recovery',
 })
 
 describe('Shell process ownership receipt lifecycle', () => {
+  it('preserves every original after interrupted historical backup and requires renewed consent', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'shell-backup-retry-'))
+    roots.push(root)
+    const old = new ShellProcessOwnershipRegistry(root)
+    for (const runId of ['first', 'second'])
+      old.beginLaunch({
+        runId,
+        projectId: 'project',
+        sessionId: 'session',
+        platform: 'win32'
+      })
+    const directory = join(root, 'shell-process-ownership')
+    const first = await readFile(join(directory, 'first.json'))
+    const second = await readFile(join(directory, 'second.json'))
+    const restarted = new ShellProcessOwnershipRegistry(root)
+    const offer = restarted.getLegacyRecovery()!
+    const originalRename = fs.renameSync
+    let moves = 0
+    const failure = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+      if (++moves === 2) throw new Error('backup interrupted')
+      originalRename(from, to)
+    })
+    try {
+      expect(() => restarted.archiveLegacyLaunches(offer.token)).toThrow('backup interrupted')
+    } finally {
+      failure.mockRestore()
+    }
+    const backups = join(root, 'shell-process-ownership-backups')
+    const firstBackup = fs.readdirSync(backups)[0]
+    expect(await readFile(join(backups, firstBackup, 'first.json'))).toEqual(first)
+    expect(await readFile(join(directory, 'second.json'))).toEqual(second)
+    await expect(restarted.recover()).rejects.toMatchObject({
+      code: 'SHELL_PROCESS_RECOVERY_BLOCKED'
+    })
+    expect(() => restarted.archiveLegacyLaunches(offer.token)).toThrow('records changed')
+    const remaining = restarted.getLegacyRecovery()!
+    expect(remaining.count).toBe(1)
+    restarted.archiveLegacyLaunches(remaining.token)
+    await restarted.recover()
+    await restarted.recover()
+    expect(restarted.hasReceipts()).toBe(false)
+    const secondBackup = fs.readdirSync(backups).find((entry) => entry !== firstBackup)!
+    expect(await readFile(join(backups, secondBackup, 'second.json'))).toEqual(second)
+  })
+
+  it.runIf(process.platform === 'win32').each(['owned', 'unrelated'] as const)(
+    'verifies the actual Windows host identity before recovery: %s',
+    async (identity) => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-host-identity-'))
+      roots.push(root)
+      const host = new ShellProcessOwnershipRegistry(root).beginLaunch({
+        runId: 'identity',
+        projectId: 'project',
+        sessionId: 'session',
+        platform: 'win32',
+        hosted: true
+      }).host!
+      const command = [process.execPath, '-e', 'console.log("ready"); setInterval(() => {}, 1000)']
+      const child =
+        identity === 'owned'
+          ? spawn(process.execPath, [host.path, host.pendingPath, host.receiptId, ...command], {
+              windowsHide: true,
+              env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+            })
+          : spawn(command[0], command.slice(1), { windowsHide: true })
+      try {
+        await new Promise<void>((resolve, reject) => {
+          child.once('error', reject)
+          child.stdout.once('data', () => resolve())
+        })
+        if (identity === 'unrelated')
+          await rename(
+            host.pendingPath,
+            join(
+              root,
+              'shell-process-ownership',
+              `identity.active.${child.pid}.${host.receiptId}.json`
+            )
+          )
+        const restarted = new ShellProcessOwnershipRegistry(root)
+        if (identity === 'owned') {
+          await restarted.recover()
+          expect(() => process.kill(child.pid!, 0)).toThrow()
+          expect(restarted.hasReceipts()).toBe(false)
+        } else {
+          await expect(restarted.recover()).rejects.toMatchObject({
+            code: 'SHELL_PROCESS_RECOVERY_BLOCKED'
+          })
+          expect(() => process.kill(child.pid!, 0)).not.toThrow()
+          expect(restarted.hasReceipts()).toBe(true)
+        }
+      } finally {
+        if (child.exitCode === null) child.kill()
+      }
+    },
+    20_000
+  )
+
+  it('cancels a pending hosted launch before a delayed host can start its command', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'shell-delayed-host-'))
+    roots.push(root)
+    const launch = new ShellProcessOwnershipRegistry(root).beginLaunch({
+      runId: 'delayed',
+      projectId: 'project',
+      sessionId: 'session',
+      platform: 'win32',
+      hosted: true
+    })
+    const restarted = new ShellProcessOwnershipRegistry(root)
+    await restarted.recover()
+    await restarted.recover()
+    const marker = join(root, 'must-not-run')
+    const host = launch.host!
+    const child = spawn(
+      process.execPath,
+      [
+        host.path,
+        host.pendingPath,
+        host.receiptId,
+        process.execPath,
+        '-e',
+        `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`
+      ],
+      { windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }
+    )
+    const code = await new Promise((resolve, reject) => {
+      child.once('error', reject)
+      child.once('close', resolve)
+    })
+    expect(code).toBe(125)
+    expect(fs.existsSync(marker)).toBe(false)
+    expect(restarted.hasReceipts()).toBe(false)
+  })
+
+  it('recovers a hosted launch interrupted before its PID was written into JSON', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'shell-promoted-host-'))
+    roots.push(root)
+    const host = new ShellProcessOwnershipRegistry(root).beginLaunch({
+      runId: 'promoted',
+      projectId: 'project',
+      sessionId: 'session',
+      platform: 'win32',
+      hosted: true
+    }).host!
+    await rename(
+      host.pendingPath,
+      join(root, 'shell-process-ownership', `promoted.active.4242.${host.receiptId}.json`)
+    )
+    const restarted = new ShellProcessOwnershipRegistry(root, { processExists: () => false })
+    await restarted.recover()
+    expect(restarted.hasReceipts()).toBe(false)
+  })
+
+  it('never offers to abandon a launch belonging to the current application instance', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'shell-current-launch-'))
+    roots.push(root)
+    const registry = new ShellProcessOwnershipRegistry(root)
+    registry.beginLaunch({
+      runId: 'current',
+      projectId: 'project',
+      sessionId: 'session',
+      platform: 'win32'
+    })
+    expect(registry.getLegacyRecovery()).toBeUndefined()
+    expect(() => registry.archiveLegacyLaunches('unreviewed')).toThrow()
+    expect(registry.hasReceipts()).toBe(true)
+  })
+
   const claimedReceipt = async (
     platform: NodeJS.Platform = 'linux'
   ): Promise<{ root: string; release: () => void }> => {

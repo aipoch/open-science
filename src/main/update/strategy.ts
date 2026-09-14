@@ -12,12 +12,13 @@ export type InstallReadiness = {
   completed: boolean
   reaped: boolean
   blockedBy?: UpdateBlocker[]
+  legacyShellRecovery?: UpdateStatus['legacyShellRecovery']
 }
 
 // Runs backend teardown before an in-place install and reports whether it is safe to proceed. The
 // in-place strategy receives it at construction and awaits it before quitAndInstall, so the installer
 // never starts while a background process still holds app files open.
-export type InstallGate = (options?: { force?: boolean }) => Promise<InstallReadiness>
+export type InstallGate = (options?: UpdateApplyOptions) => Promise<InstallReadiness>
 
 const restoreAfterFinalRefusal = (restore: () => void): void => {
   try {

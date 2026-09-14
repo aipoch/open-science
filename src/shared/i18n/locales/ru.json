@@ -119,6 +119,10 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Исходный пакет недоступен. Возможно, он перемещён, удалён или больше не читается. Выберите другой пакет."
   },
   "renderer": {
+    "Old Shell launch records are blocking this update.": "Старые записи запуска командной строки блокируют обновление.",
+    "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "При восстановлении будет создана резервная копия старых записей запуска командной строки, после чего обновление повторится. Данные проекта и настройки сохранятся.",
+    "Back up records and retry": "Сохранить копию записей и повторить",
+    "Open Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?": "Open Science не может проверить, выполняются ли ещё команды из предыдущего сеанса. Если да, их результаты могут быть потеряны во время обновления. Сохранить резервную копию старых записей запуска и повторить попытку?",
     "Click to enter a page number": "Нажмите, чтобы ввести номер страницы",
     "Only stable releases can be installed.": "Можно устанавливать только стабильные версии.",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "Для проверки доступа к R защита сети должна быть готова. Проверьте настройки сети, затем повторно проверьте среды выполнения.",

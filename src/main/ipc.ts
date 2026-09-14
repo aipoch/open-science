@@ -3762,9 +3762,10 @@ const createApplicationModules = async (
     log: createLogger('shutdown')
   })
   const durableBackendHandoffGate = createDurableInstallGate(
-    () =>
+    (options) =>
       shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, {
-        holdSideChatAdmission: true
+        holdSideChatAdmission: true,
+        legacyShellRecoveryToken: options?.legacyShellRecoveryToken
       }),
     () => confirmRendererDurability()
   )

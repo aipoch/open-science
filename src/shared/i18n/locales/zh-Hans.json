@@ -116,6 +116,10 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原包文件不可用，可能已移动、删除或无法读取。请选择其他包文件。"
   },
   "renderer": {
+    "Old Shell launch records are blocking this update.": "旧的命令行启动记录阻止了本次更新。",
+    "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "恢复操作将备份旧的命令行启动记录，然后重试更新。项目数据和设置将保留。",
+    "Back up records and retry": "备份记录并重试",
+    "Open Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?": "Open Science 无法确认先前会话中的命令是否仍在运行。如果仍在运行，更新可能导致其结果丢失。是否备份旧的启动记录并重试？",
     "Click to enter a page number": "点击输入页码",
     "Only stable releases can be installed.": "仅可安装稳定版本。",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "验证 R 访问权限需要网络保护就绪。请检查网络设置，然后重新检查运行环境。",

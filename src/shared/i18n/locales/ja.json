@@ -116,6 +116,10 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "元のパッケージを利用できません。移動、削除されたか、読み取れなくなった可能性があります。別のパッケージを選択してください。"
   },
   "renderer": {
+    "Old Shell launch records are blocking this update.": "古いシェル起動記録が更新を妨げています。",
+    "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "復旧操作では古いシェル起動記録をバックアップし、更新を再試行します。プロジェクトのデータと設定は保持されます。",
+    "Back up records and retry": "記録をバックアップして再試行",
+    "Open Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?": "Open Science は、以前のセッションのコマンドがまだ実行中かどうかを確認できません。実行中の場合、更新中に結果が失われる可能性があります。古い起動記録をバックアップして再試行しますか？",
     "Click to enter a page number": "クリックしてページ番号を入力",
     "Only stable releases can be installed.": "安定版のみインストールできます。",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "R のアクセス検証にはネットワーク保護の準備が必要です。ネットワーク設定を確認してから、ランタイムを再確認してください。",

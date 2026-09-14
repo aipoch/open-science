@@ -1,5 +1,39 @@
 import { expect, test } from '@playwright/test'
 
+test('recovers historical records only after confirmation in the update dialog', async ({
+  page
+}) => {
+  await page.goto('/update-dialog.html?refused-restart&legacy')
+  const dialog = page.getByRole('dialog', { name: 'Update available' })
+  await dialog.getByRole('button', { name: 'Restart to update', exact: true }).click()
+  const recover = dialog.getByRole('button', { name: 'Back up records and retry', exact: true })
+  await expect(recover).toBeInViewport()
+  page.once('dialog', (confirmation) => confirmation.dismiss())
+  await recover.click()
+  await expect(recover).toBeEnabled()
+  page.once('dialog', async (confirmation) => {
+    expect(confirmation.message()).toContain('cannot verify whether commands')
+    await confirmation.accept()
+  })
+  await recover.click()
+  await expect(
+    dialog.getByText('Open Science is stopping background tasks', { exact: false })
+  ).toBeVisible()
+  await expect(recover).toBeHidden()
+})
+
+test('shows a refused restart reason without scrolling through release notes', async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 720 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/update-dialog.html?refused-restart')
+  const dialog = page.getByRole('dialog', { name: 'Update available' })
+  await dialog.getByRole('button', { name: 'Restart to update', exact: true }).click()
+  const error = dialog.getByRole('alert')
+  await expect(error).toContainText('Could not fully stop background processes before updating.')
+  await expect(dialog.getByRole('button', { name: 'Restart to update', exact: true })).toBeEnabled()
+  await expect(error).toBeInViewport()
+})
+
 for (const size of [
   { width: 1000, height: 720 },
   { width: 560, height: 420 }
