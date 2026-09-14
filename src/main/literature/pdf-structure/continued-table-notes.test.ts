@@ -12,30 +12,46 @@ const load = (): ReturnType<typeof JSON.parse> =>
     )
   )
 
-it('attaches all eight cited native notes from a numbered continuation and preserves the source page', () => {
-  const { table, page, nextPage } = load()
-  const original = structuredClone({ table, page, nextPage })
-  const notes = associateContinuedTableNotes(table, page, nextPage)
-  expect(notes.map((n: { text: string }) => n.text[0])).toEqual([
-    'a',
-    'b',
-    'c',
-    'd',
-    'e',
-    'f',
-    'g',
-    'h'
-  ])
-  expect(
-    notes.every(
-      (n: { page: number; rect: number[] }) => n.page === 5 && n.rect[1] > 60 && n.rect[3] < 146
-    )
-  ).toBe(true)
-  expect(notes[4].text).toBe('e χ² Test.')
-  expect(notes[6].text).toContain('Chromosome 17 centromere (CEP-17) ratio.')
-  expect(notes[7].text).toContain('excluded from analysis.')
-  expect({ table, page, nextPage }).toEqual(original)
-})
+it.each([false, true])(
+  'attaches all cited native notes and preserves the source page (grouped: %s)',
+  (grouped) => {
+    const { table, page, nextPage } = load()
+    if (grouped) {
+      table.parts = [
+        {
+          title: 'A. First section',
+          cells: table.cells.filter((_: object, index: number) => index % 2 === 0)
+        },
+        {
+          title: 'B. Second section',
+          cells: table.cells.filter((_: object, index: number) => index % 2 === 1)
+        }
+      ]
+      delete table.cells
+    }
+    const original = structuredClone({ table, page, nextPage })
+    const notes = associateContinuedTableNotes(table, page, nextPage)
+    expect(notes.map((n: { text: string }) => n.text[0])).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+      'e',
+      'f',
+      'g',
+      'h'
+    ])
+    expect(
+      notes.every(
+        (n: { page: number; rect: number[] }) => n.page === 5 && n.rect[1] > 60 && n.rect[3] < 146
+      )
+    ).toBe(true)
+    expect(notes[4].text).toBe('e χ² Test.')
+    expect(notes[6].text).toContain('Chromosome 17 centromere (CEP-17) ratio.')
+    expect(notes[7].text).toContain('excluded from analysis.')
+    expect({ table, page, nextPage }).toEqual(original)
+  }
+)
 
 it.each([
   'missing',
@@ -72,5 +88,20 @@ it.each([
       ...l,
       text: l.text.replace('(cont)', 'discusses the results.')
     }))
+  expect(associateContinuedTableNotes(table, page, nextPage)).toEqual([])
+})
+
+it('rejects grouped continuation notes when a cited marker is absent from every part', () => {
+  const { table, page, nextPage } = load()
+  table.parts = [
+    {
+      title: 'A. First section',
+      cells: table.cells.filter(
+        (c: { textRuns?: { text: string }[] }) => !c.textRuns?.some((r) => r.text === 'g')
+      )
+    },
+    { title: 'B. Empty section', cells: [] }
+  ]
+  delete table.cells
   expect(associateContinuedTableNotes(table, page, nextPage)).toEqual([])
 })

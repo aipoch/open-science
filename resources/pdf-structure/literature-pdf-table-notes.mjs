@@ -119,7 +119,8 @@ const startsNote = (text) =>
 // Some continuations contain only the prior table's lettered notes. Reuse the
 // page-local note parser, anchored at an explicit matching continuation title.
 export function associateContinuedTableNotes(table, page, nextPage) {
-  if (!nextPage || nextPage.pageNumber !== page.pageNumber + 1 || !table.cells) return []
+  if (!nextPage || nextPage.pageNumber !== page.pageNumber + 1) return []
+  const cells = (table.parts ?? [table]).flatMap((part) => part.cells ?? [])
   const number = /^Table\s+([A-Z]?\d+)\b/i.exec(table.caption?.text ?? '')?.[1]
   if (!number) return []
   const titles = groupPageLines(nextPage).filter((line) => {
@@ -134,7 +135,7 @@ export function associateContinuedTableNotes(table, page, nextPage) {
     right = (table.cropRect[2] / 1.5 / page.width) * nextPage.width
   if (title.y > nextPage.height * 0.15 || Math.abs(title.x - left) > 12) return []
   const cited = new Set(
-    table.cells.flatMap((cell) =>
+    cells.flatMap((cell) =>
       (cell.textRuns ?? []).flatMap((run) =>
         run.position === 'superscript' && /^[a-z](?:,[a-z])*$/.test(run.text.trim())
           ? run.text.trim().split(',')
