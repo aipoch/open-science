@@ -1,5 +1,47 @@
 import { expect, test } from '@playwright/test'
 
+test('recovers historical records only after confirmation in the update dialog', async ({
+  page
+}) => {
+  await page.goto('/update-dialog.html?refused-restart&legacy')
+  const dialog = page.getByRole('dialog', { name: 'Update available' })
+  await dialog.getByRole('button', { name: 'Restart to update', exact: true }).click()
+  const recover = dialog.getByRole('button', { name: 'Back up records and retry', exact: true })
+  await expect(recover).toBeInViewport()
+  await recover.click()
+  const confirmation = page.getByRole('alertdialog', { name: 'Back up records and retry' })
+  await expect(confirmation).toBeVisible()
+  await expect(confirmation).toContainText('cannot verify whether commands')
+  const cancel = confirmation.getByRole('button', { name: 'Cancel', exact: true })
+  await expect(cancel).toBeFocused()
+  await cancel.click()
+  await expect(confirmation).toBeHidden()
+  await expect(recover).toBeEnabled()
+  await expect(recover).toBeFocused()
+  await recover.click()
+  await page.keyboard.press('Escape')
+  await expect(confirmation).toBeHidden()
+  await expect(recover).toBeFocused()
+  await recover.click()
+  await confirmation.getByRole('button', { name: 'Back up records and retry', exact: true }).click()
+  await expect(
+    dialog.getByText('Open Science is stopping background tasks', { exact: false })
+  ).toBeVisible()
+  await expect(recover).toBeHidden()
+})
+
+test('shows a refused restart reason without scrolling through release notes', async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 720 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/update-dialog.html?refused-restart')
+  const dialog = page.getByRole('dialog', { name: 'Update available' })
+  await dialog.getByRole('button', { name: 'Restart to update', exact: true }).click()
+  const error = dialog.getByRole('alert')
+  await expect(error).toContainText('Could not fully stop background processes before updating.')
+  await expect(dialog.getByRole('button', { name: 'Restart to update', exact: true })).toBeEnabled()
+  await expect(error).toBeInViewport()
+})
+
 for (const size of [
   { width: 1000, height: 720 },
   { width: 560, height: 420 }

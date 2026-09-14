@@ -32,6 +32,28 @@ function surface<Electron, Web>(electron: Electron, web: Web): Surface<Electron,
 }
 
 describe('installWebRendererContracts', () => {
+  it('forwards the private bookmark identity on Web and retains a failed save for retry', async () => {
+    const api: Record<string, unknown> = {}
+    const invoke = vi.fn().mockRejectedValueOnce(new Error('Bookmark was not saved.'))
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['bookmarks:create']),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    const request = { id: 'bookmark-1', projectId: 'project-1', sessionId: 'session-1', note: '' }
+    await expect(methodAt(api, 'bookmarks.create')!(request)).rejects.toThrow(
+      'Bookmark was not saved.'
+    )
+    const saved = { ...request, createdAt: '2026-09-14T00:00:00.000Z' }
+    invoke.mockResolvedValueOnce(saved)
+    await expect(methodAt(api, 'bookmarks.create')!(request)).resolves.toEqual(saved)
+    expect(invoke.mock.calls).toEqual([
+      ['bookmarks:create', [request]],
+      ['bookmarks:create', [request]]
+    ])
+  })
   it('forwards external R library consent through the Web contract', async () => {
     const api: Record<string, unknown> = {}
     const invoke = vi.fn()

@@ -108,7 +108,10 @@ import { WorkspaceSubagentMessageRow } from './WorkspaceSubagentMessageRow'
 import { getNotebookRunIdFromActivity } from './workspace-tool-activity-details'
 import { setWorkspacePresentationRevealing } from './workspace-presentation-revealing'
 import { useTranscriptWindow } from './use-transcript-window'
-import { subscribeAnnotationRevealPreparation } from './annotations/annotation-reveal'
+import {
+  subscribeAnnotationRevealPreparation,
+  subscribeBookmarkRevealPreparation
+} from './annotations/annotation-reveal'
 import type { AnnotationPort } from './annotations/annotation-port'
 
 // Replacing a bounded tail can keep the same row count. Tell the existing scroller to follow
@@ -163,6 +166,7 @@ type WorkspaceMessageScrollerProps = {
   optimisticMessage?: ChatMessage
   annotations?: readonly Annotation[]
   onAddAnnotation?: (annotation: TextAnnotation) => AnnotationValidationError | undefined
+  onRemoveAnnotation?: (id: string) => void
   onUpdateAnnotationNote?: (id: string, note: string) => AnnotationValidationError | undefined
   onAnnotationError?: (error: AnnotationValidationError) => void
   canBranchInNewSession?: boolean
@@ -238,6 +242,14 @@ const VisibleMessageSnapshotCommit = ({
   useLayoutEffect(() => {
     onCommit(scopeId, new Set(JSON.parse(messageIdsKey)))
   }, [messageIdsKey, onCommit, scopeId])
+  return null
+}
+
+const AnnotationMessageReveal = ({ target }: { target?: { messageId: string } }): null => {
+  const { scrollToMessage } = useMessageScroller()
+  useLayoutEffect(() => {
+    if (target) scrollToMessage(target.messageId, { align: 'center', behavior: 'instant' })
+  }, [target, scrollToMessage])
   return null
 }
 
@@ -493,6 +505,7 @@ const WorkspaceMessageScrollerImpl = ({
   annotations = [],
   onAddAnnotation,
   onUpdateAnnotationNote,
+  onRemoveAnnotation,
   onAnnotationError,
   optimisticMessage,
   canBranchInNewSession = false,
@@ -534,6 +547,7 @@ const WorkspaceMessageScrollerImpl = ({
           activeAnnotations,
           onAdd: handleAddTextAnnotation,
           onUpdateNote: onUpdateAnnotationNote,
+          onRemove: onRemoveAnnotation,
           onError: onAnnotationError
         }
       : undefined
@@ -792,75 +806,93 @@ const WorkspaceMessageScrollerImpl = ({
     presentationBarrierIndex,
     revealTranscriptItem
   ])
-  useEffect(
-    () =>
-      subscribeAnnotationRevealPreparation((annotation) => {
-        if (annotation.kind !== 'text') return
-        const source = annotation.source
-        if (
-          (source.kind !== 'agent-message' && source.kind !== 'session-item') ||
-          source.sessionId !== currentSessionId
-        ) {
-          return
+  const [annotationScrollTarget, setAnnotationScrollTarget] = useState<{
+    sessionId: string
+    messageId: string
+  }>()
+  if (annotationScrollTarget && annotationScrollTarget.sessionId !== currentSessionId) {
+    setAnnotationScrollTarget(undefined)
+  }
+  const lastBookmarkPreparation = useRef<object | undefined>(undefined)
+  useEffect(() => {
+    const prepare = (annotation: Pick<TextAnnotation, 'source'>): void => {
+      const source = annotation.source
+      if (
+        (source.kind !== 'agent-message' && source.kind !== 'session-item') ||
+        source.sessionId !== currentSessionId
+      ) {
+        return
+      }
+
+      const targetIndex = conversationItems.findIndex((item) => {
+        if (source.kind === 'agent-message') {
+          return item.type === 'message' && item.message.id === source.messageId
         }
-
-        const targetIndex = conversationItems.findIndex((item) => {
-          if (source.kind === 'agent-message') {
-            return item.type === 'message' && item.message.id === source.messageId
-          }
-          if (source.itemType === 'tool-activity') {
-            return (
-              item.type === 'activity-group' &&
-              item.activities.some((activity) => activity.id === source.itemId)
-            )
-          }
-          if (source.itemType === 'plan') {
-            return item.type === 'plan-activity' && item.activity.id === source.itemId
-          }
-          if (source.itemType === 'elicitation') {
-            return item.type === 'activity' && item.activity.id === source.itemId
-          }
-          if (source.itemType === 'subagent-message') {
-            return item.type === 'subagent-message' && item.message.messageId === source.itemId
-          }
-          return false
-        })
-        if (
-          targetIndex < 0 ||
-          (presentationBarrierIndex >= 0 && targetIndex > presentationBarrierIndex)
-        ) {
-          return
+        if (source.itemType === 'tool-activity') {
+          return (
+            item.type === 'activity-group' &&
+            item.activities.some((activity) => activity.id === source.itemId)
+          )
         }
-
-        const target = conversationItems[targetIndex]!
-        revealTranscriptItem(target.id)
-        if (source.kind !== 'session-item') return
-
-        const request = {
-          requestId: ++annotationRevealRequestIdRef.current,
-          itemId: source.itemId,
-          itemType: source.itemType,
-          ...(source.sectionId ? { sectionId: source.sectionId } : {})
+        if (source.itemType === 'plan') {
+          return item.type === 'plan-activity' && item.activity.id === source.itemId
         }
-        setSessionItemRevealRequest(request)
-        if (source.itemType !== 'tool-activity' || target.type !== 'activity-group') return
+        if (source.itemType === 'elicitation') {
+          return item.type === 'activity' && item.activity.id === source.itemId
+        }
+        if (source.itemType === 'subagent-message') {
+          return item.type === 'subagent-message' && item.message.messageId === source.itemId
+        }
+        return false
+      })
+      if (
+        targetIndex < 0 ||
+        (presentationBarrierIndex >= 0 && targetIndex > presentationBarrierIndex)
+      ) {
+        return
+      }
 
-        setCollapsedActivityGroupState((current) => {
-          const groupIds =
-            current.sessionId === currentSessionId ? new Set(current.groupIds) : new Set<string>()
-          groupIds.delete(target.id)
-          return { sessionId: currentSessionId, groupIds }
-        })
-        setActivityExpansionOverrideState((current) => ({
-          sessionId: currentSessionId,
-          overrides: {
-            ...(current.sessionId === currentSessionId ? current.overrides : {}),
-            [source.itemId]: true
-          }
-        }))
-      }),
-    [conversationItems, currentSessionId, presentationBarrierIndex, revealTranscriptItem]
-  )
+      const target = conversationItems[targetIndex]!
+      revealTranscriptItem(target.id)
+      setAnnotationScrollTarget({ sessionId: source.sessionId, messageId: target.id })
+      if (source.kind !== 'session-item') return
+
+      const request = {
+        requestId: ++annotationRevealRequestIdRef.current,
+        itemId: source.itemId,
+        itemType: source.itemType,
+        ...(source.sectionId ? { sectionId: source.sectionId } : {})
+      }
+      setSessionItemRevealRequest(request)
+      if (source.itemType !== 'tool-activity' || target.type !== 'activity-group') return
+
+      setCollapsedActivityGroupState((current) => {
+        const groupIds =
+          current.sessionId === currentSessionId ? new Set(current.groupIds) : new Set<string>()
+        groupIds.delete(target.id)
+        return { sessionId: currentSessionId, groupIds }
+      })
+      setActivityExpansionOverrideState((current) => ({
+        sessionId: currentSessionId,
+        overrides: {
+          ...(current.sessionId === currentSessionId ? current.overrides : {}),
+          [source.itemId]: true
+        }
+      }))
+    }
+    const stopAnnotation = subscribeAnnotationRevealPreparation((annotation) => {
+      if (annotation.kind === 'text') prepare(annotation)
+    })
+    const stopBookmark = subscribeBookmarkRevealPreparation((bookmark) => {
+      if (bookmark.kind !== 'text' || lastBookmarkPreparation.current === bookmark) return
+      lastBookmarkPreparation.current = bookmark
+      prepare(bookmark)
+    })
+    return () => {
+      stopAnnotation()
+      stopBookmark()
+    }
+  }, [conversationItems, currentSessionId, presentationBarrierIndex, revealTranscriptItem])
   const revealFullTranscript = transcriptWindow.revealAll
   const [windowFindOpen, setWindowFindOpen] = useState(false)
   const windowFindAcknowledgedScopeRef = useRef<{ scopeId: string | undefined } | undefined>(
@@ -1437,6 +1469,13 @@ const WorkspaceMessageScrollerImpl = ({
         scrollPreviousItemPeek={64}
       >
         <MessageScroller className="relative min-h-0 flex-1 bg-bg-10">
+          <AnnotationMessageReveal
+            target={
+              annotationScrollTarget?.sessionId === currentSessionId
+                ? annotationScrollTarget
+                : undefined
+            }
+          />
           <SearchMessageReveal
             target={
               searchFocus?.navigationRevision === navigationRevision &&
@@ -2095,6 +2134,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   previous.trailingContent === next.trailingContent &&
   previous.isResumingSession === next.isResumingSession &&
   previous.onAddAnnotation === next.onAddAnnotation &&
+  previous.onRemoveAnnotation === next.onRemoveAnnotation &&
   previous.onUpdateAnnotationNote === next.onUpdateAnnotationNote &&
   previous.onAnnotationError === next.onAnnotationError &&
   areAnnotationsEqual(previous.annotations, next.annotations) &&

@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { EnvStatusBanner } from './EnvStatusBanner'
+import { deriveProvisionUi } from './provisioning-view'
 
 let container: HTMLDivElement
 let root: Root
@@ -19,6 +20,65 @@ afterEach(() => {
 })
 
 describe('EnvStatusBanner', () => {
+  it('routes reported recovery failures to settings instead of repeating provision', () => {
+    let retried = 0
+    let openedSettings = 0
+    const diagnostic =
+      "Error invoking remote method 'notebook-env:provision': Error: The python runtime is " +
+      'recovering from an interrupted operation whose process could not be confirmed stopped.'
+    const ui = deriveProvisionUi(
+      {
+        pythonReady: false,
+        rReady: false,
+        version: 0,
+        provisioning: false,
+        pythonRecoveryBlocked: true
+      },
+      undefined,
+      undefined,
+      diagnostic
+    )
+    act(() =>
+      root.render(
+        <EnvStatusBanner
+          ui={ui}
+          onRetry={() => {
+            retried += 1
+          }}
+          onOpenRuntimes={() => {
+            openedSettings += 1
+          }}
+        />
+      )
+    )
+    const banner = container.querySelector('[role="alert"]')
+    expect(banner?.textContent).toContain('Runtime recovery blocked')
+    expect(banner?.textContent).not.toContain(diagnostic)
+    const action = banner?.querySelector('button')
+    expect(action?.textContent).toBe('Open Settings')
+    act(() => action?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(openedSettings).toBe(1)
+    expect(retried).toBe(0)
+  })
+
+  it('keeps Recheck available when settings are not mounted during onboarding', () => {
+    let rechecked = 0
+    act(() =>
+      root.render(
+        <EnvStatusBanner
+          ui={{ kind: 'error', message: 'recovery details', recoveryBlocked: true }}
+          onRetry={() => {
+            rechecked += 1
+          }}
+        />
+      )
+    )
+    const button = container.querySelector('button')
+    expect(button?.textContent).toBe('Recheck')
+    act(() => button?.click())
+    expect(rechecked).toBe(1)
+  })
+
   it('shows an updating banner during an additive upgrade', () => {
     act(() =>
       root.render(

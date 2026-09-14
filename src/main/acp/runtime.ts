@@ -475,7 +475,7 @@ type AcpRuntimeNotebookOptions = {
     memoryTools: boolean
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
-  releaseSessionCapabilities?: (sessionId: string) => void
+  releaseSessionCapabilities?: (sessionId: string, capabilityTokens: readonly string[]) => void
   registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
   authorizeExecution?: (authorization: {
     sessionId: string
@@ -512,7 +512,7 @@ type AcpRuntimeSkillImportOptions = {
   isEnabled?: () => Promise<boolean>
   getRpcConnection: (binding: { sessionId: string }) => Promise<SkillImportRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
-  releaseSessionCapabilities?: (sessionId: string) => void
+  releaseSessionCapabilities?: (sessionId: string, capabilityTokens: readonly string[]) => void
   authorizeReferencedUploads?: (
     projectId: string,
     sessionId: string,

@@ -235,6 +235,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
         <EnvStatusBanner
           ui={startup.environment.ui}
           onRetry={() => void startup.environment.retry()}
+          onOpenRuntimes={events.settings.openRuntimes}
         />
         <WorkspaceAgentRuntimeProvider onSessionSizeLimit={sessions.reportSessionSizeLimit}>
           <WorkspaceComposerDraftsProvider>

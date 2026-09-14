@@ -5560,7 +5560,7 @@ describe('ACP runtime session management', () => {
 
     await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith(session.sessionId)
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith(session.sessionId, ['secret-token'])
   })
 
   it('emits a terminal failure for every in-flight prompt before an unexpected close clears state', async () => {
@@ -8399,8 +8399,8 @@ describe('ACP runtime session management', () => {
           notebookRpcServer.issueSessionConnection(sessionId, projectId, `root-frame-${sessionId}`),
         registerSessionAlias: (aliasSessionId, sessionId) =>
           notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-        releaseSessionCapabilities: (sessionId) =>
-          notebookRpcServer.releaseSessionCapabilities(sessionId)
+        releaseSessionCapabilities: (sessionId, capabilityTokens) =>
+          notebookRpcServer.releaseSessionCapabilitiesIfOwned(sessionId, capabilityTokens)
       }
     })
 
@@ -16921,7 +16921,7 @@ describe('ACP runtime session management', () => {
     await runtime.deleteSession({ sessionId: session.sessionId })
 
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith(session.sessionId)
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith(session.sessionId, ['secret-token'])
   })
 
   it('releases notebook RPC capabilities for every session on disconnect', async () => {
@@ -16948,8 +16948,8 @@ describe('ACP runtime session management', () => {
     await runtime.disconnect()
 
     expect(releaseSessionCapabilities).toHaveBeenCalledTimes(2)
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith(first.sessionId)
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith(second.sessionId)
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith(first.sessionId, ['secret-token'])
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith(second.sessionId, ['secret-token'])
   })
 
   it('clears all MCP server names on disconnect', async () => {
@@ -17233,7 +17233,7 @@ describe('ACP runtime session management', () => {
       ).rejects.toBe(failure)
 
       expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
-      expect(releaseSessionCapabilities).toHaveBeenCalledWith('restored-session')
+      expect(releaseSessionCapabilities).toHaveBeenCalledWith('restored-session', ['resumed-token'])
 
       const recovered = await runtime.resumeSession({
         sessionId: 'restored-session',
@@ -17287,7 +17287,7 @@ describe('ACP runtime session management', () => {
       ).rejects.toBe(failure)
 
       expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
-      expect(releaseSessionCapabilities).toHaveBeenCalledWith('switched-session')
+      expect(releaseSessionCapabilities).toHaveBeenCalledWith('switched-session', ['adopted-token'])
 
       const recovered = await runtime.resumeSession({
         sessionId: 'switched-session',
@@ -17444,7 +17444,7 @@ describe('ACP runtime session management', () => {
 
     expect(getRpcConnection).toHaveBeenCalledTimes(2)
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith('restored-session')
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith('restored-session', ['session-token'])
   })
 
   it('times out and tears down a reconnect when the agent never answers session/resume', async () => {
@@ -26151,7 +26151,8 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
 
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
     expect(releaseSessionCapabilities).toHaveBeenCalledWith(
-      expect.stringMatching(/^notebook-session-/)
+      expect.stringMatching(/^notebook-session-/),
+      ['secret-token']
     )
   })
 
@@ -26188,7 +26189,8 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
     expect(release).toHaveBeenCalledOnce()
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
     expect(releaseSessionCapabilities).toHaveBeenCalledWith(
-      expect.stringMatching(/^notebook-session-/)
+      expect.stringMatching(/^notebook-session-/),
+      ['secret-token']
     )
   })
 

@@ -116,6 +116,10 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "元のパッケージを利用できません。移動、削除されたか、読み取れなくなった可能性があります。別のパッケージを選択してください。"
   },
   "renderer": {
+    "Old Shell launch records are blocking this update.": "古いシェル起動記録が更新を妨げています。",
+    "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "復旧操作では古いシェル起動記録をバックアップし、更新を再試行します。プロジェクトのデータと設定は保持されます。",
+    "Back up records and retry": "記録をバックアップして再試行",
+    "Open Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?": "Open Science は、以前のセッションのコマンドがまだ実行中かどうかを確認できません。実行中の場合、更新中に結果が失われる可能性があります。古い起動記録をバックアップして再試行しますか？",
     "Click to enter a page number": "クリックしてページ番号を入力",
     "Only stable releases can be installed.": "安定版のみインストールできます。",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "R のアクセス検証にはネットワーク保護の準備が必要です。ネットワーク設定を確認してから、ランタイムを再確認してください。",
@@ -5798,6 +5802,31 @@
     "Leave blank for a local server": "ローカルサーバーの場合は空欄のままにしてください",
     "Not usable with {{framework}}: it needs {{routes}}, but this gateway speaks {{providerRoutes}}. You can still save it — switch the agent framework to use this model.": "{{framework}} では使用できません：{{routes}} が必要ですが、このゲートウェイは {{providerRoutes}} を提供します。保存は可能です。エージェントフレームワークを切り替えるとこのモデルを使用できます。",
     "Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.": "ベース URL と Chat Completions 形式を自動入力します。もう一度タップするとクリアできます。すべて後から編集できます。",
-    "Not usable with {{framework}}": "{{framework}}では使用できません"
+    "Not usable with {{framework}}": "{{framework}}では使用できません",
+    "PDF region on page {{page}}": "PDF {{page}}ページの領域",
+    "For me": "自分用",
+    "Show bookmark source": "ブックマークの参照元を表示",
+    "Bookmark note could not be saved. Try again.": "ブックマークのメモを保存できませんでした。もう一度お試しください。",
+    "This PDF source could not be verified for bookmarks.": "この PDF の参照元を検証できないため、ブックマークを追加できません。",
+    "Bookmarks are available after this conversation is saved.": "この会話を保存するとブックマークを追加できます。",
+    "Agent message": "エージェントのメッセージ",
+    "Bookmark could not be deleted. Try again.": "ブックマークを削除できませんでした。もう一度お試しください。",
+    "Bookmarks in this session. Click one to jump there.": "この会話のブックマークです。クリックすると元の箇所に移動します。",
+    "Loading bookmarks…": "ブックマークを読み込み中…",
+    "Bookmarked": "ブックマーク済み",
+    "For agent": "エージェント向け",
+    "Session activity": "セッションのアクティビティ",
+    "Bookmark source is no longer available.": "ブックマークの参照元は利用できなくなりました。",
+    "Bookmarks could not be loaded. Try again.": "ブックマークを読み込めませんでした。もう一度お試しください。",
+    "Bookmarks ({{count}})_other": "ブックマーク（{{count}}）",
+    "Delete bookmark": "ブックマークを削除",
+    "Optional — a note for your future self…": "任意 — 未来の自分へのメモ…",
+    "Edit bookmark note": "ブックマークのメモを編集",
+    "Selection destination": "選択範囲の用途",
+    "Bookmark could not be saved. Try again.": "ブックマークを保存できませんでした。もう一度お試しください。",
+    "Add a private note": "個人用のメモを追加",
+    "No bookmarks yet.": "ブックマークはまだありません。",
+    "Bookmark note": "ブックマークのメモ",
+    "The exact bookmark location could not be found.": "ブックマークの正確な位置が見つかりませんでした。"
   }
 }

@@ -584,7 +584,13 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     if (this.status.state !== 'ready' || this.applying) return this.status
     this.applying = true
     this.installerStarted = false
-    this.setStatus({ ...this.status, state: 'applying', error: undefined, blockedBy: undefined })
+    this.setStatus({
+      ...this.status,
+      state: 'applying',
+      error: undefined,
+      blockedBy: undefined,
+      legacyShellRecovery: undefined
+    })
 
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-apply',
@@ -601,7 +607,12 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       operation.phase('install-gate')
       let readiness: Awaited<ReturnType<InstallGate>>
       try {
-        readiness = await this.installGate({ force: options.force })
+        readiness = await this.installGate({
+          force: options.force,
+          ...(options.legacyShellRecoveryToken
+            ? { legacyShellRecoveryToken: options.legacyShellRecoveryToken }
+            : {})
+        })
       } catch (error) {
         this.releaseAbortedInstallHandoff()
         this.log.error('update install gate failed', error)
@@ -634,7 +645,10 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
                 : readiness.blockedBy?.length
                   ? 'Research work is still running. Stop it before restarting to update.'
                   : 'Could not fully stop background processes before updating. Please try again.',
-          ...(readiness.blockedBy ? { blockedBy: readiness.blockedBy } : {})
+          ...(readiness.blockedBy ? { blockedBy: readiness.blockedBy } : {}),
+          ...(readiness.legacyShellRecovery
+            ? { legacyShellRecovery: readiness.legacyShellRecovery }
+            : {})
         })
         operation.fail(new Error('Install gate refused'), {
           reason: 'install-gate-refused',

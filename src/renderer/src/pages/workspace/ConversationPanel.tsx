@@ -151,6 +151,8 @@ import type { WorkspaceConversationController } from './workspace-conversation-c
 import type { WorkspaceSessionController } from './workspace-session-controller'
 import { getAvatarColor } from '../settings/specialist-icons'
 import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
+import { BookmarksPopover } from './bookmarks/BookmarksPopover'
+import { useBookmarks } from './bookmarks/bookmark-context'
 
 const localizeVisionRunFailure = (
   error: string | null | undefined,
@@ -443,8 +445,10 @@ const ConversationPanel = ({
   subagents
 }: ConversationPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
   const { activeSession, composerFocusKey, canEditDraft, actionError, sideChatDisabledReason } =
     view
+  const hasBookmarkEntry = Boolean(activeSession && (bookmarkCount > 0 || bookmarkLoadError))
   const {
     view: {
       doc: draftDoc,
@@ -1142,6 +1146,7 @@ const ConversationPanel = ({
               annotations={annotations}
               onAddAnnotation={handleAddTranscriptAnnotation}
               onUpdateAnnotationNote={handleUpdateTranscriptAnnotation}
+              onRemoveAnnotation={onRemoveAnnotation}
               onAnnotationError={handleTranscriptAnnotationError}
             />
           </WorkspaceMessageEditStateProvider>
@@ -1315,6 +1320,7 @@ const ConversationPanel = ({
                 messageQueue.items.length > 0 ||
                 backgroundTasksVisible ||
                 hasSubagents ||
+                hasBookmarkEntry ||
                 (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false) ? (
                   <div
                     aria-hidden={ordinaryComposerBlocked || undefined}
@@ -1328,7 +1334,7 @@ const ConversationPanel = ({
                     }
                     className={cn(
                       'flex px-2',
-                      notebookReference || messageQueue.items.length > 0
+                      notebookReference || messageQueue.items.length > 0 || hasBookmarkEntry
                         ? 'relative -mb-8 min-h-[68px] items-start rounded-2xl bg-bg-200 pt-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200 motion-safe:ease-out'
                         : 'mb-2 min-h-9 items-center rounded-lg border border-border-200 bg-bg-000 shadow-card',
                       ordinaryComposerBlocked && 'invisible pointer-events-none'
@@ -1353,6 +1359,7 @@ const ConversationPanel = ({
                       />
                     ) : null}
                     <SubagentsBar session={activeSession} permissions={pendingPermissions} />
+                    {activeSession ? <BookmarksPopover /> : null}
                     {notebookReference ? (
                       <button
                         type="button"

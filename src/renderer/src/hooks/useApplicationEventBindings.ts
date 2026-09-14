@@ -73,6 +73,7 @@ type ApplicationEventProjection = Readonly<{
   }>
   settings: Readonly<{
     close: () => void
+    openRuntimes: () => void
     openSession: (sessionId: string) => void
   }>
 }>
@@ -89,6 +90,7 @@ const useApplicationEventBindings = ({
   const view = useNavigationStore((state) => state.view)
   const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
   const openSettings = useSettingsStore((state) => state.openSettings)
+  const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
   const closeSettings = useSettingsStore((state) => state.closeSettings)
   const hasConnectorApproval = useSettingsStore((state) => state.pendingApprovals.length > 0)
   const enqueueConnectorApproval = useSettingsStore((state) => state.enqueueApproval)
@@ -486,7 +488,11 @@ const useApplicationEventBindings = ({
     navigation: { view },
     globalSearch: { open: openGlobalSearch, setOpen: setGlobalSearchOpen },
     closeConfirmation: { setOpen: setCloseConfirmationOpen },
-    settings: { close: closeSettings, openSession: openPermissionSession }
+    settings: {
+      close: closeSettings,
+      openRuntimes: () => openSettingsToPanel('runtimes'),
+      openSession: openPermissionSession
+    }
   }
 }
 

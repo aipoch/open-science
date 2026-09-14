@@ -180,6 +180,59 @@ describe('ensembl_vep_variant', () => {
     expect((r.colocated_variants as unknown[]).length).toBe(1)
   })
 
+  it.each([1, 10])(
+    'preserves allele-specific predictions and counts unique transcripts with cap %i',
+    async (cap) => {
+      const rows = [
+        {
+          transcript_id: 't1',
+          gene_id: 'G1',
+          variant_allele: 'A',
+          impact: 'LOW',
+          sift_prediction: 'tolerated'
+        },
+        {
+          transcript_id: 't1',
+          gene_id: 'G1',
+          variant_allele: 'T',
+          impact: 'MODERATE',
+          sift_prediction: 'deleterious'
+        },
+        { transcript_id: 't2', gene_id: 'G1', variant_allele: 'A', impact: 'MODIFIER' },
+        { transcript_id: 't3', gene_id: 'G2', variant_allele: 'T', impact: 'LOW' }
+      ]
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonRes([{ ...vepResult, allele_string: 'G/A/T', transcript_consequences: rows }])
+        )
+      const out = (await run(
+        'ensembl_vep_variant',
+        { variant_id: 'rs-test', max_consequences: cap },
+        fetchImpl
+      )) as { results: Array<Record<string, unknown>> }
+      const r = out.results[0]
+      const kept = r.transcript_consequences as Array<Record<string, unknown>>
+      expect(r.genes).toEqual([
+        { gene_id: 'G1', gene_symbol: undefined, worst_impact: 'MODERATE', n_transcripts: 2 },
+        { gene_id: 'G2', gene_symbol: undefined, worst_impact: 'LOW', n_transcripts: 1 }
+      ])
+      expect(r.n_transcript_consequences).toBe(4)
+      expect(r.transcript_consequences_truncated).toBe(cap < 4)
+      expect(kept).toHaveLength(Math.min(cap, 4))
+      expect(kept[0]).toMatchObject({
+        transcript_id: 't1',
+        variant_allele: 'T',
+        sift_prediction: 'deleterious'
+      })
+      if (cap >= 4) {
+        expect(
+          kept.find((row) => row.transcript_id === 't1' && row.variant_allele === 'A')
+        ).toMatchObject({ sift_prediction: 'tolerated' })
+      }
+    }
+  )
+
   it('builds the region+allele route and reports the query', async () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes([{ ...vepResult, input: 'region' }]))
     const out = (await run(

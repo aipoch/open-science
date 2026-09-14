@@ -1,4 +1,5 @@
 import { ErrorNotice } from '@/components/error-notice'
+import { useEffect, useRef, useState } from 'react'
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { Trans, useTranslation } from 'react-i18next'
@@ -7,6 +8,7 @@ import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { Button } from '@/components/ui/button'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   dialogBodyClassName,
@@ -46,10 +48,24 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
 
   const open = Boolean(active && isOpen && status.latest)
   const dialogStatus = useRetainedDialogValue(open ? status : undefined)
+  const failureNotice = useRef<HTMLDivElement>(null)
+  const [recoveryToken, setRecoveryToken] = useState<string>()
+  useEffect(() => {
+    if (open && dialogStatus?.error) {
+      failureNotice.current?.scrollIntoView({ block: 'start' })
+    }
+  }, [open, dialogStatus?.error])
   const releaseUrl = `${APP.links.githubReleases}/tag/v${dialogStatus?.latest ?? ''}`
   const isDownloading = dialogStatus?.state === 'downloading'
   const isReady = dialogStatus?.state === 'ready'
   const isApplying = dialogStatus?.state === 'applying'
+  const legacyRecovery = dialogStatus?.legacyShellRecovery
+  const recoverUpdate = (): void => {
+    if (legacyRecovery) setRecoveryToken(legacyRecovery.token)
+  }
+  const recoveryConfirmationOpen = Boolean(
+    open && isReady && recoveryToken && recoveryToken === legacyRecovery?.token
+  )
   const isInstallerUnavailable =
     dialogStatus?.state === 'available' &&
     dialogStatus.applyKind === 'installer' &&
@@ -82,7 +98,10 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
     <Dialog.Root
       open={open}
       onOpenChange={(open) => {
-        if (!open && !isApplying) closeDialog()
+        if (!open && !isApplying) {
+          setRecoveryToken(undefined)
+          closeDialog()
+        }
       }}
     >
       {dialogStatus ? (
@@ -90,6 +109,13 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
           <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
           <Dialog.Content
             onInteractOutside={(event) => event.preventDefault()}
+            onEscapeKeyDown={(event) => {
+              // The nested layer may not have registered its Escape listener yet.
+              if (recoveryConfirmationOpen) {
+                event.preventDefault()
+                setRecoveryToken(undefined)
+              }
+            }}
             className={dialogPanelClassName(
               'z-[60] flex max-h-[calc(100svh-2rem)] flex-col w-[min(560px,calc(100vw-2rem))] overflow-hidden p-0'
             )}
@@ -124,6 +150,89 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
 
             <ScrollArea className="grid min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:h-auto [&>[data-slot=scroll-area-viewport]]:min-h-0">
               <div className={dialogBodyClassName}>
+                {dialogStatus.error ? (
+                  <div ref={failureNotice}>
+                    <ErrorNotice
+                      role="alert"
+                      className="mt-3"
+                      primaryButton={
+                        legacyRecovery && isReady
+                          ? {
+                              label: t('Back up records and retry'),
+                              onClick: recoverUpdate
+                            }
+                          : undefined
+                      }
+                      description={
+                        legacyRecovery
+                          ? t('Old Shell launch records are blocking this update.')
+                          : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_ERROR
+                            ? t(
+                                'Could not stop background processes before updating. Please try again.'
+                              )
+                            : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
+                              ? t(
+                                  'Could not fully stop background processes before updating. Please try again.'
+                                )
+                              : dialogStatus.error === UPDATE_SETTINGS_INSTALL_ERROR
+                                ? t(
+                                    'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
+                                  )
+                                : dialogStatus.error ===
+                                    'Research work is still running. Stop it before restarting to update.'
+                                  ? t(
+                                      'Research work is still running. Stop it before restarting to update.'
+                                    )
+                                  : dialogStatus.error ===
+                                      'Subagents are still running. Return to their tasks and stop them before restarting to update.'
+                                    ? t(
+                                        'Subagents are still running. Return to their tasks and stop them before restarting to update.'
+                                      )
+                                    : dialogStatus.error ===
+                                        'The installer is missing or has changed. Download the update again.'
+                                      ? t(
+                                          'The installer is missing or has changed. Download the update again.'
+                                        )
+                                      : (dialogStatus.error ?? t('Update failed'))
+                      }
+                    >
+                      {legacyRecovery ? (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {t(
+                            'Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.'
+                          )}
+                        </p>
+                      ) : isBackgroundProcessError ? (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          <Trans
+                            i18nKey="Cancel this update, then use Reveal in Settings → General → Diagnostics to locate the log file. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>."
+                            components={{
+                              issueLink: (
+                                <ExternalTextLink href={APP.links.githubIssues}>
+                                  {''}
+                                </ExternalTextLink>
+                              )
+                            }}
+                          />
+                        </p>
+                      ) : null}
+                      {/* Fallback when the in-app update fails (e.g. a blocked/failed in-place install): let the
+                    user grab the installer by hand, mirroring the macOS manual-reinstall path. */}
+                      <ExternalTextLink href={APP.update.downloadPage} className="mt-1 text-xs">
+                        {t('Download manually')}
+                      </ExternalTextLink>
+                      {isForceableGateError && isReady ? (
+                        <button
+                          type="button"
+                          onClick={forceUpdate}
+                          className="mt-2 block text-xs text-destructive underline"
+                        >
+                          {t('Continue with force update')}
+                        </button>
+                      ) : null}
+                    </ErrorNotice>
+                  </div>
+                ) : null}
                 {releaseNotes ? (
                   <div>
                     <p className="mb-1 text-xs font-medium text-muted-foreground">
@@ -160,71 +269,6 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                   </div>
                 ) : null}
 
-                {dialogStatus.error ? (
-                  <ErrorNotice
-                    role="alert"
-                    className="mt-3"
-                    description={
-                      dialogStatus.error === UPDATE_BACKGROUND_PROCESS_ERROR
-                        ? t(
-                            'Could not stop background processes before updating. Please try again.'
-                          )
-                        : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
-                          ? t(
-                              'Could not fully stop background processes before updating. Please try again.'
-                            )
-                          : dialogStatus.error === UPDATE_SETTINGS_INSTALL_ERROR
-                            ? t(
-                                'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
-                              )
-                            : dialogStatus.error ===
-                                'Research work is still running. Stop it before restarting to update.'
-                              ? t(
-                                  'Research work is still running. Stop it before restarting to update.'
-                                )
-                              : dialogStatus.error ===
-                                  'Subagents are still running. Return to their tasks and stop them before restarting to update.'
-                                ? t(
-                                    'Subagents are still running. Return to their tasks and stop them before restarting to update.'
-                                  )
-                                : dialogStatus.error ===
-                                    'The installer is missing or has changed. Download the update again.'
-                                  ? t(
-                                      'The installer is missing or has changed. Download the update again.'
-                                    )
-                                  : (dialogStatus.error ?? t('Update failed'))
-                    }
-                  >
-                    {isBackgroundProcessError ? (
-                      <p className="mt-2 text-xs text-muted-foreground">
-                        <Trans
-                          i18nKey="Cancel this update, then use Reveal in Settings → General → Diagnostics to locate the log file. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>."
-                          components={{
-                            issueLink: (
-                              <ExternalTextLink href={APP.links.githubIssues}>
-                                {''}
-                              </ExternalTextLink>
-                            )
-                          }}
-                        />
-                      </p>
-                    ) : null}
-                    {/* Fallback when the in-app update fails (e.g. a blocked/failed in-place install): let the
-                    user grab the installer by hand, mirroring the macOS manual-reinstall path. */}
-                    <ExternalTextLink href={APP.update.downloadPage} className="mt-1 text-xs">
-                      {t('Download manually')}
-                    </ExternalTextLink>
-                    {isForceableGateError && isReady ? (
-                      <button
-                        type="button"
-                        onClick={forceUpdate}
-                        className="mt-2 block text-xs text-destructive underline"
-                      >
-                        {t('Continue with force update')}
-                      </button>
-                    ) : null}
-                  </ErrorNotice>
-                ) : null}
                 {isInstallerUnavailable ? (
                   <p className="mt-3 text-xs text-muted-foreground">
                     {t(
@@ -316,6 +360,29 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
           </Dialog.Content>
         </Dialog.Portal>
       ) : null}
+      <ConfirmActionDialog
+        open={recoveryConfirmationOpen}
+        title={t('Back up records and retry')}
+        description={t(
+          'Open Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
+        )}
+        cancelLabel={t('Cancel')}
+        confirmLabel={t('Back up records and retry')}
+        destructive
+        onCancel={() => setRecoveryToken(undefined)}
+        onConfirm={() => {
+          if (!recoveryConfirmationOpen) return
+          setRecoveryToken(undefined)
+          void apply({ legacyShellRecoveryToken: recoveryToken })
+        }}
+        onCloseAutoFocus={(event) => {
+          const trigger = failureNotice.current?.querySelector('button')
+          if (open && isReady && trigger) {
+            event.preventDefault()
+            trigger.focus()
+          }
+        }}
+      />
     </Dialog.Root>
   )
 }

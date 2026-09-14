@@ -733,18 +733,15 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     }
   }
 
-  // Refuses to write a prefix crash-recovery flagged possibly-live (see ProvisionerDeps.isPrefixBlocked).
-  // Called at every prefix-write site so an unknown-liveness orphan blocks the write this session —
+  // Refuses to write a prefix with unfinished crash recovery (see ProvisionerDeps.isPrefixBlocked).
+  // Called at every prefix-write site so retained recovery evidence blocks the write this session —
   // covering the startup gate's restore/upgrade/repair, not just the UI provision/repair handlers.
   private assertPrefixWritable(prefix: string): void {
     if (this.deps.isPrefixBlocked?.(prefix)) {
       throw new Error(
-        `RUNTIME_RECOVERY_BLOCKED: a previous operation on "${prefix}" was interrupted and its worker ` +
-          'process could not be confirmed stopped, so writing this environment now could corrupt it. ' +
-          // Honest: a probeable worker clears itself once it exits (re-checked each restart); an
-          // unprobeable/uncertain block will NOT clear on its own, so point the user at Reset.
-          'On restart it clears automatically once its worker is confirmed stopped; if it persists, ' +
-          'use Reset in Settings → Runtimes to recover this environment.'
+        `RUNTIME_RECOVERY_BLOCKED: recovery of a previous operation on "${prefix}" has not completed. ` +
+          'Writing this environment is blocked. Use Recheck in Settings → Runtimes to retry safe ' +
+          'recovery and review the remaining recovery requirements.'
       )
     }
   }

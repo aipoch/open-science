@@ -116,6 +116,10 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原套件檔案無法使用，可能已移動、刪除或無法讀取。請選擇其他套件檔案。"
   },
   "renderer": {
+    "Old Shell launch records are blocking this update.": "舊的命令列啟動記錄阻止了本次更新。",
+    "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "復原操作將備份舊的命令列啟動記錄，然後重試更新。專案資料和設定將保留。",
+    "Back up records and retry": "備份記錄並重試",
+    "Open Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?": "Open Science 無法確認先前工作階段中的命令是否仍在執行。如果仍在執行，更新可能導致其結果遺失。是否備份舊的啟動記錄並重試？",
     "Click to enter a page number": "點擊輸入頁碼",
     "Only stable releases can be installed.": "僅可安裝穩定版本。",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "驗證 R 存取權限需要網路保護就緒。請檢查網路設定，然後重新檢查執行環境。",
@@ -5798,6 +5802,31 @@
     "Leave blank for a local server": "本機服務可留空",
     "Not usable with {{framework}}: it needs {{routes}}, but this gateway speaks {{providerRoutes}}. You can still save it — switch the agent framework to use this model.": "無法搭配 {{framework}} 使用：它需要 {{routes}}，而此閘道提供 {{providerRoutes}}。仍可儲存——切換智能體框架後即可使用此模型。",
     "Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.": "快速填入基礎 URL 與 Chat Completions 格式。再次點按可清除。所有欄位仍可修改。",
-    "Not usable with {{framework}}": "無法搭配 {{framework}} 使用"
+    "Not usable with {{framework}}": "無法搭配 {{framework}} 使用",
+    "PDF region on page {{page}}": "PDF 第 {{page}} 頁的區域",
+    "For me": "留給自己",
+    "Show bookmark source": "顯示書籤來源",
+    "Bookmark note could not be saved. Try again.": "無法儲存書籤備註。請重試。",
+    "This PDF source could not be verified for bookmarks.": "無法驗證此 PDF 來源以新增書籤。",
+    "Bookmarks are available after this conversation is saved.": "儲存此對話後即可新增書籤。",
+    "Agent message": "智能體訊息",
+    "Bookmark could not be deleted. Try again.": "無法刪除書籤。請重試。",
+    "Bookmarks in this session. Click one to jump there.": "此對話中的書籤。點擊書籤可跳轉至原文。",
+    "Loading bookmarks…": "正在載入書籤…",
+    "Bookmarked": "已加入書籤",
+    "For agent": "給智能體",
+    "Session activity": "對話活動",
+    "Bookmark source is no longer available.": "書籤來源已無法使用。",
+    "Bookmarks could not be loaded. Try again.": "無法載入書籤。請重試。",
+    "Bookmarks ({{count}})_other": "書籤（{{count}}）",
+    "Delete bookmark": "刪除書籤",
+    "Optional — a note for your future self…": "選填 — 給未來的自己留個備註…",
+    "Edit bookmark note": "編輯書籤備註",
+    "Selection destination": "選取範圍用途",
+    "Bookmark could not be saved. Try again.": "無法儲存書籤。請重試。",
+    "Add a private note": "新增私人備註",
+    "No bookmarks yet.": "尚無書籤。",
+    "Bookmark note": "書籤備註",
+    "The exact bookmark location could not be found.": "無法找到書籤的確切位置。"
   }
 }

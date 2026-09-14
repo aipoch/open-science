@@ -40,6 +40,53 @@ const mergeCollectionByIdentity = <Item>(
   return merged
 }
 
+// Task completions persist tool calls without renderer-only groups; keep only agreed memberships.
+const reconcileActivityGroupMembership = (
+  graph: NonNullable<PersistedChatSession['conversationGraph']>
+): NonNullable<PersistedChatSession['conversationGraph']> => {
+  const groupsById = new Map(graph.activityGroups.map((group) => [group.id, group]))
+  const activityIdsByGroupId = new Map(
+    graph.activityGroups.map((group) => [group.id, new Set(group.activityIds)])
+  )
+  const firstGroupByActivityId = new Map<string, (typeof graph.activityGroups)[number]>()
+  for (const group of graph.activityGroups) {
+    for (const activityId of group.activityIds) {
+      if (!firstGroupByActivityId.has(activityId)) firstGroupByActivityId.set(activityId, group)
+    }
+  }
+  const activities = graph.activities.map((activity): (typeof graph.activities)[number] => {
+    const group = activity.activityGroupId
+      ? groupsById.get(activity.activityGroupId)
+      : firstGroupByActivityId.get(activity.id)
+    if (
+      group &&
+      activityIdsByGroupId.get(group.id)!.has(activity.id) &&
+      group.agentFrameId === activity.agentFrameId &&
+      group.messageBranchId === activity.messageBranchId &&
+      group.promptMessageId === activity.promptMessageId
+    ) {
+      return activity.activityGroupId === group.id
+        ? activity
+        : { ...activity, activityGroupId: group.id }
+    }
+    if (!activity.activityGroupId) return activity
+    const { activityGroupId, ...ungrouped } = activity
+    void activityGroupId
+    return ungrouped
+  })
+  const groupIdByActivityId = new Map(
+    activities.map(({ id, activityGroupId }) => [id, activityGroupId])
+  )
+  return {
+    ...graph,
+    activities,
+    activityGroups: graph.activityGroups.map((group) => ({
+      ...group,
+      activityIds: group.activityIds.filter((id) => groupIdByActivityId.get(id) === group.id)
+    }))
+  }
+}
+
 const mergeConversationGraphByIdentity = (
   current: NonNullable<PersistedChatSession['conversationGraph']>,
   incoming: NonNullable<PersistedChatSession['conversationGraph']>,
@@ -64,7 +111,7 @@ const mergeConversationGraphByIdentity = (
       (currentItem, incomingItem) =>
         preferIncoming(currentItem, incomingItem) ? incomingItem : currentItem
     )
-  return {
+  return reconcileActivityGroupMembership({
     ...structuredClone(current),
     frames: mergeCollectionByIdentity(
       current.frames,
@@ -125,7 +172,7 @@ const mergeConversationGraphByIdentity = (
         incomingWinsConflicts ||
         (right.endedAt ?? right.startedAt) > (left.endedAt ?? left.startedAt)
     )
-  }
+  })
 }
 
 const mergeDelegatedWorkByIdentity = (

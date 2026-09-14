@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => {
       load: vi.fn().mockResolvedValue(true),
       checkEnvironment: vi.fn().mockResolvedValue(undefined),
       openSettings: vi.fn(),
+      openSettingsToPanel: vi.fn(),
       closeSettings: vi.fn()
     },
     skillImport: { enqueue: vi.fn(), dismiss: vi.fn(), pending: [] as unknown[] },
@@ -389,8 +390,19 @@ vi.mock('@/pages/settings/SettingsPage', () => ({
   )
 }))
 vi.mock('@/pages/workspace/EnvStatusBanner', () => ({
-  EnvStatusBanner: ({ onRetry }: { onRetry?: () => void }): React.JSX.Element => (
-    <button type="button" data-testid="env-banner" onClick={onRetry} />
+  EnvStatusBanner: ({
+    onRetry,
+    onOpenRuntimes
+  }: {
+    onRetry?: () => void
+    onOpenRuntimes?: () => void
+  }): React.JSX.Element => (
+    <>
+      <button type="button" data-testid="env-banner" onClick={onRetry} />
+      {onOpenRuntimes ? (
+        <button type="button" data-testid="env-open-runtimes" onClick={onOpenRuntimes} />
+      ) : null}
+    </>
   )
 }))
 vi.mock('@/pages/workspace/WorkspacePage', () => ({
@@ -1313,6 +1325,16 @@ describe('App startup routing', () => {
     expect(mocks.syncUnreadTaskView).toHaveBeenLastCalledWith({
       isSessionContentVisible: false
     })
+  })
+
+  it('opens the Runtimes settings panel from the home recovery banner', async () => {
+    mocks.settings.isLoaded = true
+    mocks.startupView = 'app'
+    await render()
+    const action = container.querySelector<HTMLButtonElement>('[data-testid="env-open-runtimes"]')
+    expect(action).not.toBeNull()
+    await act(async () => action?.click())
+    expect(mocks.settings.openSettingsToPanel).toHaveBeenCalledWith('runtimes')
   })
 
   it('routes first-run users to onboarding after settings hydration', async () => {

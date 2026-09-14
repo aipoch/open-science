@@ -95,6 +95,7 @@ const renderCodeBody = (
       activeAnnotations={annotationContext.annotationPort.activeAnnotations}
       onAdd={annotationContext.annotationPort.onAdd}
       onUpdateNote={annotationContext.annotationPort.onUpdateNote}
+      onRemove={annotationContext.annotationPort.onRemove}
       onError={annotationContext.annotationPort.onError}
     >
       {body}
@@ -198,6 +199,7 @@ const WorkspaceToolDetailsRow = ({
               activeAnnotations={annotationPort.activeAnnotations}
               onAdd={annotationPort.onAdd}
               onUpdateNote={annotationPort.onUpdateNote}
+              onRemove={annotationPort.onRemove}
               onError={annotationPort.onError}
             >
               {diffBody}

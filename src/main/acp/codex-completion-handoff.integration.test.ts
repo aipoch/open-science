@@ -210,8 +210,8 @@ describe('Codex approved handoff', () => {
               ),
             registerSessionAlias: (aliasSessionId, sessionId) =>
               notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-            releaseSessionCapabilities: (sessionId) =>
-              notebookRpcServer.releaseSessionCapabilities(sessionId),
+            releaseSessionCapabilities: (sessionId, capabilityTokens) =>
+              notebookRpcServer.releaseSessionCapabilitiesIfOwned(sessionId, capabilityTokens),
             registerSessionSpecialist: (sessionId, specialistId) =>
               notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
             setArtifactTurnBinding: (sessionId, binding) => {

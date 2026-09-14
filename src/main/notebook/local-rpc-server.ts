@@ -1038,6 +1038,23 @@ class NotebookLocalRpcServer {
     }
   }
 
+  // Runtime generations overlap during adoption. Only a caller holding every current ACP
+  // credential in this alias closure may remove the shared Session state. Concrete release()
+  // callbacks still revoke the caller's own credentials when this ownership check fails.
+  releaseSessionCapabilitiesIfOwned(sessionId: string, capabilityTokens: readonly string[]): void {
+    const expected = new Set(capabilityTokens)
+    let ownsCurrentCapability = false
+    for (const owner of this.resolveSessionCapabilityOwners(sessionId)) {
+      for (const tokens of [this.sessionRpcTokens, this.skillImportRpcTokens, this.planRpcTokens]) {
+        const token = tokens.get(owner)
+        if (!token) continue
+        if (!expected.has(token)) return
+        ownsCurrentCapability = true
+      }
+    }
+    if (ownsCurrentCapability) this.releaseSessionCapabilities(sessionId)
+  }
+
   // Releases ACP-owned session state without revoking the persistent control-plane capability. The
   // Notebook RuntimeSession owns that capability and revokes it through connection.release().
   releaseSessionCapabilities(sessionId: string): void {

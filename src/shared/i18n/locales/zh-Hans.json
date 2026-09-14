@@ -116,6 +116,10 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原包文件不可用，可能已移动、删除或无法读取。请选择其他包文件。"
   },
   "renderer": {
+    "Old Shell launch records are blocking this update.": "旧的命令行启动记录阻止了本次更新。",
+    "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "恢复操作将备份旧的命令行启动记录，然后重试更新。项目数据和设置将保留。",
+    "Back up records and retry": "备份记录并重试",
+    "Open Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?": "Open Science 无法确认先前会话中的命令是否仍在运行。如果仍在运行，更新可能导致其结果丢失。是否备份旧的启动记录并重试？",
     "Click to enter a page number": "点击输入页码",
     "Only stable releases can be installed.": "仅可安装稳定版本。",
     "R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.": "验证 R 访问权限需要网络保护就绪。请检查网络设置，然后重新检查运行环境。",
@@ -5798,6 +5802,31 @@
     "Leave blank for a local server": "本地服务可留空",
     "Not usable with {{framework}}: it needs {{routes}}, but this gateway speaks {{providerRoutes}}. You can still save it — switch the agent framework to use this model.": "无法配合 {{framework}} 使用：它需要 {{routes}}，而此网关提供 {{providerRoutes}}。仍可保存——切换智能体框架后即可使用此模型。",
     "Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.": "快速填入基础 URL 和 Chat Completions 格式。再次点按可清除。所有字段仍可修改。",
-    "Not usable with {{framework}}": "无法配合 {{framework}} 使用"
+    "Not usable with {{framework}}": "无法配合 {{framework}} 使用",
+    "PDF region on page {{page}}": "PDF 第 {{page}} 页的区域",
+    "For me": "留给自己",
+    "Show bookmark source": "显示书签来源",
+    "Bookmark note could not be saved. Try again.": "无法保存书签备注。请重试。",
+    "This PDF source could not be verified for bookmarks.": "无法验证此 PDF 来源以添加书签。",
+    "Bookmarks are available after this conversation is saved.": "保存此会话后即可添加书签。",
+    "Agent message": "智能体消息",
+    "Bookmark could not be deleted. Try again.": "无法删除书签。请重试。",
+    "Bookmarks in this session. Click one to jump there.": "此会话中的书签。点击书签可跳转到原文。",
+    "Loading bookmarks…": "正在加载书签…",
+    "Bookmarked": "已添加书签",
+    "For agent": "给智能体",
+    "Session activity": "会话活动",
+    "Bookmark source is no longer available.": "书签来源已不可用。",
+    "Bookmarks could not be loaded. Try again.": "无法加载书签。请重试。",
+    "Bookmarks ({{count}})_other": "书签（{{count}}）",
+    "Delete bookmark": "删除书签",
+    "Optional — a note for your future self…": "可选 — 给未来的自己留个备注…",
+    "Edit bookmark note": "编辑书签备注",
+    "Selection destination": "选区用途",
+    "Bookmark could not be saved. Try again.": "无法保存书签。请重试。",
+    "Add a private note": "添加私人备注",
+    "No bookmarks yet.": "暂无书签。",
+    "Bookmark note": "书签备注",
+    "The exact bookmark location could not be found.": "无法找到书签的准确位置。"
   }
 }

@@ -4,6 +4,15 @@ import { join, win32 } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
+const cacheWarnings = vi.hoisted(() => vi.fn())
+vi.mock('../logger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../logger')>()
+  return {
+    ...actual,
+    createLogger: (scope: string) => ({ ...actual.createLogger(scope), warn: cacheWarnings })
+  }
+})
+
 import {
   DEFAULT_MAX_CACHE_RELATIVE_PATH,
   isTrustedMicromambaWorkingCacheForRoot,
@@ -451,6 +460,42 @@ describe('isTrustedMicromambaWorkingCacheForRoot', () => {
 
   it('accepts the exact marker- and ownership-verified retained cache', () => {
     expect(isTrustedMicromambaWorkingCacheForRoot(root, cache.path, trustedDeps)).toBe(true)
+  })
+
+  it('diagnoses an unreadable cache marker separately from rejected ownership', () => {
+    cacheWarnings.mockClear()
+    const missing = Object.assign(new Error('private path must not enter diagnostics'), {
+      code: 'ENOENT'
+    })
+    expect(
+      isTrustedMicromambaWorkingCacheForRoot(root, cache.path, {
+        ...trustedDeps,
+        inspect: () => {
+          throw missing
+        }
+      })
+    ).toBe(false)
+    expect(cacheWarnings).toHaveBeenLastCalledWith(
+      'working cache recovery trust rejected',
+      expect.objectContaining({
+        stage: 'cache-inspection',
+        errorCode: 'ENOENT'
+      })
+    )
+    expect(
+      isTrustedMicromambaWorkingCacheForRoot(root, cache.path, {
+        ...trustedDeps,
+        verifyOwnership: (path) => path !== cache.path
+      })
+    ).toBe(false)
+    expect(cacheWarnings).toHaveBeenLastCalledWith(
+      'working cache recovery trust rejected',
+      expect.objectContaining({
+        stage: 'cache-ownership'
+      })
+    )
+    expect(JSON.stringify(cacheWarnings.mock.calls)).not.toContain('alice')
+    expect(JSON.stringify(cacheWarnings.mock.calls)).not.toContain(missing.message)
   })
 
   it('accepts a marker-owned OpenScienceTmp fallback after TEMP changes', () => {
