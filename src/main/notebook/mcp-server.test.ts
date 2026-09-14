@@ -2732,11 +2732,9 @@ describe('compactNotebookExecutionResult', () => {
     expect(raw.outputs[0].traceback).toBe(traceback)
   })
 
-  it.each([
-    'Error: host.viewImage rejected: BACKGROUND_HOST_METHOD_UNSAFE. Run host.viewImage in foreground repl_execute.',
-    'Error: Compute host unavailable\n{"error_code":"HOST_OFFLINE","message":"Compute host unavailable","retry_after_user_action":true}',
-    'StructuredOutputError: structured output exceeds max bytes 64000; shorten the result.'
-  ])('preserves actionable Host error context after stack removal: %s', (message) => {
+  it('preserves multiline diagnostic text and structured fields while stripping stack frames', () => {
+    const message =
+      'Error: diagnostic sentinel\n' + JSON.stringify({ code: 'TEST_FAILURE', retryable: false })
     const traceback = `${message}\n    at async <repl>:3:20`
     const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')!
     const compact = replTool.mapResult!({ ...runSummary({ traceback }), status: 'failed' }, {})

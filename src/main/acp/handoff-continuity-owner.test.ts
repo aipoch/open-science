@@ -37,9 +37,9 @@ describe('AcpHandoffContinuityOwner', () => {
     expect(continuation.suppressUserMessage).toBe(true)
     const replay = owner.peekClaudeReplay('session-1')!
     expect(replay).toContain('without uploading source data')
-    expect(replay).toContain('"jobId":"job-existing-42"')
-    expect(replay).toContain('"status":"unknown"')
-    expect(replay).toContain('"submitted":true')
+    expect(replay).toMatch(/"jobId"\s*:\s*"job-existing-42"/u)
+    expect(replay).toMatch(/"status"\s*:\s*"unknown"/u)
+    expect(replay).toMatch(/"submitted"\s*:\s*true/u)
     expect(replay).toContain('not as new user or assistant messages')
   })
 

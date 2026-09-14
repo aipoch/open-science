@@ -197,46 +197,46 @@ describe('repl_loop local RPC transport', () => {
       OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath
     })
     try {
-      for (const [field, invalid, valid] of [
-        ['maxDepth', -1, 1],
-        ['maxNodes', 0, 5]
+      for (const [field, invalid, valid, minimum, maximum] of [
+        ['maxDepth', -1, 1, 0, 20],
+        ['maxNodes', 0, 5, 1, 500]
       ] as const) {
         const failed = await send(`await host.lineage.graph('missing', { ${field}: ${invalid} })`)
-        const suggested = failed.error?.match(/graph (\w+) must be an integer/)?.[1]
-        expect(suggested).toBe(field)
-        const repaired = await send(
-          `await host.lineage.graph('missing', { ${suggested}: ${valid} })`
-        )
-        expect(repaired.error).toContain(
-          'Artifact Version not found in the current Project: missing'
-        )
+        expect(failed.error).toContain(field)
+        expect(failed.error).toMatch(/integer/i)
+        for (const bound of [minimum, maximum]) {
+          expect(failed.error).toMatch(new RegExp(`\\b${bound}\\b`))
+        }
+        const repaired = await send(`await host.lineage.graph('missing', { ${field}: ${valid} })`)
+        expect(repaired.error).toMatch(/Artifact Version.*not found/i)
+        expect(repaired.error).toContain('missing')
       }
       const framesFailure = await send('await host.frames.list({ rootsOnly: 1 })')
-      const rootsKey = framesFailure.error?.match(/list (\w+) must be a boolean/)?.[1]
-      expect(rootsKey).toBe('rootsOnly')
-      expect((await send(`await host.frames.list({ ${rootsKey}: false })`)).error).toBeNull()
+      expect(framesFailure.error).toContain('rootsOnly')
+      expect(framesFailure.error).toMatch(/boolean/i)
+      expect((await send('await host.frames.list({ rootsOnly: false })')).error).toBeNull()
 
       const collectFailure = await send(
         "await host.collect(['frame-1'], { returnWhen: 'invalid' })"
       )
-      const returnKey = collectFailure.error?.match(/options\.(\w+) must be all or any/)?.[1]
-      expect(returnKey).toBe('returnWhen')
+      expect(collectFailure.error).toContain('returnWhen')
+      expect(collectFailure.error).toMatch(/\ball\b/)
+      expect(collectFailure.error).toMatch(/\bany\b/)
       expect(
-        (await send(`await host.collect(['frame-1'], { ${returnKey}: 'any' })`)).error
+        (await send("await host.collect(['frame-1'], { returnWhen: 'any' })")).error
       ).toBeNull()
 
-      for (const [field, invalid, valid] of [
-        ['remotePath', 'relative', '/scratch/input.csv'],
-        ['dstFilename', 'nested/input.csv', 'input.csv']
-      ]) {
+      for (const [field, invalid, valid, constraint] of [
+        ['remotePath', 'relative', '/scratch/input.csv', /absolute/i],
+        ['dstFilename', 'nested/input.csv', 'input.csv', /bare filename|path separators/i]
+      ] as const) {
         const input = { remotePath: '/scratch/input.csv', [field]: invalid }
         const failed = await send(
           `await host.compute.create('ssh:test').submitJob('test', 'true', { inputs: [${JSON.stringify(input)}] })`
         )
-        const suggested = failed.error?.match(/(\w+) must be/)?.[1]
-        expect(suggested).toBe(field)
-        delete input[field]
-        input[suggested!] = valid
+        expect(failed.error).toContain(field)
+        expect(failed.error).toMatch(constraint)
+        input[field] = valid
         expect(
           (
             await send(

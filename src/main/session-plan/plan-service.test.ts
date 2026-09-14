@@ -929,19 +929,23 @@ describe('PlanService', () => {
     })
 
     for (const status of ['in_progress', 'blocked', 'skipped'] as const) {
-      await expect(
-        service.updateStepStatus({
+      const failure = await service
+        .updateStepStatus({
           ...identity,
           expectedRevision: completed.projection.revision,
           title: 'Analyze the data',
           status
         })
-      ).rejects.toMatchObject({
-        code: 'invalid-transition',
-        message: expect.stringContaining(
-          'is completed; requested ' + status + '. Allowed statuses: completed'
+        .then(
+          () => {
+            throw new Error('Expected invalid transition')
+          },
+          (error: Error) => error
         )
-      })
+      expect(failure).toMatchObject({ code: 'invalid-transition' })
+      expect(failure.message).toContain('completed')
+      expect(failure.message).toContain(status)
+      expect(failure.message).toMatch(/allowed statuses\s*:\s*completed/i)
     }
   })
 
@@ -1413,19 +1417,23 @@ describe('PlanService', () => {
   it('explains the allowed first transition without changing the Plan', async () => {
     const { service, identity, approved } = await approveExecutionPlan()
     const before = await service.getProjection(identity.projectId, identity.sessionId)
-    await expect(
-      service.updateStepStatus({
+    const failure = await service
+      .updateStepStatus({
         ...identity,
         expectedRevision: approved.projection.revision,
         title: 'Validate cohorts',
         status: 'completed'
       })
-    ).rejects.toMatchObject({
-      code: 'invalid-transition',
-      message: expect.stringContaining(
-        'is not_started; requested completed. Allowed statuses: in_progress, skipped'
+      .then(
+        () => {
+          throw new Error('Expected invalid transition')
+        },
+        (error: Error) => error
       )
-    })
+    expect(failure).toMatchObject({ code: 'invalid-transition' })
+    for (const fact of ['Validate cohorts', 'not_started', 'completed', 'in_progress', 'skipped']) {
+      expect(failure.message).toContain(fact)
+    }
     expect(await service.getProjection(identity.projectId, identity.sessionId)).toEqual(before)
   })
 

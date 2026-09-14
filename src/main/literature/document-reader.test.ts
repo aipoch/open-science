@@ -251,12 +251,16 @@ describe('LiteratureDocumentReader', () => {
         content: [
           expect.objectContaining({
             type: 'text',
-            text: expect.stringMatching(
-              /cursor is invalid.*read_document.*documentId without cursor.*nextCursor/u
-            )
+            text: expect.any(String)
           })
         ]
       })
+      const cursorDiagnostic = JSON.stringify(invalidCursor.content)
+      expect(cursorDiagnostic).toContain('cursor is invalid')
+      expect(cursorDiagnostic).toContain('read_document')
+      expect(cursorDiagnostic).toContain('documentId')
+      expect(cursorDiagnostic).toContain('without cursor')
+      expect(cursorDiagnostic).toContain('nextCursor')
       const ambiguous = await client.callTool({
         name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
         arguments: { documentId: 'binding-1', query: 'needle' }

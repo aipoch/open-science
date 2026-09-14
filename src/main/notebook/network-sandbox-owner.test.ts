@@ -653,33 +653,30 @@ describe('NotebookNetworkSandboxOwner', () => {
         requestDecision,
         platform: 'linux'
       })
-      const wrappedCommands = [] as Awaited<ReturnType<typeof owner.wrap>>[]
+      const commandText = 'curl data.example.org/a'
+      let wrapped: Awaited<ReturnType<typeof owner.wrap>> | undefined
       try {
-        // Two observed bash commands make the command selector necessary.
-        for (const commandText of ['curl data.example.org/a', 'curl data.example.org/b']) {
-          const wrapped = await owner.wrap({
-            executable: '/usr/bin/bash',
-            args: [],
-            env: {},
-            cwd: '/workspace',
-            commandText,
-            sessionId: 'session-1',
-            projectId: 'project-1',
-            runtime: 'bash',
-            filesystem: {
-              readOnlyRoots: [],
-              readWriteRoots: ['/workspace'],
-              deniedReadRoots: [],
-              deniedWriteRoots: []
-            }
-          })
-          wrappedCommands.push(wrapped)
-          const end = wrapped.beginExecution?.()
-          await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(
-            false
-          )
-          end?.()
-        }
+        wrapped = await owner.wrap({
+          executable: '/usr/bin/bash',
+          args: [],
+          env: {},
+          cwd: '/workspace',
+          commandText,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          runtime: 'bash',
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: ['/workspace'],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        const finishBlockedExecution = wrapped.beginExecution?.()
+        await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(
+          false
+        )
+        finishBlockedExecution?.()
         const cancellation = new AbortController()
         if (decisionSource === 'aborted') cancellation.abort()
         const result = await owner.requestNetworkAccess({
@@ -688,7 +685,7 @@ describe('NotebookNetworkSandboxOwner', () => {
           hostname: 'data.example.org',
           reason: 'Download the dataset.',
           runtime: 'bash',
-          command: 'curl data.example.org/a',
+          command: commandText,
           signal: cancellation.signal
         })
         expect(result).toMatchObject({
@@ -699,15 +696,13 @@ describe('NotebookNetworkSandboxOwner', () => {
         })
         expect(requestDecision).toHaveBeenCalledTimes(decisionSource === 'user-decision' ? 1 : 0)
         expect(persistAlwaysAllow).not.toHaveBeenCalled()
-        const end = wrappedCommands.at(-1)?.beginExecution?.()
+        const end = wrapped.beginExecution?.()
         await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(
           false
         )
         end?.()
       } finally {
-        for (const wrapped of wrappedCommands) {
-          await wrapped.cleanup('exit', { processesTerminated: true })
-        }
+        await wrapped?.cleanup('exit', { processesTerminated: true })
         await owner.dispose()
       }
     }

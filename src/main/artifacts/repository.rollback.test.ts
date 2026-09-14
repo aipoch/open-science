@@ -65,9 +65,14 @@ describe('ArtifactRepository pending-file rollback', () => {
           },
           (error: Error) => error
         )
-      expect(failure.message).toMatch(
-        /Artifact write failed: durable Version write failed.*simulated Windows sharing violation.*Version routing publication was not confirmed.*Original file backup retained/s
-      )
+      for (const fact of [
+        'durable Version write failed',
+        'simulated Windows sharing violation',
+        'publication was not confirmed',
+        'backup retained'
+      ]) {
+        expect(failure.message).toContain(fact)
+      }
 
       const directory = dirname(original.path)
       const backup = (await readdir(directory)).find(

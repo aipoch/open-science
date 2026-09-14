@@ -10,7 +10,7 @@ import {
 } from './mcp-server'
 
 describe('Skill import MCP server', () => {
-  it('delivers partial commit information and rejected bundle diagnostics to the agent', async () => {
+  it('projects supplied import receipts, groups repeated errors, and forwards handler failures', async () => {
     const partial = {
       status: 'partial' as const,
       skills: [{ id: 'imported-first', name: 'First', status: 'imported' as const }],
@@ -19,9 +19,7 @@ describe('Skill import MCP server', () => {
         { name: 'Third', error: 'Not attempted.' },
         { name: 'Fourth', error: 'Not attempted.' }
       ],
-      warnings: [
-        'Successful Skill imports remain committed, but requesting catalog refresh failed. Do not reimport to retry refresh; availability in agent contexts is unconfirmed.'
-      ]
+      warnings: ['refresh warning sentinel']
     }
     const server = createSkillImportMcpServer({
       requestImport: async () => {
@@ -37,19 +35,13 @@ describe('Skill import MCP server', () => {
         name: REQUEST_SKILL_IMPORT_TOOL_NAME,
         arguments: { github_url: 'https://github.com/acme/skills/tree/main/first' }
       })
-      expect(result.content).toEqual([
-        {
-          type: 'text',
-          text: JSON.stringify(
-            {
-              ...partial,
-              errors: [partial.errors[0], { names: ['Third', 'Fourth'], error: 'Not attempted.' }]
-            },
-            null,
-            2
-          )
-        }
-      ])
+      const content = result.content as Array<{ type: string; text: string }>
+      expect(content).toHaveLength(1)
+      expect(content[0].type).toBe('text')
+      expect(JSON.parse(content[0].text)).toEqual({
+        ...partial,
+        errors: [partial.errors[0], { names: ['Third', 'Fourth'], error: 'Not attempted.' }]
+      })
       const rejected = await client.callTool({
         name: REQUEST_SKILL_IMPORT_TOOL_NAME,
         arguments: {

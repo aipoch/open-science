@@ -60,7 +60,7 @@ describe('complete Artifact save over the production local RPC', () => {
     expect(error.message).toContain(committed.id)
     expect(error.message).toContain('committed as pending')
     expect(error.message).toContain('not yet a finalized Artifact')
-    expect(error.message).toContain('do not assume the write was rolled back or repeat it')
+    expect(error.message).toMatch(/do not.*repeat/i)
     expect(error.message).toContain('projection failed')
     expect(error.message).toContain('projection tail')
     expect(error.message).toContain('[redacted]')

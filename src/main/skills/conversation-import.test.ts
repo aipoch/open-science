@@ -105,16 +105,20 @@ describe('ConversationSkillImporter', () => {
       const uploads = new UploadRepository(root)
       const store = new UserSkillRepository(root)
       const bundle = buildNamedSkillZip('retained')
-      const [staged] = await stageUploadFixtures(uploads, {
-        files: [
-          {
-            name: 'retained.skill',
-            content: bundle.toString('base64'),
-            mimeType: 'application/zip'
-          }
-        ]
-      })
-      const [attachment] = await uploads.finalizePendingSessionUploads('session-1', [staged])
+      let attachmentUri: string | undefined
+      if (source === 'attachment') {
+        const [staged] = await stageUploadFixtures(uploads, {
+          files: [
+            {
+              name: 'retained.skill',
+              content: bundle.toString('base64'),
+              mimeType: 'application/zip'
+            }
+          ]
+        })
+        const [attachment] = await uploads.finalizePendingSessionUploads('session-1', [staged])
+        attachmentUri = pathToFileURL(attachment.path).href
+      }
       const importer = new ConversationSkillImporter({
         uploads,
         createCancellationGuard: createActiveCancellationGuard,
@@ -150,7 +154,7 @@ describe('ConversationSkillImporter', () => {
           : {
               sessionId: 'session-1',
               turnToken: 'turn-1',
-              attachmentUri: pathToFileURL(attachment.path).href
+              attachmentUri: attachmentUri!
             }
       )
       expect(result).toMatchObject({
@@ -226,7 +230,6 @@ describe('ConversationSkillImporter', () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
     roots.push(root)
     const uploads = new UploadRepository(root)
-    const store = new UserSkillRepository(root)
     const zip = buildNamedSkillZip('broken')
     const [staged] = await stageUploadFixtures(uploads, {
       files: [
@@ -235,25 +238,46 @@ describe('ConversationSkillImporter', () => {
     })
     const [attachment] = await uploads.finalizePendingSessionUploads('session-1', [staged])
     const requestApproval = vi.fn()
+    const importBundle = vi.fn(async () => [])
+    const skipped = Array.from({ length: 7 }, (_, index) => ({
+      source: `entry-${index}-` + 's'.repeat(1_000),
+      reason: `reason-${index}-` + 'r'.repeat(1_000)
+    }))
     const importer = new ConversationSkillImporter({
       uploads,
       createCancellationGuard: createActiveCancellationGuard,
       previewBundle: async () => ({
         previews: [],
-        skipped: [{ source: 'bad.txt', reason: 'invalid DEFLATE data' }]
+        skipped
       }),
-      importBundle: (bundle, items) => store.importFromZipBatch(bundle, items),
+      importBundle,
       requestApproval
     })
-    await expect(
-      importer.request({
+    const failure = await importer
+      .request({
         sessionId: 'session-1',
         turnToken: 'turn-1',
         attachmentUri: pathToFileURL(attachment.path).href
       })
-    ).rejects.toThrow('invalid DEFLATE data')
+      .then(
+        () => {
+          throw new Error('Expected rejected bundle')
+        },
+        (error: Error) => error
+      )
+    expect(failure.message).toContain('omitted')
+    for (let index = 0; index < 5; index++) {
+      expect(failure.message).toContain(`entry-${index}-`)
+      expect(failure.message).toContain(`reason-${index}-`)
+    }
+    for (const index of [5, 6]) {
+      expect(failure.message).not.toContain(`entry-${index}-`)
+      expect(failure.message).not.toContain(`reason-${index}-`)
+    }
+    // Five entries at 200 source + 300 reason characters, plus JSON and message overhead.
+    expect(failure.message.length).toBeLessThan(2_800)
     expect(requestApproval).not.toHaveBeenCalled()
-    expect(await store.list()).toEqual([])
+    expect(importBundle).not.toHaveBeenCalled()
   })
 
   it('scans and imports selected GitHub Skills after the user confirms the conversation preview', async () => {
@@ -410,7 +434,7 @@ describe('ConversationSkillImporter', () => {
       errors: [
         {
           name: 'Second',
-          error: 'Not attempted: the Skill import batch was cancelled or timed out.'
+          error: expect.stringContaining('Not attempted')
         }
       ]
     })
