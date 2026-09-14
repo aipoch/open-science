@@ -1,5 +1,5 @@
 import { ErrorNotice } from '@/components/error-notice'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { Trans, useTranslation } from 'react-i18next'
@@ -66,6 +66,12 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
   const recoveryConfirmationOpen = Boolean(
     open && isReady && recoveryToken && recoveryToken === legacyRecovery?.token
   )
+  // Radix can retain the initial Escape callback through forwardRef (facebook/react#34818).
+  // Keep its guard current before the confirmation's autofocus and listener handoff.
+  const recoveryConfirmationOpenRef = useRef(recoveryConfirmationOpen)
+  useLayoutEffect(() => {
+    recoveryConfirmationOpenRef.current = recoveryConfirmationOpen
+  }, [recoveryConfirmationOpen])
   const isInstallerUnavailable =
     dialogStatus?.state === 'available' &&
     dialogStatus.applyKind === 'installer' &&
@@ -111,7 +117,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
             onInteractOutside={(event) => event.preventDefault()}
             onEscapeKeyDown={(event) => {
               // The nested layer may not have registered its Escape listener yet.
-              if (recoveryConfirmationOpen) {
+              if (recoveryConfirmationOpenRef.current) {
                 event.preventDefault()
                 setRecoveryToken(undefined)
               }
