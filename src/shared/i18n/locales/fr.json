@@ -6150,6 +6150,9 @@
     "No bookmarks yet.": "Aucun signet pour le moment.",
     "Bookmark note": "Note du signet",
     "Bookmarks ({{count}})_one": "Signet ({{count}})",
-    "The exact bookmark location could not be found.": "Impossible de retrouver l’emplacement exact du signet."
+    "The exact bookmark location could not be found.": "Impossible de retrouver l’emplacement exact du signet.",
+    "Skill installation blocked": "Installation de la compétence bloquée",
+    "Manage local skills": "Gérer les compétences locales",
+    "Local conflict": "Conflit local"
   }
 }

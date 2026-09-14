@@ -5820,6 +5820,9 @@
     "Add a private note": "新增私人備註",
     "No bookmarks yet.": "尚無書籤。",
     "Bookmark note": "書籤備註",
-    "The exact bookmark location could not be found.": "無法找到書籤的確切位置。"
+    "The exact bookmark location could not be found.": "無法找到書籤的確切位置。",
+    "Skill installation blocked": "技能安裝受阻",
+    "Manage local skills": "管理本地技能",
+    "Local conflict": "本機衝突"
   }
 }

@@ -128,9 +128,9 @@ const ErrorNotice = ({
   const trailingAction =
     compact &&
     (title !== undefined || description !== undefined) &&
-    primaryButton &&
-    !secondaryButton &&
-    !primaryButton.description &&
+    (primaryButton || secondaryButton) &&
+    !primaryButton?.description &&
+    !secondaryButton?.description &&
     !children &&
     !help
   const describedActions = compact && (primaryButton?.description || secondaryButton?.description)
@@ -185,8 +185,9 @@ const ErrorNotice = ({
             ) : null}
           </div>
           {trailingAction ? (
-            <div className="ml-7 shrink-0 sm:ml-0">
-              <NoticeButton button={primaryButton} compact />
+            <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
+              {secondaryButton ? <NoticeButton button={secondaryButton} secondary compact /> : null}
+              {primaryButton ? <NoticeButton button={primaryButton} compact /> : null}
             </div>
           ) : null}
           {dismissButton ? (
@@ -227,16 +228,18 @@ const ErrorNotice = ({
           className={cn(
             describedActions
               ? 'grid gap-3 border-t border-border pt-3 sm:grid-cols-2'
-              : 'flex flex-wrap items-center gap-2',
-            compact ? Icon && 'ml-7' : 'justify-end'
+              : 'flex flex-wrap items-center justify-end gap-2',
+            compact && Icon && 'ml-7'
           )}
         >
-          {compact && primaryButton ? <NoticeButton button={primaryButton} compact /> : null}
+          {describedActions && primaryButton ? (
+            <NoticeButton button={primaryButton} compact />
+          ) : null}
           {secondaryButton ? (
             <NoticeButton button={secondaryButton} secondary compact={compact} />
           ) : null}
-          {!compact && primaryButton ? (
-            <NoticeButton button={primaryButton} compact={false} />
+          {!describedActions && primaryButton ? (
+            <NoticeButton button={primaryButton} compact={compact} />
           ) : null}
         </div>
       ) : null}

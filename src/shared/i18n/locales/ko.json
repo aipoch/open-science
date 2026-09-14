@@ -5818,6 +5818,9 @@
     "Add a private note": "개인 메모 추가",
     "No bookmarks yet.": "아직 북마크가 없습니다.",
     "Bookmark note": "북마크 메모",
-    "The exact bookmark location could not be found.": "북마크의 정확한 위치를 찾을 수 없습니다."
+    "The exact bookmark location could not be found.": "북마크의 정확한 위치를 찾을 수 없습니다.",
+    "Skill installation blocked": "스킬 설치가 차단됨",
+    "Manage local skills": "로컬 스킬 관리",
+    "Local conflict": "로컬 충돌"
   }
 }

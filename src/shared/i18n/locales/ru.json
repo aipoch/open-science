@@ -6290,6 +6290,9 @@
     "No bookmarks yet.": "Закладок пока нет.",
     "Bookmark note": "Заметка к закладке",
     "Bookmarks ({{count}})_one": "Закладка ({{count}})",
-    "The exact bookmark location could not be found.": "Не удалось найти точное расположение закладки."
+    "The exact bookmark location could not be found.": "Не удалось найти точное расположение закладки.",
+    "Skill installation blocked": "Установка навыка заблокирована",
+    "Manage local skills": "Управление локальными навыками",
+    "Local conflict": "Локальный конфликт"
   }
 }

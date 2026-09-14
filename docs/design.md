@@ -1053,6 +1053,9 @@ Use the shared `ErrorNotice` for error summaries. The default is a compact inlin
 Settings, workspace previews, conversations, and Literature: a neutral `bg-card` surface with a
 `border-border` outline, a small semantically colored status icon, 16px padding, and 14px copy.
 Place a single recovery action at the trailing edge, wrapping below the copy in narrow containers.
+Place multiple ordinary recovery actions at the upper trailing edge beside the summary, secondary
+before primary in visual and keyboard order. Wrap below when space is limited. Keep described
+choices in their existing content grid.
 Keep inline actions low emphasis so they do not compete with the page's primary task. Omit the
 flask and avoid a second border or background in wrappers. All copy and identifiers wrap.
 

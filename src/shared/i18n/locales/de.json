@@ -5981,6 +5981,9 @@
     "No bookmarks yet.": "Noch keine Lesezeichen.",
     "Bookmark note": "Lesezeichennotiz",
     "Bookmarks ({{count}})_one": "Lesezeichen ({{count}})",
-    "The exact bookmark location could not be found.": "Die genaue Position des Lesezeichens wurde nicht gefunden."
+    "The exact bookmark location could not be found.": "Die genaue Position des Lesezeichens wurde nicht gefunden.",
+    "Skill installation blocked": "Installation der Fähigkeit blockiert",
+    "Manage local skills": "Lokale Fähigkeiten verwalten",
+    "Local conflict": "Lokaler Konflikt"
   }
 }

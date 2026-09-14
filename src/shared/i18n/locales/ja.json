@@ -5820,6 +5820,9 @@
     "Add a private note": "個人用のメモを追加",
     "No bookmarks yet.": "ブックマークはまだありません。",
     "Bookmark note": "ブックマークのメモ",
-    "The exact bookmark location could not be found.": "ブックマークの正確な位置が見つかりませんでした。"
+    "The exact bookmark location could not be found.": "ブックマークの正確な位置が見つかりませんでした。",
+    "Skill installation blocked": "スキルのインストールがブロックされています",
+    "Manage local skills": "ローカルスキルを管理",
+    "Local conflict": "ローカルの競合"
   }
 }

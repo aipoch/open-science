@@ -6150,6 +6150,9 @@
     "No bookmarks yet.": "Todavía no hay marcadores.",
     "Bookmark note": "Nota del marcador",
     "Bookmarks ({{count}})_one": "Marcador ({{count}})",
-    "The exact bookmark location could not be found.": "No se pudo encontrar la ubicación exacta del marcador."
+    "The exact bookmark location could not be found.": "No se pudo encontrar la ubicación exacta del marcador.",
+    "Skill installation blocked": "Instalación de la habilidad bloqueada",
+    "Manage local skills": "Gestionar habilidades locales",
+    "Local conflict": "Conflicto local"
   }
 }
