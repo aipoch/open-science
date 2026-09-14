@@ -5780,6 +5780,17 @@
     "Could not save files filter preference. Try again.": "无法保存文件过滤设置。请重试。",
     "Could not save the default permission mode. Try again.": "无法保存默认权限模式。请重试。",
     "Could not switch active provider or model. Try again.": "无法切换当前模型服务商或模型。请重试。",
-    "Could not switch agent framework. Try again.": "无法切换智能体框架。请重试。"
+    "Could not switch agent framework. Try again.": "无法切换智能体框架。请重试。",
+    "Close Side chat?": "关闭侧聊？",
+    "Closing this Side chat tab will stop it and delete its saved conversation. This cannot be undone.": "关闭此侧聊标签页将停止侧聊并删除已保存的对话。此操作无法撤销。",
+    "View main session": "查看主会话",
+    "Move to Side chat…": "移至侧边聊天…",
+    "Choose a Side chat. The annotation will be added to its draft without sending.": "选择一个侧边聊天。批注将添加到其草稿中，不会发送。",
+    "New side chat": "新建侧边聊天",
+    "Empty draft": "空草稿",
+    "Could not move this annotation. It may have changed or the target is full.": "无法移动此批注。批注可能已更改，或目标已满。",
+    "Add to this Side chat": "添加到此侧边聊天",
+    "Add to main conversation": "添加到主对话",
+    "Move to Side chat": "移至侧边聊天"
   }
 }

@@ -6247,6 +6247,17 @@
     "Could not save files filter preference. Try again.": "Не удалось сохранить настройку фильтра файлов. Попробуйте снова.",
     "Could not save the default permission mode. Try again.": "Не удалось сохранить режим разрешений по умолчанию. Попробуйте снова.",
     "Could not switch active provider or model. Try again.": "Не удалось переключить активного поставщика или модель. Попробуйте снова.",
-    "Could not switch agent framework. Try again.": "Не удалось переключить фреймворк агента. Попробуйте снова."
+    "Could not switch agent framework. Try again.": "Не удалось переключить фреймворк агента. Попробуйте снова.",
+    "Close Side chat?": "Закрыть боковой чат?",
+    "Closing this Side chat tab will stop it and delete its saved conversation. This cannot be undone.": "Закрытие этой вкладки бокового чата остановит чат и удалит сохранённый диалог. Это действие нельзя отменить.",
+    "View main session": "Показать основную сессию",
+    "Move to Side chat…": "Переместить в боковой чат…",
+    "Choose a Side chat. The annotation will be added to its draft without sending.": "Выберите боковой чат. Аннотация будет добавлена в его черновик без отправки.",
+    "New side chat": "Новый боковой чат",
+    "Empty draft": "Пустой черновик",
+    "Could not move this annotation. It may have changed or the target is full.": "Не удалось переместить аннотацию. Возможно, она изменилась или целевой чат заполнен.",
+    "Add to this Side chat": "Добавить в этот боковой чат",
+    "Add to main conversation": "Добавить в основной диалог",
+    "Move to Side chat": "Переместить в боковой чат"
   }
 }

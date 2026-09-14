@@ -2367,6 +2367,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
                 !loaded.unsavedTitle &&
                 !loaded.isPending &&
                 !loaded.runtimeContext?.sideChat &&
+                !loaded.runtimeContext?.sideChats?.length &&
                 !loaded.runtimeContext?.delegatedWork &&
                 !hasStagedUploads(loaded) &&
                 pendingArtifactRequests(loaded, true).length === 0

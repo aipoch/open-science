@@ -6108,6 +6108,17 @@
     "Could not save files filter preference. Try again.": "La préférence de filtre de fichiers n'a pas pu être enregistrée. Réessayez.",
     "Could not save the default permission mode. Try again.": "Le mode d'autorisation par défaut n'a pas pu être enregistré. Réessayez.",
     "Could not switch active provider or model. Try again.": "Le fournisseur ou le modèle actif n'a pas pu être changé. Réessayez.",
-    "Could not switch agent framework. Try again.": "Le framework d'agents n'a pas pu être changé. Réessayez."
+    "Could not switch agent framework. Try again.": "Le framework d'agents n'a pas pu être changé. Réessayez.",
+    "Close Side chat?": "Fermer la discussion parallèle ?",
+    "Closing this Side chat tab will stop it and delete its saved conversation. This cannot be undone.": "Fermer cet onglet de discussion parallèle arrêtera la discussion et supprimera sa conversation enregistrée. Cette action est irréversible.",
+    "View main session": "Afficher la session principale",
+    "Move to Side chat…": "Déplacer vers une discussion parallèle…",
+    "Choose a Side chat. The annotation will be added to its draft without sending.": "Choisissez une discussion parallèle. L’annotation sera ajoutée à son brouillon sans être envoyée.",
+    "New side chat": "Nouvelle discussion parallèle",
+    "Empty draft": "Brouillon vide",
+    "Could not move this annotation. It may have changed or the target is full.": "Impossible de déplacer cette annotation. Elle a peut-être été modifiée ou la destination est pleine.",
+    "Add to this Side chat": "Ajouter à cette discussion parallèle",
+    "Add to main conversation": "Ajouter à la conversation principale",
+    "Move to Side chat": "Déplacer vers une discussion parallèle"
   }
 }

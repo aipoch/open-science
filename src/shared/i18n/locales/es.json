@@ -6108,6 +6108,17 @@
     "Could not save files filter preference. Try again.": "No se pudo guardar la preferencia del filtro de archivos. Vuelva a intentarlo.",
     "Could not save the default permission mode. Try again.": "No se pudo guardar el modo de permisos predeterminado. Vuelva a intentarlo.",
     "Could not switch active provider or model. Try again.": "No se pudo cambiar el proveedor o modelo activo. Vuelva a intentarlo.",
-    "Could not switch agent framework. Try again.": "No se pudo cambiar el framework de agentes. Vuelva a intentarlo."
+    "Could not switch agent framework. Try again.": "No se pudo cambiar el framework de agentes. Vuelva a intentarlo.",
+    "Close Side chat?": "¿Cerrar el chat paralelo?",
+    "Closing this Side chat tab will stop it and delete its saved conversation. This cannot be undone.": "Al cerrar esta pestaña del chat paralelo, se detendrá el chat y se eliminará su conversación guardada. Esta acción no se puede deshacer.",
+    "View main session": "Ver la sesión principal",
+    "Move to Side chat…": "Mover al chat lateral…",
+    "Choose a Side chat. The annotation will be added to its draft without sending.": "Seleccione un chat lateral. La anotación se añadirá a su borrador sin enviarse.",
+    "New side chat": "Nuevo chat lateral",
+    "Empty draft": "Borrador vacío",
+    "Could not move this annotation. It may have changed or the target is full.": "No se pudo mover esta anotación. Es posible que haya cambiado o que el destino esté lleno.",
+    "Add to this Side chat": "Añadir a este chat lateral",
+    "Add to main conversation": "Añadir a la conversación principal",
+    "Move to Side chat": "Mover al chat lateral"
   }
 }

@@ -18,6 +18,7 @@ export type SideChatSendMessageResult = Readonly<{
 }>
 
 export type SideChatStartRequest = Readonly<{
+  sideSessionId?: string
   parentSessionId: string
   projectId: string
   text: string

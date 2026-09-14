@@ -215,6 +215,7 @@ const mergeRuntimeContextByOwner = (
       : {}),
     ...(delegatedWork ? { delegatedWork } : {}),
     ...(authoritative.permission ? { permission: structuredClone(authoritative.permission) } : {}),
+    ...(authoritative.sideChats ? { sideChats: structuredClone(authoritative.sideChats) } : {}),
     ...(authoritative.sideChat ? { sideChat: structuredClone(authoritative.sideChat) } : {}),
     ...(authoritative.sideChatRelays
       ? { sideChatRelays: structuredClone(authoritative.sideChatRelays) }
@@ -240,6 +241,7 @@ const mergeDelegatedRuntimeAuthority = (
     ...(current?.plan ? { plan: structuredClone(current.plan) } : {}),
     ...(delegatedWork ? { delegatedWork } : {}),
     ...(current?.permission ? { permission: structuredClone(current.permission) } : {}),
+    ...(current?.sideChats ? { sideChats: structuredClone(current.sideChats) } : {}),
     ...(current?.sideChat ? { sideChat: structuredClone(current.sideChat) } : {}),
     ...(current?.sideChatRelays ? { sideChatRelays: structuredClone(current.sideChatRelays) } : {}),
     ...(current?.pdfContext ? { pdfContext: structuredClone(current.pdfContext) } : {})

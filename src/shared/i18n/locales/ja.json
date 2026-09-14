@@ -5780,6 +5780,17 @@
     "Could not save files filter preference. Try again.": "ファイルフィルターの設定を保存できませんでした。再試行してください。",
     "Could not save the default permission mode. Try again.": "デフォルトの権限モードを保存できませんでした。再試行してください。",
     "Could not switch active provider or model. Try again.": "アクティブなプロバイダーまたはモデルを切り替えられませんでした。再試行してください。",
-    "Could not switch agent framework. Try again.": "エージェントフレームワークを切り替えられませんでした。再試行してください。"
+    "Could not switch agent framework. Try again.": "エージェントフレームワークを切り替えられませんでした。再試行してください。",
+    "Close Side chat?": "サイドチャットを閉じますか？",
+    "Closing this Side chat tab will stop it and delete its saved conversation. This cannot be undone.": "このサイドチャットのタブを閉じると、チャットが停止し、保存済みの会話が削除されます。この操作は元に戻せません。",
+    "View main session": "メインセッションを表示",
+    "Move to Side chat…": "サイドチャットに移動…",
+    "Choose a Side chat. The annotation will be added to its draft without sending.": "サイドチャットを選択してください。注釈は送信されず、下書きに追加されます。",
+    "New side chat": "新しいサイドチャット",
+    "Empty draft": "空の下書き",
+    "Could not move this annotation. It may have changed or the target is full.": "この注釈を移動できませんでした。注釈が変更されたか、移動先が上限に達しています。",
+    "Add to this Side chat": "このサイドチャットに追加",
+    "Add to main conversation": "メインの会話に追加",
+    "Move to Side chat": "サイドチャットに移動"
   }
 }

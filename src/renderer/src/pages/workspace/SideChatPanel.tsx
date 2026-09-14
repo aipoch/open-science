@@ -1,3 +1,9 @@
+import { AnnotationDragSource } from './annotations/AnnotationDragSource'
+import { annotationTransfers } from './annotations/annotation-transfer'
+import { SideChatAnnotationDrop } from './annotations/SideChatAnnotationDrop'
+import { AnnotationDraftCards } from './annotations/AnnotationCards'
+import { annotationValidationMessage } from './annotations/annotation-validation-message'
+import { requestAnnotationReveal } from './annotations/annotation-reveal'
 /*
  * Hallmark · modern-minimal · quiet utility · palette: existing semantic theme
  * Macrostructure: integrated in-flow side panel · pre-emit critique: P5 H5 E4 S5 R5 V4
@@ -7,7 +13,7 @@ import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-st
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { ArrowUp, MessageCircleMore, Plus, Square, X } from 'lucide-react'
+import { ArrowUp, Plus, Square, X } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -21,22 +27,26 @@ import {
 import { useTranslation } from 'react-i18next'
 import {
   parseSideChatAnnotationText,
+  sideChatAnnotationText,
+  validateAnnotations,
+  type Annotation,
   type SideChatAnnotationItem
 } from '../../../../shared/annotations'
 
 import { useFollowScrollBottom } from './use-follow-scroll-bottom'
 
-import { ResizableBottomPanel } from './ResizableBottomPanel'
 import { SentAnnotationCards, type SentAnnotationCardView } from './annotations/SentAnnotationCards'
 import type { SideChatEntry, SideChatView } from './use-side-chat-controller'
 
 type SideChatPanelProps = Readonly<{
   view: SideChatView
   onSend: (text: string) => Promise<boolean>
+  onAnnotationsChange?: (value: SetStateAction<readonly Annotation[]>) => void
   onDraftChange: (value: SetStateAction<string>) => void
   onCancel: () => void
   onClose: () => void
   controls?: ReactNode
+  headerAction?: ReactNode
 }>
 
 type SideChatMessageEntry = Extract<SideChatEntry, { kind: 'message' }>
@@ -148,11 +158,15 @@ const SideChatPanel = ({
   view,
   onSend,
   onDraftChange,
+  onAnnotationsChange,
   onCancel,
   onClose,
-  controls
+  controls,
+  headerAction
 }: SideChatPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const [annotationError, setAnnotationError] = useState<string>()
+  const annotations = view.annotations ?? []
   const messageViewportRef = useFollowScrollBottom(true)
   const followUpRef = useRef<HTMLTextAreaElement>(null)
   const [presentationState, setPresentationState] = useState<SideChatPresentationState>(() => ({
@@ -204,15 +218,28 @@ const SideChatPanel = ({
   )
 
   useEffect(() => {
-    if (view.sideSessionId) followUpRef.current?.focus()
+    if (view.sideSessionId && !annotationTransfers.read()) followUpRef.current?.focus()
   }, [view.sideSessionId])
 
   const submit = (): void => {
     const text = view.draft.trim()
-    if (!text || view.running || !view.sideSessionId) return
+    if ((!text && annotations.length === 0) || view.running || !view.sideSessionId) return
+    const validation = validateAnnotations(annotations, text)
+    if (validation) {
+      setAnnotationError(annotationValidationMessage(validation, t))
+      return
+    }
+    setAnnotationError(undefined)
     onDraftChange('')
-    void onSend(text).then((sent) => {
-      if (!sent) onDraftChange((current) => current || text)
+    onAnnotationsChange?.([])
+    void onSend(sideChatAnnotationText(text, annotations)).then((sent) => {
+      if (!sent) {
+        onDraftChange((current) => current || text)
+        onAnnotationsChange?.((current) => [
+          ...annotations,
+          ...current.filter((item) => !annotations.some((old) => old.id === item.id))
+        ])
+      }
     })
   }
 
@@ -223,20 +250,14 @@ const SideChatPanel = ({
   }
 
   return (
-    <ResizableBottomPanel
-      ariaLabel={t('Resize Side chat panel')}
-      testId="side-chat-panel"
-      scrollTestId="side-chat-panel-scroll"
-      variant="integrated"
-    >
+    <section data-testid="side-chat-panel" className="h-full min-h-0">
       <div className="flex h-full min-h-0 flex-col">
         <div
           data-testid="side-chat-header"
           className="relative z-20 flex h-12 shrink-0 items-center gap-2 border-b border-border-200 bg-bg-000 px-4 pt-1"
         >
-          <MessageCircleMore className="size-4 text-text-300" aria-hidden="true" />
-          <span className="text-[13px] font-medium text-text-100">{t('Side chat')}</span>
           <div className="flex-1" />
+          {headerAction}
           <TooltipProvider delayDuration={200}>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -360,16 +381,55 @@ const SideChatPanel = ({
           data-testid="side-chat-composer"
           className="relative z-20 flex shrink-0 flex-col gap-2 border-t border-border-200 bg-bg-000 px-4 py-3"
         >
-          <Textarea
-            ref={followUpRef}
-            rows={1}
-            value={view.draft}
-            placeholder={t('Follow up…')}
-            aria-label={t('Side chat follow up')}
-            className="max-h-28 min-h-8 flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1 text-[15px] leading-6 text-text-000 shadow-none placeholder:text-text-300 focus-visible:border-transparent"
-            onChange={(event) => onDraftChange(event.target.value)}
-            onKeyDown={handleKeyDown}
-          />
+          <SideChatAnnotationDrop
+            chatId={view.id ?? view.sideSessionId ?? ''}
+            parentSessionId={view.parentSessionId}
+            projectId={view.projectId}
+          >
+            <AnnotationDragSource
+              sourceId={`side-chat:${view.id ?? view.sideSessionId ?? ''}`}
+              projectId={view.projectId}
+              parentSessionId={view.parentSessionId}
+              annotations={annotations}
+              disabled={!onAnnotationsChange}
+              onRemove={(id) =>
+                onAnnotationsChange?.((current) => current.filter((item) => item.id !== id))
+              }
+            >
+              <AnnotationDraftCards
+                annotations={annotations}
+                disabled={!onAnnotationsChange}
+                onReveal={requestAnnotationReveal}
+                onRemove={(id) => {
+                  onAnnotationsChange?.((current) => current.filter((item) => item.id !== id))
+                  setAnnotationError(undefined)
+                }}
+                onUpdateNote={(id, note) => {
+                  const next = annotations.map((item) =>
+                    item.id === id ? { ...item, note } : item
+                  )
+                  const error = validateAnnotations(next, view.draft)
+                  if (!error) onAnnotationsChange?.(next)
+                  return error
+                }}
+              />
+            </AnnotationDragSource>
+            {annotationError ? (
+              <p role="alert" className="text-xs text-danger-000">
+                {annotationError}
+              </p>
+            ) : null}
+            <Textarea
+              ref={followUpRef}
+              rows={1}
+              value={view.draft}
+              placeholder={t('Follow up…')}
+              aria-label={t('Side chat follow up')}
+              className="max-h-28 min-h-8 flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1 text-[15px] leading-6 text-text-000 shadow-none placeholder:text-text-300 focus-visible:border-transparent"
+              onChange={(event) => onDraftChange(event.target.value)}
+              onKeyDown={handleKeyDown}
+            />
+          </SideChatAnnotationDrop>
           <div className="flex items-center gap-1">
             <TooltipProvider delayDuration={200}>
               <Tooltip>
@@ -399,7 +459,9 @@ const SideChatPanel = ({
                     type="button"
                     className="grid size-8 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground transition-colors duration-150 hover:bg-primary/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary motion-reduce:transition-none motion-reduce:active:translate-y-0"
                     disabled={
-                      view.running ? !view.sideSessionId : !view.draft.trim() || !view.sideSessionId
+                      view.running
+                        ? !view.sideSessionId
+                        : (!view.draft.trim() && annotations.length === 0) || !view.sideSessionId
                     }
                     aria-label={
                       view.running ? t('Cancel Side chat response') : t('Send Side chat follow up')
@@ -421,7 +483,7 @@ const SideChatPanel = ({
           </div>
         </div>
       </div>
-    </ResizableBottomPanel>
+    </section>
   )
 }
 

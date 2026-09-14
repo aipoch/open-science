@@ -3348,16 +3348,7 @@ const createApplicationModules = async (
           })
       },
       recordUsage: recordAuxiliaryUsage,
-      onEvent: (event) => broadcastToRenderers('side-chat:event', event),
-      setParentInteractionsPaused: (sessionId, paused) => {
-        if (paused) {
-          approvalBroker.pauseSession(sessionId)
-          computeIpcModule.handlers.approvalPauseSession(sessionId)
-          return
-        }
-        approvalBroker.resumeSession(sessionId)
-        computeIpcModule.handlers.approvalResumeSession(sessionId)
-      }
+      onEvent: (event) => broadcastToRenderers('side-chat:event', event)
     } satisfies ConstructorParameters<typeof SideChatRuntimeOwner>[0],
     (options) => {
       const owner = new SideChatRuntimeOwner(options)
@@ -3570,9 +3561,6 @@ const createApplicationModules = async (
     await sessionSpecialistReconfiguration.assertUserPromptReady(sessionId)
     if (!(await completionHandoffLifecycle.canStartUserPrompt(sessionId))) {
       throw new Error('The approved Specialist handoff must finish or be cancelled before sending.')
-    }
-    if (sideChatRuntime.hasForParent(sessionId)) {
-      throw new Error('Close Side chat before sending a message to Main.')
     }
   })
   runtime.setPromptDispatchAdmissionGuard((sessionId, dispatch, requireAvailable) =>

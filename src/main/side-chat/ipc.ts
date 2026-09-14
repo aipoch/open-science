@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type {
   SideChatCloseRequest,
@@ -23,9 +24,9 @@ const registerSideChatIpcHandlers = (
   runtime: SideChatRuntimeOwner,
   dependencies: SideChatIpcDependencies
 ): void => {
-  const startingParents = new Set<string>()
+  const starts = new Map<string, string>()
   const sends = new Map<string, { cancellation: AbortController; dispatching: boolean }>()
-  const closeRequestedParents = new Set<string>()
+  const closedStarts = new Set<string>()
   const loadAvailableParent = async (
     projectId: string,
     parentSessionId: string
@@ -39,11 +40,13 @@ const registerSideChatIpcHandlers = (
 
   ipcMainHandle('side-chat:list', () => runtime.list())
   ipcMainHandle('side-chat:start', async (_event, request: SideChatStartRequest) => {
-    startingParents.add(request.parentSessionId)
+    const startId = request.sideSessionId ?? `side-chat-${randomUUID()}`
+    if (starts.has(startId)) throw new Error('Side chat is already starting.')
+    starts.set(startId, request.parentSessionId)
     try {
       return await dependencies.withParentAvailable(request.parentSessionId, async () => {
         const parent = await loadAvailableParent(request.projectId, request.parentSessionId)
-        if (closeRequestedParents.delete(request.parentSessionId)) {
+        if (closedStarts.delete(startId)) {
           throw new Error('Side chat closed before startup completed.')
         }
         const historyPreamble = parent
@@ -52,11 +55,11 @@ const registerSideChatIpcHandlers = (
               budget: SIDE_CHAT_MESSAGE_LIMIT
             })
           : undefined
-        return runtime.start({ ...request, historyPreamble })
+        return runtime.start({ ...request, sideSessionId: startId, historyPreamble })
       })
     } finally {
-      startingParents.delete(request.parentSessionId)
-      closeRequestedParents.delete(request.parentSessionId)
+      starts.delete(startId)
+      closedStarts.delete(startId)
     }
   })
   ipcMainHandle('side-chat:send', async (_event, request: SideChatPromptRequest) => {
@@ -90,10 +93,15 @@ const registerSideChatIpcHandlers = (
     return runtime.cancel(request)
   })
   ipcMainHandle('side-chat:close', (_event, request: SideChatCloseRequest) => {
-    if ('sideSessionId' in request) return runtime.close(request)
-    if (startingParents.has(request.parentSessionId)) {
-      closeRequestedParents.add(request.parentSessionId)
+    if ('sideSessionId' in request) {
+      if (starts.has(request.sideSessionId)) {
+        closedStarts.add(request.sideSessionId)
+        // Preflight may not have reached runtime ownership yet.
+        if (!runtime.parentFor(request.sideSessionId)) return
+      }
+      return runtime.close(request)
     }
+    for (const [id, parent] of starts) if (parent === request.parentSessionId) closedStarts.add(id)
     return runtime.closeForParent(request.parentSessionId)
   })
 }

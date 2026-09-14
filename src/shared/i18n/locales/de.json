@@ -5940,6 +5940,17 @@
     "Could not save files filter preference. Try again.": "Die Dateifilter-Einstellung konnte nicht gespeichert werden. Versuchen Sie es erneut.",
     "Could not save the default permission mode. Try again.": "Der Standard-Berechtigungsmodus konnte nicht gespeichert werden. Versuchen Sie es erneut.",
     "Could not switch active provider or model. Try again.": "Der aktive Anbieter oder das Modell konnte nicht gewechselt werden. Versuchen Sie es erneut.",
-    "Could not switch agent framework. Try again.": "Das Agenten-Framework konnte nicht gewechselt werden. Versuchen Sie es erneut."
+    "Could not switch agent framework. Try again.": "Das Agenten-Framework konnte nicht gewechselt werden. Versuchen Sie es erneut.",
+    "Close Side chat?": "Side-Chat schließen?",
+    "Closing this Side chat tab will stop it and delete its saved conversation. This cannot be undone.": "Wenn Sie diesen Side-Chat-Tab schließen, wird der Chat beendet und seine gespeicherte Konversation gelöscht. Dies kann nicht rückgängig gemacht werden.",
+    "View main session": "Hauptsitzung anzeigen",
+    "Move to Side chat…": "In den Side-Chat verschieben…",
+    "Choose a Side chat. The annotation will be added to its draft without sending.": "Wählen Sie einen Side-Chat. Die Anmerkung wird seinem Entwurf hinzugefügt, ohne gesendet zu werden.",
+    "New side chat": "Neuer Side-Chat",
+    "Empty draft": "Leerer Entwurf",
+    "Could not move this annotation. It may have changed or the target is full.": "Diese Anmerkung konnte nicht verschoben werden. Sie wurde möglicherweise geändert oder das Ziel ist voll.",
+    "Add to this Side chat": "Zu diesem Side-Chat hinzufügen",
+    "Add to main conversation": "Zur Hauptkonversation hinzufügen",
+    "Move to Side chat": "In den Side-Chat verschieben"
   }
 }

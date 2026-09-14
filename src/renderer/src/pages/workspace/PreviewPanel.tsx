@@ -1,3 +1,7 @@
+import { useSideChatTransfers } from './use-side-chat-controller'
+import { sideChatSummary } from './side-chat-summary'
+import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
+import { SideChatWorkbenchContent } from './SideChatWorkbench'
 import { BookOpen, File, FolderOpen, Globe2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -75,6 +79,9 @@ const PreviewActiveContent = ({
     )
   }
 
+  if (item.type === 'tool' && item.toolKind === 'side-chat')
+    return <SideChatWorkbenchContent item={item} />
+
   if (item.type === 'tool') {
     return <PreviewToolContent item={item} restoredPlanResponder={restoredPlanResponder} />
   }
@@ -136,6 +143,10 @@ const PreviewTabActionTarget = ({
   }
   const stageLocalPath = window.api.uploads?.stageLocalPath
   const deps: PreviewTabActionDeps = {
+    viewSession: (item) => {
+      if (item.projectId)
+        useNavigationStore.getState().openSession(item.projectId, item.sessionId, 'user')
+    },
     closeTab: removeItem,
     closeOtherTabs: removeOtherItems,
     saveManagedFile: (request) => window.api.saveManagedFile(request),
@@ -278,7 +289,23 @@ const PreviewTab = ({
   onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const tabTitle = tab.title
+  const sideChats = useSideChatTransfers().views
+  const sideView =
+    tab.type === 'tool' && tab.toolKind === 'side-chat'
+      ? sideChats.find((view) => view.id === tab.sideChatId)
+      : undefined
+  const dragHoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const clearDragHover = (): void => {
+    clearTimeout(dragHoverTimer.current)
+    dragHoverTimer.current = undefined
+  }
+  useEffect(() => () => clearTimeout(dragHoverTimer.current), [tab.id])
+  const tabTitle =
+    tab.type === 'tool' && tab.toolKind === 'side-chat'
+      ? sideView
+        ? sideChatSummary(sideView) || t('Side chat')
+        : t('Side chat')
+      : tab.title
 
   return (
     <div
@@ -315,6 +342,28 @@ const PreviewTab = ({
               return
             }
             onActivate(tab.id)
+          }}
+          onDragOver={(event) => {
+            const transfer = annotationTransfers.read()
+            if (
+              !event.dataTransfer.types.includes(ANNOTATION_DRAG_TYPE) ||
+              tab.type !== 'tool' ||
+              tab.toolKind !== 'side-chat' ||
+              transfer?.parentSessionId !== tab.sessionId ||
+              transfer.projectId !== tab.projectId
+            )
+              return
+            event.preventDefault()
+            if (!isActive && dragHoverTimer.current === undefined)
+              dragHoverTimer.current = setTimeout(() => {
+                dragHoverTimer.current = undefined
+                if (annotationTransfers.read() === transfer) onActivate(tab.id)
+              }, 500)
+          }}
+          onDragLeave={clearDragHover}
+          onDrop={(event) => {
+            clearDragHover()
+            event.preventDefault()
           }}
           onKeyDown={onKeyDown}
           title={tabTitle}

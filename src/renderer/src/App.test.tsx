@@ -904,17 +904,17 @@ describe('App startup routing', () => {
     expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(false)
   })
 
-  it('does not let Side Chat-owned approvals block workspace visibility or global search', async () => {
+  it('presents main approvals even when a Side chat is open', async () => {
     mocks.settings.isLoaded = true
     mocks.navigation.view = 'workspace'
     mocks.sideChatParentSessionIds.add('side-chat-session')
     mocks.compute.pendingApprovals = [{ id: 'compute', sessionId: 'side-chat-session' }]
     await render()
 
-    expect(mocks.presentationProps.computeApproval?.active).toBe(false)
-    expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(true)
+    expect(mocks.presentationProps.computeApproval?.active).toBe(true)
+    expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(false)
     expect(mocks.syncUnreadTaskView).toHaveBeenLastCalledWith({
-      isSessionContentVisible: true
+      isSessionContentVisible: false
     })
 
     await act(async () => {
@@ -923,7 +923,7 @@ describe('App startup routing', () => {
       )
     })
 
-    expect(mocks.globalSearch.props?.open).toBe(true)
+    expect(mocks.globalSearch.props?.open).not.toBe(true)
   })
 
   it('consumes the close shortcut while a decision-required approval is active', async () => {

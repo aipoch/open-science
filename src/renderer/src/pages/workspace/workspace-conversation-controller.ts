@@ -260,7 +260,6 @@ const canSubmitImmediately = (options: WorkspaceConversationControllerOptions): 
   return (
     options.isPersistenceReady &&
     options.agentConfigurationReady &&
-    !options.sideChatOpen &&
     composer.view.transfers.length === 0 &&
     !composer.view.readingContext.isPending &&
     (!docIsEmpty(composer.view.doc) ||
@@ -281,7 +280,6 @@ const canQueueDraft = (options: WorkspaceConversationControllerOptions): boolean
   return Boolean(
     options.isPersistenceReady &&
     options.agentConfigurationReady &&
-    !options.sideChatOpen &&
     activeSession?.status === 'running' &&
     composer.view.transfers.length === 0 &&
     !composer.view.readingContext.isPending &&
@@ -303,7 +301,6 @@ const canRevise = (options: WorkspaceConversationControllerOptions): boolean => 
   return (
     options.isPersistenceReady &&
     options.agentConfigurationReady &&
-    !options.sideChatOpen &&
     composer.view.transfers.length === 0 &&
     (options.actionability?.actions.revise.allowed ?? true) &&
     !hasRuntimeInteraction(options) &&
@@ -321,7 +318,6 @@ const canQueueRevision = (options: WorkspaceConversationControllerOptions): bool
   return Boolean(
     options.isPersistenceReady &&
     options.agentConfigurationReady &&
-    !options.sideChatOpen &&
     activeSession?.status === 'running' &&
     composer.view.transfers.length === 0 &&
     !options.isReviewing &&
@@ -359,7 +355,6 @@ const canStartSideChat = (options: WorkspaceConversationControllerOptions): bool
     options.sideChat &&
     options.activeSession &&
     hasMainConversation(options.activeSession) &&
-    !options.sideChatOpen &&
     options.isPersistenceReady &&
     options.agentConfigurationReady &&
     options.actionability?.actions.startSideChat.allowed !== false &&
@@ -386,8 +381,7 @@ const useWorkspaceConversationController = (
     promptInFlightSessionIds: options.promptInFlightSessionIds,
     sendPreparationInFlightSessionIds: options.sendPreparationInFlightSessionIds,
     saveAsSkillInFlightSessionIds: options.saveAsSkillInFlightSessionIds,
-    isSideChatOpen: (sessionId) =>
-      optionsRef.current.activeSession?.id === sessionId && optionsRef.current.sideChatOpen,
+    isSideChatOpen: () => false,
     composer: {
       setError: options.composer.actions.setError,
       restoreQueuedDraft: (snapshot) =>
@@ -591,12 +585,12 @@ const useWorkspaceConversationController = (
     }
 
     const submitRestoredPlan = async (response: RestoredPlanResponse): Promise<void> => {
-      const { activeSession, agentConfigurationReady, isPersistenceReady, runtime, sideChatOpen } =
+      const { activeSession, agentConfigurationReady, isPersistenceReady, runtime } =
         optionsRef.current
       if (!isPersistenceReady) throw new Error('Session persistence is unavailable.')
       const session = activeSession ? optionsRef.current.getSession(activeSession.id) : undefined
       const plan = selectActiveBranchPlan(session)
-      if (sideChatOpen || !session || session.activeRun || plan?.approval !== 'pending') {
+      if (!session || session.activeRun || plan?.approval !== 'pending') {
         throw new Error('The pending Plan is no longer available for a response.')
       }
       if (!agentConfigurationReady) {
@@ -687,6 +681,8 @@ const useWorkspaceConversationController = (
           const current = optionsRef.current
           if (!canStartSideChat(current) || !current.sideChat) return
           const snapshot = current.composer.lifecycle.captureSend()
+          if (inFlightDraftKeysRef.current.has(snapshot.draftKey)) return
+          inFlightDraftKeysRef.current.add(snapshot.draftKey)
           void current.sideChat
             .start(sideChatAnnotationText(docToText(snapshot.doc), snapshot.annotations))
             .then((admitted) => {
@@ -695,17 +691,17 @@ const useWorkspaceConversationController = (
               }
             })
             .catch((error: unknown) => current.composer.actions.setError(errorMessage(error)))
+            .finally(() => inFlightDraftKeysRef.current.delete(snapshot.draftKey))
         }
       },
       reportSessionSizeLimit: (sessionId): void => optionsRef.current.onSessionSizeLimit(sessionId),
       resume: async (): Promise<void> => {
         const current = optionsRef.current
-        if (!current.isPersistenceReady || !current.activeSession || current.sideChatOpen) return
+        if (!current.isPersistenceReady || !current.activeSession) return
         await current.runtime.resumeInterruptedSession(current.activeSession.id)
       },
       cancel: async (): Promise<void> => {
         const current = optionsRef.current
-        if (current.sideChatOpen) return
         const session = current.activeSession
         if (!session) return
         const fixLoopCancellation = session.fixLoopActive
@@ -735,7 +731,7 @@ const useWorkspaceConversationController = (
       submit: submitImmediately || queueDraft,
       submitMode: submitImmediately ? 'send' : queueDraft ? 'queue' : undefined,
       revise: canRevise(options) || canQueueRevision(options),
-      resume: options.isPersistenceReady && !options.sideChatOpen,
+      resume: options.isPersistenceReady,
       branch: !queueBlocksActiveSession && canBranch(options),
       planResponse: options.isPersistenceReady
     },

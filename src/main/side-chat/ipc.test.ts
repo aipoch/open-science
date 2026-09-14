@@ -48,6 +48,7 @@ describe('Side chat IPC', () => {
     } as never)
 
     expect(runtime.start).toHaveBeenCalledWith({
+      sideSessionId: expect.stringMatching(/^side-chat-/),
       parentSessionId: 'main-1',
       projectId: 'project-1',
       text: 'What context do you have?',
