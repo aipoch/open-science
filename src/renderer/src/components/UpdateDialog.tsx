@@ -60,8 +60,20 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
   const isReady = dialogStatus?.state === 'ready'
   const isApplying = dialogStatus?.state === 'applying'
   const legacyRecovery = dialogStatus?.legacyShellRecovery
+  // Synchronous mirror of the confirmation state, set in the click handler and cleared wherever
+  // the token clears: the Dialog root's onOpenChange below must not close the update dialog while
+  // the recovery confirmation is modal on top, even when Radix's nested-layer listener races route
+  // the Escape there before the onEscapeKeyDown guard's closure has caught up.
+  const recoveryOpenRef = useRef(false)
+  const closeRecoveryConfirmation = (): void => {
+    recoveryOpenRef.current = false
+    setRecoveryToken(undefined)
+  }
   const recoverUpdate = (): void => {
-    if (legacyRecovery) setRecoveryToken(legacyRecovery.token)
+    if (legacyRecovery) {
+      recoveryOpenRef.current = true
+      setRecoveryToken(legacyRecovery.token)
+    }
   }
   const recoveryConfirmationOpen = Boolean(
     open && isReady && recoveryToken && recoveryToken === legacyRecovery?.token
@@ -98,6 +110,13 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
     <Dialog.Root
       open={open}
       onOpenChange={(open) => {
+        if (!open && recoveryOpenRef.current) {
+          // A dismissal while the recovery confirmation is open is the confirmation being escaped
+          // (the nested layer's listener can lose the race that routes Escape to this root): close
+          // only the confirmation and keep the update dialog open.
+          closeRecoveryConfirmation()
+          return
+        }
         if (!open && !isApplying) {
           setRecoveryToken(undefined)
           closeDialog()
@@ -113,7 +132,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
               // The nested layer may not have registered its Escape listener yet.
               if (recoveryConfirmationOpen) {
                 event.preventDefault()
-                setRecoveryToken(undefined)
+                closeRecoveryConfirmation()
               }
             }}
             className={dialogPanelClassName(
@@ -369,10 +388,10 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
         cancelLabel={t('Cancel')}
         confirmLabel={t('Back up records and retry')}
         destructive
-        onCancel={() => setRecoveryToken(undefined)}
+        onCancel={closeRecoveryConfirmation}
         onConfirm={() => {
           if (!recoveryConfirmationOpen) return
-          setRecoveryToken(undefined)
+          closeRecoveryConfirmation()
           void apply({ legacyShellRecoveryToken: recoveryToken })
         }}
         onCloseAutoFocus={(event) => {
