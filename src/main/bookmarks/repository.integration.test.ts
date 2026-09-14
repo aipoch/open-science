@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { migrateApplicationDatabase } from '../database/migration-service'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { BookmarkRepository } from './repository'
+import { SessionProjectionRepository } from '../session-persistence/projection'
 
 describe('BookmarkRepository', () => {
   let root: string
@@ -156,8 +157,16 @@ describe('BookmarkRepository', () => {
       repository.list({ projectId: 'project-1', sessionId: 'session-1' })
     ).resolves.toMatchObject({ total: 0 })
 
-    // Complete startup authority reconciliation removes rows for identities absent from the scan.
-    await repository.reconcileSessions([])
+    const projection = new SessionProjectionRepository(async () => client)
+    await projection.replaceAll([])
+    await projection.markPending('project-1', 'session-2', 'save')
+    await projection.commitDelete('project-1', 'session-2')
+    await expect(
+      repository.list({ projectId: 'project-1', sessionId: 'session-2' })
+    ).resolves.toMatchObject({ total: 1 })
+
+    await projection.markPending('project-1', 'session-2', 'delete')
+    await projection.commitDelete('project-1', 'session-2')
     await expect(
       repository.list({ projectId: 'project-1', sessionId: 'session-2' })
     ).resolves.toMatchObject({ total: 0 })

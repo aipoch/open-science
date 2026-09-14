@@ -223,16 +223,6 @@ class BookmarkRepository {
     await client.bookmark.deleteMany({ where: { sessionId: { in: [...new Set(sessionIds)] } } })
   }
 
-  async reconcileSessions(existingSessionIds: readonly string[]): Promise<void> {
-    const client = await this.getClient()
-    await client.bookmark.deleteMany({
-      where:
-        existingSessionIds.length > 0
-          ? { sessionId: { notIn: [...new Set(existingSessionIds)] } }
-          : {}
-    })
-  }
-
   async deleteProject(projectId: string): Promise<void> {
     const client = await this.getClient()
     await client.bookmark.deleteMany({ where: { projectId } })

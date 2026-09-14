@@ -1107,6 +1107,13 @@ const PdfEvidenceLayer = ({
                 setRegionDraft({ ...regionDraft, note: event.target.value, error: undefined })
               }
             />
+            {regionDraft.destination === 'bookmark' && (!bookmarkSource || !bookmarks.available) ? (
+              <p role="status" className="text-xs text-muted-foreground">
+                {!bookmarks.available
+                  ? t('Bookmarks are available after this conversation is saved.')
+                  : t('Bookmark source is no longer available.')}
+              </p>
+            ) : null}
             {regionDraft.error ? (
               <p role="alert" className="text-xs text-destructive">
                 {regionDraft.error}
@@ -1125,7 +1132,11 @@ const PdfEvidenceLayer = ({
               <Button
                 type="button"
                 size="sm"
-                disabled={regionDraft.saving}
+                disabled={
+                  regionDraft.saving ||
+                  (regionDraft.destination === 'bookmark' &&
+                    (!bookmarkSource || !bookmarks.available))
+                }
                 onClick={() => void saveRegionDraft()}
               >
                 {regionDraft.destination === 'bookmark' ? t('Bookmark') : t('Annotate')}

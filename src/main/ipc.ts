@@ -1715,10 +1715,7 @@ const createApplicationModules = async (
       ])
     },
     onSessionsReconciled: async (sessionIds) => {
-      await Promise.all([
-        visionEvidenceRepository.reconcileSessions(sessionIds),
-        bookmarkRepository.reconcileSessions(sessionIds)
-      ])
+      await visionEvidenceRepository.reconcileSessions(sessionIds)
     }
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {

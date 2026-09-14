@@ -131,6 +131,7 @@ describe('PreviewTextAnnotationSurface', () => {
     onAnnotationAdded,
     previewItem = item(),
     annotationVersionId,
+    annotationVersionPending = false,
     sourcePageNumber,
     pdfEvidenceSource,
     pdfBookmarkSource,
@@ -146,6 +147,7 @@ describe('PreviewTextAnnotationSurface', () => {
     onAnnotationAdded?: () => void
     previewItem?: PreviewFileItem
     annotationVersionId?: string
+    annotationVersionPending?: boolean
     sourcePageNumber?: number
     pdfEvidenceSource?: PdfAnnotation['source']
     pdfBookmarkSource?: PdfBookmarkSource
@@ -159,6 +161,7 @@ describe('PreviewTextAnnotationSurface', () => {
       <PreviewTextAnnotationSurface
         item={previewItem}
         annotationVersionId={annotationVersionId}
+        annotationVersionPending={annotationVersionPending}
         activeAnnotations={activeAnnotations}
         onAddAnnotation={onAddAnnotation}
         onUpdateAnnotationNote={onUpdateAnnotationNote}
@@ -352,6 +355,117 @@ describe('PreviewTextAnnotationSurface', () => {
         }
       })
     )
+    expect(container.querySelector('[aria-label="Edit bookmark note"]')).not.toBeNull()
+    expect([...registeredRanges].map((range) => range.toString())).toContain(
+      'confidence intervals overlap'
+    )
+  })
+
+  it('restores a saved preview bookmark and edits and deletes it from its marker', async () => {
+    const original: Bookmark = {
+      id: 'bookmark-restored',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      version: 1,
+      note: 'Original note',
+      createdAt: '2026-09-14T00:00:00.000Z',
+      updatedAt: '2026-09-14T00:00:00.000Z',
+      target: { kind: 'text', source: annotation().source, quote: annotation().quote }
+    }
+    const updateNote = vi.fn(async ({ note }) => ({ ...original, note }))
+    const remove = vi.fn().mockResolvedValue({ deleted: true })
+    await renderSurface({
+      bookmarkApi: {
+        list: vi.fn().mockResolvedValue({ items: [original], total: 1 }),
+        updateNote,
+        delete: remove
+      } as unknown as Window['api']['bookmarks']
+    })
+    expect([...registeredRanges].map((range) => range.toString())).toContain(
+      original.target.kind === 'text' ? original.target.quote : ''
+    )
+    const openMarker = async (): Promise<void> => {
+      const marker = container.querySelector<HTMLButtonElement>('[aria-label="Edit bookmark note"]')
+      expect(marker).not.toBeNull()
+      await act(async () => marker!.click())
+    }
+    await openMarker()
+    const input = document.querySelector<HTMLTextAreaElement>('textarea')!
+    expect(input.value).toBe(original.note)
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+        input,
+        'Updated note'
+      )
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Save')!
+        .click()
+    )
+    expect(updateNote).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      id: original.id,
+      note: 'Updated note'
+    })
+    await openMarker()
+    expect(document.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('Updated note')
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="Delete bookmark"]')!.click()
+    )
+    expect(remove).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      id: original.id
+    })
+    expect(container.querySelector('[aria-label="Edit bookmark note"]')).toBeNull()
+    expect(registeredRanges.size).toBe(0)
+  })
+
+  it('keeps managed preview markers scoped to the verified project and version', async () => {
+    const saved: Bookmark = {
+      id: 'bookmark-managed',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      version: 1,
+      note: '',
+      createdAt: '2026-09-14T00:00:00.000Z',
+      updatedAt: '2026-09-14T00:00:00.000Z',
+      target: {
+        kind: 'text',
+        quote: annotation().quote,
+        source: {
+          ...annotation().source,
+          kind: 'project-file',
+          projectId: 'project-1',
+          path: '/project/notes.md',
+          fileSource: 'artifact',
+          sourceFileId: 'artifact-1',
+          versionId: 'version-7'
+        }
+      }
+    }
+    const bookmarkApi = {
+      list: vi.fn().mockResolvedValue({ items: [saved], total: 1 })
+    } as unknown as Window['api']['bookmarks']
+    const previewItem = item({ managedFileId: 'artifact-1' })
+    await renderSurface({ bookmarkApi, previewItem })
+    expect(container.querySelector('[aria-label="Edit bookmark note"]')).not.toBeNull()
+    for (const overrides of [
+      { previewItem, annotationVersionPending: true },
+      { previewItem: { ...previewItem, selectedVersionId: 'other-version' } },
+      { previewItem: { ...previewItem, projectId: 'other-project' } }
+    ]) {
+      await renderSurface({ bookmarkApi, ...overrides })
+      expect(container.querySelector('[aria-label="Edit bookmark note"]')).toBeNull()
+      expect(registeredRanges.size).toBe(0)
+    }
+    await renderSurface({ bookmarkApi, previewItem })
+    expect(container.querySelector('[aria-label="Edit bookmark note"]')).not.toBeNull()
+    await act(async () => root.render(null))
+    expect(registeredRanges.size).toBe(0)
   })
 
   it('reveals an exact project-file bookmark and reports a missing quote', async () => {

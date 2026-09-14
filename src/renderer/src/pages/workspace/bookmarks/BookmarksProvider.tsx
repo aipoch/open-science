@@ -44,7 +44,16 @@ const BookmarksProvider = ({
   const overlaysRef = useRef(new Map<string, Bookmark | null>())
 
   useEffect(() => {
-    const scopeRevision = ++scopeRevisionRef.current
+    ++scopeRevisionRef.current
+    setState({ key: scopeKey, bookmarks: [], total: 0, loading: Boolean(scopeKey) })
+    return () => {
+      ++scopeRevisionRef.current
+    }
+  }, [scopeKey])
+
+  useEffect(() => {
+    // A read retry supersedes only the previous read, not writes still committing in this Session.
+    let active = true
     overlaysRef.current = new Map()
     if (!projectId || !sessionId) return
 
@@ -55,7 +64,7 @@ const BookmarksProvider = ({
       let total = 0
       do {
         const result = await api.list({ projectId, sessionId, cursor })
-        if (scopeRevisionRef.current !== scopeRevision) return
+        if (!active) return
         loaded.push(...result.items)
         total = result.total
         cursor = result.nextCursor
@@ -81,7 +90,7 @@ const BookmarksProvider = ({
     }
 
     void load().catch((error: unknown) => {
-      if (scopeRevisionRef.current !== scopeRevision) return
+      if (!active) return
       setState((current) => {
         const sameScope = current.key === scopeKey
         return {
@@ -93,6 +102,9 @@ const BookmarksProvider = ({
         }
       })
     })
+    return () => {
+      active = false
+    }
   }, [loadAttempt, projectId, scopeKey, sessionId])
 
   const retryLoad = useCallback(() => {

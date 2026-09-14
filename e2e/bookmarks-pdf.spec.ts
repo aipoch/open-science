@@ -1,13 +1,10 @@
 import { expect } from '@playwright/test'
-import { mkdir } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
 import type { Locator, Page } from 'playwright'
 
 import { test } from './fixtures/electron-app'
 
 const PROJECT_NAME = 'Rotated PDF bookmarks'
 const PDF_NAME = 'rotated-bookmarks.pdf'
-const SCREENSHOT_ROOT = resolve(process.cwd(), 'test-results')
 
 const rotatedPdf = (multiline = false): Buffer => {
   const stream = (content: string): string =>
@@ -138,8 +135,7 @@ test('restores text and region bookmarks on intrinsically rotated PDF pages', as
   expect(selection.normalizedRect!.x).toBeGreaterThan(0.78)
   expect(selection.normalizedRect!.x).toBeLessThan(0.86)
   expect(selection.normalizedRect!.height).toBeGreaterThan(selection.normalizedRect!.width)
-  await page.locator('[data-selection-action="bookmark"]').hover()
-  await page.locator('[data-selection-action="bookmark"]').click({ delay: 150 })
+  await page.locator('[data-selection-action="bookmark"]').click()
   await expect(page.getByRole('textbox', { name: 'Note (optional)', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Bookmark', exact: true }).click()
   const textMarker = page90.locator('[data-pdf-bookmark-highlight]')
@@ -188,8 +184,7 @@ test('restores text and region bookmarks on intrinsically rotated PDF pages', as
   await expect(textRevealButton).toBeEnabled()
   await expect(bookmarks.getByRole('alert')).toHaveCount(0)
   await expectNormalizedRect(restoredPage90, restoredTextMarker, selection.normalizedRect!)
-  await mkdir(SCREENSHOT_ROOT, { recursive: true })
-  const screenshotPath = join(SCREENSHOT_ROOT, 'bookmarks-pdf-restored.png')
+  const screenshotPath = testInfo.outputPath('bookmarks-pdf-restored.png')
   await page.screenshot({ path: screenshotPath })
   await testInfo.attach('rotated-pdf-restored', {
     path: screenshotPath,

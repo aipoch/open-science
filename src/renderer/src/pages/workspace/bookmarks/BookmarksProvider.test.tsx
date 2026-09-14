@@ -276,6 +276,41 @@ describe('BookmarksProvider', () => {
     expect(latest?.loadError).toBe('database unavailable')
   })
 
+  it.each(['create', 'updateNote', 'remove'] as const)(
+    'publishes a pending %s when a read retry completes before the write',
+    async (operation) => {
+      const original = bookmark('bookmark-1', 'session-2')
+      const committed = { ...original, note: 'saved note' }
+      const pending = deferred<Bookmark | { deleted: boolean }>()
+      const initialItems = operation === 'create' ? [] : [original]
+      window.api = {
+        bookmarks: {
+          list: vi.fn().mockResolvedValue({ items: initialItems, total: initialItems.length }),
+          create: vi.fn().mockReturnValue(pending.promise),
+          updateNote: vi.fn().mockReturnValue(pending.promise),
+          delete: vi.fn().mockReturnValue(pending.promise)
+        }
+      } as unknown as Window['api']
+      await renderScope('session-2')
+      const writing =
+        operation === 'create'
+          ? latest!.create(original.id, target, committed.note)
+          : operation === 'updateNote'
+            ? latest!.updateNote(original.id, committed.note)
+            : latest!.remove(original.id)
+
+      await act(async () => latest!.retryLoad())
+      expect(latest?.bookmarks).toEqual(initialItems)
+      await act(async () => {
+        pending.resolve(operation === 'remove' ? { deleted: true } : committed)
+        await writing
+      })
+
+      expect(latest?.bookmarks).toEqual(operation === 'remove' ? [] : [committed])
+      expect(latest?.total).toBe(operation === 'remove' ? 0 : 1)
+    }
+  )
+
   it('publishes a complete paginated list instead of a partial list', async () => {
     const second = deferred<{ items: Bookmark[]; total: number }>()
     const list = vi

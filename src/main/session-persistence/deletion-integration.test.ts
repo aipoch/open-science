@@ -161,7 +161,7 @@ describe('managed-file deletion integration', () => {
     })
     coordinator.setSessionDeletionHandlers({
       commit: (sessionIds) => bookmarks.deleteSessions(sessionIds),
-      reconcile: (sessionIds) => bookmarks.reconcileSessions(sessionIds)
+      reconcile: async () => undefined
     })
 
     await coordinator.deleteSession(PROJECT_ID, SESSION_ID)
@@ -188,7 +188,7 @@ describe('managed-file deletion integration', () => {
     })
     coordinator.setSessionDeletionHandlers({
       commit: (sessionIds) => bookmarks.deleteSessions(sessionIds),
-      reconcile: (sessionIds) => bookmarks.reconcileSessions(sessionIds)
+      reconcile: async () => undefined
     })
     vi.spyOn(sessions, 'deleteSession').mockRejectedValueOnce(new Error('disk locked'))
 
@@ -201,7 +201,7 @@ describe('managed-file deletion integration', () => {
     })
   })
 
-  it('repairs committed Bookmark cleanup failure from the next complete Session scan', async () => {
+  it('replays the durable delete intent after committed Bookmark cleanup fails', async () => {
     const bookmarks = new BookmarkRepository(() => Promise.resolve(client))
     await bookmarks.create({
       id: 'bookmark-1',
@@ -214,21 +214,31 @@ describe('managed-file deletion integration', () => {
       },
       note: ''
     })
-    coordinator.setSessionDeletionHandlers({
-      commit: async () => {
-        throw new Error('database temporarily unavailable')
-      },
-      reconcile: (sessionIds) => bookmarks.reconcileSessions(sessionIds)
-    })
+    const projection = new SessionProjectionRepository(() => Promise.resolve(client))
+    const repository = new SessionRepository(storageRoot, undefined, projection)
+    await repository.ensureSessionProjection(() => sessions.loadAll())
+    await client.$executeRawUnsafe(`CREATE TRIGGER reject_bookmark_cleanup
+      BEFORE DELETE ON bookmarks BEGIN SELECT RAISE(ABORT, 'cleanup blocked'); END`)
 
-    await coordinator.deleteSession(PROJECT_ID, SESSION_ID)
+    await expect(repository.deleteSession(PROJECT_ID, SESSION_ID)).rejects.toBeInstanceOf(
+      SessionDeletionCommittedError
+    )
     await expect(
       bookmarks.list({ projectId: PROJECT_ID, sessionId: SESSION_ID })
     ).resolves.toMatchObject({
       total: 1
     })
 
-    await coordinator.loadAll()
+    expect(await projection.pending()).toEqual([
+      expect.objectContaining({ projectId: PROJECT_ID, sessionId: SESSION_ID, operation: 'delete' })
+    ])
+    await client.$executeRawUnsafe('DROP TRIGGER reject_bookmark_cleanup')
+    const restarted = new SessionRepository(
+      storageRoot,
+      undefined,
+      new SessionProjectionRepository(() => Promise.resolve(client))
+    )
+    await restarted.reconcilePendingSessionProjection()
 
     await expect(
       bookmarks.list({ projectId: PROJECT_ID, sessionId: SESSION_ID })

@@ -22,6 +22,7 @@ import type { PreviewFileRendererProps } from './preview-types'
 import type { TextBookmarkTarget } from '../../../../../shared/bookmarks'
 import type { PdfBookmarkSource, PdfBookmarkTarget } from '../../../../../shared/pdf-bookmarks'
 import { useBookmarks } from '../bookmarks/bookmark-context'
+import { BookmarkMarker } from '../bookmarks/BookmarkMarker'
 import {
   revealTextAnnotationRange,
   subscribeAnnotationReveal,
@@ -254,7 +255,13 @@ const textBookmarkBelongsToPreview = (
   annotationVersionId?: string
 ): boolean => {
   const source = target.source
-  if (source.kind !== 'project-file' || !item.projectId || pageNumber !== undefined) return false
+  if (
+    source.kind !== 'project-file' ||
+    !item.projectId ||
+    source.projectId !== item.projectId ||
+    pageNumber !== undefined
+  )
+    return false
   const versionId = projectFileVersionId(item, annotationVersionId)
   const managedIdentity = resolveManagedProjectFileAnnotationIdentity(source)
   if (managedIdentity === null) return false
@@ -272,6 +279,15 @@ const textBookmarkBelongsToPreview = (
     source.path === item.path &&
     source.versionId === versionId
   )
+}
+
+const getBookmarkHighlight = (): Highlight | undefined => {
+  if (typeof Highlight === 'undefined' || !globalThis.CSS?.highlights) return undefined
+  const existing = CSS.highlights.get('preview-personal-bookmark')
+  if (existing) return existing
+  const highlight = new Highlight()
+  CSS.highlights.set('preview-personal-bookmark', highlight)
+  return highlight
 }
 
 const getDraftHighlight = (): Highlight | undefined => {
@@ -323,6 +339,10 @@ export const PreviewTextAnnotationSurface = ({
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
   const ownedRanges = useRef(new Map<string, Range>())
+  const ownedBookmarkRanges = useRef(new Map<string, Range>())
+  const [bookmarkMarkers, setBookmarkMarkers] = useState<
+    readonly { id: string; left: number; top: number; note: string }[]
+  >([])
   const pendingRangeRef = useRef<Range | null>(null)
   const copiedResetRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [selection, setSelection] = useState<SelectionDraft>()
@@ -350,6 +370,23 @@ export const PreviewTextAnnotationSurface = ({
     [activeAnnotations, annotationVersionId, item, sourcePageNumber]
   )
 
+  const matchingBookmarks = useMemo(
+    () =>
+      annotationVersionPending
+        ? []
+        : bookmarks.bookmarks.filter(
+            (bookmark) =>
+              bookmark.target.kind === 'text' &&
+              textBookmarkBelongsToPreview(
+                { id: bookmark.id, ...bookmark.target },
+                item,
+                sourcePageNumber,
+                annotationVersionId
+              )
+          ),
+    [annotationVersionPending, bookmarks.bookmarks, item, sourcePageNumber, annotationVersionId]
+  )
+
   const measureAnnotationControls = useCallback((): void => {
     const surface = surfaceRef.current
     if (!surface) return
@@ -374,7 +411,22 @@ export const PreviewTextAnnotationSurface = ({
         ]
       })
     )
-  }, [matchingAnnotations])
+    setBookmarkMarkers(
+      matchingBookmarks.flatMap((bookmark) => {
+        const range = ownedBookmarkRanges.current.get(bookmark.id)
+        const rect = Array.from(range?.getClientRects?.() ?? []).at(-1)
+        if (!rect || (rect.width === 0 && rect.height === 0)) return []
+        return [
+          {
+            id: bookmark.id,
+            note: bookmark.note,
+            left: rect.right - surfaceRect.left + 1,
+            top: rect.top - surfaceRect.top - 3
+          }
+        ]
+      })
+    )
+  }, [matchingAnnotations, matchingBookmarks])
 
   const trackAnnotatedTextHover = (event: React.PointerEvent<HTMLDivElement>): void => {
     const hovered = matchingAnnotations.find((annotation) => {
@@ -429,9 +481,19 @@ export const PreviewTextAnnotationSurface = ({
       ownedRanges.current
     )
     for (const range of ownedRanges.current.values()) highlight.add(range)
+    const bookmarkHighlight = getBookmarkHighlight()
+    for (const range of ownedBookmarkRanges.current.values()) bookmarkHighlight?.delete(range)
+    ownedBookmarkRanges.current = reconcileTextAnnotationRanges(
+      content,
+      matchingBookmarks.flatMap((bookmark) =>
+        bookmark.target.kind === 'text' ? [{ id: bookmark.id, ...bookmark.target }] : []
+      ),
+      ownedBookmarkRanges.current
+    )
+    for (const range of ownedBookmarkRanges.current.values()) bookmarkHighlight?.add(range)
     measureAnnotationControls()
     retryPendingAnnotationReveal()
-  }, [matchingAnnotations, measureAnnotationControls])
+  }, [matchingAnnotations, matchingBookmarks, measureAnnotationControls])
 
   useLayoutEffect(() => {
     reconcilePreviewHighlights()
@@ -477,6 +539,9 @@ export const PreviewTextAnnotationSurface = ({
   useLayoutEffect(
     () => () => {
       if (copiedResetRef.current) clearTimeout(copiedResetRef.current)
+      const bookmarkHighlight = getBookmarkHighlight()
+      for (const range of ownedBookmarkRanges.current.values()) bookmarkHighlight?.delete(range)
+      ownedBookmarkRanges.current.clear()
       const highlight = getDraftHighlight()
       if (!highlight) return
       for (const range of ownedRanges.current.values()) highlight.delete(range)
@@ -873,6 +938,9 @@ export const PreviewTextAnnotationSurface = ({
         onRemove={onRemoveAnnotation}
         onError={onAnnotationError}
       />
+      {bookmarkMarkers.map((marker) => (
+        <BookmarkMarker key={marker.id} {...marker} />
+      ))}
       {matchingAnnotations.length > 0 ? (
         <span className="sr-only">{t('Annotated for Agent')}</span>
       ) : null}

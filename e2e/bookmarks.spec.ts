@@ -18,16 +18,13 @@ test('keeps a private text bookmark after restart and allows editing and deletin
   await expect(page.getByText('Response completed.', { exact: true })).toBeVisible()
   await reply.dblclick({ position: { x: 20, y: 10 } })
   await page.getByRole('button', { name: 'Annotate', exact: true }).click()
-  await page.screenshot({ path: 'test-results/annotate-editor.png' })
   await page.getByRole('tab', { name: 'For me', exact: true }).click()
   await page
     .getByRole('textbox', { name: 'Note (optional)', exact: true })
     .fill('Use in discussion')
-  await page.screenshot({ path: 'test-results/bookmarks-editor.png' })
   await page.getByRole('button', { name: 'Bookmark', exact: true }).click()
   await page.getByRole('button', { name: /^Bookmarks \(\d+\)$/ }).click()
   await expect(page.getByText('Use in discussion', { exact: true })).toBeVisible()
-  await page.screenshot({ path: 'test-results/bookmarks-list.png' })
 
   await page.keyboard.press('Escape')
   await page.locator('[data-bookmark-marker]').click()
