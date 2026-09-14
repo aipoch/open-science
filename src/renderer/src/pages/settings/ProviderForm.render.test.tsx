@@ -74,9 +74,9 @@ describe('ProviderForm field switching', () => {
     const onChange = vi.fn()
     render(createEmptyProviderFormValue({ type: 'custom' }), { onChange })
 
-    const ollama = [
-      ...container.querySelectorAll<HTMLButtonElement>('button[type="button"]')
-    ].find((button) => button.textContent?.includes('Ollama'))
+    const ollama = [...container.querySelectorAll<HTMLButtonElement>('button[type="button"]')].find(
+      (button) => button.textContent?.includes('Ollama')
+    )
     act(() => ollama?.click())
 
     expect(onChange).toHaveBeenCalledWith({
