@@ -746,11 +746,13 @@ export const GlobalSearchDialog = ({
               data-open={advancedOpen}
               aria-hidden={!advancedOpen}
               inert={!advancedOpen}
-              aria-label={t('Advanced filters')}
+              aria-labelledby={`${advancedPanelId}-title`}
               className="global-search-advanced h-full"
             >
               <div className="search-advanced-island">
-                <div className="search-advanced-title">{t('Advanced filters')}</div>
+                <div id={`${advancedPanelId}-title`} className="search-advanced-title">
+                  {t('Advanced filters')}
+                </div>
                 {advancedOpen && <SearchResultFilters stacked {...searchFilterProps} />}
               </div>
             </aside>

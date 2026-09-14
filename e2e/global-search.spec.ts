@@ -562,7 +562,7 @@ test('keeps saved Notebook output and structured file previews visible inside se
   await dialog.screenshot({ path: testInfo.outputPath('search-molecule.png') })
 })
 
-test('toggles the advanced filter island column from the category chips', async ({
+test('toggles the advanced filter island column from the toolbar toggle', async ({
   app
 }, testInfo) => {
   await app.completeOnboarding()

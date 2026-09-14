@@ -87,9 +87,6 @@
   background: var(--primary);
   border-color: var(--primary);
 }
-.search-advanced-toggle {
-  margin-left: auto;
-}
 .search-subfilters {
   min-height: 28px;
   display: flex;
@@ -842,6 +839,9 @@
   .global-search-detail[data-open='true'] {
     pointer-events: auto;
   }
+  /* Both panes overlay the full body on mobile; the detail aside comes later in DOM order, so an
+     open detail intentionally covers the island until it is closed — the full-screen detail wins,
+     and the toolbar toggle remains reachable above the body to close the island. */
   .global-search-advanced,
   .global-search-advanced[data-open='true'] {
     position: absolute;
