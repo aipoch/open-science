@@ -57,10 +57,17 @@ describe('BookmarksProvider', () => {
     return null
   }
 
-  const renderScope = async (sessionId?: string): Promise<void> => {
+  const renderScope = async (
+    sessionId?: string,
+    persistSessionTextSource?: (projectId: string, sessionId: string) => Promise<void>
+  ): Promise<void> => {
     await act(async () => {
       root.render(
-        <BookmarksProvider projectId={sessionId ? 'project-1' : undefined} sessionId={sessionId}>
+        <BookmarksProvider
+          projectId={sessionId ? 'project-1' : undefined}
+          sessionId={sessionId}
+          persistSessionTextSource={persistSessionTextSource}
+        >
           <Probe />
         </BookmarksProvider>
       )
@@ -139,6 +146,94 @@ describe('BookmarksProvider', () => {
       note: 'note'
     })
     expect(latest?.bookmarks).toEqual([committed])
+  })
+
+  it('commits the displayed Session source before creating its bookmark', async () => {
+    const barrier = deferred<void>()
+    const persistSource = vi.fn(() => barrier.promise)
+    const create = vi.fn().mockResolvedValue(bookmark('bookmark-new', 'session-2'))
+    window.api = {
+      bookmarks: { list: vi.fn().mockResolvedValue({ items: [], total: 0 }), create }
+    } as unknown as Window['api']
+    await renderScope('session-2', persistSource)
+    const creating = latest!.create('bookmark-new', target, 'note')
+    expect(persistSource).toHaveBeenCalledWith('project-1', 'session-2')
+    expect(create).not.toHaveBeenCalled()
+    await act(async () => {
+      barrier.resolve()
+      await creating
+    })
+    expect(create).toHaveBeenCalledWith({
+      id: 'bookmark-new',
+      projectId: 'project-1',
+      sessionId: 'session-2',
+      target,
+      note: 'note'
+    })
+    expect(latest!.total).toBe(1)
+  })
+
+  it('preserves the bookmark retry identity when its source cannot be persisted', async () => {
+    const persistSource = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockResolvedValueOnce(undefined)
+    const create = vi.fn().mockResolvedValue(bookmark('bookmark-retry', 'session-2'))
+    window.api = {
+      bookmarks: { list: vi.fn().mockResolvedValue({ items: [], total: 0 }), create }
+    } as unknown as Window['api']
+    await renderScope('session-2', persistSource)
+    await expect(latest!.create('bookmark-retry', target, 'note')).rejects.toThrow('disk full')
+    expect(create).not.toHaveBeenCalled()
+    expect(latest!.total).toBe(0)
+    await act(async () => {
+      await latest!.create('bookmark-retry', target, 'note')
+    })
+    expect(create).toHaveBeenCalledOnce()
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'bookmark-retry', note: 'note' })
+    )
+  })
+
+  it('keeps the captured Session scope while its source write is pending', async () => {
+    const barrier = deferred<void>()
+    const persistSource = vi.fn(() => barrier.promise)
+    const create = vi.fn().mockResolvedValue(bookmark('bookmark-old-scope', 'session-2'))
+    window.api = {
+      bookmarks: { list: vi.fn().mockResolvedValue({ items: [], total: 0 }), create }
+    } as unknown as Window['api']
+    await renderScope('session-2', persistSource)
+    const creating = latest!.create('bookmark-old-scope', target, '')
+    await renderScope('session-3', persistSource)
+    await act(async () => {
+      barrier.resolve()
+      await creating
+    })
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-2', target }))
+    expect(latest!.sessionId).toBe('session-3')
+    expect(latest!.total).toBe(0)
+    expect(latest!.bookmarks).toEqual([])
+  })
+
+  it('does not rewrite a Session to bookmark an independently versioned file', async () => {
+    const persistSource = vi.fn()
+    const create = vi.fn().mockResolvedValue(bookmark('bookmark-file', 'session-2'))
+    window.api = {
+      bookmarks: { list: vi.fn().mockResolvedValue({ items: [], total: 0 }), create }
+    } as unknown as Window['api']
+    await renderScope('session-2', persistSource)
+    await act(async () => {
+      await latest!.create(
+        'bookmark-file',
+        {
+          ...target,
+          source: { kind: 'project-file', projectId: 'project-1', path: '/project/file.txt' }
+        },
+        ''
+      )
+    })
+    expect(persistSource).not.toHaveBeenCalled()
+    expect(create).toHaveBeenCalledOnce()
   })
 
   it('does not call persistence without a persisted Session scope', async () => {

@@ -43,8 +43,9 @@ const bookmarkRevealListeners = new Set<
 >()
 
 const fileAnnotationSource = (
-  annotation: Annotation
+  annotation: Annotation | BookmarkRevealTarget
 ):
+  | Extract<BookmarkRevealTarget, { kind: 'pdf' }>['source']
   | Extract<Annotation, { kind: 'image-point' | 'pdf' }>['source']
   | Extract<Extract<Annotation, { kind: 'text' }>['source'], { kind: 'project-file' }>
   | undefined => {
@@ -131,7 +132,10 @@ const managedAnnotationIdentity = (
     : undefined
 }
 
-const fileSourceMatchesItem = (annotation: Annotation, item: PreviewFileItem): boolean => {
+const fileSourceMatchesItem = (
+  annotation: Annotation | BookmarkRevealTarget,
+  item: PreviewFileItem
+): boolean => {
   const source = fileAnnotationSource(annotation)
   if (!source) return false
   if (item.projectId !== source.projectId) return false
@@ -331,7 +335,12 @@ const requestBookmarkReveal = async (bookmark: Bookmark): Promise<BookmarkReveal
   const source = bookmarkFileSource(target)
   if (source) {
     const workbench = usePreviewWorkbenchStore.getState()
-    const item = createBookmarkPreviewItem(target)
+    // Reuse the exact-Version tab: replacing it with a minimal item discards metadata and
+    // remounts its renderer after the old renderer has already acknowledged this reveal.
+    const existing = workbench.items.find(
+      (item): item is PreviewFileItem => item.type === 'file' && fileSourceMatchesItem(target, item)
+    )
+    const item = existing ?? createBookmarkPreviewItem(target)
     if (!item) return 'source-unavailable'
     workbench.upsertAndActivateItem(item)
   }

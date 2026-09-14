@@ -309,6 +309,18 @@ describe('annotation reveal', () => {
         path: sourcePath
       })
     ])
+    const existing = usePreviewWorkbenchStore.getState().items[0] as PreviewFileItem
+    const hydrated = { ...existing, size: 902, mtimeMs: 1234 }
+    usePreviewWorkbenchStore.getState().upsertItem(hydrated)
+
+    await expect(requestBookmarkReveal(bookmark)).resolves.toBe('revealed')
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([hydrated])
+
+    usePreviewWorkbenchStore.getState().upsertItem({ ...hydrated, selectedVersionId: 'version-8' })
+    await expect(requestBookmarkReveal(bookmark)).resolves.toBe('revealed')
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([
+      expect.objectContaining({ selectedVersionId: 'version-7', path: sourcePath })
+    ])
     stop()
   })
 

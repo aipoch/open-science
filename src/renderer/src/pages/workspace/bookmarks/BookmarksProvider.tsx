@@ -26,11 +26,13 @@ const BookmarksProvider = ({
   projectId,
   sessionId,
   writable = true,
+  persistSessionTextSource,
   children
 }: React.PropsWithChildren<{
   projectId?: string
   sessionId?: string
   writable?: boolean
+  persistSessionTextSource?: (projectId: string, sessionId: string) => Promise<void>
 }>): React.JSX.Element => {
   const scopeKey = projectId && sessionId ? `${projectId}\u0000${sessionId}` : ''
   const [state, setState] = useState<ScopeState>({
@@ -39,15 +41,17 @@ const BookmarksProvider = ({
     total: 0,
     loading: Boolean(scopeKey)
   })
+  if (state.key !== scopeKey) {
+    setState({ key: scopeKey, bookmarks: [], total: 0, loading: Boolean(scopeKey) })
+  }
   const [loadAttempt, setLoadAttempt] = useState(0)
   const scopeRevisionRef = useRef(0)
   const overlaysRef = useRef(new Map<string, Bookmark | null>())
 
   useEffect(() => {
-    ++scopeRevisionRef.current
-    setState({ key: scopeKey, bookmarks: [], total: 0, loading: Boolean(scopeKey) })
+    const scopeRevision = ++scopeRevisionRef.current
     return () => {
-      ++scopeRevisionRef.current
+      scopeRevisionRef.current = scopeRevision + 1
     }
   }, [scopeKey])
 
@@ -120,6 +124,11 @@ const BookmarksProvider = ({
     async (id: string, target: BookmarkTarget, note: string): Promise<Bookmark> => {
       if (!projectId || !sessionId || !writable) throw unavailableError()
       const scopeRevision = scopeRevisionRef.current
+      // A displayed response can precede the renderer's coalesced Session write. Publish its
+      // source through the Session owner before main validates the durable message identity.
+      if (target.kind === 'text' && target.source.kind !== 'project-file') {
+        await persistSessionTextSource?.(projectId, sessionId)
+      }
       const created = await (window.api.bookmarks as BookmarksApi).create({
         id,
         projectId,
@@ -144,7 +153,7 @@ const BookmarksProvider = ({
       }
       return created
     },
-    [projectId, scopeKey, sessionId, writable]
+    [persistSessionTextSource, projectId, scopeKey, sessionId, writable]
   )
 
   const updateNote = useCallback(
