@@ -327,9 +327,9 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
     },
 
     retry: async () => {
-      const { status, statusError, scope } = get()
+      const { status, statusError, scope, ui } = get()
       const recoveryBlocked = scope === 'r' ? status.rRecoveryBlocked : status.pythonRecoveryBlocked
-      if (statusError || recoveryBlocked) {
+      if (statusError || recoveryBlocked || (ui.kind === 'error' && ui.recoveryBlocked)) {
         await get().init()
         return
       }
