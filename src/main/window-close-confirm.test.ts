@@ -501,6 +501,87 @@ const emptyPreferences: ClosePreferenceAccess = {
   set: async () => undefined
 }
 
+describe('close confirmation with a destroyed BrowserWindow', () => {
+  const guardWebContents = (window: FakeWindow): FakeWebContents => {
+    const webContents = window.webContents
+    // Electron's native getter throws after BrowserWindow destruction, even for a property read.
+    Object.defineProperty(window, 'webContents', {
+      get: () => {
+        if (window.isDestroyed()) throw new TypeError('Object has been destroyed')
+        return webContents
+      }
+    })
+    return webContents
+  }
+
+  beforeEach(() => {
+    electronMocks.ipcMainListeners.clear()
+    electronMocks.showMessageBox.mockReset()
+    electronMocks.showMessageBox.mockResolvedValue({ response: 0, checkboxChecked: false })
+  })
+
+  it.each([false, true])(
+    'can quit after closing the window with active work=%s',
+    async (active) => {
+      const window = createFakeWindow()
+      const webContents = guardWebContents(window)
+      const confirm = createElectronCloseConfirm(
+        () => window as unknown as BrowserWindow,
+        emptyPreferences
+      )
+      window.isDestroyed.mockReturnValue(true)
+      webContents.isDestroyed.mockReturnValue(true)
+
+      await expect(confirm('quit', active ? [session] : [])).resolves.toBe(
+        active ? 'cancel' : 'quit'
+      )
+
+      expect(webContents.send).not.toHaveBeenCalled()
+      expect(electronMocks.showMessageBox).toHaveBeenCalledTimes(active ? 1 : 0)
+      if (active) expect(electronMocks.showMessageBox.mock.calls[0]).toHaveLength(1)
+    }
+  )
+
+  it('settles native fallback after its parent window closes', async () => {
+    vi.useFakeTimers()
+    try {
+      let respond!: (result: { response: number; checkboxChecked: boolean }) => void
+      electronMocks.showMessageBox.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            respond = resolve
+          })
+      )
+      const window = createFakeWindow()
+      const webContents = guardWebContents(window)
+      const confirm = createElectronCloseConfirm(
+        () => window as unknown as BrowserWindow,
+        emptyPreferences
+      )
+      const completed = vi.fn()
+      const pending = confirm('quit', [session]).then(completed)
+      await vi.advanceTimersByTimeAsync(500)
+      expect(electronMocks.showMessageBox).toHaveBeenCalledTimes(1)
+      window.isDestroyed.mockReturnValue(true)
+      webContents.isDestroyed.mockReturnValue(true)
+      for (const listener of webContents.__listeners.get('destroyed') ?? []) listener()
+      respond({ response: 0, checkboxChecked: false })
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(completed).toHaveBeenCalledWith('cancel')
+      await pending
+      expect(
+        electronMocks.ipcMainListeners.get(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL)
+      ).toHaveLength(0)
+      expect([...webContents.__listeners.values()].every((listeners) => listeners.size === 0)).toBe(
+        true
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('createElectronCloseConfirm — send path', () => {
   let getWindow: ReturnType<typeof vi.fn<() => unknown>>
   let confirm: ReturnType<typeof createElectronCloseConfirm>
