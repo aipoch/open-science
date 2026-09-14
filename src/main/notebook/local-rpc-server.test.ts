@@ -4096,7 +4096,9 @@ describe('notebook local RPC server', () => {
         })
       })
       expect(response.status).toBe(500)
-      await expect(response.json()).resolves.toEqual({ error: detail })
+      await expect(response.json()).resolves.toEqual({
+        error: { ...detail, message: 'No matching Run.' }
+      })
     } finally {
       await server.close()
     }

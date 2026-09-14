@@ -12500,7 +12500,7 @@ describe('v4 runtime bindings & agent tools', () => {
     // The bound external interpreter is threaded to the executor, and the managed default is NOT built.
     expect(executions[0].resolvedInterpreter?.command).toBe(userPyA.interpreterPath)
     expect(provisionPython).not.toHaveBeenCalled()
-    expect(summary).not.toHaveProperty('kernelDispatched')
+    expect(summary.kernelDispatched).toBe(true)
     expect(summary).not.toHaveProperty('runtimeId')
     await expect(repository.findExisting('default-project', 's')).resolves.toMatchObject({
       runs: [expect.objectContaining({ kernelDispatched: true, runtimeId: userPyA.envId })]
