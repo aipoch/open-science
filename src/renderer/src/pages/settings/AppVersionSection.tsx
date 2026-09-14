@@ -4,10 +4,9 @@
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: pass (semantic Settings tokens) · slop: pass
  */
-import { CircleHelp, Download, FileText, RefreshCw } from 'lucide-react'
+import { CircleHelp, Download, FileText, RefreshCw, Scale } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import licenseText from '../../../../../LICENSE?raw'
 import { license as licenseId } from '../../../../../package.json'
 import { AppLogo } from '@/components/AppLogo'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
@@ -175,20 +174,26 @@ const AppVersionSection = ({
             </span>
           </span>
         </ExternalTextLink>
-      </div>
-      <details className="text-sm text-muted-foreground">
-        <summary className="w-fit cursor-pointer rounded-sm py-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
-          {t('Open-source license')} · {licenseId}
-        </summary>
-        <pre
-          lang="en"
-          tabIndex={0}
+        <ExternalTextLink
+          href={APP.links.license}
           aria-label={t('Open-source license')}
-          className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted p-4 font-mono text-xs leading-relaxed text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          className={resourceLinkClassName}
         >
-          {licenseText}
-        </pre>
-      </details>
+          <Scale
+            data-slot="about-resource-icon"
+            className={resourceIconClassName}
+            aria-hidden="true"
+          />
+          <span className="min-w-0 flex-1">
+            <span data-slot="about-resource-title" className={resourceTitleClassName}>
+              {t('Open-source license')}
+            </span>
+            <span data-slot="about-resource-description" className={resourceDescriptionClassName}>
+              {licenseId}
+            </span>
+          </span>
+        </ExternalTextLink>
+      </div>
     </SettingsSection>
   )
 }
