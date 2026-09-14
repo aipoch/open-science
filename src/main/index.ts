@@ -766,12 +766,22 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           // Module loading can fail while verification is actively migrating. Keep the quit guard
           // installed until that attempt settles so app.quit cannot interrupt database writes.
           await databaseStartupOwner.whenAttemptSettled()
-          disposeLocalePreferenceIpc()
-          databaseStartupQuitGuard.dispose()
-          managedPreviewProtocolBridge.dispose()
-          disposeDatabaseStartupIpc()
-          if (startupWindow && !startupWindow.isDestroyed()) startupWindow.destroy()
-          app.quit()
+          for (const cleanup of [
+            disposeLocalePreferenceIpc,
+            () => databaseStartupQuitGuard.dispose(),
+            () => managedPreviewProtocolBridge.dispose(),
+            disposeDatabaseStartupIpc,
+            () => {
+              if (startupWindow && !startupWindow.isDestroyed()) startupWindow.destroy()
+            },
+            () => app.quit()
+          ]) {
+            try {
+              cleanup()
+            } catch (error) {
+              log.warn('Startup shell cleanup failed', diagnosticErrorFields(error))
+            }
+          }
         }
       })
     },
