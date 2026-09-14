@@ -1298,7 +1298,7 @@ export function SkillMarketplace({
                             ) : null}
                             <TruncatedText
                               text={item.displayName}
-                              lines={2}
+                              lines={1}
                               onClick={() => openDetail(item)}
                             />
                           </div>
