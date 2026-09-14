@@ -840,6 +840,7 @@
           "src/main/artifacts/provenance-message-snapshot.test.ts",
           "src/main/artifacts/provenance-repository.architecture.test.ts",
           "src/main/artifacts/provenance-repository.test.ts",
+          "src/main/artifacts/provenance-startup.integration.test.ts",
           "src/main/artifacts/provenance-reproducibility-projection.test.ts",
           "src/main/artifacts/provenance-write-contract.test.ts",
           "src/main/artifacts/reviewer-turn-file-evidence-reader.test.ts",
@@ -849,6 +850,7 @@
         ],
         "contract": [
           "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
+          "src/main/database/managed-file-version-domain.test.ts",
           "src/main/artifacts/ipc.test.ts",
           "src/main/artifacts/mcp-server.test.ts",
           "src/main/data-content-application-commands.test.ts",
