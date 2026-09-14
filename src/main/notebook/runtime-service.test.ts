@@ -5008,11 +5008,14 @@ describe('notebook runtime service', () => {
     it('finishes runtime disposal after a queued Shell cancellation write fails', async () => {
       const root = await createStorageRoot()
       const repository = new NotebookRunRepository(root)
+      const firstStarted = createDeferred<void>()
+      const secondAdmitted = createDeferred<void>()
       let releaseFirst!: () => void
       const firstGate = new Promise<void>((resolve) => {
         releaseFirst = resolve
       })
       const execute = vi.fn<NotebookShellProcess['execute']>(async () => {
+        firstStarted.resolve()
         await firstGate
         return { stdout: '', stderr: '', exitCode: 0 }
       })
@@ -5035,6 +5038,12 @@ describe('notebook runtime service', () => {
       const first = service.executeShell({ ...scope, command: 'occupy-slot' })
       const cancellation = new AbortController()
       let second: Promise<unknown> | undefined
+      const appendOrGetRun = repository.appendOrGetRun.bind(repository)
+      const admission = vi.spyOn(repository, 'appendOrGetRun').mockImplementation(async (input) => {
+        const result = await appendOrGetRun(input)
+        if (input.run.script === 'queued-command') secondAdmitted.resolve()
+        return result
+      })
       const transition = repository.transitionRun.bind(repository)
       const write = vi.spyOn(repository, 'transitionRun').mockImplementation(async (input) => {
         if (input.run.script === 'queued-command' && input.run.status === 'cancelled') {
@@ -5043,33 +5052,30 @@ describe('notebook runtime service', () => {
         return transition(input)
       })
       try {
-        await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce())
+        // Wait for lifecycle boundaries, not the default one-second polling budget: admission
+        // performs real filesystem writes and can take longer on a busy CI runner.
+        await Promise.race([firstStarted.promise, first])
+        expect(execute).toHaveBeenCalledOnce()
         second = service.executeShell({ ...scope, command: 'queued-command' }, cancellation.signal)
         const rejected = expect(second).rejects.toThrow('queued cancellation write unavailable')
-        await vi.waitFor(async () => {
-          expect(
-            (await service.state(scope)).runs.find((run) => run.script === 'queued-command')?.status
-          ).toBe('queued')
-        })
+        await Promise.race([secondAdmitted.promise, second])
+        expect(
+          (await service.state(scope)).runs.find((run) => run.script === 'queued-command')?.status
+        ).toBe('queued')
         cancellation.abort(new Error('user cancellation'))
         await rejected
         expect(execute).toHaveBeenCalledOnce()
         releaseFirst()
         await first
         expect(disposePrepared).toHaveBeenCalledTimes(2)
-        let settled = false
-        void service.dispose().then(
-          () => {
-            settled = true
-          },
-          () => {
-            settled = true
-          }
+        await service.dispose().then(
+          () => undefined,
+          () => undefined
         )
-        await vi.waitFor(() => expect(settled).toBe(true), { timeout: 1000 })
       } finally {
         releaseFirst()
         await Promise.allSettled([first, ...(second ? [second] : [])])
+        admission.mockRestore()
         write.mockRestore()
       }
     })
