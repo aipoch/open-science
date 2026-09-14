@@ -291,9 +291,7 @@ describe('TextAnnotationSurface highlight restoration', () => {
       const editor = screen.getByRole('textbox', { name: 'Annotation note' }) as HTMLTextAreaElement
       expect(editor.value).toBe('Check this wording')
       await act(async () => fireEvent.change(editor, { target: { value: 'Updated locally' } }))
-      await act(async () =>
-        fireEvent.click(screen.getByRole('button', { name: action, exact: true }))
-      )
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: action })))
 
       expect(screen.queryByRole('textbox', { name: 'Annotation note' })).toBeNull()
       if (action === 'Save') {
