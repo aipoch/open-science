@@ -732,7 +732,6 @@ export const GlobalSearchDialog = ({
               className="global-search-list-pane min-h-0 min-w-0 flex flex-col"
               aria-label={t('Search results')}
             >
-              {!advancedOpen && <SearchResultFilters {...searchFilterProps} />}
               <div
                 className="global-search-list min-h-0 flex-1 overflow-auto"
                 ref={listRef}

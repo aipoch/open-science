@@ -246,6 +246,7 @@ test('searches projects, sessions, message bodies and Library with paged disclos
     await Promise.all(el.getAnimations().map((animation) => animation.finished))
   })
   await expect(details).toHaveAttribute('data-open', 'true')
+  await dialog.getByRole('button', { name: 'Advanced filters' }).click()
   const order = dialog.getByRole('combobox', { name: 'Result order' })
   await order.focus()
   await order.press('Enter')
@@ -254,6 +255,7 @@ test('searches projects, sessions, message bodies and Library with paged disclos
   await page.keyboard.press('Escape')
   await expect(order).toBeFocused()
   await expect(order).toHaveAttribute('aria-expanded', 'false')
+  await dialog.getByRole('button', { name: 'Advanced filters' }).click()
   await expect(details).toHaveAttribute('data-open', 'true')
   await expect(dialog).toBeVisible()
   await expect(details.getByRole('tab', { name: 'Recent files' })).toBeVisible()
@@ -526,6 +528,7 @@ test('keeps saved Notebook output and structured file previews visible inside se
   const search = dialog.getByRole('combobox', { name: 'Global search' })
   await search.fill('search-')
   await dialog.locator('[data-category="uploads"]').click()
+  await dialog.getByRole('button', { name: 'Advanced filters' }).click()
   await dialog.getByRole('combobox', { name: 'Refine category' }).click()
   await page.getByRole('option', { name: 'Notebook', exact: true }).click()
   await expect(dialog.getByRole('listbox').getByRole('option')).toHaveCount(1)
@@ -581,7 +584,8 @@ test('toggles the advanced filter island column from the category chips', async 
           row.querySelector('[data-testid="global-search-advanced-toggle"]')
       )
   ).toBe(true)
-  await expect(dialog.locator('.global-search-list-pane .search-subfilters')).toBeVisible()
+  // The inline filter row no longer exists: the island is the only entry to the selects.
+  await expect(dialog.locator('.global-search-list-pane .search-subfilters')).toHaveCount(0)
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-expanded', 'true')
   await expect(panel).toHaveAttribute('data-open', 'true')
@@ -667,7 +671,8 @@ test('toggles the advanced filter island column from the category chips', async 
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')
   await expect(panel).toHaveAttribute('data-open', 'false')
-  await expect(dialog.locator('.global-search-list-pane .search-subfilters')).toBeVisible()
+  await expect(dialog.locator('.global-search-list-pane .search-subfilters')).toHaveCount(0)
+  await expect(dialog.getByRole('combobox', { name: 'Search scope' })).toHaveCount(0)
 })
 
 test('uses the same preview and information tabs for generated files', async ({
