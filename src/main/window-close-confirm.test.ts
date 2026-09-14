@@ -1004,6 +1004,85 @@ describe('confirmation decision ownership', () => {
     ).toBe(true)
   })
 
+  it.each(['cancel', 'quit'] as const)(
+    'replaces an installation warning through real confirmation IPC before %s',
+    async (choice) => {
+      electronMocks.ipcMainListeners.clear()
+      const app = Object.assign(new EventEmitter(), { exit: vi.fn() })
+      const window = Object.assign(createFakeWindow(), { on: vi.fn() })
+      let activeInstallId = 'install-1'
+      const requestQuit = (): void => {
+        app.emit('before-quit', { preventDefault: vi.fn(), defaultPrevented: false })
+      }
+      const shutdownBackends = vi.fn(async () => undefined)
+      const quit = vi.fn(requestQuit)
+      installAppLifecycle({
+        app: app as unknown as Parameters<typeof installAppLifecycle>[0]['app'],
+        createMainWindow: () => window as unknown as BrowserWindow,
+        createTray: () => undefined,
+        quit,
+        countWindows: () => 1,
+        shutdownBackends,
+        prepareForQuit: async () => undefined,
+        holdSettingsInstallAdmission: () => () => undefined,
+        abortQuitPreparation: () => undefined,
+        flushSessionPersistence: async () => 'completed',
+        isMigrationInProgress: () => false,
+        detectActiveSessions: () => [],
+        hasActiveReviewerWork: () => false,
+        getActiveSettingsInstallId: () => activeInstallId,
+        createConfirmClose: (getWindow) => createElectronCloseConfirm(getWindow, emptyPreferences)
+      })
+      const requests = (): CloseConfirmRequest[] =>
+        window.webContents.send.mock.calls
+          .filter(([channel]) => channel === WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL)
+          .map(([, payload]) => payload as CloseConfirmRequest)
+      const respond = (response: CloseConfirmResponse): void => {
+        for (const listener of electronMocks.ipcMainListeners.get(
+          WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL
+        ) ?? [])
+          listener({ sender: window.webContents }, response)
+      }
+      try {
+        requestQuit()
+        const first = requests()[0]
+        respond({ requestId: first.requestId, ack: true })
+        activeInstallId = 'install-2'
+        respond({ requestId: first.requestId, choice: 'quit' })
+        await wait(0)
+
+        expect(requests()).toHaveLength(2)
+        const second = requests()[1]
+        expect(second).toMatchObject({ variant: 'quit', sessions: [], unlistedWorkActive: true })
+        expect(second.requestId).not.toBe(first.requestId)
+        expect(window.webContents.send).toHaveBeenCalledWith(WINDOW_CLOSE_CONFIRM_DISMISS_CHANNEL, {
+          requestId: first.requestId
+        })
+        expect(
+          electronMocks.ipcMainListeners.get(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL)
+        ).toHaveLength(1)
+        respond({ requestId: second.requestId, ack: true })
+        respond({ requestId: first.requestId, choice: 'quit' })
+        requestQuit()
+        await wait(0)
+        expect(requests()).toHaveLength(2)
+        expect(shutdownBackends).not.toHaveBeenCalled()
+        respond({ requestId: second.requestId, choice })
+        await wait(0)
+        expect(
+          electronMocks.ipcMainListeners.get(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL)
+        ).toHaveLength(0)
+        expect(shutdownBackends).toHaveBeenCalledTimes(choice === 'quit' ? 1 : 0)
+        expect(app.exit).toHaveBeenCalledTimes(choice === 'quit' ? 1 : 0)
+      } finally {
+        for (const request of requests())
+          respond({ requestId: request.requestId, choice: 'cancel' })
+        await wait(0)
+        clearApplicationShutdownTrigger()
+      }
+    }
+  )
+
   it('allows another normal quit after the acknowledged window is destroyed and reopened', async () => {
     electronMocks.ipcMainListeners.clear()
     const app = Object.assign(new EventEmitter(), { exit: vi.fn() })
