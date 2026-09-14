@@ -575,10 +575,10 @@ test('toggles the advanced filter island column from the category chips', async 
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')
   await expect(toggle).toHaveAttribute('aria-controls', (await panel.getAttribute('id'))!)
   await expect(panel).toHaveAttribute('data-open', 'false')
-  // The toggle stays the last chip in the category row.
+  // The toggle stays pinned at the right end of the toolbar while the chips scroll underneath.
   expect(
     await dialog
-      .locator('.global-search-chips')
+      .locator('.global-search-toolbar')
       .evaluate(
         (row) =>
           row.lastElementChild ===

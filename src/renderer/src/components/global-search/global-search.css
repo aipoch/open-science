@@ -261,6 +261,21 @@
 .global-search-body[data-expanded='true'] {
   grid-template-columns: minmax(0, 0.45fr) minmax(0, 0.55fr) auto;
 }
+/* The advanced aside is the body's first DOM child so keyboard tabbing reaches it right after the
+   toolbar toggle; explicit row and columns keep its visual position at the right edge regardless
+   (sparse auto-flow would otherwise push later items into a second implicit row). */
+.global-search-list-pane {
+  grid-row: 1;
+  grid-column: 1;
+}
+.global-search-detail {
+  grid-row: 1;
+  grid-column: 2;
+}
+.global-search-advanced {
+  grid-row: 1;
+  grid-column: 3;
+}
 .global-search-detail {
   min-width: 0;
   overflow: hidden;

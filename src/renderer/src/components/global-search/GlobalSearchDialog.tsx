@@ -717,21 +717,21 @@ export const GlobalSearchDialog = ({
                     </button>
                   )
                 })}
-                <button
-                  type="button"
-                  data-testid="global-search-advanced-toggle"
-                  aria-expanded={advancedOpen}
-                  aria-controls={advancedPanelId}
-                  onClick={() => setAdvancedOpen((open) => !open)}
-                  className="search-category-chip search-advanced-toggle transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <SlidersHorizontal aria-hidden="true" />
-                  {t('Advanced filters')}
-                  {activeFilterCount > 0 && (
-                    <span className="search-filter-count">{activeFilterCount}</span>
-                  )}
-                </button>
               </div>
+              <button
+                type="button"
+                data-testid="global-search-advanced-toggle"
+                aria-expanded={advancedOpen}
+                aria-controls={advancedPanelId}
+                onClick={() => setAdvancedOpen((open) => !open)}
+                className="search-category-chip search-advanced-toggle transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <SlidersHorizontal aria-hidden="true" />
+                {t('Advanced filters')}
+                {activeFilterCount > 0 && (
+                  <span className="search-filter-count">{activeFilterCount}</span>
+                )}
+              </button>
             </div>
             <p className="px-4 pb-2 text-xs text-muted-foreground">
               {t(
@@ -740,6 +740,20 @@ export const GlobalSearchDialog = ({
             </p>
           </header>
           <div className="global-search-body min-h-0 flex-1" data-expanded={!!selected}>
+            <aside
+              id={advancedPanelId}
+              data-testid="global-search-advanced"
+              data-open={advancedOpen}
+              aria-hidden={!advancedOpen}
+              inert={!advancedOpen}
+              aria-label={t('Advanced filters')}
+              className="global-search-advanced h-full"
+            >
+              <div className="search-advanced-island">
+                <div className="search-advanced-title">{t('Advanced filters')}</div>
+                {advancedOpen && <SearchResultFilters stacked {...searchFilterProps} />}
+              </div>
+            </aside>
             <section
               className="global-search-list-pane min-h-0 min-w-0 flex flex-col"
               aria-label={t('Search results')}
@@ -971,20 +985,6 @@ export const GlobalSearchDialog = ({
                     onCollapse={collapse}
                   />
                 )}
-              </div>
-            </aside>
-            <aside
-              id={advancedPanelId}
-              data-testid="global-search-advanced"
-              data-open={advancedOpen}
-              aria-hidden={!advancedOpen}
-              inert={!advancedOpen}
-              aria-label={t('Advanced filters')}
-              className="global-search-advanced h-full"
-            >
-              <div className="search-advanced-island">
-                <div className="search-advanced-title">{t('Advanced filters')}</div>
-                {advancedOpen && <SearchResultFilters stacked {...searchFilterProps} />}
               </div>
             </aside>
           </div>
