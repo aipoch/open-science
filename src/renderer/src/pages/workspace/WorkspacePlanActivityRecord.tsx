@@ -53,6 +53,7 @@ const PlanTextAnnotationSurface = ({
       activeAnnotations={annotationPort.activeAnnotations}
       onAdd={annotationPort.onAdd}
       onUpdateNote={annotationPort.onUpdateNote}
+      onRemove={annotationPort.onRemove}
       onError={annotationPort.onError}
     >
       {children}

@@ -19,6 +19,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
@@ -37,7 +38,10 @@ import {
   annotationRevealScrollBehavior,
   retryPendingAnnotationReveal,
   subscribeAnnotationReveal,
-  subscribeAnnotationRevealPreparation
+  subscribeAnnotationRevealPreparation,
+  subscribeBookmarkReveal,
+  subscribeBookmarkRevealPreparation,
+  type BookmarkRevealTarget
 } from '../../annotations/annotation-reveal'
 import { createAnnotationId } from '../../annotations/annotation-id'
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
@@ -51,6 +55,11 @@ import {
 } from '../../../../../../shared/web-event-connection'
 import { createManagedPreviewRequest } from '../preview-file-reader'
 import type { PreviewFileRendererProps } from '../preview-types'
+import {
+  pdfBookmarkSelectorMatchesPage,
+  type PdfBookmarkSource
+} from '../../../../../../shared/pdf-bookmarks'
+import { useBookmarks } from '../../bookmarks/bookmark-context'
 import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { useNearViewport } from '../useNearViewport'
 import { resolvePdfContextTarget } from '../../use-pdf-context-action'
@@ -603,10 +612,21 @@ const MAX_RENDER_SCALE = 5
 const isRenderCancel = (error: unknown): boolean =>
   error instanceof Error && error.name === 'RenderingCancelledException'
 
+const pdfBookmarkSourceMatches = (
+  candidate: PdfBookmarkSource,
+  expected: PdfBookmarkSource
+): boolean =>
+  candidate.kind === expected.kind &&
+  candidate.projectId === expected.projectId &&
+  candidate.sourceFileId === expected.sourceFileId &&
+  candidate.versionId === expected.versionId &&
+  candidate.checksum === expected.checksum
+
 const PdfEvidenceLayer = ({
   pageNumber,
   pageRotation,
   source,
+  bookmarkSource,
   canvas,
   textLayer,
   active,
@@ -620,7 +640,8 @@ const PdfEvidenceLayer = ({
 }: {
   pageNumber: number
   pageRotation: number
-  source: PdfAnnotation['source']
+  source?: PdfAnnotation['source']
+  bookmarkSource?: PdfBookmarkSource
   canvas: React.RefObject<HTMLCanvasElement | null>
   textLayer: React.RefObject<HTMLDivElement | null>
   active: boolean
@@ -633,10 +654,23 @@ const PdfEvidenceLayer = ({
   onSelected: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const bookmarks = useBookmarks()
   const [start, setStart] = useState<Readonly<{ x: number; y: number }>>()
   const [end, setEnd] = useState<Readonly<{ x: number; y: number }>>()
   const [reveal, setReveal] = useState<Readonly<{ id: string; sequence: number }>>()
   const [preparedAnnotation, setPreparedAnnotation] = useState<PdfAnnotation>()
+  const [preparedBookmark, setPreparedBookmark] = useState<BookmarkRevealTarget>()
+  const [regionDraft, setRegionDraft] = useState<
+    Readonly<{
+      id: string
+      rect: ReturnType<typeof normalizedPdfRect> & {}
+      text?: string
+      destination: 'agent' | 'bookmark'
+      note: string
+      saving: boolean
+      error?: string
+    }>
+  >()
   const revealSequence = useRef(0)
   const highlightLayer = useRef<HTMLDivElement | null>(null)
   const matching = useMemo(() => {
@@ -645,6 +679,7 @@ const PdfEvidenceLayer = ({
       !activeAnnotations.some((annotation) => annotation.id === preparedAnnotation.id)
         ? [...activeAnnotations, preparedAnnotation]
         : activeAnnotations
+    if (!source) return []
     return annotations.filter(
       (annotation): annotation is PdfAnnotation =>
         annotation.kind === 'pdf' &&
@@ -653,19 +688,30 @@ const PdfEvidenceLayer = ({
         annotation.source.checksum === source.checksum &&
         annotation.selector.pageNumber === pageNumber
     )
-  }, [
-    activeAnnotations,
-    pageNumber,
-    preparedAnnotation,
-    source.checksum,
-    source.projectId,
-    source.versionId
-  ])
+  }, [activeAnnotations, pageNumber, preparedAnnotation, source])
+  const matchingBookmarks = useMemo(() => {
+    if (!bookmarkSource) return []
+    const saved = bookmarks.bookmarks.flatMap((bookmark) =>
+      bookmark.target.kind === 'pdf' &&
+      pdfBookmarkSourceMatches(bookmark.target.source, bookmarkSource) &&
+      pdfBookmarkSelectorMatchesPage(bookmark.target.selector, pageNumber, pageRotation)
+        ? [{ id: bookmark.id, ...bookmark.target } satisfies BookmarkRevealTarget]
+        : []
+    )
+    return preparedBookmark &&
+      preparedBookmark.kind === 'pdf' &&
+      pdfBookmarkSourceMatches(preparedBookmark.source, bookmarkSource) &&
+      pdfBookmarkSelectorMatchesPage(preparedBookmark.selector, pageNumber, pageRotation) &&
+      !saved.some((bookmark) => bookmark.id === preparedBookmark.id)
+      ? [...saved, preparedBookmark]
+      : saved
+  }, [bookmarkSource, bookmarks.bookmarks, pageNumber, pageRotation, preparedBookmark])
 
   useEffect(
     () =>
       subscribeAnnotationRevealPreparation((annotation) => {
         if (
+          !source ||
           annotation.kind !== 'pdf' ||
           annotation.source.projectId !== source.projectId ||
           annotation.source.versionId !== source.versionId ||
@@ -676,7 +722,7 @@ const PdfEvidenceLayer = ({
         }
         setPreparedAnnotation(annotation)
       }),
-    [pageNumber, source.checksum, source.projectId, source.versionId]
+    [pageNumber, source]
   )
 
   useEffect(() => {
@@ -698,11 +744,63 @@ const PdfEvidenceLayer = ({
     }
   }, [matching])
 
+  useEffect(
+    () =>
+      subscribeBookmarkRevealPreparation((target) => {
+        if (
+          !bookmarkSource ||
+          target.kind !== 'pdf' ||
+          !pdfBookmarkSourceMatches(target.source, bookmarkSource) ||
+          target.selector.pageNumber !== pageNumber
+        ) {
+          return
+        }
+        setPreparedBookmark(target)
+      }),
+    [bookmarkSource, pageNumber]
+  )
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const unsubscribe = subscribeBookmarkReveal((target) => {
+      if (
+        !bookmarkSource ||
+        target.kind !== 'pdf' ||
+        !pdfBookmarkSourceMatches(target.source, bookmarkSource)
+      ) {
+        return
+      }
+      if (target.selector.pageNumber !== pageNumber) return
+      if (!pdfBookmarkSelectorMatchesPage(target.selector, pageNumber, pageRotation)) {
+        return 'locator-unsupported'
+      }
+      const sequence = ++revealSequence.current
+      setPreparedBookmark(target)
+      setReveal({ id: target.id, sequence })
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        setReveal((current) => (current?.sequence === sequence ? undefined : current))
+        setPreparedBookmark((current) => (current?.id === target.id ? undefined : current))
+      }, 1_600)
+      return true
+    })
+    return () => {
+      unsubscribe()
+      clearTimeout(timer)
+    }
+  }, [bookmarkSource, pageNumber, pageRotation])
+
   useEffect(() => {
     if (!reveal) return
     const target = Array.from(
-      highlightLayer.current?.querySelectorAll<HTMLElement>('[data-pdf-evidence-highlight]') ?? []
-    ).find((element) => element.dataset.pdfEvidenceHighlight === reveal.id)
+      highlightLayer.current?.querySelectorAll<HTMLElement>(
+        '[data-pdf-evidence-highlight], [data-pdf-bookmark-highlight]'
+      ) ?? []
+    ).find(
+      (element) =>
+        element.dataset.pdfEvidenceHighlight === reveal.id ||
+        element.dataset.pdfBookmarkHighlight === reveal.id
+    )
     target?.scrollIntoView({
       block: 'center',
       inline: 'center',
@@ -715,13 +813,24 @@ const PdfEvidenceLayer = ({
     const page = element.getBoundingClientRect()
     setStart(undefined)
     setEnd(undefined)
-    if (!canvas.current || !onAddAnnotation) return
+    const text = textInPdfRect(textLayer.current, page, rect, ANNOTATION_LIMITS.quote)
+    if (bookmarkSource) {
+      setRegionDraft({
+        id: createAnnotationId().replace(/^annotation-/u, 'bookmark-'),
+        rect,
+        ...(text ? { text } : {}),
+        destination: onAddAnnotation && source ? 'agent' : 'bookmark',
+        note: '',
+        saving: false
+      })
+      return
+    }
+    if (!canvas.current || !onAddAnnotation || !source) return
     const image = cropPdfCanvasRegion(canvas.current, rect)
     if (!image) {
       onAnnotationError?.('payload-too-large')
       return
     }
-    const text = textInPdfRect(textLayer.current, page, rect, ANNOTATION_LIMITS.quote)
     const error = onAddAnnotation({
       id: createAnnotationId(),
       kind: 'pdf',
@@ -743,9 +852,78 @@ const PdfEvidenceLayer = ({
     onSelected()
   }
 
+  const saveRegionDraft = async (): Promise<void> => {
+    if (!regionDraft) return
+    if (regionDraft.destination === 'bookmark') {
+      if (!bookmarkSource || !bookmarks.available) return
+      setRegionDraft({ ...regionDraft, saving: true, error: undefined })
+      try {
+        await bookmarks.create(
+          regionDraft.id,
+          {
+            kind: 'pdf',
+            source: bookmarkSource,
+            selector: {
+              kind: 'region',
+              pageNumber,
+              rect: regionDraft.rect,
+              pageRotation,
+              ...(regionDraft.text ? { text: regionDraft.text } : {}),
+              coordinateVersion: 1
+            }
+          },
+          regionDraft.note.trim()
+        )
+        setRegionDraft(undefined)
+        onSelected()
+      } catch (error) {
+        setRegionDraft((current) =>
+          current
+            ? {
+                ...current,
+                saving: false,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : t('Bookmark could not be saved. Try again.')
+              }
+            : current
+        )
+      }
+      return
+    }
+    if (!canvas.current || !onAddAnnotation || !source) return
+    const image = cropPdfCanvasRegion(canvas.current, regionDraft.rect)
+    if (!image) {
+      onAnnotationError?.('payload-too-large')
+      return
+    }
+    const error = onAddAnnotation({
+      id: createAnnotationId(),
+      kind: 'pdf',
+      target: 'agent',
+      ...(regionDraft.note.trim() ? { note: regionDraft.note.trim() } : {}),
+      source,
+      selector: {
+        kind: 'region',
+        pageNumber,
+        rect: regionDraft.rect,
+        pageRotation,
+        ...(regionDraft.text ? { text: regionDraft.text } : {}),
+        image
+      }
+    })
+    if (error) {
+      onAnnotationError?.(error)
+      return
+    }
+    setRegionDraft(undefined)
+    onSelected()
+  }
+
   return (
     <>
-      <div ref={highlightLayer} className="pointer-events-none absolute inset-0 z-20">
+      <div ref={highlightLayer} className="pointer-events-none absolute inset-0 z-40">
         {matching.flatMap((annotation) => {
           const boxes =
             annotation.selector.kind === 'text'
@@ -819,6 +997,28 @@ const PdfEvidenceLayer = ({
             </button>
           )
         })}
+        {matchingBookmarks.flatMap((bookmark) => {
+          const selector = bookmark.selector
+          const boxes = selector.kind === 'text' ? selector.quads : [selector.rect]
+          const isRevealed = reveal?.id === bookmark.id
+          return boxes.map((rect, index) => (
+            <span
+              key={`${bookmark.id}-${index}-${isRevealed ? reveal.sequence : 0}`}
+              data-pdf-bookmark-highlight={bookmark.id}
+              data-pdf-bookmark-revealed={isRevealed ? 'true' : undefined}
+              className={cn(
+                'absolute rounded-[2px] bg-primary/15 ring-1 ring-inset ring-primary/50',
+                isRevealed && 'pdf-evidence-reveal'
+              )}
+              style={{
+                left: `${rect.x * 100}%`,
+                top: `${rect.y * 100}%`,
+                width: `${rect.width * 100}%`,
+                height: `${rect.height * 100}%`
+              }}
+            />
+          ))
+        })}
         {draft ? (
           <span
             data-pdf-region-draft="true"
@@ -830,6 +1030,119 @@ const PdfEvidenceLayer = ({
               height: `${draft.height * 100}%`
             }}
           />
+        ) : null}
+        {regionDraft ? (
+          <div
+            data-pdf-region-bookmark-editor="true"
+            className="pointer-events-auto absolute z-40 w-80 space-y-2 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-dialog"
+            style={{
+              left: `${Math.min(regionDraft.rect.x + regionDraft.rect.width, 0.72) * 100}%`,
+              top: `${Math.min(regionDraft.rect.y + regionDraft.rect.height, 0.72) * 100}%`
+            }}
+          >
+            {onAddAnnotation && source && regionDraft.destination !== 'bookmark' ? (
+              <div
+                role="tablist"
+                aria-label={t('Selection destination')}
+                className="inline-flex rounded-md border border-border bg-muted/60 p-0.5"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={true}
+                  className={cn(
+                    'h-6 rounded-[4px] px-2 text-[11px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50',
+                    'bg-card text-foreground shadow-sm'
+                  )}
+                  onClick={() =>
+                    setRegionDraft({ ...regionDraft, destination: 'agent', error: undefined })
+                  }
+                >
+                  {t('To Agent')}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={false}
+                  className={cn(
+                    'h-6 rounded-[4px] px-2 text-[11px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50',
+                    'text-muted-foreground hover:text-foreground'
+                  )}
+                  onClick={() =>
+                    setRegionDraft({ ...regionDraft, destination: 'bookmark', error: undefined })
+                  }
+                >
+                  {t('For me')}
+                </button>
+              </div>
+            ) : (
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {t('For me')}
+              </div>
+            )}
+            {regionDraft.destination === 'bookmark' && regionDraft.text ? (
+              <blockquote className="line-clamp-2 rounded-md bg-muted/70 px-2 py-1.5 text-[11px] leading-4 text-muted-foreground">
+                {regionDraft.text}
+              </blockquote>
+            ) : null}
+            <label
+              className="block text-xs font-medium"
+              htmlFor={`pdf-bookmark-note-${regionDraft.id}`}
+            >
+              {t('Note (optional)')}
+            </label>
+            <Textarea
+              id={`pdf-bookmark-note-${regionDraft.id}`}
+              data-pdf-bookmark-note="true"
+              autoFocus
+              value={regionDraft.note}
+              maxLength={2_000}
+              placeholder={
+                regionDraft.destination === 'bookmark'
+                  ? t('Add a private note')
+                  : t('Add context for the Agent')
+              }
+              disabled={regionDraft.saving}
+              onChange={(event) =>
+                setRegionDraft({ ...regionDraft, note: event.target.value, error: undefined })
+              }
+            />
+            {regionDraft.destination === 'bookmark' && (!bookmarkSource || !bookmarks.available) ? (
+              <p role="status" className="text-xs text-muted-foreground">
+                {!bookmarks.available
+                  ? t('Bookmarks are available after this conversation is saved.')
+                  : t('Bookmark source is no longer available.')}
+              </p>
+            ) : null}
+            {regionDraft.error ? (
+              <p role="alert" className="text-xs text-destructive">
+                {regionDraft.error}
+              </p>
+            ) : null}
+            <div className="flex items-center justify-end gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={regionDraft.saving}
+                onClick={() => setRegionDraft(undefined)}
+              >
+                {t('Cancel')}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={
+                  regionDraft.saving ||
+                  (regionDraft.destination === 'bookmark' &&
+                    (!bookmarkSource || !bookmarks.available))
+                }
+                onClick={() => void saveRegionDraft()}
+              >
+                {regionDraft.destination === 'bookmark' ? t('Bookmark') : t('Annotate')}
+              </Button>
+            </div>
+          </div>
         ) : null}
       </div>
       {active ? (
@@ -885,6 +1198,7 @@ const PdfPageCanvas = ({
   registerDisposer,
   annotationProps,
   pdfEvidenceSource,
+  pdfBookmarkSource,
   pdfRevealSource,
   selectedEvidenceId,
   onSelectEvidence,
@@ -898,6 +1212,7 @@ const PdfPageCanvas = ({
   registerDisposer: (dispose: () => void) => () => void
   annotationProps?: PreviewFileRendererProps
   pdfEvidenceSource?: PdfAnnotation['source']
+  pdfBookmarkSource?: PdfBookmarkSource
   pdfRevealSource?: PdfAnnotation['source']
   selectedEvidenceId?: string
   onSelectEvidence: (id: string) => void
@@ -1130,12 +1445,15 @@ const PdfPageCanvas = ({
       )}
       style={pageWidth > 0 ? { aspectRatio, width: pageWidth } : { aspectRatio }}
       data-page-number={pageNumber}
+      data-pdf-page-rotation={pageRotation}
     >
       {annotationProps && isNearViewport ? (
         <PreviewTextAnnotationSurface
           {...annotationProps}
           sourcePageNumber={pageNumber}
           pdfEvidenceSource={pdfEvidenceSource}
+          pdfBookmarkSource={pdfBookmarkSource}
+          pdfPageRotation={pageRotation}
           pdfExtractorVersion={`pdfjs-${pdfjsLib.version}`}
           onAnnotationAdded={onRegionSelected}
         >
@@ -1144,15 +1462,18 @@ const PdfPageCanvas = ({
       ) : (
         pageContent
       )}
-      {isNearViewport && (pdfEvidenceSource || pdfRevealSource) ? (
+      {isNearViewport &&
+      status === 'ready' &&
+      (pdfEvidenceSource || pdfBookmarkSource || pdfRevealSource) ? (
         <PdfEvidenceLayer
           key={regionSelectionActive ? 'selecting' : 'viewing'}
           pageNumber={pageNumber}
           pageRotation={pageRotation}
-          source={pdfEvidenceSource ?? pdfRevealSource!}
+          source={pdfEvidenceSource ?? pdfRevealSource}
+          bookmarkSource={pdfBookmarkSource}
           canvas={canvasRef}
           textLayer={textLayerHostRef}
-          active={regionSelectionActive && Boolean(pdfEvidenceSource)}
+          active={regionSelectionActive && Boolean(pdfEvidenceSource || pdfBookmarkSource)}
           activeAnnotations={annotationProps?.activeAnnotations ?? []}
           selectedAnnotationId={selectedEvidenceId}
           onAddAnnotation={pdfEvidenceSource ? annotationProps?.onAddAnnotation : undefined}
@@ -1180,6 +1501,8 @@ export const PdfPreviewContent = ({
   onReadingPositionChange,
   annotationProps,
   pdfEvidenceSource,
+  pdfBookmarkSource,
+  pdfBookmarkSourceUnavailable = false,
   pdfRevealSource,
   presentation = 'reader'
 }: {
@@ -1196,6 +1519,8 @@ export const PdfPreviewContent = ({
   onReadingPositionChange?: PreviewFileRendererProps['onPdfReadingPositionChange']
   annotationProps?: PreviewFileRendererProps
   pdfEvidenceSource?: PdfAnnotation['source']
+  pdfBookmarkSource?: PdfBookmarkSource
+  pdfBookmarkSourceUnavailable?: boolean
   pdfRevealSource?: PdfAnnotation['source']
   presentation?: PreviewFileRendererProps['presentation']
 }): React.JSX.Element => {
@@ -1294,7 +1619,9 @@ export const PdfPreviewContent = ({
   const handleTextLayerRendered = useCallback(() => {
     setTextLayerEpoch((epoch) => epoch + 1)
   }, [])
-  const canSelectArea = Boolean(annotationProps?.onAddAnnotation && pdfEvidenceSource)
+  const canSelectArea = Boolean(
+    (annotationProps?.onAddAnnotation && pdfEvidenceSource) || pdfBookmarkSource
+  )
   if (!canSelectArea && cursorMode === 'area') setCursorMode('select')
 
   const captureViewportAnchor = useCallback((): void => {
@@ -1516,6 +1843,24 @@ export const PdfPreviewContent = ({
     [document, resourceRequestKey, searchQuery, scrollToPage]
   )
   const navigateToPage = scrollToPage
+  useEffect(
+    () =>
+      subscribeBookmarkRevealPreparation((target) => {
+        if (
+          !document ||
+          !pdfBookmarkSource ||
+          target.kind !== 'pdf' ||
+          !pdfBookmarkSourceMatches(target.source, pdfBookmarkSource) ||
+          target.selector.pageNumber < 1 ||
+          target.selector.pageNumber > document.numPages
+        ) {
+          return
+        }
+        setReadingMode('original')
+        scrollToPage(target.selector.pageNumber)
+      }),
+    [document, pdfBookmarkSource, scrollToPage]
+  )
   useEffect(
     () =>
       subscribePdfReadingReveal((target) => {
@@ -1833,6 +2178,11 @@ export const PdfPreviewContent = ({
           }
         }}
       >
+        {pdfBookmarkSourceUnavailable ? (
+          <p role="status" className="shrink-0 px-3 py-1 text-xs text-status-warning-foreground">
+            {t('This PDF source could not be verified for bookmarks.')}
+          </p>
+        ) : null}
         {attachmentVersionId && presentation !== 'search' ? (
           <Tabs.List
             aria-label={t('PDF reading mode')}
@@ -1974,6 +2324,7 @@ export const PdfPreviewContent = ({
                           registerDisposer={registerPageDisposer}
                           annotationProps={annotationProps}
                           pdfEvidenceSource={pdfEvidenceSource}
+                          pdfBookmarkSource={pdfBookmarkSource}
                           pdfRevealSource={pdfRevealSource}
                           selectedEvidenceId={effectiveSelectedEvidenceId}
                           onSelectEvidence={(id) => {
@@ -2065,6 +2416,13 @@ export const PdfPreviewContent = ({
 
 export const PdfPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.Element => {
   const target = resolvePdfContextTarget(props.item)
+  const ownerSessionId = useSessionStore((state) => {
+    const session = state.sessions.find(
+      (candidate) =>
+        candidate.id === state.selectedSessionId && candidate.projectId === props.item.projectId
+    )
+    return session?.id
+  })
   const binding = useSessionStore((state) => {
     const session = state.sessions.find(
       (candidate) =>
@@ -2092,6 +2450,103 @@ export const PdfPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.E
       : undefined
   const pdfEvidenceSource =
     candidateSource && pdfAnnotationSourceIsFixed(candidateSource) ? candidateSource : undefined
+  const bookmarkSourceKind = target?.sourceKind
+  const bookmarkSourceFileId = target?.sourceFileId
+  const bookmarkSourceVersionId = target?.sourceVersionId
+  const pdfBookmarkResolutionKey =
+    bookmarkSourceKind &&
+    bookmarkSourceFileId &&
+    bookmarkSourceVersionId &&
+    props.item.projectId &&
+    ownerSessionId
+      ? JSON.stringify({
+          projectId: props.item.projectId,
+          sessionId: ownerSessionId,
+          sourceKind: bookmarkSourceKind,
+          sourceFileId: bookmarkSourceFileId,
+          versionId: bookmarkSourceVersionId
+        })
+      : undefined
+  const [pdfBookmarkResolution, setPdfBookmarkResolution] = useState<
+    Readonly<{
+      key: string
+      source?: PdfBookmarkSource
+      unavailable: boolean
+    }>
+  >()
+  useEffect(() => {
+    let active = true
+    if (
+      !pdfBookmarkResolutionKey ||
+      !props.item.projectId ||
+      !ownerSessionId ||
+      !bookmarkSourceKind ||
+      !bookmarkSourceFileId ||
+      !bookmarkSourceVersionId
+    ) {
+      return () => undefined
+    }
+    void window.api.bookmarks
+      .resolvePdfSource({
+        projectId: props.item.projectId,
+        sessionId: ownerSessionId,
+        sourceKind: bookmarkSourceKind,
+        sourceFileId: bookmarkSourceFileId,
+        versionId: bookmarkSourceVersionId
+      })
+      .then((result) => {
+        if (!active) return
+        setPdfBookmarkResolution({
+          key: pdfBookmarkResolutionKey,
+          ...(result.ok ? { source: result.source } : {}),
+          unavailable: !result.ok
+        })
+      })
+      .catch(() => {
+        if (active) {
+          setPdfBookmarkResolution({ key: pdfBookmarkResolutionKey, unavailable: true })
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [
+    bookmarkSourceFileId,
+    bookmarkSourceKind,
+    bookmarkSourceVersionId,
+    ownerSessionId,
+    pdfBookmarkResolutionKey,
+    props.item.projectId
+  ])
+  const currentPdfBookmarkResolution =
+    pdfBookmarkResolution?.key === pdfBookmarkResolutionKey ? pdfBookmarkResolution : undefined
+  const pdfBookmarkSource = currentPdfBookmarkResolution?.source
+  const pdfBookmarkSourceUnavailable =
+    currentPdfBookmarkResolution?.unavailable ??
+    Boolean(target && props.item.projectId && ownerSessionId && !pdfBookmarkResolutionKey)
+  useEffect(
+    () =>
+      subscribeBookmarkReveal((revealTarget) => {
+        if (
+          !pdfBookmarkSourceUnavailable ||
+          revealTarget.kind !== 'pdf' ||
+          revealTarget.source.projectId !== props.item.projectId ||
+          revealTarget.source.kind !== bookmarkSourceKind ||
+          revealTarget.source.sourceFileId !== bookmarkSourceFileId ||
+          revealTarget.source.versionId !== bookmarkSourceVersionId
+        ) {
+          return
+        }
+        return 'source-unavailable'
+      }),
+    [
+      bookmarkSourceFileId,
+      bookmarkSourceKind,
+      bookmarkSourceVersionId,
+      pdfBookmarkSourceUnavailable,
+      props.item.projectId
+    ]
+  )
   const [preparedReveal, setPreparedReveal] =
     useState<Readonly<{ path: string; source: PdfAnnotation['source'] }>>()
   const pdfRevealSource =
@@ -2127,6 +2582,8 @@ export const PdfPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.E
       onReadingPositionChange={props.onPdfReadingPositionChange}
       annotationProps={props}
       pdfEvidenceSource={pdfEvidenceSource}
+      pdfBookmarkSource={pdfBookmarkSource}
+      pdfBookmarkSourceUnavailable={pdfBookmarkSourceUnavailable}
       pdfRevealSource={pdfRevealSource}
     />
   )

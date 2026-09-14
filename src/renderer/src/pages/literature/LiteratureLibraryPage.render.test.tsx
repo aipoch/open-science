@@ -3082,6 +3082,7 @@ describe('LiteratureLibraryPage', () => {
         sources: [
           {
             sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-1',
             sourceVersionId: 'version-1'
           }
         ]
@@ -3095,6 +3096,7 @@ describe('LiteratureLibraryPage', () => {
       }),
       {
         sourceKind: 'literature-attachment-version',
+        sourceFileId: 'attachment-1',
         sourceVersionId: 'version-1'
       }
     )
@@ -3137,7 +3139,11 @@ describe('LiteratureLibraryPage', () => {
       expect(startPdfReadingConversation).toHaveBeenCalledWith(
         'project-35',
         expect.objectContaining({ source: 'literature' }),
-        { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' }
+        {
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: 'attachment-1',
+          sourceVersionId: 'version-1'
+        }
       )
     )
   })
@@ -3184,13 +3190,25 @@ describe('LiteratureLibraryPage', () => {
     await waitFor(() =>
       expect(startPdfReadingConversations).toHaveBeenCalledWith('project-1', [
         expect.objectContaining({
-          source: { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' }
+          source: {
+            sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-1',
+            sourceVersionId: 'version-1'
+          }
         }),
         expect.objectContaining({
-          source: { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-3' }
+          source: {
+            sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-3',
+            sourceVersionId: 'version-3'
+          }
         }),
         expect.objectContaining({
-          source: { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-4' }
+          source: {
+            sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-4',
+            sourceVersionId: 'version-4'
+          }
         })
       ])
     )
@@ -3198,6 +3216,7 @@ describe('LiteratureLibraryPage', () => {
       projectId: 'project-1',
       sources: [1, 3, 4].map((id) => ({
         sourceKind: 'literature-attachment-version',
+        sourceFileId: `attachment-${id}`,
         sourceVersionId: `version-${id}`
       }))
     })
@@ -3249,8 +3268,16 @@ describe('LiteratureLibraryPage', () => {
     expect(filterPdfContextCandidates).toHaveBeenCalledWith({
       projectId: 'project-1',
       sources: [
-        { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' },
-        { sourceKind: 'literature-attachment-version', sourceVersionId: 'last-version' }
+        {
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: 'attachment-1',
+          sourceVersionId: 'version-1'
+        },
+        {
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: 'last-attachment',
+          sourceVersionId: 'last-version'
+        }
       ]
     })
   })
@@ -3898,6 +3925,7 @@ describe('LiteratureLibraryPage', () => {
         sources: [
           {
             sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-1',
             sourceVersionId: 'version-1'
           }
         ]
@@ -3908,6 +3936,7 @@ describe('LiteratureLibraryPage', () => {
       expect.objectContaining({ path: 'literature-attachment-version:version-1' }),
       {
         sourceKind: 'literature-attachment-version',
+        sourceFileId: 'attachment-1',
         sourceVersionId: 'version-1'
       }
     )
@@ -3938,6 +3967,7 @@ describe('LiteratureLibraryPage', () => {
         sources: [
           {
             sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-1',
             sourceVersionId: 'version-1'
           }
         ]
@@ -3948,6 +3978,7 @@ describe('LiteratureLibraryPage', () => {
       expect.objectContaining({ path: 'literature-attachment-version:version-1' }),
       {
         sourceKind: 'literature-attachment-version',
+        sourceFileId: 'attachment-1',
         sourceVersionId: 'version-1'
       }
     )

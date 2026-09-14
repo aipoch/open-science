@@ -3206,10 +3206,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const previewFirstAttachment = (entry: LiteratureItemView): void => {
-    const version = entry.attachments.find((attachment) => attachment.versions[0])?.versions[0]
+    const attachment = entry.attachments.find((candidate) => candidate.versions[0])
+    const version = attachment?.versions[0]
     if (
       section === 'trash' ||
       entry.deletedAt !== undefined ||
+      !attachment ||
       !version ||
       version.availability === 'unavailable' ||
       useAttachmentOperations
@@ -3223,6 +3225,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       title: version.filename,
       type: 'file',
       source: 'literature',
+      managedFileId: attachment.id,
       path: createLiteratureAttachmentVersionReference(version.id),
       format: 'pdf',
       name: version.filename,
@@ -6416,13 +6419,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           readItem={detailController.read}
                           key={selectedItem.id}
                           item={selectedItem}
-                          onPreview={(version) =>
+                          onPreview={(version) => {
+                            const attachment = selectedItem.attachments.find((candidate) =>
+                              candidate.versions.some(
+                                (candidateVersion) => candidateVersion.id === version.id
+                              )
+                            )
+                            if (!attachment) return
                             setPreviewItem({
                               id: `literature:${version.id}`,
                               sessionId: LITERATURE_PREVIEW_SESSION_ID,
                               title: version.filename,
                               type: 'file',
                               source: 'literature',
+                              managedFileId: attachment.id,
                               path: createLiteratureAttachmentVersionReference(version.id),
                               format: 'pdf',
                               name: version.filename,
@@ -6430,7 +6440,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               size: version.sizeBytes,
                               versionNumber: version.versionNumber
                             })
-                          }
+                          }}
                         />
                         {selectedItem.attachments.length === 0 ? (
                           <button

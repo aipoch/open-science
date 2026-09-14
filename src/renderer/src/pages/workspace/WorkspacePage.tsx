@@ -72,6 +72,7 @@ import { FilePreviewDialog } from './FilePreviewDialog'
 import { EditSessionDialog } from './EditSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
 import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
+import { BookmarksProvider } from './bookmarks/BookmarksProvider'
 import { JobDetailModal } from '@/components/JobDetailModal'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { startWslSetupConversation } from '@/lib/wsl-support-handoff'
@@ -1185,6 +1186,15 @@ const WorkspacePage = ({
   }
   const canOpenProjectCompute =
     typeof window.api.backgroundResultDelivery?.getProjectActivity === 'function'
+  const bookmarkSession =
+    activeSession && isSessionPersistenceReady && !activeSession.packageOrigin
+      ? activeSession
+      : undefined
+  const bookmarksWritable = Boolean(
+    bookmarkSession &&
+    !persistenceBlockedSessionIds.includes(bookmarkSession.id) &&
+    activeProject?.archivedAt === undefined
+  )
 
   return (
     <ProjectPackageDropZone
@@ -1199,378 +1209,394 @@ const WorkspacePage = ({
       tabIndex={-1}
       className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]"
     >
-      <WorkspacePanelLayout
-        hasPreviewItems={previewItems.length > 0}
-        isPreviewPresentationActive={isPreviewPresentationActive}
-        onPdfContextError={setAttachmentError}
-        restoredPlanResponder={{
-          sessionId: activeSession?.id,
-          enabled: activeSession !== undefined && conversation.availability.planResponse,
-          respond: conversation.actions.submit.restoredPlan,
-          canRespondToSession: (sessionId) =>
-            isSessionPersistenceReady && !persistenceBlockedSessionIds.includes(sessionId),
-          onSessionSizeLimit: conversation.actions.reportSessionSizeLimit
+      <BookmarksProvider
+        projectId={bookmarkSession?.projectId}
+        sessionId={bookmarkSession?.id}
+        writable={bookmarksWritable}
+        persistSessionTextSource={async (projectId, sessionId) => {
+          const state = useSessionStore.getState()
+          const session = state.sessions.find(
+            (candidate) => candidate.id === sessionId && candidate.projectId === projectId
+          )
+          if (!session || session.isPending || session.packageOrigin) {
+            throw new Error('Bookmark Session is not available.')
+          }
+          await saveSessionInOrder(toPersistedSession(session, state.streamingMessages))
         }}
-        preview={{
-          state: previewPanelState,
-          openRequestVersion: previewOpenRequestVersion,
-          toggle: togglePreviewPanel,
-          syncState: syncPreviewPanelState
-        }}
-        previewAnnotations={previewAnnotations}
-        renderDesktopSidebar={({ sidebarToggle, sidebarToggleRef }) => (
-          <WorkspaceSidebarContainer
-            projectId={scopedProjectId}
-            isProjectArchived={activeProject?.archivedAt !== undefined}
-            projectName={activeProject?.name ?? t('Project')}
-            activeSessionId={selectedSessionId}
-            canCreateConversation={isSessionPersistenceReady}
-            canMutateConversations={isSessionPersistenceReady}
-            canDeleteConversations={canDeleteConversations}
-            onGoHome={() => goHome('user')}
-            onNewConversation={openNewConversation}
-            isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
-            onOpenFiles={openFilesPreview}
-            onOpenLiterature={() => openProjectLiterature(scopedProjectId, 'user')}
-            isComputeOpen={
-              canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
-            }
-            onOpenCompute={canOpenProjectCompute ? openComputePreview : undefined}
-            onOpenSession={openSessionWithoutExportError}
-            onRenameSession={sessionController.actions.openEdit}
-            onRenameSessionTitle={sessionController.actions.renameTitle}
-            canDownloadArtifacts={typeof window.api?.saveSessionArtifacts === 'function'}
-            onDownloadArtifacts={sessionController.actions.openDownloadArtifacts}
-            onCheckArtifacts={
-              window.api.artifacts?.sessionReproducibility ? setCheckSession : undefined
-            }
-            onViewNotebook={sessionController.actions.openNotebook}
-            onExportPackage={sessionPackageExportAvailable() ? openPackageExport : undefined}
-            onExportSession={
-              typeof window.api.sessions?.exportConversation === 'function'
-                ? sessionController.actions.openExportConversation
-                : undefined
-            }
-            onTogglePin={(session) => {
-              sessionController.actions.togglePin(session)
-            }}
-            canArchiveSession={canArchiveSession}
-            onArchiveSession={sessionController.actions.archive}
-            onDeleteSession={sessionController.actions.openDelete}
-            onOpenSettings={openSettings}
-            onOpenProjectSettings={() => {
-              if (activeProject) projectFormDialog.openEditDialog(activeProject)
-            }}
-            onNewProject={projectFormDialog.openCreateDialog}
-            canDownloadProjectArtifacts={
-              typeof window.api?.saveProjectArtifacts === 'function' &&
-              !isDownloadingProjectArtifacts &&
-              canCollectProjectArtifacts
-            }
-            onDownloadProjectArtifacts={() => setIsProjectDownloadOpen(true)}
-            sidebarToggle={sidebarToggle}
-            sidebarToggleButtonRef={sidebarToggleRef}
-          />
-        )}
-        renderMobileSidebar={({ isOpen, close }) => (
-          <WorkspaceSidebarContainer
-            projectId={scopedProjectId}
-            isProjectArchived={activeProject?.archivedAt !== undefined}
-            projectName={activeProject?.name ?? t('Project')}
-            activeSessionId={selectedSessionId}
-            canCreateConversation={isSessionPersistenceReady}
-            canMutateConversations={isSessionPersistenceReady}
-            canDeleteConversations={canDeleteConversations}
-            onGoHome={() => {
-              close()
-              goHome('user')
-            }}
-            onNewConversation={() => {
-              close()
-              openNewConversation()
-            }}
-            isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
-            onOpenFiles={() => {
-              close()
-              openFilesPreview()
-            }}
-            onOpenLiterature={() => {
-              if (openProjectLiterature(scopedProjectId, 'user')) close()
-            }}
-            isComputeOpen={
-              canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
-            }
-            onOpenCompute={
-              canOpenProjectCompute
-                ? () => {
-                    close()
-                    openComputePreview()
-                  }
-                : undefined
-            }
-            onOpenSession={(sessionId) => {
-              close()
-              openSessionWithoutExportError(sessionId)
-            }}
-            onRenameSession={(session) => {
-              close()
-              sessionController.actions.openEdit(session)
-            }}
-            canDownloadArtifacts={typeof window.api?.saveSessionArtifacts === 'function'}
-            onDownloadArtifacts={(session) => {
-              close()
-              sessionController.actions.openDownloadArtifacts(session)
-            }}
-            onCheckArtifacts={
-              window.api.artifacts?.sessionReproducibility
-                ? (session) => {
-                    close()
-                    setCheckSession(session)
-                  }
-                : undefined
-            }
-            onViewNotebook={(session) => {
-              close()
-              sessionController.actions.openNotebook(session)
-            }}
-            onExportPackage={
-              sessionPackageExportAvailable()
-                ? async (session) => {
-                    close()
-                    await openPackageExport(session)
-                  }
-                : undefined
-            }
-            onExportSession={
-              typeof window.api.sessions?.exportConversation === 'function'
-                ? (session) => {
-                    close()
-                    sessionController.actions.openExportConversation(session)
-                  }
-                : undefined
-            }
-            onTogglePin={(session) => {
-              close()
-              sessionController.actions.togglePin(session)
-            }}
-            canArchiveSession={canArchiveSession}
-            onArchiveSession={(session) => {
-              close()
-              sessionController.actions.archive(session)
-            }}
-            onDeleteSession={(session) => {
-              close()
-              sessionController.actions.openDelete(session)
-            }}
-            onOpenSettings={() => {
-              close()
-              openSettings()
-            }}
-            onOpenProjectSettings={() => {
-              close()
-              if (activeProject) projectFormDialog.openEditDialog(activeProject)
-            }}
-            onNewProject={() => {
-              close()
-              projectFormDialog.openCreateDialog()
-            }}
-            canDownloadProjectArtifacts={
-              typeof window.api?.saveProjectArtifacts === 'function' &&
-              !isDownloadingProjectArtifacts &&
-              canCollectProjectArtifacts
-            }
-            onDownloadProjectArtifacts={() => {
-              close()
-              setIsProjectDownloadOpen(true)
-            }}
-            mobileMode
-            isMobileOpen={isOpen}
-            onMobileClose={close}
-          />
-        )}
-        renderConversation={({
-          isPreviewPanelCollapsed,
-          togglePreviewPanel: togglePreviewPanelFromLayout,
-          openMobileSidebar
-        }) => (
-          <ConversationPanel
-            view={{
-              activeSession,
-              composerFocusKey: currentDraftKey,
-              canEditDraft,
-              actionError: visibleActionError,
-              sideChatDisabledReason
-            }}
-            composer={composer}
-            conversation={conversation}
-            sideChat={sideChat}
-            specialist={sessionController}
-            layout={{
-              isPreviewPanelCollapsed,
-              togglePreviewPanel: togglePreviewPanelFromLayout,
-              openSidebar: openMobileSidebar
-            }}
-            permissions={{
-              requests: visiblePermissionRequests,
-              credentialRequests: visibleCredentialRequests,
-              permissionProfile: activePermissionProfile,
-              permissionProfileState: activePermissionProfileState,
-              permissionGrants: activePermissionGrants,
-              canChangePermissionProfile,
-              respond: respondToVisiblePermission,
-              changeProfile: changePermissionProfile,
-              revokeGrant: revokeActivePermissionGrant,
-              clearGrants: clearActivePermissionGrants
-            }}
-            elicitation={{
-              requests: visibleElicitationRequests,
-              respond: respondToElicitation
-            }}
-            agentControls={{
-              ...agentControlAvailability,
-              canChangeMemory: agentControlAvailability.canChangeMemory && isGlobalMemoryEnabled,
-              modelConfiguration: activeAgentConfiguration,
-              modelUnavailable: agentConfigurationUnavailable,
-              changeModelConfiguration: changeAgentConfiguration,
-              autoReviewEnabled: activeAutoReviewEnabled,
-              memoryEnabled: activeMemoryEnabled,
-              delegationEnabled: delegationControl.enabled,
-              delegationPending: delegationControl.pending,
-              delegationHasLiveAttempts: delegationControl.hasLiveDelegatedAttempts,
-              canChangeDelegation:
-                isSessionPersistenceReady &&
-                delegationControl.frameworkSupported &&
-                delegationControl.sessionAuthoritative,
-              delegationDisabledReason: delegationControl.frameworkSupported
-                ? undefined
-                : t('The selected agent framework does not support delegated work.'),
-              memoryDisabledReason: isGlobalMemoryEnabled
-                ? undefined
-                : t('Memory is off in Settings. Turn it on to use Memory in this conversation.'),
-              enabledComputeHosts: computeHostAccess.enabledProviderIds,
-              selectedComputeHosts: computeHostAccess.selectedProviderIds,
-              toggleAutoReview: changeAutoReviewEnabled,
-              toggleMemory: changeMemoryEnabled,
-              toggleDelegation: delegationControl.change,
-              setComputeHostEnabled: computeHostAccess.setHostEnabled,
-              setComputeHostSelected: computeHostAccess.setHostSelected
-            }}
-            contextWindow={{
-              usage: activeContextUsage,
-              canCompact: canCompactContext,
-              compactDisabledReason: compactContextDisabledReason,
-              compact: compactActiveContext
-            }}
-            workflows={{
-              artifactFinalization: {
-                running: artifactFinalizationRetrySessionId !== undefined,
-                request: requestArtifactFinalizationRetry
-              },
-              review: {
-                disabled: isRequestReviewDisabled,
-                running: isReviewBusy,
-                request: requestManualReview
-              },
-              saveAsSkill: {
-                disabled: !saveAsSkillAvailability.enabled,
-                disabledReason: saveAsSkillAvailability.disabledReason,
-                running: activeSessionSaveAsSkillRunning,
-                request: requestSaveAsSkill
-              },
-              wslSetup: {
-                start: () => startWslSetupConversation(scopedProjectId, t)
+      >
+        <WorkspacePanelLayout
+          hasPreviewItems={previewItems.length > 0}
+          isPreviewPresentationActive={isPreviewPresentationActive}
+          onPdfContextError={setAttachmentError}
+          restoredPlanResponder={{
+            sessionId: activeSession?.id,
+            enabled: activeSession !== undefined && conversation.availability.planResponse,
+            respond: conversation.actions.submit.restoredPlan,
+            canRespondToSession: (sessionId) =>
+              isSessionPersistenceReady && !persistenceBlockedSessionIds.includes(sessionId),
+            onSessionSizeLimit: conversation.actions.reportSessionSizeLimit
+          }}
+          preview={{
+            state: previewPanelState,
+            openRequestVersion: previewOpenRequestVersion,
+            toggle: togglePreviewPanel,
+            syncState: syncPreviewPanelState
+          }}
+          previewAnnotations={previewAnnotations}
+          renderDesktopSidebar={({ sidebarToggle, sidebarToggleRef }) => (
+            <WorkspaceSidebarContainer
+              projectId={scopedProjectId}
+              isProjectArchived={activeProject?.archivedAt !== undefined}
+              projectName={activeProject?.name ?? t('Project')}
+              activeSessionId={selectedSessionId}
+              canCreateConversation={isSessionPersistenceReady}
+              canMutateConversations={isSessionPersistenceReady}
+              canDeleteConversations={canDeleteConversations}
+              onGoHome={() => goHome('user')}
+              onNewConversation={openNewConversation}
+              isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
+              onOpenFiles={openFilesPreview}
+              onOpenLiterature={() => openProjectLiterature(scopedProjectId, 'user')}
+              isComputeOpen={
+                canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
               }
-            }}
-            sessionTools={{
-              notebookReference: activeNotebookReference,
-              openNotebook: openNotebookPreview,
-              openJobs: sessionController.actions.openJobList,
-              openJob: sessionController.actions.openJob
-            }}
-            subagents={{
-              unavailable: activeSession
-                ? delegatedWorkUnavailableBySession[activeSession.id]
-                : undefined,
-              stop: async () => {
-                if (!activeSession) return
-                // Main selects the Stop scope from the durable branch, so commit the visible
-                // selection before cancellation can overtake the coalesced background save.
-                await saveSessionInOrder(
-                  toPersistedSession(activeSession, useSessionStore.getState().streamingMessages)
-                )
-                await window.api.acp.cancel({ sessionId: activeSession.id, scope: 'subagents' })
+              onOpenCompute={canOpenProjectCompute ? openComputePreview : undefined}
+              onOpenSession={openSessionWithoutExportError}
+              onRenameSession={sessionController.actions.openEdit}
+              onRenameSessionTitle={sessionController.actions.renameTitle}
+              canDownloadArtifacts={typeof window.api?.saveSessionArtifacts === 'function'}
+              onDownloadArtifacts={sessionController.actions.openDownloadArtifacts}
+              onCheckArtifacts={
+                window.api.artifacts?.sessionReproducibility ? setCheckSession : undefined
               }
-            }}
-          />
-        )}
-      />
+              onViewNotebook={sessionController.actions.openNotebook}
+              onExportPackage={sessionPackageExportAvailable() ? openPackageExport : undefined}
+              onExportSession={
+                typeof window.api.sessions?.exportConversation === 'function'
+                  ? sessionController.actions.openExportConversation
+                  : undefined
+              }
+              onTogglePin={(session) => {
+                sessionController.actions.togglePin(session)
+              }}
+              canArchiveSession={canArchiveSession}
+              onArchiveSession={sessionController.actions.archive}
+              onDeleteSession={sessionController.actions.openDelete}
+              onOpenSettings={openSettings}
+              onOpenProjectSettings={() => {
+                if (activeProject) projectFormDialog.openEditDialog(activeProject)
+              }}
+              onNewProject={projectFormDialog.openCreateDialog}
+              canDownloadProjectArtifacts={
+                typeof window.api?.saveProjectArtifacts === 'function' &&
+                !isDownloadingProjectArtifacts &&
+                canCollectProjectArtifacts
+              }
+              onDownloadProjectArtifacts={() => setIsProjectDownloadOpen(true)}
+              sidebarToggle={sidebarToggle}
+              sidebarToggleButtonRef={sidebarToggleRef}
+            />
+          )}
+          renderMobileSidebar={({ isOpen, close }) => (
+            <WorkspaceSidebarContainer
+              projectId={scopedProjectId}
+              isProjectArchived={activeProject?.archivedAt !== undefined}
+              projectName={activeProject?.name ?? t('Project')}
+              activeSessionId={selectedSessionId}
+              canCreateConversation={isSessionPersistenceReady}
+              canMutateConversations={isSessionPersistenceReady}
+              canDeleteConversations={canDeleteConversations}
+              onGoHome={() => {
+                close()
+                goHome('user')
+              }}
+              onNewConversation={() => {
+                close()
+                openNewConversation()
+              }}
+              isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
+              onOpenFiles={() => {
+                close()
+                openFilesPreview()
+              }}
+              onOpenLiterature={() => {
+                if (openProjectLiterature(scopedProjectId, 'user')) close()
+              }}
+              isComputeOpen={
+                canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
+              }
+              onOpenCompute={
+                canOpenProjectCompute
+                  ? () => {
+                      close()
+                      openComputePreview()
+                    }
+                  : undefined
+              }
+              onOpenSession={(sessionId) => {
+                close()
+                openSessionWithoutExportError(sessionId)
+              }}
+              onRenameSession={(session) => {
+                close()
+                sessionController.actions.openEdit(session)
+              }}
+              canDownloadArtifacts={typeof window.api?.saveSessionArtifacts === 'function'}
+              onDownloadArtifacts={(session) => {
+                close()
+                sessionController.actions.openDownloadArtifacts(session)
+              }}
+              onCheckArtifacts={
+                window.api.artifacts?.sessionReproducibility
+                  ? (session) => {
+                      close()
+                      setCheckSession(session)
+                    }
+                  : undefined
+              }
+              onViewNotebook={(session) => {
+                close()
+                sessionController.actions.openNotebook(session)
+              }}
+              onExportPackage={
+                sessionPackageExportAvailable()
+                  ? async (session) => {
+                      close()
+                      await openPackageExport(session)
+                    }
+                  : undefined
+              }
+              onExportSession={
+                typeof window.api.sessions?.exportConversation === 'function'
+                  ? (session) => {
+                      close()
+                      sessionController.actions.openExportConversation(session)
+                    }
+                  : undefined
+              }
+              onTogglePin={(session) => {
+                close()
+                sessionController.actions.togglePin(session)
+              }}
+              canArchiveSession={canArchiveSession}
+              onArchiveSession={(session) => {
+                close()
+                sessionController.actions.archive(session)
+              }}
+              onDeleteSession={(session) => {
+                close()
+                sessionController.actions.openDelete(session)
+              }}
+              onOpenSettings={() => {
+                close()
+                openSettings()
+              }}
+              onOpenProjectSettings={() => {
+                close()
+                if (activeProject) projectFormDialog.openEditDialog(activeProject)
+              }}
+              onNewProject={() => {
+                close()
+                projectFormDialog.openCreateDialog()
+              }}
+              canDownloadProjectArtifacts={
+                typeof window.api?.saveProjectArtifacts === 'function' &&
+                !isDownloadingProjectArtifacts &&
+                canCollectProjectArtifacts
+              }
+              onDownloadProjectArtifacts={() => {
+                close()
+                setIsProjectDownloadOpen(true)
+              }}
+              mobileMode
+              isMobileOpen={isOpen}
+              onMobileClose={close}
+            />
+          )}
+          renderConversation={({
+            isPreviewPanelCollapsed,
+            togglePreviewPanel: togglePreviewPanelFromLayout,
+            openMobileSidebar
+          }) => (
+            <ConversationPanel
+              view={{
+                activeSession,
+                composerFocusKey: currentDraftKey,
+                canEditDraft,
+                actionError: visibleActionError,
+                sideChatDisabledReason
+              }}
+              composer={composer}
+              conversation={conversation}
+              sideChat={sideChat}
+              specialist={sessionController}
+              layout={{
+                isPreviewPanelCollapsed,
+                togglePreviewPanel: togglePreviewPanelFromLayout,
+                openSidebar: openMobileSidebar
+              }}
+              permissions={{
+                requests: visiblePermissionRequests,
+                credentialRequests: visibleCredentialRequests,
+                permissionProfile: activePermissionProfile,
+                permissionProfileState: activePermissionProfileState,
+                permissionGrants: activePermissionGrants,
+                canChangePermissionProfile,
+                respond: respondToVisiblePermission,
+                changeProfile: changePermissionProfile,
+                revokeGrant: revokeActivePermissionGrant,
+                clearGrants: clearActivePermissionGrants
+              }}
+              elicitation={{
+                requests: visibleElicitationRequests,
+                respond: respondToElicitation
+              }}
+              agentControls={{
+                ...agentControlAvailability,
+                canChangeMemory: agentControlAvailability.canChangeMemory && isGlobalMemoryEnabled,
+                modelConfiguration: activeAgentConfiguration,
+                modelUnavailable: agentConfigurationUnavailable,
+                changeModelConfiguration: changeAgentConfiguration,
+                autoReviewEnabled: activeAutoReviewEnabled,
+                memoryEnabled: activeMemoryEnabled,
+                delegationEnabled: delegationControl.enabled,
+                delegationPending: delegationControl.pending,
+                delegationHasLiveAttempts: delegationControl.hasLiveDelegatedAttempts,
+                canChangeDelegation:
+                  isSessionPersistenceReady &&
+                  delegationControl.frameworkSupported &&
+                  delegationControl.sessionAuthoritative,
+                delegationDisabledReason: delegationControl.frameworkSupported
+                  ? undefined
+                  : t('The selected agent framework does not support delegated work.'),
+                memoryDisabledReason: isGlobalMemoryEnabled
+                  ? undefined
+                  : t('Memory is off in Settings. Turn it on to use Memory in this conversation.'),
+                enabledComputeHosts: computeHostAccess.enabledProviderIds,
+                selectedComputeHosts: computeHostAccess.selectedProviderIds,
+                toggleAutoReview: changeAutoReviewEnabled,
+                toggleMemory: changeMemoryEnabled,
+                toggleDelegation: delegationControl.change,
+                setComputeHostEnabled: computeHostAccess.setHostEnabled,
+                setComputeHostSelected: computeHostAccess.setHostSelected
+              }}
+              contextWindow={{
+                usage: activeContextUsage,
+                canCompact: canCompactContext,
+                compactDisabledReason: compactContextDisabledReason,
+                compact: compactActiveContext
+              }}
+              workflows={{
+                artifactFinalization: {
+                  running: artifactFinalizationRetrySessionId !== undefined,
+                  request: requestArtifactFinalizationRetry
+                },
+                review: {
+                  disabled: isRequestReviewDisabled,
+                  running: isReviewBusy,
+                  request: requestManualReview
+                },
+                saveAsSkill: {
+                  disabled: !saveAsSkillAvailability.enabled,
+                  disabledReason: saveAsSkillAvailability.disabledReason,
+                  running: activeSessionSaveAsSkillRunning,
+                  request: requestSaveAsSkill
+                },
+                wslSetup: {
+                  start: () => startWslSetupConversation(scopedProjectId, t)
+                }
+              }}
+              sessionTools={{
+                notebookReference: activeNotebookReference,
+                openNotebook: openNotebookPreview,
+                openJobs: sessionController.actions.openJobList,
+                openJob: sessionController.actions.openJob
+              }}
+              subagents={{
+                unavailable: activeSession
+                  ? delegatedWorkUnavailableBySession[activeSession.id]
+                  : undefined,
+                stop: async () => {
+                  if (!activeSession) return
+                  // Main selects the Stop scope from the durable branch, so commit the visible
+                  // selection before cancellation can overtake the coalesced background save.
+                  await saveSessionInOrder(
+                    toPersistedSession(activeSession, useSessionStore.getState().streamingMessages)
+                  )
+                  await window.api.acp.cancel({ sessionId: activeSession.id, scope: 'subagents' })
+                }
+              }}
+            />
+          )}
+        />
 
-      <EditSessionDialog
-        session={sessionController.view.dialogs.edit?.session}
-        titleDraft={sessionController.view.dialogs.edit?.titleDraft ?? ''}
-        descriptionDraft={sessionController.view.dialogs.edit?.descriptionDraft ?? ''}
-        isSaving={sessionController.view.dialogs.edit?.isSaving}
-        error={sessionController.view.dialogs.edit?.error}
-        onTitleDraftChange={sessionController.actions.changeEditTitleDraft}
-        onDescriptionDraftChange={sessionController.actions.changeEditDescriptionDraft}
-        onCancel={sessionController.actions.closeEdit}
-        onConfirmEdit={sessionController.actions.confirmEdit}
-      />
-      <DeleteSessionDialog
-        session={sessionController.view.dialogs.delete?.session}
-        projectName={deleteSessionProjectName}
-        canDelete={canDeleteConversations}
-        isDeleting={sessionController.view.dialogs.delete?.isDeleting}
-        error={sessionController.view.dialogs.delete?.error ?? undefined}
-        onCancel={sessionController.actions.closeDelete}
-        onConfirmDelete={conversation.actions.delete}
-      />
-      <DownloadSessionArtifactsDialog
-        session={sessionController.view.dialogs.downloadArtifacts ?? undefined}
-        onClose={sessionController.actions.closeDownloadArtifacts}
-      />
-      <SessionReproducibilityDialog
-        session={checkSession}
-        onClose={() => setCheckSession(undefined)}
-      />
-      <ConversationExportDialog
-        session={sessionController.view.dialogs.exportConversation ?? undefined}
-        currentSession={currentExportConversationSession}
-        onClose={sessionController.actions.closeExportConversation}
-      />
-      <DownloadProjectArtifactsDialog
-        project={isProjectDownloadOpen ? activeProject : undefined}
-        onClose={() => setIsProjectDownloadOpen(false)}
-        onDownloadingChange={setIsDownloadingProjectArtifacts}
-      />
+        <EditSessionDialog
+          session={sessionController.view.dialogs.edit?.session}
+          titleDraft={sessionController.view.dialogs.edit?.titleDraft ?? ''}
+          descriptionDraft={sessionController.view.dialogs.edit?.descriptionDraft ?? ''}
+          isSaving={sessionController.view.dialogs.edit?.isSaving}
+          error={sessionController.view.dialogs.edit?.error}
+          onTitleDraftChange={sessionController.actions.changeEditTitleDraft}
+          onDescriptionDraftChange={sessionController.actions.changeEditDescriptionDraft}
+          onCancel={sessionController.actions.closeEdit}
+          onConfirmEdit={sessionController.actions.confirmEdit}
+        />
+        <DeleteSessionDialog
+          session={sessionController.view.dialogs.delete?.session}
+          projectName={deleteSessionProjectName}
+          canDelete={canDeleteConversations}
+          isDeleting={sessionController.view.dialogs.delete?.isDeleting}
+          error={sessionController.view.dialogs.delete?.error ?? undefined}
+          onCancel={sessionController.actions.closeDelete}
+          onConfirmDelete={conversation.actions.delete}
+        />
+        <DownloadSessionArtifactsDialog
+          session={sessionController.view.dialogs.downloadArtifacts ?? undefined}
+          onClose={sessionController.actions.closeDownloadArtifacts}
+        />
+        <SessionReproducibilityDialog
+          session={checkSession}
+          onClose={() => setCheckSession(undefined)}
+        />
+        <ConversationExportDialog
+          session={sessionController.view.dialogs.exportConversation ?? undefined}
+          currentSession={currentExportConversationSession}
+          onClose={sessionController.actions.closeExportConversation}
+        />
+        <DownloadProjectArtifactsDialog
+          project={isProjectDownloadOpen ? activeProject : undefined}
+          onClose={() => setIsProjectDownloadOpen(false)}
+          onDownloadingChange={setIsDownloadingProjectArtifacts}
+        />
 
-      <FilePreviewDialog
-        onFocusFallback={() => previewFocusFallbackRef.current?.focus()}
-        item={
-          isPreviewPresentationActive && fileDialogItem?.projectId === activeProjectId
-            ? fileDialogItem
-            : undefined
-        }
-        onClose={usePreviewWorkbenchStore.getState().closeFileDialog}
-        onItemChange={usePreviewWorkbenchStore.getState().openFileDialog}
-        {...previewAnnotations}
-        onPdfContextError={setAttachmentError}
-      />
+        <FilePreviewDialog
+          onFocusFallback={() => previewFocusFallbackRef.current?.focus()}
+          item={
+            isPreviewPresentationActive && fileDialogItem?.projectId === activeProjectId
+              ? fileDialogItem
+              : undefined
+          }
+          onClose={usePreviewWorkbenchStore.getState().closeFileDialog}
+          onItemChange={usePreviewWorkbenchStore.getState().openFileDialog}
+          {...previewAnnotations}
+          onPdfContextError={setAttachmentError}
+        />
 
-      <SessionNotebookDialog
-        session={sessionController.view.dialogs.notebook ?? undefined}
-        onClose={sessionController.actions.closeNotebook}
-      />
+        <SessionNotebookDialog
+          session={sessionController.view.dialogs.notebook ?? undefined}
+          onClose={sessionController.actions.closeNotebook}
+        />
 
-      <JobDetailModal
-        key={sessionController.view.dialogs.jobList.sessionId}
-        open={sessionController.view.dialogs.jobList.open}
-        sessionId={sessionController.view.dialogs.jobList.sessionId}
-        initialJob={sessionController.view.dialogs.jobList.initialJob}
-        onClose={sessionController.actions.closeJobList}
-      />
+        <JobDetailModal
+          key={sessionController.view.dialogs.jobList.sessionId}
+          open={sessionController.view.dialogs.jobList.open}
+          sessionId={sessionController.view.dialogs.jobList.sessionId}
+          initialJob={sessionController.view.dialogs.jobList.initialJob}
+          onClose={sessionController.actions.closeJobList}
+        />
 
-      <ProjectFormDialog {...projectFormDialog.dialogProps} />
+        <ProjectFormDialog {...projectFormDialog.dialogProps} />
+      </BookmarksProvider>
     </ProjectPackageDropZone>
   )
 }

@@ -32,6 +32,21 @@ const createPort = (): MockPort => ({
 })
 
 describe('electron renderer contract adapter', () => {
+  it('delivers a committed private bookmark without leaking the command envelope', async () => {
+    const port = createPort()
+    const result = { id: 'bookmark-1', note: 'Keep this result' }
+    port.invoke.mockResolvedValue({ ok: true, result })
+    const request = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      id: 'bookmark-1',
+      note: 'Keep this result'
+    }
+    await expect(
+      createElectronRendererContractAdapter(port).invoke('bookmarks.updateNote', request)
+    ).resolves.toEqual(result)
+    expect(port.invoke).toHaveBeenCalledWith('bookmarks:update-note', request)
+  })
   it('resolves dropped packages through the native File boundary', async () => {
     const port = createPort()
     port.invoke.mockResolvedValue({ ok: true, result: null })

@@ -6,7 +6,7 @@ import { PdfStructureSourceAuthority } from './literature/pdf-structure/source'
 import { PdfStructureReader } from './literature/pdf-structure/reader'
 import { createSpecialistApplicationOwner } from './specialist/application-commands'
 import { dirname, join } from 'node:path'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, realpath } from 'node:fs/promises'
 
 import {
   app,
@@ -31,6 +31,9 @@ import {
   type ApplicationCommandCompositionDependencies
 } from './application-command-composition'
 import { registerApplicationCommandElectronAdapter } from './application-command-electron-adapter'
+import { isPathInsideWorkspace } from './acp/workspace-path'
+import { BookmarkRepository } from './bookmarks/repository'
+import { BookmarkService } from './bookmarks/service'
 import type { ApplicationInvocation } from './application-command-router'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
 import type { JobSummary } from '../shared/compute'
@@ -1212,6 +1215,7 @@ const createApplicationModules = async (
     inputs: immutableInputAuthority,
     literature: literatureAttachmentAuthority
   })
+  const bookmarkRepository = new BookmarkRepository(() => getProjectDbClient(resolveConfigRoot()))
   const provenanceMessageSnapshots = new ProvenanceMessageSnapshotRepository({
     storageRoot: resolveDataRoot(),
     getClient: () => getProjectDbClient(resolveConfigRoot())
@@ -1458,6 +1462,25 @@ const createApplicationModules = async (
     },
     (session) => sessionPackageService.prepareSessionDeletion(session)
   )
+  const bookmarkService = new BookmarkService({
+    repository: bookmarkRepository,
+    sessions: sessionRepository,
+    pdfVersions: sessionPdfSourceResolver,
+    runWithSessionAuthority: (projectId, sessionId, operation) =>
+      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, operation),
+    validateProjectFile: async (source, owningSession) => {
+      if (source.kind !== 'project-file' || source.sessionId !== owningSession.id) return false
+      try {
+        const [canonicalRoot, canonicalSource] = await Promise.all([
+          realpath(owningSession.cwd),
+          realpath(source.path)
+        ])
+        return isPathInsideWorkspace(canonicalRoot, canonicalSource)
+      } catch {
+        return false
+      }
+    }
+  })
   const sessionPdfContextOwner = new SessionPdfContextOwner({
     sources: sessionPdfSourceResolver,
     pendingUploads: {
@@ -1687,7 +1710,8 @@ const createApplicationModules = async (
       await Promise.all([
         sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
         sideChatOwnerRef.current?.invalidateParents(sessionIds),
-        visionEvidenceRepository.deleteSessions(sessionIds)
+        visionEvidenceRepository.deleteSessions(sessionIds),
+        bookmarkRepository.deleteSessions(sessionIds)
       ])
     },
     onSessionsReconciled: async (sessionIds) => {
@@ -4542,6 +4566,7 @@ const createApplicationModules = async (
   }
   const applicationCommandDependencies: ApplicationCommandCompositionDependencies = {
     specialist: specialistApplicationOwner,
+    bookmarks: bookmarkService,
     acp: {
       runtime,
       workflows: acpHandlerWorkflows,
