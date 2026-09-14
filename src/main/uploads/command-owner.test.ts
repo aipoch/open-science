@@ -211,6 +211,59 @@ describe('upload command owner', () => {
     expect(repository.stageLocalFile).not.toHaveBeenCalled()
   })
 
+  it.each([
+    'lease release',
+    'adapter cleanup',
+    'replacement generation',
+    'current caller'
+  ] as const)(
+    'resumes a duplicate begin according to caller lifetime: %s',
+    async (invalidation) => {
+      const root = await mkdtemp(join(tmpdir(), 'upload-duplicate-begin-'))
+      temporaryRoots.push(root)
+      const repository = new UploadRepository(root)
+      const beginTransfer = repository.beginTransfer.bind(repository)
+      const initialized = deferred<void>()
+      const resume = deferred<void>()
+      const begin = vi
+        .spyOn(repository, 'beginTransfer')
+        .mockImplementationOnce(async (request) => {
+          const status = await beginTransfer(request)
+          initialized.resolve()
+          await resume.promise
+          return status
+        })
+      const owner = createUploadCommandOwner(repository)
+      const leases = new ApplicationCallerLeaseRegistry()
+      const caller = createCaller(leases, 42)
+      const request = { transferId: 'duplicate-begin', name: 'data.csv', size: 10 }
+      const first = owner.beginTransfer(invocationFor(caller, [request]))
+      await initialized.promise
+      const duplicate = owner.beginTransfer(invocationFor(caller, [request]))
+      const results = Promise.allSettled([first, duplicate])
+      if (invalidation === 'lease release') caller.ownedLease.release()
+      else if (invalidation === 'adapter cleanup') owner.releaseCaller(caller.ownedLease.lease)
+      else if (invalidation === 'replacement generation') createCaller(leases, 42)
+      resume.resolve()
+      const settled = await results
+      leases.dispose()
+      await waitForDataRootWriters()
+
+      if (invalidation === 'current caller') {
+        expect(settled.map(({ status }) => status)).toEqual(['fulfilled', 'fulfilled'])
+        expect(settled[1]).toEqual(settled[0])
+        expect(begin).toHaveBeenCalledTimes(2)
+        return
+      }
+      expect(settled.map(({ status }) => status)).toEqual(['rejected', 'rejected'])
+      for (const result of settled) {
+        if (result.status === 'rejected')
+          expect(result.reason.message).toContain('no longer available')
+      }
+      expect(begin).toHaveBeenCalledOnce()
+    }
+  )
+
   it('releases every transfer owned by a caller on adapter navigation cleanup', async () => {
     const repository = {
       beginTransfer: vi.fn(async () => ({

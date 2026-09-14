@@ -357,6 +357,10 @@ const createUploadCommandOwner = (
           throw new Error(`Upload transfer belongs to another renderer: ${request.transferId}`)
         }
         await existing.ready
+        if (existing.cancelled) {
+          await existing.cleanup
+          throw new Error(`Upload renderer is no longer available: ${request.transferId}`)
+        }
         return repository.beginTransfer(request)
       }
 
