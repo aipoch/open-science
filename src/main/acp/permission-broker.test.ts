@@ -1076,12 +1076,37 @@ describe('ACP permission broker', () => {
     expect(broker.listGrants('session-1')).toEqual([])
   })
 
+  it.each(['todoread', 'todowrite'])(
+    'rejects the OpenCode native %s tool without exposing an approval path',
+    async (toolName) => {
+      const emitted: EmittedPermissionRequest[] = []
+      const broker = new AcpPermissionBroker((request) => emitted.push(request))
+
+      const response = broker.requestPermission(
+        createToolPermissionRequest({
+          title: toolName,
+          providerToolName: 'other',
+          kind: 'other',
+          rawInput: {}
+        }),
+        { profile: 'full', frameworkId: 'opencode' }
+      )
+
+      expect(emitted).toEqual([])
+      await expect(response).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    }
+  )
+
   it('keeps non-OpenCode and unknown OpenCode tools on the normal approval path', () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))
 
     void broker.requestPermission(
       createToolPermissionRequest({ title: 'skill', kind: 'other', rawInput: {} }),
+      { profile: 'ask', frameworkId: 'claude-code' }
+    )
+    void broker.requestPermission(
+      createToolPermissionRequest({ title: 'todowrite', kind: 'other', rawInput: {} }),
       { profile: 'ask', frameworkId: 'claude-code' }
     )
     void broker.requestPermission(
@@ -1093,7 +1118,7 @@ describe('ACP permission broker', () => {
       { profile: 'ask', frameworkId: 'opencode' }
     )
 
-    expect(emitted).toHaveLength(3)
+    expect(emitted).toHaveLength(4)
   })
 
   it('requires a stable server and tool identity before offering MCP session scope', () => {

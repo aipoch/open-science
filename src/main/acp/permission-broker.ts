@@ -138,6 +138,20 @@ const CODEX_POLICY_AMENDMENT_OPTION_ID_PATTERN = /^accept_.*policy_amendment$/
 // position) is robust to option reordering — tests pin this contract.
 const CODEX_MCP_PERSISTENT_ALLOW_OPTION_ID = 'allow_always'
 const CODEX_EXEC_POLICY_AMENDMENT_OPTION_ID = 'accept_execpolicy_amendment'
+const OPENCODE_DISABLED_NATIVE_TODO_TOOLS = new Set(['todoread', 'todowrite'])
+
+const isDisabledOpenCodeNativeTodoRequest = (
+  request: RequestPermissionRequest,
+  policyContext?: PermissionPolicyContext
+): boolean => {
+  if (policyContext?.frameworkId !== 'opencode') return false
+
+  return [extractProviderToolName(request.toolCall), request.toolCall.title].some(
+    (toolName) =>
+      typeof toolName === 'string' &&
+      OPENCODE_DISABLED_NATIVE_TODO_TOOLS.has(toolName.trim().toLowerCase())
+  )
+}
 
 const metadataRecord = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === 'object' && !Array.isArray(value)
@@ -961,6 +975,12 @@ class AcpPermissionBroker {
     params: RequestPermissionRequest,
     policyContext?: PermissionPolicyContext
   ): Promise<RequestPermissionResponse> {
+    // Current OpenCode releases surface configured native-tool denials as ACP approval requests.
+    // Reject Todo here before profile/grant resolution so no UI or Full-access path can re-enable it.
+    if (isDisabledOpenCodeNativeTodoRequest(params, policyContext)) {
+      return Promise.resolve({ outcome: { outcome: 'cancelled' } })
+    }
+
     const cancellationGeneration = this.cancellationGeneration
     const requestId = randomUUID()
     const mcpServerNames = policyContext?.mcpServerNames ?? []
