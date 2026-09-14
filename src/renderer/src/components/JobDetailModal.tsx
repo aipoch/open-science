@@ -12,7 +12,7 @@ import { cn, formatByteSize } from '@/lib/utils'
 import { JobStatusBadge } from './JobStatusBadge'
 import { JobTerminalOutput } from './JobTerminalOutput'
 import { ErrorNotice } from './error-notice'
-import { formatDuration, jobElapsedMs } from './remote-job-badge-utils'
+import { formatDuration, isJobElapsedLive, jobElapsedMs } from './remote-job-badge-utils'
 import { FileBrowserModal } from '../pages/settings/FileBrowserModal'
 import { useSettingsStore } from '@/stores/settings-store'
 import {
@@ -44,10 +44,12 @@ function SessionJobsList({
     .sort((a, b) => b.created_at - a.created_at)
 
   const [now, setNow] = useState(() => Date.now())
+  const hasLiveElapsed = jobs.some(isJobElapsedLive)
   useEffect(() => {
+    if (!hasLiveElapsed) return
     const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
-  }, [])
+  }, [hasLiveElapsed])
 
   return (
     <>
@@ -59,7 +61,7 @@ function SessionJobsList({
           </div>
         ) : (
           jobs.map((job) => {
-            const isRunning = job.status === 'running' || job.status === 'submitted'
+            const isRunning = isJobElapsedLive(job)
             const elapsedMs = jobElapsedMs(job, now)
             const elapsedStr = formatDuration(elapsedMs)
             const intentDisplay =
@@ -144,7 +146,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
 
   // Track elapsed time for running jobs
   const [now, setNow] = useState(() => Date.now())
-  const isRunning = latestJob.status === 'running' || latestJob.status === 'submitted'
+  const isRunning = isJobElapsedLive(latestJob)
   const isActive =
     latestJob.status === 'queued' ||
     latestJob.status === 'submitted' ||
