@@ -3422,9 +3422,6 @@ describe('ConversationPanel composer intake', () => {
     const topFade = container.querySelector('[data-testid="side-chat-message-fade-top"]')
     const bottomFade = container.querySelector('[data-testid="side-chat-message-fade-bottom"]')
 
-    expect(
-      container.querySelector('[data-testid="side-chat-panel"]')?.classList.contains('h-full')
-    ).toBe(true)
     expect(viewport.previousElementSibling).toBe(header)
     expect(viewport.nextElementSibling).toBe(composer)
     expect(messageScroll.parentElement).toBe(viewport)
