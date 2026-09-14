@@ -100,7 +100,9 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
       onOpenChange={(open) => {
         if (!open && !isApplying) {
           setRecoveryToken(undefined)
-          closeDialog()
+          // Radix's document Escape listener can still see the previous render immediately
+          // after reopening confirmation. Recheck ownership at the controlled state boundary.
+          if (!recoveryConfirmationOpen) closeDialog()
         }
       }}
     >

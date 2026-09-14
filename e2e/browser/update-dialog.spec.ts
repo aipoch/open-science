@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 
 test('recovers historical records only after confirmation in the update dialog', async ({
   page
-}) => {
+}, testInfo) => {
   await page.goto('/update-dialog.html?refused-restart&legacy')
   const dialog = page.getByRole('dialog', { name: 'Update available' })
   await dialog.getByRole('button', { name: 'Restart to update', exact: true }).click()
@@ -22,6 +22,7 @@ test('recovers historical records only after confirmation in the update dialog',
   await page.keyboard.press('Escape')
   await expect(confirmation).toBeHidden()
   await expect(recover).toBeFocused()
+  await page.screenshot({ path: testInfo.outputPath('update-confirmation-cancelled.png') })
   await recover.click()
   await confirmation.getByRole('button', { name: 'Back up records and retry', exact: true }).click()
   await expect(

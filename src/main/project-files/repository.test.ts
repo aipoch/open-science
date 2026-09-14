@@ -77,6 +77,38 @@ describe('ManagedFileIndexRepository', () => {
     await rm(storageRoot, { recursive: true, force: true })
   }, WINDOWS_SQLITE_HOOK_TIMEOUT_MS)
 
+  it('waits for a competing database transaction before syncing session files', async () => {
+    const transaction = client.$transaction.bind(client)
+    const spy = vi
+      .spyOn(client, '$transaction')
+      .mockImplementationOnce(async (operation, options) => {
+        let acquired!: () => void
+        const ready = new Promise<void>((resolve) => {
+          acquired = resolve
+        })
+        const competing = transaction(async () => {
+          acquired()
+          await new Promise((resolve) => setTimeout(resolve, 2_500))
+        })
+        await ready
+        try {
+          return await transaction(operation, options)
+        } finally {
+          await competing
+        }
+      })
+    try {
+      await expect(repository.syncSession(createSession())).resolves.toEqual([])
+      await expect(
+        client.managedFileSessionSync.findUnique({
+          where: { projectId_sessionId: { projectId: PROJECT_ID, sessionId: SESSION_ID } }
+        })
+      ).resolves.toMatchObject({ filesRevision: 1, deletedAt: null })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it.each([
     { source: 'upload', updateDuringRead: false },
     { source: 'upload', updateDuringRead: true },
