@@ -14,14 +14,15 @@ export async function changedReferenceFiles(root, mappings, platform) {
       const path = join(relative, name)
       const stat = await inspect(join(root, path))
       if (stat.isDirectory()) {
-        if (/^(sessions|notebooks)([/\\]|$)/.test(path)) await visit(path)
+        if (/^(sessions|notebooks)([/\\]|$)/.test(path) || path === 'runtime') await visit(path)
       } else if (documentKind(path)) {
         if (!stat.isFile() || stat.nlink !== 1)
           throw new Error(`Unsafe reference document: ${path}`)
         const value = JSON.parse(await readFile(join(root, path), 'utf8'))
-        const next = transformDocument(value, documentKind(path), mappings, platform, true)
+        // Unchanged paths do not prove that pending work is settled. Validate every supported
+        // document before deciding which files need a backup and rewrite.
+        const next = transformDocument(value, documentKind(path), mappings, platform)
         if (JSON.stringify(value) !== JSON.stringify(next)) {
-          transformDocument(value, documentKind(path), mappings, platform)
           files.push(path)
         }
       }

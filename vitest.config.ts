@@ -188,7 +188,8 @@ export default defineConfig({
             ...VITEST_ARCHITECTURE_TEST_GLOBS,
             ...VITEST_DATABASE_TEST_GLOBS,
             ...VITEST_PROCESS_TEST_GLOBS,
-            'scripts/brand-path-migration.test.ts'
+            'scripts/brand-path-migration.test.ts',
+            'scripts/brand-migration-omissions.test.ts'
           ]
         }
       },
@@ -219,7 +220,10 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'brand-migration',
-          include: ['scripts/brand-path-migration.test.ts'],
+          include: [
+            'scripts/brand-path-migration.test.ts',
+            'scripts/brand-migration-omissions.test.ts'
+          ],
           exclude: [...VITEST_EXCLUDE_PATTERNS],
           isolate: true,
           fileParallelism: false,

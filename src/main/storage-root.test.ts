@@ -32,6 +32,14 @@ const {
 
 let homeDir: string
 
+// Default-path cases use the mocked app home (a temporary directory for all filesystem tests),
+// while override cases set their own values. Never inherit the developer's isolated root as input.
+beforeEach(() => {
+  vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', undefined)
+  vi.stubEnv('OPEN_SCIENCE_STORAGE_ROOT', undefined)
+})
+afterEach(() => vi.unstubAllEnvs())
+
 describe('dataFolderName', () => {
   afterEach(() => {
     appMock.isPackaged = false

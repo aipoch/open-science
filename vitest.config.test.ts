@@ -168,6 +168,19 @@ const projectByName = (name: string): VitestProjectTest => {
   return project!.test as VitestProjectTest
 }
 
+it('serializes both real brand migration suites after process fixtures', () => {
+  const files = [
+    'scripts/brand-path-migration.test.ts',
+    'scripts/brand-migration-omissions.test.ts'
+  ]
+  const migration = projectByName('brand-migration')
+  expect(migration.include).toEqual(expect.arrayContaining(files))
+  expect(projectByName('default').exclude).toEqual(expect.arrayContaining(files))
+  expect(migration.fileParallelism).toBe(false)
+  expect(migration.maxWorkers).toBe(1)
+  expect(migration.sequence?.groupOrder).toBe(3)
+})
+
 it('runs whole-tree architecture scans in one reused worker after the parallel unit pool', () => {
   expect(VITEST_ARCHITECTURE_TEST_GLOBS).toEqual(['**/*.architecture.test.ts'])
   const architecture = projectByName('architecture')

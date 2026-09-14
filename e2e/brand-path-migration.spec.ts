@@ -27,9 +27,27 @@ for (const failedPreparing of [false, true]) {
     await page.getByRole('button', { name: 'Send message' }).click()
     await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
 
+    // A real saved edit leaves a published write-operation receipt. This normal terminal state
+    // must survive the upgrade together with its versions, rather than blocking startup.
+    await page.getByRole('button', { name: 'Files', exact: true }).click()
+    await page.getByRole('button', { name: 'Preview uploaded file history.md' }).click()
+    const beforePreview = page.getByRole('dialog', { name: 'Preview history.md' })
+    await beforePreview.getByRole('button', { name: 'Edit history.md' }).click()
+    const editor = beforePreview.getByRole('textbox', { name: 'Edit history.md source' })
+    await expect(editor).toHaveValue(content)
+    await editor.fill(`${content}\n\nSaved before the brand upgrade.`)
+    await beforePreview.getByRole('button', { name: 'Save changes' }).click()
+    await expect(editor).toBeHidden()
+    await beforePreview.getByRole('button', { name: 'Close preview of history.md' }).click()
+
     const migrated = await app.restartWithLegacyBrandPaths(failedPreparing)
     page = migrated.page
     expect(migrated.identityAfter).toEqual(migrated.identityBefore)
+    expect(migrated.identityAfter).toMatchObject({
+      ManagedFileVersionWriteOperation: expect.arrayContaining([
+        expect.objectContaining({ state: 'published' })
+      ])
+    })
     expect((await lstat(migrated.oldRoot)).isSymbolicLink()).toBe(true)
     expect(await page.evaluate(async () => (await window.api.storage.getInfo()).dataRoot)).toBe(
       migrated.newRoot
@@ -48,6 +66,9 @@ for (const failedPreparing of [false, true]) {
     await expect(preview.getByText('Preserved research', { exact: true })).toBeVisible()
     await expect(
       preview.getByText('Migration keeps the complete attachment.', { exact: true })
+    ).toBeVisible()
+    await expect(
+      preview.getByText('Saved before the brand upgrade.', { exact: true })
     ).toBeVisible()
     const storageRoot = dirname(migrated.newRoot)
     const receipt = JSON.parse(

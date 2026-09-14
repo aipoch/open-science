@@ -1,8 +1,19 @@
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { prepareBrandPathMigration } from './brand-path-migration'
 
 vi.mock('node:child_process', () => ({ spawnSync: vi.fn() }))
+// These tests inspect mocked startup arguments; the test launcher configuration must not select
+// a different branch of the adapter. No child process or real Electron profile is opened here.
+beforeEach(() => {
+  for (const key of [
+    'OPEN_SCIENCE_E2E_STORAGE_ROOT',
+    'OPEN_SCIENCE_STORAGE_ROOT',
+    'OPEN_SCIENCE_USER_DATA',
+    'OPEN_SCIENCE_ALLOW_MULTI_INSTANCE'
+  ])
+    vi.stubEnv(key, undefined)
+})
 afterEach(() => {
   vi.unstubAllEnvs()
   vi.clearAllMocks()

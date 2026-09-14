@@ -1316,6 +1316,16 @@ async function migrate(options, deps) {
     await planMigrationWork(journal.participants, journal.status, true)
     if (journal.status === 'preparing')
       await prepare(journal, save, progress, deps.copyTree ?? copyTree)
+    // A saved participant list may omit unchanged databases/documents (including older receipts).
+    // Recheck pending work before publishing or resuming, without adding files to that snapshot.
+    // Rollback deliberately returns above: recovery must remain available when forward work blocks.
+    for (const root of new Set([
+      current.configRoot,
+      ...journal.participants.flatMap((p) => [p.from, p.to, p.stage])
+    ])) {
+      if (root && (await inspect(root)))
+        await changedReferenceFiles(root, journal.mappings, journal.platform)
+    }
     const checkWriters = () => {
       assertHeld()
       ;(deps.assertNoProcesses ?? ((roots) => assertNoOpenFiles(roots)))(

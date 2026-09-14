@@ -1007,6 +1007,7 @@ class ElectronAppHarness implements ElectronApp {
           'ContentBlob',
           'UploadVersion',
           'ArtifactVersion',
+          'ManagedFileVersionWriteOperation',
           'GrantedLocalRoot'
         ]
         return Object.fromEntries(

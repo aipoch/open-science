@@ -11,16 +11,20 @@ import { inside, inspect, remapPath } from './paths.mjs'
 // Scan executable/opaque state conservatively, but verify any alternate-case root against
 // the filesystem just as structured-reference migration does. Similar prefixes are not roots.
 function referenceNeedles(variants, platform) {
-  return variants.flatMap((from) => [
-    { from, text: from, decode: (s) => s },
-    { from, text: from.replaceAll('\\', '/'), decode: (s) => s },
-    {
-      from,
-      text: pathToFileURL(from, { windows: platform === 'win32' }).href,
-      decode: (s) => fileURLToPath(s, { windows: platform === 'win32' })
-    },
-    { from, text: JSON.stringify(from).slice(1, -1), decode: (s) => JSON.parse(`"${s}"`) }
-  ])
+  // Include canonical Unicode spellings in opaque text searches too. They are only candidates:
+  // inside() still verifies native filesystem identity before accepting an alternate spelling.
+  return variants.flatMap((from) =>
+    [...new Set([from, from.normalize('NFC'), from.normalize('NFD')])].flatMap((spelling) => [
+      { from, text: spelling, decode: (s) => s },
+      { from, text: spelling.replaceAll('\\', '/'), decode: (s) => s },
+      {
+        from,
+        text: pathToFileURL(spelling, { windows: platform === 'win32' }).href,
+        decode: (s) => fileURLToPath(s, { windows: platform === 'win32' })
+      },
+      { from, text: JSON.stringify(spelling).slice(1, -1), decode: (s) => JSON.parse(`"${s}"`) }
+    ])
+  )
 }
 function containsReference(buffer, needles, platform, complete = true) {
   for (const text of [
@@ -129,6 +133,18 @@ export async function auditAliases(
         ['session', 'notebook', 'tasks'].includes(documentKind(e.path))
       ) {
         const value = JSON.parse(await readFile(file, 'utf8'))
+        // Runtime IDs carry enablement/installation policy. The offline migrator leaves them
+        // intact, but cannot retire their alias until the runtime owner explicitly rebinds them.
+        if (
+          documentKind(e.path) === 'notebook' &&
+          ['python', 'r'].some((language) =>
+            ['runtimeId', 'interpreterPath'].some((key) => {
+              const path = value.runtimeBindings?.[language]?.[key]
+              return typeof path === 'string' && remapPath(path, maps, journal.platform) !== path
+            })
+          )
+        )
+          blockers.push({ path: file, reason: 'notebook-runtime-binding-needs-rebind' })
         if (
           JSON.stringify(transformDocument(value, documentKind(e.path), maps, journal.platform)) !==
           JSON.stringify(value)

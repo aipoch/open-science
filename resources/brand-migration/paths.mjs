@@ -14,7 +14,7 @@ export const inspect = async (path) => {
   }
 }
 export const readJson = async (path) => JSON.parse(await readFile(path, 'utf8'))
-// A differently-cased prefix is accepted only when this host resolves both spellings to
+// A differently-cased or Unicode-equivalent prefix is accepted only when this host resolves both spellings to
 // the same directory. This also works on case-sensitive macOS volumes and per-directory
 // case-sensitive Windows trees; a simulated foreign platform uses its lexical rules only.
 export function relativeInside(root, value, platform = process.platform) {
@@ -24,12 +24,14 @@ export function relativeInside(root, value, platform = process.platform) {
   let rel = path.relative(base, normalized)
   const contained =
     rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel))
-  const prefix = normalized.slice(0, base.length)
-  const boundary = normalized.length === base.length || normalized[base.length] === path.sep
+  // NFC/NFD spellings can have different string lengths. Split at directory boundaries before
+  // checking identity, and retain the original suffix rather than normalizing a user's filenames.
+  const components = normalized.split(path.sep)
+  const depth = base.split(path.sep).length
+  const prefix = components.slice(0, depth).join(path.sep)
   if (
     prefix !== base &&
-    boundary &&
-    prefix.toLowerCase() === base.toLowerCase() &&
+    prefix.normalize('NFC').toLowerCase() === base.normalize('NFC').toLowerCase() &&
     platform === process.platform
   ) {
     try {
@@ -37,7 +39,7 @@ export function relativeInside(root, value, platform = process.platform) {
       const b = statSync(prefix)
       if (!a.isDirectory() || !b.isDirectory() || a.dev !== b.dev || a.ino !== b.ino)
         return undefined
-      rel = normalized.slice(base.length).replace(/^[/\\]/, '')
+      rel = components.slice(depth).join(path.sep)
       return rel
     } catch (error) {
       if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error

@@ -83,7 +83,7 @@ export function documentKind(relative) {
   const p = relative.replaceAll('\\', '/')
   if (p === 'settings.json') return 'settings'
   if (/^sessions\/[^/]+\/[^/]+\.json$/.test(p)) return 'session'
-  if (/^notebooks\/[^/]+\/[^/]+\/run\.json$/.test(p)) return 'notebook'
+  if (/^notebooks\/[^/]+\/[^/]+\/(?:frames\/[^/]+\/)?run\.json$/.test(p)) return 'notebook'
   if (p === 'task-runs.json') return 'tasks'
   if (p === 'runtime/operation-journal.json') return 'runtime-operations'
 }
@@ -156,20 +156,15 @@ export function rewriteDatabase(
     )
       throw new Error('Database integrity check failed')
     if (!readOnly) db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE')
-    for (const [table, column] of [
-      ['ManagedFileVersionWriteOperation', 'state'],
-      ['ComputeJobOperation', 'phase']
+    // Each owner's state machine has its own terminal states. Preflight is also required for a
+    // stationary DB with no remapped fields; choosing the reference bundle must not bypass it.
+    for (const [table, column, terminal] of [
+      ['ManagedFileVersionWriteOperation', 'state', ['published', 'conflict', 'failed']],
+      ['ComputeJobOperation', 'phase', ['settled']]
     ]) {
-      if (!readOnly && tables.has(table) && columns(table).has(column)) {
+      if (tables.has(table) && columns(table).has(column)) {
         const values = db.prepare(`SELECT "${column}" AS state FROM "${table}"`).all()
-        if (
-          values.some(
-            (r) =>
-              !['committed', 'completed', 'settled', 'failed', 'aborted', 'cancelled'].includes(
-                r.state
-              )
-          )
-        )
+        if (values.some((r) => !terminal.includes(r.state)))
           throw new Error(`Unfinished ${table} blocks migration`)
       }
     }

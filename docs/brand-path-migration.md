@@ -137,6 +137,18 @@ execution evidence and user text remain unchanged. Pending managed-file writes o
 operations block offline migration. Session projection fingerprints are preserved; they are not path fields. The startup head-repair path preserves a same-version, same-session
 `ManagedFile.messageId`; a new user edit keeps the existing distinct publication semantics.
 
+Alternate letter case and NFC/NFD Unicode spellings are matched by path components, then accepted
+only when this host resolves the old prefixes to the same filesystem device/inode. A macOS host is
+not assumed to have case-insensitive or normalization-insensitive storage. The same matching rule
+applies to database migration and alias auditing, including file URIs. Opaque launcher scans also
+check canonical Unicode spellings without rewriting their contents.
+
+Operation preflight is independent of whether a stationary database or document needs a path
+rewrite. `ManagedFileVersionWriteOperation` terminal states are `published`, `conflict` and `failed`;
+`staging` and `file_ready` block migration. `ComputeJobOperation` must be `settled`. Unchanged
+Notebook/task documents and `runtime/operation-journal.json` are checked as well. A blocked migration
+does not settle or delete these records; use the owning application's recovery before retrying.
+
 Protected Compute Job JSON is an array envelope, not plaintext. The offline phase records a pending
 reconciliation and retains its alias. After Electron's OS credential store is ready, but before the
 application DB client opens, the app decrypts only this field, maps upload paths, and encrypts it
@@ -147,11 +159,29 @@ receipt records hashes of validated encrypted values for later alias auditing.
 Known document adapters cover `settings.json` (data root, agent executables, manual interpreters,
 legacy granted roots and disabled runtime entries), `sessions/<project>/<session>.json` (cwd,
 upload/artifact paths and derived file URLs), `notebooks/<project>/<session>/run.json` (current roots,
-run cwd/working files/artifacts), and `task-runs.json`. Relative `$DATA/` values remain portable.
+run cwd/working files/artifacts), its `frames/<frameId>/run.json` variants, and `task-runs.json`.
+Relative `$DATA/` values remain portable.
 Runtime operations must be settled. Installation authorizations are not transferred to a new runtime
 identity. User messages, tool inputs, historical frozen snapshots and provenance are not recursively
 rewritten. Arbitrary MCP commands/env and third-party databases require their own explicit repair;
 remaining old-root dependencies block alias retirement.
+
+Notebook `runtimeBindings.python/r.runtimeId` and `interpreterPath` remain the runtime owner's
+identity and policy. A binding that still resolves through an old root now blocks `--retire-aliases`
+with `notebook-runtime-binding-needs-rebind`. Start the application while the alias is retained,
+explicitly select/enable the intended runtime and rebind affected sessions through the existing
+runtime controls, then rerun `--audit-aliases`. Merely moving an interpreter does not transfer
+enablement or installation authorization. The audit also applies to frame Notebook documents.
+
+This correction does not change the journal format or remove backups. Existing version-1/2
+receipts retain their established recovery path. Forward resume rechecks pending work even for
+documents excluded from an older reference bundle; rollback remains available subject to the
+existing integrity checks. Already prepared snapshots are not silently rewritten under their saved
+hashes: use `--restart-preparing` in a supported unpublished phase to prepare a fresh snapshot.
+For an already committed migration, use the current alias audit to find outstanding references and
+retain the aliases until their owners reconcile them. If a clean rollback is still allowed, the
+existing `--rollback` followed by `--execute --restart-after-rollback` prepares the data with these
+adapters and preserves the old receipt. Never delete the journal or force rollback over newer data.
 
 ## Operator commands
 
