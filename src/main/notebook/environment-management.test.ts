@@ -507,6 +507,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
       'recovery',
       'recoverable',
       'mutation:analysis',
+      'recoverable',
       'remove:analysis',
       'repair:analysis'
     ])
@@ -527,3 +528,39 @@ describe('NotebookEnvironmentManagementOwner', () => {
     expect(options.runtimeRepair.completeRemovedManagedEnvironment).not.toHaveBeenCalled()
   })
 })
+
+it.each(['binding', 'kernel'] as const)(
+  'AUDIT: removal rechecks a %s created while waiting for the mutation lease',
+  async (usage) => {
+    let release!: () => void
+    let entered!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const lease = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const sessions: EnvironmentSession[] = []
+    const { owner, manager: configured } = harness({
+      sessions: () => sessions,
+      environmentOperations: {
+        runMutation: async (_name, operation) => {
+          entered()
+          await lease
+          return operation()
+        }
+      }
+    })
+    const removing = owner.manage({ action: 'remove', name: 'analysis' })
+    await waiting
+    sessions.push(
+      usage === 'binding'
+        ? session('new-session', [], [['python', runtimeBinding('analysis')]])
+        : session('new-session', [['python:analysis', 'idle']])
+    )
+    release()
+    const outcome = await removing.catch((error) => error)
+    expect.soft(outcome).toBeInstanceOf(Error)
+    expect(configured?.removeEnvironment).not.toHaveBeenCalled()
+  }
+)

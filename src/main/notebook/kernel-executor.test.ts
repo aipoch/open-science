@@ -672,6 +672,54 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   })
 
+  it('AUDIT: retains each persistent process cwd when another kernel changes the request directory', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-cwd-evidence-')
+    const request = baseRequest(cwdDir)
+    const firstDir = join(request.dataRoot, 'analysis')
+    const otherDir = join(request.dataRoot, 'other')
+    await mkdir(firstDir, { recursive: true })
+    await mkdir(otherDir, { recursive: true })
+    await stubEnvPython(request.runtimeRoot, 'other')
+    const executor = new NotebookKernelExecutor({
+      pythonBin: python3,
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+    try {
+      const changed = await executor.execute({
+        ...request,
+        cwd: request.dataRoot,
+        code: `import os; os.chdir(${JSON.stringify(firstDir)})`
+      })
+      expect(changed.status).toBe('completed')
+      expect(changed.cwdAfter).toBe(realpathSync(firstDir))
+      const other = await executor.execute({
+        ...request,
+        cwd: otherDir,
+        environment: 'other',
+        code: '1'
+      })
+      expect(other.status).toBe('completed')
+      const written = await executor.execute({
+        ...request,
+        cwd: otherDir,
+        code: 'with open("generated.csv", "w") as output: output.write("x,y\\n1,2\\n")'
+      })
+      expect(written.status).toBe('completed')
+      expect(await readFile(join(firstDir, 'generated.csv'), 'utf8')).toBe('x,y\n1,2\n')
+      expect(existsSync(join(otherDir, 'generated.csv'))).toBe(false)
+      expect.soft(written).toHaveProperty('cwdBefore', realpathSync(firstDir))
+      expect(written.workingFiles).toContainEqual(
+        expect.objectContaining({
+          path: resolve(firstDir, 'generated.csv'),
+          relativePath: 'data/analysis/generated.csv'
+        })
+      )
+    } finally {
+      await executor.shutdown()
+    }
+  }, 30_000)
+
   it('runs a cell, echoes stdout, and reports the working directory', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-exec-')
     const executor = makeExecutor()

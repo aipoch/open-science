@@ -706,7 +706,7 @@ class NotebookExecutionOwner {
       kernelEpoch,
       helperModuleScope
     )
-    const helperPlan = await this.options.helperModules.plan(kernelEpoch, helperRequest)
+    await this.options.helperModules.plan(kernelEpoch, helperRequest)
     const queuedRun: NotebookRunRecord = {
       runId,
       executionMode: request.background ? 'background' : 'foreground',
@@ -774,11 +774,26 @@ class NotebookExecutionOwner {
       return await session.enqueueExecution(
         processKey,
         async () => {
+          // Admission freezes the target and inputs, not the process or directory that survives
+          // preceding executions. Resolve those facts again on this process's serialized turn.
+          const cwdBefore = session.cwd
+          const kernelStatusBefore = session.kernelStatus(processKey)
           const kernelWasTerminated =
-            kernelWasTerminatedAtAdmission ||
             session.isKernelTerminated(processKey) ||
             session.kernelStatus(processKey) === 'terminated' ||
             session.hasDurableKernelTermination(processKey)
+          const kernelEpoch = session.kernelEpoch(
+            processKey,
+            kernelWasTerminated,
+            notebookInterpreterIdentity(resolvedInterpreter)
+          )
+          const kernelEpochId = kernelEpoch.id
+          const executionRun = {
+            ...durableAdmission.run,
+            inputFiles: queuedRun.inputFiles,
+            cwdBefore,
+            kernelEpochId
+          }
           const kernelMarkedRunning = admission.rejection === undefined
           let executedOnLiveKernel = true
           let reachedExecutor = false
@@ -786,7 +801,7 @@ class NotebookExecutionOwner {
             session,
             // Admission freezes the exact Version identities. The request-owned copies retain only
             // the monotonic access association gathered while that frozen Version is resolved.
-            queuedRun: { ...durableAdmission.run, inputFiles: queuedRun.inputFiles },
+            queuedRun: executionRun,
             startLive: () => {
               session.markCellRunning(cell.id, runId, executionCount)
               if (kernelMarkedRunning) {
@@ -818,9 +833,13 @@ class NotebookExecutionOwner {
                     executedOnLiveKernel = false
                     return errorToExecutionResult(error, cwdBefore)
                   }
+                  const helperPlan = await this.options.helperModules.plan(
+                    kernelEpoch,
+                    helperRequest
+                  )
                   reachedExecutor = true
                   const sourceFileAccessContext = await this.options
-                    .sourceFileAccessContext?.(session, durableAdmission.run)
+                    .sourceFileAccessContext?.(session, executionRun)
                     .catch(() => undefined)
                   let executionResult = await session
                     .execute({

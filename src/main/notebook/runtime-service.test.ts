@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, posix, win32 } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { NotebookBackgroundRunError } from '../../shared/notebook'
+import { EnvironmentLeaseManager } from './environment-lease-manager'
 
 import type {
   NotebookExecutionRequest,
@@ -16305,5 +16306,253 @@ it('keeps a failed recovery round joined until its other owners finish', async (
     await service.dispose()
     recover.mockRestore()
     complete.mockRestore()
+  }
+})
+
+it.each(['python', 'r'] as const)(
+  'AUDIT: queued %s execution rotates epoch after the preceding kernel crashes',
+  async (language) => {
+    const root = await createStorageRoot()
+    const gate = createDeferred<void>()
+    const entered = createDeferred<void>()
+    let calls = 0
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: (_sessionId, lifecycle) => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          calls += 1
+          if (calls === 1) {
+            entered.resolve()
+            await gate.promise
+            await lifecycle.onTerminated(
+              language,
+              language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
+            )
+            return {
+              status: 'failed',
+              stdout: '',
+              stderr: 'kernel crashed',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }
+          }
+          return {
+            status: 'completed',
+            stdout: 'fresh kernel',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    try {
+      const request = {
+        sessionId: 'audit-epoch',
+        language,
+        workspaceCwd: root,
+        background: true as const
+      }
+      const first = await service.executeBackground({ ...request, code: 'first' })
+      await entered.promise
+      const second = await service.executeBackground({ ...request, code: 'second' })
+      gate.resolve()
+      await Promise.all([
+        service.waitForBackgroundRun(first.runId),
+        service.waitForBackgroundRun(second.runId)
+      ])
+      const state = await service.state(request)
+      const a = state.runs.find((run) => run.runId === first.runId)!
+      const b = state.runs.find((run) => run.runId === second.runId)!
+      expect(a.status).toBe('failed')
+      expect(a.kernelEpochId).toBeTruthy()
+      expect(b.status).toBe('completed')
+      expect(b.kernelEpochId).toBeTruthy()
+      expect.soft(b.kernelEpochId).not.toBe(a.kernelEpochId)
+      expect.soft(state.environments).toContainEqual(
+        expect.objectContaining({
+          processKey: `${language}:${language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV}`,
+          status: 'idle'
+        })
+      )
+      if (language === 'python') expect.soft(state.kernelStatus).toBe('idle')
+    } finally {
+      gate.resolve()
+      await service.shutdownAll()
+    }
+  }
+)
+
+it.each(['python', 'r'] as const)(
+  'AUDIT: queued %s execution records cwd at actual dispatch after preceding chdir',
+  async (language) => {
+    const root = await createStorageRoot()
+    const executions: NotebookExecutionRequest[] = []
+    const nextCwd = join(root, 'analysis')
+    await mkdir(nextCwd)
+    const gate = createDeferred<void>()
+    const entered = createDeferred<void>()
+    let calls = 0
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          executions.push(request)
+          if (++calls === 1) {
+            entered.resolve()
+            await gate.promise
+          }
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: nextCwd,
+            outputs: []
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    try {
+      const request = {
+        sessionId: 'audit-cwd',
+        language,
+        workspaceCwd: root,
+        background: true as const
+      }
+      const first = await service.executeBackground({
+        ...request,
+        code:
+          language === 'python'
+            ? 'import os; os.chdir(' + JSON.stringify(nextCwd) + ')'
+            : 'setwd(' + JSON.stringify(nextCwd) + ')'
+      })
+      await entered.promise
+      const second = await service.executeBackground({
+        ...request,
+        code:
+          language === 'python'
+            ? 'open("result.csv", "w").write("ok")'
+            : 'writeLines("ok", "result.csv")'
+      })
+      gate.resolve()
+      await Promise.all([
+        service.waitForBackgroundRun(first.runId),
+        service.waitForBackgroundRun(second.runId)
+      ])
+      const state = await service.state(request)
+      expect(state.runs.find((run) => run.runId === first.runId)?.cwdAfter).toBe(nextCwd)
+      expect(state.runs.find((run) => run.runId === second.runId)?.status).toBe('completed')
+      expect.soft(executions[1]?.cwd).toBe(nextCwd)
+      expect.soft(state.runs.find((run) => run.runId === second.runId)?.cwdBefore).toBe(nextCwd)
+    } finally {
+      gate.resolve()
+      await service.shutdownAll()
+    }
+  }
+)
+
+it('AUDIT: removal cannot overtake a managed binding whose durable commit is in flight', async () => {
+  const root = await createStorageRoot()
+  const repository = new NotebookRunRepository(root)
+  const commitEntered = createDeferred<void>()
+  const finishCommit = createDeferred<void>()
+  const removalRequested = createDeferred<void>()
+  const runtimeId = pythonBin(envPrefix(getRuntimeRoot(root), 'analysis'))
+  const removeEnvironment = vi.fn()
+  const service = new NotebookRuntimeService({
+    configRoot: root,
+    dataRoot: root,
+    projectId: 'default-project',
+    repository,
+    discoverRuntimes: async (language) =>
+      language === 'python'
+        ? [
+            {
+              language,
+              provenance: 'agent-created',
+              envId: runtimeId,
+              interpreterPath: runtimeId,
+              label: 'analysis',
+              condaEnv: 'analysis',
+              runnable: true
+            }
+          ]
+        : [],
+    environmentManager: {
+      createNamedEnvironment: async (name, language) => ({
+        name,
+        language,
+        ready: true,
+        isDefault: false
+      }),
+      listEnvironments: () => [],
+      removeEnvironment
+    },
+    executorFactory: () => ({
+      execute: async () => {
+        throw new Error('unexpected execution')
+      },
+      shutdown: async () => ({ reaped: true })
+    })
+  })
+  const request = { sessionId: 'binding-removal', workspaceCwd: root }
+  await service.state(request)
+  const persist = repository.setRuntimeBindings.bind(repository)
+  const commit = vi
+    .spyOn(repository, 'setRuntimeBindings')
+    .mockImplementationOnce(async (...args) => {
+      commitEntered.resolve()
+      await finishCommit.promise
+      return persist(...args)
+    })
+  const acquire = EnvironmentLeaseManager.prototype.acquire
+  const lease = vi.spyOn(EnvironmentLeaseManager.prototype, 'acquire').mockImplementation(function (
+    this: EnvironmentLeaseManager,
+    environment,
+    mode
+  ) {
+    const result = acquire.call(this, environment, mode)
+    if (environment === 'analysis' && mode === 'exclusive') removalRequested.resolve()
+    return result
+  })
+  try {
+    const binding = service.bindRuntime({ ...request, language: 'python', runtimeId })
+    await commitEntered.promise
+    const removing = service
+      .manageEnvironments({ action: 'remove', name: 'analysis' })
+      .catch((error: unknown) => error)
+    // Observe the real lease request; do not replace its locking or wait a wall-clock interval.
+    await removalRequested.promise
+    finishCommit.resolve()
+    const [bound, removed] = await Promise.all([binding, removing])
+    expect(bound).toHaveProperty('bound.runtimeId', runtimeId)
+    expect.soft(removed).toBeInstanceOf(Error)
+    expect.soft(removeEnvironment).not.toHaveBeenCalled()
+    expect((await service.state(request)).runtimeBindings.python?.runtimeId).toBe(runtimeId)
+    await service.withEnvLock('analysis', async () => {
+      const selection = await service.switchRuntime({ ...request, language: 'python', runtimeId })
+      expect(selection).toMatchObject({
+        ok: false,
+        bindingChanged: false,
+        error: expect.stringContaining('ENVIRONMENT_MUTATION_ALREADY_PENDING')
+      })
+    })
+    expect((await service.state(request)).runtimeBindings.python?.runtimeId).toBe(runtimeId)
+  } finally {
+    finishCommit.resolve()
+    await service.shutdownAll()
+    commit.mockRestore()
+    lease.mockRestore()
   }
 })

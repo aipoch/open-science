@@ -498,6 +498,8 @@ class NotebookRuntimeService {
       runtimeSettings,
       repairPolicy: this.repairPolicy,
       discoverRuntimes: options.discoverRuntimes,
+      acquireEnvironmentBindingLease: (environment) =>
+        this.environmentOperations.acquireBindingLease(environment),
       waitForEnvironmentStartup: () => this.environmentStartupBarrier,
       platform: options.platform
     })

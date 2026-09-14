@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, realpathSync } from 'node:fs'
 import { readFile, rm, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -275,6 +275,7 @@ type ProcState = {
   // sets it once *any* signal is sent, including the soft-timeout SIGINT a loop catches and survives,
   // so it cannot distinguish a still-running loop from a dead one.
   alive: boolean
+  cwd: string
   // Armed while the proc is idle (no pending request); disarmed at the start of the next request.
   idleTimer?: IdleTimerHandle
   // Interpreter backing this proc (see interpreterIdentity): '' for the managed default, or the resolved
@@ -526,6 +527,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   async execute(request: NotebookExecutionRequest): Promise<NotebookExecutionResult> {
     let workingFileObservation: WorkingFileObservation | undefined
     let kernelDispatched = false
+    let cwdBefore: string | undefined
     let endSandboxExecution: (() => void) | undefined
     const helperModulesInitialized: string[] = []
     try {
@@ -578,6 +580,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
           throw helperInitializationError(helperModules, initialization.response.error)
         }
       }
+      if (kind !== 'repl') {
+        cwdBefore = proc.cwd
+        request = { ...request, cwd: cwdBefore }
+      }
       workingFileObservation = await startWorkingFileObservation(request)
       // sendRequest installs proc.pending synchronously. Revalidate immediately before that handoff:
       // an involuntary drop while ensureProc was finishing must settle this execute() locally rather
@@ -623,6 +629,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
         stdout: mapped.stdout,
         stderr: mapped.stderr,
         traceback: cancelled ? '' : mapped.traceback,
+        ...(cwdBefore !== undefined ? { cwdBefore } : {}),
         cwdAfter: response.cwd || request.cwd,
         outputs: cancelled
           ? mapped.outputs.filter((output) => output.type !== 'error')
@@ -640,6 +647,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       const fileObservation = await workingFileObservation?.finish(AbortSignal.abort())
       return {
         ...errorToExecutionResult(error, request, kernelDispatched, helperModulesInitialized),
+        ...(cwdBefore !== undefined ? { cwdBefore } : {}),
         ...(fileObservation
           ? {
               workingFiles: fileObservation.workingFiles,
@@ -825,6 +833,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       annotateStderr: spawned.annotateStderr,
       cleanupSandbox: spawned.cleanupSandbox,
       alive: true,
+      cwd: spawned.cwd,
       interpreterIdentity: identity,
       protectedDirs: new Set(request.protectedDirs ?? []),
       ownershipReceipt: spawned.ownershipReceipt
@@ -911,6 +920,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     request: NotebookExecutionRequest
   ): Promise<{
     child: ChildProcessWithoutNullStreams
+    cwd: string
     beginSandboxExecution: () => () => void
     annotateStderr: (stderr: string) => string
     cleanupSandbox: (
@@ -927,7 +937,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       : {}
     // A missing session dir would surface as an opaque ENOENT; fall back to the OS default cwd so
     // spawn fails only for a genuinely missing interpreter.
-    const spawnCwd = existsSync(request.cwd) ? request.cwd : undefined
+    const spawnCwd = existsSync(request.cwd) ? realpathSync(request.cwd) : undefined
     const ownerToken = this.processLifecycle?.createOwnerToken()
     const spawnEnv = this.buildEnv(
       kind,
@@ -1155,6 +1165,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     }
     return {
       child,
+      cwd: spawnCwd ?? process.cwd(),
       beginSandboxExecution: sandboxed?.beginExecution ?? (() => () => undefined),
       annotateStderr: sandboxed?.annotateStderr ?? ((stderr) => stderr),
       cleanupSandbox,
@@ -1425,6 +1436,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     if (!pending) return
 
     if (pending.reqId === response.reqId) {
+      if (response.cwd) proc.cwd = response.cwd
       pending.response = response
       pending.interruptAcknowledged ||= response.interruptAck === true
       if (pending.interruptProbeReqId !== undefined) return
