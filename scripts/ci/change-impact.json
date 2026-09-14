@@ -213,7 +213,6 @@
         "src/main/settings/service.ts",
         "src/main/settings/skill-catalog.ts",
         "src/main/settings/workflows/local-shell.ts",
-        "src/main/brand-upgrade/**",
         "src/main/storage-root.ts",
         "src/main/storage/**",
         "src/main/tray.ts",
