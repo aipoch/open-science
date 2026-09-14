@@ -466,6 +466,8 @@ describe('preload bridge — public surface inventory', () => {
       'pdfStructure.parse',
       'pdfStructure.readCached',
       'pdfStructure.readThumbnail',
+      'pendingInputs.execute',
+      'pendingInputs.onChanged',
       'permissions.extendUndo',
       'permissions.list',
       'permissions.onChanged',

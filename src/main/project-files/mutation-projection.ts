@@ -316,6 +316,40 @@ const extractSessionFiles = async (
     }
   }
 
+  // Published Uploads belong to the Session library before a queued prompt becomes a Message.
+  // Rebuild those native heads too; absence from the transcript is not deletion authority.
+  try {
+    const client = await getClient()
+    const uploads = await client.uploadFile.findMany({
+      where: { projectId: session.projectId, sessionId: session.id },
+      include: { currentVersion: true }
+    })
+    const referencedIds = new Set(
+      files.filter((file) => file.source === 'upload').map((file) => file.sourceFileId)
+    )
+    for (const upload of uploads) {
+      const version = upload.currentVersion
+      if (!version || version.state !== 'ready' || referencedIds.has(upload.id)) continue
+      const createdAtMs = BigInt((version.createdAt ?? version.registeredAt).getTime())
+      files.push({
+        source: 'upload',
+        sourceFileId: upload.id,
+        sourceVersionId: version.id,
+        checksum: version.checksum,
+        projectId: session.projectId,
+        sessionId: session.id,
+        displayName: version.originalFilename || version.filename,
+        storageKey: version.contentStorageKey,
+        mimeType: version.contentType ?? undefined,
+        sizeBytes: version.sizeBytes,
+        mtimeMs: version.createdAt ? BigInt(version.createdAt.getTime()) : undefined,
+        sortAtMs: createdAtMs
+      })
+    }
+  } catch (error) {
+    errors.push(describeError(error))
+  }
+
   // Native Artifact identity and version order live in SQLite. Session JSON is intentionally a
   // compatibility projection and can lag a newly finalized Version or retain an older branch's
   // descriptor, so it must not choose the Files tile content for a provenance lineage.

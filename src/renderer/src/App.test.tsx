@@ -627,69 +627,73 @@ describe('App startup routing', () => {
     expect(mocks.compute.jobsList).toHaveBeenLastCalledWith({ nonTerminal: true })
   })
 
-  it('keeps the remote-job analysis owner active while Home is presented', async () => {
-    mocks.settings.isLoaded = true
-    // The durable claim can finish after the next timer turn on a busy CI worker.
-    mocks.compute.jobsTransitionAnalysis.mockImplementationOnce(
-      () => new Promise((resolve) => setTimeout(() => resolve([]), 50))
-    )
-    mocks.sessions = [
-      {
-        id: 'session-1',
-        projectId: 'project-1',
-        title: 'Background Session',
-        cwd: '/workspace/project-1',
-        status: 'idle',
-        messages: [],
-        conversationGraph: createLinearConversationGraph({
-          sessionId: 'session-1',
+  it.each([false, true])(
+    'keeps background analysis draining on Home with Side chat open=%s',
+    async (sideChatOpen) => {
+      mocks.settings.isLoaded = true
+      if (sideChatOpen) mocks.sideChatParentSessionIds.add('session-1')
+      // The durable claim can finish after the next timer turn on a busy CI worker.
+      mocks.compute.jobsTransitionAnalysis.mockImplementationOnce(
+        () => new Promise((resolve) => setTimeout(() => resolve([]), 50))
+      )
+      mocks.sessions = [
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Background Session',
+          cwd: '/workspace/project-1',
+          status: 'idle',
           messages: [],
+          conversationGraph: createLinearConversationGraph({
+            sessionId: 'session-1',
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1
+          }),
           createdAt: 1,
           updatedAt: 1
-        }),
-        createdAt: 1,
-        updatedAt: 1
-      }
-    ]
-    mocks.compute.jobsPendingNotification.mockResolvedValueOnce([
-      {
-        job_id: 'job-1',
-        provider_id: 'ssh:cluster',
-        display_name: 'Cluster',
-        shape: 'direct_ssh',
-        session_id: 'session-1',
-        status: 'success',
-        intent: 'Analyze results',
-        created_at: 1,
-        started_at: 2,
-        finished_at: 3,
-        exit_code: 0,
-        error_code: undefined,
-        remote_workdir: undefined,
-        stdout_tail: undefined,
-        stderr_tail: undefined,
-        notified_at: 4,
-        notification_consumed_at: undefined
-      }
-    ])
+        }
+      ]
+      mocks.compute.jobsPendingNotification.mockResolvedValueOnce([
+        {
+          job_id: 'job-1',
+          provider_id: 'ssh:cluster',
+          display_name: 'Cluster',
+          shape: 'direct_ssh',
+          session_id: 'session-1',
+          status: 'success',
+          intent: 'Analyze results',
+          created_at: 1,
+          started_at: 2,
+          finished_at: 3,
+          exit_code: 0,
+          error_code: undefined,
+          remote_workdir: undefined,
+          stdout_tail: undefined,
+          stderr_tail: undefined,
+          notified_at: 4,
+          notification_consumed_at: undefined
+        }
+      ])
 
-    await render()
-    // Recovery crosses asynchronous persistence and message-queue boundaries.
-    await act(async () => {
-      await vi.waitFor(() =>
-        expect(mocks.runtimeSendMessage).toHaveBeenCalledWith(
-          expect.objectContaining({
-            sessionId: 'session-1',
-            requireExistingSession: true,
-            attribution: expect.objectContaining({ feature: 'compute' })
-          })
+      await render()
+      // Recovery crosses asynchronous persistence and message-queue boundaries.
+      await act(async () => {
+        await vi.waitFor(() =>
+          expect(mocks.runtimeSendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              sessionId: 'session-1',
+              requireExistingSession: true,
+              attribution: expect.objectContaining({ feature: 'compute' })
+            })
+          )
         )
-      )
-    })
+      })
 
-    expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
-    expect(mocks.compute.jobsPendingNotification).toHaveBeenCalledWith({ allSessions: true })
-  })
+      expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
+      expect(mocks.compute.jobsPendingNotification).toHaveBeenCalledWith({ allSessions: true })
+    }
+  )
 
   it('opens Settings with Cmd/Ctrl+, after startup is interactive', async () => {
     await render()

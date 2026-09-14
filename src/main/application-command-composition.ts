@@ -1,3 +1,5 @@
+import { pendingInputCommandGroup, registerPendingInputCommands } from './pending-input-commands'
+import type { PendingInputOwner } from './pending-input-owner'
 import {
   bootstrapApplicationCommandGroup,
   registerBootstrapApplicationCommands
@@ -132,6 +134,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   compute: ComputeApplicationCommandDependencies
   permissionGrants: PermissionGrantDependencies
   tags: TagCommandOwner
+  pendingInputs: Pick<PendingInputOwner, 'execute'>
   memory: MemoryCommandOwner
   specialist: SpecialistApplicationOwner
   literature: LiteratureCommandOwner
@@ -277,6 +280,9 @@ const createApplicationCommandModules = (
     ),
     defineApplicationCommandModule([tagApplicationCommandGroup], (registrar) =>
       registerTagApplicationCommands(registrar, dependencies.tags)
+    ),
+    defineApplicationCommandModule([pendingInputCommandGroup], (registrar) =>
+      registerPendingInputCommands(registrar, dependencies.pendingInputs)
     ),
     defineApplicationCommandModule([memoryApplicationCommandGroup], (registrar) =>
       registerMemoryApplicationCommands(registrar, dependencies.memory)

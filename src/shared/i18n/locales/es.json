@@ -115,7 +115,11 @@
     "Session package operation in progress": "Operación de paquete de sesión en curso",
     "Temporary files could not be removed. Try cleanup again.": "No se pudieron eliminar los archivos temporales. Vuelva a intentar la limpieza.",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "No se pudo completar la operación del paquete de sesión. Compruebe el paquete y el espacio disponible en disco, y vuelva a intentarlo.",
-    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "El paquete original no está disponible. Puede que se haya movido, eliminado o que ya no se pueda leer. Seleccione otro paquete."
+    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "El paquete original no está disponible. Puede que se haya movido, eliminado o que ya no se pueda leer. Seleccione otro paquete.",
+    "Show startup logs": "Mostrar registros de inicio",
+    "Quit application": "Salir de la aplicación",
+    "The desktop bridge failed to load. Reload the window to try again, or open the startup logs for diagnostics. Background work may still be running.": "No se pudo cargar el puente de escritorio. Vuelva a cargar la ventana para reintentar o abra los registros de inicio para realizar un diagnóstico. Es posible que aún haya tareas en ejecución en segundo plano.",
+    "The app window could not initialize.": "No se pudo inicializar la ventana de la aplicación."
   },
   "renderer": {
     "Old Shell launch records are blocking this update.": "Los registros antiguos de inicio de la línea de comandos bloquean esta actualización.",
@@ -3947,9 +3951,6 @@
     "Retry project recovery before deleting projects.": "Reintente la recuperación del proyecto antes de eliminar proyectos.",
     "Finish or stop active sessions before archiving this project.": "Finalice o detenga las sesiones activas antes de archivar este proyecto.",
     "Message queue": "Cola de mensajes",
-    "Queue ({{count}}) · Not saved_one": "Cola ({{count}}) · Sin guardar",
-    "Queue ({{count}}) · Not saved_other": "Cola ({{count}}) · Sin guardar",
-    "Queue ({{count}}) · Not saved_many": "Cola ({{count}}) · Sin guardar",
     "Attachment message": "Mensaje adjunto",
     "Reorder queued message {{index}}": "Reordenar mensaje en cola {{index}}",
     "Drag or use arrow keys to reorder": "Arrastre o use las teclas de flecha para reordenar",
@@ -6150,6 +6151,11 @@
     "No bookmarks yet.": "Todavía no hay marcadores.",
     "Bookmark note": "Nota del marcador",
     "Bookmarks ({{count}})_one": "Marcador ({{count}})",
-    "The exact bookmark location could not be found.": "No se pudo encontrar la ubicación exacta del marcador."
+    "The exact bookmark location could not be found.": "No se pudo encontrar la ubicación exacta del marcador.",
+    "Queue ({{count}})_other": "Cola ({{count}})",
+    "Queue ({{count}})_one": "Cola ({{count}})",
+    "Queue ({{count}})_many": "Cola ({{count}})",
+    "Resume sending": "Reanudar envío",
+    "Recovered message. Review before sending; an interrupted send may already have reached the agent.": "Mensaje recuperado. Revíselo antes de enviarlo; es posible que el envío interrumpido ya haya llegado al agente."
   }
 }

@@ -113,7 +113,11 @@
     "Session package operation in progress": "セッションパッケージを処理中",
     "Temporary files could not be removed. Try cleanup again.": "一時ファイルを削除できませんでした。後処理を再試行してください。",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "セッションパッケージの操作を完了できませんでした。パッケージとディスクの空き容量を確認してから、再試行してください。",
-    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "元のパッケージを利用できません。移動、削除されたか、読み取れなくなった可能性があります。別のパッケージを選択してください。"
+    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "元のパッケージを利用できません。移動、削除されたか、読み取れなくなった可能性があります。別のパッケージを選択してください。",
+    "Show startup logs": "起動ログを表示",
+    "Quit application": "アプリを終了",
+    "The desktop bridge failed to load. Reload the window to try again, or open the startup logs for diagnostics. Background work may still be running.": "デスクトップブリッジを読み込めませんでした。ウィンドウを再読み込みして再試行するか、起動ログを開いて診断してください。バックグラウンドの処理が続いている場合があります。",
+    "The app window could not initialize.": "アプリのウィンドウを初期化できませんでした。"
   },
   "renderer": {
     "Old Shell launch records are blocking this update.": "古いシェル起動記録が更新を妨げています。",
@@ -3674,7 +3678,6 @@
     "Retry project recovery before deleting projects.": "プロジェクトを削除する前に、プロジェクトの回復を再試行してください。",
     "Finish or stop active sessions before archiving this project.": "このプロジェクトをアーカイブする前に、アクティブなセッションを終了または停止してください。",
     "Message queue": "メッセージキュー",
-    "Queue ({{count}}) · Not saved_other": "キュー ({{count}})・未保存",
     "Attachment message": "添付メッセージ",
     "Reorder queued message {{index}}": "キュー内のメッセージ {{index}} を並べ替えます",
     "Drag or use arrow keys to reorder": "ドラッグするか矢印キーを使用して順序を変更します",
@@ -5820,6 +5823,9 @@
     "Add a private note": "個人用のメモを追加",
     "No bookmarks yet.": "ブックマークはまだありません。",
     "Bookmark note": "ブックマークのメモ",
-    "The exact bookmark location could not be found.": "ブックマークの正確な位置が見つかりませんでした。"
+    "The exact bookmark location could not be found.": "ブックマークの正確な位置が見つかりませんでした。",
+    "Queue ({{count}})_other": "キュー ({{count}})",
+    "Resume sending": "送信を再開",
+    "Recovered message. Review before sending; an interrupted send may already have reached the agent.": "復元されたメッセージです。送信前に確認してください。中断された送信がすでにエージェントに届いている場合があります。"
   }
 }

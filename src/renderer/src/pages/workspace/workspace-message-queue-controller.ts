@@ -17,7 +17,6 @@ import { useProjectStore } from '@/stores/project-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 
-import { useOpenSideChatParentSessionIds } from './use-side-chat-controller'
 import {
   enqueueApplicationMessage,
   enqueueQueuedMessage,
@@ -60,7 +59,7 @@ type WorkspaceMessageQueueController = {
     sendNow: (itemId: string) => Promise<void>
   }
   lifecycle: {
-    enqueue: (admission: MessageQueueAdmission) => boolean
+    enqueue: (admission: MessageQueueAdmission) => boolean | Promise<boolean>
     enqueueApplication: (
       admission: ApplicationMessageQueueAdmission
     ) => Promise<{ sessionId: string; messageId: string } | undefined>
@@ -104,8 +103,11 @@ const useWorkspaceApplicationMessageAdmission =
   }
 
 const WorkspaceMessageQueueProvider = ({ children }: PropsWithChildren): ReactElement => {
-  const [owner] = useState(() => new WorkspaceMessageQueueOwner())
+  const [owner] = useState(() => new WorkspaceMessageQueueOwner(window.api?.pendingInputs))
   useEffect(() => {
+    void owner
+      .connectRemote()
+      .catch((error) => console.warn('Pending input recovery failed:', error))
     const unsubscribeBarriers = subscribeWorkspaceSpecialistBarriers(owner.requestDrain)
     const unsubscribePresentation = subscribeWorkspacePresentationRevealing(owner.requestDrain)
     return () => {
@@ -127,7 +129,6 @@ const WorkspaceMessageQueueRuntimeBridge = ({
   const specialistCatalogLoaded = useSpecialistStore((state) => state.isLoaded)
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadSpecialists = useSpecialistStore((state) => state.load)
-  const openSideChatParentSessionIds = useOpenSideChatParentSessionIds()
   const projects = useProjectStore((state) => state.projects)
   const fallbackOptionsRef = useRef<WorkspaceMessageQueueControllerOptions>(undefined as never)
   const cancelledPersistenceBlockedSessions = useRef(new Set<string>())
@@ -182,7 +183,7 @@ const WorkspaceMessageQueueRuntimeBridge = ({
         (item) => item.kind === 'custom' && item.enabled && item.id === session.specialistId
       )
     },
-    isSideChatOpen: (sessionId) => openSideChatParentSessionIds.has(sessionId),
+    isSideChatOpen: () => false,
     isPersistenceBlocked: (sessionId) => persistenceBlockedSessionIds.includes(sessionId),
     hasPendingPermissionRequest: (sessionId) =>
       runtime.pendingPermissions.some((request) => request.sessionId === sessionId),
@@ -221,7 +222,7 @@ const useWorkspaceMessageQueueController = (
   )
 
   const enqueue = useCallback(
-    (admission: MessageQueueAdmission): boolean =>
+    (admission: MessageQueueAdmission): boolean | Promise<boolean> =>
       enqueueQueuedMessage(owner, optionsRef.current.composer.setError, admission),
     [owner]
   )

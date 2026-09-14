@@ -113,7 +113,11 @@
     "Session package operation in progress": "對話套件操作進行中",
     "Temporary files could not be removed. Try cleanup again.": "無法移除暫存檔案，請重試清理。",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "無法完成工作階段套件操作，請檢查套件檔案和可用磁碟空間後重試。",
-    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原套件檔案無法使用，可能已移動、刪除或無法讀取。請選擇其他套件檔案。"
+    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原套件檔案無法使用，可能已移動、刪除或無法讀取。請選擇其他套件檔案。",
+    "Show startup logs": "顯示啟動日誌",
+    "Quit application": "結束應用程式",
+    "The desktop bridge failed to load. Reload the window to try again, or open the startup logs for diagnostics. Background work may still be running.": "桌面橋接載入失敗。請重新載入視窗以重試，或開啟啟動日誌進行診斷。背景工作可能仍在執行。",
+    "The app window could not initialize.": "應用程式視窗無法初始化。"
   },
   "renderer": {
     "Old Shell launch records are blocking this update.": "舊的命令列啟動記錄阻止了本次更新。",
@@ -3761,7 +3765,6 @@
     "Retry project recovery before deleting projects.": "刪除專案前請先重試專案復原。",
     "Finish or stop active sessions before archiving this project.": "封存專案前，請先完成或停止進行中的工作階段。",
     "Message queue": "訊息佇列",
-    "Queue ({{count}}) · Not saved_other": "佇列（{{count}}）· 未儲存",
     "Attachment message": "附件訊息",
     "Reorder queued message {{index}}": "調整第 {{index}} 則佇列訊息的順序",
     "Drag or use arrow keys to reorder": "拖曳或使用方向鍵調整順序",
@@ -5820,6 +5823,9 @@
     "Add a private note": "新增私人備註",
     "No bookmarks yet.": "尚無書籤。",
     "Bookmark note": "書籤備註",
-    "The exact bookmark location could not be found.": "無法找到書籤的確切位置。"
+    "The exact bookmark location could not be found.": "無法找到書籤的確切位置。",
+    "Queue ({{count}})_other": "佇列（{{count}}）",
+    "Resume sending": "繼續傳送",
+    "Recovered message. Review before sending; an interrupted send may already have reached the agent.": "已復原訊息。傳送前請檢查；中斷的傳送可能已經送達智能體。"
   }
 }

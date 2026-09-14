@@ -1,3 +1,4 @@
+import type { PendingInputSnapshot } from '../shared/pending-input'
 import type { LiteratureChangedEvent } from '../shared/literature'
 import type {
   AcpAgentRuntimeUpdate,
@@ -53,6 +54,7 @@ const log = createLogger('application-events')
 // signals and generated Web-only channels stay on their existing transports until their owner moves
 // them deliberately.
 export type ApplicationEventMap = {
+  'pending-inputs:changed': PendingInputSnapshot
   'sessions:package-operation-changed': PackageOperationSnapshot
   'acp:state': AcpStateUpdate
   'acp:event': readonly AcpRuntimeEvent[]

@@ -1,7 +1,7 @@
 import { listAllSessionArtifacts } from '../../renderer/src/pages/workspace/session-artifact-download-data'
 import { listAllProjectFiles } from '../../renderer/src/pages/workspace/project-artifact-download-data'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
 
@@ -17,6 +17,7 @@ import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { UploadRepository } from '../uploads/repository'
+import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import { createManagedFileIndexRepository, ManagedFileIndexRepository } from './repository'
 
 const PROJECT_ID = 'project-a'
@@ -555,6 +556,66 @@ describe('ManagedFileIndexRepository', () => {
       })
     ).resolves.toMatchObject({ sourceVersionId: expect.any(String) })
   })
+
+  it.each([
+    { force: false, missingCreatedAt: false },
+    { force: true, missingCreatedAt: false },
+    { force: false, missingCreatedAt: true },
+    { force: true, missingCreatedAt: true }
+  ])(
+    'preserves published uploads without a message during sync (force: $force, missing time: $missingCreatedAt)',
+    async ({ force, missingCreatedAt }) => {
+      const [draft] = await stageUploadFixtures(uploadRepository, {
+        files: [
+          {
+            name: 'queued.txt',
+            content: Buffer.from('durable queued attachment').toString('base64')
+          }
+        ]
+      })
+      const [attachment] = await uploadRepository.finalizePendingSessionUploads(
+        SESSION_ID,
+        [draft],
+        PROJECT_ID
+      )
+      if (missingCreatedAt)
+        await client.uploadVersion.update({
+          where: { id: attachment.versionId },
+          data: { createdAt: null }
+        })
+      // Exercise reconstruction as well as retaining a previously published projection.
+      await client.managedFile.deleteMany({
+        where: { source: 'upload', sourceFileId: attachment.id }
+      })
+      await repository.syncSession(createSession(), { force })
+      await repository.syncSession(createSession({ filesRevision: 2 }), { force })
+
+      const uploads = await repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'uploads' },
+        limit: 24
+      })
+      expect(uploads.items).toEqual([
+        expect.objectContaining({
+          sourceFileId: attachment.id,
+          sourceVersionId: attachment.versionId
+        })
+      ])
+      await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+        isIndexComplete: true,
+        uploadCount: 1
+      })
+      const previewPath = await uploadRepository.resolveManagedUploadPath(
+        { path: attachment.path },
+        { projectId: PROJECT_ID, sessionId: SESSION_ID }
+      )
+      expect(await readFile(previewPath, 'utf8')).toBe('durable queued attachment')
+      await expect(
+        uploadRepository.finalizePendingSessionUploads(SESSION_ID, [attachment], PROJECT_ID)
+      ).resolves.toMatchObject([{ id: attachment.id, versionId: attachment.versionId }])
+      await expect(repository.syncSession(createSession({ filesRevision: 2 }))).resolves.toEqual([])
+    }
+  )
 
   it('indexes uploads and all finalized managed artifacts without requiring a message link', async () => {
     const uploadPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'input.csv')

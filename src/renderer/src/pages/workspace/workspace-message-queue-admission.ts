@@ -118,6 +118,7 @@ const queueBlocksImmediateSend = (
 ): boolean => {
   const activeDispatch = owner.dispatches.get(sessionId)
   return (
+    !owner.ready ||
     owner.itemsFor(sessionId).length > 0 ||
     Boolean(
       activeDispatch &&
@@ -133,7 +134,7 @@ const enqueueQueuedMessage = (
   owner: WorkspaceMessageQueueOwner,
   setComposerError: (error: string | null) => void,
   admission: MessageQueueAdmission
-): boolean => {
+): boolean | Promise<boolean> => {
   const { session, snapshot, ...intent } = admission
   const identity = activeBranchIdentity(session)
   if (!identity) {
@@ -152,7 +153,9 @@ const enqueueQueuedMessage = (
   const item: MessageQueueItem = {
     kind: 'user',
     agentFrameworkId: session.agentFrameworkId,
-    id: owner.createQueueItemId(),
+    id:
+      restored?.durableItemId ??
+      (owner.remote ? owner.admissionId(admission) : owner.createQueueItemId()),
     sessionId: session.id,
     ...identity,
     snapshot,
@@ -163,6 +166,14 @@ const enqueueQueuedMessage = (
     ...intent,
     ...restored
   }
+  if (owner.remote)
+    return owner.persistAdmission(item).then(
+      () => true,
+      (error: unknown) => {
+        setComposerError(queueErrorMessage(error))
+        return false
+      }
+    )
   owner.queues.set(session.id, [...owner.itemsFor(session.id), item])
   owner.emit(MESSAGE_QUEUE_ANNOUNCEMENTS.added)
   return true

@@ -225,7 +225,8 @@ describe('application database (integration)', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ]
     })
 
@@ -702,6 +703,7 @@ describe('application database (integration)', () => {
     await client.$executeRawUnsafe('DROP TABLE "Tag"')
     await removeAgentMemoryTriggers(client)
     // Simulate a current pre-ledger schema with the targeted legacy table shape.
+    await client.$executeRawUnsafe('DROP TABLE "bookmarks"')
     await client.$executeRawUnsafe('DROP TABLE "ManagedFileVersionWriteOperation"')
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
@@ -791,6 +793,7 @@ describe('application database (integration)', () => {
     await client.$executeRawUnsafe('DROP TABLE "Tag"')
     await removeAgentMemoryTriggers(client)
     // Simulate a current pre-ledger schema with the targeted legacy table shape.
+    await client.$executeRawUnsafe('DROP TABLE "bookmarks"')
     await client.$executeRawUnsafe('DROP TABLE "ManagedFileVersionWriteOperation"')
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
@@ -1296,7 +1299,8 @@ describe('application database (integration)', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ]
     })
 

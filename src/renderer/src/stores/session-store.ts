@@ -29,7 +29,9 @@ import {
 export {
   createInitialSessionState,
   getExternallyHydratedSessionAuthority,
+  hasUnsavedAgentMessageText,
   isExternallyHydratedSession,
+  isStreamedMessageExtension,
   toPersistedSession,
   type ElicitationEditDraft,
   type ActiveRun,

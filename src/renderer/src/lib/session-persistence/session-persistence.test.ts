@@ -2780,6 +2780,156 @@ describe('renderer session persistence bridge', () => {
     })
   })
 
+  it.each(
+    (['save-receipt', 'earlier-subscription'] as const).flatMap((arrival) =>
+      [false, true].map((forced) => ({ arrival, forced }))
+    )
+  )(
+    'rebases a queued same-branch snapshot from $arrival (forced=$forced)',
+    async ({ arrival, forced }) => {
+      useSessionStore.getState().hydrateSessions([createPersistedSession({ revision: 4 })])
+      useSessionStore.getState().appendUserMessage({ sessionId: 'session-1', content: 'Stream' })
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'session-1',
+        streamId: 'reply',
+        eventId: 'first',
+        content: 'one '
+      })
+      const firstReceipt = createDeferred<PersistedChatSession>()
+      const saveSession = vi
+        .fn<SessionPersistenceApi['saveSession']>()
+        .mockImplementationOnce(() => firstReceipt.promise)
+        .mockImplementation(async (snapshot) => ({
+          ...snapshot,
+          revision: (snapshot.revision ?? 0) + 1
+        }))
+      const save = createStoreSaver(createApi({ saveSession }), useSessionStore.getState())
+      useSessionStore.getState().renameSession('session-1', 'First queued')
+      const first = save(useSessionStore.getState())
+      await flushMicrotasks()
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'session-1',
+        streamId: 'reply',
+        eventId: 'second',
+        content: 'two'
+      })
+      useSessionStore.getState().renameSession('session-1', 'Latest queued')
+      const pendingState = useSessionStore.getState()
+      const second = save(
+        pendingState,
+        forced ? { forceTargets: new Set(['session:session-1']) } : undefined
+      )
+      useSessionStore.getState().finishRun('session-1')
+      const completed = {
+        ...toPersistedSession(useSessionStore.getState().sessions[0]),
+        title: 'First queued',
+        revision: arrival === 'earlier-subscription' ? 6 : 5
+      }
+      useSessionStore.setState(pendingState)
+      let external: Promise<unknown> | undefined
+      if (arrival === 'earlier-subscription') {
+        useSessionStore.getState().upsertPersistedSession(completed)
+        external = save(useSessionStore.getState())
+        firstReceipt.resolve({ ...saveSession.mock.calls[0][0], revision: 5 })
+      } else firstReceipt.resolve(completed)
+      await Promise.all([first, second, external])
+      expect(saveSession).toHaveBeenCalledTimes(
+        forced && arrival === 'earlier-subscription' ? 3 : 2
+      )
+      const written = saveSession.mock.calls[1][0]
+      expect(written).toMatchObject({
+        revision: completed.revision,
+        status: 'idle',
+        title: 'Latest queued'
+      })
+      expect(written.activeRun).toBeUndefined()
+      expect(written.messages.at(-1)).toMatchObject({
+        status: 'complete',
+        content: 'one two',
+        eventIds: ['first', 'second']
+      })
+      expect(written.conversationGraph?.messages.at(-1)?.status).toBe('complete')
+    }
+  )
+
+  it.each(
+    [false, true].flatMap((terminalForced) =>
+      [false, true].map((repairForced) => ({ terminalForced, repairForced }))
+    )
+  )(
+    'retains a completed turn across receipt repair (terminalForced=$terminalForced, repairForced=$repairForced)',
+    async ({ terminalForced, repairForced }) => {
+      useSessionStore.getState().hydrateSessions([createPersistedSession({ revision: 4 })])
+      useSessionStore.getState().appendUserMessage({ sessionId: 'session-1', content: 'Stream' })
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'session-1',
+        streamId: 'reply',
+        eventId: 'first',
+        content: 'one '
+      })
+      const firstReceipt = createDeferred<PersistedChatSession>()
+      const saveSession = vi
+        .fn<SessionPersistenceApi['saveSession']>()
+        .mockImplementationOnce(() => firstReceipt.promise)
+        .mockImplementation(async (session) => ({
+          ...session,
+          revision: (session.revision ?? 0) + 1
+        }))
+      const save = createStoreSaver(createApi({ saveSession }), useSessionStore.getState())
+      useSessionStore.getState().renameSession('session-1', 'Updated')
+      const first = save(useSessionStore.getState())
+      await flushMicrotasks()
+      const short = { ...saveSession.mock.calls[0][0], revision: 6 }
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'session-1',
+        streamId: 'reply',
+        eventId: 'second',
+        content: 'two'
+      })
+      useSessionStore.getState().finishRun('session-1')
+      const completed = save(
+        useSessionStore.getState(),
+        terminalForced ? { forceTargets: new Set(['session:session-1']) } : undefined
+      )
+      useSessionStore.getState().upsertPersistedSession(short)
+      expect(useSessionStore.getState().sessions[0].messages.at(-1)?.content).toBe('one two')
+      const repair = save(
+        useSessionStore.getState(),
+        repairForced ? { forceTargets: new Set(['session:session-1']) } : undefined
+      )
+      firstReceipt.resolve({ ...saveSession.mock.calls[0][0], revision: 5 })
+      await Promise.all([first, completed, repair])
+      expect(saveSession.mock.calls.at(-1)?.[0]).toMatchObject({ status: 'idle' })
+      expect(saveSession.mock.calls.at(-1)?.[0].activeRun).toBeUndefined()
+      expect(saveSession.mock.calls.at(-1)?.[0].messages.at(-1)).toMatchObject({
+        status: 'complete',
+        content: 'one two'
+      })
+    }
+  )
+
+  it('records a forced write source before preparing the next forced write', async () => {
+    useSessionStore
+      .getState()
+      .hydrateSessions([createPersistedSession({ revision: 4, memoryEnabled: false })])
+    const firstReceipt = createDeferred<PersistedChatSession>()
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockImplementationOnce(() => firstReceipt.promise)
+      .mockImplementationOnce(async (session) => ({ ...session, revision: 6 }))
+    const save = createStoreSaver(createApi({ saveSession }), useSessionStore.getState())
+    const options = { forceTargets: new Set(['session:session-1']) }
+    useSessionStore.getState().setMemoryEnabled('session-1', true)
+    const first = save(useSessionStore.getState(), options)
+    await flushMicrotasks()
+    useSessionStore.getState().setMemoryEnabled('session-1', false)
+    const second = save(useSessionStore.getState(), options)
+    firstReceipt.resolve({ ...saveSession.mock.calls[0][0], revision: 5 })
+    await Promise.all([first, second])
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[1][0]).toMatchObject({ revision: 5, memoryEnabled: false })
+  })
+
   it('chains queued local saves from the last acknowledged durable revision', async () => {
     const firstSave = createDeferred<PersistedChatSession>()
     const saveSession = vi
@@ -3842,6 +3992,177 @@ describe('renderer session persistence bridge', () => {
     })
   })
 
+  it.each([false, true])(
+    'rebases a shared streamed prefix when remoteAhead=%s',
+    async (remoteAhead) => {
+      useSessionStore.getState().hydrateSessions([createPersistedSession({ revision: 8 })])
+      useSessionStore.getState().appendUserMessage({ sessionId: 'session-1', content: 'Stream' })
+      const chunks = ['one ', 'two ', 'three'].map((content, index) => ({
+        sessionId: 'session-1',
+        streamId: 'reply',
+        eventId: `event-${index}`,
+        content
+      }))
+      useSessionStore.getState().appendAgentMessageChunk(chunks[0])
+      const first = useSessionStore.getState()
+      useSessionStore.getState().appendAgentMessageChunks(chunks.slice(1, remoteAhead ? 3 : 2))
+      const remote = useSessionStore.getState()
+      const authoritative = {
+        ...toPersistedSession(remote.sessions[0], remote.streamingMessages),
+        revision: 9
+      }
+      useSessionStore.setState(first)
+      const saveSession = vi
+        .fn<SessionPersistenceApi['saveSession']>()
+        .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+        .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 10 }))
+      const save = createStoreSaver(
+        createApi({ loadOne: vi.fn().mockResolvedValue(authoritative), saveSession }),
+        useSessionStore.getState()
+      )
+      useSessionStore.getState().appendAgentMessageChunks(chunks.slice(1, remoteAhead ? 2 : 3))
+      await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+      expect(saveSession).toHaveBeenCalledTimes(2)
+      const rebased = saveSession.mock.calls[1][0]
+      expect(rebased.revision).toBe(9)
+      expect(rebased.messages.at(-1)).toMatchObject({
+        content: 'one two three',
+        eventIds: chunks.map((chunk) => chunk.eventId)
+      })
+      expect(rebased.conversationGraph?.messages.at(-1)?.content).toBe('one two three')
+    }
+  )
+
+  it.each(['insertion', 'completion'] as const)(
+    'rebases the same runtime message with different renderer $0 timestamps',
+    async (phase) => {
+      const prompt = {
+        id: 'prompt',
+        role: 'user' as const,
+        content: 'Stream',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const reply = {
+        id: 'reply',
+        role: 'agent' as const,
+        content: 'one ',
+        status: 'streaming' as const,
+        eventIds: ['first'],
+        createdAt: 10,
+        updatedAt: 10
+      }
+      const base = materializeSessionConversationGraph(
+        createPersistedSession({
+          revision: 8,
+          messages: [prompt, ...(phase === 'completion' ? [reply] : [])]
+        })
+      )
+      const snapshot = (remote: boolean): PersistedChatSession =>
+        materializeSessionConversationGraph({
+          ...base,
+          conversationGraph: undefined,
+          revision: remote ? 9 : 8,
+          messages: [
+            prompt,
+            {
+              ...reply,
+              content: phase === 'completion' || remote ? 'one two' : 'one ',
+              eventIds: phase === 'completion' || remote ? ['first', 'second'] : ['first'],
+              status: phase === 'completion' ? ('complete' as const) : ('streaming' as const),
+              createdAt: phase === 'insertion' && !remote ? 20 : 10,
+              ...(phase === 'completion' ? { completedAt: remote ? 30 : 40 } : {}),
+              updatedAt: remote ? 30 : 40
+            }
+          ]
+        })
+      const submitted = snapshot(false)
+      const latest = snapshot(true)
+      const saveSession = vi
+        .fn<SessionPersistenceApi['saveSession']>()
+        .mockRejectedValueOnce(new SessionRevisionConflictError(8, 9))
+        .mockImplementationOnce(async (session) => ({ ...session, revision: 10 }))
+      const api = createApi({ saveSession, loadOne: vi.fn().mockResolvedValue(latest) })
+      const persistence = createOrderedSessionPersistence(api)
+      persistence.seedAcknowledgedSessions([base])
+      const durable = await saveSessionInOrder(submitted, persistence, api)
+      expect(durable.messages.at(-1)).toMatchObject({
+        content: 'one two',
+        eventIds: ['first', 'second'],
+        createdAt: 10,
+        ...(phase === 'completion' ? { completedAt: 30 } : {})
+      })
+      expect(durable.conversationGraph?.messages.at(-1)).toMatchObject(durable.messages.at(-1)!)
+    }
+  )
+
+  it.each(['rewritten-base', 'message-metadata'] as const)(
+    'rejects concurrent streamed body repair with %s',
+    async (conflict) => {
+      useSessionStore.getState().hydrateSessions([createPersistedSession({ revision: 8 })])
+      useSessionStore.getState().appendUserMessage({ sessionId: 'session-1', content: 'Stream' })
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'session-1',
+        streamId: 'reply',
+        eventId: 'base',
+        content: 'Original'
+      })
+      const state = useSessionStore.getState()
+      const base = toPersistedSession(state.sessions[0], state.streamingMessages)
+      const submitted = structuredClone(base)
+      const latest = { ...structuredClone(base), revision: 9 }
+      for (const [snapshot, remote] of [
+        [submitted, false],
+        [latest, true]
+      ] as const) {
+        for (const message of [
+          ...snapshot.messages,
+          ...(snapshot.conversationGraph?.messages ?? [])
+        ]) {
+          if (message.role !== 'agent') continue
+          message.content =
+            conflict === 'rewritten-base'
+              ? remote
+                ? 'Rewritten longer'
+                : 'Rewritten'
+              : remote
+                ? 'Original longer still'
+                : 'Original longer'
+          message.eventIds =
+            conflict === 'rewritten-base'
+              ? remote
+                ? ['new', 'next']
+                : ['new']
+              : remote
+                ? ['base', 'next', 'last']
+                : ['base', 'next']
+          if (conflict === 'message-metadata') message.status = remote ? 'error' : 'complete'
+        }
+      }
+      useSessionStore.getState().hydrateSessions([base])
+      const saveSession = vi
+        .fn<SessionPersistenceApi['saveSession']>()
+        .mockRejectedValue(new SessionRevisionConflictError(8, 9))
+      const save = createStoreSaver(
+        createApi({ loadOne: vi.fn().mockResolvedValue(latest), saveSession }),
+        useSessionStore.getState()
+      )
+      useSessionStore.setState({
+        sessions: [
+          {
+            ...useSessionStore.getState().sessions[0],
+            messages: submitted.messages,
+            conversationGraph: submitted.conversationGraph
+          }
+        ]
+      })
+      await expect(save(useSessionStore.getState())).rejects.toThrow('Session revision conflict')
+      expect(saveSession).toHaveBeenCalledOnce()
+    }
+  )
+
   it('saves a generated file event already attached by Main after JSON readback', async () => {
     const prompt = {
       id: 'prompt-1',
@@ -4226,6 +4547,125 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession.mock.calls[1][0].messages).toEqual(latest.messages)
   })
 
+  it.each(['unrelated', 'reordered', 'longer-remote'] as const)(
+    'does not save a repair for a $0 hydrated body without a proven local extension',
+    async (kind) => {
+      useSessionStore.getState().hydrateSessions([createPersistedSession({ revision: 1 })])
+      useSessionStore.getState().appendUserMessage({ sessionId: 'session-1', content: 'Stream' })
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'session-1',
+        streamId: 'reply',
+        eventId: 'first',
+        content: 'one '
+      })
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'session-1',
+        streamId: 'reply',
+        eventId: 'second',
+        content: 'two'
+      })
+      const state = useSessionStore.getState()
+      const remote = {
+        ...toPersistedSession(state.sessions[0], state.streamingMessages),
+        revision: 2
+      }
+      const content = kind === 'longer-remote' ? 'one two three' : 'unrelated body'
+      const eventIds =
+        kind === 'longer-remote'
+          ? ['first', 'second', 'third']
+          : kind === 'reordered'
+            ? ['second', 'first']
+            : ['other']
+      for (const message of [...remote.messages, ...(remote.conversationGraph?.messages ?? [])]) {
+        if (message.role !== 'agent') continue
+        message.content = content
+        message.eventIds = eventIds
+      }
+      // Completed snapshots have no dirty streaming slice; pure remote hydration must not echo.
+      if (kind === 'longer-remote') {
+        useSessionStore.getState().finishRun('session-1')
+        remote.status = 'idle'
+        delete remote.activeRun
+        for (const message of [...remote.messages, ...(remote.conversationGraph?.messages ?? [])])
+          message.status = 'complete'
+      }
+      const saveSession = vi.fn<SessionPersistenceApi['saveSession']>()
+      const save = createStoreSaver(createApi({ saveSession }), useSessionStore.getState())
+      useSessionStore.getState().upsertPersistedSession(remote)
+      expect(
+        useSessionStore.getState().sessions[0].conversationGraph?.messages.at(-1)?.content
+      ).toBe(content)
+      await save(useSessionStore.getState())
+      expect(saveSession).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([false, true])(
+    'persists retained completed text after a short receipt (compacted=%s)',
+    async (compacted) => {
+      useSessionStore.getState().hydrateSessions([createPersistedSession({ revision: 1 })])
+      useSessionStore.getState().appendUserMessage({ sessionId: 'session-1', content: 'Stream' })
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'session-1',
+        streamId: 'reply',
+        eventId: 'first',
+        content: 'one '
+      })
+      if (compacted)
+        useSessionStore.getState().appendAgentMessageChunks(
+          Array.from({ length: 498 }, (_, index) => ({
+            sessionId: 'session-1',
+            streamId: 'reply',
+            eventId: `middle-${index}`,
+            content: '.'
+          }))
+        )
+      const first = useSessionStore.getState()
+      const short = {
+        ...toPersistedSession(first.sessions[0], first.streamingMessages),
+        revision: 2
+      }
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'session-1',
+        streamId: 'reply',
+        eventId: 'second',
+        content: 'two'
+      })
+      if (compacted)
+        useSessionStore.getState().appendAgentMessageChunk({
+          sessionId: 'session-1',
+          streamId: 'reply',
+          eventId: 'last',
+          content: '!'
+        })
+      useSessionStore.getState().finishRun('session-1')
+      if (!compacted) {
+        short.status = 'idle'
+        delete short.activeRun
+        for (const message of [...short.messages, ...(short.conversationGraph?.messages ?? [])])
+          message.status = 'complete'
+      }
+      if (compacted)
+        expect(useSessionStore.getState().sessions[0].messages.at(-1)?.eventIds).toHaveLength(500)
+      const expected = compacted ? `one ${'.'.repeat(498)}two!` : 'one two'
+      const saveSession = vi
+        .fn<SessionPersistenceApi['saveSession']>()
+        .mockImplementation(async (submitted) => ({ ...submitted, revision: 3 }))
+      const save = createStoreSaver(createApi({ saveSession }), useSessionStore.getState())
+      useSessionStore.getState().upsertPersistedSession(short)
+      expect(useSessionStore.getState().sessions[0].messages.at(-1)?.content).toBe(expected)
+      await save(useSessionStore.getState())
+      expect(saveSession).toHaveBeenCalledTimes(1)
+      expect(saveSession.mock.calls[0][0]).toMatchObject({ revision: 2 })
+      expect(saveSession.mock.calls[0][0].messages.at(-1)?.content).toBe(expected)
+      expect(saveSession.mock.calls[0][0].conversationGraph?.messages.at(-1)?.content).toBe(
+        expected
+      )
+      await save(useSessionStore.getState())
+      expect(saveSession).toHaveBeenCalledTimes(1)
+    }
+  )
+
   it('still saves an unsaved local title after a newer remote Session projection', async () => {
     const persisted = materializeSessionConversationGraph(
       createPersistedSession({
@@ -4408,6 +4848,91 @@ describe('renderer session persistence bridge', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+
+  it('recovers an explicit materialization queued behind the first Session write', async () => {
+    const source = createPersistedSession({ revision: 0, memoryEnabled: false })
+    const creation = createDeferred<PersistedChatSession>()
+    const created = { ...source, revision: 1, pinned: true }
+    const latest = { ...created, revision: 3, runtimeContext: { version: 1 as const, revision: 1 } }
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockImplementationOnce(() => creation.promise)
+      .mockRejectedValueOnce(new SessionRevisionConflictError(1, 3))
+      .mockImplementationOnce(async (session) => ({ ...session, revision: 4 }))
+      .mockImplementationOnce(async (session) => ({ ...session, revision: 5 }))
+    const api = createApi({ saveSession, loadOne: vi.fn().mockResolvedValue(latest) })
+    const persistence = createOrderedSessionPersistence(api)
+    const first = persistence.saveSession(source)
+    const explicit = saveSessionInOrder({ ...source, memoryEnabled: true }, persistence, api)
+    const next = saveSessionInOrder({ ...source, memoryEnabled: false }, persistence, api)
+    creation.resolve(created)
+    await first
+    await expect(explicit).resolves.toMatchObject({
+      revision: 4,
+      pinned: true,
+      memoryEnabled: true,
+      runtimeContext: latest.runtimeContext
+    })
+    await expect(next).resolves.toMatchObject({
+      revision: 5,
+      pinned: true,
+      memoryEnabled: false,
+      runtimeContext: latest.runtimeContext
+    })
+  })
+
+  it('rejects conflicting explicit edits queued before the first acknowledgement', async () => {
+    const source = createPersistedSession({ revision: 0, title: 'Original' })
+    const creation = createDeferred<PersistedChatSession>()
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockImplementationOnce(() => creation.promise)
+    const api = createApi({ saveSession })
+    const persistence = createOrderedSessionPersistence(api)
+    const first = persistence.saveSession(source)
+    const explicit = saveSessionInOrder({ ...source, title: 'Local' }, persistence, api)
+    creation.resolve({ ...source, revision: 1, title: 'Remote' })
+    await first
+    await expect(explicit).rejects.toMatchObject({ code: 'session-revision-conflict' })
+    expect(saveSession).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a new prompt running when an earlier queued receipt completes its predecessor', async () => {
+    useSessionStore.getState().hydrateSessions([createPersistedSession({ revision: 4 })])
+    useSessionStore
+      .getState()
+      .appendUserMessage({ sessionId: 'session-1', content: 'First prompt' })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'first-reply',
+      eventId: 'first',
+      content: 'Done'
+    })
+    const state = useSessionStore.getState()
+    const base = toPersistedSession(state.sessions[0], state.streamingMessages)
+    useSessionStore.getState().finishRun('session-1')
+    const completed = { ...toPersistedSession(useSessionStore.getState().sessions[0]), revision: 5 }
+    useSessionStore.getState().appendUserMessage({ sessionId: 'session-1', content: 'Next prompt' })
+    const submitted = toPersistedSession(useSessionStore.getState().sessions[0])
+    const firstReceipt = createDeferred<PersistedChatSession>()
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockImplementation(async (session) => ({ ...session, revision: 6 }))
+    const api = createApi({ saveSession })
+    const persistence = createOrderedSessionPersistence(api)
+    persistence.seedAcknowledgedSessions([base])
+    const first = persistence.saveLatestSession('session:session-1', () => firstReceipt.promise)
+    const next = saveSessionInOrder(submitted, persistence, api)
+    firstReceipt.resolve(completed)
+    await Promise.all([first, next])
+    expect(saveSession).toHaveBeenCalledOnce()
+    expect(saveSession.mock.calls[0][0]).toMatchObject({
+      revision: 5,
+      status: 'running',
+      activeRun: submitted.activeRun
+    })
+    expect(saveSession.mock.calls[0][0].messages).toEqual(submitted.messages)
   })
 
   it('rebases an explicit Session save over a disjoint concurrent main-process update', async () => {

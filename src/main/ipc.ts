@@ -1,3 +1,4 @@
+import { DEFAULT_PERMISSION_PROFILE } from '../shared/permission-profiles'
 import { PdfElementAgentReader } from './literature/pdf-structure/agent-reader'
 import { transactLiterature } from './literature/transact'
 import { createPdfStructureOwner } from './literature/pdf-structure/owner'
@@ -8,6 +9,7 @@ import { createSpecialistApplicationOwner } from './specialist/application-comma
 import { dirname, join } from 'node:path'
 import { mkdir, realpath } from 'node:fs/promises'
 
+import { PendingInputOwner } from './pending-input-owner'
 import {
   app,
   BrowserWindow,
@@ -1596,6 +1598,55 @@ const createApplicationModules = async (
     withSessionMutation: (projectId, sessionId, mutation) =>
       sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
   })
+  const pendingInputOwner = await modules.add(
+    {
+      withWrite: withDataRootWrite,
+      getClient: () => getProjectDbClient(resolveConfigRoot()),
+      withSessionMutation: (projectId, sessionId, operation) =>
+        sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, operation),
+      validateSession: async (content) => {
+        const project = await projectRepository.get(content.projectId)
+        const session = await sessionRepository.loadSession(content.projectId, content.sessionId)
+        const graph = session?.conversationGraph
+        const frame = graph?.frames.find((candidate) => candidate.id === graph.activeFrameId)
+        if (
+          !project ||
+          project.archivedAt ||
+          !session ||
+          session.archivedAt !== undefined ||
+          frame?.id !== content.agentFrameId ||
+          frame.activeBranchId !== content.messageBranchId ||
+          session.specialistId !== content.specialistId ||
+          (session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE) !== content.permissionProfile
+        ) {
+          throw new Error('The queued message no longer matches an active Session.')
+        }
+        if (graph?.messages.some((message) => message.id === content.id)) {
+          throw new Error(
+            'This queued message is already in the conversation. Review the conversation before discarding it.'
+          )
+        }
+      },
+      publishAttachments: async (content) => {
+        const attachments = await uploadRepository.finalizePendingSessionUploads(
+          content.sessionId,
+          content.snapshot.attachments,
+          content.projectId
+        )
+        return attachments.map((attachment) => {
+          const file = { ...attachment }
+          delete file.draftReceipt
+          return file
+        })
+      },
+      changed: (snapshot: import('../shared/pending-input').PendingInputSnapshot) =>
+        broadcastToRenderers('pending-inputs:changed', snapshot)
+    } satisfies ConstructorParameters<typeof PendingInputOwner>[0],
+    (options) => {
+      const owner = new PendingInputOwner(options)
+      return { name: 'pending-inputs', capability: owner, dispose: () => owner.dispose() }
+    }
+  )
   const reviewRepository = createDefaultReviewRepository()
   const projectDeletionCoordinator = new ProjectDeletionCoordinator(
     projectRepository,
@@ -1627,6 +1678,7 @@ const createApplicationModules = async (
         await notebookService.deleteProjectFileEvidence(projectId)
         await notebookService.deleteProjectInputs(projectId)
         await backgroundResultDelivery.commitProjectDeletion(projectId)
+        await pendingInputOwner.deleteProject(projectId)
       },
       completeProjectDeletion: (projectId) => {
         archiveCoordinator.releaseProjectDeletion(projectId)
@@ -3980,7 +4032,10 @@ const createApplicationModules = async (
   )
   sessionPersistenceBackend.deleteSession = async (projectId, sessionId) => {
     const owner = artifactReproducibilityAttemptOwnerRef.current
-    const operation = (): Promise<void> => deleteSessionWithCleanup(projectId, sessionId)
+    const operation = (): Promise<void> =>
+      withSessionDeletionCleanup(deleteSessionWithCleanup, (projectId, sessionId) =>
+        pendingInputOwner.deleteSession(projectId, sessionId)
+      )(projectId, sessionId)
     if (owner) await owner.withSessionStopped(projectId, sessionId, operation)
     else await operation()
   }
@@ -4621,6 +4676,7 @@ const createApplicationModules = async (
     },
     permissionGrants: permissionGrantProjection,
     tags: tagService,
+    pendingInputs: pendingInputOwner,
     literature: {
       jobs: (request) => literatureBatchJobs.run(request),
       citationStyles: async (request) => {

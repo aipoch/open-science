@@ -999,6 +999,17 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "expectedMetadataRevision" INTEGER NOT NULL,
     "committedMetadataRevision" INTEGER NOT NULL,
     CONSTRAINT "LiteratureMetadataCommitReceipt_itemId_fkey" FOREIGN KEY ("itemId") REFERENCES "LiteratureItem" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
+  `CREATE TABLE IF NOT EXISTS "PendingInput" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "position" INTEGER NOT NULL,
+    "revision" INTEGER NOT NULL DEFAULT 1,
+    "phase" TEXT NOT NULL,
+    "content" TEXT NOT NULL,
+    "error" TEXT,
+    CONSTRAINT "PendingInput_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );`
 ] as const
 
@@ -1136,6 +1147,8 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_sourceKind_state_createdAt_id_idx" ON "BackgroundResultDelivery"("sourceKind", "state", "createdAt", "id");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "BackgroundResultDelivery_sourceKind_sourceId_key" ON "BackgroundResultDelivery"("sourceKind", "sourceId");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureMetadataCommitReceipt_itemId_idx" ON "LiteratureMetadataCommitReceipt"("itemId");`,
+  `CREATE INDEX IF NOT EXISTS "PendingInput_sessionId_position_id_idx" ON "PendingInput"("sessionId", "position", "id");`,
+  `CREATE INDEX IF NOT EXISTS "PendingInput_projectId_idx" ON "PendingInput"("projectId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_global_contentKey_key" ON "MemoryEntry"("contentKey") WHERE "projectId" IS NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureCollection_root_nameKey_key" ON "LiteratureCollection"("nameKey") WHERE "parentId" IS NULL`,
   `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_project_visible_idx" ON "BackgroundResultDelivery"("projectId", "updatedAt" DESC, "id") WHERE "state" IN ('waiting-result', 'pending', 'claimed', 'dispatching', 'needs-attention')`,
@@ -1207,7 +1220,8 @@ const RUNTIME_SCHEMA_TABLES = [
   'MemoryCategory',
   'MemoryEntry',
   'BackgroundResultDelivery',
-  'LiteratureMetadataCommitReceipt'
+  'LiteratureMetadataCommitReceipt',
+  'PendingInput'
 ] as const
 
 export {

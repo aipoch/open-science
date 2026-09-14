@@ -6,6 +6,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatSession } from '@/stores/session-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 
+import type {
+  PendingInput,
+  PendingInputCommand,
+  PendingInputResult
+} from '../../../../shared/pending-input'
+import { WorkspaceMessageQueueOwner } from './workspace-message-queue-owner'
+import { editQueuedItem } from './workspace-message-queue-projection'
+import { drainQueuedSessions, sendQueuedItemNow } from './workspace-message-queue-drain'
 import { type ComposerDoc } from './composer/composer-doc'
 import {
   useWorkspaceMessageQueueController,
@@ -2346,3 +2354,258 @@ describe('workspace message queue controller', () => {
     expect(sendMessage).toHaveBeenCalledOnce()
   })
 })
+
+it.each(['resume', 'edit then resume'])(
+  'waits for durable settlement before dispatching recovered input through %s',
+  async (action) => {
+    const intent = admission('Recovered input')
+    let saved: PendingInput | undefined = {
+      schemaVersion: 1,
+      id: 'durable-1',
+      projectId: 'project-a',
+      sessionId: 'session-a',
+      agentFrameId: 'root',
+      messageBranchId: 'branch-a',
+      text: intent.text,
+      forcedSkillIds: [],
+      permissionProfile: 'full',
+      snapshot: {
+        ...intent.snapshot,
+        doc: { nodes: [{ type: 'text', text: intent.text }] },
+        attachments: [
+          {
+            id: 'upload-1',
+            sessionId: 'session-a',
+            name: 'notes.txt',
+            originalName: 'notes.txt',
+            size: 5,
+            versionId: 'version-1',
+            versionNumber: 1,
+            sha256: 'sha256-test'
+          }
+        ]
+      },
+      revision: 2,
+      position: 0,
+      phase: 'recovery-required'
+    }
+    let revision = 0
+    let changed: ((snapshot: PendingInputResult) => void) | undefined
+    const snapshot = (): PendingInputResult => ({
+      generation: 'main',
+      revision,
+      items: saved ? [{ ...saved }] : [],
+      item: saved ? { ...saved } : undefined
+    })
+    const remote = {
+      onChanged: (listener: (snapshot: PendingInputResult) => void) => {
+        changed = listener
+        return () => {}
+      },
+      execute: vi.fn(async (command: PendingInputCommand): Promise<PendingInputResult> => {
+        if (command.operation === 'list') return snapshot()
+        if (!saved || !('revision' in command) || command.revision !== saved.revision)
+          throw new Error('stale revision')
+        if (command.operation === 'edit')
+          saved = { ...saved, phase: 'recovery-required', revision: saved.revision + 1 }
+        else if (command.operation === 'claim')
+          saved = { ...saved, phase: 'sending', revision: saved.revision + 1 }
+        else if (command.operation === 'settle')
+          saved =
+            command.outcome === 'sent'
+              ? undefined
+              : { ...saved, phase: 'queued', revision: saved.revision + 1 }
+        else throw new Error('unexpected operation')
+        revision++
+        const result = snapshot()
+        changed?.(result)
+        return result
+      })
+    }
+    const owner = new WorkspaceMessageQueueOwner(remote)
+    const current = options(session('error'), { promptInFlightSessionIds: [] })
+    const ref = { current }
+    const projections: Array<{ projected: string; authoritative: string | undefined }> = []
+    owner.subscribe(() => {
+      const item = owner.itemsFor('session-a')[0]
+      if (item) projections.push({ projected: item.phase, authoritative: saved?.phase })
+    })
+    owner.setFallbackDrain(() => drainQueuedSessions(owner, ref))
+    await owner.connectRemote()
+    expect(current.runtime.sendMessage).not.toHaveBeenCalled()
+    const runtimeAttachment = {
+      id: 'upload-1',
+      sessionId: 'session-a',
+      name: 'notes.txt',
+      originalName: 'notes.txt',
+      size: 5,
+      versionId: 'version-1',
+      versionNumber: 1,
+      checksum: 'sha256-test',
+      path: 'upload-version:project-a/session-a/upload-1/version-1'
+    }
+    if (action === 'edit then resume') {
+      editQueuedItem(owner, ref, 'durable-1')
+      await vi.waitFor(() =>
+        expect(current.composer.restoreQueuedDraft).toHaveBeenCalledWith(
+          expect.objectContaining({ attachments: [runtimeAttachment] })
+        )
+      )
+      expect(current.runtime.sendMessage).not.toHaveBeenCalled()
+    }
+    await sendQueuedItemNow(owner, ref, 'durable-1')
+    await vi.waitFor(() => expect(saved).toBeUndefined())
+    expect(current.runtime.sendMessage).toHaveBeenCalledTimes(1)
+    expect(current.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: 'durable-1',
+        requireExistingSession: true,
+        attachments: [runtimeAttachment]
+      })
+    )
+    expect(projections).not.toContainEqual({ projected: 'queued', authoritative: 'sending' })
+    owner.dispose()
+  }
+)
+
+it.each(['fix-loop', 'displaced-dispatch'] as const)(
+  'does not steer after disposal while awaiting %s',
+  async (waitingFor) => {
+    const owner = new WorkspaceMessageQueueOwner()
+    const intent = admission('Do not send after disposal')
+    const live = { ...session(), fixLoopActive: waitingFor === 'fix-loop' }
+    let release!: () => void
+    const completion = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const current = options(live, { abortFixLoop: vi.fn(() => completion) })
+    current.runtime.steerFollowUp = vi.fn(async () => ({
+      injected: false as const,
+      reason: 'not-advertised' as const
+    }))
+    owner.queues.set(live.id, [
+      {
+        ...intent,
+        id: 'queued-1',
+        cwd: live.cwd,
+        kind: 'user',
+        sessionId: live.id,
+        projectId: live.projectId,
+        phase: 'queued',
+        attachmentCount: 0,
+        deferredUntilIdle: false,
+        agentFrameId: 'root',
+        messageBranchId: 'branch-a'
+      }
+    ])
+    if (waitingFor === 'displaced-dispatch') {
+      owner.dispatches.set(live.id, { itemId: 'previous', settled: false, completion })
+    }
+    const sending = sendQueuedItemNow(owner, { current }, 'queued-1')
+    if (waitingFor === 'fix-loop') expect(current.abortFixLoop).toHaveBeenCalledTimes(1)
+    owner.dispose()
+    release()
+    await sending
+    expect(current.runtime.steerFollowUp).not.toHaveBeenCalled()
+    expect(current.runtime.sendMessage).not.toHaveBeenCalled()
+  }
+)
+
+it.each(['send', 'double click', 'dispose', 'remove', 'edit'] as const)(
+  'waits for a durable dispatch before Send now and revalidates after %s',
+  async (whileWaiting) => {
+    const intent = admission('Send after the first admission')
+    let saved: PendingInput | undefined = {
+      schemaVersion: 1,
+      id: 'durable-next',
+      projectId: 'project-a',
+      sessionId: 'session-a',
+      agentFrameId: 'root',
+      messageBranchId: 'branch-a',
+      text: intent.text,
+      forcedSkillIds: [],
+      permissionProfile: 'full',
+      snapshot: {
+        draftKey: intent.snapshot.draftKey,
+        version: intent.snapshot.version,
+        doc: { nodes: [{ type: 'text', text: intent.text }] },
+        annotations: [],
+        attachments: []
+      },
+      revision: 1,
+      position: 1,
+      phase: 'queued'
+    }
+    let firstSending = true
+    let revision = 0
+    let changed: ((snapshot: PendingInputResult) => void) | undefined
+    const snapshot = (): PendingInputResult => ({
+      generation: 'main',
+      revision,
+      items: saved ? [{ ...saved }] : [],
+      item: saved ? { ...saved } : undefined
+    })
+    const remote = {
+      onChanged: (listener: (snapshot: PendingInputResult) => void) => {
+        changed = listener
+        return () => {}
+      },
+      execute: vi.fn(async (command: PendingInputCommand): Promise<PendingInputResult> => {
+        if (command.operation === 'list') return snapshot()
+        if (!saved || !('revision' in command) || command.revision !== saved.revision)
+          throw new Error('stale revision')
+        if (command.operation === 'claim') {
+          if (firstSending) throw new Error('Another queued message is being sent in this Session.')
+          if (saved.phase === 'sending') throw new Error('The queued message is being sent.')
+          saved = { ...saved, phase: 'sending', revision: saved.revision + 1 }
+        } else if (command.operation === 'settle' && command.outcome === 'sent') {
+          saved = undefined
+        } else throw new Error('unexpected operation')
+        revision++
+        const result = snapshot()
+        changed?.(result)
+        return result
+      })
+    }
+    const owner = new WorkspaceMessageQueueOwner(remote)
+    const current = options(session())
+    current.runtime.steerFollowUp = vi.fn(async () => ({
+      injected: true as const,
+      transport: 'acp-steering' as const,
+      messageId: 'steered-next'
+    }))
+    await owner.connectRemote()
+    let release!: () => void
+    const completion = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    owner.dispatches.set('session-a', { itemId: 'durable-first', settled: false, completion })
+    const sending = sendQueuedItemNow(owner, { current }, 'durable-next')
+    const duplicate =
+      whileWaiting === 'double click'
+        ? sendQueuedItemNow(owner, { current }, 'durable-next')
+        : undefined
+    await Promise.resolve()
+    const claimsBeforeRelease = remote.execute.mock.calls.filter(
+      ([command]) => command.operation === 'claim'
+    )
+    if (whileWaiting === 'dispose') owner.dispose()
+    if (whileWaiting === 'remove') saved = undefined
+    if (whileWaiting === 'edit') saved = { ...saved!, revision: 2, text: 'Changed after clicking' }
+    revision++
+    changed?.(snapshot())
+    firstSending = false
+    release()
+    await Promise.all([sending, duplicate])
+    expect(claimsBeforeRelease).toEqual([])
+    if (whileWaiting === 'double click') {
+      // Main's existing CAS rejects a competing click rather than sending twice.
+      expect(current.composer.setError).toHaveBeenCalledWith('stale revision')
+    } else expect(current.composer.setError).not.toHaveBeenCalled()
+    const shouldSend = whileWaiting === 'send' || whileWaiting === 'double click'
+    expect(current.runtime.steerFollowUp).toHaveBeenCalledTimes(shouldSend ? 1 : 0)
+    expect(current.runtime.sendMessage).not.toHaveBeenCalled()
+    if (shouldSend) expect(saved).toBeUndefined()
+    owner.dispose()
+  }
+)

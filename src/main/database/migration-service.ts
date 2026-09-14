@@ -1,3 +1,4 @@
+import { pendingInputMigration } from './migrations/0042-pending-input'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
 import {
@@ -816,6 +817,17 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...pendingInputMigration,
+    checksum: checksumMigrationPayload(
+      pendingInputMigration.id,
+      pendingInputMigration.statements,
+      pendingInputMigration.verifiers,
+      pendingInputMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1254,6 +1266,7 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
   await runMigrationVerifiers(client, contentVerificationObservationMigration.verifiers)
   await runMigrationVerifiers(client, literatureMetadataCommitReceiptMigration.verifiers)
   await runMigrationVerifiers(client, literatureCollectionRevisionMigration.verifiers)
+  await runMigrationVerifiers(client, pendingInputMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {
@@ -2074,6 +2087,89 @@ const migrateApplicationDatabaseWithManifest = async (
   }
 
   const applied: string[] = []
+  // This approved, checksum-pinned draft predates the released Bookmark suffix. Preserve its
+  // queue rows while installing Bookmarks and moving only its ledger identity, atomically.
+  const draftPendingId = '0041_pending_input'
+  const draftPendingChecksum = '5c83f05fb2b9c6d726b489ceedb4e8d1a3bf06ed484566492175ce5abab247f4'
+  const bookmarkIndex = MIGRATION_MANIFEST.findIndex(({ id }) => id === bookmarksMigration.id)
+  const bookmarkEntry = MIGRATION_MANIFEST[bookmarkIndex]!
+  const pendingEntry = MIGRATION_MANIFEST[bookmarkIndex + 1]!
+  if (
+    ledger.length === bookmarkIndex + 1 &&
+    ledger.at(-1)?.id === draftPendingId &&
+    ledger.at(-1)?.checksum === draftPendingChecksum &&
+    manifest[bookmarkIndex]?.id === bookmarkEntry.id &&
+    manifest[bookmarkIndex]?.checksum === bookmarkEntry.checksum &&
+    manifest[bookmarkIndex + 1]?.id === pendingEntry.id &&
+    manifest[bookmarkIndex + 1]?.checksum === pendingEntry.checksum
+  ) {
+    validateLedger(ledger.slice(0, -1), MIGRATION_MANIFEST.slice(0, bookmarkIndex))
+    validateLedger(ledger.slice(0, -1), manifest.slice(0, bookmarkIndex))
+    // Validate only the frozen draft boundary here. Later migrations may legitimately extend
+    // PendingInput; the complete() path owns verification against the latest generated schema.
+    const verifyDraftPendingInput = (target: PrismaClient): Promise<void> =>
+      runMigrationVerifiers(target, [
+        {
+          kind: 'sqlite-schema-objects-exist',
+          version: 1,
+          objects: [
+            {
+              type: 'table',
+              name: 'PendingInput',
+              sql: pendingInputMigration.statements[0].replace(/;$/, '')
+            }
+          ]
+        },
+        {
+          kind: 'indexes-exist',
+          version: 1,
+          indexes: [
+            {
+              name: 'PendingInput_sessionId_position_id_idx',
+              sql: pendingInputMigration.statements[1]
+            },
+            { name: 'PendingInput_projectId_idx', sql: pendingInputMigration.statements[2] }
+          ]
+        }
+      ])
+    try {
+      await verifyDraftPendingInput(client)
+    } catch (error) {
+      throw classifyDatabaseFailure(error, 'validation', draftPendingId)
+    }
+    await ensureBackupBeforeMigration(bookmarkEntry)
+    options.onProgress?.({ phase: 'migrating', migrationId: bookmarkEntry.id })
+    try {
+      await client.$transaction(async (transaction) => {
+        const transactionClient = transaction as unknown as PrismaClient
+        if (JSON.stringify(await readLedger(transactionClient)) !== JSON.stringify(ledger)) {
+          throw new DatabaseMigrationError(
+            'database_history_invalid',
+            'The database migration history changed before the pending input upgrade.',
+            false,
+            draftPendingId
+          )
+        }
+        await verifyDraftPendingInput(transactionClient)
+        for (const statement of bookmarkEntry.statements) {
+          await migrationSqlExecutor.execute(transactionClient, statement)
+        }
+        await runMigrationVerifiers(transactionClient, bookmarkEntry.verifiers)
+        await transactionClient.$executeRaw`
+          UPDATE "_open_science_migrations"
+          SET "id" = ${pendingEntry.id}, "checksum" = ${pendingEntry.checksum}
+          WHERE "id" = ${draftPendingId} AND "checksum" = ${draftPendingChecksum}
+        `
+        await insertLedgerRow(transactionClient, bookmarkEntry)
+        validateLedger(await readLedger(transactionClient), manifest)
+        await verifyForeignKeyIntegrity(transactionClient)
+      })
+    } catch (error) {
+      throw classifyDatabaseFailure(error, 'migration', pendingEntry.id)
+    }
+    ledger = await readLedger(client)
+    applied.push(bookmarkEntry.id, pendingEntry.id)
+  }
   const appliedCount = validateLedger(ledger, manifest)
   if (appliedCount === manifest.length) {
     return complete({ adoptedLegacy: false, applied, from, to: latest.id })

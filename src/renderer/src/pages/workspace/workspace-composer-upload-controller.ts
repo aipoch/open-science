@@ -259,8 +259,8 @@ export const useWorkspaceComposerUploadController = ({
         controllersRef.current[transferId]?.abort()
         void uploads.abortTransfer({ transferId }).catch(() => undefined)
       }
-      for (const [path] of historyAttachments) {
-        if (!retainedAttachmentPaths.has(path))
+      for (const [path, attachment] of historyAttachments) {
+        if (!attachment.versionId && !retainedAttachmentPaths.has(path))
           void uploads.deleteUpload({ path }).catch(() => undefined)
       }
       // Upload jobs belong to this mounted controller. Retain completed uploads, but
@@ -282,9 +282,12 @@ export const useWorkspaceComposerUploadController = ({
   const deleteAttachmentFiles = useCallback(
     (items: UploadedAttachment[]): void => {
       if (items.length === 0) return
-      void Promise.all(items.map((item) => uploads.deleteUpload({ path: item.path }))).catch(
-        (deleteError) => setError(asText(deleteError))
-      )
+      // Published versions belong to the Session library; editing only releases the input reference.
+      void Promise.all(
+        items
+          .filter((item) => !item.versionId)
+          .map((item) => uploads.deleteUpload({ path: item.path }))
+      ).catch((deleteError) => setError(asText(deleteError)))
     },
     [uploads, setError]
   )
@@ -873,11 +876,9 @@ export const useWorkspaceComposerUploadController = ({
       if (cleanup) {
         cleanup.attachments = cleanup.attachments.filter((item) => item.id !== attachment.id)
       }
-      void uploads
-        .deleteUpload({ path: attachment.path })
-        .catch((deleteError) => setError(asText(deleteError)))
+      deleteAttachmentFiles([attachment])
     },
-    [updateActiveAttachments, updateActiveTransfers, uploads, setError]
+    [updateActiveAttachments, updateActiveTransfers, uploads, deleteAttachmentFiles]
   )
 
   const reconcileRemovedPastedTextUploads = useCallback(
@@ -1350,9 +1351,7 @@ export const useWorkspaceComposerUploadController = ({
       if (cleanup) {
         cleanup.attachments = cleanup.attachments.filter((item) => item.id !== attachment.id)
       }
-      void uploads.deleteUpload({ path: attachment.path }).catch((deleteError) => {
-        setError(asText(deleteError))
-      })
+      deleteAttachmentFiles([attachment])
     },
     [
       activeDraftKeyRef,
@@ -1362,8 +1361,7 @@ export const useWorkspaceComposerUploadController = ({
       markChanged,
       removePastedText,
       updateActiveAttachments,
-      uploads,
-      setError
+      deleteAttachmentFiles
     ]
   )
 

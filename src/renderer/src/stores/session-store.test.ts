@@ -770,6 +770,340 @@ describe('session store', () => {
     expect(useSessionStore.getState().streamingMessages[message.id]).toBeUndefined()
   })
 
+  it.each(
+    (['subscription', 'same revision subscription', 'save receipt'] as const).flatMap((source) =>
+      [0, 1, 2].flatMap((localChunks) =>
+        [false, true].map((nextDelta) => ({ source, localChunks, nextDelta }))
+      )
+    )
+  )(
+    'retains a newer persisted streaming prefix from $source after $localChunks local chunks (next delta: $nextDelta)',
+    ({ source, localChunks, nextDelta }) => {
+      const store = useSessionStore.getState()
+      store.appendUserMessage({ sessionId: 'transport-session-1', content: 'Stream a response' })
+      const append = (eventId: string, content: string): void => {
+        useSessionStore.getState().appendAgentMessageChunk({
+          sessionId: 'transport-session-1',
+          streamId: 'assistant-message-1',
+          eventId,
+          content
+        })
+      }
+      if (localChunks >= 1) append('event-1', 'one ')
+      if (localChunks >= 2) append('event-2', 'two ')
+      const local = useSessionStore.getState()
+      if (localChunks < 1) append('event-1', 'one ')
+      if (localChunks < 2) append('event-2', 'two ')
+      append('event-3', 'three ')
+      const remote = useSessionStore.getState()
+      const saved = {
+        ...toPersistedSession(remote.sessions[0], remote.streamingMessages),
+        revision: source === 'same revision subscription' ? (local.sessions[0].revision ?? 0) : 1,
+        updatedAt:
+          source === 'same revision subscription'
+            ? local.sessions[0].updatedAt
+            : remote.sessions[0].updatedAt
+      }
+      useSessionStore.setState(local)
+      if (source !== 'save receipt') useSessionStore.getState().upsertPersistedSession(saved)
+      else
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: local.sessions[0],
+          session: saved,
+          mode: 'replace-persisted-if-current'
+        })
+      append('event-3', 'three ')
+      if (nextDelta) append('event-4', 'four')
+      useSessionStore.getState().finishRun('transport-session-1')
+      expect(useSessionStore.getState().sessions[0].messages.at(-1)).toMatchObject({
+        content: nextDelta ? 'one two three four' : 'one two three ',
+        status: 'complete',
+        eventIds: nextDelta
+          ? ['event-1', 'event-2', 'event-3', 'event-4']
+          : ['event-1', 'event-2', 'event-3']
+      })
+      expect(useSessionStore.getState().streamingMessages).toEqual({})
+    }
+  )
+
+  it.each(['subscription', 'runtime-context-authority'] as const)(
+    'shows a longer persisted prefix after local completion through %s',
+    (source) => {
+      useSessionStore
+        .getState()
+        .appendUserMessage({ sessionId: 'transport-session-1', content: 'Stream a response' })
+      const append = (eventId: string, content: string): void => {
+        useSessionStore.getState().appendAgentMessageChunk({
+          sessionId: 'transport-session-1',
+          streamId: 'assistant-message-1',
+          eventId,
+          content
+        })
+      }
+      append('event-1', 'one ')
+      useSessionStore.getState().finishRun('transport-session-1')
+      const local = useSessionStore.getState()
+      append('event-2', 'two')
+      useSessionStore.getState().finishRun('transport-session-1')
+      const remote = useSessionStore.getState()
+      const saved = {
+        ...toPersistedSession(remote.sessions[0], remote.streamingMessages),
+        revision: local.sessions[0].revision ?? 0,
+        updatedAt: local.sessions[0].updatedAt
+      }
+      useSessionStore.setState(local)
+      if (source === 'subscription') useSessionStore.getState().upsertPersistedSession(saved)
+      else
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: local.sessions[0],
+          session: saved,
+          mode: source
+        })
+      const current = useSessionStore.getState()
+      expect(current.sessions[0].messages.at(-1)).toMatchObject({
+        content: 'one two',
+        status: 'complete',
+        eventIds: ['event-1', 'event-2']
+      })
+      expect(current.streamingMessages).toEqual({})
+    }
+  )
+
+  it.each(
+    (['subscription', 'runtime-context-authority'] as const).flatMap((source) =>
+      [1, MAX_ACP_RUNTIME_EVENTS, MAX_ACP_RUNTIME_EVENTS + 1].map((localChunks) => ({
+        source,
+        localChunks
+      }))
+    )
+  )(
+    'retains a completed reply with compacted event IDs through $source after $localChunks chunks',
+    ({ source, localChunks }) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'transport-session-1',
+        content: 'Stream a long response'
+      })
+      const chunks = Array.from({ length: MAX_ACP_RUNTIME_EVENTS + 2 }, (_, index) => ({
+        sessionId: 'transport-session-1',
+        streamId: 'assistant-message-1',
+        eventId: `event-${index}`,
+        content: `${index} `
+      }))
+      useSessionStore.getState().appendAgentMessageChunks(chunks.slice(0, localChunks))
+      const local = useSessionStore.getState()
+      useSessionStore.getState().appendAgentMessageChunks(chunks.slice(localChunks))
+      useSessionStore.getState().finishRun('transport-session-1')
+      const remote = useSessionStore.getState()
+      const saved = {
+        ...toPersistedSession(remote.sessions[0], remote.streamingMessages),
+        revision: 1
+      }
+      useSessionStore.setState(local)
+      if (source === 'subscription') useSessionStore.getState().upsertPersistedSession(saved)
+      else
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: local.sessions[0],
+          session: saved,
+          mode: source
+        })
+      useSessionStore.getState().finishRun('transport-session-1')
+      const current = useSessionStore.getState()
+      expect(current.sessions[0].messages.at(-1)).toMatchObject({
+        content: chunks.map((chunk) => chunk.content).join(''),
+        status: 'complete',
+        eventIds: chunks.slice(-MAX_ACP_RUNTIME_EVENTS).map((chunk) => chunk.eventId)
+      })
+      expect(current.streamingMessages).toEqual({})
+    }
+  )
+
+  it.each(['same-cursor', 'reordered-overlap', 'unrelated-body', 'partial-window'] as const)(
+    'rejects an unproven terminal suffix with %s',
+    (sequence) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'transport-session-1',
+        content: 'Stream a long response'
+      })
+      const chunks = Array.from({ length: MAX_ACP_RUNTIME_EVENTS + 1 }, (_, index) => ({
+        sessionId: 'transport-session-1',
+        streamId: 'assistant-message-1',
+        eventId: `event-${index}`,
+        content: `${index} `
+      }))
+      useSessionStore.getState().appendAgentMessageChunks(chunks.slice(0, -1))
+      const local = useSessionStore.getState()
+      useSessionStore.getState().appendAgentMessageChunks(chunks.slice(-1))
+      useSessionStore.getState().finishRun('transport-session-1')
+      const remote = useSessionStore.getState()
+      const saved = {
+        ...toPersistedSession(remote.sessions[0], remote.streamingMessages),
+        revision: 1
+      }
+      for (const message of [...saved.messages, ...(saved.conversationGraph?.messages ?? [])]) {
+        if (message.role !== 'agent') continue
+        if (sequence === 'same-cursor')
+          message.eventIds = chunks.slice(0, -1).map((chunk) => chunk.eventId)
+        if (sequence === 'reordered-overlap')
+          message.eventIds = [
+            'event-2',
+            'event-1',
+            ...chunks.slice(3).map((chunk) => chunk.eventId)
+          ]
+        if (sequence === 'unrelated-body' || sequence === 'partial-window') {
+          message.eventIds = Array.from(
+            { length: sequence === 'partial-window' ? 499 : 500 },
+            (_, index) => `other-${index}`
+          )
+          if (sequence === 'unrelated-body') message.content = 'Different response'
+        }
+      }
+      useSessionStore.setState(local)
+      useSessionStore.getState().upsertPersistedSession(saved)
+      useSessionStore.getState().finishRun('transport-session-1')
+      expect(useSessionStore.getState().sessions[0].messages.at(-1)).toMatchObject({
+        content: chunks
+          .slice(0, -1)
+          .map((chunk) => chunk.content)
+          .join(''),
+        eventIds: chunks.slice(0, -1).map((chunk) => chunk.eventId)
+      })
+    }
+  )
+
+  it.each(
+    (['subscription', 'replace-persisted-if-current', 'merge-upload-identities'] as const).flatMap(
+      (source) => [false, true].map((terminal) => ({ source, terminal }))
+    )
+  )(
+    'retains completed local text with $source and terminal=$terminal short receipt',
+    ({ source, terminal }) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'transport-session-1',
+        content: 'Stream',
+        attachments: [createUploadAttachment()]
+      })
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'reply',
+        eventId: 'first',
+        content: 'one '
+      })
+      const first = useSessionStore.getState()
+      const saved = {
+        ...toPersistedSession(first.sessions[0], first.streamingMessages),
+        revision: 2
+      }
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'reply',
+        eventId: 'second',
+        content: 'two'
+      })
+      useSessionStore.getState().finishRun('transport-session-1')
+      if (terminal) {
+        saved.status = 'idle'
+        delete saved.activeRun
+        const branch = saved.conversationGraph!.branches[0]
+        saved.conversationGraph!.branches.push({
+          ...branch,
+          id: 'empty-branch',
+          headMessageId: undefined
+        })
+        for (const message of [...saved.messages, ...(saved.conversationGraph?.messages ?? [])])
+          message.status = 'complete'
+      }
+      if (source === 'merge-upload-identities') {
+        for (const message of [...saved.messages, ...(saved.conversationGraph?.messages ?? [])])
+          if (message.uploads)
+            message.uploads = message.uploads.map((upload) => ({
+              ...upload,
+              versionId: 'version-1'
+            }))
+      }
+      if (source === 'subscription') useSessionStore.getState().upsertPersistedSession(saved)
+      else
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: useSessionStore.getState().sessions[0],
+          session: saved,
+          mode: source
+        })
+      expect(useSessionStore.getState().sessions[0].messages.at(-1)?.content).toBe('one two')
+      expect(useSessionStore.getState().sessions[0].revision).toBe(2)
+      expect(
+        useSessionStore.getState().sessions[0].conversationGraph?.messages.at(-1)?.content
+      ).toBe('one two')
+      if (source === 'merge-upload-identities')
+        expect(useSessionStore.getState().sessions[0].messages[0].uploads?.[0].versionId).toBe(
+          'version-1'
+        )
+      if (terminal) {
+        const original = saved.conversationGraph!.branches[0].id
+        useSessionStore.getState().activateMessageBranch('transport-session-1', 'empty-branch')
+        expect(useSessionStore.getState().sessions[0].messages).toEqual([])
+        useSessionStore.getState().activateMessageBranch('transport-session-1', original)
+        expect(useSessionStore.getState().sessions[0].messages.at(-1)?.content).toBe('one two')
+      }
+    }
+  )
+
+  it('does not restore completed text removed by an authoritative replacement', () => {
+    useSessionStore
+      .getState()
+      .appendUserMessage({ sessionId: 'transport-session-1', content: 'Stream' })
+    const saved = { ...toPersistedSession(useSessionStore.getState().sessions[0]), revision: 2 }
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'reply',
+      eventId: 'first',
+      content: 'one'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.getState().applyDurableSessionProjection({
+      source: useSessionStore.getState().sessions[0],
+      session: saved,
+      mode: 'replace-persisted-if-current'
+    })
+    expect(useSessionStore.getState().sessions[0].messages.map((message) => message.role)).toEqual([
+      'user'
+    ])
+    expect(useSessionStore.getState().streamingMessages).toEqual({})
+  })
+
+  it.each(['shorter', 'different'] as const)(
+    'does not replace a live prefix with a %s persisted event sequence',
+    (sequence) => {
+      useSessionStore
+        .getState()
+        .appendUserMessage({ sessionId: 'transport-session-1', content: 'Stream a response' })
+      const append = (eventId: string, content: string): void => {
+        useSessionStore.getState().appendAgentMessageChunk({
+          sessionId: 'transport-session-1',
+          streamId: 'assistant-message-1',
+          eventId,
+          content
+        })
+      }
+      append('event-1', 'one ')
+      const base = useSessionStore.getState()
+      const saved = { ...toPersistedSession(base.sessions[0], base.streamingMessages), revision: 1 }
+      if (sequence === 'different') {
+        for (const message of [...saved.messages, ...(saved.conversationGraph?.messages ?? [])]) {
+          if (message.role !== 'agent') continue
+          message.content = 'unrelated'
+          message.eventIds = ['other-1', 'other-2', 'other-3']
+        }
+      }
+      append('event-2', 'two ')
+      useSessionStore.getState().upsertPersistedSession(saved)
+      append('event-3', 'three')
+      useSessionStore.getState().finishRun('transport-session-1')
+      expect(useSessionStore.getState().sessions[0].messages.at(-1)).toMatchObject({
+        content: 'one two three',
+        eventIds: ['event-1', 'event-2', 'event-3']
+      })
+    }
+  )
+
   it('keeps Session and messages references stable across pure text-growth ticks', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',

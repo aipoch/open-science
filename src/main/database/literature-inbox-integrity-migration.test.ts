@@ -59,6 +59,7 @@ describe('Literature inbox integrity migration', () => {
       } else {
         await client.literatureCandidateDiscovery.deleteMany()
       }
+      if (schema === 'pre-ledger released') await client.$executeRawUnsafe('DROP TABLE "bookmarks"')
       await client.$executeRawUnsafe('DROP TABLE "LiteratureMetadataCommitReceipt"')
       await client.$executeRawUnsafe(
         schema === 'pre-ledger released'
@@ -69,7 +70,8 @@ describe('Literature inbox integrity migration', () => {
       expect(await migrateApplicationDatabase(client)).toMatchObject({
         applied: expect.arrayContaining([
           '0037_literature_inbox_integrity',
-          '0040_literature_collection_revision'
+          '0040_literature_collection_revision',
+          '0042_pending_input'
         ])
       })
       expect(await client.literatureSourceRecord.findMany()).toEqual(sources)

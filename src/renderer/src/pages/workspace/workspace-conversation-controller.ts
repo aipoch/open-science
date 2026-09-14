@@ -448,19 +448,23 @@ const useWorkspaceConversationController = (
         const { hasPendingSwitch } = session.lifecycle.captureSendIntent(false)
         if (hasPendingSwitch) return
         const snapshot = composer.lifecycle.captureSend()
-        if (
-          messageQueue.lifecycle.enqueue({
-            session: activeSession,
-            snapshot,
-            text: docToText(snapshot.doc),
-            forcedSkillIds,
-            permissionProfile: current.permissionProfile,
-            agentConfiguration: current.agentConfiguration,
-            specialistId: activeSession.specialistId
-          })
-        ) {
-          composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
+        if (inFlightDraftKeysRef.current.has(snapshot.draftKey)) return
+        inFlightDraftKeysRef.current.add(snapshot.draftKey)
+        const admission = messageQueue.lifecycle.enqueue({
+          session: activeSession,
+          snapshot,
+          text: docToText(snapshot.doc),
+          forcedSkillIds,
+          permissionProfile: current.permissionProfile,
+          agentConfiguration: current.agentConfiguration,
+          specialistId: activeSession.specialistId
+        })
+        const finishAdmission = (saved: boolean): void => {
+          inFlightDraftKeysRef.current.delete(snapshot.draftKey)
+          if (saved) composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
         }
+        if (typeof admission === 'boolean') finishAdmission(admission)
+        else void admission.then(finishAdmission)
         return
       }
 
@@ -620,7 +624,7 @@ const useWorkspaceConversationController = (
           if (!current.agentConfiguration || (!canRevise(current) && !canQueueRevision(current)))
             return { ok: false }
           const snapshot = current.composer.lifecycle.captureRevision(doc, annotations)
-          const queued = messageQueue.lifecycle.enqueue({
+          const queued = await messageQueue.lifecycle.enqueue({
             session: current.activeSession!,
             snapshot,
             text: docToText(doc),

@@ -99,6 +99,7 @@ const dependencies = (): ApplicationCommandCompositionDependencies =>
     compute: EMPTY_OWNER,
     permissionGrants: EMPTY_OWNER,
     tags: EMPTY_OWNER,
+    pendingInputs: EMPTY_OWNER,
     specialist: {
       dispose: vi.fn()
     } as unknown as ApplicationCommandCompositionDependencies['specialist'],
@@ -271,6 +272,7 @@ describe('application command composition', () => {
       'pdf-structure:parse',
       'pdf-structure:read-cached',
       'pdf-structure:read-thumbnail',
+      'pending-inputs:execute',
       'projects:create',
       'projects:delete',
       'projects:get',

@@ -3090,6 +3090,42 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.doc).toEqual(textDoc('first queued intent'))
   })
 
+  it.each(['attachment', 'pasted-text', 'discard'] as const)(
+    'removes a recovered published %s reference without deleting Session-owned bytes',
+    async (kind) => {
+      const uploadApi = uploads()
+      const hook = renderController(uploadApi)
+      mounted.push(hook)
+      const attachment: UploadedAttachment = {
+        id: 'saved-upload',
+        sessionId: 'session-a',
+        name: 'queued.txt',
+        originalName: 'queued.txt',
+        path: '/uploads/session-a/queued.txt',
+        size: 4,
+        versionId: 'saved-version',
+        versionNumber: 1
+      }
+      const snapshot = { ...hook.result.current.lifecycle.captureSend(), attachments: [attachment] }
+      if (kind === 'pasted-text')
+        snapshot.doc = pastedDoc({
+          type: 'pasted-text',
+          id: 'saved-paste',
+          text: 'text',
+          attachmentId: attachment.id
+        })
+      if (kind === 'discard') {
+        act(() => hook.result.current.lifecycle.discardSnapshot(snapshot))
+      } else {
+        act(() => hook.result.current.lifecycle.restoreFailedSend(snapshot, true))
+        act(() => hook.result.current.actions.removeAttachment(attachment))
+        expect(hook.result.current.view.attachments).toEqual([])
+      }
+      await flushAsyncWork()
+      expect(uploadApi.deleteUpload).not.toHaveBeenCalled()
+    }
+  )
+
   it('discards queued uploads without changing the current draft version', () => {
     const uploadApi = uploads()
     const hook = renderController(uploadApi)

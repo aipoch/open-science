@@ -212,8 +212,7 @@ describe('workspace page architecture', () => {
       'pages/workspace/annotations/AnnotationTransferSource.tsx',
       'pages/workspace/annotations/SideChatAnnotationDrop.tsx',
       'pages/workspace/side-chat-summary.ts',
-      'pages/workspace/workspace-conversation-controller.ts',
-      'pages/workspace/workspace-message-queue-controller.ts'
+      'pages/workspace/workspace-conversation-controller.ts'
     ])
   })
 

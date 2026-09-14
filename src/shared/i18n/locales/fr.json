@@ -115,7 +115,11 @@
     "Session package operation in progress": "Opération sur le paquet de session en cours",
     "Temporary files could not be removed. Try cleanup again.": "Les fichiers temporaires n’ont pas pu être supprimés. Réessayez le nettoyage.",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "L’opération sur le paquet de session n’a pas pu être terminée. Vérifiez le paquet et l’espace disque disponible, puis réessayez.",
-    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Le paquet d’origine est indisponible. Il a peut-être été déplacé, supprimé ou est devenu illisible. Choisissez un autre paquet."
+    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Le paquet d’origine est indisponible. Il a peut-être été déplacé, supprimé ou est devenu illisible. Choisissez un autre paquet.",
+    "Show startup logs": "Afficher les journaux de démarrage",
+    "Quit application": "Quitter l’application",
+    "The desktop bridge failed to load. Reload the window to try again, or open the startup logs for diagnostics. Background work may still be running.": "Le pont du bureau n’a pas pu être chargé. Rechargez la fenêtre pour réessayer ou ouvrez les journaux de démarrage pour effectuer un diagnostic. Des tâches peuvent encore être en cours en arrière-plan.",
+    "The app window could not initialize.": "La fenêtre de l’application n’a pas pu être initialisée."
   },
   "renderer": {
     "Old Shell launch records are blocking this update.": "D’anciens enregistrements de lancement du Terminal bloquent cette mise à jour.",
@@ -3947,9 +3951,6 @@
     "Retry project recovery before deleting projects.": "Réessayez la récupération du projet avant de supprimer des projets.",
     "Finish or stop active sessions before archiving this project.": "Terminez ou arrêtez les sessions actives avant d'archiver ce projet.",
     "Message queue": "File d'attente des messages",
-    "Queue ({{count}}) · Not saved_one": "File d'attente ({{count}}) · non enregistrée",
-    "Queue ({{count}}) · Not saved_other": "File d'attente ({{count}}) · non enregistrée",
-    "Queue ({{count}}) · Not saved_many": "File d'attente ({{count}}) · non enregistrée",
     "Attachment message": "Message en pièce jointe",
     "Reorder queued message {{index}}": "Réorganiser le message en file d'attente {{index}}",
     "Drag or use arrow keys to reorder": "Faites glisser ou utilisez les touches fléchées pour réorganiser",
@@ -6150,6 +6151,11 @@
     "No bookmarks yet.": "Aucun signet pour le moment.",
     "Bookmark note": "Note du signet",
     "Bookmarks ({{count}})_one": "Signet ({{count}})",
-    "The exact bookmark location could not be found.": "Impossible de retrouver l’emplacement exact du signet."
+    "The exact bookmark location could not be found.": "Impossible de retrouver l’emplacement exact du signet.",
+    "Queue ({{count}})_other": "File d'attente ({{count}})",
+    "Queue ({{count}})_one": "File d'attente ({{count}})",
+    "Queue ({{count}})_many": "File d'attente ({{count}})",
+    "Resume sending": "Reprendre l’envoi",
+    "Recovered message. Review before sending; an interrupted send may already have reached the agent.": "Message récupéré. Vérifiez-le avant de l’envoyer ; l’envoi interrompu a peut-être déjà atteint l’agent."
   }
 }

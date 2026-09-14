@@ -30,6 +30,7 @@ import {
   type ListSessionSummariesResult,
   type LoadSessionRequest,
   type PersistedChatSession,
+  type PersistedChatMessage,
   type SaveSessionOptions,
   type SessionConflictRebaseField,
   type SessionLoadDiagnostics,
@@ -39,8 +40,10 @@ import {
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
   getExternallyHydratedSessionAuthority,
+  hasUnsavedAgentMessageText,
   isArtifactFinalizationError,
   isExternallyHydratedSession,
+  isStreamedMessageExtension,
   toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
@@ -155,12 +158,17 @@ type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'sa
     target: string,
     task: LatestSessionSaveTask,
     options?: SaveSessionOptions,
-    streaming?: boolean
+    streaming?: boolean,
+    receiptRepair?: boolean
   ) => Promise<PersistedChatSession>
   saveSessionWithRecovery: (
     session: PersistedChatSession,
     options: SaveSessionOptions | undefined,
-    recover: OrderedSessionSaveRecovery
+    recover: OrderedSessionSaveRecovery,
+    queued?: {
+      prepare: () => PersistedChatSession
+      onSaved?: (session: PersistedChatSession) => void
+    }
   ) => Promise<PersistedChatSession>
   seedAcknowledgedSessions: (sessions: readonly PersistedChatSession[]) => void
   getAcknowledgedSession: (sessionId: string) => PersistedChatSession | undefined
@@ -318,7 +326,9 @@ const rebaseConversationGraphCollection = <Item extends { id: string }>(
 // artifact/upload finalization can update a disjoint field on the same durable identity. Apply a
 // property-level three-way merge, union append-only event evidence, and fail closed whenever both
 // sides changed the same semantic property differently.
-const rebaseMessageCollection = <Item extends { id: string; eventIds: string[] }>(
+const rebaseMessageCollection = <
+  Item extends Pick<PersistedChatMessage, 'id' | 'role' | 'content' | 'status' | 'eventIds'>
+>(
   baseItems: readonly Item[],
   submittedItems: readonly Item[],
   latestItems: readonly Item[]
@@ -339,8 +349,59 @@ const rebaseMessageCollection = <Item extends { id: string; eventIds: string[] }
         ...Object.keys(latest)
       ])
 
+      // Two renderers may save different lengths of the same stream. Rebase the proven
+      // body/cursor pair atomically; arbitrary concurrent edits still fail closed below.
+      let advanced =
+        submittedItem.role === 'agent' && latestItem.role === 'agent'
+          ? submittedItem.content.startsWith(latestItem.content) &&
+            isStreamedMessageExtension(latestItem, submittedItem)
+            ? submittedItem
+            : latestItem.content.startsWith(submittedItem.content) &&
+                isStreamedMessageExtension(submittedItem, latestItem)
+              ? latestItem
+              : undefined
+          : undefined
+      if (
+        advanced &&
+        baseItem &&
+        !(
+          advanced.content.startsWith(baseItem.content) &&
+          (isStreamedMessageExtension(baseItem, advanced) ||
+            (advanced.content === baseItem.content &&
+              advanced.eventIds.length === baseItem.eventIds.length &&
+              advanced.eventIds.every((id, index) => id === baseItem.eventIds[index])))
+        )
+      )
+        advanced = undefined
+      const sameRuntimeMessage =
+        submittedItem.role === 'agent' &&
+        latestItem.role === 'agent' &&
+        submittedItem.eventIds.some((id) => latestItem.eventIds.includes(id)) &&
+        (advanced !== undefined ||
+          (submittedItem.content === latestItem.content &&
+            submittedItem.eventIds.length > 0 &&
+            submittedItem.eventIds.length === latestItem.eventIds.length &&
+            submittedItem.eventIds.every((id, index) => id === latestItem.eventIds[index])))
       for (const key of keys) {
         if (key === 'id') continue
+        // Independent windows timestamp the same runtime message when they project it.
+        // Preserve the earliest observation only after proving the shared body/event identity.
+        if (
+          sameRuntimeMessage &&
+          ((key === 'createdAt' && !baseItem) ||
+            (key === 'completedAt' &&
+              submittedItem.status === 'complete' &&
+              latestItem.status === 'complete')) &&
+          typeof submitted[key] === 'number' &&
+          typeof latest[key] === 'number'
+        ) {
+          rebased[key] = Math.min(submitted[key] as number, latest[key] as number)
+          continue
+        }
+        if (advanced && (key === 'content' || key === 'eventIds')) {
+          rebased[key] = structuredClone(advanced[key])
+          continue
+        }
         if (key === 'eventIds') {
           const baseEventIds = (base?.eventIds as string[] | undefined) ?? []
           const submittedEventIds = submitted.eventIds as string[]
@@ -519,9 +580,21 @@ const rebaseSessionAfterRevisionConflict = (
     const baseValue = base[key]
     const submittedValue = submitted[key]
     const latestValue = latest[key]
-    const localChanged = !sessionFieldValuesEqual(key, submittedValue, baseValue)
+    // Two consecutive turns both say "running". A different activeRun is still a local
+    // lifecycle change, even when that scalar equals the earlier turn's value.
+    const startsNewRun =
+      key === 'status' &&
+      submitted.status === 'running' &&
+      submitted.activeRun !== undefined &&
+      !jsonValuesEqual(submitted.activeRun, base.activeRun) &&
+      !(latest.conversationGraph?.messages ?? latest.messages).some(
+        (message) => message.id === submitted.activeRun?.promptMessageId
+      )
+    const localChanged = startsNewRun || !sessionFieldValuesEqual(key, submittedValue, baseValue)
     if (!localChanged) continue
-    const remoteChanged = !sessionFieldValuesEqual(key, latestValue, baseValue)
+    const remoteChanged =
+      !(startsNewRun && !latest.activeRun && latest.status === 'idle') &&
+      !sessionFieldValuesEqual(key, latestValue, baseValue)
     if (remoteChanged && !sessionFieldValuesEqual(key, submittedValue, latestValue)) {
       if (key === 'messages') {
         const messages = rebaseMessageCollection(
@@ -665,6 +738,7 @@ type PendingLatestSessionSave = {
   options: SaveSessionOptions | undefined
   generation: number
   streaming?: boolean
+  receiptRepair?: boolean
   promise?: Promise<PersistedChatSession>
   bypassCadence?: boolean
   releaseCadence?: () => void
@@ -709,6 +783,16 @@ const deferExportedSessionSave = (target: string): void => {
 // Serializes every renderer-originated Session write through one ordering seam. Store snapshots at
 // the queue tail use latest-wins coalescing; explicit Session and Manifest writes remain barriers, so
 // Artifact finalization cannot be overtaken by an older store snapshot.
+// Keep the original source attached to a successful receipt while that receipt is retained.
+// A newly created Session can queue an explicit write before its first acknowledgement exists.
+const sessionWriteSources = new WeakMap<PersistedChatSession, PersistedChatSession>()
+const cloneSessionReceipt = (session: PersistedChatSession): PersistedChatSession => {
+  const clone = structuredClone(session)
+  const source = sessionWriteSources.get(session)
+  if (source) sessionWriteSources.set(clone, source)
+  return clone
+}
+
 const createOrderedSessionPersistence = (
   api: Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
 ): OrderedSessionPersistence => {
@@ -767,7 +851,7 @@ const createOrderedSessionPersistence = (
       session.id,
       Math.max(acknowledgedRevisions.get(session.id) ?? 0, revision)
     )
-    acknowledgedSessions.set(session.id, structuredClone(session))
+    acknowledgedSessions.set(session.id, cloneSessionReceipt(session))
   }
 
   const releasePendingLatestCadence = (): void => {
@@ -848,6 +932,7 @@ const createOrderedSessionPersistence = (
     const durable = options
       ? await api.saveSession(submitted, options)
       : await api.saveSession(submitted)
+    sessionWriteSources.set(durable, session)
     acknowledgeSession(durable)
     return durable
   }
@@ -856,10 +941,15 @@ const createOrderedSessionPersistence = (
     target: string,
     task: LatestSessionSaveTask,
     options?: SaveSessionOptions,
-    streaming?: boolean
+    streaming?: boolean,
+    receiptRepair = false
   ): Promise<PersistedChatSession> => {
     const pending = pendingLatestByTarget.get(target)
     if (pending?.promise) {
+      // A derived body repair must not discard an unsaved local edit or terminal snapshot.
+      // That pending task will rebase against the newest authority when it actually runs.
+      if (receiptRepair && !pending.receiptRepair) return pending.promise
+      pending.receiptRepair = receiptRepair
       pending.task = task
       pending.options = mergeSaveSessionOptions(pending.options, options)
       if (pending.streaming && !streaming) {
@@ -876,6 +966,7 @@ const createOrderedSessionPersistence = (
       task,
       options,
       streaming,
+      receiptRepair,
       generation: hydrationGeneration
     }
     const runTask = async (): Promise<PersistedChatSession> => {
@@ -911,12 +1002,12 @@ const createOrderedSessionPersistence = (
       }
       for (const session of sessions) {
         acknowledgedRevisions.set(session.id, sessionRevision(session))
-        acknowledgedSessions.set(session.id, structuredClone(session))
+        acknowledgedSessions.set(session.id, cloneSessionReceipt(session))
       }
     },
     getAcknowledgedSession: (sessionId) => {
       const session = acknowledgedSessions.get(sessionId)
-      return session ? structuredClone(session) : undefined
+      return session ? cloneSessionReceipt(session) : undefined
     },
     releaseAcknowledgedSessionBody: (sessionId) => {
       if (pendingWriteCount > 0 || failedWritesByTarget.has(`session:${sessionId}`)) return false
@@ -928,18 +1019,25 @@ const createOrderedSessionPersistence = (
     clearWriteFailures: () => failedWritesByTarget.clear(),
     saveSession: (session, options) =>
       enqueue(`session:${session.id}`, () => saveSubmittedSession(session, options)),
-    saveSessionWithRecovery: (session, options, recover) =>
+    saveSessionWithRecovery: (session, options, recover, queued) =>
       enqueue(`session:${session.id}`, async () => {
-        const submitted = structuredClone(session)
+        const submitted = structuredClone(queued ? queued.prepare() : session)
         submitted.revision = Math.max(
           sessionRevision(submitted),
           acknowledgedRevisions.get(submitted.id) ?? 0
         )
+        let durable: PersistedChatSession
         try {
-          return await saveSubmittedSession(submitted, options)
+          durable = await saveSubmittedSession(submitted, options)
         } catch (error) {
-          return recover(error, submitted, saveSubmittedSession)
+          durable = await recover(error, submitted, saveSubmittedSession)
         }
+        // Publish the original source, including across recovery retries, before releasing
+        // the next save. The Store callback may refine it to its unrebased local snapshot.
+        sessionWriteSources.set(durable, session)
+        queued?.onSaved?.(durable)
+        acknowledgeSession(durable)
+        return durable
       }),
     saveManifest: (request) => enqueue('manifest', () => api.saveManifest(request)),
     flush: async () => {
@@ -985,13 +1083,13 @@ const saveSessionInOrder = async (
   api: SessionReadApi = window.api.sessions
 ): Promise<PersistedChatSession> => {
   const target = `session:${session.id}`
+  let base = persistence.getAcknowledgedSession(session.id)
   try {
     const durable = await persistence.saveSessionWithRecovery(
       session,
       undefined,
       async (error, submitted, retry) => {
         if (!isSessionRevisionConflictError(error)) throw error
-        const base = persistence.getAcknowledgedSession(submitted.id)
         if (!base) throw error
         return saveAfterSessionRevisionConflict(
           error,
@@ -1007,6 +1105,20 @@ const saveSessionInOrder = async (
             ),
           retry
         )
+      },
+      {
+        prepare: () => {
+          const latest = persistence.getAcknowledgedSession(session.id)
+          // First materialization may be admitted before the creating write finishes. Its
+          // original source, not its enriched receipt, is the only proven editing baseline.
+          if (!base && latest) base = sessionWriteSources.get(latest)
+          if (!base || !latest || sessionRevision(latest) <= sessionRevision(base)) return session
+          const rebased = rebaseSessionAfterRevisionConflict(base, session, latest)
+          if (!rebased)
+            throw new SessionRevisionConflictError(sessionRevision(base), sessionRevision(latest))
+          base = latest
+          return rebased
+        }
       }
     )
     unresolvedSessionRevisionConflictTargets.delete(target)
@@ -1548,6 +1660,30 @@ const createStoreSaver = (
       .filter((session) => session.contentLoaded !== false)
       .map((session) => [session.id, toPersistedSession(session)])
   )
+  // The source of our preceding successful write is the editing baseline for snapshots queued
+  // behind it. Its receipt may also contain concurrent remote changes that those snapshots never saw.
+  const completedLocalWrites = new Map<string, PersistedChatSession>()
+  const acknowledge = (
+    durable: PersistedChatSession,
+    localSnapshot?: PersistedChatSession
+  ): void => {
+    if (localSnapshot) {
+      completedLocalWrites.set(durable.id, localSnapshot)
+      sessionWriteSources.set(durable, localSnapshot)
+    }
+    const previous = acknowledgedSessions.get(durable.id)
+    acknowledgedRevisions.set(
+      durable.id,
+      Math.max(acknowledgedRevisions.get(durable.id) ?? 0, sessionRevision(durable))
+    )
+    if (
+      !previous ||
+      sessionRevision(durable) > sessionRevision(previous) ||
+      (sessionRevision(durable) === sessionRevision(previous) &&
+        durable.updatedAt >= previous.updatedAt)
+    )
+      acknowledgedSessions.set(durable.id, durable)
+  }
   persistence.seedAcknowledgedSessions([...acknowledgedSessions.values()])
   // Keep an explicit local selection until its own receipt; a queued runtime update can coalesce
   // with that save, and an older receipt must not clear a newer navigation intent.
@@ -1659,8 +1795,7 @@ const createStoreSaver = (
                 const durable = coalescedOptions
                   ? await api.saveSession(candidate, coalescedOptions)
                   : await api.saveSession(candidate)
-                acknowledgedRevisions.set(session.id, sessionRevision(durable))
-                acknowledgedSessions.set(session.id, durable)
+                acknowledge(durable, candidate)
                 useSessionStore.getState().upsertPersistedSession(durable)
                 return durable
               },
@@ -1672,20 +1807,12 @@ const createStoreSaver = (
       const authority = isExternallyHydratedSession(session)
         ? getExternallyHydratedSessionAuthority(session)
         : undefined
-      if (authority) {
-        const previousAuthority = acknowledgedSessions.get(session.id)
-        const authorityIsNewer =
-          !previousAuthority ||
-          sessionRevision(authority) > sessionRevision(previousAuthority) ||
-          (sessionRevision(authority) === sessionRevision(previousAuthority) &&
-            authority.updatedAt >= previousAuthority.updatedAt)
-        acknowledgedRevisions.set(
-          session.id,
-          Math.max(acknowledgedRevisions.get(session.id) ?? 0, sessionRevision(authority))
-        )
-        if (authorityIsNewer) acknowledgedSessions.set(session.id, authority)
-      }
+      if (authority) acknowledge(authority)
 
+      // A newer receipt may acknowledge only an older prefix of a completed reply. The
+      // projection retains its proven local body after releasing the stream cache; persist
+      // that repair even though the receipt also supplies the new durable revision.
+      const hasUnsavedAgentText = hasUnsavedAgentMessageText(session)
       const hasUnsavedLocalTitle =
         session.unsavedTitle === true && Boolean(authority && session.title !== authority.title)
       const rootBranchId = selectedRootBranchId(session)
@@ -1723,6 +1850,7 @@ const createStoreSaver = (
         previousSession !== session &&
         !isForced &&
         !hasUnsavedLocalTitle &&
+        !hasUnsavedAgentText &&
         !(authority && hasUnsavedContextReset) &&
         !streamingDirtySessionIds.has(session.id) &&
         shallow(
@@ -1740,6 +1868,7 @@ const createStoreSaver = (
           streamingDirtySessionIds.has(session.id) ||
           !isExternallyHydratedSession(session) ||
           hasUnsavedLocalTitle ||
+          hasUnsavedAgentText ||
           hasUnsavedContextReset) &&
         !hasStagedUploads(session) &&
         // A terminal graph-integrity failure keeps the renderer responsive, but the flat projection
@@ -1761,6 +1890,17 @@ const createStoreSaver = (
 
         const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
         const sourceAuthority = acknowledgedSessions.get(session.id)
+        const receiptRepair = Boolean(
+          authority &&
+          hasUnsavedAgentText &&
+          !hasUnsavedLocalTitle &&
+          !hasUnsavedContextReset &&
+          !selectionIntent &&
+          !(previousSession === session && streamingDirtySessionIds.has(session.id)) &&
+          !options?.conflictRebaseFieldsByTarget?.get(target)?.length
+        )
+        const priorLocalWrite = completedLocalWrites.get(session.id)
+        let localSnapshot: PersistedChatSession | undefined
         let submittedAuthority = sourceAuthority
         const serializeSession = (): PersistedChatSession => {
           let persisted = toPersistedSession(session, nextStreamingMessages)
@@ -1785,28 +1925,36 @@ const createStoreSaver = (
               branchContextResetRequired: sourceAuthority?.branchContextResetRequired
             }
           }
-          // A passive queued snapshot can predate a remotely created Branch. Rebase its changes
-          // before using a newer revision. Explicit navigation already selects the intended Branch.
-          submittedAuthority = acknowledgedSessions.get(session.id)
+          // A queued snapshot must be rebased before borrowing a newer revision, even on the
+          // same Branch. Use our preceding write's original source when it completed meanwhile:
+          // local A -> B -> C edits are ordered, while additions in B's receipt are concurrent.
+          localSnapshot = persisted
+          const orderedAuthority = persistence.getAcknowledgedSession(session.id)
+          const knownAuthority = acknowledgedSessions.get(session.id)
           if (
-            !selectionIntent &&
-            sourceAuthority &&
-            submittedAuthority &&
-            selectedRootBranchId(sourceAuthority) !== selectedRootBranchId(submittedAuthority)
-          ) {
-            const rebased = rebaseSessionAfterRevisionConflict(
-              sourceAuthority,
-              persisted,
-              submittedAuthority
-            )
+            orderedAuthority &&
+            (!knownAuthority || sessionRevision(orderedAuthority) > sessionRevision(knownAuthority))
+          )
+            acknowledge(orderedAuthority)
+          const completedWrite = completedLocalWrites.get(session.id)
+          // A receipt repair changes only its authority's body. It is not the next local
+          // edit after a preceding write, even if a forced-save barrier separated the tasks.
+          const base =
+            !receiptRepair && completedWrite !== priorLocalWrite ? completedWrite : sourceAuthority
+          submittedAuthority = acknowledgedSessions.get(session.id)
+          if (!selectionIntent && base && submittedAuthority && base !== submittedAuthority) {
+            const rebased = rebaseSessionAfterRevisionConflict(base, persisted, submittedAuthority)
             if (!rebased) {
               throw new SessionRevisionConflictError(
-                sessionRevision(sourceAuthority),
+                sessionRevision(base),
                 sessionRevision(submittedAuthority)
               )
             }
+            // Main owns generated details, but an explicitly queued rename still owns its title.
+            if (conflictRebaseFields.includes('title')) rebased.title = persisted.title
             persisted = rebased
           }
+          persisted.revision = acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
           return persisted
         }
 
@@ -1835,13 +1983,10 @@ const createStoreSaver = (
           failureContext: { conflictRebaseFields },
           run: isForced
             ? async () => {
-                const persisted = observePersistencePhase('session-serialize', serializeSession)
-                persisted.revision =
-                  acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
-                let durableSession: PersistedChatSession
+                const persisted = toPersistedSession(session, nextStreamingMessages)
                 let recoveredRevisionConflict = false
                 try {
-                  durableSession = await persistence.saveSessionWithRecovery(
+                  await persistence.saveSessionWithRecovery(
                     persisted,
                     saveOptions,
                     async (error, submitted, retry) => {
@@ -1854,17 +1999,25 @@ const createStoreSaver = (
                       )
                       recoveredRevisionConflict = true
                       return recovered
+                    },
+                    {
+                      prepare: () => observePersistencePhase('session-serialize', serializeSession),
+                      onSaved: (durableSession) => {
+                        acknowledge(durableSession, localSnapshot)
+                        observePersistencePhase('session-apply-durable', () =>
+                          applyDurableSession(
+                            durableSession,
+                            saveOptions,
+                            recoveredRevisionConflict
+                          )
+                        )
+                      }
                     }
                   )
                 } catch (finalError) {
                   reportPersistenceError(finalError, 'session-save')
                   throw finalError
                 }
-                acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
-                acknowledgedSessions.set(session.id, durableSession)
-                observePersistencePhase('session-apply-durable', () =>
-                  applyDurableSession(durableSession, saveOptions, recoveredRevisionConflict)
-                )
               }
             : () =>
                 persistence.saveLatestSession(
@@ -1894,8 +2047,7 @@ const createStoreSaver = (
                         throw finalError
                       }
                     }
-                    acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
-                    acknowledgedSessions.set(session.id, durableSession)
+                    acknowledge(durableSession, localSnapshot)
                     observePersistencePhase('session-apply-durable', () =>
                       applyDurableSession(
                         durableSession,
@@ -1908,7 +2060,8 @@ const createStoreSaver = (
                   saveOptions,
                   // In-flight turns flush intermediate snapshots at the relaxed streaming cadence;
                   // the terminal commit (streaming slice empty again) reverts to the normal one.
-                  streamingSessionIds.has(session.id)
+                  streamingSessionIds.has(session.id),
+                  receiptRepair
                 )
         })
       }
@@ -1941,6 +2094,9 @@ const createStoreSaver = (
       }
     }
 
+    for (const id of completedLocalWrites.keys()) {
+      if (!nextById.has(id)) completedLocalWrites.delete(id)
+    }
     for (const id of pendingBranchSelections.keys()) {
       if (!nextById.has(id)) pendingBranchSelections.delete(id)
     }
@@ -1975,6 +2131,7 @@ const createStoreSaver = (
     )
       return false
     acknowledgedSessions.delete(source.id)
+    completedLocalWrites.delete(source.id)
     // Change the diff baseline before publishing the summary. Unloading is not a metadata edit
     // and must not enqueue a save which loads the same body straight back into the store.
     previousSessions = current.sessions.map((session) => (session === source ? summary : session))

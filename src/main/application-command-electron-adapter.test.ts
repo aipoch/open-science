@@ -56,6 +56,7 @@ const validatedChannels = [
   'pdf-structure:parse',
   'pdf-structure:read-cached',
   'pdf-structure:read-thumbnail',
+  'pending-inputs:execute',
   'projects:create',
   'projects:delete',
   'projects:get',

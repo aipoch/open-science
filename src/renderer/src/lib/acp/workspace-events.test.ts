@@ -157,6 +157,81 @@ describe('workspace runtime events', () => {
     (['claude-code', 'opencode', 'codex-response', 'codex-bridge'] as const).flatMap((target) =>
       (['single', 'batch'] as const).map((path) => ({ target, path }))
     )
+  )('loads an unseen $target prompt before its reply through $path', async ({ target, path }) => {
+    const remote: ReturnType<typeof toPersistedSession> = {
+      ...toPersistedSession(useSessionStore.getState().sessions[0]),
+      revision: 1,
+      agentFrameworkId: target === 'codex-response' || target === 'codex-bridge' ? 'codex' : target
+    }
+    const promptMessageId = remote.messages[0].id
+    const empty = structuredClone(remote)
+    empty.revision = 0
+    empty.messages = []
+    delete empty.activeRun
+    empty.conversationGraph!.messages = []
+    for (const branch of empty.conversationGraph!.branches) delete branch.headMessageId
+    useSessionStore.getState().hydrateSessions([empty])
+    const loadOne = vi.fn().mockResolvedValue(remote)
+    vi.stubGlobal('window', { api: { sessions: { loadOne } } })
+    const event = createEvent({
+      role: 'assistant',
+      messageId: 'remote-reply',
+      promptMessageId,
+      text: 'one '
+    })
+    if (path === 'single') await applyWorkspaceRuntimeEvent(event)
+    else await applyWorkspaceRuntimeEventBatch([event])
+    // The normal lifecycle subscription arrives after the runtime event.
+    useSessionStore.getState().upsertPersistedSession({ ...remote, revision: 2 })
+    await applyWorkspaceRuntimeEvent({ ...event, id: 'next', text: 'two' })
+    const state = useSessionStore.getState()
+    const persisted = toPersistedSession(state.sessions[0], state.streamingMessages)
+    expect(persisted.messages.at(-1)?.content).toBe('one two')
+    expect(persisted.messages[0].id).toBe(promptMessageId)
+    expect(loadOne).toHaveBeenCalledOnce()
+  })
+
+  it.each(['unavailable', 'stale', 'deleted'] as const)(
+    'does not append an unseen prompt reply when its load is %s',
+    async (outcome) => {
+      const remote = { ...toPersistedSession(useSessionStore.getState().sessions[0]), revision: 1 }
+      const promptMessageId = remote.messages[0].id
+      const empty = structuredClone(remote)
+      empty.messages = []
+      delete empty.activeRun
+      empty.conversationGraph!.messages = []
+      for (const branch of empty.conversationGraph!.branches) delete branch.headMessageId
+      empty.updatedAt += 100
+      useSessionStore.getState().hydrateSessions([empty])
+      const loadOne = vi.fn(async () => {
+        if (outcome === 'deleted') useSessionStore.getState().deleteSession(empty.id)
+        return outcome === 'unavailable' ? empty : remote
+      })
+      vi.stubGlobal('window', { api: { sessions: { loadOne } } })
+      const pending = applyWorkspaceRuntimeEvent(
+        createEvent({ role: 'assistant', promptMessageId, text: 'Do not orphan this reply' })
+      )
+      if (outcome === 'deleted') {
+        await pending
+        expect(useSessionStore.getState().sessions).toEqual([])
+      } else {
+        await expect(pending).rejects.toThrow(/Runtime prompt/)
+        expect(useSessionStore.getState().sessions[0].messages).toEqual([])
+        if (outcome === 'unavailable') {
+          loadOne.mockResolvedValue({ ...remote, revision: 2 })
+          await applyWorkspaceRuntimeEvent(
+            createEvent({ role: 'assistant', promptMessageId, text: 'Recovered' })
+          )
+          expect(useSessionStore.getState().sessions[0].messages.at(-1)?.content).toBe('Recovered')
+        }
+      }
+    }
+  )
+
+  it.each(
+    (['claude-code', 'opencode', 'codex-response', 'codex-bridge'] as const).flatMap((target) =>
+      (['single', 'batch'] as const).map((path) => ({ target, path }))
+    )
   )(
     'loads a summarized $target session before applying a restored reply through the $path path',
     async ({ target, path }) => {

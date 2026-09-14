@@ -103,7 +103,7 @@ const ComposerMessageQueueTrigger = ({
       data-testid="composer-queue-trigger"
     >
       <ListOrdered className="size-3.5" strokeWidth={2} aria-hidden="true" />
-      {t('Queue ({{count}}) · Not saved', { count: items.length })}
+      {t('Queue ({{count}})', { count: items.length })}
       <ChevronDown
         className={cn(
           'size-3.5 transition-transform duration-150 ease-out motion-reduce:transition-none',
@@ -273,7 +273,16 @@ const ComposerMessageQueueContent = ({
                         {t('Attachments: {{count}}', { count: item.attachmentCount })}
                       </p>
                     ) : null}
-                    {item.error ? (
+                    {item.phase === 'recovery-required' ? (
+                      <p
+                        className="mt-0.5 text-[11px] leading-4 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                        role="status"
+                      >
+                        {t(
+                          'Recovered message. Review before sending; an interrupted send may already have reached the agent.'
+                        )}
+                      </p>
+                    ) : item.error ? (
                       <p className="mt-0.5 text-[11px] leading-4 text-red-400" role="alert">
                         {queueErrorText(t, item.error)}
                       </p>
@@ -295,7 +304,9 @@ const ComposerMessageQueueContent = ({
                           ? t('Stopping…')
                           : item.phase === 'sending'
                             ? t('Sending…')
-                            : t('Send now')
+                            : item.phase === 'recovery-required'
+                              ? t('Resume sending')
+                              : t('Send now')
                       }
                       onClick={() => void actions.sendNow(item.id)}
                     >
@@ -312,7 +323,9 @@ const ComposerMessageQueueContent = ({
                           ? t('Stopping…')
                           : item.phase === 'sending'
                             ? t('Sending…')
-                            : t('Send now')}
+                            : item.phase === 'recovery-required'
+                              ? t('Resume sending')
+                              : t('Send now')}
                       </span>
                     </button>
                     <button

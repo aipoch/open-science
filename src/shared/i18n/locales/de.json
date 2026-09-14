@@ -114,7 +114,11 @@
     "Session package operation in progress": "Sitzungspaketvorgang läuft",
     "Temporary files could not be removed. Try cleanup again.": "Temporäre Dateien konnten nicht entfernt werden. Wiederholen Sie die Bereinigung.",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "Der Vorgang mit dem Sitzungspaket konnte nicht abgeschlossen werden. Prüfen Sie das Paket und den freien Speicherplatz und versuchen Sie es erneut.",
-    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Das ursprüngliche Paket ist nicht verfügbar. Es wurde möglicherweise verschoben, gelöscht oder ist nicht mehr lesbar. Wählen Sie ein anderes Paket."
+    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Das ursprüngliche Paket ist nicht verfügbar. Es wurde möglicherweise verschoben, gelöscht oder ist nicht mehr lesbar. Wählen Sie ein anderes Paket.",
+    "Show startup logs": "Startprotokolle anzeigen",
+    "Quit application": "Anwendung beenden",
+    "The desktop bridge failed to load. Reload the window to try again, or open the startup logs for diagnostics. Background work may still be running.": "Die Desktop-Brücke konnte nicht geladen werden. Laden Sie das Fenster erneut, oder öffnen Sie die Startprotokolle zur Diagnose. Hintergrundaufgaben laufen möglicherweise noch.",
+    "The app window could not initialize.": "Das Anwendungsfenster konnte nicht initialisiert werden."
   },
   "renderer": {
     "Old Shell launch records are blocking this update.": "Alte Startaufzeichnungen der Befehlszeile blockieren dieses Update.",
@@ -3527,8 +3531,6 @@
     "Retry project recovery before deleting projects.": "Versuchen Sie die Projektwiederherstellung erneut, bevor Sie Projekte löschen.",
     "Finish or stop active sessions before archiving this project.": "Beenden oder beenden Sie aktive Sitzungen, bevor Sie dieses Projekt archivieren.",
     "Message queue": "Nachrichtenwarteschlange",
-    "Queue ({{count}}) · Not saved_one": "Warteschlange ({{count}}) · Nicht gespeichert",
-    "Queue ({{count}}) · Not saved_other": "Warteschlange ({{count}}) · Nicht gespeichert",
     "Attachment message": "Anhangsnachricht",
     "Reorder queued message {{index}}": "Neuordnung der Nachricht in der Warteschlange {{index}}",
     "Drag or use arrow keys to reorder": "Ziehen Sie oder verwenden Sie die Pfeiltasten, um die Reihenfolge neu anzuordnen",
@@ -5981,6 +5983,10 @@
     "No bookmarks yet.": "Noch keine Lesezeichen.",
     "Bookmark note": "Lesezeichennotiz",
     "Bookmarks ({{count}})_one": "Lesezeichen ({{count}})",
-    "The exact bookmark location could not be found.": "Die genaue Position des Lesezeichens wurde nicht gefunden."
+    "The exact bookmark location could not be found.": "Die genaue Position des Lesezeichens wurde nicht gefunden.",
+    "Queue ({{count}})_other": "Warteschlange ({{count}})",
+    "Queue ({{count}})_one": "Warteschlange ({{count}})",
+    "Resume sending": "Senden fortsetzen",
+    "Recovered message. Review before sending; an interrupted send may already have reached the agent.": "Wiederhergestellte Nachricht. Vor dem Senden prüfen; die unterbrochene Übertragung hat den Agenten möglicherweise bereits erreicht."
   }
 }

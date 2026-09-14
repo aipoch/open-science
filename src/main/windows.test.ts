@@ -22,6 +22,8 @@ const {
   ipcMainRemoveListenerMock,
   showMessageBoxMock,
   showMessageBoxSyncMock,
+  openLogFileMock,
+  quitMock,
   webFrameMainFromIdMock
 } = vi.hoisted(() => ({
   openExternalMock: vi.fn(async () => undefined),
@@ -29,6 +31,8 @@ const {
   ipcMainRemoveListenerMock: vi.fn(),
   showMessageBoxMock: vi.fn(),
   showMessageBoxSyncMock: vi.fn(),
+  openLogFileMock: vi.fn(async () => ({ opened: true })),
+  quitMock: vi.fn(),
   webFrameMainFromIdMock: vi.fn()
 }))
 
@@ -43,6 +47,9 @@ const { windowLogSpies } = vi.hoisted(() => ({
 vi.mock('./logger', () => ({
   createLogger: () => windowLogSpies,
   diagnosticErrorFields: () => ({ errorCategory: 'error' })
+}))
+vi.mock('./logs-ipc', () => ({
+  createLogsCommandOwner: () => ({ openFile: openLogFileMock })
 }))
 
 // The overlay manager is a collaborator with its own deep test suite; here we only need to observe
@@ -206,7 +213,7 @@ class FakeBrowserWindow {
 
 vi.mock('electron', () => ({
   // isPackaged=true skips the dev title-suffix branch, keeping the fake focused on the open + close handlers.
-  app: { isPackaged: true, getAppPath: () => '/app' },
+  app: { isPackaged: true, getAppPath: () => '/app', quit: quitMock },
   BrowserWindow: class {
     constructor(options: BrowserWindowConstructorOptions) {
       lastWindowOptions = options
@@ -1649,6 +1656,70 @@ describe('close chord interception', () => {
     })
     expect(JSON.stringify(windowLogSpies.error.mock.calls)).not.toContain('private-preload')
     expect(JSON.stringify(windowLogSpies.error.mock.calls)).not.toContain('secret from local data')
+  })
+
+  it('shows one native recovery prompt for repeated preload failures and waits for user reload', async () => {
+    let choose!: (result: { response: number }) => void
+    showMessageBoxMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        choose = resolve
+      })
+    )
+    createMainWindow()
+    const window = currentWindow!
+    for (let attempt = 0; attempt < 3; attempt++) {
+      fireWebContentsEvent(window, 'preload-error', {}, '/private/preload.js', new Error('private'))
+      fireWebContentsEvent(window, 'render-process-gone', {}, { reason: 'crashed', exitCode: 1 })
+    }
+    expect(window.showMock).toHaveBeenCalledOnce()
+    expect(showMessageBoxMock).toHaveBeenCalledExactlyOnceWith(
+      window,
+      expect.objectContaining({
+        buttons: ['Reload', 'Show startup logs', 'Quit application'],
+        cancelId: 2,
+        message: 'The app window could not initialize.'
+      })
+    )
+    expect(window.loadFileMock).toHaveBeenCalledTimes(1)
+    choose({ response: 0 })
+    await vi.waitFor(() => expect(window.loadFileMock).toHaveBeenCalledTimes(2))
+  })
+
+  it('reopens recovery after viewing startup logs and routes quit through the lifecycle', async () => {
+    const requestQuit = vi.fn()
+    showMessageBoxMock.mockResolvedValueOnce({ response: 1 }).mockResolvedValueOnce({ response: 2 })
+    createMainWindow({
+      classifyClose: () => 'hide',
+      resolveCloseAction: async () => 'minimize',
+      requestQuit
+    })
+    const window = currentWindow!
+    fireWebContentsEvent(window, 'preload-error', {}, '/private/preload.js', new Error('private'))
+    await vi.waitFor(() => expect(requestQuit).toHaveBeenCalledWith(false))
+    expect(openLogFileMock).toHaveBeenCalled()
+    expect(showMessageBoxMock).toHaveBeenCalledTimes(2)
+    expect(window.destroyMock).not.toHaveBeenCalled()
+    expect(window.loadFileMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps native recovery available when the initial document also rejects', async () => {
+    let rejectLoad!: (error: Error) => void
+    loadRendererDocument = () =>
+      new Promise((_resolve, reject) => {
+        rejectLoad = reject
+      })
+    showMessageBoxMock.mockReturnValueOnce(new Promise(() => {}))
+    createMainWindow()
+    const window = currentWindow!
+    fireWebContentsEvent(window, 'preload-error', {}, '/preload.js', new Error('preload'))
+    rejectLoad(new Error('document'))
+    await vi.waitFor(() =>
+      expect(windowLogSpies.error).toHaveBeenCalledWith('renderer document load rejected', {
+        errorName: 'Error'
+      })
+    )
+    expect(window.destroyMock).not.toHaveBeenCalled()
+    expect(showMessageBoxMock).toHaveBeenCalledOnce()
   })
 
   it('reloads the safe renderer entry after an unexpected renderer exit', () => {

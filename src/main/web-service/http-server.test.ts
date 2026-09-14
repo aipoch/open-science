@@ -1375,6 +1375,66 @@ describe('startWebHttpServer', () => {
     publicSocket.close()
   })
 
+  it('bounds an actual paused event consumer without mocking socket bufferedAmount', async () => {
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      tasks: {
+        subscribeProgress: () => () => undefined,
+        resolveActiveRun: (sessionId: string) =>
+          sessionId === 'session-1'
+            ? { runId: 'run-1', sessionId, projectId: 'project-1' }
+            : undefined
+      } as never,
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const socket = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/events?token=test-token`)
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve)
+      socket.once('error', reject)
+    })
+    socket.pause()
+    const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()))
+    try {
+      // Exceed the production bound using ordinary individual frames while the client cannot
+      // drain its socket. Keep the burst in one turn so kernel scheduling cannot hide backlog.
+      const text = 'x'.repeat(512 * 1024)
+      for (let sequence = 0; sequence < 64; sequence++) {
+        applicationEvents.publish('acp:event', [
+          {
+            id: `pressure-${sequence}`,
+            timestamp: sequence,
+            level: 'info',
+            sessionId: 'session-1',
+            kind: 'message',
+            role: 'assistant',
+            text
+          }
+        ])
+      }
+      socket.resume()
+      await closed
+      expect(socket.readyState).toBe(WebSocket.CLOSED)
+    } finally {
+      socket.terminate()
+    }
+  })
+
   it('disconnects event sockets before their outgoing backlog exceeds the byte limit', async () => {
     const server = await startTestWebHttpServer({
       host: '127.0.0.1',

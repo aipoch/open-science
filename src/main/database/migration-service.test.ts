@@ -3,15 +3,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { PrismaClient } from '@prisma/client'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { literatureCandidateInputSchema } from '../../shared/literature'
 import { LiteratureCatalog } from '../literature/catalog'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { adaptMigrationOperationsForCurrentSchema } from './legacy-baseline-adapter'
+import * as baselineAdapter from './legacy-baseline-adapter'
+import { PendingInputOwner } from '../pending-input-owner'
 import { RUNTIME_SCHEMA_TABLE_DDL_BY_NAME } from './migrations/0001-runtime-schema-baseline'
 import { databaseJsonConstraintsMigration } from './migrations/0008-database-json-constraints'
 import { applySqliteMigrationOperations } from './sqlite-schema-migrations'
+import { migrationSqlExecutor } from './migration-sql-executor'
 import {
   BASELINE_CHECKSUM,
   MIGRATION_MANIFEST,
@@ -316,6 +319,243 @@ describe('application database migrations', () => {
     if (storageRoot) await rm(storageRoot, { force: true, recursive: true })
   })
 
+  const createPendingInputDraftDatabase = async (): Promise<string> => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'pending-input-draft-upgrade-'))
+    client = createProjectDbClient(storageRoot)
+    const pending = MIGRATION_MANIFEST.find(({ id }) => id === '0042_pending_input')!
+    const legacy = {
+      ...pending,
+      id: '0041_pending_input',
+      checksum: '5c83f05fb2b9c6d726b489ceedb4e8d1a3bf06ed484566492175ce5abab247f4'
+    }
+    expect(checksumMigrationPayload(legacy.id, legacy.statements, legacy.verifiers)).toBe(
+      legacy.checksum
+    )
+    await migrateApplicationDatabase(client)
+    await client.$executeRawUnsafe('DROP TABLE "bookmarks"')
+    await client.$executeRaw`DELETE FROM "_open_science_migrations" WHERE "id" = '0041_bookmarks'`
+    await client.$executeRaw`UPDATE "_open_science_migrations" SET "id" = ${legacy.id}, "checksum" = ${legacy.checksum} WHERE "id" = ${pending.id}`
+    await client.project.create({ data: { id: 'queued-project', name: 'Retained project' } })
+    const content = JSON.stringify({
+      schemaVersion: 1,
+      id: 'queued-input',
+      projectId: 'queued-project',
+      sessionId: 'queued-session',
+      agentFrameId: 'root',
+      messageBranchId: 'branch-1',
+      text: 'Retain this draft',
+      forcedSkillIds: [],
+      permissionProfile: 'ask',
+      snapshot: {
+        draftKey: 'queued-session',
+        version: 1,
+        doc: { nodes: [{ type: 'text', text: 'Retain this draft' }] },
+        annotations: [],
+        attachments: [
+          {
+            id: 'upload-1',
+            sessionId: 'queued-session',
+            name: 'notes.txt',
+            originalName: 'notes.txt',
+            size: 5,
+            versionId: 'version-1',
+            versionNumber: 1,
+            path: '/obsolete/upload/notes.txt',
+            checksum: 'old-checksum'
+          }
+        ]
+      }
+    })
+    await client.$executeRaw`
+      INSERT INTO "PendingInput" ("id", "projectId", "sessionId", "position", "revision", "phase", "content")
+      VALUES ('queued-input', 'queued-project', 'queued-session', 7, 3, 'recovery-required', ${content})
+    `
+    return content
+  }
+
+  it('bridges the checksum-pinned pending-input draft ledger without losing queued data', async () => {
+    const content = await createPendingInputDraftDatabase()
+    const database = client!
+    const before = await database.$queryRawUnsafe('SELECT * FROM "PendingInput"')
+    const result = await migrateApplicationDatabase(database)
+    expect(result).toEqual({
+      adoptedLegacy: false,
+      from: '0041_pending_input',
+      to: '0042_pending_input',
+      applied: ['0041_bookmarks', '0042_pending_input']
+    })
+    expect(await database.$queryRawUnsafe('SELECT * FROM "PendingInput"')).toEqual(before)
+    expect(await database.$queryRawUnsafe('SELECT "content" FROM "PendingInput"')).toEqual([
+      { content }
+    ])
+    expect(
+      await database.$queryRawUnsafe(
+        'SELECT "id", "checksum" FROM "_open_science_migrations" ORDER BY "id"'
+      )
+    ).toEqual(MIGRATION_MANIFEST.map(({ id, checksum }) => ({ id, checksum })))
+    expect(await database.$queryRawUnsafe('SELECT * FROM "bookmarks"')).toEqual([])
+    await expect(
+      access(join(storageRoot!, 'open-science.db.before-0041_bookmarks.backup'))
+    ).resolves.toBeUndefined()
+    await expect(migrateApplicationDatabase(database)).resolves.toMatchObject({ applied: [] })
+    const owner = new PendingInputOwner({
+      withWrite: (operation) => operation(),
+      getClient: async () => database,
+      withSessionMutation: async (_project, _session, operation) => operation(),
+      validateSession: async () => {},
+      publishAttachments: async (input) => input.snapshot.attachments,
+      changed: () => {}
+    })
+    try {
+      const recovered = await owner.execute(
+        { operation: 'list' },
+        {
+          leaseId: 'recovery-test',
+          generation: 1,
+          signal: new AbortController().signal,
+          isCurrent: () => true
+        }
+      )
+      expect(recovered.items).toMatchObject([
+        {
+          id: 'queued-input',
+          phase: 'recovery-required',
+          snapshot: {
+            attachments: [{ id: 'upload-1', versionId: 'version-1', sha256: 'old-checksum' }]
+          }
+        }
+      ])
+      expect(recovered.items[0].snapshot.attachments[0]).not.toHaveProperty('path')
+    } finally {
+      await owner.dispose()
+    }
+  })
+
+  it('runs a later schema-changing suffix after the pending-input draft bridge', async () => {
+    await createPendingInputDraftDatabase()
+    const database = client!
+    const future = {
+      ...futureTestMigration(),
+      id: '9997_pending_input_extension',
+      statements: ['ALTER TABLE "PendingInput" ADD COLUMN "futureNote" TEXT'],
+      verifiers: [
+        { kind: 'column-exists', version: 1, table: 'PendingInput', column: 'futureNote' }
+      ] as const
+    }
+    future.checksum = checksumMigrationPayload(future.id, future.statements, future.verifiers)
+    // Model the future generated validator: both whole-schema and table checks require the new
+    // column. The draft bridge must use its frozen contract before that suffix has run.
+    const requireFutureColumn = async (target: PrismaClient): Promise<void> => {
+      const columns = await target.$queryRawUnsafe<Array<{ name: string }>>(
+        'PRAGMA table_info("PendingInput")'
+      )
+      expect(columns.map(({ name }) => name)).toContain('futureNote')
+    }
+    const verifyAll = vi
+      .spyOn(baselineAdapter, 'verifyCurrentRuntimeSchema')
+      .mockImplementation(requireFutureColumn)
+    const verifyTables = vi
+      .spyOn(baselineAdapter, 'verifyCurrentRuntimeSchemaTables')
+      .mockImplementation(async (target, tables) => {
+        if (tables.includes('PendingInput')) await requireFutureColumn(target)
+      })
+    try {
+      await expect(
+        migrateApplicationDatabaseWithManifest(database, [...MIGRATION_MANIFEST, future])
+      ).resolves.toMatchObject({
+        applied: ['0041_bookmarks', '0042_pending_input', future.id]
+      })
+      expect(verifyAll).toHaveBeenCalledOnce()
+      expect(await database.$queryRawUnsafe('SELECT "futureNote" FROM "PendingInput"')).toEqual([
+        { futureNote: null }
+      ])
+    } finally {
+      verifyAll.mockRestore()
+      verifyTables.mockRestore()
+    }
+  })
+
+  it.each(['checksum', 'prefix', 'extra-entry', 'schema', 'index'] as const)(
+    'rejects an unproven pending-input draft %s without rewriting history',
+    async (corruption) => {
+      await createPendingInputDraftDatabase()
+      const database = client!
+      if (corruption === 'checksum' || corruption === 'prefix') {
+        const id =
+          corruption === 'checksum' ? '0041_pending_input' : '0040_literature_collection_revision'
+        await database.$executeRaw`UPDATE "_open_science_migrations" SET "checksum" = ${'0'.repeat(64)} WHERE "id" = ${id}`
+      } else if (corruption === 'extra-entry') {
+        await database.$executeRaw`INSERT INTO "_open_science_migrations" ("id", "checksum") VALUES ('0043_foreign', ${'0'.repeat(64)})`
+      } else if (corruption === 'index') {
+        await database.$executeRawUnsafe('DROP INDEX "PendingInput_projectId_idx"')
+      } else {
+        await database.$executeRawUnsafe('ALTER TABLE "PendingInput" ADD COLUMN "unowned" TEXT')
+      }
+      const ledger = await database.$queryRawUnsafe(
+        'SELECT * FROM "_open_science_migrations" ORDER BY "id"'
+      )
+      const queued = await database.$queryRawUnsafe('SELECT * FROM "PendingInput"')
+      await expect(migrateApplicationDatabase(database)).rejects.toMatchObject({
+        code:
+          corruption === 'schema' || corruption === 'index'
+            ? 'database_validation_failed'
+            : 'database_history_invalid'
+      })
+      expect(
+        await database.$queryRawUnsafe('SELECT * FROM "_open_science_migrations" ORDER BY "id"')
+      ).toEqual(ledger)
+      expect(await database.$queryRawUnsafe('SELECT * FROM "PendingInput"')).toEqual(queued)
+    }
+  )
+
+  it.each(['schema', 'ledger'] as const)(
+    'rolls back pending-input draft %s changes when the bridge cannot finish and retries safely',
+    async (stage) => {
+      await createPendingInputDraftDatabase()
+      const database = client!
+      const execute = migrationSqlExecutor.execute
+      const failure = vi
+        .spyOn(migrationSqlExecutor, 'execute')
+        .mockImplementation(async (target, sql, ...params) => {
+          if (
+            (stage === 'schema' && sql.startsWith('CREATE INDEX "bookmarks_')) ||
+            (stage === 'ledger' &&
+              sql.startsWith('CREATE TABLE IF NOT EXISTS "_open_science_migrations"'))
+          ) {
+            if (stage === 'ledger')
+              expect(
+                await target.$queryRawUnsafe(
+                  'SELECT id FROM "_open_science_migrations" WHERE id = \'0042_pending_input\''
+                )
+              ).toEqual([{ id: '0042_pending_input' }])
+            throw new Error('injected bridge failure')
+          }
+          return execute(target, sql, ...params)
+        })
+      const ledger = await database.$queryRawUnsafe(
+        'SELECT * FROM "_open_science_migrations" ORDER BY "id"'
+      )
+      const queued = await database.$queryRawUnsafe('SELECT * FROM "PendingInput"')
+      try {
+        await expect(migrateApplicationDatabase(database)).rejects.toMatchObject({
+          code: 'database_migration_failed'
+        })
+      } finally {
+        failure.mockRestore()
+      }
+      expect(
+        await database.$queryRawUnsafe('SELECT * FROM "_open_science_migrations" ORDER BY "id"')
+      ).toEqual(ledger)
+      expect(await database.$queryRawUnsafe('SELECT * FROM "PendingInput"')).toEqual(queued)
+      expect(
+        await database.$queryRawUnsafe("SELECT name FROM sqlite_schema WHERE name = 'bookmarks'")
+      ).toEqual([])
+      await expect(migrateApplicationDatabase(database)).resolves.toMatchObject({
+        applied: ['0041_bookmarks', '0042_pending_input']
+      })
+    }
+  )
+
   it('adds empty metadata commit receipts without inventing proof for historical references', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'literature-receipt-upgrade-'))
     client = createProjectDbClient(storageRoot)
@@ -332,25 +572,26 @@ describe('application database migrations', () => {
     const before = await client.literatureItem.findMany()
     await client.$executeRawUnsafe('DROP TABLE "LiteratureMetadataCommitReceipt"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE id IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks')`
+      `DELETE FROM "_open_science_migrations" WHERE id IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_pending_input')`
     )
     const ledger = await client.$queryRawUnsafe(
       'SELECT * FROM "_open_science_migrations" ORDER BY id'
     )
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       from: '0038_literature_search_text',
-      to: '0041_bookmarks',
+      to: '0042_pending_input',
       applied: [
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ]
     })
     expect(await client.literatureMetadataCommitReceipt.count()).toBe(0)
     expect(await client.literatureItem.findMany()).toEqual(before)
     expect(
       await client.$queryRawUnsafe(
-        `SELECT * FROM "_open_science_migrations" WHERE id NOT IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks') ORDER BY id`
+        `SELECT * FROM "_open_science_migrations" WHERE id NOT IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_pending_input') ORDER BY id`
       )
     ).toEqual(ledger)
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -698,10 +939,11 @@ describe('application database migrations', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ],
       from: null,
-      to: '0041_bookmarks'
+      to: '0042_pending_input'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -714,8 +956,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0041_bookmarks',
-      to: '0041_bookmarks'
+      from: '0042_pending_input',
+      to: '0042_pending_input'
     })
   })
 
@@ -748,10 +990,11 @@ describe('application database migrations', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ],
       from: '0033_compute_job_harvest_retry',
-      to: '0041_bookmarks'
+      to: '0042_pending_input'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -860,7 +1103,8 @@ describe('application database migrations', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ]
     })
     await expect(
@@ -955,7 +1199,8 @@ describe('application database migrations', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1000,7 +1245,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0041_bookmarks'
+      to: '0042_pending_input'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -1064,10 +1309,11 @@ describe('application database migrations', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0041_bookmarks'
+      to: '0042_pending_input'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -1159,10 +1405,11 @@ describe('application database migrations', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0041_bookmarks'
+      to: '0042_pending_input'
     })
     await expect(
       client.$queryRaw<
@@ -1285,7 +1532,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0041_bookmarks'
+      migrationId: '0042_pending_input'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -1302,7 +1549,7 @@ describe('application database migrations', () => {
     ).resolves.toEqual({
       adoptedLegacy: false,
       applied: ['9997_test_suffix'],
-      from: '0041_bookmarks',
+      from: '0042_pending_input',
       to: '9997_test_suffix'
     })
     await expect(
@@ -1351,6 +1598,7 @@ describe('application database migrations', () => {
       { id: '0039_literature_metadata_commit_receipt' },
       { id: '0040_literature_collection_revision' },
       { id: '0041_bookmarks' },
+      { id: '0042_pending_input' },
       { id: '9997_test_suffix' }
     ])
   })
@@ -1444,10 +1692,11 @@ describe('application database migrations', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0041_bookmarks'
+      to: '0042_pending_input'
     })
     expect(backupEvents).toEqual([
       {
@@ -1542,7 +1791,8 @@ describe('application database migrations', () => {
       { id: '0038_literature_search_text' },
       { id: '0039_literature_metadata_commit_receipt' },
       { id: '0040_literature_collection_revision' },
-      { id: '0041_bookmarks' }
+      { id: '0041_bookmarks' },
+      { id: '0042_pending_input' }
     ])
   })
 
@@ -1677,6 +1927,7 @@ describe('application database migrations', () => {
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
         '0041_bookmarks',
+        '0042_pending_input',
         '9997_test_suffix'
       ],
       to: '9997_test_suffix'
@@ -1814,7 +2065,7 @@ describe('application database migrations', () => {
       adoptedLegacy: false,
       applied: MIGRATION_MANIFEST.slice(computePasswordAuthIndex).map(({ id }) => id),
       from: '0009_vision_evidence',
-      to: '0041_bookmarks'
+      to: '0042_pending_input'
     })
     await expect(
       client.$queryRaw<Array<{ projectId: string }>>`
@@ -1943,7 +2194,8 @@ describe('application database migrations', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ]
     })
     await expect(
@@ -2081,7 +2333,8 @@ describe('application database migrations', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -2171,7 +2424,8 @@ describe('application database migrations', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ]
     })
     await expect(
@@ -2264,7 +2518,8 @@ describe('application database migrations', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ]
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
@@ -2391,7 +2646,8 @@ describe('application database migrations', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ]
     })
     await expect(
@@ -2914,8 +3170,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0040_literature_collection_revision.backup',
       'open-science.db.before-0041_bookmarks.backup',
+      'open-science.db.before-0042_pending_input.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
@@ -3225,10 +3481,11 @@ describe('application database migrations', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0041_bookmarks'
+      to: '0042_pending_input'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ currentVersionId: string | null }>>(
@@ -3287,7 +3544,7 @@ describe('application database migrations', () => {
         MIGRATION_MANIFEST.findIndex(({ id }) => id === '0009_vision_evidence')
       ).map(({ id }) => id),
       from: '0008_database_json_constraints',
-      to: '0041_bookmarks'
+      to: '0042_pending_input'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -3360,10 +3617,11 @@ describe('application database migrations', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_pending_input'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0041_bookmarks'
+      to: '0042_pending_input'
     })
     await expect(
       client.$queryRaw<Array<{ uploadVersionId: string }>>`

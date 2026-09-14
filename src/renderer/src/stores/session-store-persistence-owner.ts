@@ -5,8 +5,16 @@ import type {
   ToolKind
 } from '@agentclientprotocol/sdk'
 import type { StoreApi } from 'zustand'
+import {
+  projectConversationMessage,
+  resolveActiveConversationMessages
+} from '../../../shared/conversation-graph'
 
-import type { ElicitationProjection, ElicitationValue } from '../../../shared/acp'
+import {
+  MAX_ACP_RUNTIME_EVENTS,
+  type ElicitationProjection,
+  type ElicitationValue
+} from '../../../shared/acp'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
 import type { PermissionProfileId } from '../../../shared/permission-profiles'
@@ -14,6 +22,7 @@ import {
   INTERRUPTED_SESSION_ERROR,
   materializeSessionConversationGraph,
   normalizeDelegationPolicy,
+  retainRecentSessionEventIds,
   sanitizeActivityGroup,
   sanitizePlanHistoryProjections,
   sessionRevision,
@@ -291,6 +300,140 @@ export const pruneStreamingMessageContent = (
   const next = { ...streamingMessages }
   for (const key of keys) delete next[key]
   return next
+}
+
+export const isStreamedMessageExtension = (
+  prefix: Pick<ChatMessage, 'content' | 'eventIds'>,
+  message: Pick<ChatMessage, 'content' | 'eventIds' | 'status'>
+): boolean => {
+  const extendsPrefix =
+    message.eventIds.length > prefix.eventIds.length &&
+    prefix.eventIds.every((id, index) => message.eventIds[index] === id)
+  // Completed text can keep its retained replay suffix after a stale streaming receipt.
+  // Prove the overlap is ordered
+  // and the candidate is exactly the existing retention policy's result before advancing.
+  const overlapEnd = message.eventIds.indexOf(prefix.eventIds.at(-1) ?? '')
+  const retainedIds =
+    overlapEnd < 0
+      ? []
+      : retainRecentSessionEventIds([...prefix.eventIds, ...message.eventIds.slice(overlapEnd + 1)])
+  const extendsRetainedSuffix =
+    overlapEnd >= 0 &&
+    message.content.startsWith(prefix.content) &&
+    (overlapEnd < message.eventIds.length - 1 ||
+      (message.content === prefix.content && message.eventIds.length < prefix.eventIds.length)) &&
+    message.eventIds
+      .slice(0, overlapEnd + 1)
+      .every(
+        (id, index) => prefix.eventIds[prefix.eventIds.length - overlapEnd - 1 + index] === id
+      ) &&
+    retainedIds.length === message.eventIds.length &&
+    retainedIds.every((id, index) => message.eventIds[index] === id)
+  // A terminal receipt can be more than one replay window ahead. Its complete body for
+  // this same Message is authoritative; require a strict text extension and a disjoint,
+  // full retained window, rather than pretending the discarded IDs can prove overlap.
+  const prefixIds = new Set(prefix.eventIds)
+  const extendsBeyondRetainedWindow =
+    message.status !== 'streaming' &&
+    message.eventIds.length === MAX_ACP_RUNTIME_EVENTS &&
+    message.content.length > prefix.content.length &&
+    message.content.startsWith(prefix.content) &&
+    message.eventIds.every((id) => !prefixIds.has(id))
+  return extendsPrefix || extendsRetainedSuffix || extendsBeyondRetainedWindow
+}
+
+// A different client can publish a longer prefix while this client's presentation lags.
+// Advance the text and replay cursor together; otherwise graph dedup skips the new prefix
+// while the next delta appends to the old streaming cache and permanently drops that text.
+const reconcileStreamingMessageProjection = (
+  streamingMessages: StreamingMessageContentByMessageId,
+  session: ChatSession,
+  previous?: ChatSession
+): { session: ChatSession; streamingMessages: StreamingMessageContentByMessageId } => {
+  const graphMessages = session.conversationGraph
+    ? resolveActiveConversationMessages(session.conversationGraph)
+    : []
+  const localMessages = new Map(session.messages.map((message) => [message.id, message]))
+  if (graphMessages.some((message) => !localMessages.has(message.id))) {
+    const graphIds = new Set(session.conversationGraph!.messages.map((message) => message.id))
+    // A graph-only reply must be visible and terminalizable without another local delta.
+    session = {
+      ...session,
+      messages: [
+        ...graphMessages.map(
+          (message) => localMessages.get(message.id) ?? projectConversationMessage(message)
+        ),
+        ...session.messages.filter((message) => !graphIds.has(message.id))
+      ]
+    }
+  }
+  const flatMessages = new Map(session.messages.map((message) => [message.id, message]))
+  let next = pruneStreamingMessageContent(
+    streamingMessages,
+    session.id,
+    new Set([...flatMessages.keys(), ...graphMessages.map((message) => message.id)])
+  )
+  // Completed Messages no longer have a streaming entry. Include their pre-merge body as a
+  // candidate so a later save receipt cannot roll back an already applied prefix. Restrict this
+  // to retained identities: Branch changes and deletions still own the visible projection.
+  const previousMessages =
+    previous?.messages.filter((message) => flatMessages.has(message.id)) ?? []
+  for (const message of [...previousMessages, ...session.messages, ...graphMessages]) {
+    const entry = next[message.id]
+    // A remote prefix can arrive before this renderer has a streaming slice, or even a flat
+    // Message. Graph replay will skip those deltas, so seed their text and cursor together.
+    const prefix = entry ?? flatMessages.get(message.id)
+    if (
+      message.role !== 'agent' ||
+      (entry && entry.sessionId !== session.id) ||
+      message.eventIds.length === 0
+    )
+      continue
+    if (prefix && !isStreamedMessageExtension(prefix, message)) continue
+    if (next === streamingMessages) next = { ...streamingMessages }
+    next[message.id] = {
+      sessionId: session.id,
+      content: message.content,
+      eventIds: message.eventIds,
+      updatedAt: Math.max(prefix?.updatedAt ?? 0, message.updatedAt)
+    }
+  }
+  let materialized = materializeStreamingMessageContent(session, next)
+  // Branch navigation reads the graph directly. Keep the proven body/cursor repair there too,
+  // without changing Branch selection, Message metadata, or RuntimeSegment ownership.
+  const graph = materialized.conversationGraph
+  const repairedMessages = new Map(materialized.messages.map((message) => [message.id, message]))
+  if (graph) {
+    let changed = false
+    const messages = graph.messages.map((message) => {
+      const entry = next[message.id]
+      const repaired = repairedMessages.get(message.id)
+      if (
+        !entry ||
+        entry.sessionId !== session.id ||
+        !repaired ||
+        !repaired.content.startsWith(message.content) ||
+        !isStreamedMessageExtension(message, repaired)
+      )
+        return message
+      changed = true
+      return {
+        ...message,
+        content: entry.content,
+        eventIds: entry.eventIds,
+        updatedAt: Math.max(message.updatedAt, entry.updatedAt)
+      }
+    })
+    if (changed) materialized = { ...materialized, conversationGraph: { ...graph, messages } }
+  }
+  // Completed rows render their Message body, not the streaming slice. Publish the two together
+  // and release terminal cache entries even when the longer receipt arrived after finishRun.
+  for (const message of materialized.messages) {
+    if (message.status === 'streaming' || next[message.id]?.sessionId !== session.id) continue
+    if (next === streamingMessages) next = { ...streamingMessages }
+    delete next[message.id]
+  }
+  return { session: materialized, streamingMessages: next }
 }
 
 export const stripTransientMessageState = (message: ChatMessage): PersistedChatMessage => {
@@ -714,16 +857,17 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           ...(existing.wslSetup ? { wslSetup: true } : {}),
           ...(existing.unsavedTitle ? { unsavedTitle: true } : {})
         }
-        markExternallyHydratedSession(hydrated, session)
+        const reconciled = reconcileStreamingMessageProjection(
+          state.streamingMessages,
+          hydrated,
+          existing
+        )
+        markExternallyHydratedSession(reconciled.session, session)
         return {
           sessions: state.sessions.map((candidate) =>
-            candidate.id === session.id ? hydrated : candidate
+            candidate.id === session.id ? reconciled.session : candidate
           ),
-          streamingMessages: pruneStreamingMessageContent(
-            state.streamingMessages,
-            session.id,
-            new Set(hydrated.messages.map((message) => message.id))
-          )
+          streamingMessages: reconciled.streamingMessages
         } as Partial<State>
       }
       const incomingSessionRevision = sessionRevision(session)
@@ -788,20 +932,40 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
               }
             : {})
         }
-        markExternallyHydratedSession(projected, session)
+        const reconciled = reconcileStreamingMessageProjection(
+          state.streamingMessages,
+          projected,
+          existing
+        )
+        markExternallyHydratedSession(reconciled.session, session)
         return {
           sessions: state.sessions.map((candidate) =>
-            candidate.id === session.id ? projected : candidate
-          )
+            candidate.id === session.id ? reconciled.session : candidate
+          ),
+          streamingMessages: reconciled.streamingMessages
         } as Partial<State>
       }
 
+      // Pure text projection can create a flat reply before the next save synchronizes its
+      // graph. Materialize that local identity before merging another client's earlier graph,
+      // otherwise the graph-selected flat list drops the reply and its streaming cache.
+      const graphIds = new Set(existing?.conversationGraph?.messages.map((message) => message.id))
+      const localProjection =
+        existing?.conversationGraph &&
+        !existing.conversationGraphSyncBlocked &&
+        existing.messages.some((message) => !graphIds.has(message.id))
+          ? {
+              ...existing,
+              conversationGraph: toPersistedSession(existing, state.streamingMessages)
+                .conversationGraph
+            }
+          : existing
       const incomingProjection =
         existing &&
         (incomingSessionRevision > existingSessionRevision ||
           (incomingSessionRevision === existingSessionRevision &&
             session.updatedAt > existing.updatedAt))
-          ? mergeNewerPersistedSessionByIdentity(existing, session)
+          ? mergeNewerPersistedSessionByIdentity(localProjection!, session)
           : session
       const hydratedSession = existing
         ? withTransientSessionState(incomingProjection, existing)
@@ -843,19 +1007,20 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         ...unsavedLocalTitle,
         ...unacknowledgedRun
       }
-      markExternallyHydratedSession(hydratedWithTransientState, session)
-      const nextSessions = [
+      const reconciled = reconcileStreamingMessageProjection(
+        state.streamingMessages,
         hydratedWithTransientState,
+        existing
+      )
+      markExternallyHydratedSession(reconciled.session, session)
+      const nextSessions = [
+        reconciled.session,
         ...state.sessions.filter((candidate) => candidate.id !== session.id)
       ].sort((left, right) => right.updatedAt - left.updatedAt)
 
       return {
         sessions: nextSessions,
-        streamingMessages: pruneStreamingMessageContent(
-          state.streamingMessages,
-          session.id,
-          new Set(hydratedWithTransientState.messages.map((message) => message.id))
-        )
+        streamingMessages: reconciled.streamingMessages
       } as Partial<State>
     })
   },
@@ -1007,11 +1172,17 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           planHistoryProjections: projectRuntimePlanHistoryAuthority(session),
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
-        markExternallyHydratedSession(projected, session)
+        const reconciled = reconcileStreamingMessageProjection(
+          state.streamingMessages,
+          projected,
+          current
+        )
+        markExternallyHydratedSession(reconciled.session, session)
         return {
           sessions: state.sessions.map((candidate) =>
-            candidate.id === session.id ? projected : candidate
-          )
+            candidate.id === session.id ? reconciled.session : candidate
+          ),
+          streamingMessages: reconciled.streamingMessages
         } as Partial<State>
       }
 
@@ -1022,11 +1193,17 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           ...authority,
           revision: Math.max(sessionRevision(current), sessionRevision(session))
         }
-        markExternallyHydratedSession(projected, session)
+        const reconciled = reconcileStreamingMessageProjection(
+          state.streamingMessages,
+          projected,
+          current
+        )
+        markExternallyHydratedSession(reconciled.session, session)
         return {
           sessions: state.sessions.map((candidate) =>
-            candidate.id === session.id ? projected : candidate
-          )
+            candidate.id === session.id ? reconciled.session : candidate
+          ),
+          streamingMessages: reconciled.streamingMessages
         } as Partial<State>
       }
 
@@ -1145,11 +1322,17 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         },
         session
       )
-      markExternallyHydratedSession(projected, session)
+      const reconciled = reconcileStreamingMessageProjection(
+        state.streamingMessages,
+        projected,
+        current
+      )
+      markExternallyHydratedSession(reconciled.session, session)
       return {
         sessions: state.sessions.map((candidate) =>
-          candidate.id === session.id ? projected : candidate
-        )
+          candidate.id === session.id ? reconciled.session : candidate
+        ),
+        streamingMessages: reconciled.streamingMessages
       } as Partial<State>
     })
   }
@@ -1161,3 +1344,26 @@ export const isExternallyHydratedSession = (session: ChatSession): boolean =>
 export const getExternallyHydratedSessionAuthority = (
   session: ChatSession
 ): PersistedChatSession | undefined => externallyHydratedSessionAuthorities.get(session)
+
+// A hydrated receipt still owns revision/metadata when the renderer retained a proven newer
+// body. Expose that local write intent without exposing the private streaming cache to savers.
+export const hasUnsavedAgentMessageText = (session: ChatSession): boolean => {
+  const authority = externallyHydratedSessionAuthorities.get(session)
+  if (!authority) return false
+  const messages = new Map(
+    (authority.conversationGraph?.messages ?? authority.messages).map((message) => [
+      message.id,
+      message
+    ])
+  )
+  return session.messages.some((message) => {
+    const saved = messages.get(message.id)
+    return (
+      message.role === 'agent' &&
+      saved !== undefined &&
+      message.content.length > saved.content.length &&
+      message.content.startsWith(saved.content) &&
+      isStreamedMessageExtension(saved, message)
+    )
+  })
+}

@@ -1,3 +1,4 @@
+import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
 import { queueItemIsBusy } from './workspace-message-queue-admission'
 import {
   MESSAGE_QUEUE_ANNOUNCEMENTS,
@@ -76,6 +77,19 @@ const moveQueuedItemTo = (
   const items = [...queue.items]
   const from = items.findIndex((item) => item.id === itemId)
   if (from < 0 || !items.some((item) => item.id === targetId)) return
+  const source = items[from]
+  if (source.durableRevision) {
+    void owner
+      .executeRemote({
+        operation: 'move',
+        id: source.id,
+        revision: source.durableRevision,
+        targetId,
+        edge
+      })
+      .catch((error: unknown) => optionsRef.current.composer.setError(String(error)))
+    return
+  }
   const [moved] = items.splice(from, 1)
   const target = items.findIndex((item) => item.id === targetId)
   items.splice(edge === 'after' ? target + 1 : target, 0, moved)
@@ -92,6 +106,12 @@ const removeQueuedItem = (
   if (!queue) return
   const item = queue.items.find((candidate) => candidate.id === itemId)
   if (!item?.snapshot || queueItemIsBusy(item)) return
+  if (item.durableRevision) {
+    void owner
+      .executeRemote({ operation: 'remove', id: item.id, revision: item.durableRevision })
+      .catch((error: unknown) => optionsRef.current.composer.setError(String(error)))
+    return
+  }
   optionsRef.current.composer.discardSnapshot(item.snapshot)
   const remaining = queue.items.filter((candidate) => candidate.id !== itemId)
   if (remaining.length === 0) owner.queues.delete(queue.sessionId)
@@ -108,6 +128,43 @@ const editQueuedItem = (
   if (!queue) return
   const item = queue.items.find((candidate) => candidate.id === itemId)
   if (!item?.snapshot || queueItemIsBusy(item)) return
+  if (item.durableRevision) {
+    void owner
+      .executeRemote({ operation: 'edit', id: item.id, revision: item.durableRevision })
+      .then((result) => {
+        if (!result.item || optionsRef.current.activeSession?.id !== result.item.sessionId) return
+        const saved = result.item
+        if (
+          !optionsRef.current.composer.restoreQueuedDraft({
+            ...saved.snapshot,
+            attachments: saved.snapshot.attachments.map((file) =>
+              toRuntimeUploadedAttachment(file, saved.projectId)
+            ),
+            queuedEdit: {
+              kind: 'user',
+              sessionId: saved.sessionId,
+              agentFrameId: saved.agentFrameId,
+              messageBranchId: saved.messageBranchId,
+              permissionProfile: saved.permissionProfile,
+              agentConfiguration: saved.agentConfiguration,
+              specialistId: saved.specialistId,
+              agentFrameworkId: saved.agentFrameworkId,
+              agentBackendId: saved.agentBackendId,
+              projectId: saved.projectId,
+              cwd: saved.cwd,
+              revisionMessageId: saved.revisionMessageId,
+              durableItemId: saved.id,
+              durableRevision: saved.revision
+            }
+          })
+        )
+          optionsRef.current.composer.setError(
+            'Clear the composer before editing this queued message.'
+          )
+      })
+      .catch((error: unknown) => optionsRef.current.composer.setError(String(error)))
+    return
+  }
   const {
     kind,
     sessionId,

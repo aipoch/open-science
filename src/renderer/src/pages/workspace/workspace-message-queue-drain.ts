@@ -24,10 +24,13 @@ const dispatchQueuedSession = (
   optionsRef: MessageQueueOptionsRef,
   sessionId: string
 ): void => {
-  const current = owner.resolveOptions(optionsRef.current)
+  if (!owner.ready) return
+  let current = owner.resolveOptions(optionsRef.current)
   const existingDispatch = owner.dispatches.get(sessionId)
   const session = current.getSession(sessionId)
   if (!session) {
+    // Catalog hydration is asynchronous. Only main's deletion lifecycle removes durable input.
+    if (owner.itemsFor(sessionId).some((item) => item.durableRevision)) return
     if (existingDispatch && !existingDispatch.settled) return
     owner.dispatches.delete(sessionId)
     owner.discardSession(sessionId, current.composer.discardSnapshot)
@@ -52,7 +55,13 @@ const dispatchQueuedSession = (
     remainingHeads--
   ) {
     const head = owner.itemsFor(sessionId)[0]
-    if (!head || head.phase === 'sending' || head.phase === 'error') return
+    if (
+      !head ||
+      head.phase === 'sending' ||
+      head.phase === 'error' ||
+      head.phase === 'recovery-required'
+    )
+      return
     const contextError = queueItemContextError(session, head)
     if (!contextError) {
       item = head
@@ -77,11 +86,12 @@ const dispatchQueuedSession = (
   if (!current.isSpecialistReady(sessionId)) return
   if (!queueSessionIsSendable(current, session)) return
 
-  owner.replaceItem(sessionId, item.id, {
-    phase: 'sending',
-    error: undefined,
-    deferredUntilIdle: false
-  })
+  if (!item.durableRevision)
+    owner.replaceItem(sessionId, item.id, {
+      phase: 'sending',
+      error: undefined,
+      deferredUntilIdle: false
+    })
   let resolveCompletion!: () => void
   const activeDispatch: MessageQueueDispatch = {
     itemId: item.id,
@@ -92,7 +102,34 @@ const dispatchQueuedSession = (
   }
   owner.dispatches.set(sessionId, activeDispatch)
   void (async (): Promise<void> => {
+    let claimedRevision: number | undefined
     try {
+      if (item.durableRevision) {
+        const claimed = await owner.executeRemote({
+          operation: 'claim',
+          claimId: crypto.randomUUID(),
+          id: item.id,
+          revision: item.durableRevision
+        })
+        claimedRevision = claimed.item?.revision
+        if (!claimedRevision) throw new Error('The queued message could not be claimed.')
+        current = owner.resolveOptions(optionsRef.current)
+        const beforeDispatch = current.getSession(sessionId)
+        if (
+          !beforeDispatch ||
+          queueItemContextError(beforeDispatch, item) ||
+          !queueSessionIsSendable(current, beforeDispatch)
+        ) {
+          await owner.executeRemote({
+            operation: 'settle',
+            id: item.id,
+            revision: claimedRevision,
+            outcome: 'deferred'
+          })
+          owner.dispatches.delete(sessionId)
+          return
+        }
+      }
       const sessionBeforeSend = current.getSession(sessionId)
       const sessionBeforeAdmission = sessionBeforeSend
         ? {
@@ -133,9 +170,10 @@ const dispatchQueuedSession = (
             agentConfiguration: item.agentConfiguration,
             forcedSkillIds: item.forcedSkillIds,
             specialistId: item.specialistId,
-            messageId: item.application?.messageId,
+            messageId: item.application?.messageId ?? (item.durableRevision ? item.id : undefined),
             attribution: item.application?.attribution,
-            requireExistingSession: item.kind === 'application' ? true : undefined
+            requireExistingSession:
+              item.kind === 'application' || item.durableRevision ? true : undefined
           })
       if (!result) {
         const latest = owner.resolveOptions(optionsRef.current)
@@ -144,16 +182,31 @@ const dispatchQueuedSession = (
           if (owner.dispatches.get(sessionId) === activeDispatch) {
             owner.dispatches.delete(sessionId)
           }
-          owner.replaceItem(sessionId, item.id, {
-            phase: 'queued',
-            error: undefined,
-            deferredUntilIdle: true
-          })
+          if (claimedRevision)
+            await owner.executeRemote({
+              operation: 'settle',
+              id: item.id,
+              revision: claimedRevision,
+              outcome: 'deferred'
+            })
+          if (!item.durableRevision)
+            owner.replaceItem(sessionId, item.id, {
+              phase: 'queued',
+              error: undefined,
+              deferredUntilIdle: true
+            })
           owner.emit(MESSAGE_QUEUE_ANNOUNCEMENTS.deferredUntilIdle)
           return
         }
         throw new Error(queuedAdmissionFailure(sessionBeforeAdmission, latestSession))
       }
+      if (claimedRevision)
+        await owner.executeRemote({
+          operation: 'settle',
+          id: item.id,
+          revision: claimedRevision,
+          outcome: 'sent'
+        })
       const latest = owner.itemsFor(sessionId)
       const remaining = latest.filter((candidate) => candidate.id !== item.id)
       if (remaining.length === 0) {
@@ -177,11 +230,23 @@ const dispatchQueuedSession = (
         owner.emit()
         item.application?.resolve(undefined)
       } else {
-        owner.replaceItem(sessionId, item.id, {
-          phase: 'error',
-          error: { kind: 'send', detail: queueErrorMessage(error) },
-          deferredUntilIdle: false
-        })
+        if (claimedRevision) {
+          await owner
+            .executeRemote({
+              operation: 'settle',
+              id: item.id,
+              revision: claimedRevision,
+              outcome: 'uncertain',
+              error: { kind: 'send', detail: queueErrorMessage(error) }
+            })
+            .catch(() => undefined)
+        }
+        if (!item.durableRevision)
+          owner.replaceItem(sessionId, item.id, {
+            phase: 'error',
+            error: { kind: 'send', detail: queueErrorMessage(error) },
+            deferredUntilIdle: false
+          })
       }
     } finally {
       activeDispatch.settled = true
@@ -211,17 +276,49 @@ const sendQueuedItemNow = async (
   optionsRef: MessageQueueOptionsRef,
   itemId: string
 ): Promise<void> => {
+  const isCurrentLifetime = owner.captureLifetime()
   const sessionId = optionsRef.current.activeSession?.id
   if (!sessionId) return
   const items = owner.itemsFor(sessionId)
   const item = items.find((candidate) => candidate.id === itemId)
   if (!item?.snapshot || queueItemIsBusy(item)) return
+  let claimedRevision: number | undefined
+  if (item.durableRevision) {
+    const existingDispatch = owner.dispatches.get(sessionId)
+    if (existingDispatch && existingDispatch.itemId !== itemId) {
+      await existingDispatch.completion
+      const latestItem = owner.itemsFor(sessionId).find((candidate) => candidate.id === itemId)
+      if (
+        !isCurrentLifetime() ||
+        !latestItem ||
+        queueItemIsBusy(latestItem) ||
+        latestItem.durableRevision !== item.durableRevision
+      )
+        return
+    }
+    try {
+      const claimed = await owner.executeRemote({
+        operation: 'claim',
+        claimId: crypto.randomUUID(),
+        id: item.id,
+        revision: item.durableRevision,
+        prioritize: true
+      })
+      claimedRevision = claimed.item!.revision
+    } catch (error) {
+      optionsRef.current.composer.setError(queueErrorMessage(error))
+      return
+    }
+  }
+  let sent = false
   const hasPayload = queuedItemHasPayload(item)
-  owner.queues.set(sessionId, [
-    { ...item, phase: 'sending', error: undefined, deferredUntilIdle: false },
-    ...items.filter((candidate) => candidate.id !== itemId)
-  ])
-  owner.emit()
+  if (!item.durableRevision) {
+    owner.queues.set(sessionId, [
+      { ...item, phase: 'sending', error: undefined, deferredUntilIdle: false },
+      ...items.filter((candidate) => candidate.id !== itemId)
+    ])
+    owner.emit()
+  }
   try {
     const displacedDispatch = owner.dispatches.get(sessionId)
     if (displacedDispatch && displacedDispatch.itemId !== itemId) {
@@ -230,17 +327,19 @@ const sendQueuedItemNow = async (
     let current = owner.resolveOptions(optionsRef.current)
     let liveSession = current.getSession(sessionId)
     const canContinue = (): boolean => {
+      if (!isCurrentLifetime()) return false
       if (!liveSession) {
         owner.discardSession(sessionId, current.composer.discardSnapshot)
         return false
       }
       const contextError = queueItemContextError(liveSession, item)
       if (contextError) {
-        owner.replaceItem(sessionId, itemId, {
-          phase: 'error',
-          error: contextError,
-          deferredUntilIdle: false
-        })
+        if (!item.durableRevision)
+          owner.replaceItem(sessionId, itemId, {
+            phase: 'error',
+            error: contextError,
+            deferredUntilIdle: false
+          })
         return false
       }
       if (
@@ -255,11 +354,12 @@ const sendQueuedItemNow = async (
         current.isBarrierInFlight(sessionId) ||
         current.isSideChatOpen(sessionId)
       ) {
-        owner.replaceItem(sessionId, itemId, {
-          phase: 'queued',
-          error: undefined,
-          deferredUntilIdle: true
-        })
+        if (!item.durableRevision)
+          owner.replaceItem(sessionId, itemId, {
+            phase: 'queued',
+            error: undefined,
+            deferredUntilIdle: true
+          })
         owner.emit(MESSAGE_QUEUE_ANNOUNCEMENTS.deferredUntilIdle)
         return false
       }
@@ -287,11 +387,12 @@ const sendQueuedItemNow = async (
       !item.snapshot.pendingPdfContextAttachmentIds?.length &&
       !item.snapshot.pendingPdfContextVersions?.length
     ) {
-      owner.replaceItem(sessionId, itemId, {
-        phase: 'sending',
-        error: undefined,
-        deferredUntilIdle: false
-      })
+      if (!item.durableRevision)
+        owner.replaceItem(sessionId, itemId, {
+          phase: 'sending',
+          error: undefined,
+          deferredUntilIdle: false
+        })
       owner.emit(MESSAGE_QUEUE_ANNOUNCEMENTS.steering)
       try {
         const steered = await current.runtime.steerFollowUp({
@@ -309,6 +410,7 @@ const sendQueuedItemNow = async (
             : {})
         })
         if (steered.injected) {
+          sent = true
           const latest = owner.itemsFor(sessionId)
           const remaining = latest.filter((candidate) => candidate.id !== item.id)
           if (remaining.length === 0) owner.queues.delete(sessionId)
@@ -319,7 +421,22 @@ const sendQueuedItemNow = async (
           owner.emit(MESSAGE_QUEUE_ANNOUNCEMENTS.sent)
           return
         }
-      } catch {
+        if (
+          claimedRevision &&
+          ![
+            'empty-text',
+            'attachments',
+            'no-live-turn',
+            'not-advertised',
+            'prompt-required'
+          ].includes(steered.reason)
+        ) {
+          throw new Error(
+            'The interrupted send may already have reached the agent. Review the conversation before sending again.'
+          )
+        }
+      } catch (error) {
+        if (claimedRevision) throw error
         // Native follow-up is fail-closed. Keep the current run and send after it finishes.
       }
     }
@@ -328,22 +445,24 @@ const sendQueuedItemNow = async (
       const latestSession = latest.getSession(sessionId)
       const latestLiveTurn = isQueueLiveTurn(latestSession)
       if (!latestSession || !latestLiveTurn || queueSessionIsSendable(latest, latestSession)) {
-        owner.replaceItem(sessionId, itemId, {
-          phase: 'queued',
-          error: undefined,
-          deferredUntilIdle: false
-        })
+        if (!item.durableRevision)
+          owner.replaceItem(sessionId, itemId, {
+            phase: 'queued',
+            error: undefined,
+            deferredUntilIdle: false
+          })
         if (owner.dispatches.get(sessionId) === displacedDispatch) {
           owner.dispatches.delete(sessionId)
         }
-        drainQueuedSessions(owner, optionsRef)
+        if (!claimedRevision) drainQueuedSessions(owner, optionsRef)
         return
       }
-      owner.replaceItem(sessionId, itemId, {
-        phase: 'queued',
-        error: undefined,
-        deferredUntilIdle: true
-      })
+      if (!item.durableRevision)
+        owner.replaceItem(sessionId, itemId, {
+          phase: 'queued',
+          error: undefined,
+          deferredUntilIdle: true
+        })
       if (owner.dispatches.get(sessionId) === displacedDispatch) {
         owner.dispatches.delete(sessionId)
       }
@@ -351,29 +470,57 @@ const sendQueuedItemNow = async (
       return
     }
     if (liveTurn) {
-      owner.replaceItem(sessionId, itemId, {
-        phase: 'queued',
-        error: undefined,
-        deferredUntilIdle: true
-      })
+      if (!item.durableRevision)
+        owner.replaceItem(sessionId, itemId, {
+          phase: 'queued',
+          error: undefined,
+          deferredUntilIdle: true
+        })
       owner.emit(MESSAGE_QUEUE_ANNOUNCEMENTS.deferredUntilIdle)
       return
     }
     if (owner.dispatches.get(sessionId) === displacedDispatch) {
       owner.dispatches.delete(sessionId)
     }
-    owner.replaceItem(sessionId, itemId, {
-      phase: 'queued',
-      error: undefined,
-      deferredUntilIdle: false
-    })
-    drainQueuedSessions(owner, optionsRef)
+    if (!item.durableRevision)
+      owner.replaceItem(sessionId, itemId, {
+        phase: 'queued',
+        error: undefined,
+        deferredUntilIdle: false
+      })
+    if (!claimedRevision) drainQueuedSessions(owner, optionsRef)
   } catch (error) {
-    owner.replaceItem(sessionId, itemId, {
-      phase: 'error',
-      error: { kind: 'cancel', detail: queueErrorMessage(error) },
-      deferredUntilIdle: false
-    })
+    if (claimedRevision) {
+      await owner
+        .executeRemote({
+          operation: 'settle',
+          id: item.id,
+          revision: claimedRevision,
+          outcome: 'uncertain',
+          error: { kind: 'cancel', detail: queueErrorMessage(error) }
+        })
+        .catch(() => undefined)
+      claimedRevision = undefined
+    }
+    if (!item.durableRevision)
+      owner.replaceItem(sessionId, itemId, {
+        phase: 'error',
+        error: { kind: 'cancel', detail: queueErrorMessage(error) },
+        deferredUntilIdle: false
+      })
+  } finally {
+    if (claimedRevision) {
+      await owner
+        .executeRemote({
+          operation: 'settle',
+          id: item.id,
+          revision: claimedRevision,
+          outcome: sent ? 'sent' : 'deferred'
+        })
+        .catch((error) => {
+          optionsRef.current.composer.setError(queueErrorMessage(error))
+        })
+    }
   }
 }
 

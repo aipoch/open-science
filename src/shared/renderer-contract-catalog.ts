@@ -1,4 +1,5 @@
 import type { MessageSearchRequest, MessageSearchPage } from './message-search'
+import type { PendingInputCommand, PendingInputResult, PendingInputSnapshot } from './pending-input'
 import type {
   SkillMarketplaceCatalog,
   SkillMarketplaceCatalogRequest,
@@ -2635,6 +2636,12 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'bookmarks',
     ['bookmarks:delete', WEB, undefined, undefined, RUNTIME_VALIDATED]
   ),
+  'pendingInputs.execute': callable<
+    (request: PendingInputCommand) => Promise<PendingInputResult>
+  >()('pending-inputs', ['pending-inputs:execute', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'pendingInputs.onChanged': callable<
+    (listener: AcpListener<PendingInputSnapshot>) => RemoveListener
+  >()('pending-inputs', ['pending-inputs:changed', EVENT]),
   'tags.create': callable<(request: CreateTagRequest) => Promise<TagSnapshot>>()('tags', [
     'tags:create',
     WEB,

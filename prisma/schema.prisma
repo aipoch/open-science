@@ -39,6 +39,7 @@ model Project {
   memoryEntries    MemoryEntry[]
   literatureItems  ProjectLiterature[]
   bookmarks        Bookmark[]
+  pendingInputs    PendingInput[]
 }
 
 // A private, Session-scoped saved source location. Session identity deliberately has no foreign key:
@@ -1208,4 +1209,21 @@ model LiteratureMetadataCommitReceipt {
   item                       LiteratureItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
 
   @@index([itemId])
+}
+
+// Authoritative user queue, independent of the rebuildable Session projection. Completed uploads
+// referenced by content remain owned by the Session's managed-file lifecycle.
+model PendingInput {
+  id        String  @id
+  projectId String
+  sessionId String
+  position  Int
+  revision  Int     @default(1)
+  phase     String
+  content   String
+  error     String?
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, position, id])
+  @@index([projectId])
 }

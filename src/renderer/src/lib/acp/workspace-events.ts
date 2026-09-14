@@ -684,17 +684,46 @@ const scheduleAutoReview = (
   scheduledAutoReviewsBySession.set(sessionId, timer)
 }
 
-// Startup summaries have no message graph. Load their existing authority before projecting
-// output; the lane owner keeps subsequent events ordered while this read is pending.
-const loadRuntimeEventSession = (sessionId: string | undefined): Promise<void> | undefined => {
+// Startup summaries and newly observed prompts need their durable graph before output is
+// projected. A reply may reach another window before its prompt's lifecycle subscription.
+// The lane owner keeps subsequent events ordered while this read is pending.
+const loadRuntimeEventSession = (event: AcpRuntimeEvent): Promise<void> | undefined => {
   const session = useSessionStore
     .getState()
-    .sessions.find((candidate) => candidate.id === sessionId)
-  if (!session || session.contentLoaded !== false) return
+    .sessions.find((candidate) => candidate.id === event.sessionId)
+  if (!session) return
+  const missingPrompt =
+    event.kind === 'message' &&
+    event.role === 'assistant' &&
+    event.promptMessageId !== undefined &&
+    !(session.conversationGraph?.messages ?? session.messages).some(
+      (message) => message.id === event.promptMessageId
+    )
+  if (session.contentLoaded !== false && !missingPrompt) return
   return loadPersistedSession({ projectId: session.projectId, sessionId: session.id }).then(
     (persisted) => {
       if (!persisted) throw new Error(`Session not found: ${session.id}`)
-      hydratePersistedSessionIfPresent(persisted)
+      if (
+        missingPrompt &&
+        !(persisted.conversationGraph?.messages ?? persisted.messages).some(
+          (message) => message.id === event.promptMessageId
+        )
+      )
+        throw new Error(`Runtime prompt not found: ${event.promptMessageId}`)
+      if (session.contentLoaded === false) hydratePersistedSessionIfPresent(persisted)
+      else if (useSessionStore.getState().sessions.some((candidate) => candidate.id === session.id))
+        useSessionStore.getState().upsertPersistedSession(persisted)
+      const current = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === session.id)
+      if (
+        current &&
+        missingPrompt &&
+        !(current.conversationGraph?.messages ?? current.messages).some(
+          (message) => message.id === event.promptMessageId
+        )
+      )
+        throw new Error(`Runtime prompt not yet projected: ${event.promptMessageId}`)
     }
   )
 }
@@ -706,7 +735,7 @@ const applyWorkspaceRuntimeEvent = async (
 ): Promise<boolean> => {
   // Thought chunks never enter the transcript or require its persisted content.
   if (event.kind === 'thought') return false
-  const loading = loadRuntimeEventSession(event.sessionId)
+  const loading = loadRuntimeEventSession(event)
   if (loading) await loading
   const store = useSessionStore.getState()
 
@@ -1139,8 +1168,8 @@ const applyWorkspaceRuntimeEventBatch = async (events: AcpRuntimeEvent[]): Promi
     return true
   }
 
-  for (const sessionId of new Set(events.map((event) => event.sessionId))) {
-    const loading = loadRuntimeEventSession(sessionId)
+  for (const event of events) {
+    const loading = loadRuntimeEventSession(event)
     if (loading) await loading
   }
   const store = useSessionStore.getState()

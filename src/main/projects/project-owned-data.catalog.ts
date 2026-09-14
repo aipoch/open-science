@@ -27,6 +27,7 @@ type ProjectDeletionPath =
   | 'delegated-runtime-quiescence'
   | 'notification-session-invalidation'
   | 'notebook-input-cache-tail'
+  | 'pending-input-target-delete'
   | 'execution-file-evidence-tail'
   | 'project-deletion-intent-protocol'
   | 'project-file-projection-delete'
@@ -262,6 +263,32 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       retention: 'Retained with the soft-deleted Project row.',
       reason:
         'Project metadata and Session Usage facts remain queryable for per-Project and global historical totals.'
+    }
+  },
+  {
+    id: 'pending-input',
+    medium: 'sqlite',
+    resources: ['PendingInput'],
+    prismaModels: [
+      {
+        name: 'PendingInput',
+        ownerFields: [requiredOwner('projectId'), requiredOwner('sessionId')],
+        relationContracts: [
+          {
+            field: 'project',
+            target: 'Project',
+            fromFields: ['projectId'],
+            onDelete: 'Cascade'
+          }
+        ]
+      }
+    ],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'pending-input-target-delete',
+      operation: 'PendingInputOwner.deleteProject',
+      note: 'Project deletion finalization removes queued input; Session deletion has its own owner callback. Missing rebuildable Session projections never imply deletion.'
     }
   },
   {

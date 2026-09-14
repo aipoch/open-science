@@ -216,6 +216,7 @@ describe('Project-owned data catalog architecture', () => {
       'project-preview-state',
       'vision-evidence',
       'session-metadata-usage-history',
+      'pending-input',
       'background-result-delivery',
       'notification-inbox-history',
       'literature-inbox-provenance',
@@ -257,6 +258,7 @@ describe('Project-owned data catalog architecture', () => {
       'execution-file-evidence-tail',
       'notebook-input-cache-tail',
       'notification-session-invalidation',
+      'pending-input-target-delete',
       'project-deletion-intent-protocol',
       'project-file-projection-delete',
       'project-metadata-soft-delete',
@@ -430,6 +432,10 @@ describe('Project-owned data catalog architecture', () => {
     expectCall(
       objectMethod(constructor.file, lifecycle, 'finalizeProjectDeletion'),
       'notebookService.deleteProjectInputs'
+    )
+    expectCall(
+      objectMethod(constructor.file, lifecycle, 'finalizeProjectDeletion'),
+      'pendingInputOwner.deleteProject'
     )
   })
 

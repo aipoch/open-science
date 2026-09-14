@@ -113,7 +113,11 @@
     "Session package operation in progress": "会话包操作进行中",
     "Temporary files could not be removed. Try cleanup again.": "无法移除临时文件，请重试清理。",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "无法完成会话包操作，请检查包文件和可用磁盘空间后重试。",
-    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原包文件不可用，可能已移动、删除或无法读取。请选择其他包文件。"
+    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原包文件不可用，可能已移动、删除或无法读取。请选择其他包文件。",
+    "Show startup logs": "显示启动日志",
+    "Quit application": "退出应用",
+    "The desktop bridge failed to load. Reload the window to try again, or open the startup logs for diagnostics. Background work may still be running.": "桌面桥接加载失败。请重新加载窗口以重试，或打开启动日志进行诊断。后台任务可能仍在运行。",
+    "The app window could not initialize.": "应用窗口无法初始化。"
   },
   "renderer": {
     "Old Shell launch records are blocking this update.": "旧的命令行启动记录阻止了本次更新。",
@@ -3761,7 +3765,6 @@
     "Retry project recovery before deleting projects.": "删除项目前请先重试项目恢复。",
     "Finish or stop active sessions before archiving this project.": "归档项目前，请先完成或停止活动会话。",
     "Message queue": "消息队列",
-    "Queue ({{count}}) · Not saved_other": "队列（{{count}}）· 未保存",
     "Attachment message": "附件消息",
     "Reorder queued message {{index}}": "调整第 {{index}} 条排队消息的顺序",
     "Drag or use arrow keys to reorder": "拖动或使用方向键调整顺序",
@@ -5820,6 +5823,9 @@
     "Add a private note": "添加私人备注",
     "No bookmarks yet.": "暂无书签。",
     "Bookmark note": "书签备注",
-    "The exact bookmark location could not be found.": "无法找到书签的准确位置。"
+    "The exact bookmark location could not be found.": "无法找到书签的准确位置。",
+    "Queue ({{count}})_other": "队列（{{count}}）",
+    "Resume sending": "恢复发送",
+    "Recovered message. Review before sending; an interrupted send may already have reached the agent.": "已恢复消息。发送前请检查；中断的发送可能已经到达智能体。"
   }
 }

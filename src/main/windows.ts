@@ -19,6 +19,7 @@ import { createFrameNavigationGuard, isAllowedExternalNavigation } from './navig
 import { createFindOverlayManager, type FindOverlayDeps } from './find-overlay'
 import { registerFindOverlayOwner } from './find-overlay-registry'
 import { createLogger, diagnosticErrorFields } from './logger'
+import { createLogsCommandOwner } from './logs-ipc'
 import { createSourcePreviewLoadMonitor } from './source-preview-load-monitor'
 import { createSourcePreviewEmbedPolicy } from './source-preview-embed-policy'
 import { registerSourcePreviewWebRequestOwner } from './source-preview-web-request-owner'
@@ -301,6 +302,7 @@ const createMainWindow = (
   let rendererUnresponsiveAt: number | undefined
   let rendererRecoveryTimes: number[] = []
   let rendererRecoveryDialogOpen = false
+  let preloadFailed = false
   type PendingRendererLoad = { failureHandledByProcessExit: boolean }
   const pendingRendererLoadsByNavigationGeneration = new Map<number, Set<PendingRendererLoad>>()
   let mainFrameNavigationGeneration = 0
@@ -334,6 +336,7 @@ const createMainWindow = (
         releasePendingLoad()
         log.error('renderer document load rejected', { errorName: rendererLoadErrorName(error) })
         if (window.isDestroyed()) return
+        if (preloadFailed) return
         if (pendingLoad.failureHandledByProcessExit) return
         if (mainFrameNavigationGeneration > ownedNavigationGeneration) return
         if (initial) {
@@ -350,12 +353,13 @@ const createMainWindow = (
   }
   function recoverRenderer(reason: string, loadFailed = false): void {
     if (window.isDestroyed()) return
+    const recoveringPreload = preloadFailed
 
     const now = Date.now()
     rendererRecoveryTimes = rendererRecoveryTimes.filter(
       (recoveryAt) => now - recoveryAt < RENDERER_RECOVERY_WINDOW_MS
     )
-    if (rendererRecoveryTimes.length < MAX_AUTOMATIC_RENDERER_RECOVERIES) {
+    if (!recoveringPreload && rendererRecoveryTimes.length < MAX_AUTOMATIC_RENDERER_RECOVERIES) {
       rendererRecoveryTimes.push(now)
       if (loadFailed) {
         log.warn('reloading renderer after document load failure', {
@@ -373,31 +377,73 @@ const createMainWindow = (
 
     if (rendererRecoveryDialogOpen) return
     rendererRecoveryDialogOpen = true
-    log.error('renderer automatic recovery paused after repeated exits', {
+    log.error('renderer automatic recovery paused', {
       reason,
       automaticRecoveries: rendererRecoveryTimes.length,
       recoveryWindowMs: RENDERER_RECOVERY_WINDOW_MS
     })
+    // A failed preload can leave the startup window hidden, with no usable renderer controls.
+    if (recoveringPreload) window.show()
     void dialog
       .showMessageBox(window, {
         type: 'error',
-        buttons: [translate('Reload', { context: 'window' }), translate('Close window')],
+        buttons: recoveringPreload
+          ? [
+              translate('Reload', { context: 'window' }),
+              translate('Show startup logs'),
+              translate('Quit application')
+            ]
+          : [translate('Reload', { context: 'window' }), translate('Close window')],
         defaultId: 0,
-        cancelId: 1,
+        cancelId: recoveringPreload ? 2 : 1,
         title: 'Open Science',
-        message: translate('The app window stopped responding repeatedly.'),
-        detail: translate(
-          'Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.'
-        )
+        message: recoveringPreload
+          ? translate('The app window could not initialize.')
+          : translate('The app window stopped responding repeatedly.'),
+        detail: recoveringPreload
+          ? translate(
+              'The desktop bridge failed to load. Reload the window to try again, or open the startup logs for diagnostics. Background work may still be running.'
+            )
+          : translate(
+              'Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.'
+            )
       })
       .then(
         ({ response }) => {
           rendererRecoveryDialogOpen = false
           if (window.isDestroyed()) return
+          // A preload failure supersedes an already-open renderer recovery prompt.
+          if (preloadFailed && !recoveringPreload) {
+            recoverRenderer('preload-failed')
+            return
+          }
           if (response === 0) {
+            preloadFailed = false
             rendererRecoveryTimes = []
             log.warn('reloading renderer after user confirmation')
             observeRendererLoad(false)
+            return
+          }
+          if (recoveringPreload) {
+            if (response === 1) {
+              // Keep the recovery entry available after the user inspects diagnostics. Do not
+              // expose raw errors (which may contain local paths) in the dialog or log metadata.
+              rendererRecoveryDialogOpen = true
+              void createLogsCommandOwner()
+                .openFile()
+                .then((result) => {
+                  if (!result.opened) log.warn('startup log could not be opened')
+                })
+                .catch(() => log.warn('startup log could not be opened'))
+                .finally(() => {
+                  rendererRecoveryDialogOpen = false
+                  recoverRenderer('preload-failed')
+                })
+              return
+            }
+            const closeOptions = mainWindowCloseOptions.get(window)
+            if (closeOptions) closeOptions.requestQuit(false)
+            else app.quit()
             return
           }
           // Bypass the normal Windows close-to-tray interception: the user explicitly chose to close
@@ -521,6 +567,10 @@ const createMainWindow = (
   )
   window.webContents.on('preload-error', (_event, _preloadPath, error) => {
     log.error('renderer preload failed', { errorName: error.name })
+    preloadFailed = true
+    rendererListenerReady = false
+    windowFindListenerReady = false
+    recoverRenderer('preload-failed')
   })
   // Persist only fixed Electron lifecycle vocabulary and numeric timing/exit metadata. Current URLs,
   // Session content, renderer console output, process arguments, and local paths stay out of main.log.
