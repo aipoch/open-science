@@ -12,7 +12,7 @@ vi.mock('./storage/initialize-location', () => ({
   }),
   initializeDataLocation: vi.fn()
 }))
-vi.mock('./brand-upgrade/native', () => ({ upgradeNativeBrandEntries: () => false }))
+vi.mock('./brand-upgrade/native-paths', () => ({ upgradeNativeBrandEntries: () => false }))
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 const { ipcEvents, startupWindow } = await vi.hoisted(async () => {

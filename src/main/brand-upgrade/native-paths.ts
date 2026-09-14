@@ -4,11 +4,7 @@ import { join } from 'node:path'
 import { app, shell } from 'electron'
 import { createLogger } from '../logger'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
-import {
-  upgradeLinuxDesktopEntry,
-  upgradeMacBundle,
-  upgradeWindowsShortcuts
-} from './system-entries'
+import { upgradeLinuxDesktopEntry, upgradeMacBundle, upgradeWindowsShortcuts } from './system-paths'
 
 // Update only this application's existing Dock items. Keep ordering, pin choices, and every other
 // preference. Clear its stale bookmark so Dock rebuilds it from the verified new file URL.

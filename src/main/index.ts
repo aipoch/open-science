@@ -365,7 +365,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             { role: 'help', submenu: [] }
           ])
         )
-      const { upgradeNativeBrandEntries } = await import('./brand-upgrade/native')
+      const { upgradeNativeBrandEntries } = await import('./brand-upgrade/native-paths')
       if (upgradeNativeBrandEntries())
         throw new Error('Application restarting after brand upgrade.')
       installPowerMonitorListeners()

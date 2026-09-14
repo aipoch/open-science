@@ -2,14 +2,14 @@ import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync }
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { BRAND_APP_ID, upgradeMacBundle, upgradeWindowsShortcuts } from './system-entries'
+import { BRAND_APP_ID, upgradeMacBundle, upgradeWindowsShortcuts } from './system-paths'
 
 const roots: string[] = []
 afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })))
 const mac = (): {
   old: string
   next: string
-  deps: import('./system-entries').MacBundleUpgradeDeps
+  deps: import('./system-paths').MacBundleUpgradeDeps
 } => {
   const root = mkdtempSync(join(tmpdir(), 'brand-app-'))
   roots.push(root)
@@ -102,7 +102,7 @@ it('refuses Windows name collisions instead of overwriting a pinned shortcut', (
 })
 
 it('repairs a Linux desktop copy while retaining its launch options and unrelated content', async () => {
-  const { upgradeLinuxDesktopEntry } = await import('./system-entries')
+  const { upgradeLinuxDesktopEntry } = await import('./system-paths')
   const source =
     '[Desktop Entry]\nName=Open Science\nExec="/opt/Open Science/open-science" --user-option %U\nIcon=/opt/Open Science/icon.png\n[Other]\nName=Open Science\n'
   expect(upgradeLinuxDesktopEntry(source, '/opt/Open-Science/open-science')).toBe(
@@ -137,7 +137,7 @@ it('leaves unreadable shortcuts untouched and continues with a verified link', (
 })
 
 it('does not redirect an installed deb launcher to a coexisting AppImage', async () => {
-  const { upgradeLinuxDesktopEntry } = await import('./system-entries')
+  const { upgradeLinuxDesktopEntry } = await import('./system-paths')
   const entry = '[Desktop Entry]\nName=Open Science\nExec="/opt/Open Science/open-science" %U\n'
   expect(upgradeLinuxDesktopEntry(entry, '/home/user/Downloads/Open-Science.AppImage')).toBe(entry)
 })
