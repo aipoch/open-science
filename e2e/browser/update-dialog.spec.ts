@@ -19,6 +19,10 @@ test('recovers historical records only after confirmation in the update dialog',
   await expect(recover).toBeEnabled()
   await expect(recover).toBeFocused()
   await recover.click()
+  // Await the confirmation before Escape, mirroring the first round: a real user cannot press
+  // Escape before the dialog appears, and racing it can beat React's commit of the open state,
+  // letting the parent dialog's own Escape handler close the whole dialog instead.
+  await expect(confirmation).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(confirmation).toBeHidden()
   await expect(recover).toBeFocused()
