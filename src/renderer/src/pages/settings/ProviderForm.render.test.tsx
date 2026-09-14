@@ -35,11 +35,13 @@ const render = (
   {
     onChange = vi.fn(),
     errors,
+    supportedModels,
     hasStoredKey = false,
     showCodexSubscriptions = false,
     showClaudeIsolated = false
   }: {
     onChange?: () => void
+    supportedModels?: string[]
     errors?: ProviderFormErrors
     hasStoredKey?: boolean
     showCodexSubscriptions?: boolean
@@ -52,6 +54,7 @@ const render = (
         value={value}
         onChange={onChange}
         errors={errors}
+        supportedModels={supportedModels}
         hasStoredKey={hasStoredKey}
         showCodexSubscriptions={showCodexSubscriptions}
         showClaudeIsolated={showClaudeIsolated}
@@ -78,6 +81,22 @@ describe('ProviderForm field switching', () => {
     expect(container.textContent).not.toContain('Refresh from vendor')
     expect(
       container.querySelector('a[href="https://platform.sensenova.cn/console/keys"]')?.textContent
+    ).toBe('Get an API key')
+  })
+
+  it('shows only the Global chat model even when an edit carries the China catalog', () => {
+    render(
+      createEmptyProviderFormValue({ type: 'official', vendorId: 'sensenova', region: 'global' }),
+      {
+        supportedModels: ['deepseek-v4-pro', 'sensenova-6.7-flash-lite']
+      }
+    )
+    expect(container.querySelector('[aria-label="Endpoint"]')?.textContent).toBe('Global')
+    expect(container.textContent).toContain('sensenova-6.8-flash-lite')
+    expect(container.textContent).not.toContain('deepseek-v4-pro')
+    expect(container.textContent).not.toContain('sensenova-6.7-flash-lite')
+    expect(
+      container.querySelector('a[href="https://platform.sensenova.ai/console/keys"]')?.textContent
     ).toBe('Get an API key')
   })
 

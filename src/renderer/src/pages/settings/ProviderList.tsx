@@ -229,7 +229,7 @@ const ProviderList = ({
           const effectiveModel =
             activeModel ??
             provider.model ??
-            (provider.vendorId ? defaultVendorModel(provider.vendorId) : undefined)
+            (provider.vendorId ? defaultVendorModel(provider.vendorId, provider.region) : undefined)
           const activeValidationTarget = {
             model: effectiveModel,
             endpoint: preferredEndpoint(

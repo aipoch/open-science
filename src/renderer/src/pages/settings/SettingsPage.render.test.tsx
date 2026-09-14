@@ -1644,6 +1644,41 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
   })
 
+  it('switches an edited SenseNova Global provider to the China catalog and back', async () => {
+    const provider: ProviderView = {
+      id: 'sensenova-global',
+      type: 'official',
+      vendorId: 'sensenova',
+      name: 'SenseNova',
+      region: 'global',
+      models: ['sensenova-6.8-flash-lite'],
+      maskedKey: '••••test',
+      hasKey: true,
+      needsKey: false,
+      supportsImageInput: true
+    }
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => {
+      useSettingsStore.setState({ providers: [provider], activeProviderId: provider.id })
+    })
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    expect(document.body.textContent).not.toContain('deepseek-v4-pro')
+    for (const region of ['China', 'Global']) {
+      openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Endpoint"]'))
+      clickRadixMenuItem(
+        Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+          (option) => option.textContent === region
+        )
+      )
+      expect(document.body.querySelector('[aria-label="Endpoint"]')?.textContent).toBe(region)
+      expect(document.body.textContent?.includes('deepseek-v4-pro')).toBe(region === 'China')
+      expect(document.body.textContent).toContain('sensenova-6.8-flash-lite')
+    }
+    expect(useSettingsStore.getState().providers[0]?.region).toBe('global')
+  })
+
   it('shows an error when refreshing a provider model catalog rejects', async () => {
     const provider: ProviderView = {
       id: 'anthropic-provider',

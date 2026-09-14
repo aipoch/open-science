@@ -13,6 +13,7 @@ import {
   OFFICIAL_VENDORS,
   defaultVendorModel,
   getOfficialVendor,
+  getOfficialVendorModelIds,
   resolveVendorModelApiEndpoints,
   type OfficialVendorId
 } from '../../../../shared/provider-registry'
@@ -108,7 +109,7 @@ export const providerFormApiEndpoints = (value: ProviderFormValue): ChatApiEndpo
   if (value.type === 'official' && value.vendorId) {
     return resolveVendorModelApiEndpoints(
       value.vendorId,
-      value.model.trim() || defaultVendorModel(value.vendorId)
+      value.model.trim() || defaultVendorModel(value.vendorId, value.region)
     )
   }
   if (value.type === 'xai-subscription') return ['anthropic', 'openai', 'responses']
@@ -129,11 +130,11 @@ export const providerFormModelForFramework = (
 
   const vendorId = value.vendorId
   return (
-    getOfficialVendor(vendorId)?.models.find(({ id }) =>
+    getOfficialVendorModelIds(vendorId, value.region).find((id) =>
       resolveVendorModelApiEndpoints(vendorId, id).some((endpoint) =>
         frameworkEndpoints.includes(endpoint)
       )
-    )?.id ?? defaultVendorModel(vendorId)
+    ) ?? defaultVendorModel(vendorId, value.region)
   )
 }
 

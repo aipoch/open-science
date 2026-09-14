@@ -1849,7 +1849,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         maskedKey={editingProvider?.maskedKey}
                         needsKey={editingProvider?.needsKey}
                         errors={formErrors}
-                        supportedModels={editingProvider?.models}
+                        supportedModels={
+                          editingProvider?.type === formValue.type &&
+                          editingProvider?.vendorId === formValue.vendorId &&
+                          editingProvider?.region === formValue.region
+                            ? editingProvider?.models
+                            : undefined
+                        }
                         onRefreshModels={
                           editingProvider?.type === 'official' &&
                           editingProvider.hasKey &&

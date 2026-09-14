@@ -1103,6 +1103,41 @@ describe('ProviderAccountsModule', () => {
     ).resolves.toMatchObject({ ok: false, category: 'incompatible' })
   })
 
+  it('persists SenseNova regions through the existing settings field without rewriting legacy records', async () => {
+    await module.upsertProvider({
+      type: 'official',
+      vendorId: 'sensenova',
+      name: 'SenseNova',
+      key: 'synthetic-key'
+    })
+    const original = (await new SettingsRepository(dir).getSettings()).providers[0]
+    expect(original.region).toBeUndefined()
+    expect(
+      module.resolveRuntimeTarget(
+        original,
+        { kind: 'provider-default' },
+        getAgentFramework('codex')
+      ).provider.baseUrl
+    ).toBe('https://token.sensenova.cn')
+    await module.upsertProvider({
+      id: original.id,
+      requireExisting: true,
+      type: 'official',
+      vendorId: 'sensenova',
+      name: 'SenseNova',
+      region: 'global'
+    })
+    const restored = (await new SettingsRepository(dir).getSettings()).providers[0]
+    expect(restored).toMatchObject({ region: 'global', keyRef: original.keyRef })
+    expect(
+      module.resolveRuntimeTarget(
+        restored,
+        { kind: 'provider-default' },
+        getAgentFramework('codex')
+      ).provider.openaiBaseUrl
+    ).toBe('https://token.sensenova.ai/v1')
+  })
+
   it('discards a model catalog fetched for a provider target changed during refresh', async () => {
     await module.upsertProvider({
       type: 'official',

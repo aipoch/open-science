@@ -31,6 +31,14 @@ describe('provider registry', () => {
       expect(hasBaseUrl).not.toBe(hasRegions) // exactly one is set
       expect(vendor.models.length).toBeGreaterThan(0)
       expect(vendor.reasoningEffort).toBeDefined()
+      for (const region of vendor.regions ?? []) {
+        if (!region.modelIds) continue
+        expect(region.modelIds.length).toBeGreaterThan(0)
+        expect(new Set(region.modelIds).size).toBe(region.modelIds.length)
+        for (const modelId of region.modelIds) {
+          expect(vendor.models.some(({ id }) => id === modelId)).toBe(true)
+        }
+      }
     }
   })
 
@@ -423,6 +431,34 @@ describe('provider registry', () => {
     expect(resolveVendorOpenAiBaseUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1')
     expect(resolveVendorModelsUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1/models')
     expect(defaultVendorModel('xiaomimimo')).toBe('mimo-v2.5-pro')
+  })
+
+  it.each([undefined, 'china', 'unknown'])(
+    'preserves the China endpoint for SenseNova region %s',
+    (region) => {
+      expect(resolveVendorBaseUrl('sensenova', region)).toBe('https://token.sensenova.cn')
+      expect(resolveVendorOpenAiBaseUrl('sensenova', region)).toBe('https://token.sensenova.cn/v1')
+      expect(getOfficialVendorModelIds('sensenova', region)).toContain('sensenova-6.7-flash-lite')
+    }
+  )
+
+  it('keeps the Global SenseNova catalog independent of China and stale discovery', () => {
+    expect(resolveVendorBaseUrl('sensenova', 'global')).toBe('https://token.sensenova.ai')
+    expect(resolveVendorOpenAiBaseUrl('sensenova', 'global')).toBe('https://token.sensenova.ai/v1')
+    expect(resolveVendorApiKeyUrl('sensenova', 'global')).toBe(
+      'https://platform.sensenova.ai/console/keys'
+    )
+    expect(resolveVendorModelsUrl('sensenova', 'global')).toBeUndefined()
+    expect(defaultVendorModel('sensenova', 'global')).toBe('sensenova-6.8-flash-lite')
+    expect(
+      getOfficialVendorModelIds('sensenova', 'global', ['deepseek-v4-pro', 'sensenova-u1-fast'])
+    ).toEqual(['sensenova-6.8-flash-lite'])
+    expect(getOfficialVendorModelIds('minimax', 'global', ['discovered-model'])).toEqual([
+      'discovered-model'
+    ])
+    expect(getOfficialVendorModelIds('minimax', 'china')).toEqual(
+      getOfficialVendorModelIds('minimax', 'global')
+    )
   })
 
   it('routes SenseNova through both APIs with a curated chat catalog', () => {

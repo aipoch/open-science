@@ -908,8 +908,9 @@ const ProviderForm = ({
           {keyField}
 
           {(() => {
-            const models =
-              supportedModels ?? (value.vendorId ? getOfficialVendorModelIds(value.vendorId) : [])
+            const models = value.vendorId
+              ? getOfficialVendorModelIds(value.vendorId, value.region, supportedModels)
+              : (supportedModels ?? [])
 
             if (models.length === 0) return null
 
