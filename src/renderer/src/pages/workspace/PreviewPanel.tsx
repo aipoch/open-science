@@ -1,5 +1,3 @@
-import { useSideChatTransfers } from './use-side-chat-controller'
-import { sideChatSummary } from './side-chat-summary'
 import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
 import { SideChatWorkbenchContent } from './SideChatWorkbench'
 import { BookOpen, File, FolderOpen, Globe2, X } from 'lucide-react'
@@ -289,23 +287,13 @@ const PreviewTab = ({
   onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const sideChats = useSideChatTransfers().views
-  const sideView =
-    tab.type === 'tool' && tab.toolKind === 'side-chat'
-      ? sideChats.find((view) => view.id === tab.sideChatId)
-      : undefined
   const dragHoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const clearDragHover = (): void => {
     clearTimeout(dragHoverTimer.current)
     dragHoverTimer.current = undefined
   }
   useEffect(() => () => clearTimeout(dragHoverTimer.current), [tab.id])
-  const tabTitle =
-    tab.type === 'tool' && tab.toolKind === 'side-chat'
-      ? sideView
-        ? sideChatSummary(sideView) || t('Side chat')
-        : t('Side chat')
-      : tab.title
+  const tabTitle = tab.type === 'tool' && tab.toolKind === 'side-chat' ? t('Side chat') : tab.title
 
   return (
     <div

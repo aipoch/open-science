@@ -1532,7 +1532,7 @@ describe('PreviewPanel', () => {
     }
   )
 
-  it('labels sibling Side chat tabs with distinct conversation summaries', async () => {
+  it('keeps sibling Side chat tab names fixed when conversations differ', async () => {
     usePreviewWorkbenchStore.getState().activateProject('default')
     window.api.sideChat = {
       list: vi.fn(async () => ({
@@ -1571,10 +1571,7 @@ describe('PreviewPanel', () => {
     )
 
     const labels = [...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)
-    expect(labels).toHaveLength(2)
-    expect(labels).toEqual(
-      expect.arrayContaining(['Compare cohorts', 'Check confidence intervals'])
-    )
+    expect(labels).toEqual(['Side chat', 'Side chat'])
   })
 
   it('renders a live Side chat and its independent composer inside the right panel', async () => {
@@ -1627,7 +1624,7 @@ describe('PreviewPanel', () => {
     expect(panel?.textContent).toContain('Question in the right panel')
     expect(panel?.querySelector('textarea')).not.toBeNull()
     expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
-      'Question in the right panel'
+      'Side chat'
     )
     expect(container.querySelector('[role="tab"]')?.textContent).not.toContain('Main analysis')
     const viewMain = panel!.querySelector<HTMLButtonElement>('[aria-label="View main session"]')!

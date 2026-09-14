@@ -206,7 +206,6 @@ describe('workspace page architecture', () => {
     expect(importersOf(ownerPaths.sideChat)).toEqual([
       'App.tsx',
       'pages/workspace/ConversationPanel.tsx',
-      'pages/workspace/PreviewPanel.tsx',
       'pages/workspace/SideChatPanel.tsx',
       'pages/workspace/SideChatWorkbench.tsx',
       'pages/workspace/WorkspacePage.tsx',
