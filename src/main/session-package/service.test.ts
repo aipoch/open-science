@@ -2721,9 +2721,18 @@ it('still aborts processing after the budget expires while copying', async () =>
   expect((await stat(join(source.storageRoot, key))).size).toBe(1024 * 1024)
 })
 
-it.each([false, true])(
-  'preserves source reproducibility receipts and logs with omitted outputs=%s',
-  async (omitOutput) => {
+// Each lifecycle scenario starts from its own imported package. Do not accumulate all
+// migrations and archive round trips under one 60-second Windows test budget.
+it.each(
+  [false, true].flatMap((omitOutput) =>
+    (['reuse', 'rollback', 'forward-and-delete'] as const).map((scenario) => ({
+      omitOutput,
+      scenario
+    }))
+  )
+)(
+  'preserves source reproducibility receipts and logs with omitted outputs=$omitOutput ($scenario)',
+  async ({ omitOutput, scenario }) => {
     const {
       ArtifactReproducibilityReceiptStore,
       listArtifactReproducibilityReceipts,
@@ -2942,89 +2951,95 @@ it.each([false, true])(
         )
       ).resolves.toEqual(output)
     }
-    const reusedSession = {
-      id: 'reuse-source',
-      projectId: imported.projectId,
-      title: 'Reuse evidence',
-      cwd: '',
-      status: 'idle' as const,
-      messages: [
-        {
-          id: 'reuse-message',
-          role: 'user' as const,
-          content: 'Inspect retained evidence',
-          status: 'complete' as const,
-          eventIds: [],
-          createdAt: 1,
-          updatedAt: 1,
-          delegatedInputVersionIds: [importedRow.id]
-        }
-      ],
-      createdAt: 1,
-      updatedAt: 2
-    }
-    await new SessionRepository(target.storageRoot).saveSession(reusedSession)
-    const reusedArchive = join(target.storageRoot, 'reused.science')
-    await importer.exportTo(
-      { projectId: imported.projectId, sessionId: reusedSession.id },
-      reusedArchive
-    )
-    const reuseTarget = await createProvenanceTestFixture()
-    fixtures.push(reuseTarget)
-    const reuseService = new SessionPackageService({
-      storageRoot: reuseTarget.storageRoot,
-      getClient: async () => reuseTarget.client
-    })
-    const reusedImport = await reuseService.importFrom(reusedArchive)
-    const reusedOrigin = await reuseService.readOrigin(reusedImport)
-    const reusedScope = {
-      projectId: reusedImport.projectId,
-      appSessionId: reusedOrigin.identities[scope.appSessionId],
-      artifactId: reusedOrigin.identities[scope.artifactId],
-      versionId: reusedOrigin.identities[scope.versionId]
-    }
-    expect(
-      (await listArtifactReproducibilityReceipts(reuseTarget.repository, reusedScope)).receipts
-    ).toEqual([originalReceipt])
-    await new SessionRepository(target.storageRoot).deleteSession(
-      imported.projectId,
-      reusedSession.id
-    )
-    const rollbackTarget = await createProvenanceTestFixture()
-    fixtures.push(rollbackTarget)
-    const rollbackService = new SessionPackageService({
-      storageRoot: rollbackTarget.storageRoot,
-      getClient: async () => rollbackTarget.client
-    })
-    await expect(
-      rollbackService.importFrom(archive, undefined, (progress) => {
-        if (progress.phase === 'importing') throw new Error('Stop before publication')
+    if (scenario === 'reuse') {
+      const reusedSession = {
+        id: 'reuse-source',
+        projectId: imported.projectId,
+        title: 'Reuse evidence',
+        cwd: '',
+        status: 'idle' as const,
+        messages: [
+          {
+            id: 'reuse-message',
+            role: 'user' as const,
+            content: 'Inspect retained evidence',
+            status: 'complete' as const,
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1,
+            delegatedInputVersionIds: [importedRow.id]
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 2
+      }
+      await new SessionRepository(target.storageRoot).saveSession(reusedSession)
+      const reusedArchive = join(target.storageRoot, 'reused.science')
+      await importer.exportTo(
+        { projectId: imported.projectId, sessionId: reusedSession.id },
+        reusedArchive
+      )
+      const reuseTarget = await createProvenanceTestFixture()
+      fixtures.push(reuseTarget)
+      const reuseService = new SessionPackageService({
+        storageRoot: reuseTarget.storageRoot,
+        getClient: async () => reuseTarget.client
       })
-    ).rejects.toThrow('Stop before publication')
-    expect(await rollbackTarget.client.artifactVersion.count()).toBe(0)
-    expect(await readdir(join(rollbackTarget.storageRoot, 'artifacts')).catch(() => [])).toEqual([])
-    const forwarded = join(target.storageRoot, 'forwarded.science')
-    await importer.exportTo(imported, forwarded)
-    const forwardedRoot = join(target.storageRoot, 'forwarded')
-    await mkdir(forwardedRoot)
-    await extractTar({ file: forwarded, cwd: forwardedRoot })
-    expect(await readFile(join(forwardedRoot, 'records.json'), 'utf8')).toBe(
-      await readFile(join(extracted, 'records.json'), 'utf8')
-    )
-    const { SessionProjectionRepository } = await import('../session-persistence/projection')
-    const sessions = new SessionRepository(
-      target.storageRoot,
-      {},
-      new SessionProjectionRepository(async () => target.client)
-    )
-    const session = await sessions.loadSession(imported.projectId, imported.sessionId)
-    await importer.prepareSessionDeletion(session!)
-    await sessions.deleteSession(imported.projectId, imported.sessionId)
-    await importer.recover({ collectDeletedPackages: true })
-    await expect(
-      stat(dirname(join(target.storageRoot, importedRow.contentStorageKey)))
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    expect(await target.client.artifactVersion.count()).toBe(0)
+      const reusedImport = await reuseService.importFrom(reusedArchive)
+      const reusedOrigin = await reuseService.readOrigin(reusedImport)
+      const reusedScope = {
+        projectId: reusedImport.projectId,
+        appSessionId: reusedOrigin.identities[scope.appSessionId],
+        artifactId: reusedOrigin.identities[scope.artifactId],
+        versionId: reusedOrigin.identities[scope.versionId]
+      }
+      expect(
+        (await listArtifactReproducibilityReceipts(reuseTarget.repository, reusedScope)).receipts
+      ).toEqual([originalReceipt])
+      await new SessionRepository(target.storageRoot).deleteSession(
+        imported.projectId,
+        reusedSession.id
+      )
+    } else if (scenario === 'rollback') {
+      const rollbackTarget = await createProvenanceTestFixture()
+      fixtures.push(rollbackTarget)
+      const rollbackService = new SessionPackageService({
+        storageRoot: rollbackTarget.storageRoot,
+        getClient: async () => rollbackTarget.client
+      })
+      await expect(
+        rollbackService.importFrom(archive, undefined, (progress) => {
+          if (progress.phase === 'importing') throw new Error('Stop before publication')
+        })
+      ).rejects.toThrow('Stop before publication')
+      expect(await rollbackTarget.client.artifactVersion.count()).toBe(0)
+      expect(await readdir(join(rollbackTarget.storageRoot, 'artifacts')).catch(() => [])).toEqual(
+        []
+      )
+    } else {
+      const forwarded = join(target.storageRoot, 'forwarded.science')
+      await importer.exportTo(imported, forwarded)
+      const forwardedRoot = join(target.storageRoot, 'forwarded')
+      await mkdir(forwardedRoot)
+      await extractTar({ file: forwarded, cwd: forwardedRoot })
+      expect(await readFile(join(forwardedRoot, 'records.json'), 'utf8')).toBe(
+        await readFile(join(extracted, 'records.json'), 'utf8')
+      )
+      const { SessionProjectionRepository } = await import('../session-persistence/projection')
+      const sessions = new SessionRepository(
+        target.storageRoot,
+        {},
+        new SessionProjectionRepository(async () => target.client)
+      )
+      const session = await sessions.loadSession(imported.projectId, imported.sessionId)
+      await importer.prepareSessionDeletion(session!)
+      await sessions.deleteSession(imported.projectId, imported.sessionId)
+      await importer.recover({ collectDeletedPackages: true })
+      await expect(
+        stat(dirname(join(target.storageRoot, importedRow.contentStorageKey)))
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(await target.client.artifactVersion.count()).toBe(0)
+    }
     expect(
       await readFile(
         join(source.storageRoot, 'runtime/provenance/environment-locks', `${lockChecksum}.json`),
