@@ -1,7 +1,7 @@
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import { BookOpen, Check, KeyRound, Server, Trash2, X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ComponentProps, type ComponentType } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -51,6 +51,45 @@ type CredentialsPanelProps = {
 
 const statusLabel = (configured: boolean): React.JSX.Element | null =>
   configured ? <Check className="size-4 text-primary" aria-hidden="true" /> : null
+
+type CredentialServiceRowProps = ComponentProps<'div'> & {
+  icon: ComponentType<{ className?: string }>
+  label: string
+  description: string
+  configured: boolean
+  disabled: boolean
+  actionLabel: string
+  onOpen: () => void
+}
+
+// One service row in the Services list. Extra props land on the row root so global-search anchors
+// can target a specific service (e.g. data-settings-anchor="credentials.github").
+const CredentialServiceRow = ({
+  icon: Icon,
+  label,
+  description,
+  configured,
+  disabled,
+  actionLabel,
+  onOpen,
+  ...props
+}: CredentialServiceRowProps): React.JSX.Element => (
+  <div className="flex items-center gap-3 px-4 py-3" {...props}>
+    <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40">
+      <Icon className="size-4" aria-hidden="true" />
+    </span>
+    <div className="min-w-0 flex-1">
+      <div className="flex items-center gap-2 text-sm font-medium">
+        {label}
+        {statusLabel(configured)}
+      </div>
+      <p className="truncate text-xs text-muted-foreground">{description}</p>
+    </div>
+    <Button type="button" variant="outline" disabled={disabled} onClick={onOpen}>
+      {actionLabel}
+    </Button>
+  </div>
+)
 const isLocalOnlyActionError = (error: unknown): boolean =>
   error instanceof Error && error.message.includes('only available in the local desktop app')
 
@@ -452,6 +491,29 @@ export function CredentialsPanel({
     }
   ]
 
+  const [githubService, literatureService, openAlexService, unpaywallService] = services
+  const serviceRowProps = (
+    service: (typeof services)[number]
+  ): Omit<CredentialServiceRowProps, 'data-settings-anchor'> => {
+    const checking = service.desktopOnly && desktopCredentialAvailability === 'checking'
+    const unavailable = service.desktopOnly && desktopCredentialAvailability === 'unavailable'
+    return {
+      icon: service.Icon,
+      label: service.label,
+      description: service.description,
+      configured: service.configured,
+      disabled: checking || unavailable,
+      actionLabel: checking
+        ? t('Checking…')
+        : unavailable
+          ? t('Desktop only')
+          : service.configured
+            ? t('Manage')
+            : t('Connect'),
+      onOpen: () => onNavigate({ kind: 'service', serviceId: service.id })
+    }
+  }
+
   const confirmCredentialRemoval = async (): Promise<void> => {
     if (!credentialToRemove || busy) return
     setBusy(true)
@@ -477,38 +539,16 @@ export function CredentialsPanel({
             )}
         </p>
         <div className="mt-4 divide-y divide-border rounded-xl border border-border">
-          {services.map(({ id, label, description, configured, desktopOnly, Icon }) => {
-            const checking = desktopOnly && desktopCredentialAvailability === 'checking'
-            const unavailable = desktopOnly && desktopCredentialAvailability === 'unavailable'
-            return (
-              <div key={id} className="flex items-center gap-3 px-4 py-3">
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40">
-                  <Icon className="size-4" aria-hidden="true" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    {label}
-                    {statusLabel(configured)}
-                  </div>
-                  <p className="truncate text-xs text-muted-foreground">{description}</p>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={checking || unavailable}
-                  onClick={() => onNavigate({ kind: 'service', serviceId: id })}
-                >
-                  {checking
-                    ? t('Checking…')
-                    : unavailable
-                      ? t('Desktop only')
-                      : configured
-                        ? t('Manage')
-                        : t('Connect')}
-                </Button>
-              </div>
-            )
-          })}
+          <CredentialServiceRow
+            data-settings-anchor="credentials.github"
+            {...serviceRowProps(githubService)}
+          />
+          <CredentialServiceRow
+            data-settings-anchor="credentials.literature"
+            {...serviceRowProps(literatureService)}
+          />
+          <CredentialServiceRow {...serviceRowProps(openAlexService)} />
+          <CredentialServiceRow {...serviceRowProps(unpaywallService)} />
         </div>
       </section>
 
@@ -519,7 +559,11 @@ export function CredentialsPanel({
             'Device-wide credentials that can be shared by the Custom Connectors you choose.'
           )}
           action={
-            <Button type="button" onClick={() => onNavigate({ kind: 'create' })}>
+            <Button
+              type="button"
+              data-settings-anchor="credentials.new"
+              onClick={() => onNavigate({ kind: 'create' })}
+            >
               {t('New credential')}
             </Button>
           }

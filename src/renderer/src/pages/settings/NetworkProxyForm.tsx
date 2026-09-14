@@ -76,6 +76,7 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
   return (
     <div className="space-y-5 p-5">
       <SettingsSection
+        data-settings-anchor="network.proxy"
         title={t('Proxy')}
         description={t(
           'Choose how Open Science reaches the internet. Changes apply to new app requests and processes.'
