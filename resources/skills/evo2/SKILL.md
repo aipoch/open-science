@@ -95,32 +95,18 @@ Need a DNA model?
 
 ## Remote compute
 
-7B/40B inference is GPU-bound (≥24 GB / 80 GB VRAM). Read
-`compute_details({provider, mode:'read'})` for an environment with `evo2` +
-`flash-attn` and a pre-cached HF weight mount, then submit:
+7B/40B inference is GPU-bound (≥24 GB / 80 GB VRAM). Follow `remote-compute-ssh`
+for the JavaScript submission and result workflow.
 
-```python
-c = host.compute.create(provider)
-job = c.submitJob(
-    intent="Evo2-7B score 200bp variant window — 1×GPU, ~2 min",
-    inputs=[{"src": "score_evo2.py", "dstFilename": "score_evo2.py"}],
-    command="python3 score_evo2.py",   # env selection is host-specific — see compute_details for your provider
-    outputs=["scores.json"],
-    timeoutSeconds=1800,
-)
-print(job.job_id)   # cell ends here — kernel never blocks on compute
-```
+Prepare `score_evo2.py` using the Python recipe above. Stage it as an input, run
+`python3 score_evo2.py` in a verified environment with `evo2` and `flash-attn`, and
+collect `scores.json`. Allow 1800 seconds, adjusted to the workload and allocated
+hardware. For Slurm, request GPU resources with leading `#SBATCH` directives using
+the shared Skill's recipe.
 
-Retain the exact returned `job_id`. Query that saved ID with the non-blocking
-`c.attachJob(job_id).status()` or `.result()` when its state or result is relevant; do not scan Job
-history. A final `.result()` read reports whether its follow-up was `suppressed` or had already been
-`committed`; otherwise the app starts the later analysis turn for an unread final result. See the
-`remote-compute-ssh` skill for details.
-
-Inside `score_evo2.py`, point `HF_HOME` at the provider's weight-cache mount
-(path is in `compute_details`) and set `HF_HUB_OFFLINE=1` so the loader
-doesn't try to write `refs/` into a read-only mount. Weight footprint:
-~15 GB (7B), ~80 GB (40B).
+Set `HF_HOME` to the verified weight-cache path from the selected host's knowledge
+and `HF_HUB_OFFLINE=1` to avoid writing `refs/` into a read-only mount.
+Weight footprint: ~15 GB (7B), ~80 GB (40B).
 
 ## Typical performance
 

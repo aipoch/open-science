@@ -89,35 +89,17 @@ drop BOS/EOS. `out["contacts"]` (when `return_contacts=True`) is `(B, L, L)`.
 
 ## Remote compute
 
-Needs ≥16 GB VRAM (650M model) and either pre-cached `.pt` checkpoints or
-egress to `dl.fbaipublicfiles.com`. Read
-`compute_details({provider, mode:'read'})` for an environment with `fair-esm`
-and a torch-hub weight cache, then:
+Needs ≥16 GB VRAM (650M model) and either pre-cached `.pt` checkpoints or permitted
+access to `dl.fbaipublicfiles.com`. Follow `remote-compute-ssh` for the JavaScript
+submission and result workflow.
 
-```python
-c = host.compute.create(provider)
-job = c.submitJob(
-    intent="ESM-2 650M embeddings for 200 sequences — 1×GPU, ~2 min",
-    inputs=[
-        {"src": "seqs.fasta", "dstFilename": "seqs.fasta"},
-        {"src": "embed_esm2.py", "dstFilename": "embed_esm2.py"},
-    ],
-    command="python3 embed_esm2.py",
-    environment=...,   # env name from compute_details
-    outputs=["embeddings.pt"],
-    timeoutSeconds=1800,
-)
-print(job.job_id)   # cell ends here — kernel never blocks on compute
-```
+Prepare `embed_esm2.py` using the Python recipe above. Stage it with `seqs.fasta`, run
+`python3 embed_esm2.py` in a verified `fair-esm` environment, and collect `embeddings.pt`.
+Allow 1800 seconds, adjusted to the workload and allocated hardware. For Slurm, request
+GPU resources with leading `#SBATCH` directives using the shared Skill's recipe.
 
-Retain the exact returned `job_id`. Query that saved ID with the non-blocking
-`c.attachJob(job_id).status()` or `.result()` when its state or result is relevant; do not scan Job
-history. A final `.result()` read reports whether its follow-up was `suppressed` or had already been
-`committed`; otherwise the app starts the later analysis turn for an unread final result. See the
-`remote-compute-ssh` skill for details.
-
-Inside `embed_esm2.py`, set `TORCH_HOME` to the provider's torch-hub cache
-mount (path is in `compute_details`) so `esm.pretrained.*` resolves locally.
+Set `TORCH_HOME` inside `embed_esm2.py` to the verified torch-hub cache path from the
+selected host's knowledge so `esm.pretrained.*` resolves locally.
 
 ## Troubleshooting
 

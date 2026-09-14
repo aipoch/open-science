@@ -75,38 +75,16 @@ embedding (`n_cells × emb_dim`, 512 by default). Downstream: feed to
 ## Remote compute
 
 Needs ≥24 GB VRAM and the released human checkpoint (~200 MB:
-`args.json`, `best_model.pt`, `vocab.json`). Read
-`compute_details({provider, mode:'read'})` for an environment with `scgpt`
-and a pre-cached checkpoint directory, then:
+`args.json`, `best_model.pt`, `vocab.json`). Follow `remote-compute-ssh` for the
+JavaScript submission and result workflow.
 
-```python
-c = host.compute.create(provider)
-job = c.submitJob(
-    intent="scGPT embed 50k cells — 1×GPU, ~5 min",
-    inputs=[
-        {"src": "dataset.h5ad", "dstFilename": "dataset.h5ad"},
-        {"src": "embed.py", "dstFilename": "embed.py"},
-    ],
-    command="python3 embed.py",
-    environment=...,   # env name from compute_details
-    outputs=["embedded.h5ad"],
-    timeoutSeconds=1800,
-)
-print(job.job_id)   # cell ends here — kernel never blocks on compute
-```
+Prepare `embed.py` using the Python recipe above. Stage it with `dataset.h5ad`, run
+`python3 embed.py` in a verified scGPT environment, and collect `embedded.h5ad`.
+Allow 1800 seconds, adjusted to the dataset and allocated hardware. For Slurm, request
+GPU resources with leading `#SBATCH` directives using the shared Skill's recipe.
 
-Retain the exact returned `job_id`. Query that saved ID with the non-blocking
-`host.compute.create(provider).attachJob(job_id).status()` or `.result()` when its state or result
-is relevant; do not scan Job history. A final `.result()` read reports whether its follow-up was `suppressed`
-or had already been `committed`; otherwise the app starts the later analysis turn for an unread
-final result. See the `remote-compute-ssh` skill for the orchestration details.
-
-See the `remote-compute-ssh` / `remote-compute-modal` skill for the
-orchestration details.
-
-In `embed.py`, pass `model_dir=` the checkpoint path from `compute_details`.
-If `flash-attn` is unavailable in that environment, set
-`use_fast_transformer=False`.
+In `embed.py`, set `model_dir` to a verified checkpoint path on the execution target.
+If `flash-attn` is unavailable, set `use_fast_transformer=False`.
 
 ## Gotchas
 

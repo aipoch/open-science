@@ -126,7 +126,7 @@ const job = await c.submitJob(
     timeoutSeconds: 3600, // optional; default 24 h, max 7 days
     inputs: [
       { src: 'in.dat', dstFilename: 'in.dat' }, // stage an Agent Session workspace file
-      { remotePath: 'ssh:<alias>/<abs_path>' } // link a remote file (no transfer)
+      { remotePath: '<abs_path>' } // absolute path on this host, e.g. /scratch/reference.dat
     ],
     outputs: [
       '*.result', // featured (default visibility)
@@ -344,19 +344,41 @@ preserved) means some files were not downloaded — the remote workdir is kept s
 ## Chaining jobs via left_on_remote
 
 Large outputs declared with `residency: 'remote'` or files that exceed the size threshold stay
-on the remote host and appear in `r.left_on_remote`. Use their URIs directly as `remotePath`
-inputs to the next job — no local round-trip:
+on the remote host and appear in `r.left_on_remote`. `remotePath` requires an absolute filesystem
+path on the next job's host, not an SSH URI. Verify the retained output belongs to that same host,
+then remove the exact `ssh://<alias>` prefix. These app-produced URIs contain raw paths; do not
+URL-decode them. A home-relative `remote_workdir` can produce `/~/...` in the URI; resolve that
+prefix using HOME from the same host. For a different host, arrange an explicit transfer instead
+of reusing its path.
+Prepare `process.py` in the Agent Session workspace before submitting:
 
 ```javascript
 // In the analysis turn — chain a left_on_remote output into the next job
-const big_output_uri = r.left_on_remote[0].uri // e.g. 'ssh:biowulf//scratch/jobs/<id>/big.h5'
+const retained = r.left_on_remote[0] // uri: ssh://<alias>/scratch/jobs/<id>/big.h5
+const hostPrefix = `ssh://${c.provider_id.slice('ssh:'.length)}`
+if (!r.result_final || !retained?.uri.startsWith(`${hostPrefix}/`)) {
+  throw new Error('Choose a final retained output from this same host before chaining jobs.')
+}
+let remoteInputPath = retained.uri.slice(hostPrefix.length) // preserves the leading /
+if (r.remote_workdir?.startsWith('~/') && remoteInputPath.startsWith('/~/')) {
+  const probe = await c.callCommand(
+    'printf %s "$HOME"',
+    'Resolve the retained output home directory'
+  )
+  const home = probe.stdout.trim()
+  if (probe.exit_code !== 0 || !home.startsWith('/') || /[\r\n]/.test(home)) {
+    throw new Error('Could not verify the absolute home directory on this host.')
+  }
+  remoteInputPath = home.replace(/\/$/, '') + remoteInputPath.slice(2)
+}
 
 const job2 = await c.submitJob(
   'process big.h5 output from job 1',
-  'python process.py --input big.h5 --out summary.csv',
+  'python3 process.py --input big.h5 --out summary.csv',
   {
     inputs: [
-      { remotePath: big_output_uri } // symlinked in job workdir, no transfer
+      { src: 'process.py', dstFilename: 'process.py' },
+      { remotePath: remoteInputPath, dstFilename: 'big.h5' } // same-host symlink, no transfer
     ],
     outputs: ['summary.csv']
   }

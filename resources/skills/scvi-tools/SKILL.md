@@ -40,8 +40,8 @@ Nothing auto-loads it outside Claude Science. Then call the helpers directly.
 If a helper raises `NameError`, you haven't exec'd kernel.py.
 
 Dependencies: `pip install scvi-tools scanpy anndata`. Training needs a
-CUDA-capable GPU — see [Remote compute](#remote-compute-rent-a-gpu) to fall out
-to a rented GPU when you don't have one locally.
+CUDA-capable GPU — see [Remote compute](#remote-compute) for execution on a
+configured remote host when no suitable local environment is available.
 
 ## How to run
 
@@ -134,17 +134,20 @@ mode).
 | `adata.layers["scvi_normalized"]` | decoded expression, library-size normalized            |
 | DE dataframe                      | per-gene `lfc_*` / `proba_de` (with `mode="change"`)   |
 
-## Remote compute (rent a GPU)
+## Remote compute
 
 An A100-class GPU is recommended for >50k cells. Training is a plain Python
 script (`pipeline.py`) that reads counts, trains scVI/scANVI, and writes the
-output `.h5ad` — run it on whatever GPU you have (a local/cluster CUDA box, or a
-serverless GPU host such as Modal). There is no Claude-Science compute broker
-here; drive the GPU host directly.
+output `.h5ad`. For a selected SSH or Slurm host, load `remote-compute-ssh` and
+use its asynchronous job workflow. Validate the target environment first; use
+`compute-env-setup` for user-run setup instructions if software or weights are missing.
 
-**Modal** (serverless GPU) — wrap `pipeline.py` in a Modal app and run it with
-the Modal CLI (`modal run pipeline.py`), which blocks until the job finishes, so
-you read the result synchronously (no notification tool needed):
+**Optional user-managed Modal workflow.** If the user specifically chooses Modal,
+the following is a standalone example for their configured account, outside Open
+Science's SSH/Slurm job tracking. The user runs `modal run pipeline.py` and reads the
+result synchronously. The example creates a persistent volume; its setup and cleanup
+remain user-owned; Open Science does not bundle a Modal compute Skill or environment.
+Do not choose it instead of a selected SSH host.
 
 ```python
 # pipeline.py — run with:  modal run pipeline.py
@@ -174,9 +177,7 @@ before the remote preprocessing/training recipe, and `h5ad_safe_obs` before
 `.write_h5ad()`. Copy the helper definitions into that script or ship and load
 `kernel.py` there; keep the documented count-source selection and validation.
 
-For a local/cluster GPU, just run `pipeline.py` directly where CUDA is visible —
-no wrapper needed. (For a fuller Modal workflow see the `remote-compute-modal`
-skill.)
+For an existing local GPU environment, run `pipeline.py` where CUDA is visible.
 
 ## Gotchas
 

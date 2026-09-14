@@ -2,7 +2,7 @@ import { chmod, cp, lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:
 import { join } from 'node:path'
 
 import { createLogger } from '../logger'
-import { COMPUTE_SKILL_ID } from '../compute/skill-doc'
+import { COMPUTE_ENV_SETUP_SKILL_ID, COMPUTE_SKILL_ID } from '../compute/skill-doc'
 import type { BundledSkill } from './registry'
 import { hasCanonicalSkillDocumentName, normalizeSkillDocumentName } from './skill-document-name'
 import { isUsableSkillName } from './skill-name'
@@ -21,47 +21,48 @@ const VERSION_MANIFEST = '.os-versions.json'
 type SkillDirectoryLayout = 'app-owned' | 'agent-facing'
 type SkillMaterializationOptions = Readonly<{ directoryLayout?: SkillDirectoryLayout }>
 
-// A matching content fingerprint is not enough for projections created before canonical Skill
-// names were enforced. Validate the generated copy before taking the fast path so only an obsolete
-// `os-*` projection is refreshed; authoritative Skill content, directories, and local IDs are never
-// migrated here.
-const hasCanonicalProjectedName = async (path: string, name: string): Promise<boolean> => {
+// A source fingerprint does not cover app-injected guidance. Refresh generated copies when their
+// public name or compute guidance is obsolete, without changing authoritative Skill packages.
+const hasCurrentProjectedDocument = async (path: string, skill: BundledSkill): Promise<boolean> => {
   try {
     const raw = await readFile(path, 'utf8')
-    return hasCanonicalSkillDocumentName(raw, name)
+    return (
+      hasCanonicalSkillDocumentName(raw, skill.name) &&
+      (!requiresCompute(skill) || raw.includes(COMPUTE_ENVIRONMENT_GUIDANCE))
+    )
   } catch {
     return false
   }
 }
 
-// Marker line in an injected notice, used to keep injection idempotent.
-const COMPUTE_NOTICE_MARKER = 'Compute environment unavailable in this app'
-
-// Agent-facing preamble injected at the top of a compute-requiring skill's body. This app ships no GPU
-// or model-execution backend, so a triggered biomodel skill would otherwise flail through package
-// installs and CLI calls that end in cryptic "command not found" / missing-GPU errors. The notice tells
-// the agent to stop up-front and report cleanly instead.
-const COMPUTE_UNAVAILABLE_NOTICE = [
+// Skill metadata describes requirements, not the current Session's compute capabilities. Discovery,
+// host selection and approvals remain owned by Compute; projections must not cache availability.
+const COMPUTE_ENVIRONMENT_GUIDANCE = [
   '> [!IMPORTANT]',
-  `> **${COMPUTE_NOTICE_MARKER}.** This skill drives GPU / model-inference tooling`,
-  '> (model weights, CUDA, CLIs such as `colabfold_batch`) that is **not configured in this**',
-  '> **environment** — there is no GPU and the Python/model toolchain is absent. Do NOT install',
-  '> packages or run the model commands below; they will fail. Instead, tell the user plainly that',
-  '> this skill needs a GPU or remote-compute environment that is not available here, and stop.',
+  '> **Compute environment selection.** Before executing a workload, verify its software, weights',
+  '> and hardware. Explaining methods or interpreting existing results does not require this check.',
+  '> A verified local CPU/GPU environment is valid unless a remote target is selected or requested;',
+  '> an empty remote host catalog alone does not block local work. Honor the selected target.',
+  `> For remote execution, follow \`${COMPUTE_SKILL_ID}\`; for missing remote dependencies, use`,
+  `> \`${COMPUTE_ENV_SETUP_SKILL_ID}\` for user-run setup instructions. These Skills own the detailed`,
+  '> discovery, submission and result workflow; their compute API runs in JavaScript REPL, not Python/R.',
+  '> References below do not expand the current Skill or tool scope. Reuse already-loaded guidance;',
+  '> load other Skills only when permitted. If required guidance is unavailable, explain what is',
+  '> missing and ask the user to include it or hand off. Do not bypass a disabled loader or allowlist,',
+  '> or guess the missing workflow. Existing runtime permissions still govern all execution and setup.',
   '',
   ''
 ].join('\n')
 
-// Whether a skill's model tooling needs a compute backend this app does not provide — true for the
-// biomodel category or any skill whose frontmatter requirements mention gpu/compute.
+// These Skills require environment discovery before executing their scientific workload.
 const requiresCompute = (skill: BundledSkill): boolean =>
   skill.category?.toLowerCase() === 'biomodels' ||
   /\b(gpu|compute)\b/i.test(skill.requirements ?? '')
 
-// Prepends the compute-unavailable notice to a materialized skill's SKILL.md body, right after its
+// Prepends compute guidance to a materialized skill's SKILL.md body, right after its
 // frontmatter block so the YAML header stays first. Idempotent and best-effort: a missing file, an
 // already-injected copy, or a write error leaves the copy as-is.
-async function injectComputeNotice(target: string): Promise<void> {
+async function injectComputeGuidance(target: string): Promise<void> {
   const file = join(target, 'SKILL.md')
   let raw: string
   try {
@@ -69,16 +70,16 @@ async function injectComputeNotice(target: string): Promise<void> {
   } catch {
     return
   }
-  if (raw.includes(COMPUTE_NOTICE_MARKER)) return
+  if (raw.includes(COMPUTE_ENVIRONMENT_GUIDANCE)) return
 
   const frontmatter = /^---\n[\s\S]*?\n---\n?/.exec(raw)
   const updated = frontmatter
-    ? `${raw.slice(0, frontmatter[0].length)}\n${COMPUTE_UNAVAILABLE_NOTICE}${raw.slice(frontmatter[0].length)}`
-    : `${COMPUTE_UNAVAILABLE_NOTICE}${raw}`
+    ? `${raw.slice(0, frontmatter[0].length)}\n${COMPUTE_ENVIRONMENT_GUIDANCE}${raw.slice(frontmatter[0].length)}`
+    : `${COMPUTE_ENVIRONMENT_GUIDANCE}${raw}`
   try {
     await writeFile(file, updated, 'utf8')
   } catch (error) {
-    log.warn('failed to inject compute-unavailable notice', { target, error })
+    log.warn('failed to inject compute guidance', { target, error })
   }
 }
 
@@ -188,7 +189,7 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
         version !== '' &&
         existingDirs.has(name) &&
         versions[name] === version &&
-        (await hasCanonicalProjectedName(join(skillsDir, name, 'SKILL.md'), skill.name))
+        (await hasCurrentProjectedDocument(join(skillsDir, name, 'SKILL.md'), skill))
       if (unchanged) continue
 
       const target = join(skillsDir, name)
@@ -276,10 +277,8 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
         ? { synthesizeFrontmatter: { description: skill.description || skill.displayName } }
         : {})
     })
-    // Skills whose model tooling needs a compute backend this app lacks get an up-front notice so
-    // the agent reports cleanly instead of failing through the model commands. Done before the
-    // read-only chmod, which would otherwise block the rewrite.
-    if (requiresCompute(skill)) await injectComputeNotice(target)
+    // Route model requirements through existing Compute discovery before making the copy read-only.
+    if (requiresCompute(skill)) await injectComputeGuidance(target)
     // Loaded skills are read-only so the agent cannot write generated files into them.
     await chmodTree(target, 'readonly')
   }

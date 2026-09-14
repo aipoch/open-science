@@ -14,6 +14,7 @@ vi.mock('electron', () => ({
 }))
 
 import { SkillRegistry } from '../skills/registry'
+import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { loadSkillDocument } from '../skills/runtime-mcp-server'
 import type { FetchLike } from '../skills/github-import'
 import type { UserSkillRepository } from '../skills/user-skill-repository'
@@ -84,6 +85,50 @@ const userSkillSourceDir = (catalog: SkillCatalogModule, source: 'personal' | 'i
   join(catalogStorageRoots.get(catalog)!, 'skills', source)
 
 describe('SkillCatalogModule', () => {
+  it.each(['app-owned', 'agent-facing'] as const)(
+    'loads real biomodel compute dependencies through the %s catalog despite disabled settings',
+    async (directoryLayout) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'biomodel-catalog-chain-'))
+      roots.push(storageRoot)
+      const runtimeRoot = join(storageRoot, 'runtime')
+      const configRoot = join(runtimeRoot, '.claude')
+      const skillRegistry = new SkillRegistry(join(process.cwd(), 'resources', 'skills'))
+      const catalog = new SkillCatalogModule({
+        repository: new SettingsRepository(storageRoot),
+        storageRoot,
+        skillRegistry,
+        userClaudeDir: join(storageRoot, 'user-claude'),
+        userCodexDir: join(storageRoot, 'user-codex'),
+        userAgentsDir: join(storageRoot, 'user-agents')
+      })
+      const disabled = (await skillRegistry.list()).map((skill) => skill.id)
+      try {
+        // Explicitly selecting scGPT must load it while required compute dependencies remain
+        // available even when old settings list every bundled Skill as disabled.
+        await catalog.materializeSkills(configRoot, disabled, new Set(['scgpt']), {
+          directoryLayout
+        })
+        const model = await loadSkillDocument({ root: runtimeRoot }, 'scgpt')
+        expect(model).toContain('Compute environment selection')
+        expect(model).not.toContain('Compute environment unavailable in this app')
+        for (const dependency of ['remote-compute-ssh', 'compute-env-setup']) {
+          expect(model).toContain(dependency)
+          const loaded = await loadSkillDocument({ root: runtimeRoot }, dependency)
+          expect(loaded).toContain(`name: ${dependency}`)
+          expect(loaded).toContain('host.compute')
+        }
+        // Force-loading one model must not silently re-enable unrelated model Skills.
+        await expect(loadSkillDocument({ root: runtimeRoot }, 'borzoi')).rejects.toThrow(
+          'Unknown skill'
+        )
+      } finally {
+        await new ClaudeCodeSkillMaterializer().sync(configRoot, [], {
+          directoryLayout: 'agent-facing'
+        })
+      }
+    }
+  )
+
   it('projects name conflicts without hashing absent Marketplace entries', async () => {
     const catalog = await createCatalog()
     await catalog.createSkill({ name: 'personal-example', description: 'Mine', body: 'Keep me' })

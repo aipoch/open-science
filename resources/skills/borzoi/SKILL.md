@@ -56,30 +56,16 @@ biosample) is in `borzoi_pytorch.pytorch_borzoi_model.TRACKS_DF` (or `model.trac
 
 ## Remote compute
 
-Needs ≥24 GB VRAM and either pre-cached HF weights or egress to
-`huggingface.co`. Read `compute_details({provider, mode:'read'})` for an
-environment with `borzoi-pytorch`, then:
+Needs ≥24 GB VRAM and either pre-cached HF weights or permitted access to
+`huggingface.co`. Follow `remote-compute-ssh` for the JavaScript submission and result workflow.
 
-```python
-c = host.compute.create(provider)
-job = c.submitJob(
-    intent="Borzoi track prediction for 1 locus — 1×GPU, ~2 min",
-    inputs=[{"src": "borzoi_run.py", "dstFilename": "borzoi_run.py"}],
-    command="python3 borzoi_run.py",   # env selection is host-specific — see compute_details for your provider
-    outputs=["tracks.npz"],
-    timeoutSeconds=1800,
-)
-print(job.job_id)   # cell ends here — kernel never blocks on compute
-```
+Prepare `borzoi_run.py` using the Python recipe above. Stage it as an input, run
+`python3 borzoi_run.py` in a verified `borzoi-pytorch` environment, and collect `tracks.npz`.
+Allow 1800 seconds, adjusted to the workload and allocated hardware. For Slurm, request
+GPU resources with leading `#SBATCH` directives using the shared Skill's recipe.
 
-Retain the exact returned `job_id`. Query that saved ID with the non-blocking
-`c.attachJob(job_id).status()` or `.result()` when its state or result is relevant; do not scan Job
-history. A final `.result()` read reports whether its follow-up was `suppressed` or had already been
-`committed`; otherwise the app starts the later analysis turn for an unread final result. See the
-`remote-compute-ssh` skill for details.
-
-If the provider exposes a weight-cache mount, point `HF_HOME` at it inside
-`borzoi_run.py` (path is in `compute_details`).
+If the selected host's knowledge specifies a weight cache, set `HF_HOME` to its verified
+path inside `borzoi_run.py`.
 
 ## Troubleshooting
 
