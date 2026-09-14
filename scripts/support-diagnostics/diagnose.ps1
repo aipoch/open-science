@@ -58,7 +58,7 @@ $signaturePatterns = [ordered]@{
 function Field($Value, [string]$Name) {
     if ($null -eq $Value) { return $null }
     $property = $Value.PSObject.Properties[$Name]
-    if ($null -ne $property) { return $property.Value }
+    if ($null -ne $property) { return ,$property.Value }
     return $null
 }
 function Alias([string]$Kind, $Value) {
@@ -279,20 +279,57 @@ try {
     foreach ($file in $sessionFiles) {
         $text = ReadInput $file 'session' 16MB
         if ($null -eq $text) { continue }
+        $inputRecord = $script:inputs[$script:inputs.Count - 1]
+        $inputRecord['decodeStatus'] = 'invalid-json'
         try { $session = ConvertFrom-Json -InputObject $text -ErrorAction Stop }
         catch { $script:notes.Add('session-json-invalid-or-unsupported'); continue }
+        # Production stores { version, session }, not a bare Session. Match the released
+        # envelope contract in decodeSessionEnvelope; never fall back through unknown versions.
+        $inputRecord['decodeStatus'] = 'invalid-envelope'
+        if ($session -isnot [pscustomobject]) { $script:notes.Add('session-envelope-invalid'); continue }
+        $hasEnvelope = $null -ne $session.PSObject.Properties['version'] -or $null -ne $session.PSObject.Properties['session']
+        $inputRecord['format'] = 'bare'
+        if ($hasEnvelope) {
+            $version = Field $session 'version'
+            if (($version -is [int] -or $version -is [long]) -and $version -gt 2) {
+                $inputRecord['decodeStatus'] = 'unsupported-envelope'
+                $script:notes.Add('session-envelope-version-unsupported'); continue
+            }
+            if (($version -isnot [int] -and $version -isnot [long]) -or $version -notin @(1,2) -or (Field $session 'session') -isnot [pscustomobject]) {
+                $script:notes.Add('session-envelope-invalid'); continue
+            }
+            $inputRecord['format'] = if ($version -eq 1) { 'envelope-v1' } else { 'envelope-v2' }
+            $session = Field $session 'session'
+        }
+        $inputRecord['decodeStatus'] = 'invalid-session'
+        if ((Field $session 'id') -isnot [string] -or !(Field $session 'id')) {
+            $script:notes.Add('session-structure-invalid'); continue
+        }
         $graph = Field $session 'conversationGraph'
         $source = Alias 'source' $file
         $sid = Alias 'session' (Field $session 'id')
+        $inputRecord['session'] = $sid
         $graphActivities = Field $graph 'activities'
         $hasGraph = $null -ne $graph
         if ($hasGraph -and (Field $graph 'schemaVersion') -ne 1) {
+            $inputRecord['decodeStatus'] = 'unsupported-graph'
             $script:notes.Add('session-graph-version-unsupported'); continue
         }
-        $activities = if ($hasGraph) { @($graphActivities) } else { @(Field $session 'activities') }
+        if (($hasGraph -and $graphActivities -isnot [Array]) -or
+            (!$hasGraph -and (Field $session 'activities') -isnot [Array] -and (Field $session 'messages') -isnot [Array])) {
+            $script:notes.Add('session-structure-invalid'); continue
+        }
+        $inputRecord['decodeStatus'] = 'decoded'
+        $flatActivities = Field $session 'activities'
+        $activities = if ($hasGraph) { @($graphActivities) } else { @($flatActivities) }
+        $inputRecord['activityCount'] = @($activities | Where-Object { $null -ne $_ }).Count
+        $inputRecord['inspectedActivityCount'] = 0
+        $inputRecord['failedActivityCount'] = 0
+        $inputRecord['activitiesWithOutput'] = 0
         if ($activities.Count -gt 10000) { $script:notes.Add('session-activity-limit') }
         $frames = @{}
-        foreach ($frame in @(Field $graph 'frames')) {
+        $graphFrames = Field $graph 'frames'
+        foreach ($frame in $graphFrames) {
             $fid = Field $frame 'id'
             if ($fid -is [string]) { $frames[$fid] = Field $frame 'activeBranchId' }
         }
@@ -302,8 +339,11 @@ try {
             if ($time -and $cutoff -and $time -lt $cutoff) { continue }
             $status = Field $activity 'status'
             if ($status -notin @('pending','in_progress','completed','failed')) { continue }
+            $inputRecord['inspectedActivityCount']++
+            if ($status -eq 'failed') { $inputRecord['failedActivityCount']++ }
             # Inspect the known output fields in memory. Only fixed signature names leave this loop.
             $outputFields = @((Field $activity 'rawOutput'), (Field $activity 'toolContent'), (Field $activity 'terminalOutput'))
+            if (@($outputFields | Where-Object { $null -ne $_ -and $_ -ne '' }).Count) { $inputRecord['activitiesWithOutput']++ }
             $probe = ConvertTo-Json -InputObject $outputFields -Depth 12 -Compress -WarningAction SilentlyContinue
             $marks = @(Signatures $probe)
             if (!$marks.Count -and $status -ne 'failed') { continue }
@@ -322,12 +362,14 @@ try {
             }
             AddEvent $event
         }
+        if (!$inputRecord['inspectedActivityCount']) { $script:notes.Add('session-no-inspectable-activities') }
+        elseif (!$inputRecord['activitiesWithOutput']) { $script:notes.Add('session-no-tool-output') }
     }
     $counts = [ordered]@{}
     foreach ($key in $signaturePatterns.Keys) { $counts[$key] = 0 }
     foreach ($event in $script:events) { foreach ($mark in $event.signatures) { $counts[$mark]++ } }
     $report = [ordered]@{
-        reportVersion=1; generatedAtUtc=[DateTime]::UtcNow.ToString('o'); collectorPowerShell=$PSVersionTable.PSVersion.ToString()
+        reportVersion=2; collectorVersion='1.1.0'; generatedAtUtc=[DateTime]::UtcNow.ToString('o'); collectorPowerShell=$PSVersionTable.PSVersion.ToString()
         privacy='allowlisted metadata and fixed signatures only; per-report aliases; no raw text, paths, credentials or uploads'
         latestLogTimeUtc=$latest; recentWindowStartUtc=$cutoff; observedAppVersions=@($versions.ToArray())
         coverage=@{ invalidOrOversizedLogLines=$badLines; omittedEvents=$script:omittedEvents; inputBytes=$script:readBytes;
@@ -340,6 +382,7 @@ try {
     }
     $lines = New-Object 'Collections.Generic.List[string]'
     $lines.Add('Open Science 脱敏诊断报告')
+    $lines.Add('诊断工具版本：1.1.0；报告格式：2')
     $lines.Add('时间均为 UTC；北京时间需加 8 小时。请先检查报告，再发给支持人员。')
     $lines.Add('只读采集已结束。未修改应用配置/数据库，未执行工具命令，未上传任何数据。')
     $lines.Add('应用版本（日志观察值）：' + ($versions -join ', '))
@@ -354,7 +397,15 @@ try {
     foreach ($key in $counts.Keys) { $lines.Add('  ' + $key + ': ' + $counts[$key]) }
     $lines.Add('')
     $lines.Add('采集状态（source 编号对应 JSON，原始路径不导出）：')
-    foreach ($input in $script:inputs) { $lines.Add('  ' + $input.source + ' ' + $input.kind + ' ' + $input.status) }
+    foreach ($input in $script:inputs) {
+        $lines.Add('  ' + $input.source + ' ' + $input.kind + ' ' + $input.status)
+        if ($input.kind -eq 'session' -and $input.Contains('decodeStatus')) {
+            $lines.Add('    会话解析：' + $input.decodeStatus + '；格式：' + $input.format + '；匿名会话：' + $input.session)
+            if ($input.decodeStatus -eq 'decoded') {
+                $lines.Add(('    活动总数：{0}；窗口内已检查：{1}；其中失败：{2}；包含工具输出：{3}' -f $input.activityCount, $input.inspectedActivityCount, $input.failedActivityCount, $input.activitiesWithOutput))
+            }
+        }
+    }
     $lines.Add('无法解析/超长日志行：' + $badLines + '；未输出事件：' + $script:omittedEvents)
     foreach ($note in $script:notes) { $lines.Add('  注意：' + $note) }
     $lines.Add('')

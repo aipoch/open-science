@@ -32,7 +32,8 @@ $activity = @{id='private-call';status='failed';title=$canary;providerToolName='
 $old = $activity.Clone(); $old.id='private-old-call'; $old.messageBranchId='private-old-branch'
 $session = @{id='private-session';title=$canary;messages=@(@{role='user';content=$canary});
     activities=@($activity);conversationGraph=@{schemaVersion=1;frames=@(@{id='private-frame';activeBranchId='private-branch'});activities=@($activity,$old)}}
-[IO.File]::WriteAllText($sessionFile, (ConvertTo-Json -InputObject $session -Depth 15), $utf8)
+$sessionEnvelope = @{version=2;session=$session}
+[IO.File]::WriteAllText($sessionFile, (ConvertTo-Json -InputObject $sessionEnvelope -Depth 15), $utf8)
 
 function Assert($Condition, [string]$Message) { if (!$Condition) { throw $Message } }
 function RunCollector([string[]]$Options) {
@@ -53,6 +54,10 @@ $beforeLog = (Get-FileHash -LiteralPath $log).Hash
 $beforeSession = (Get-FileHash -LiteralPath $sessionFile).Hash
 $report = RunCollector @('-LogPath',$log,'-SessionPath',$sessionFile)
 Assert ($report.signatureCounts.'invalid-notebook-rpc-token' -eq 2) 'graph duplicate projection or signature parsing wrong'
+Assert ($report.collectorVersion -eq '1.1.0' -and $report.reportVersion -eq 2) 'collector version missing'
+$sessionInput = @($report.inputs | Where-Object {$_.kind -eq 'session'})[0]
+Assert ($sessionInput.decodeStatus -eq 'decoded' -and $sessionInput.format -eq 'envelope-v2') 'production envelope was not decoded'
+Assert ($sessionInput.activityCount -eq 2 -and $sessionInput.inspectedActivityCount -eq 2 -and $sessionInput.failedActivityCount -eq 2 -and $sessionInput.activitiesWithOutput -eq 2) 'activity coverage wrong'
 Assert ($report.signatureCounts.'skills-list-omitted' -eq 1) 'skills warning missing'
 Assert ($report.coverage.invalidOrOversizedLogLines -eq 1) 'malformed line not counted'
 $results = @($report.events | Where-Object {$_.event -eq 'persisted-tool-result'})
@@ -61,6 +66,26 @@ Assert (@($results | Where-Object {$_.branchRelation -eq 'other-branch-or-ancest
 $failed = @($report.events | Where-Object {$_.event -eq 'tool-failed'})[0]
 Assert ($failed.tool -eq 'notebook_execute' -and $failed.toolCall -eq $results[0].toolCall) 'tool ID join lost'
 Assert ($beforeLog -eq (Get-FileHash -LiteralPath $log).Hash -and $beforeSession -eq (Get-FileHash -LiteralPath $sessionFile).Hash) 'input was changed'
+$v1 = @{version=1;session=$session}
+[IO.File]::WriteAllText($sessionFile,(ConvertTo-Json -InputObject $v1 -Depth 15),$utf8)
+$v1Report = RunCollector @('-LogPath',$log,'-SessionPath',$sessionFile)
+Assert ($v1Report.signatureCounts.'invalid-notebook-rpc-token' -eq 2) 'released v1 envelope not supported'
+foreach ($invalidEnvelope in @(@{version=99;session=$session}, @{version='2';session=$session}, @{version=2;session=@($session)}, @{session=$session})) {
+    [IO.File]::WriteAllText($sessionFile,(ConvertTo-Json -InputObject $invalidEnvelope -Depth 15),$utf8)
+    $invalidReport = RunCollector @('-LogPath',$log,'-SessionPath',$sessionFile)
+    Assert ($invalidReport.signatureCounts.'invalid-notebook-rpc-token' -eq 0) 'unsupported envelope was inspected'
+    $invalidInput = @($invalidReport.inputs | Where-Object {$_.kind -eq 'session'})[0]
+    Assert ($invalidInput.decodeStatus -in @('invalid-envelope','unsupported-envelope')) 'envelope decode failure not disclosed'
+}
+$empty = @{version=2;session=@{id='private-session';conversationGraph=@{schemaVersion=1;frames=@();activities=@()}}}
+[IO.File]::WriteAllText($sessionFile,(ConvertTo-Json -InputObject $empty -Depth 8),$utf8)
+$emptyReport = RunCollector @('-LogPath',$log,'-SessionPath',$sessionFile)
+Assert ($emptyReport.coverage.notes -contains 'session-no-inspectable-activities') 'empty activities not disclosed'
+$noOutput = @{version=2;session=@{id='private-session';activities=@(@{id='private-call';status='failed';title='notebook_execute'})}}
+[IO.File]::WriteAllText($sessionFile,(ConvertTo-Json -InputObject $noOutput -Depth 8),$utf8)
+$noOutputReport = RunCollector @('-LogPath',$log,'-SessionPath',$sessionFile)
+Assert ($noOutputReport.coverage.notes -contains 'session-no-tool-output') 'missing tool output not disclosed'
+Assert (@($noOutputReport.events | Where-Object {$_.event -eq 'persisted-tool-result'}).Count -eq 1) 'failed activity without output was dropped'
 $copyOnly = RunCollector @('-LogPath',$log)
 Assert (@($copyOnly.inputs | Where-Object {$_.kind -eq 'session'}).Count -eq 0) 'copied log mode read local sessions'
 Assert ($copyOnly.coverage.notes -contains 'no-session-error-content-collected') 'missing session not disclosed'
@@ -93,7 +118,7 @@ $fakeLogs = Join-Path $fakeAppData 'Open Science/logs'
 $fakeSessions = Join-Path $fakeHome '.open-science/sessions/project-1'
 $null = New-Item -ItemType Directory -Path $fakeLogs,$fakeSessions -Force
 [IO.File]::WriteAllText((Join-Path $fakeLogs 'main.log'), $logText, $utf8)
-[IO.File]::WriteAllText((Join-Path $fakeSessions 'private-session.json'), (ConvertTo-Json -InputObject $session -Depth 15), $utf8)
+[IO.File]::WriteAllText((Join-Path $fakeSessions 'private-session.json'), (ConvertTo-Json -InputObject $sessionEnvelope -Depth 15), $utf8)
 [IO.File]::WriteAllText((Join-Path $fakeSessions 'unrelated.json'), '{broken-should-not-be-read', $utf8)
 $savedAppData=$env:APPDATA; $savedProfile=$env:USERPROFILE
 try {
