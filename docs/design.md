@@ -1102,7 +1102,7 @@ alert region excludes the diagnostic payload so opening it does not announce the
 | Skills            | Export / edit / delete                               | One `DropdownMenu`; destructive item follows a separator                                 |
 | Skills            | Enable toggle                                        | Shared shadcn `Switch`                                                                   |
 | Skills            | Import selected                                      | Neutral `button` (`border border-border bg-card`), not primary                           |
-| Connectors        | Add connector                                        | Final neutral `Button outline` in the header action row               |
+| Connectors        | Add connector                                        | Final neutral `Button outline` in the header action row                                  |
 | Connectors        | Connector row                                        | Leading Connector glyph + flex-1 name/description `button` → detail/edit                 |
 | Connectors        | Agent usage                                          | Shared overlapping avatar stack + scrollable non-modal `Popover`                         |
 | Connectors        | Export / edit / remove                               | One `DropdownMenu`; destructive item follows a separator                                 |
