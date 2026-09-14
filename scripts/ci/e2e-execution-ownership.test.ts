@@ -41,9 +41,16 @@ it('assigns every discovered Electron spec to a workflow-reachable command', () 
   expect(readFileSync('scripts/performance/run-runtime-profile.mjs', 'utf8')).toContain(
     'e2e/runtime-performance.spec.ts'
   )
+  expect(readFileSync('scripts/performance/run-runtime-profile.mjs', 'utf8')).toContain(
+    'e2e/startup-performance.spec.ts'
+  )
   const selected = new Set([
     ...commands.flatMap(([, command]) => collect(command.split(/\s+/).slice(2))),
-    ...collect(['e2e/accessibility.spec.ts', 'e2e/runtime-performance.spec.ts'])
+    ...collect([
+      'e2e/accessibility.spec.ts',
+      'e2e/runtime-performance.spec.ts',
+      'e2e/startup-performance.spec.ts'
+    ])
   ])
   expect([...new Set(collect([]))].filter((file) => !selected.has(file))).toEqual([])
 }, 90_000)
@@ -77,7 +84,7 @@ it.each(['regressions', 'delegation'])(
     const steps = workflow.jobs.macos_e2e.steps
     const execution = steps.find(({ id }) => id === `e2e_${group}_macos`)!
     expect(execution.if).toBe(
-      `\${{ matrix.group == '${group}' && steps.build_electron.outcome == 'success'${group === 'regressions' ? " && steps.build_web.outcome == 'success'" : ''} }}`
+      `\${{ matrix.group == '${group}' && steps.setup.outcome == 'success' }}`
     )
     expect(execution.run).toContain(`npm run test:e2e:${group} -- --fail-on-flaky-tests`)
     const enforce = steps.find(({ name }) => name === 'Enforce selected macOS checks')!

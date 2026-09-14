@@ -59,7 +59,7 @@ import {
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import {
-  LocalFileActionErrorToast,
+  LocalFileActionErrorNotice,
   LocalFileHeaderActions,
   type LocalFileActionFailure,
   type SaveAsArtifactState
@@ -1302,6 +1302,20 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       setMode('edit')
     }
 
+    const copyEditDraft = async (): Promise<void> => {
+      const generation = saveGenerationRef.current
+      try {
+        await navigator.clipboard.writeText(draft)
+        if (saveGenerationRef.current !== generation) return
+        setCopied(true)
+        clearTimeout(copiedTimer.current)
+        copiedTimer.current = setTimeout(() => setCopied(false), 1500)
+      } catch {
+        if (saveGenerationRef.current !== generation) return
+        setEditError(t('Could not copy the draft. Select the text and copy it manually.'))
+      }
+    }
+
     const saveEdit = async (): Promise<void> => {
       if (
         !managedIdentity ||
@@ -1658,6 +1672,14 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   <VersionHistoryLoadButton history={lineageHistory} />
                 </>
               ) : null}
+              {localActionFailure ? (
+                <div className="shrink-0 max-h-[40%] overflow-y-auto">
+                  <LocalFileActionErrorNotice
+                    failure={localActionFailure}
+                    onDismiss={() => setLocalActionFailure(undefined)}
+                  />
+                </div>
+              ) : null}
               <PreviewProvenanceSplit
                 mode={showProvenance ? (widePreview ? 'split' : 'provenance') : 'content'}
                 provenance={
@@ -1707,9 +1729,17 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                       {editError ? (
                         <div
                           role="alert"
-                          className="flex items-center justify-between border-t border-border-300 px-3 py-2 text-xs text-destructive"
+                          className="flex flex-wrap items-center gap-2 border-t border-border-300 px-3 py-2 text-xs text-destructive"
                         >
-                          {editError}
+                          <span className="min-w-0 flex-1">{editError}</span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void copyEditDraft()}
+                          >
+                            {copied ? t('Copied!') : t('Copy draft')}
+                          </Button>
                           {conflictHead ? (
                             <Button
                               type="button"
@@ -1812,12 +1842,6 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   <BookOpen className="size-3.5" aria-hidden="true" />
                   {t('Literature')}
                 </Button>
-              ) : null}
-              {localActionFailure ? (
-                <LocalFileActionErrorToast
-                  failure={localActionFailure}
-                  onDismiss={() => setLocalActionFailure(undefined)}
-                />
               ) : null}
             </div>
           </ActionMenuTarget>

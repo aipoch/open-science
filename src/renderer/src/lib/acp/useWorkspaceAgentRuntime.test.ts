@@ -3909,6 +3909,7 @@ describe('workspace agent message sending', () => {
     ['edit-middle', 'attachments'],
     ['resume', 'attachments'],
     ['resume', 'event-drain'],
+    ['edit-middle', 'event-drain'],
     ['edit-middle', 'pdf'],
     ['edit-middle', 'admission']
   ] as const)(
@@ -11196,6 +11197,51 @@ describe('resendEditedWorkspaceMessage', () => {
     expect(runtime.createSession).not.toHaveBeenCalled()
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
+
+  it.each(['claude-code', 'opencode', 'codebuddy', 'codex-response', 'codex-bridge'] as const)(
+    'drains a prior stop before persistence can settle an edited %s run',
+    async (target) => {
+      seedConversation()
+      const runtime = {
+        state: createSnapshot(['session-1']),
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+      }
+      let pendingStop = true
+      const drainRuntimeEvents = vi.fn(async () => {
+        if (!pendingStop) return
+        pendingStop = false
+        await applyWorkspaceRuntimeEvent(
+          createEvent({
+            id: 'accepted-stop-before-edit',
+            sessionId: 'session-1',
+            kind: 'stop',
+            promptMessageId: 'user-2'
+          })
+        )
+      })
+      const resent = await resendEditedWorkspaceMessage(
+        runtime,
+        { sessionId: 'session-1', messageId: 'user-2', text: 'second prompt, edited' },
+        {
+          drainRuntimeEvents,
+          // A pending Web stop can arrive while the save barrier yields, before provider dispatch.
+          flushPersistence: drainRuntimeEvents,
+          historyReplayDescriptor: { target }
+        }
+      )
+      expect(resent).toBe(true)
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+      expect(runtime.sendPrompt.mock.calls[0]?.[5]).toContain('first answer')
+      expect(runtime.sendPrompt.mock.calls[0]?.[5]).not.toContain('second prompt')
+      expect(useSessionStore.getState().sessions[0]).toMatchObject({
+        status: 'running',
+        activeRun: { promptMessageId: expect.any(String) }
+      })
+    }
+  )
 
   it('opens the resent run after reset, then replays the kept history', async () => {
     seedConversation()

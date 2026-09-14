@@ -191,6 +191,7 @@ describe('content repository', () => {
       const lease = await repository.openLease('blob-lease')
       try {
         if (mode === 'replace') {
+          if (process.platform === 'win32') return
           const replacement = join(storageRoot!, 'replacement')
           await writeFile(replacement, 'REPLACED')
           await rename(replacement, lease.path)

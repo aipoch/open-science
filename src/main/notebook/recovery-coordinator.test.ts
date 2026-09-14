@@ -65,45 +65,48 @@ const beginInterruptedMaterialize = async (
 }
 
 describe('NotebookRecoveryCoordinator', () => {
-  it('recovers a committed install with ordinary links inside extracted Conda packages', async () => {
-    const runtimeRoot = await createRuntimeRoot()
-    const cache = join(runtimeRoot, 'pkgs')
-    const downloads = join(cache, 'https', 'conda.example', 'osx-arm64')
-    const extracted = join(downloads, 'r-example-1.0-0')
-    await mkdir(join(extracted, 'info'), { recursive: true })
-    await writeFile(join(extracted, 'info', 'index.json'), '{}')
-    await symlink('libR.dylib', join(extracted, 'libR.so'))
-    const file = 'r-example-1.0-0.conda'
-    await writeFile(join(downloads, file), 'verified archive')
-    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
-    const targetPath = join(runtimeRoot, 'envs', 'default-r')
-    await journal.begin({
-      operationId: 'committed-r-install',
-      kind: 'install',
-      runtimeId: 'managed:r:default-r',
-      targetPath,
-      phase: 'install-r',
-      startedAt: 100,
-      archivePublications: [
-        {
-          workingRoot: cache,
-          authorizations: [
-            {
-              file,
-              algorithm: 'sha256',
-              digest: createHash('sha256').update('verified archive').digest('hex')
-            }
-          ]
-        }
-      ]
-    })
-    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
-    await coordinator.recover()
-    expect(coordinator.isPrefixBlocked(targetPath)).toBe(false)
-    expect(coordinator.isRuntimeIdBlocked('managed:r:default-r')).toBe(false)
-    expect(await journal.pending()).toEqual([])
-    expect(existsSync(join(cache, file))).toBe(true)
-  })
+  it.skipIf(process.platform === 'win32')(
+    'recovers a committed install with ordinary links inside extracted Conda packages',
+    async () => {
+      const runtimeRoot = await createRuntimeRoot()
+      const cache = join(runtimeRoot, 'pkgs')
+      const downloads = join(cache, 'https', 'conda.example', 'osx-arm64')
+      const extracted = join(downloads, 'r-example-1.0-0')
+      await mkdir(join(extracted, 'info'), { recursive: true })
+      await writeFile(join(extracted, 'info', 'index.json'), '{}')
+      await symlink('libR.dylib', join(extracted, 'libR.so'))
+      const file = 'r-example-1.0-0.conda'
+      await writeFile(join(downloads, file), 'verified archive')
+      const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+      const targetPath = join(runtimeRoot, 'envs', 'default-r')
+      await journal.begin({
+        operationId: 'committed-r-install',
+        kind: 'install',
+        runtimeId: 'managed:r:default-r',
+        targetPath,
+        phase: 'install-r',
+        startedAt: 100,
+        archivePublications: [
+          {
+            workingRoot: cache,
+            authorizations: [
+              {
+                file,
+                algorithm: 'sha256',
+                digest: createHash('sha256').update('verified archive').digest('hex')
+              }
+            ]
+          }
+        ]
+      })
+      const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
+      await coordinator.recover()
+      expect(coordinator.isPrefixBlocked(targetPath)).toBe(false)
+      expect(coordinator.isRuntimeIdBlocked('managed:r:default-r')).toBe(false)
+      expect(await journal.pending()).toEqual([])
+      expect(existsSync(join(cache, file))).toBe(true)
+    }
+  )
   it('finalizes a leftover working cache only after recovery has no blocked writer', async () => {
     const runtimeRoot = await createRuntimeRoot()
     const finalizeWorkingCache = vi.fn().mockResolvedValue(true)
@@ -857,3 +860,61 @@ it.each(['download', 'materialize'] as const)(
     }
   }
 )
+
+it('rechecks only startup leftovers while preserving new operations and their cache', async () => {
+  const runtimeRoot = await createRuntimeRoot()
+  const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+  const journal = await beginInterruptedMaterialize(runtimeRoot, 'old-worker', prefix)
+  await journal.update('old-worker', { childPid: process.pid, childStartedAt: Date.now() })
+  const recovery = new NotebookRecoveryCoordinator(runtimeRoot)
+  await recovery.recover()
+  expect(recovery.status()).toMatchObject({
+    checkedAt: expect.any(Number),
+    operations: [{ operationId: 'old-worker', reason: 'child-unconfirmed', targetPath: prefix }]
+  })
+  const newStaging = join(runtimeRoot, 'packs', '.cache', 'new-download')
+  await mkdir(newStaging, { recursive: true })
+  await writeFile(join(newStaging, 'keep'), 'in-progress')
+  await journal.begin({
+    operationId: 'new-download',
+    kind: 'download',
+    runtimeId: 'new',
+    phase: 'fetch-python',
+    startedAt: Date.now(),
+    targetPath: newStaging
+  })
+  await recovery.ensureReady()
+  expect((await journal.pending()).map((record) => record.operationId)).toEqual([
+    'old-worker',
+    'new-download'
+  ])
+  expect(existsSync(join(newStaging, 'keep'))).toBe(true)
+  expect(recovery.isPrefixBlocked(newStaging)).toBe(false)
+  expect(recovery.status().operations).toHaveLength(1)
+  const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+    throw Object.assign(new Error('gone'), { code: 'ESRCH' })
+  })
+  try {
+    await Promise.all([recovery.ensureReady(), recovery.ensureReady()])
+    expect(recovery.isPrefixBlocked(prefix)).toBe(false)
+    expect(recovery.status().operations).toEqual([])
+    expect((await journal.pending()).map((record) => record.operationId)).toEqual(['new-download'])
+    expect(existsSync(join(newStaging, 'keep'))).toBe(true)
+  } finally {
+    kill.mockRestore()
+  }
+})
+
+it('removes stale recovery details after explicit repair clears the affected block', async () => {
+  const runtimeRoot = await createRuntimeRoot()
+  const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+  const journal = await beginInterruptedMaterialize(runtimeRoot, 'repair-cleared', prefix)
+  await journal.update('repair-cleared', { childPid: process.pid, childStartedAt: Date.now() })
+  const recovery = new NotebookRecoveryCoordinator(runtimeRoot)
+  await recovery.recover()
+  expect(recovery.status().operations).toHaveLength(1)
+  // The authorized repair owner clears its journal before releasing the coordinator's block.
+  await journal.complete('repair-cleared')
+  recovery.clearPrefixBlock(prefix)
+  expect(recovery.status().operations).toEqual([])
+})

@@ -92,6 +92,11 @@ const OPENCODE_ENDPOINT_PROVIDER: Record<'anthropic' | 'openai', { id: string; n
 // plaintext key OFF disk — opencode.json only ever holds the reference, never the secret.
 const OPENCODE_API_KEY_ENV = 'OPENCODE_APP_API_KEY'
 
+// OpenCode Go requires this exact header even though OpenCode also sends its own x-session-id and
+// x-session-affinity headers. A native plugin is the only layer that has the current OpenCode session
+// id, so generate one inside the isolated app-owned config and scope it to Go-backed provider ids.
+const OPENCODE_GO_SESSION_PLUGIN = 'open-science-opencode-go-session.js'
+
 // OpenCode rejects a model limit that declares context without output. Keep maxOutputTokens optional
 // in the provider model, but reserve a conservative adapter-only output budget when it is absent so
 // the generated config remains valid and OpenCode can calculate its native compaction threshold.
@@ -247,6 +252,32 @@ const opencodeModelCatalog = (
     models.set(`${endpoint.providerId}/${endpoint.bareModel}`, entry)
   }
   return [...models.values()]
+}
+
+const buildOpencodeGoSessionPlugin = (
+  provider: ResolvedProvider,
+  reasoningEffort: ModelReasoningEffort | undefined,
+  catalog: readonly AgentModelCatalogEntry[]
+): string => {
+  const providerIds = [
+    ...new Set(
+      opencodeModelCatalog(provider, reasoningEffort, catalog)
+        .filter((entry) => entry.provider.vendorId === 'opencode-go')
+        .map((entry) => resolveOpencodeEndpoint(entry.provider).providerId)
+    )
+  ]
+
+  return [
+    `const providerIDs = new Set(${JSON.stringify(providerIds)})`,
+    '',
+    'export const OpenScienceOpencodeGoSession = async () => ({',
+    '  "chat.headers": async (input, output) => {',
+    '    if (!providerIDs.has(input.model.providerID)) return',
+    '    output.headers["x-opencode-session"] = input.sessionID',
+    '  }',
+    '})',
+    ''
+  ].join('\n')
 }
 
 const buildOpencodeModelConfig = (
@@ -454,7 +485,19 @@ export const createOpencodeFramework = ({
     const dataHome = opencodeDataHome(ctx.storageRoot)
     const opencodeDir = join(configHome, 'opencode')
     const configPath = join(opencodeDir, 'opencode.json')
-    const configFiles = [{ path: configPath, content: '' }]
+    const configFiles = [
+      { path: configPath, content: '' },
+      {
+        path: join(opencodeDir, 'plugins', OPENCODE_GO_SESSION_PLUGIN),
+        // Always rewrite the app-owned plugin, including with an empty provider set, so switching
+        // away from Go cannot leave a previously generated provider match active on disk.
+        content: buildOpencodeGoSessionPlugin(
+          provider,
+          ctx.reasoningEffort,
+          ctx.providerModelCatalog ?? []
+        )
+      }
+    ]
 
     // Stable app guidance belongs in OpenCode's native instructions layer, never ordinary user prompt
     // history. Keep connector conventions separate so their independent lifecycle remains explicit;

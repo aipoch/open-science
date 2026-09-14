@@ -105,12 +105,16 @@ describe('saved Session model availability', () => {
     mount(false)
     expect(mocks.setAgentConfiguration).not.toHaveBeenCalled()
   })
-  it('persists an explicit replacement selected by the user', () => {
-    mocks.providers = [provider('original'), provider('fallback')]
+  it('recovers a missing provider only after the user explicitly selects a replacement', () => {
+    mocks.providers = [provider('fallback')]
     const hook = mount()
+    expect(hook.result().agentConfigurationUnavailable).toBe(true)
+    expect(hook.result().activeAgentConfiguration).toEqual(original)
+    expect(mocks.setAgentConfiguration).not.toHaveBeenCalled()
     act(() => hook.result().changeAgentConfiguration(fallback))
     expect(mocks.setAgentConfiguration).toHaveBeenCalledWith('session-1', fallback)
     hook.render()
     expect(hook.result().activeAgentConfiguration).toEqual(fallback)
+    expect(hook.result().agentConfigurationUnavailable).toBe(false)
   })
 })

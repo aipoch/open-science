@@ -355,9 +355,12 @@ describe('Settings backend ownership architecture', () => {
       'markLegacyDataMovePromptDismissed',
       'markOnboardingComplete',
       'markPathsNormalized',
+      'publishBootstrapOpenAlex',
+      'publishBootstrapProvider',
       'rememberCodexAutoHttpsFallback',
       'removeCustomServer',
       'restoreLocalShellRuntime',
+      'selectBootstrapCodex',
       'setActiveProvider',
       'setAgentEnvironmentCreationEnabled',
       'setAgentFramework',
@@ -413,10 +416,12 @@ describe('Settings backend ownership architecture', () => {
     ])
     expect(publicOperationsOf(settingsPaths.providerAccounts, 'ProviderAccountsModule')).toEqual([
       'beginXaiOAuthLogin',
+      'bootstrapOpenAi',
       'cancelClaudeIsolatedLogin',
       'cancelClaudeLogin',
       'cancelCodexLogin',
       'cancelXaiOAuthLogin',
+      'completeBootstrapCodex',
       'deleteProvider',
       'dispose',
       'getClaudeIsolatedStatus',
@@ -432,6 +437,7 @@ describe('Settings backend ownership architecture', () => {
       'logoutIsolatedCodex',
       'logoutXaiOAuth',
       'migrateLegacyKeyRefs',
+      'prepareBootstrapCodex',
       'refreshProviderModels',
       'resolveActiveModel',
       'resolveProvider',
@@ -481,15 +487,15 @@ describe('Settings backend ownership architecture', () => {
   it('locks the SettingsService application interface', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
-        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel allowNotebookNetworkDomain authenticateCustomServer authenticateDeviceCredential buildCustomServerTemplateExport
+        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel allowNotebookNetworkDomain authenticateCustomServer authenticateDeviceCredential bootstrap buildCustomServerTemplateExport
         buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
         codexSkillDescriptorsForIds createDeviceCredential createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
         detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getActiveInstallId getAgentEnvironmentCreationEnabled getAppIconVariant getClosePreference
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getLocalShellRuntimePreference getManualInterpreters getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
-        getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail getWsl2BashPreviewStatus getWslSetupStatus hasActiveInstall holdInstallAdmission
+        getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail getSkillMarketplaceBatch getSkillMarketplaceDetail getWsl2BashPreviewStatus getWslSetupStatus hasActiveInstall holdInstallAdmission
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
-        importSkillZipBatch installClaude installCodeBuddy installCodex installMissingWslDependencies installNotebookNetwork installOpencode installRecommendedWslDistro installWslPlatform isEncryptionAvailable
-        isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listSkills listSpecialistSkillCatalog listUserSkills
+        importSkillZipBatch installClaude installCodeBuddy installCodex installMissingWslDependencies installNotebookNetwork installOpencode installRecommendedWslDistro installSkillMarketplace installWslPlatform isEncryptionAvailable
+        isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listSkillMarketplace listSkills listSpecialistSkillCatalog listUserSkills
         dispose loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
         markPathsNormalized migrateAgentHomeSkillIdentities openWslTerminal previewAgentHomeSkill previewCustomServerTemplateExport
@@ -503,7 +509,7 @@ describe('Settings backend ownership architecture', () => {
         setDataRoot setDefaultPermissionProfile setDeviceCredentialAuthenticator setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotebookNetwork setNotificationsEnabled
         setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
-        setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodeBuddy uninstallCodex
+        setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex
         uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
       `
         .trim()
@@ -596,6 +602,7 @@ describe('Settings backend ownership architecture', () => {
     expect(importersOf(settingsPaths.service)).toEqual([
       'src/main/ipc.ts',
       'src/main/settings/application-commands.ts',
+      'src/main/settings/bootstrap-application-commands.ts',
       'src/main/settings/ipc.ts',
       'src/main/settings/service-capabilities.ts',
       'src/main/settings/workflows/appearance.ts',
@@ -632,6 +639,7 @@ describe('Settings backend ownership architecture', () => {
 
   it('locks the complete Notebook local-RPC capability inventory', () => {
     expect(stringSetValues(settingsPaths.notebookLocalRpcServer, 'ARTIFACT_RPC_METHODS')).toEqual([
+      'artifactSaveVersion',
       'artifactReserveWrite',
       'artifactReleaseWrite',
       'artifactCreateVersion',
@@ -721,6 +729,7 @@ describe('Settings backend ownership architecture', () => {
       'codexAuthMode',
       'codexAutoUseHttps',
       'codexTransport',
+      'configRevision',
       'contextWindow',
       'disconnectedAt',
       'expiresAt',

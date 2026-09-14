@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import * as Dialog from '@/components/ui/dialog'
 import { Check, RefreshCw, TriangleAlert } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -389,12 +390,14 @@ const StorageMigrationModal = ({
               >
                 {t('Elapsed {{time}}', { time: formatElapsed(elapsedMs) })}
               </p>
-              <p
+              <ErrorNotice
                 role="alert"
-                className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
-              >
-                {t("Don't quit Open Science or turn off your computer until this finishes.")}
-              </p>
+                tone="amber"
+                className="mt-3"
+                description={t(
+                  "Don't quit Open Science or turn off your computer until this finishes."
+                )}
+              />
               <div className="mt-4 flex justify-end">
                 <Button
                   type="button"
@@ -457,12 +460,12 @@ const StorageMigrationModal = ({
                 </div>
               </div>
               {discardError ? (
-                <p
+                <ErrorNotice
                   role="alert"
-                  className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
-                >
-                  {discardError}
-                </p>
+                  tone="amber"
+                  className="mt-3"
+                  description={discardError}
+                />
               ) : null}
               <div className="mt-5 flex justify-end">
                 <Button
@@ -504,12 +507,12 @@ const StorageMigrationModal = ({
                 </div>
               </div>
               {discardError ? (
-                <p
+                <ErrorNotice
                   role="alert"
-                  className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
-                >
-                  {discardError}
-                </p>
+                  tone="amber"
+                  className="mt-3"
+                  description={discardError}
+                />
               ) : null}
               {discardError ? (
                 <div className="mt-5 flex justify-end">

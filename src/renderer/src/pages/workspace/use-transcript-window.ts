@@ -262,9 +262,11 @@ const useTranscriptWindow = (
 
   const expandAtScrollEdge = (previousScrollTop: number): void => {
     const viewport = viewportRef.current
-    if (!viewport || presentationBarrierIndex >= 0) return
-    const prefetchDistance = Math.max(64, viewport.clientHeight)
+    if (!viewport) return
+    // Pacing can pause window expansion, but must not freeze the reader's scroll position.
     readingAnchorRef.current = captureReadingAnchor(scopeId, viewport)
+    if (presentationBarrierIndex >= 0) return
+    const prefetchDistance = Math.max(64, viewport.clientHeight)
     if (finding) {
       const snapshot = findRestoreRef.current
       if (snapshot?.followEnd) {

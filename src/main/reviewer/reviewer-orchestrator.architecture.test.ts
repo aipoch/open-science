@@ -427,12 +427,14 @@ describe('Reviewer orchestrator architecture', () => {
         'src/main/reviewer/model-runtime-owner.ts',
         'src/main/reviewer/review-assessment-owner.ts',
         'src/main/reviewer/reviewer-fix-loop-owner.ts',
-        'src/main/reviewer/reviewer-session-driver.ts'
+        'src/main/reviewer/reviewer-session-driver.ts',
+        'src/main/reviewer/paged-preview-electron.ts'
       ],
       interfacePaths: [
         'src/main/reviewer/orchestrator.ts',
         'src/main/reviewer/ipc.ts',
-        'src/shared/reviewer.ts'
+        'src/shared/reviewer.ts',
+        'src/main/reviewer/paged-preview-electron.ts'
       ],
       consumerModules: ['workspace_runtime', 'workspace_page', 'artifact_provenance'],
       testFiles: {
@@ -449,7 +451,8 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/reviewer/fix-loop.test.ts',
           'src/main/reviewer/reviewer-fix-loop-owner.test.ts',
           'src/main/reviewer/correction-context.test.ts',
-          'src/main/reviewer/correction.test.ts'
+          'src/main/reviewer/correction.test.ts',
+          'src/main/reviewer/paged-preview-electron.test.ts'
         ],
         contract: [
           'src/main/reviewer/ipc.test.ts',
@@ -461,14 +464,22 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/web-service/application-event-projections.test.ts',
           'src/shared/renderer-contract-catalog.test.ts',
           'src/preload/index.test.ts',
-          'src/renderer/web/api-installer.test.ts'
+          'src/renderer/web/api-installer.test.ts',
+          'src/main/reviewer/paged-preview-resolver.test.ts',
+          'src/main/reviewer/host-sdk.test.ts',
+          'src/main/managed-preview-resources.test.ts',
+          'src/main/managed-preview-protocol.test.ts',
+          'src/main/office-preview/office-preview-electron.test.ts',
+          'src/main/office-preview/office-preview-runtime-protocol.test.ts',
+          'src/main/uploads/attachment-media.pdf-preview.test.ts'
         ],
         consumer: [
           'packages/open-science/cli.test.ts',
           'src/main/notebook/local-rpc-notebook-adapter.test.ts',
           'src/renderer/src/lib/acp/workspace-events.test.ts',
           'src/renderer/src/stores/review-store.test.ts',
-          'src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx'
+          'src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx',
+          'src/renderer/src/reviewer-paged-preview/main.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive'],

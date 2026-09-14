@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, relative, resolve, sep } from 'node:path'
 
-import type { PrismaClient, Review as PrismaReview } from '@prisma/client'
+import type { Prisma, PrismaClient, Review as PrismaReview } from '@prisma/client'
 
 import type {
   CheckStatus,
@@ -27,6 +27,7 @@ import {
   toReviewCheck
 } from './review-submission-read-model'
 import { assertReviewSubmissionWithinLimits } from './submission-limits'
+import { decodeReviewScope, decodeReviewLog, requireReviewScope } from './review-json'
 
 const REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE =
   'Review was interrupted because Open Science exited before it completed.'
@@ -97,18 +98,45 @@ const resolveSnapshotStorageKey = (root: string, key: string): string => {
 // Review row, not to child Finding rows, so a finding-only mutation (resolution/reflag) would otherwise
 // leave updatedAt stale — and a slow focus-load could then overwrite newer pushed finding state at an
 // equal timestamp. Run inside the same transaction as the finding write so the two commit atomically.
-const touchReview = async (tx: Pick<PrismaClient, 'review'>, reviewId: string): Promise<void> => {
-  await tx.review.update({ where: { id: reviewId }, data: { updatedAt: new Date() } })
-}
-
-// JSON columns are parsed defensively: a corrupt value degrades to the given fallback rather than
-// throwing, so one bad row cannot break loading a whole session's reviews.
-const parseJson = <T>(value: string, fallback: T): T => {
-  try {
-    return JSON.parse(value) as T
-  } catch {
-    return fallback
+const touchReview = async (
+  tx: Pick<PrismaClient, 'review' | 'reviewFindingDisposition'>,
+  reviewId: string,
+  data: Prisma.ReviewUpdateInput = {}
+): Promise<PrismaReview> => {
+  const current = await tx.review.findUniqueOrThrow({
+    where: { id: reviewId },
+    select: { updatedAt: true }
+  })
+  const updated = await tx.review.update({
+    where: { id: reviewId },
+    data: {
+      ...data,
+      updatedAt: new Date(Math.max(Date.now(), current.updatedAt.getTime() + 1))
+    }
+  })
+  // Tracked submissions embed the live source Check, so those views also need a new token.
+  const dependents = await tx.reviewFindingDisposition.findMany({
+    where: {
+      sourceFinding: { reviewId },
+      trigger: 'review_submission',
+      causeReviewId: { not: null }
+    },
+    select: { causeReviewId: true }
+  })
+  for (const id of new Set(dependents.map((row) => row.causeReviewId))) {
+    if (!id || id === reviewId) continue
+    const dependent = await tx.review.findUniqueOrThrow({
+      where: { id },
+      select: { updatedAt: true }
+    })
+    await tx.review.update({
+      where: { id },
+      data: {
+        updatedAt: new Date(Math.max(Date.now(), dependent.updatedAt.getTime() + 1))
+      }
+    })
   }
+  return updated
 }
 
 const EMPTY_SCOPE = (turnMessageId: string): TurnScope => ({
@@ -128,20 +156,26 @@ const asOutcome = (value: string | null): ReviewOutcome | null =>
 // Maps a Prisma review row (JSON strings + DateTime) into the epoch-ms domain shape shared with the renderer.
 // v2: Review no longer has summary/checks columns; those are gone.
 // v3: reasoning replaced by reviewerLog (captured action stream).
-const toReview = (row: PrismaReview): Review => ({
-  id: row.id,
-  projectId: row.projectId,
-  sessionId: row.sessionId,
-  turnMessageId: row.turnMessageId,
-  scope: parseJson<TurnScope>(row.scope, EMPTY_SCOPE(row.turnMessageId)),
-  lifecycle: asLifecycle(row.lifecycle),
-  outcome: asOutcome(row.outcome),
-  errorMessage: row.errorMessage ?? undefined,
-  model: row.model,
-  reviewerLog: parseJson<ReviewerLogEntry[]>(row.reviewerLog, []),
-  createdAt: row.createdAt.getTime(),
-  updatedAt: row.updatedAt.getTime()
-})
+const toReview = (row: PrismaReview): Review => {
+  const scope = decodeReviewScope(row.scope)
+  const reviewerLog = decodeReviewLog(row.reviewerLog)
+  const invalid = scope === undefined || reviewerLog === undefined
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    sessionId: row.sessionId,
+    turnMessageId: row.turnMessageId,
+    scope: scope ?? EMPTY_SCOPE(row.turnMessageId),
+    lifecycle: invalid ? 'error' : asLifecycle(row.lifecycle),
+    outcome: invalid ? null : asOutcome(row.outcome),
+    errorMessage: invalid ? 'Stored Review data is invalid.' : (row.errorMessage ?? undefined),
+    model: row.model,
+    reviewerLog: reviewerLog ?? [],
+    createdAt: row.createdAt.getTime(),
+    updatedAt: row.updatedAt.getTime(),
+    ...(invalid ? { verificationUnavailable: true } : {})
+  }
+}
 
 type PersistedReviewCheckAssessment = ReviewCheckAssessment & { schemaVersion: 1 }
 
@@ -233,25 +267,31 @@ class ReviewRepository {
           note: FIX_LOOP_INTERRUPTED_ON_STARTUP_MESSAGE
         }))
       )
-      await client.review.update({
-        where: { id: fixLoopReview.id },
-        data: { lifecycle: 'complete', outcome: 'flagged', errorMessage: null }
+      await this.updateReview(fixLoopReview.id, {
+        lifecycle: 'complete',
+        outcome: 'flagged',
+        errorMessage: null
       })
     }
 
-    const interruptedAssessments = await client.review.updateMany({
-      where: {
-        lifecycle: 'running',
-        outcome: null,
-        findings: { none: { status: { in: ['warn', 'fail'] } } }
-      },
-      data: {
-        lifecycle: 'error',
-        outcome: null,
-        errorMessage: REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE
-      }
+    const interruptedAssessmentCount = await client.$transaction(async (tx) => {
+      const interrupted = await tx.review.findMany({
+        where: {
+          lifecycle: 'running',
+          outcome: null,
+          findings: { none: { status: { in: ['warn', 'fail'] } } }
+        },
+        select: { id: true }
+      })
+      for (const review of interrupted)
+        await touchReview(tx, review.id, {
+          lifecycle: 'error',
+          outcome: null,
+          errorMessage: REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE
+        })
+      return interrupted.length
     })
-    return interruptedFixLoops.length + interruptedAssessments.count
+    return interruptedFixLoops.length + interruptedAssessmentCount
   }
 
   // Inserts a new review, defaulting a fresh audit to the 'running' lifecycle with no outcome yet.
@@ -361,7 +401,7 @@ class ReviewRepository {
 
   // Patches only the provided fields so a caller can flip lifecycle/outcome without resupplying the rest.
   async updateReview(id: string, patch: UpdateReviewPatch): Promise<Review> {
-    const data: Record<string, unknown> = {}
+    const data: Prisma.ReviewUpdateInput = {}
 
     if (patch.scope !== undefined) data.scope = JSON.stringify(patch.scope)
     if (patch.lifecycle !== undefined) data.lifecycle = patch.lifecycle
@@ -371,7 +411,7 @@ class ReviewRepository {
     if (patch.reviewerLog !== undefined) data.reviewerLog = JSON.stringify(patch.reviewerLog)
 
     const client = await this.getClient()
-    const row = await client.review.update({ where: { id }, data })
+    const row = await client.$transaction((tx) => touchReview(tx, id, data))
 
     return toReview(row)
   }
@@ -386,7 +426,7 @@ class ReviewRepository {
     await client.$transaction(async (tx) => {
       const review = await tx.review.findUnique({ where: { id: reviewId } })
       if (!review) throw new Error(`Review not found: ${reviewId}`)
-      const scope = parseJson<TurnScope>(review.scope, EMPTY_SCOPE(review.turnMessageId))
+      const scope = requireReviewScope(review.scope)
       for (const check of checks) {
         if (
           check.artifactVersionId &&
@@ -471,10 +511,7 @@ class ReviewRepository {
       if (assessmentReview.lifecycle !== 'running') {
         throw new Error(`Review submission is already terminal: ${input.reviewId}`)
       }
-      const assessmentScope = parseJson<TurnScope>(
-        assessmentReview.scope,
-        EMPTY_SCOPE(assessmentReview.turnMessageId)
-      )
+      const assessmentScope = requireReviewScope(assessmentReview.scope)
       for (const check of input.checks) {
         if (
           check.artifactVersionId &&
@@ -581,20 +618,17 @@ class ReviewRepository {
       for (const sourceReviewId of touchedSourceReviewIds) {
         await touchReview(tx, sourceReviewId)
       }
-      const committedReview = await tx.review.update({
-        where: { id: assessmentReview.id },
-        data: {
-          lifecycle:
-            input.mode === 'initial' && input.keepFlaggedReviewRunning && outcome === 'flagged'
-              ? 'running'
-              : 'complete',
-          outcome:
-            input.mode === 'initial' && input.keepFlaggedReviewRunning && outcome === 'flagged'
-              ? null
-              : outcome,
-          errorMessage: null,
-          reviewerLog: JSON.stringify(input.reviewerLog ?? [])
-        }
+      const committedReview = await touchReview(tx, assessmentReview.id, {
+        lifecycle:
+          input.mode === 'initial' && input.keepFlaggedReviewRunning && outcome === 'flagged'
+            ? 'running'
+            : 'complete',
+        outcome:
+          input.mode === 'initial' && input.keepFlaggedReviewRunning && outcome === 'flagged'
+            ? null
+            : outcome,
+        errorMessage: null,
+        reviewerLog: JSON.stringify(input.reviewerLog ?? [])
       })
       const { checks, submittedChecks } = await loadReviewSubmissionProjection(
         tx,
@@ -759,7 +793,7 @@ class ReviewRepository {
         orderBy: { sequence: 'desc' },
         select: { sequence: true }
       })
-      return tx.reviewFindingDisposition.create({
+      const disposition = await tx.reviewFindingDisposition.create({
         data: {
           id: input.eventId,
           sourceFindingId: input.sourceFindingId,
@@ -771,6 +805,12 @@ class ReviewRepository {
           assessedArtifactVersionId: input.assessedArtifactVersionId ?? null
         }
       })
+      const finding = await tx.finding.findUniqueOrThrow({
+        where: { id: input.sourceFindingId },
+        select: { reviewId: true }
+      })
+      await touchReview(tx, finding.reviewId)
+      return disposition
     })
     return {
       id: row.id,
@@ -838,10 +878,7 @@ class ReviewRepository {
           throw new Error('Finding disposition Review belongs to another Project or Session.')
         }
         if (input.assessedArtifactVersionId) {
-          const assessmentScope = parseJson<TurnScope>(
-            assessmentReview.scope,
-            EMPTY_SCOPE(assessmentReview.turnMessageId)
-          )
+          const assessmentScope = requireReviewScope(assessmentReview.scope)
           if (!assessmentScope.artifactVersionIds.includes(input.assessedArtifactVersionId)) {
             throw new Error(
               `Assessed Artifact Version is outside Review scope: ${input.assessedArtifactVersionId}`

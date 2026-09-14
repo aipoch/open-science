@@ -411,6 +411,114 @@ const createProjectReconciliationSnapshot = (): ArtifactProjectReconciliationSna
   ({}) as ArtifactProjectReconciliationSnapshot
 
 describe('SessionPersistenceCoordinator', () => {
+  it('defers late renderer saves until export releases without occupying other persistence lanes', async () => {
+    const repository = createSessionRepository()
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const release = await coordinator.reserveSessionExport('project-1', 'session-1')
+    const failures: unknown[] = []
+    const delayed = coordinator.saveSession(createSession()).catch((error) => {
+      failures.push(error)
+    })
+    await coordinator.runSessionMutation('project-1', 'session-2', async () => undefined)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(failures).toEqual([])
+    expect(repository.saveSession).not.toHaveBeenCalled()
+    release()
+    await delayed
+    expect(failures).toEqual([])
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+  })
+  it('drains earlier writes and rejects source mutations and deletion until export releases', async () => {
+    const repository = createSessionRepository()
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const prior = coordinator.runSessionMutation('project-1', 'session-1', () => pending)
+    let reserved = false
+    const reservation = coordinator
+      .reserveSessionExport('project-1', 'session-1')
+      .then((release) => {
+        reserved = true
+        return release
+      })
+    await Promise.resolve()
+    expect(reserved).toBe(false)
+    finish()
+    await prior
+    const release = await reservation
+    const mutation = vi.fn(async () => undefined)
+    await expect(
+      coordinator.runSessionMutation('project-1', 'session-1', mutation)
+    ).rejects.toThrow('locked')
+    await expect(coordinator.deleteSession('project-1', 'session-1')).rejects.toThrow('locked')
+    await expect(coordinator.deleteProjectSessions('project-1')).rejects.toThrow('locked')
+    expect(repository.deleteSession).not.toHaveBeenCalled()
+    expect(mutation).not.toHaveBeenCalled()
+    await coordinator.runSessionMutation('project-1', 'session-2', mutation)
+    release()
+    await coordinator.runSessionMutation('project-1', 'session-1', mutation)
+    expect(mutation).toHaveBeenCalledTimes(2)
+  })
+
+  it('saves an imported renderer projection through Main without losing runtime evidence', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'imported-session-save-'))
+    try {
+      const repository = new SessionRepository(root)
+      await repository.saveSession(
+        createSession({
+          id: 'import-session-1',
+          runtimeContext: { version: 1, revision: 1 },
+          packageOrigin: {
+            importId: 'import-operation',
+            sourceProjectId: 'source-project',
+            sourceSessionId: 'source-session',
+            importedAt: 1,
+            manifestChecksum: 'a'.repeat(64)
+          }
+        })
+      )
+      const current = await repository.loadSession('project-1', 'import-session-1')
+      if (!current) throw new Error('Imported Session was not readable')
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+      await coordinator.saveSession({
+        ...current,
+        title: 'Renamed history',
+        runtimeContext: undefined,
+        description: current.description ?? '',
+        permissionProfile: current.permissionProfile ?? 'ask'
+      })
+      const saved = await repository.loadSession('project-1', 'import-session-1')
+      expect(saved).toMatchObject({
+        title: 'Renamed history',
+        runtimeContext: current.runtimeContext,
+        packageOrigin: current.packageOrigin
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects imported research at the shared prompt and Side chat admission boundary', async () => {
+    const session = createSession({
+      packageOrigin: {
+        importId: 'import-operation',
+        sourceProjectId: 'source-project',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'found', session })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    await expect(coordinator.assertSessionAvailable(session.projectId, session.id)).rejects.toThrow(
+      'read-only'
+    )
+  })
+
   it('rejects a retry when any requested native Artifact run remains unresolved', async () => {
     const session = createSession()
     const repository = createSessionRepository({
@@ -552,13 +660,17 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: structuredClone(durable)
       })),
-      saveSession: vi.fn(async (candidate, expectedRevision) => {
-        const expected = expectedRevision ?? candidate.revision ?? 0
-        expect(expected).toBe(durable.revision)
-        expectedRevisions.push(expected)
-        durable = structuredClone({ ...candidate, revision: expected + 1 })
-        return structuredClone(durable)
-      })
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(
+        async (candidate, expectedRevision) => {
+          const expected = expectedRevision ?? candidate.revision ?? 0
+          expect(expected).toBe(durable.revision)
+          expectedRevisions.push(expected)
+          durable = materializeSessionConversationGraph(
+            structuredClone({ ...candidate, revision: expected + 1 })
+          )
+          return structuredClone(durable)
+        }
+      )
     })
     const coordinator = new SessionPersistenceCoordinator(
       repository,
@@ -667,11 +779,13 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: structuredClone(durable)
       })),
-      saveSession: vi.fn(async (candidate, expectedRevision) => {
-        expect(expectedRevision ?? candidate.revision).toBe(durable.revision)
-        durable = structuredClone({ ...candidate, revision: (durable.revision ?? 0) + 1 })
-        return structuredClone(durable)
-      })
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(
+        async (candidate, expectedRevision) => {
+          expect(expectedRevision ?? candidate.revision).toBe(durable.revision)
+          durable = structuredClone({ ...candidate, revision: (durable.revision ?? 0) + 1 })
+          return structuredClone(durable)
+        }
+      )
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
 
@@ -769,7 +883,7 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (candidate) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (candidate) => {
         durable = structuredClone({ ...candidate, revision: (candidate.revision ?? 0) + 1 })
         return durable
       })
@@ -941,8 +1055,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -989,8 +1104,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const publishRuntimeContextSession = vi.fn()
@@ -1055,8 +1171,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -1106,8 +1223,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const publishSession = vi.fn()
@@ -1187,8 +1305,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -1349,7 +1468,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn()
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) =>
+        structuredClone(session)
+      )
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
 
@@ -1377,7 +1498,7 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = {
           ...structuredClone(session),
           revision: (session.revision ?? 0) + 1
@@ -1530,8 +1651,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -1601,7 +1723,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn()
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) =>
+        structuredClone(session)
+      )
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
 
@@ -1634,8 +1758,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -1678,8 +1803,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -1733,8 +1859,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -1888,8 +2015,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -1931,8 +2059,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
-        durable = structuredClone(session)
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
+        durable = materializeSessionConversationGraph(structuredClone(session))
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -1979,13 +2108,17 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session, expectedRevision) => {
-        durable = structuredClone({
-          ...session,
-          revision: (expectedRevision ?? session.revision ?? 0) + 1
-        })
-        return durable
-      })
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(
+        async (session, expectedRevision) => {
+          durable = materializeSessionConversationGraph(
+            structuredClone({
+              ...session,
+              revision: (expectedRevision ?? session.revision ?? 0) + 1
+            })
+          )
+          return durable
+        }
+      )
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
     const staleTitleEdit = materializeSessionConversationGraph(
@@ -2063,8 +2196,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -2095,8 +2229,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -2125,8 +2260,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -2156,8 +2292,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -2206,8 +2343,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
-        durable = structuredClone(session)
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
+        durable = materializeSessionConversationGraph(structuredClone(session))
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -2252,8 +2390,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
-        durable = structuredClone(session)
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
+        durable = materializeSessionConversationGraph(structuredClone(session))
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -2301,8 +2440,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
-        durable = structuredClone(session)
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
+        durable = materializeSessionConversationGraph(structuredClone(session))
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -2334,8 +2474,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -2352,8 +2493,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -2379,8 +2521,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const onDelegationPolicyUpdated = vi.fn()
@@ -2423,14 +2566,16 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session, expectedRevision) => {
-        const revision = expectedRevision ?? session.revision ?? 0
-        if (revision !== durable.revision) {
-          throw new SessionRevisionConflictError(revision, durable.revision ?? 0)
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(
+        async (session, expectedRevision) => {
+          const revision = expectedRevision ?? session.revision ?? 0
+          if (revision !== durable.revision) {
+            throw new SessionRevisionConflictError(revision, durable.revision ?? 0)
+          }
+          durable = structuredClone({ ...session, revision: revision + 1 })
+          return durable
         }
-        durable = structuredClone({ ...session, revision: revision + 1 })
-        return durable
-      })
+      )
     })
     const onDelegationPolicyUpdated = vi.fn()
     const coordinator = new SessionPersistenceCoordinator(
@@ -2508,8 +2653,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -2530,13 +2676,15 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session, expectedRevision) => {
-        durable = structuredClone({
-          ...session,
-          revision: (expectedRevision ?? session.revision ?? 0) + 1
-        })
-        return durable
-      })
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(
+        async (session, expectedRevision) => {
+          durable = structuredClone({
+            ...session,
+            revision: (expectedRevision ?? session.revision ?? 0) + 1
+          })
+          return durable
+        }
+      )
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
 
@@ -2555,8 +2703,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -2580,13 +2729,15 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session, expectedRevision) => {
-        durable = structuredClone({
-          ...session,
-          revision: (expectedRevision ?? session.revision ?? 0) + 1
-        })
-        return durable
-      })
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(
+        async (session, expectedRevision) => {
+          durable = structuredClone({
+            ...session,
+            revision: (expectedRevision ?? session.revision ?? 0) + 1
+          })
+          return durable
+        }
+      )
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
 
@@ -2614,13 +2765,15 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session, expectedRevision) => {
-        durable = structuredClone({
-          ...session,
-          revision: (expectedRevision ?? session.revision ?? 0) + 1
-        })
-        return durable
-      })
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(
+        async (session, expectedRevision) => {
+          durable = structuredClone({
+            ...session,
+            revision: (expectedRevision ?? session.revision ?? 0) + 1
+          })
+          return durable
+        }
+      )
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
 
@@ -2652,8 +2805,9 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -2690,10 +2844,11 @@ describe('SessionPersistenceCoordinator', () => {
         updatedAt: 5
       })
     ]
-    const saveSession = vi.fn(async (session: PersistedChatSession) => {
+    const saveSession = vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
       sessions = sessions.map((candidate) =>
         candidate.id === session.id ? structuredClone(session) : candidate
       )
+      return structuredClone(session)
     })
     const repository = createSessionRepository({
       loadAllWithDiagnostics: vi.fn(async () => ({
@@ -2793,12 +2948,13 @@ describe('SessionPersistenceCoordinator', () => {
         result: { sessions, manifest: { version: 1 as const } },
         isComplete: true
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         saveAttempts += 1
         sessions = sessions.map((candidate) =>
           candidate.id === session.id ? structuredClone(session) : candidate
         )
         if (saveAttempts === 2) throw new Error('Session write failed')
+        return structuredClone(session)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -2963,8 +3119,9 @@ describe('SessionPersistenceCoordinator', () => {
     let durable: PersistedChatSession | undefined
     const repository = createSessionRepository({
       loadSessionWithDiagnostics: vi.fn(async () => ({ status: 'missing' as const })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -2993,12 +3150,13 @@ describe('SessionPersistenceCoordinator', () => {
         status: 'found' as const,
         session: durable
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         if (failNextSave) {
           failNextSave = false
           throw new Error('partial write rejected')
         }
         durable = structuredClone(session)
+        return structuredClone(durable)
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -3033,9 +3191,10 @@ describe('SessionPersistenceCoordinator', () => {
       loadSessionWithDiagnostics: vi.fn(async () =>
         durable ? { status: 'found' as const, session: durable } : { status: 'missing' as const }
       ),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         await saveGate.promise
         durable = structuredClone(session)
+        return structuredClone(durable)
       }),
       deleteSession: vi.fn(async () => {
         durable = undefined
@@ -3163,7 +3322,10 @@ describe('SessionPersistenceCoordinator', () => {
   it('waits for an in-flight save before returning Session metadata', async () => {
     const saveGate = createDeferred<void>()
     const repository = createSessionRepository({
-      saveSession: vi.fn(() => saveGate.promise)
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
+        await saveGate.promise
+        return structuredClone(session)
+      })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
 
@@ -3296,10 +3458,11 @@ describe('SessionPersistenceCoordinator', () => {
     const order: string[] = []
     const saveGate = createDeferred<void>()
     const repository = createSessionRepository({
-      saveSession: vi.fn(async () => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         order.push('json-save:start')
         await saveGate.promise
         order.push('json-save:end')
+        return structuredClone(session)
       }),
       deleteSession: vi.fn(async () => {
         order.push('json-delete')
@@ -3415,7 +3578,10 @@ describe('SessionPersistenceCoordinator', () => {
     const uploads = {
       upgradeLegacySessionUploads: vi.fn().mockResolvedValue(durableSession)
     }
-    const repository = createSessionRepository()
+    const receipt = { ...durableSession, revision: 1 }
+    const repository = createSessionRepository({
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>().mockResolvedValue(receipt)
+    })
     const coordinator = new SessionPersistenceCoordinator(
       repository,
       createFileIndex(),
@@ -3424,10 +3590,7 @@ describe('SessionPersistenceCoordinator', () => {
       uploads
     )
 
-    await expect(coordinator.saveSession(legacySession)).resolves.toEqual({
-      ...durableSession,
-      revision: 1
-    })
+    await expect(coordinator.saveSession(legacySession)).resolves.toBe(receipt)
     expect(uploads.upgradeLegacySessionUploads).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'session-1' }),
       { mode: 'live-save' }
@@ -3438,8 +3601,9 @@ describe('SessionPersistenceCoordinator', () => {
   it('does not overwrite Session JSON when finalized Artifact bindings reject the snapshot', async () => {
     let durableSession = createSession({ title: 'Durable latest' })
     const repository = createSessionRepository({
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         durableSession = session
+        return structuredClone(durableSession)
       })
     })
     const provenance = createProvenancePersistence({
@@ -3914,12 +4078,14 @@ describe('SessionPersistenceCoordinator', () => {
         sha256: 'a'.repeat(64)
       }
     ]
+    const receipt = { ...upgradedSession, revision: 1 }
     const repository = createSessionRepository({
       loadSessionWithDiagnostics: vi
         .fn()
         .mockResolvedValue({ status: 'found', session: legacySession }),
-      saveSession: vi.fn(async () => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async () => {
         order.push('save-upgraded')
+        return receipt
       }),
       deleteSession: vi.fn(async () => {
         order.push('delete-json')
@@ -3932,7 +4098,7 @@ describe('SessionPersistenceCoordinator', () => {
           return upgradedSession
         }
         order.push('cleanup-terminal')
-        expect(session).toBe(upgradedSession)
+        expect(session).toBe(receipt)
         return session
       })
     }
@@ -3971,10 +4137,10 @@ describe('SessionPersistenceCoordinator', () => {
     expect(uploads.upgradeLegacySessionUploads).toHaveBeenNthCalledWith(1, legacySession, {
       mode: 'live-save'
     })
-    expect(uploads.upgradeLegacySessionUploads).toHaveBeenNthCalledWith(2, upgradedSession, {
+    expect(uploads.upgradeLegacySessionUploads).toHaveBeenNthCalledWith(2, receipt, {
       mode: 'terminal-delete'
     })
-    expect(provenance.prepareSessionDeletion).toHaveBeenCalledWith(upgradedSession)
+    expect(provenance.prepareSessionDeletion).toHaveBeenCalledWith(receipt)
   })
 
   it('retains a legacy Session source when its path-free projection cannot be saved before deletion', async () => {
@@ -3985,7 +4151,9 @@ describe('SessionPersistenceCoordinator', () => {
       loadSessionWithDiagnostics: vi
         .fn()
         .mockResolvedValue({ status: 'found', session: legacySession }),
-      saveSession: vi.fn().mockRejectedValue(new Error('session file unavailable'))
+      saveSession: vi
+        .fn<SessionMutationRepository['saveSession']>()
+        .mockRejectedValue(new Error('session file unavailable'))
     })
     const uploads = {
       upgradeLegacySessionUploads: vi.fn(async (_session, options) => {
@@ -5025,8 +5193,9 @@ describe('SessionPersistenceCoordinator', () => {
     let persistedFirst: PersistedChatSession | undefined
     const repository = createSessionRepository({
       loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true }),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         persistedFirst = structuredClone(session)
+        return structuredClone(persistedFirst)
       })
     })
     const uploads = {
@@ -5066,7 +5235,9 @@ describe('SessionPersistenceCoordinator', () => {
     const result = { sessions: [session], manifest: { version: 1 as const } }
     const repository = createSessionRepository({
       loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true }),
-      saveSession: vi.fn().mockRejectedValue(new Error('session file unavailable'))
+      saveSession: vi
+        .fn<SessionMutationRepository['saveSession']>()
+        .mockRejectedValue(new Error('session file unavailable'))
     })
     const uploads = {
       upgradeLegacySessionUploads: vi.fn().mockResolvedValue(upgradedSession)
@@ -5257,8 +5428,9 @@ describe('SessionPersistenceCoordinator', () => {
         result: { sessions: [durableSession], manifest: { version: 1 as const } },
         isComplete: true
       })),
-      saveSession: vi.fn(async (session) => {
-        durableSession = structuredClone(session)
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
+        durableSession = materializeSessionConversationGraph(structuredClone(session))
+        return structuredClone(durableSession)
       })
     })
     const recoveredArtifact = createRecoveredArtifact()
@@ -5401,8 +5573,9 @@ describe('SessionPersistenceCoordinator', () => {
         result: { sessions: [durableSession], manifest: { version: 1 as const } },
         isComplete: true
       })),
-      saveSession: vi.fn(async (session) => {
-        durableSession = structuredClone(session)
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
+        durableSession = materializeSessionConversationGraph(structuredClone(session))
+        return structuredClone(durableSession)
       })
     })
     const artifactStorage = {
@@ -5464,10 +5637,11 @@ describe('SessionPersistenceCoordinator', () => {
         result: { sessions: [durableSession], manifest: { version: 1 as const } },
         isComplete: true
       })),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         writeAttempt += 1
         if (writeAttempt === 1) throw new Error('session json is read-only')
-        durableSession = structuredClone(session)
+        durableSession = materializeSessionConversationGraph(structuredClone(session))
+        return structuredClone(durableSession)
       })
     })
     const markReconciliationIncomplete = vi.fn()
@@ -5527,9 +5701,9 @@ describe('SessionPersistenceCoordinator', () => {
     const repository = createSessionRepository({
       loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true }),
       saveSession: vi
-        .fn()
+        .fn<SessionMutationRepository['saveSession']>()
         .mockRejectedValueOnce(new Error('session json is read-only'))
-        .mockResolvedValueOnce(undefined)
+        .mockImplementationOnce(async (session) => structuredClone(session))
     })
     const markReconciliationIncomplete = vi.fn()
     const fileIndex = createFileIndex({ markReconciliationIncomplete })
@@ -6234,8 +6408,9 @@ describe('SessionPersistenceCoordinator', () => {
         sessions: [first, second],
         isComplete: true
       }),
-      saveSession: vi.fn(async (session) => {
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
         order.push(`save:${session.id}`)
+        return structuredClone(session)
       })
     })
     let secondUpgradeAttempts = 0
@@ -6288,7 +6463,9 @@ describe('SessionPersistenceCoordinator', () => {
         sessions: [legacySession],
         isComplete: true
       }),
-      saveSession: vi.fn().mockRejectedValue(new Error('session file unavailable'))
+      saveSession: vi
+        .fn<SessionMutationRepository['saveSession']>()
+        .mockRejectedValue(new Error('session file unavailable'))
     })
     const uploads = {
       upgradeLegacySessionUploads: vi.fn(async (_session, options) => {
@@ -7132,7 +7309,9 @@ describe('literature attachment removal and session persistence ordering', () =>
   it.each(['single attachment', 'item batch'] as const)(
     'checks a queued binding after %s removal completes',
     async (kind) => {
-      const save = vi.fn()
+      const save = vi.fn<SessionMutationRepository['saveSession']>(async (session) =>
+        structuredClone(session)
+      )
       const coordinator = new SessionPersistenceCoordinator(
         createSessionRepository({
           loadSessionWithDiagnostics: vi
@@ -7197,7 +7376,9 @@ const createSessionRepository = (
   }),
   loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'missing' }),
   assertSessionIdentityOwnership: vi.fn().mockResolvedValue(undefined),
-  saveSession: vi.fn().mockResolvedValue(undefined),
+  saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) =>
+    structuredClone(session)
+  ),
   saveCommittedProjectSession: vi.fn().mockResolvedValue(undefined),
   deleteSession: vi.fn().mockResolvedValue(undefined),
   deleteProjectSessions: vi.fn().mockResolvedValue(undefined),

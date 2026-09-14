@@ -754,7 +754,8 @@ describe('release-gate Subagent surfaces', () => {
     completedFrame.completedAt = completed.updatedAt
     Object.assign(completedAttempt, {
       status: 'completed',
-      endedAt: completed.updatedAt
+      endedAt: completed.updatedAt,
+      terminalMessageId: 'child-a-durable-answer'
     })
     completedBranch.headMessageId = 'child-a-durable-answer'
     completed.conversationGraph.messages.push({
@@ -777,6 +778,12 @@ describe('release-gate Subagent surfaces', () => {
     })
 
     expect(screen.getByText('Durable child evidence')).toBeTruthy()
+    expect(screen.getByText('Saved result available below.')).toBeTruthy()
+    expect(
+      screen.getByText(
+        'Execution completed. Check the Main Agent conversation to confirm it received the result.'
+      )
+    ).toBeTruthy()
     expect(screen.queryByText('Thinking')).toBeNull()
   })
 
@@ -872,7 +879,7 @@ describe('release-gate Subagent surfaces', () => {
 
     expect(screen.getByRole('alert').textContent).toContain('could not be read')
     expect(screen.getByRole('button', { name: 'Retry Subagent preview' }).className).toContain(
-      'focus-visible:ring-[3px]'
+      'focus-visible:ring-3'
     )
   })
 

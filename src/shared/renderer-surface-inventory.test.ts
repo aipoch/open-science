@@ -175,7 +175,10 @@ const WEB_UNAVAILABLE_CHANNELS = [
   'file:save-project-artifacts',
   'file:save-session-artifacts',
   'sessions:export-conversation',
+  'sessions:export-package',
+  'sessions:import-package',
   'sessions:open-recovery-folder',
+  'sessions:package-operation',
   'settings:import-agent-home-skills',
   'settings:list-agent-home-skills',
   'uploads:stage-local-file',
@@ -183,6 +186,8 @@ const WEB_UNAVAILABLE_CHANNELS = [
 ] as const
 
 const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
+  'pdf-structure': ['read-cached', 'parse', 'cancel', 'read-thumbnail', 'clear-cache'],
+  'local-models': ['get-snapshot', 'install', 'cancel', 'remove'],
   artifacts: ['open-file'],
   cli: ['install', 'uninstall'],
   compute: [

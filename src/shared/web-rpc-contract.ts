@@ -28,6 +28,9 @@ export const WEB_RPC_UNAVAILABLE_CHANNELS = [
   'file:save-blob',
   'file:save-managed',
   'sessions:export-conversation',
+  'sessions:export-package',
+  'sessions:import-package',
+  'sessions:package-operation',
   'sessions:open-recovery-folder',
   'file:save-session-artifacts',
   'file:save-project-artifacts',
@@ -103,6 +106,7 @@ export const webRpcResponseSchema = z.discriminatedUnion('ok', [
 export const webRpcBootstrapSchema = z
   .object({
     platform: z.string(),
+    draftScope: z.string().min(1).optional(),
     webCallerLocation: z.enum(WEB_CALLER_LOCATIONS).optional(),
     versions: z.object({ electron: z.string(), chrome: z.string(), node: z.string() }).strict(),
     rpcProtocolVersion: z.literal(WEB_RPC_PROTOCOL_VERSION),

@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events'
+import { createElectronSurfaceAdapter } from '../ipc-surfaces/adapter'
+import { disposeIpcHandlerRegistry } from '../ipc-handler-registry'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { registerOfficePreviewIpcHandlers } from './office-preview-ipc'
@@ -14,7 +16,9 @@ const ipc = vi.hoisted(() => ({ handlers: new Map<string, OpenHandler>() }))
 vi.mock('electron', () => ({
   ipcMain: {
     handle: (name: string, handler: OpenHandler) => ipc.handlers.set(name, handler),
-    on: () => {}
+    on: () => {},
+    removeListener: () => {},
+    removeHandler: (name: string) => ipc.handlers.delete(name)
   },
   net: { fetch: vi.fn() },
   protocol: { handle: vi.fn(), unhandle: vi.fn() }
@@ -81,6 +85,7 @@ const setup = (
 }
 afterEach(() => {
   vi.useRealTimers()
+  disposeIpcHandlerRegistry()
   ipc.handlers.clear()
 })
 describe('Office host navigation', () => {
@@ -90,6 +95,7 @@ describe('Office host navigation', () => {
     supervisor: OfficePreviewSupervisor
     publish: ReturnType<typeof vi.fn>
     acquired: ManagedPreviewResource[]
+    uninstall: () => void | Promise<void>
   } => {
     const env = setup(size)
     let session = 0
@@ -108,12 +114,25 @@ describe('Office host navigation', () => {
       resolveFrameProcess: () => undefined,
       publishState: publish
     })
-    registerOfficePreviewIpcHandlers(supervisor)
-    return { ...env, supervisor, publish, acquired }
+    const installation = createElectronSurfaceAdapter('office-preview', () =>
+      registerOfficePreviewIpcHandlers(supervisor)
+    ).install()
+    return {
+      ...env,
+      supervisor,
+      publish,
+      acquired,
+      uninstall: async () => (await installation).uninstall()
+    }
   }
-  it.each([false, true])(
-    'Office navigation immediately closes an unattached session (retry=%s)',
-    async (retry) => {
+  it.each([
+    ['navigation', false],
+    ['navigation', true],
+    ['uninstall', false],
+    ['uninstall', true]
+  ] as const)(
+    'Office %s immediately closes an unattached session (retry=%s)',
+    async (eventName, retry) => {
       vi.useFakeTimers()
       const env = office(25 * 1024 * 1024)
       const s = sender()
@@ -130,7 +149,8 @@ describe('Office host navigation', () => {
       expect(result.kind).toBe('started')
       expect(env.close).toHaveBeenCalledOnce()
       env.close.mockClear()
-      s.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+      if (eventName === 'uninstall') await env.uninstall()
+      else s.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
       await Promise.resolve()
       expect(env.close).toHaveBeenCalledOnce()
       await expect(env.resources.resolveProtocolResource(env.acquired[0].id)).rejects.toThrow(
@@ -139,7 +159,7 @@ describe('Office host navigation', () => {
       s.emit('destroyed')
     }
   )
-  it.each(['navigation', 'destroyed'])(
+  it.each(['navigation', 'destroyed', 'uninstall'])(
     'Office acquisition finishing after %s has the documented lifecycle outcome',
     async (eventName) => {
       vi.useFakeTimers()
@@ -157,6 +177,7 @@ describe('Office host navigation', () => {
       )
       if (eventName === 'navigation')
         s.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+      else if (eventName === 'uninstall') await env.uninstall()
       else s.emit('destroyed')
       gate.resolve()
       const result = await pending

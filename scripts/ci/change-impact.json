@@ -11,6 +11,7 @@
     "interface_contracts",
     "cli_sdk",
     "i18n",
+    "runtime_bundle",
     "unit_macos",
     "linux_runtime",
     "windows_runtime",
@@ -42,6 +43,7 @@
     "interface_contracts": "static",
     "cli_sdk": "static",
     "i18n": "static",
+    "runtime_bundle": "static",
     "unit_macos": "unit",
     "linux_runtime": "linux_runtime",
     "windows_runtime": "windows_core",
@@ -125,6 +127,7 @@
         "src/main/**/*powershell*.ts",
         "src/main/**/*path*.ts",
         "src/main/**/*acl*.ts",
+        "src/main/window-shortcuts.ts",
         "src/main/acp/agent-process.ts",
         "src/main/acp/claude-executable.ts",
         "src/main/acp/permission-broker.ts",
@@ -149,13 +152,18 @@
         "src/main/index.ts",
         "src/main/ipc.ts",
         "src/main/lifecycle-shutdown.ts",
+        "src/main/literature/pdf-structure/engine.ts",
         "src/main/local-rpc-transport.ts",
         "src/main/notebook/dependency-analysis-python.ts",
+        "src/main/notebook/conditional-restore-script.ts",
         "src/main/notebook/environment-discovery.ts",
+        "src/main/notebook/environment-lock.ts",
         "src/main/notebook/environment-state-tracker.ts",
         "src/main/notebook/execution-owner.ts",
+        "src/main/notebook/external-r-library.ts",
         "src/main/notebook/configured-shell-runtime.ts",
         "src/main/notebook/kernel-executor.ts",
+        "src/main/notebook/kernel-executable-read-root.ts",
         "src/main/notebook/local-rpc-server.ts",
         "src/main/notebook/managed-runtime-guard.ts",
         "src/main/notebook/mcp-server.ts",
@@ -173,6 +181,7 @@
         "src/main/notebook/restored-environment-verification.ts",
         "src/main/notebook/python-command.ts",
         "src/main/notebook/r-command.ts",
+        "src/main/notebook/runtime-workflows.ts",
         "src/main/notebook/shell-process.ts",
         "src/main/notebook/shell-runtime.ts",
         "src/main/notebook/shell-search-scope.ts",
@@ -207,6 +216,7 @@
         "src/main/storage-root.ts",
         "src/main/storage/**",
         "src/main/tray.ts",
+        "src/main/window-shortcuts.ts",
         "src/main/update/create-strategy.ts",
         "src/main/update/electron-updater-strategy.ts",
         "src/main/wsl/**",
@@ -258,6 +268,28 @@
       "role": "overlay",
       "paths": ["src/main/settings/ipc.ts"],
       "capabilities": ["settings_ipc"]
+    },
+    {
+      "id": "default_env_staging",
+      "role": "owner",
+      "paths": [
+        "scripts/stage-default-envs.mjs",
+        "scripts/stage-default-envs.test.ts",
+        "scripts/verify-runtime-bundle.mjs",
+        "scripts/verify-runtime-bundle.test.ts"
+      ],
+      "capabilities": ["runtime_bundle"]
+    },
+    {
+      "id": "runtime_bundle",
+      "role": "overlay",
+      "paths": [
+        "src/main/notebook/runtime-paths.ts",
+        "scripts/stage-default-envs.mjs",
+        "scripts/verify-runtime-bundle.mjs",
+        ".github/workflows/stage-runtime-bundle.yml"
+      ],
+      "capabilities": ["runtime_bundle"]
     }
   ],
   "capabilities": {
@@ -330,6 +362,10 @@
     "i18n_catalog": {
       "consumers": [],
       "lanes": ["i18n"]
+    },
+    "runtime_bundle": {
+      "consumers": [],
+      "lanes": ["runtime_bundle"]
     },
     "renderer_state": {
       "consumers": ["e2e_workspace"],

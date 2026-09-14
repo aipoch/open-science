@@ -25,6 +25,8 @@ import {
 } from './workspace-skill-load'
 import {
   buildLiteratureLibraryToolSummary,
+  pdfElementToolAction,
+  buildPdfElementToolSummary,
   buildLiteratureToolSummary,
   getLiteratureLibraryToolAction,
   isLiteratureReadDocumentTool,
@@ -414,13 +416,16 @@ const buildGenericDetails = (activity: ToolActivity): ToolActivityDetails | unde
 const buildLiteratureDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
   const libraryAction = getLiteratureLibraryToolAction(activity.providerToolName, activity.title)
   const isReading = isLiteratureReadDocumentTool(activity.providerToolName, activity.title)
-  if (!libraryAction && !isReading) return undefined
+  const elementAction = pdfElementToolAction(activity.providerToolName, activity.title)
+  if (!libraryAction && !isReading && !elementAction) return undefined
 
   const contentTexts = collectToolTexts(activity)
   const output = [...contentTexts, activity.rawOutput]
-  const summary = libraryAction
-    ? buildLiteratureLibraryToolSummary(libraryAction, activity.rawInput, output)
-    : buildLiteratureToolSummary(activity.rawInput, output)
+  const summary = elementAction
+    ? buildPdfElementToolSummary(elementAction, output)
+    : libraryAction
+      ? buildLiteratureLibraryToolSummary(libraryAction, activity.rawInput, output)
+      : buildLiteratureToolSummary(activity.rawInput, output)
   return {
     displayName: libraryAction ? 'Literature library' : 'Reading',
     subtitle: summary.query ?? summary.itemTitles?.[0] ?? summary.documentNames[0],

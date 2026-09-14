@@ -1,4 +1,7 @@
 import { strFromU8, unzipSync } from 'fflate'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import sharp from 'sharp'
 import { compareReproducedContent } from './output-comparison'
@@ -256,7 +259,7 @@ describe('Artifact reproducibility verification export', () => {
     )
     value.receiptChecksum = sha256(canonicalJson(payload as CanonicalJson))
     const exporter = createArtifactReproducibilityReceiptExporter({
-      downloadsDirectory: '/downloads',
+      downloadsDirectory: () => '/downloads',
       readReceipt: async () => value,
       readOutput: async () => actual,
       readOriginalOutput: async () => original,
@@ -300,7 +303,7 @@ describe('Artifact reproducibility verification export', () => {
       const value = receipt()
       const writeArchive = vi.fn()
       const exporter = createArtifactReproducibilityReceiptExporter({
-        downloadsDirectory: '/downloads',
+        downloadsDirectory: () => '/downloads',
         readReceipt: async () => value,
         readVersion: async () => ({
           versionId: value.artifactVersion.versionId,
@@ -316,6 +319,24 @@ describe('Artifact reproducibility verification export', () => {
       expect(writeArchive).not.toHaveBeenCalled()
     }
   )
+  it('resolves the downloads directory only when a save dialog needs it', async () => {
+    const value = receipt()
+    const downloadsDirectory = vi.fn(() => '/downloads')
+    const exporter = createArtifactReproducibilityReceiptExporter({
+      downloadsDirectory,
+      readReceipt: async () => value,
+      readVersion: async () => ({
+        versionId: value.artifactVersion.versionId,
+        artifactId: value.artifactVersion.artifactId,
+        checksum: value.artifactVersion.targetChecksum,
+        versionNumber: 3
+      }),
+      showSaveDialog: async () => ({ canceled: true })
+    })
+    expect(downloadsDirectory).not.toHaveBeenCalled()
+    await expect(exporter.export(undefined, request(value))).resolves.toEqual({ saved: false })
+    expect(downloadsDirectory).toHaveBeenCalledTimes(1)
+  })
   it('previews and exports receipt-bound bytes, with original output remaining optional', async () => {
     const current = receipt()
     const bytes = Buffer.from('group,n\nCtrl,34\n')
@@ -349,7 +370,7 @@ describe('Artifact reproducibility verification export', () => {
       clearedReceiptChecksums: [] as string[]
     }))
     const exporter = createArtifactReproducibilityReceiptExporter({
-      downloadsDirectory: '/downloads',
+      downloadsDirectory: () => '/downloads',
       readReceipt: async () => value,
       readOutput,
       readOriginalOutput,
@@ -434,6 +455,38 @@ describe('Artifact reproducibility verification export', () => {
     expect(buildVerificationReport(value)).not.toContain('/Users/')
   })
 
+  it('exports source checks from an imported Version without relabeling the receipt', async () => {
+    const { receipt: value, log } = receiptWithCheckLog()
+    const local = {
+      ...request(value),
+      projectId: 'import-project',
+      appSessionId: 'import-session',
+      artifactId: 'local-artifact',
+      versionId: 'local-version'
+    }
+    const writeArchive = vi.fn<(path: string, bytes: Uint8Array) => Promise<void>>(
+      async () => undefined
+    )
+    const exporter = createArtifactReproducibilityReceiptExporter({
+      downloadsDirectory: () => '/downloads',
+      readReceipt: async () => value,
+      readCheckLog: async () => log,
+      readSourceScope: async () => value.artifactVersion,
+      readVersion: async () => ({
+        versionId: local.versionId,
+        artifactId: local.artifactId,
+        checksum: value.artifactVersion.targetChecksum,
+        versionNumber: 1
+      }),
+      showSaveDialog: async () => ({ canceled: false, filePath: '/exports/source.zip' }),
+      writeArchive
+    })
+    await expect(exporter.export(undefined, local)).resolves.toEqual({ saved: true })
+    const archive = unzipSync(writeArchive.mock.calls[0]![1])
+    expect(JSON.parse(strFromU8(archive['verification-receipt.json']!))).toEqual(value)
+    expect(strFromU8(archive['report.md']!)).toContain('source installation')
+  })
+
   it('reloads and validates the selected receipt before saving', async () => {
     const { receipt: value, log } = receiptWithCheckLog()
     const writeArchive = vi.fn<(path: string, bytes: Uint8Array) => Promise<void>>(
@@ -452,7 +505,7 @@ describe('Artifact reproducibility verification export', () => {
       versionNumber: 3
     }))
     const exporter = createArtifactReproducibilityReceiptExporter({
-      downloadsDirectory: '/downloads',
+      downloadsDirectory: () => '/downloads',
       readReceipt,
       readCheckLog,
       readVersion,
@@ -486,7 +539,7 @@ describe('Artifact reproducibility verification export', () => {
     expect(showSaveDialog).toHaveBeenCalledWith(
       { window: 1 },
       expect.objectContaining({
-        defaultPath: `/downloads/${verificationArchiveName('results.csv', value.completedAt)}`
+        defaultPath: join('/downloads', verificationArchiveName('results.csv', value.completedAt))
       })
     )
     expect(writeArchive).toHaveBeenCalledWith('/exports/verification.zip', expect.any(Uint8Array))
@@ -496,7 +549,7 @@ describe('Artifact reproducibility verification export', () => {
     const { receipt: value } = receiptWithCheckLog()
     const showSaveDialog = vi.fn()
     const exporter = createArtifactReproducibilityReceiptExporter({
-      downloadsDirectory: '/downloads',
+      downloadsDirectory: () => '/downloads',
       readReceipt: vi.fn(async () => value),
       readCheckLog: vi.fn(async () => undefined),
       showSaveDialog,
@@ -513,7 +566,7 @@ describe('Artifact reproducibility verification export', () => {
     const value = receipt()
     const writeArchive = vi.fn()
     const exporter = createArtifactReproducibilityReceiptExporter({
-      downloadsDirectory: '/downloads',
+      downloadsDirectory: () => '/downloads',
       readReceipt: vi.fn(async () => value),
       showSaveDialog: vi.fn(async () => ({ canceled: true })),
       writeArchive
@@ -530,7 +583,7 @@ describe('Artifact reproducibility verification export', () => {
       value: ArtifactReproducibilityReceipt | undefined
     ): ReturnType<typeof createArtifactReproducibilityReceiptExporter> =>
       createArtifactReproducibilityReceiptExporter({
-        downloadsDirectory: '/downloads',
+        downloadsDirectory: () => '/downloads',
         readReceipt: vi.fn(async () => value),
         showSaveDialog,
         writeArchive: vi.fn()
@@ -555,7 +608,7 @@ describe('Artifact reproducibility verification export', () => {
     const value = receipt()
     const readReceipt = vi.fn()
     const exporter = createArtifactReproducibilityReceiptExporter({
-      downloadsDirectory: '/downloads',
+      downloadsDirectory: () => '/downloads',
       readReceipt,
       showSaveDialog: vi.fn(),
       writeArchive: vi.fn()
@@ -578,6 +631,35 @@ describe('Artifact reproducibility verification export', () => {
 })
 
 describe('Artifact Environment lock export', () => {
+  it('exports a conditional runner without a fabricated Conda restore command', () => {
+    const content = JSON.stringify({
+      R: { Version: '4.4.3' },
+      Packages: { glue: { Version: '1.8.0' } }
+    })
+    const lock: NotebookEnvironmentLock = {
+      schemaVersion: 2,
+      format: 'environment-lock-bundle',
+      kernelKind: 'r',
+      environmentName: 'external-r',
+      platform: 'win32',
+      architecture: 'x64',
+      externalRuntime: { version: '4.4.3', installerVersion: '1.2.4' },
+      untrackedPackages: ['r:glue'],
+      components: [
+        {
+          ecosystem: 'r',
+          format: 'renv-lock',
+          resolution: 'locked',
+          files: [{ path: 'r/renv.lock', content, checksum: sha256(content) }]
+        }
+      ]
+    }
+    const files = unzipSync(buildEnvironmentLockArchive(lock, JSON.stringify(lock)))
+    expect(files['conda-explicit.txt']).toBeUndefined()
+    expect(strFromU8(files['README.md']!)).toContain('does not recreate the interpreter')
+    expect(strFromU8(files['restore-packages.py']!)).toContain('Nothing was installed.')
+    expect(strFromU8(files['README.md']!)).not.toContain('micromamba create')
+  })
   it('preserves the run scope and omitted packages in exported lock evidence', () => {
     const lock = { ...condaOnlyEnvironmentLock, omittedPackages: ['python:pandas'] }
     const serialized = JSON.stringify(lock)
@@ -792,7 +874,7 @@ describe('Artifact Environment lock export', () => {
     }))
     const writeArchive = vi.fn(async () => undefined)
     const exporter = createArtifactReproducibilityReceiptExporter({
-      downloadsDirectory: '/downloads',
+      downloadsDirectory: () => '/downloads',
       readReceipt: vi.fn(),
       readExecution,
       readEnvironmentLock,
@@ -809,11 +891,16 @@ describe('Artifact Environment lock export', () => {
       artifactId: 'artifact-1',
       versionId: 'version-1'
     })
-    expect(readEnvironmentLock).toHaveBeenCalledWith(environmentLockChecksum)
+    expect(readEnvironmentLock).toHaveBeenCalledWith(environmentLockChecksum, {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1'
+    })
     expect(showSaveDialog).toHaveBeenCalledWith(
       { window: 1 },
       expect.objectContaining({
-        defaultPath: `/downloads/environment-lock-${environmentLockChecksum}.zip`
+        defaultPath: join('/downloads', `environment-lock-${environmentLockChecksum}.zip`)
       })
     )
     expect(writeArchive).toHaveBeenCalledWith(
@@ -829,7 +916,7 @@ describe('Artifact Environment lock export', () => {
       contents?: string
     ): ReturnType<typeof createArtifactReproducibilityReceiptExporter> =>
       createArtifactReproducibilityReceiptExporter({
-        downloadsDirectory: '/downloads',
+        downloadsDirectory: () => '/downloads',
         readReceipt: vi.fn(),
         readExecution: vi.fn(async () => execution),
         readEnvironmentLock: vi.fn(async () => contents),
@@ -867,7 +954,7 @@ describe('Artifact Environment lock export', () => {
       reused: false
     }))
     const exporter = createArtifactReproducibilityReceiptExporter({
-      downloadsDirectory: '/downloads',
+      downloadsDirectory: () => '/downloads',
       readReceipt: vi.fn(),
       showSaveDialog: vi.fn(),
       showOpenDialog: vi.fn(async () => ({ canceled: false, filePaths: [archivePath] })),
@@ -897,7 +984,7 @@ describe('Artifact Environment lock export', () => {
       reused: false
     }))
     const exporter = createArtifactReproducibilityReceiptExporter({
-      downloadsDirectory: '/downloads',
+      downloadsDirectory: () => '/downloads',
       readReceipt: vi.fn(),
       readExecution: vi.fn(async () => environmentLockExecution),
       readEnvironmentLock: vi.fn(async () => environmentLockContents),
@@ -927,7 +1014,7 @@ describe('Artifact Environment lock export', () => {
     }))
     const showOpenDialog = vi.fn(async () => ({ canceled: false, filePaths: [archivePath] }))
     const exporter = createArtifactReproducibilityReceiptExporter({
-      downloadsDirectory: '/downloads',
+      downloadsDirectory: () => '/downloads',
       readReceipt: vi.fn(),
       showSaveDialog: vi.fn(),
       showOpenDialog,
@@ -990,6 +1077,3 @@ describe('Artifact Environment lock export', () => {
     }
   })
 })
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'

@@ -100,6 +100,10 @@ type FakeSettingsService = Record<
   | 'setNetworkProxy'
   | 'setNotebookNetwork'
   | 'listSkills'
+  | 'startSkillMarketplaceBatch'
+  | 'listSkillMarketplace'
+  | 'getSkillMarketplaceBatch'
+  | 'stopSkillMarketplaceBatch'
   | 'getSkillDetail'
   | 'resolveSkillDocument'
   | 'buildSkillExport'
@@ -255,6 +259,10 @@ const createFakeService = (): FakeSettingsService => ({
     disabledOpenScienceDomains: []
   }),
   listSkills: vi.fn().mockResolvedValue([]),
+  startSkillMarketplaceBatch: vi.fn().mockReturnValue({ ok: false, error: 'busy' }),
+  listSkillMarketplace: vi.fn().mockResolvedValue({ ok: true, value: { entries: [] } }),
+  getSkillMarketplaceBatch: vi.fn().mockReturnValue(null),
+  stopSkillMarketplaceBatch: vi.fn().mockReturnValue(true),
   getSkillDetail: vi.fn().mockResolvedValue({
     id: 'demo',
     name: 'Demo',
@@ -399,6 +407,29 @@ const invoke = (channel: string, payload?: unknown): unknown =>
   handlers.get(channel)!({ sender: ipcSender }, payload)
 
 describe('settings IPC handlers', () => {
+  it('forwards catalog refresh and local reconciliation options unchanged', async () => {
+    const fake = createFakeService()
+    registerTestSettingsIpcHandlers({ service: asService(fake) })
+    for (const request of [undefined, { forceRefresh: true }, { snapshotId: 'a'.repeat(64) }]) {
+      await invoke('settings:list-skill-marketplace', request)
+      expect(fake.listSkillMarketplace).toHaveBeenLastCalledWith(request)
+    }
+  })
+  it('routes batch start, progress and stop through the shared owners', async () => {
+    const fake = createFakeService()
+    registerTestSettingsIpcHandlers({ service: asService(fake) })
+    const request = {
+      snapshotId: 'a'.repeat(64),
+      items: [{ id: 'one', version: '1.0.0', expectedVersion: null }]
+    }
+    await expect(
+      handlers.get('settings:start-skill-marketplace-batch')!({}, request)
+    ).resolves.toEqual({ ok: false, error: 'busy' })
+    expect(fake.startSkillMarketplaceBatch).toHaveBeenCalledWith(request, expect.any(Function))
+    expect(await handlers.get('settings:get-skill-marketplace-batch')!({}, undefined)).toBeNull()
+    expect(await handlers.get('settings:stop-skill-marketplace-batch')!({}, 'batch')).toBe(true)
+    expect(fake.stopSkillMarketplaceBatch).toHaveBeenCalledWith('batch')
+  })
   it('registers every settings channel', () => {
     handlers.clear()
     registerTestSettingsIpcHandlers({ service: asService(createFakeService()) })

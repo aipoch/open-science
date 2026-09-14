@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConnectorDetailView as ConnectorDetail } from '../../../../shared/settings'
+import { i18next } from '@/i18n'
 import { ConnectorDetailView } from './ConnectorDetailView'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
@@ -122,6 +123,46 @@ const blockSegment = (method: string): HTMLButtonElement | null => {
 }
 
 describe('ConnectorDetailView', () => {
+  it('shows translated descriptions for the new DOI tools while retaining exact permission identities', async () => {
+    const method = 'crossref_get_updates'
+    const literature: ConnectorDetail = {
+      ...detail,
+      id: 'literature',
+      displayName: 'Literature Graph',
+      tools: [
+        { id: `literature/${method}`, method, description: 'API contract', permission: 'allow' }
+      ]
+    }
+    vi.mocked(window.api.settings.getConnectorDetail).mockResolvedValue(literature)
+    const setToolPermission = vi.fn().mockResolvedValue({
+      ...literature,
+      tools: [{ ...literature.tools[0], permission: 'block' }]
+    })
+    useSettingsStore.setState({ setToolPermission })
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+      root.render(<ConnectorDetailView id="literature" />)
+    })
+    try {
+      const tool = Array.from(container.querySelectorAll('button')).find((button) =>
+        button.textContent?.includes(method)
+      )!
+      await act(async () => tool.click())
+      expect(container.textContent).toContain('查询已登记的更正和撤稿信息')
+      expect(container.textContent).toContain('Crossref 和 DataCite')
+      expect(container.textContent).toContain(method)
+      expect(container.querySelectorAll('[role="radiogroup"]')).toHaveLength(1)
+      const block = container.querySelector<HTMLButtonElement>('[role="radio"][aria-label="阻止"]')!
+      await act(async () => block.click())
+      expect(setToolPermission).toHaveBeenCalledWith(`literature/${method}`, 'block')
+      expect(block.getAttribute('aria-checked')).toBe('true')
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
+  })
+
   it('C05 keeps both permission changes when the user edits two tools in succession', async () => {
     const initial = {
       ...detail,

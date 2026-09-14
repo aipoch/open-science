@@ -477,3 +477,11 @@ describe('conversation export projection', () => {
     expect(sanitizeExportFilename(`${'界'.repeat(81)}tail`)).toBe(`${'界'.repeat(79)}...`)
   })
 })
+
+it('reserves a filename byte budget for package dates and extensions without splitting Unicode', () => {
+  const title = sanitizeExportFilename('🧪研究'.repeat(100), 220)
+  const filename = `${title}-2026-09-11.science`
+  expect(new TextEncoder().encode(filename).length).toBeLessThanOrEqual(255)
+  expect(filename).toMatch(/-2026-09-11\.science$/)
+  expect(title).not.toContain('\uFFFD')
+})

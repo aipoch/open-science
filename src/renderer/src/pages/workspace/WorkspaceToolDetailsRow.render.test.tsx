@@ -83,6 +83,104 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(formatNotebookRunOutputLineMeta(run, i18next.t)).toBe('3 lines of output')
   })
 
+  it.each([
+    'mcp__open-science-literature__list_pdf_elements',
+    'open_science_literature_list_pdf_elements',
+    'mcp.open-science-literature.list_pdf_elements',
+    'mcp__open_science_literature__list_pdf_elements'
+  ])('shows discovery coverage without treating %s as read evidence', async (providerToolName) => {
+    const activity = createActivity({
+      providerToolName,
+      rawInput: {},
+      rawOutput: {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              document: { documentId: 'private-binding', name: 'Trial.pdf' },
+              elements: [
+                {
+                  elementRef: 'opaque-secret-reference',
+                  kind: 'table',
+                  caption: 'Table 2. Outcomes',
+                  pageStart: 2,
+                  pageEnd: 2
+                }
+              ],
+              coverage: {
+                checkedPages: [1, 2, 3],
+                parsedPages: [2],
+                unavailablePages: [1, 3],
+                scanComplete: false
+              },
+              warnings: ['Some checked pages have no cache.'],
+              nextCursor: 'private-cursor'
+            })
+          }
+        ]
+      }
+    })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={buildToolActivityDetails(activity)!}
+          isExpanded
+          onToggle={() => undefined}
+        />
+      )
+    )
+    expect(container.textContent).toContain('PDF figures and tables')
+    expect(container.textContent).toContain('Trial.pdf')
+    expect(container.textContent).toContain('Elements: 1')
+    expect(container.textContent).toContain('Parsed pages: 1 / 3')
+    expect(container.textContent).toContain('Some evidence is unavailable or incomplete.')
+    expect(container.textContent).toContain('More results are available')
+    expect(container.textContent).not.toContain('opaque-secret-reference')
+    expect(container.textContent).not.toContain('private-cursor')
+    expect(container.textContent).not.toContain('passages')
+  })
+
+  it('shows the selected figure caption and image delivery without rendering Base64 as text', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp.open-science-literature.read_pdf_element',
+      rawOutput: {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              document: { name: 'Trial.pdf' },
+              kind: 'figure',
+              caption: 'Figure 3. Survival by treatment group.',
+              pageStart: 2,
+              pageEnd: 2,
+              imageIncluded: true,
+              warnings: [],
+              nextCursor: null
+            })
+          },
+          { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' }
+        ]
+      }
+    })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={buildToolActivityDetails(activity)!}
+          isExpanded
+          onToggle={() => undefined}
+        />
+      )
+    )
+    expect(container.textContent).toContain('Figure 3. Survival by treatment group.')
+    expect(container.textContent).toContain('Image delivered')
+    expect(container.textContent).toContain('Page 2')
+    expect(container.textContent).not.toContain('aW1hZ2U=')
+  })
+
   it('counts the normalized notebook output shown by tool details', () => {
     const echoedRun = createNotebookRun({
       text: { stdout: '42\n', stderr: '', traceback: '', plain: ['42\n'] },

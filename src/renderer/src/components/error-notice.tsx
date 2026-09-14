@@ -4,6 +4,7 @@ import {
   CircleAlert,
   CircleQuestionMark,
   LoaderCircle,
+  X,
   type LucideIcon
 } from 'lucide-react'
 
@@ -20,6 +21,7 @@ type ErrorNoticeTone = 'teal' | 'amber' | 'red'
 
 type ErrorNoticeButton = {
   label: string
+  testId?: string
   description?: string
   onClick: () => void
   disabled?: boolean
@@ -43,6 +45,7 @@ type ErrorNoticeProps = {
   issueLink?: { label: string; tooltip: string; onClick: () => void }
   secondaryButton?: ErrorNoticeButton
   primaryButton?: ErrorNoticeButton
+  dismissButton?: { label: string; onClick: () => void; testId?: string }
 }
 
 // Semantic tones: teal = update the app, amber = transient / retryable, red = data or
@@ -74,6 +77,7 @@ const NoticeButton = ({
     <div className="min-w-0">
       <Button
         type="button"
+        data-testid={button.testId}
         className={cn(
           'focus-visible:transition-none',
           compact && 'h-auto min-h-8 max-w-full whitespace-normal text-left'
@@ -116,7 +120,8 @@ const ErrorNotice = ({
   help,
   issueLink,
   secondaryButton,
-  primaryButton
+  primaryButton,
+  dismissButton
 }: ErrorNoticeProps): React.JSX.Element => {
   const compact = !fullPage
   const Heading = compact ? 'h2' : 'h1'
@@ -158,7 +163,11 @@ const ErrorNotice = ({
               <Icon className="size-4" strokeWidth={1.8} aria-hidden="true" />
             </div>
           ) : null}
-          <div role={role} className="flex min-w-0 flex-1 basis-40 flex-col gap-1">
+          <div
+            role={role}
+            aria-atomic={role ? true : undefined}
+            className="flex min-w-0 flex-1 basis-40 flex-col gap-1"
+          >
             {title !== undefined ? (
               <Heading
                 className={cn(
@@ -170,7 +179,7 @@ const ErrorNotice = ({
               </Heading>
             ) : null}
             {description !== undefined ? (
-              <p className="text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+              <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
                 {description}
               </p>
             ) : null}
@@ -179,6 +188,19 @@ const ErrorNotice = ({
             <div className="ml-7 shrink-0 sm:ml-0">
               <NoticeButton button={primaryButton} compact />
             </div>
+          ) : null}
+          {dismissButton ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0"
+              aria-label={dismissButton.label}
+              data-testid={dismissButton.testId}
+              onClick={dismissButton.onClick}
+            >
+              <X aria-hidden="true" />
+            </Button>
           ) : null}
         </div>
       ) : null}

@@ -1,9 +1,9 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertDialog } from 'radix-ui'
 import {
-  AlertTriangle,
   BadgeCheck,
   CheckCircle2,
   ChevronDown,
@@ -149,25 +149,12 @@ const MarketplaceError = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
-    <div
+    <ErrorNotice
       role="alert"
-      className="rounded-lg border border-danger-000/30 bg-danger-000/10 p-3 text-sm text-danger-000"
-    >
-      <div className="flex items-start gap-2">
-        <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-        <span>{message}</span>
-      </div>
-      {retry ? (
-        <Button type="button" variant="outline" size="sm" className="mt-3" onClick={retry}>
-          {t('Retry')}
-        </Button>
-      ) : null}
-      {action ? (
-        <Button type="button" variant="outline" size="sm" className="mt-3" onClick={action.onClick}>
-          {action.label}
-        </Button>
-      ) : null}
-    </div>
+      description={message}
+      primaryButton={retry ? { label: t('Retry'), onClick: retry } : undefined}
+      secondaryButton={action}
+    />
   )
 }
 
@@ -756,12 +743,12 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                     </p>
                   )}
                   {sourceError ? (
-                    <p
+                    <ErrorNotice
                       role="alert"
-                      className="mt-4 rounded-lg border border-danger-000/30 bg-danger-000/10 p-3 text-xs text-danger-000"
-                    >
-                      {sourceError}
-                    </p>
+                      tone="amber"
+                      className="mt-4"
+                      description={sourceError}
+                    />
                   ) : null}
                 </div>
                 <div className={dialogFooterClassName}>

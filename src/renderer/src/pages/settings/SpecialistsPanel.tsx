@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { canImportSpecialistPackage } from '@/lib/specialist-package-upload'
 import { Trans, useTranslation } from 'react-i18next'
@@ -644,12 +645,7 @@ const InstalledSpecialistsPanel = ({
           </span>
         </div>
         {exportError ? (
-          <div
-            className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm"
-            role="alert"
-          >
-            {t(exportError)}
-          </div>
+          <ErrorNotice role="alert" tone="amber" description={t(exportError)} />
         ) : null}
         {exportPreview ? (
           <div className="flex flex-col gap-4">
@@ -984,12 +980,12 @@ const InstalledSpecialistsPanel = ({
               </Button>
             </div>
             {templateSaveError ? (
-              <p
+              <ErrorNotice
                 role="alert"
-                className="mt-4 rounded-lg border border-danger-000/30 bg-danger-000/10 p-3 text-sm text-danger-000"
-              >
-                {t(templateSaveError)}
-              </p>
+                tone="amber"
+                className="mt-4"
+                description={t(templateSaveError)}
+              />
             ) : null}
           </div>
         ) : (
@@ -1219,51 +1215,48 @@ const InstalledSpecialistsPanel = ({
             </section>
 
             {packagePreview.overwrite?.modifiedSinceImport ? (
-              <p
+              <ErrorNotice
                 role="alert"
-                className="rounded-lg border border-warning-100/50 bg-warning-100/10 p-3 text-xs"
-              >
-                {t('Local edits will be replaced by this import.')}
-              </p>
+                tone="amber"
+                description={t('Local edits will be replaced by this import.')}
+              />
             ) : null}
             {packageFailure ? (
-              <div
-                role="alert"
-                className="rounded-lg border border-danger-000/30 bg-danger-000/10 p-3 text-xs text-danger-000"
-              >
-                <p>{t(packageFailure.body)}</p>
-                {packageFailure.previewAgain ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mt-3"
-                    disabled={packageBusy}
-                    onClick={() => {
-                      setPackageBusy(true)
-                      void cancelPackage()
-                        .then(() => {
-                          setPackageErrorCode(undefined)
-                          return selectPackage()
-                        })
-                        .finally(() => setPackageBusy(false))
-                    }}
-                  >
-                    {t('Preview again')}
-                  </Button>
-                ) : null}
-                {packageFailure.revealStorage ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mt-3"
-                    onClick={() => void window.api.storage.revealAppStorage()}
-                  >
-                    {t('Open data folder')}
-                  </Button>
-                ) : null}
-              </div>
+              <ErrorNotice role="alert" description={t(packageFailure.body)}>
+                <div className="flex flex-wrap gap-2">
+                  {packageFailure.previewAgain ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-3"
+                      disabled={packageBusy}
+                      onClick={() => {
+                        setPackageBusy(true)
+                        void cancelPackage()
+                          .then(() => {
+                            setPackageErrorCode(undefined)
+                            return selectPackage()
+                          })
+                          .finally(() => setPackageBusy(false))
+                      }}
+                    >
+                      {t('Preview again')}
+                    </Button>
+                  ) : null}
+                  {packageFailure.revealStorage ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-3"
+                      onClick={() => void window.api.storage.revealAppStorage()}
+                    >
+                      {t('Open data folder')}
+                    </Button>
+                  ) : null}
+                </div>
+              </ErrorNotice>
             ) : null}
             <div className="flex justify-between gap-2">
               <Button
@@ -1621,59 +1614,27 @@ const InstalledSpecialistsPanel = ({
       ) : null}
 
       {loadError ? (
-        <div
+        <ErrorNotice
           role="alert"
-          className="mb-4 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-sm text-danger-000"
-        >
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            <p>{t('Open Science could not load Specialists. Retry to continue.')}</p>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="mt-3"
-            onClick={() => void load({ force: true })}
-          >
-            {t('Retry')}
-          </Button>
-        </div>
+          className="mb-4"
+          description={t('Open Science could not load Specialists. Retry to continue.')}
+          primaryButton={{ label: t('Retry'), onClick: () => void load({ force: true }) }}
+        />
       ) : null}
 
       {catalogReadOnly ? (
-        <div
+        <ErrorNotice
           role="alert"
-          className="mb-4 rounded-lg border border-warning-100/50 bg-warning-100/10 px-3 py-2 text-sm"
-        >
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            <div>
-              <p className="font-medium">{t('Some Specialist data could not be read.')}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t('No Specialist changes will be saved until the data is repaired.')}
-              </p>
-            </div>
-          </div>
-          <div className="mt-3 flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void load({ force: true })}
-            >
-              {t('Retry')}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void window.api.storage.revealAppStorage()}
-            >
-              {t('Open data folder')}
-            </Button>
-          </div>
-        </div>
+          tone="red"
+          className="mb-4"
+          title={t('Some Specialist data could not be read.')}
+          description={t('No Specialist changes will be saved until the data is repaired.')}
+          primaryButton={{ label: t('Retry'), onClick: () => void load({ force: true }) }}
+          secondaryButton={{
+            label: t('Open data folder'),
+            onClick: () => void window.api.storage.revealAppStorage()
+          }}
+        />
       ) : null}
 
       {!isLoaded && !loadError ? (
@@ -2473,12 +2434,12 @@ const InstalledSpecialistsPanel = ({
                 </p>
               )}
               {deleteError ? (
-                <p
+                <ErrorNotice
                   role="alert"
-                  className="mt-3 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-                >
-                  {t(deleteError)}
-                </p>
+                  tone="amber"
+                  className="mt-3"
+                  description={t(deleteError)}
+                />
               ) : null}
             </div>
 

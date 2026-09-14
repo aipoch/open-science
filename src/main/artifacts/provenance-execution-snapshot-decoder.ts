@@ -123,6 +123,7 @@ const executionInputKeyValue = (value: unknown): boolean => {
 }
 
 const ENVIRONMENT_LOCK_PARTIAL_REASONS = new Set([
+  'external-interpreter-required',
   'environment-manifest-partial',
   'non-conda-package-detected',
   'non-conda-installer-detected',

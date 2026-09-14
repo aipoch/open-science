@@ -282,7 +282,10 @@ export const hashConversationExportContent = async (
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
-export const sanitizeExportFilename = (title: string): string => {
+export const sanitizeExportFilename = (
+  title: string,
+  maxBytes = EXPORT_FILENAME_MAX_BYTES
+): string => {
   const sanitized = removeControlCharacters(title)
     .replace(UNSAFE_FILENAME_CHARACTERS, ' ')
     .replace(/\s+/g, ' ')
@@ -301,10 +304,10 @@ export const sanitizeExportFilename = (title: string): string => {
 
   const characters = Array.from(sanitized)
   const totalBytes = characters.reduce((sum, character) => sum + byteLength(character), 0)
-  if (totalBytes <= EXPORT_FILENAME_MAX_BYTES) return sanitized
+  if (totalBytes <= maxBytes) return sanitized
 
   const suffix = '...'
-  const contentByteLimit = EXPORT_FILENAME_MAX_BYTES - suffix.length
+  const contentByteLimit = maxBytes - suffix.length
   let truncated = ''
   let truncatedBytes = 0
 

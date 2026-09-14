@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -5,10 +7,44 @@ import {
   buildNotebookKernelEnvironment,
   buildNotebookShellEnvironment,
   environmentPathRoots,
-  notebookTrustBundleEnvironment
+  notebookTrustBundleEnvironment,
+  normalizeRProcessLocale
 } from './process-environment'
 
 describe('Notebook process environment', () => {
+  it('lets Windows R use the system locale instead of an unsupported POSIX C.UTF-8 locale', () => {
+    const sourceEnv = { LANG: 'C.UTF-8', LC_ALL: 'C.utf8', LC_CTYPE: 'C.UTF-8', PATH: 'tools' }
+    expect(normalizeRProcessLocale(sourceEnv, 'win32')).toEqual({ PATH: 'tools' })
+    expect(normalizeRProcessLocale(sourceEnv, 'linux')).toEqual(sourceEnv)
+    expect(normalizeRProcessLocale(sourceEnv, 'darwin')).toEqual(sourceEnv)
+    expect(sourceEnv.LANG).toBe('C.UTF-8')
+    const windowsLocale = { LANG: 'German.UTF-8', LC_ALL: 'C' }
+    expect(normalizeRProcessLocale(windowsLocale, 'win32')).toEqual(windowsLocale)
+  })
+
+  it.skipIf(process.platform !== 'win32' || !process.env.OPEN_SCIENCE_TEST_RSCRIPT)(
+    'starts real Windows R without inherited POSIX locale warnings',
+    () => {
+      const result = spawnSync(
+        process.env.OPEN_SCIENCE_TEST_RSCRIPT!,
+        ['--vanilla', '-e', 'stopifnot(1 + 1 == 2); cat("R_LOCALE_OK")'],
+        {
+          env: normalizeRProcessLocale(
+            { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', LC_CTYPE: 'C.UTF-8' },
+            'win32'
+          ),
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: 15_000
+        }
+      )
+      expect(result.error).toBeUndefined()
+      expect(result.status).toBe(0)
+      expect(result.stdout).toContain('R_LOCALE_OK')
+      expect(result.stderr).not.toMatch(/Setting LC_.*failed/)
+    }
+  )
+
   const source = {
     PATH: '/usr/bin',
     HOME: '/home/researcher',
@@ -98,7 +134,7 @@ describe('Notebook process environment', () => {
     expect(env).toMatchObject({
       HOME: '/runtime/home',
       R_USER: '/runtime/home',
-      R_LIBS_USER: '/runtime/envs/analysis/lib/R/library'
+      R_LIBS_USER: join('/runtime/envs/analysis', 'lib', 'R', 'library')
     })
     expect(env.R_LIBS).toBeUndefined()
     expect(env.R_LIBS_SITE).toBeUndefined()

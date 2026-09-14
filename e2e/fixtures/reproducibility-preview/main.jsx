@@ -1,10 +1,22 @@
+import { usePackageOperationStore } from '../../../src/renderer/src/stores/package-operation-store'
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { FilePreviewDialog } from '../../../src/renderer/src/pages/workspace/FilePreviewDialog'
-import { initI18n } from '../../../src/renderer/src/i18n'
+import { initI18n, prepareI18nLocale } from '../../../src/renderer/src/i18n'
 import '../../../src/renderer/src/assets/main.css'
 
-initI18n(new URLSearchParams(location.search).get('locale') === 'de' ? 'de' : 'en')
+const fixtureLocale = new URLSearchParams(location.search).get('locale') === 'de' ? 'de' : 'en'
+const localeReady = Promise.resolve(prepareI18nLocale(fixtureLocale)).then(() =>
+  initI18n(fixtureLocale)
+)
+if (new URLSearchParams(location.search).get('package') === 'export')
+  usePackageOperationStore.getState().receive({
+    id: 'export-fixture',
+    kind: 'export',
+    state: 'running',
+    session: { projectId: 'import-project', sessionId: 'import-session' },
+    progress: { phase: 'copying', completedBytes: 1048576, totalBytes: 4194304 }
+  })
 export function Fixture() {
   const [open, setOpen] = useState(true)
   return (
@@ -27,4 +39,6 @@ export function Fixture() {
     />
   )
 }
-createRoot(document.getElementById('root')).render(<Fixture />)
+void localeReady.then(() => {
+  createRoot(document.getElementById('root')).render(<Fixture />)
+})

@@ -382,17 +382,15 @@ describe('notebook MCP server config', () => {
     ])
   })
 
-  it('ties network access requests to a real sandbox denial and an approved retry', () => {
+  it('allows explicit network approval before a connection while preserving scoped grants', () => {
     const tool = NOTEBOOK_RPC_TOOLS.find((candidate) => candidate.name === 'request_network_access')
 
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('A failed connection is not required')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('call `request_network_access`')
     expect(tool?.description).toContain(
-      'Call only after Notebook execution reports OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED'
+      'before connecting or after OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED'
     )
-    expect(tool?.description).toContain(
-      'Retry the failed execution only when the result is allowed'
-    )
+    expect(tool?.description).toContain('Execute or retry only when the result is allowed')
   })
 
   it('exposes bounded memory discovery, search, and append-only agent tools', () => {

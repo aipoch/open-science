@@ -1,4 +1,5 @@
 import type { StoreApi } from 'zustand'
+import { sessionExportLocked, usePackageOperationStore } from './package-operation-store'
 import {
   activateConversationBranch,
   forkEditedConversationMessage,
@@ -782,6 +783,7 @@ export const createSessionMessageGraphOwner = <
         if (
           session.id !== sessionId ||
           !session.conversationGraph ||
+          sessionExportLocked(usePackageOperationStore.getState().operation, session) ||
           session.activeRun ||
           session.status === 'running' ||
           session.status === 'waiting-for-user' ||

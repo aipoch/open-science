@@ -1,3 +1,4 @@
+import { artifactSaveRequestSchema } from '../artifacts/save-request'
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
@@ -39,6 +40,8 @@ import type {
 } from '../skills/conversation-import'
 import type {
   ArtifactRpcCapabilityBinding,
+  SaveArtifactVersionRequest,
+  ArtifactWriteSourceScope,
   ArtifactRpcMethod,
   ArtifactWriteReservation,
   ArtifactVersionFile,
@@ -71,6 +74,8 @@ import { createLogger, errorLogFields } from '../logger'
 import {
   LOCAL_RESOURCE_BUDGETS,
   ResourceBudgetExceededError,
+  PendingRequestBudget,
+  PendingRequestLimitError,
   readBoundedJsonBody
 } from '../resource-budget'
 import { PlanCommandError } from '../../shared/session-plan/contract'
@@ -233,6 +238,12 @@ type NotebookLocalRpcServerOptions = {
   }
   requestUserInput?: (request: AgentUserChoiceRequest) => Promise<AgentUserChoiceResult>
   artifactProvenance?: {
+    saveVersion?(
+      request: SaveArtifactVersionRequest,
+      sourceScope: ArtifactWriteSourceScope,
+      signal?: AbortSignal,
+      onMetadataBytes?: (bytes: number) => void
+    ): Promise<ArtifactVersionFile>
     createVersion(
       request: CreateArtifactVersionRequest,
       signal?: AbortSignal
@@ -476,6 +487,7 @@ class BackgroundHostMethodUnsafeError extends RpcHttpError {
 }
 
 const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
+  'artifactSaveVersion',
   'artifactReserveWrite',
   'artifactReleaseWrite',
   'artifactCreateVersion',
@@ -670,6 +682,7 @@ class NotebookLocalRpcServer {
   private readonly activeArtifactTurnBindings = new Map<string, ActiveArtifactTurnBinding>()
   private readonly activeInputRunLeases = new Map<string, Set<NotebookInputRunLease>>()
   private readonly inputRunLeaseIds = new WeakMap<NotebookInputRunLease, string>()
+  private static readonly artifactRequestBudget = new PendingRequestBudget()
   private readonly artifactRpcCapabilities = new Map<string, ArtifactRpcCapability>()
   private readonly drainingArtifactRpcCapabilities = new Map<string, Promise<void>>()
   private readonly executionAuthorizations = new Map<
@@ -737,18 +750,17 @@ class NotebookLocalRpcServer {
     const token = randomUUID()
     this.artifactRpcCapabilities.set(token, {
       ...binding,
+      sourceScope: binding.sourceScope
+        ? {
+            ...binding.sourceScope,
+            allowedImportRoots: [...binding.sourceScope.allowedImportRoots]
+          }
+        : undefined,
       messageBranchAncestry: binding.messageBranchAncestry
         ? [...binding.messageBranchAncestry]
         : undefined,
       messageAncestry: binding.messageAncestry ? [...binding.messageAncestry] : undefined,
-      allowedMethods: new Set(
-        binding.allowedMethods ?? [
-          'artifactReserveWrite',
-          'artifactReleaseWrite',
-          'artifactCreateVersion',
-          'artifactReplayVersion'
-        ]
-      ),
+      allowedMethods: new Set(binding.allowedMethods ?? ['artifactSaveVersion']),
       expiresAt: this.now() + ttlMs,
       inFlightRequests: 0,
       drainWaiters: new Set()
@@ -1526,20 +1538,25 @@ class NotebookLocalRpcServer {
       throw new RpcHttpError(403, `Artifact RPC capability does not allow ${method}.`)
     }
 
-    const boundFields =
-      method === 'artifactCreateVersion'
-        ? [
-            'projectId',
-            'appSessionId',
-            'artifactStorageSessionId',
-            'artifactRunId',
-            'rootFrameId',
-            'agentFrameId',
-            'messageBranchId',
-            'runtimeSegmentId',
-            'promptMessageId'
-          ]
-        : ['projectId', 'appSessionId', 'artifactStorageSessionId', 'artifactRunId']
+    if (method !== 'artifactSaveVersion') {
+      throw new RpcHttpError(
+        409,
+        'Artifact save protocol changed. Restart the Agent MCP connection.'
+      )
+    }
+    if (!capability.sourceScope)
+      throw new RpcHttpError(403, 'Artifact save requires a trusted source scope.')
+    const boundFields = [
+      'projectId',
+      'appSessionId',
+      'artifactStorageSessionId',
+      'artifactRunId',
+      'rootFrameId',
+      'agentFrameId',
+      'messageBranchId',
+      'runtimeSegmentId',
+      'promptMessageId'
+    ] as const
     for (const field of boundFields) {
       const expected = capability[field as keyof ArtifactRpcCapabilityBinding]
       if (params[field] !== expected) {
@@ -1547,35 +1564,24 @@ class NotebookLocalRpcServer {
       }
     }
 
-    const sanitizedParams = { ...params }
-    delete sanitizedParams.messageBranchAncestry
-    delete sanitizedParams.messageAncestry
-    delete sanitizedParams.agentName
-    delete sanitizedParams.notebookSessionId
-
     const trustedParams = {
-      ...sanitizedParams,
+      ...params,
+      sourceScope: capability.sourceScope,
       projectId: capability.projectId,
       appSessionId: capability.appSessionId,
       artifactStorageSessionId: capability.artifactStorageSessionId,
       artifactRunId: capability.artifactRunId,
-      ...(method === 'artifactCreateVersion'
-        ? {
-            rootFrameId: capability.rootFrameId,
-            agentFrameId: capability.agentFrameId,
-            messageBranchId: capability.messageBranchId,
-            messageBranchAncestry: capability.messageBranchAncestry
-              ? [...capability.messageBranchAncestry]
-              : undefined,
-            messageAncestry: capability.messageAncestry
-              ? [...capability.messageAncestry]
-              : undefined,
-            runtimeSegmentId: capability.runtimeSegmentId,
-            promptMessageId: capability.promptMessageId,
-            agentName: capability.agentName,
-            notebookSessionId: capability.notebookSessionId
-          }
-        : {})
+      rootFrameId: capability.rootFrameId,
+      agentFrameId: capability.agentFrameId,
+      messageBranchId: capability.messageBranchId,
+      messageBranchAncestry: capability.messageBranchAncestry
+        ? [...capability.messageBranchAncestry]
+        : undefined,
+      messageAncestry: capability.messageAncestry ? [...capability.messageAncestry] : undefined,
+      runtimeSegmentId: capability.runtimeSegmentId,
+      promptMessageId: capability.promptMessageId,
+      agentName: capability.agentName,
+      notebookSessionId: capability.notebookSessionId
     }
     capability.inFlightRequests += 1
     let released = false
@@ -1676,6 +1682,7 @@ class NotebookLocalRpcServer {
   ): Promise<void> {
     const disconnect = new AbortController()
     let writeProducerSignal: AbortSignal | undefined
+    let artifactAdmission: ReturnType<PendingRequestBudget['acquire']> | undefined
     const activeRequest: NotebookRpcRequestLifecycle = {
       request,
       response,
@@ -1730,7 +1737,14 @@ class NotebookLocalRpcServer {
       }
       let payload: unknown
       try {
-        payload = await readBoundedJsonBody(request, this.requestBytes)
+        if (artifactCapability) {
+          artifactAdmission = NotebookLocalRpcServer.artifactRequestBudget.acquire(
+            `${artifactCapability.projectId}\0${artifactCapability.appSessionId}`
+          )
+        }
+        payload = await readBoundedJsonBody(request, this.requestBytes, {
+          onBytes: artifactAdmission?.addBytes
+        })
       } catch (error) {
         if (error instanceof SyntaxError) throw new RpcHttpError(400, error.message)
         throw error
@@ -2118,7 +2132,13 @@ class NotebookLocalRpcServer {
             ? await withDataRootWrite(() =>
                 this.dispatch(method, resolvedParams, dispatchSignal, checkMemoryAccess)
               )
-            : await this.dispatch(method, resolvedParams, dispatchSignal, checkMemoryAccess)
+            : await this.dispatch(
+                method,
+                resolvedParams,
+                dispatchSignal,
+                checkMemoryAccess,
+                artifactAdmission?.addBytes
+              )
 
       writeJson(response, 200, { result })
     } catch (error) {
@@ -2149,7 +2169,10 @@ class NotebookLocalRpcServer {
                   }
                 : message
 
-      if (error instanceof ResourceBudgetExceededError) {
+      if (
+        error instanceof ResourceBudgetExceededError ||
+        error instanceof PendingRequestLimitError
+      ) {
         closeRequestAfterResponse(request, response)
       }
 
@@ -2163,7 +2186,9 @@ class NotebookLocalRpcServer {
             ? 403
             : error instanceof ResourceBudgetExceededError
               ? 413
-              : 500,
+              : error instanceof PendingRequestLimitError
+                ? 429
+                : 500,
         { error: serializedError }
       )
     } finally {
@@ -2171,6 +2196,7 @@ class NotebookLocalRpcServer {
       response.off('close', abortDisconnectedResponse)
       lifecycle.activeRequests.delete(activeRequest)
       releaseArtifactRequest?.()
+      artifactAdmission?.release()
       releaseDelegatedNotebookRequest?.()
     }
   }
@@ -2180,7 +2206,8 @@ class NotebookLocalRpcServer {
     method: string,
     params: Record<string, unknown>,
     signal: AbortSignal,
-    checkMemoryAccess?: () => Promise<void>
+    checkMemoryAccess?: () => Promise<void>,
+    onArtifactMetadataBytes?: (bytes: number) => void
   ): Promise<unknown> {
     if (WSL_SETUP_RPC_METHODS.has(method)) {
       if (!this.wslSetup || !this.wslSetupSessions) {
@@ -2287,37 +2314,15 @@ class NotebookLocalRpcServer {
     // Artifact stdio/HTTP MCP handlers cannot own SQLite connections. Route the trusted run-bound
     // save envelope back into the main process, where the Provenance repository owns transactions,
     // immutable Version publication, and idempotency.
-    if (method === 'artifactCreateVersion') {
-      if (!this.artifactProvenance) {
-        throw new Error('Artifact Provenance persistence is not configured.')
-      }
-      const request = params as CreateArtifactVersionRequest
-      if (!request.resourceReservationId) {
-        throw new RpcHttpError(400, 'Artifact Version creation requires a write reservation.')
-      }
-      return this.artifactProvenance.createVersion(request, signal)
-    }
-    if (method === 'artifactReserveWrite') {
-      if (!this.artifactProvenance?.reserveWrite) {
-        throw new Error('Artifact write reservation is not configured.')
-      }
-      return this.artifactProvenance.reserveWrite(params as ReserveArtifactWriteRequest)
-    }
-    if (method === 'artifactReleaseWrite') {
-      if (!this.artifactProvenance?.releaseWriteReservation) {
-        throw new Error('Artifact write reservation is not configured.')
-      }
-      await this.artifactProvenance.releaseWriteReservation(
-        params as ReleaseArtifactWriteReservationRequest
+    if (method === 'artifactSaveVersion') {
+      if (!this.artifactProvenance?.saveVersion) throw new Error('Artifact save is unavailable.')
+      const request = artifactSaveRequestSchema.parse(params)
+      return this.artifactProvenance.saveVersion(
+        request,
+        params.sourceScope as ArtifactWriteSourceScope,
+        signal,
+        onArtifactMetadataBytes
       )
-      return { released: true }
-    }
-    if (method === 'artifactReplayVersion') {
-      if (!this.artifactProvenance?.replayVersion) {
-        throw new Error('Artifact Provenance persistence is not configured.')
-      }
-
-      return this.artifactProvenance.replayVersion(params as ReplayArtifactVersionRequest)
     }
 
     if (method === 'skillImport') {

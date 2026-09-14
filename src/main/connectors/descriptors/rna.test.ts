@@ -6,7 +6,12 @@ import type { ToolDescriptor } from '../types'
 
 const tool = (id: string): ToolDescriptor => RNA_TOOLS.find((t) => t.id === id)!
 const jsonRes = (body: unknown): Response =>
-  ({ ok: true, status: 200, json: async () => body }) as Response
+  ({
+    ok: true,
+    status: 200,
+    json: async () => body,
+    text: async () => JSON.stringify(body)
+  }) as Response
 const textRes = (body: string): Response =>
   ({ ok: true, status: 200, text: async () => body }) as Response
 
@@ -344,19 +349,22 @@ describe('rna / rfam', () => {
     const fetchImpl = vi
       .fn()
       .mockResolvedValueOnce(
-        jsonRes({ jobId: 'job-1', resultURL: 'https://rfam.org/search/result/job-1' })
+        jsonRes({ jobId: 'job-1', resultURL: 'https://batch.rfam.org/result/job-1' })
       )
       .mockResolvedValueOnce(jsonRes({ status: 'PEND' }))
-      .mockResolvedValueOnce(jsonRes({ searchSequence: 'GGUUCC', hits }))
+      .mockResolvedValueOnce(
+        jsonRes({ searchSequence: 'GGUUCC', hits, closed: '2026-09-13 08:15:20' })
+      )
     const out = (await new ParserEngine({ fetchImpl }).call(
       tool('search_sequence'),
       { sequence: 'GGUUCC', poll_interval_s: 0, max_wait_s: 5 },
       {}
     )) as Record<string, unknown>
     // First call POSTs the sequence, subsequent calls poll the resultURL
-    expect(fetchImpl.mock.calls[0][0]).toBe('https://rfam.org/search/sequence')
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://batch.rfam.org/submit-job')
     expect(fetchImpl.mock.calls[0][1]).toMatchObject({ method: 'POST' })
-    expect(fetchImpl.mock.calls[1][0]).toBe('https://rfam.org/search/result/job-1')
+    expect(fetchImpl.mock.calls[1][0]).toBe('https://batch.rfam.org/result/job-1')
+    expect(fetchImpl.mock.calls[1][1].headers.accept).toBe('application/json')
     expect(out).toEqual({
       job_id: 'job-1',
       num_hits: 3,
@@ -365,6 +373,92 @@ describe('rna / rfam', () => {
       search_sequence: 'GGUUCC'
     })
   })
+
+  it('accepts bare pending status text from the batch API', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonRes({ jobId: 'job-1', resultURL: 'https://batch.rfam.org/result/job-1' })
+      )
+      .mockResolvedValueOnce(textRes('RUN'))
+      .mockResolvedValueOnce(
+        jsonRes({ hits: {}, searchSequence: 'AGUUCC', closed: '2026-09-13 08:15:20' })
+      )
+    await expect(
+      new ParserEngine({ fetchImpl }).call(
+        tool('search_sequence'),
+        { sequence: 'AGUUCC', poll_interval_s: 0 },
+        {}
+      )
+    ).resolves.toMatchObject({ job_id: 'job-1', num_hits: 0, hits: {} })
+  })
+
+  it('does not mistake the HTTP 200 unfinished envelope for a zero-hit result', async () => {
+    // Observed from the batch API on 2026-09-13 before cmscan results were ready.
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonRes({ jobId: 'job-1', resultURL: 'https://batch.rfam.org/result/job-1' })
+      )
+      .mockResolvedValueOnce(
+        jsonRes({
+          jobId: 'job-1',
+          searchSequence: '',
+          numHits: 0,
+          opened: '',
+          started: '',
+          closed: '',
+          hits: {}
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonRes({
+          jobId: 'job-1',
+          searchSequence: 'AGUUCC',
+          closed: '2026-09-13 08:15:20',
+          hits: { tRNA: [{ acc: 'RF00005' }] }
+        })
+      )
+    await expect(
+      new ParserEngine({ fetchImpl }).call(
+        tool('search_sequence'),
+        { sequence: 'AGUUCC', poll_interval_s: 0 },
+        {}
+      )
+    ).resolves.toMatchObject({ num_hits: 1, families: ['tRNA'], search_sequence: 'AGUUCC' })
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
+
+  it('rejects a submission result URL outside the returned Rfam job before polling', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonRes({ jobId: 'job-1', resultURL: 'https://other.test/result/job-1' }))
+    await expect(
+      new ParserEngine({ fetchImpl }).call(tool('search_sequence'), { sequence: 'AGUUCC' }, {})
+    ).rejects.toThrow('unexpected result URL')
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { error: 'Search failed' },
+    { hits: [], searchSequence: 'AGUUCC' },
+    { hits: { tRNA: 'invalid' }, searchSequence: 'AGUUCC' },
+    { hits: {}, searchSequence: 'AGUUCC', jobId: 'other-job' }
+  ])(
+    'does not turn malformed or mismatched search results into a successful empty result',
+    async (payload) => {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonRes({ jobId: 'job-1', resultURL: 'https://batch.rfam.org/result/job-1' })
+        )
+        .mockResolvedValueOnce(jsonRes(payload))
+      await expect(
+        new ParserEngine({ fetchImpl }).call(tool('search_sequence'), { sequence: 'AGUUCC' }, {})
+      ).rejects.toThrow()
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    }
+  )
 
   it.each([150_000, 295_000])(
     'search_sequence preserves the default window for a job ready after %ims',
@@ -376,11 +470,14 @@ describe('rna / rfam', () => {
         const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
           if (init?.method === 'POST') {
             await new Promise((resolve) => setTimeout(resolve, submissionMs))
-            return Response.json({ jobId: 'job-1', resultURL: 'https://rfam.test/result/1' })
+            return Response.json({
+              jobId: 'job-1',
+              resultURL: 'https://batch.rfam.org/result/job-1'
+            })
           }
           return Response.json(
             Date.now() >= submissionMs + readyAfterMs
-              ? { hits: {}, searchSequence: 'GGUUCC' }
+              ? { hits: {}, searchSequence: 'GGUUCC', closed: '2026-09-13 08:15:20' }
               : { status: 'PEND' }
           )
         })
@@ -409,7 +506,7 @@ describe('rna / rfam', () => {
       const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) =>
         Response.json(
           init?.method === 'POST'
-            ? { jobId: 'job-1', resultURL: 'https://rfam.test/result/1' }
+            ? { jobId: 'job-1', resultURL: 'https://batch.rfam.org/result/job-1' }
             : { status: 'PEND' }
         )
       )
@@ -434,7 +531,7 @@ describe('rna / rfam', () => {
       const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) =>
         Response.json(
           init?.method === 'POST'
-            ? { jobId: 'job-1', resultURL: 'https://rfam.test/result/1' }
+            ? { jobId: 'job-1', resultURL: 'https://batch.rfam.org/result/job-1' }
             : { status: 'PEND' }
         )
       )
@@ -459,19 +556,22 @@ describe('rna / rfam', () => {
   it('aborts the polling delay without starting another request', async () => {
     vi.useFakeTimers()
     const cancellation = new AbortController()
-    const fetchJson = vi.fn().mockResolvedValue({})
+    const fetchText = vi.fn().mockResolvedValue('PEND')
     const pending = tool('search_sequence').run!(
       {
         credentials: {},
         signal: cancellation.signal,
-        fetchJson,
-        fetchText: async () => {
+        fetchText,
+        fetchJson: async () => {
           throw new Error('unused')
         },
         fetchJsonWithHeaders: async () => {
           throw new Error('unused')
         },
-        postJson: async () => ({ resultURL: 'https://rfam.test/result/1', jobId: 'job-1' })
+        postJson: async () => {
+          throw new Error('unused JSON transport')
+        },
+        postForm: async () => ({ resultURL: 'https://batch.rfam.org/result/job-1', jobId: 'job-1' })
       },
       { sequence: 'GGUUCC', poll_interval_s: 60, max_wait_s: 120 }
     )
@@ -481,12 +581,12 @@ describe('rna / rfam', () => {
     })
 
     try {
-      await vi.waitFor(() => expect(fetchJson).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(fetchText).toHaveBeenCalledOnce())
       cancellation.abort()
 
       await vi.waitFor(() => expect(settled).toBe(true))
       await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
-      expect(fetchJson).toHaveBeenCalledOnce()
+      expect(fetchText).toHaveBeenCalledOnce()
     } finally {
       vi.useRealTimers()
     }
@@ -502,4 +602,20 @@ describe('rna / rfam', () => {
       )
     ).rejects.toThrow('HTTP 500')
   })
+})
+
+describe.skipIf(!process.env.LIVE_API)('rna / Rfam LIVE', () => {
+  it('search_sequence submits multipart to the public batch service and returns a known family', async () => {
+    // Public example from https://docs.rfam.org/en/latest/api.html#sequence-searches
+    const sequence =
+      'AGTTACGGCCATACCTCAGAGAATATACCGTATCCCGTTCGATCTGCGAAGTTAAGCTCTGAAGGGCGTCGTCAGTACTATAGTGGGTGACCATATGGGAATACGACGTGCTGTAGCTT'
+    const result = await new ParserEngine().call(tool('search_sequence'), { sequence }, {})
+    expect(result, JSON.stringify(result)).toMatchObject({
+      job_id: expect.stringContaining('infernal_cmscan-'),
+      num_hits: expect.any(Number),
+      families: expect.arrayContaining(['5S_rRNA']),
+      search_sequence: sequence,
+      hits: { '5S_rRNA': expect.arrayContaining([expect.objectContaining({ acc: 'RF00001' })]) }
+    })
+  }, 360_000)
 })

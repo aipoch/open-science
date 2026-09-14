@@ -32,11 +32,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'literature',
     displayName: 'Literature Graph',
-    description:
-      'Scholarly literature graph — OpenAlex works/authors/venues/citations, arXiv metadata.',
+    description: 'Literature and research data via OpenAlex, arXiv, Crossref and DataCite.',
     useWhen:
-      'Use when exploring the scholarly literature graph — searching works/papers by topic with citation counts and authors, following a work’s citations or references, looking up authors (ORCID, h-index, institution) or a venue/journal, or searching arXiv preprints. Sourced from OpenAlex and arXiv.',
-    sources: ['OpenAlex', 'arXiv'],
+      'Use when exploring the scholarly literature graph — searching works/papers by topic with citation counts and authors, following a work’s citations or references, looking up authors (ORCID, h-index, institution) or a venue/journal, searching arXiv preprints, checking Crossref bibliographic metadata and deposited corrections/retractions, or discovering DataCite datasets/software and their publication relationships. Sourced from OpenAlex, arXiv, Crossref and DataCite.',
+    sources: ['OpenAlex', 'arXiv', 'Crossref', 'DataCite'],
     termsUrl: 'https://docs.openalex.org/additional-help/terms',
     requiresNcbi: false
   },

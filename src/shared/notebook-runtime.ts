@@ -34,6 +34,8 @@ export type DiscoveredInterpreter = {
   runnable: boolean
   condaEnv?: string
   detail?: string
+  // Advisory discovery only; never persisted as consent. Missing means detection was unavailable.
+  personalRLibraries?: string[]
 }
 
 // One installed package in a discovered environment, surfaced by the Settings "Packages" dialog.
@@ -54,6 +56,8 @@ export type EnvPackage = {
 export type RuntimeEnablement = {
   enabled: Record<string, boolean>
   installAuthorized: Record<string, boolean>
+  // Explicit R library consent. Historical booleans alone never authorize R writes.
+  installLibraries?: Record<string, string>
 }
 
 // How many live sessions are bound to a runtime, split by kernel state, so the Settings disable

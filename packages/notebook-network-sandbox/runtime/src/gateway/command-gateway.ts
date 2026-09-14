@@ -1,12 +1,21 @@
+import { NETWORK_APPROVAL_REQUIRED, NETWORK_UPSTREAM_FAILED } from './recovery-context.js'
 import { createServer as createHttpServer, request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { connect as connectTcp, createServer as createTcpServer, isIP, type Socket } from 'node:net'
-import { connect as connectTls } from 'node:tls'
+import { connect as connectTls, TLSSocket, type SecureContext } from 'node:tls'
+import { domainToASCII } from 'node:url'
+import { inspectReadRequest, MAX_HEADER_BYTES, MAX_TARGET_BYTES } from './read-request.js'
 import { timingSafeEqual } from 'node:crypto'
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http'
 
 type GatewayDecision =
-  Readonly<{ allowed: true; address: string }> | Readonly<{ allowed: false; message?: string }>
+  | Readonly<{ allowed: true; address: string }>
+  | Readonly<{
+      allowed: false
+      message?: string
+      source?: 'unknown' | 'explicit'
+      address?: string
+    }>
 
 type ParentProxySettings = Readonly<{
   http?: string
@@ -16,7 +25,12 @@ type ParentProxySettings = Readonly<{
 }>
 
 type CommandGatewayOptions = Readonly<{
-  decide: (host: string, port: number) => Promise<GatewayDecision>
+  decide: (host: string, port: number, purpose?: 'probe' | 'block') => Promise<GatewayDecision>
+  inspection?: Readonly<{
+    certificate: (host: string) => Promise<SecureContext>
+    isExecutionActive: () => boolean
+    trustedCaCertificates?: readonly string[]
+  }>
   credentials: GatewayCredentials
   localRpcSocketPath?: string
   parentProxy?: ParentProxySettings
@@ -204,7 +218,11 @@ const connectProxySocket = (
   const options = { host: url.hostname, port: defaultPort(url), signal }
   if (url.protocol !== 'https:') return waitForTcpConnection(connectTcp(options))
   return new Promise((resolve, reject) => {
-    const socket = connectTls({ ...options, ca: ca ? [...ca] : undefined })
+    const socket = connectTls({
+      ...options,
+      ca: ca ? [...ca] : undefined,
+      rejectUnauthorized: true
+    })
     const ready = (): void => {
       socket.removeListener('error', failed)
       resolve(socket)
@@ -450,7 +468,12 @@ const parseAuthority = (
   authority: string,
   fallbackPort: number
 ): { host: string; port: number } => {
-  const url = new URL(`http://${authority}`)
+  if (!authority || /[\s/@?#\\]/.test(authority)) throw new Error('Malformed authority')
+  // Match CONNECT's default: URL normalizes an explicit default port to empty.
+  // Using http here would turn an explicit :80 into the 443 fallback.
+  const url = new URL(`https://${authority}`)
+  if (url.username || url.password || url.pathname !== '/' || url.search || url.hash)
+    throw new Error('Malformed authority')
   return { host: url.hostname, port: Number(url.port || fallbackPort) }
 }
 
@@ -462,6 +485,7 @@ class CommandGateway {
   readonly #connections = new Set<Socket>()
   readonly #http = createHttpServer()
   readonly #ingress = createTcpServer()
+  #inspections = 0
   #active = true
   #connectionGeneration = 0
   #closePromise: Promise<void> | undefined
@@ -679,9 +703,14 @@ class CommandGateway {
     return true
   }
 
-  async #authorize(host: string, port: number, generation: number): Promise<GatewayDecision> {
+  async #authorize(
+    host: string,
+    port: number,
+    generation: number,
+    purpose: 'probe' | 'block' = 'block'
+  ): Promise<GatewayDecision> {
     try {
-      const decision = await this.#options.decide(host, port)
+      const decision = await this.#options.decide(host, port, purpose)
       if (!this.#active || generation !== this.#connectionGeneration) {
         return { allowed: false, message: 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED' }
       }
@@ -880,10 +909,24 @@ class CommandGateway {
       rejectSocket(client, 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED: malformed CONNECT target')
       return
     }
-    const decision = await this.#authorize(destination.host, destination.port, generation)
-    if (!decision.allowed) {
-      rejectSocket(client, decision.message ?? 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+    destination.host = domainToASCII(destination.host.replace(/\.$/, '').toLowerCase())
+    let decision = await this.#authorize(destination.host, destination.port, generation, 'probe')
+    if (
+      !decision.allowed &&
+      decision.source === 'unknown' &&
+      destination.port === 443 &&
+      !isIP(destination.host) &&
+      this.#options.inspection
+    ) {
+      await this.#inspectConnect(destination.host, client, head, generation)
       return
+    }
+    if (!decision.allowed) {
+      decision = await this.#authorize(destination.host, destination.port, generation)
+      if (!decision.allowed) {
+        rejectSocket(client, decision.message ?? 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+        return
+      }
     }
     try {
       const upstream = await destinationSocket(
@@ -909,6 +952,316 @@ class CommandGateway {
         client,
         `Policy gateway could not open the tunnel: ${error instanceof Error ? error.message : String(error)}`
       )
+    }
+  }
+
+  #inspectionActive(generation: number, client: Socket): boolean {
+    return (
+      this.#active &&
+      generation === this.#connectionGeneration &&
+      !client.destroyed &&
+      this.#options.inspection?.isExecutionActive() === true
+    )
+  }
+
+  async #inspectConnect(
+    host: string,
+    client: Socket,
+    head: Buffer,
+    generation: number
+  ): Promise<void> {
+    const inspection = this.#options.inspection!
+    if (!this.#inspectionActive(generation, client)) {
+      rejectSocket(client, 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+      return
+    }
+    if (this.#inspections >= 4) {
+      client.end(
+        'HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'
+      )
+      return
+    }
+    this.#inspections += 1
+    let released = false
+    const release = (): void => {
+      if (!released) {
+        released = true
+        this.#inspections -= 1
+      }
+    }
+    client.once('close', release)
+    const lifetime = new AbortController()
+    client.once('close', () => lifetime.abort())
+    let handshakeComplete = false
+    let malformed = false
+    let sawRequest = false
+    let resourceTimeout = false
+    let recordedBlock = false
+    let tls: TLSSocket | undefined
+    const expire = (): void => {
+      resourceTimeout = true
+      tls?.destroy()
+      client.destroy()
+    }
+    let timer = setTimeout(expire, 10_000)
+    client.once('close', () => clearTimeout(timer))
+    const block = async (): Promise<void> => {
+      if (
+        !recordedBlock &&
+        this.#active &&
+        generation === this.#connectionGeneration &&
+        inspection.isExecutionActive()
+      ) {
+        recordedBlock = true
+        await this.#authorize(host, 443, generation, 'block')
+      }
+    }
+    try {
+      const context = await inspection.certificate(host)
+      if (!this.#inspectionActive(generation, client)) {
+        client.destroy()
+        return
+      }
+      client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+      if (head.length) client.unshift(head)
+      tls = new TLSSocket(client, {
+        isServer: true,
+        secureContext: context,
+        ALPNProtocols: ['http/1.1'],
+        SNICallback: (servername, callback) => {
+          if (domainToASCII(servername.replace(/\.$/, '').toLowerCase()) !== host) {
+            malformed = true
+            callback(new Error('TLS authority mismatch'))
+          } else callback(null, context)
+        }
+      })
+      this.#trackConnection(tls)
+      tls.once('error', () => {
+        if (!handshakeComplete && !malformed) void block()
+      })
+      tls.once('close', () => {
+        if (!sawRequest && !malformed && !resourceTimeout) void block()
+        client.destroy()
+        lifetime.abort()
+        clearTimeout(timer)
+      })
+      tls.once('secure', () => {
+        handshakeComplete = true
+        clearTimeout(timer)
+        if (!this.#inspectionActive(generation, client)) {
+          tls!.destroy()
+          return
+        }
+        let buffered = Buffer.alloc(0)
+        let headerBytes = 0
+        let completeHeader = false
+        let extraBytes = false
+        let busy = false
+        const parser = createHttpServer({
+          maxHeaderSize: MAX_TARGET_BYTES + MAX_HEADER_BYTES + 1024,
+          insecureHTTPParser: false
+        })
+        const armHeaders = (): void => {
+          clearTimeout(timer)
+          timer = setTimeout(expire, 10_000)
+        }
+        armHeaders()
+        tls!.setTimeout(60_000, expire)
+        // Register before the strict parser to preserve exact wire sizes and detect pipelining.
+        const inspectWire = (chunk: Buffer): void => {
+          if (completeHeader) {
+            extraBytes = true
+            if (busy) tls!.destroy()
+            return
+          }
+          buffered = Buffer.concat([buffered, chunk])
+          const end = buffered.indexOf('\r\n\r\n')
+          if (end < 0) {
+            if (buffered.length > MAX_TARGET_BYTES + MAX_HEADER_BYTES + 32) tls!.destroy()
+            return
+          }
+          const firstLine = buffered.indexOf('\r\n') + 2
+          headerBytes = end + 4 - firstLine
+          completeHeader = true
+          extraBytes = buffered.length > end + 4
+          buffered = Buffer.alloc(0)
+        }
+        const handle = async (
+          request: IncomingMessage,
+          response: ServerResponse
+        ): Promise<void> => {
+          if (busy || !this.#inspectionActive(generation, client)) {
+            tls!.destroy()
+            return
+          }
+          clearTimeout(timer)
+          sawRequest = true
+          const verdict = inspectReadRequest(request, host, headerBytes)
+          if (verdict.kind !== 'read') {
+            if (verdict.kind === 'approval') {
+              await block()
+              if (!response.destroyed) rejectHttp(response, NETWORK_APPROVAL_REQUIRED)
+            } else if (verdict.kind === 'limit') {
+              response.writeHead(431, { connection: 'close' })
+              response.end()
+            } else tls!.destroy()
+            return
+          }
+          if (extraBytes) {
+            tls!.destroy()
+            return
+          }
+          busy = true
+          response.once('finish', () => {
+            busy = false
+            completeHeader = false
+            headerBytes = 0
+            extraBytes = false
+            if (!tls!.destroyed) armHeaders()
+          })
+          try {
+            const decision = await this.#authorize(host, 443, generation, 'probe')
+            if (!this.#inspectionActive(generation, client)) {
+              tls!.destroy()
+              return
+            }
+            const address =
+              decision.allowed || decision.source === 'unknown' ? decision.address : undefined
+            if (!address) {
+              tls!.destroy()
+              return
+            }
+            const parent = selectProxy(this.#parent, host, 443, true)
+            const raw = parent
+              ? await tunnelThroughProxy(parent, address, 443, this.#parent?.ca, lifetime.signal)
+              : await waitForTcpConnection(
+                  connectTcp({ host: address, port: 443, signal: lifetime.signal })
+                )
+            if (!this.#inspectionActive(generation, client)) {
+              raw.destroy()
+              return
+            }
+            this.#trackConnection(raw)
+            const upstream = connectTls({
+              socket: raw,
+              servername: host,
+              ca: inspection.trustedCaCertificates
+                ? [...inspection.trustedCaCertificates]
+                : undefined,
+              rejectUnauthorized: true,
+              ALPNProtocols: ['http/1.1']
+            })
+            this.#trackConnection(upstream)
+            const stop = (): void => {
+              upstream.destroy()
+              raw.destroy()
+            }
+            tls!.once('close', stop)
+            const handshakeTimer = setTimeout(stop, 10_000)
+            try {
+              await new Promise<void>((resolve, reject) => {
+                upstream.once('secureConnect', resolve)
+                upstream.once('error', reject)
+                upstream.once('close', () => reject(new Error('Upstream closed')))
+              })
+            } finally {
+              clearTimeout(handshakeTimer)
+            }
+            if (!this.#inspectionActive(generation, client)) {
+              stop()
+              return
+            }
+            upstream.setTimeout(60_000, stop)
+            const outgoing = httpRequest(
+              {
+                host,
+                port: 443,
+                method: request.method,
+                path: request.url,
+                headers: { ...verdict.headers, connection: 'close' },
+                createConnection: () => upstream
+              },
+              (incoming) => {
+                if (!this.#inspectionActive(generation, client)) {
+                  stop()
+                  return
+                }
+                response.writeHead(
+                  incoming.statusCode ?? 502,
+                  withoutConnectionHeaders(incoming.headers)
+                )
+                incoming.pipe(response)
+                incoming.once('error', () => response.destroy())
+                incoming.once('end', () => {
+                  tls!.removeListener('close', stop)
+                  stop()
+                })
+              }
+            )
+            outgoing.once('upgrade', (_res, socket) => {
+              socket.destroy()
+              response.destroy()
+            })
+            outgoing.once('error', () => {
+              stop()
+              if (!response.headersSent) response.writeHead(502, { connection: 'close' })
+              response.end(NETWORK_UPSTREAM_FAILED)
+            })
+            outgoing.end()
+          } catch {
+            if (!response.headersSent) response.writeHead(502, { connection: 'close' })
+            response.end(NETWORK_UPSTREAM_FAILED)
+          }
+        }
+        parser.on('request', (request, response) => void handle(request, response))
+        parser.on('checkContinue', (request, response) => void handle(request, response))
+        parser.on('checkExpectation', (request, response) => void handle(request, response))
+        const unsupported = (request: IncomingMessage, innerConnect = false): void => {
+          sawRequest = true
+          const verdict = inspectReadRequest(
+            innerConnect
+              ? ({
+                  rawHeaders: request.rawHeaders,
+                  httpVersion: request.httpVersion,
+                  method: 'GET',
+                  url: '/'
+                } as IncomingMessage)
+              : request,
+            host,
+            headerBytes
+          )
+          if (
+            verdict.kind === 'invalid' ||
+            verdict.kind === 'limit' ||
+            (innerConnect && request.url !== `${host}:443`)
+          ) {
+            tls!.destroy()
+            return
+          }
+          void block().finally(() => tls!.destroy())
+        }
+        parser.on('upgrade', (request) => unsupported(request))
+        parser.on('connect', (request) => unsupported(request, true))
+        parser.on('clientError', () => {
+          malformed = true
+          tls!.destroy()
+        })
+        parser.emit('connection', tls!)
+        tls!.prependListener('data', inspectWire)
+      })
+    } catch (error) {
+      if (resourceTimeout) {
+        client.destroy()
+        return
+      }
+      if ((error as { code?: string }).code === 'OPEN_SCIENCE_NETWORK_RESOURCE_LIMIT') {
+        client.end(
+          'HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'
+        )
+        return
+      }
+      await block()
+      client.destroy()
     }
   }
 

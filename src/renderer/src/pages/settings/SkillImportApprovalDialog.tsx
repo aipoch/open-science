@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { useSkillImportStore } from '@/stores/skill-import-store'
-import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
+import { SkillImportCandidatePreview, SkillReplacementSummary } from './SkillImportCandidatePreview'
 import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
 type SkillImportApprovalRequestDialogProps = {
@@ -160,6 +160,15 @@ const SkillImportApprovalRequestDialog = ({
                       <div className="truncate text-sm font-medium text-foreground">
                         {candidate.name}
                       </div>
+                      {candidate.replacement ? (
+                        <SkillReplacementSummary replacement={candidate.replacement} />
+                      ) : candidate.replaceableId ? (
+                        <p className="text-xs text-muted-foreground">
+                          {t(
+                            'The installed folder will be replaced, including local edits and files absent from this package. Cancel to keep the current copy.'
+                          )}
+                        </p>
+                      ) : null}
                       <div className="truncate text-xs text-muted-foreground">
                         {candidate.description || candidate.subPath}
                       </div>
@@ -191,6 +200,7 @@ const SkillImportApprovalRequestDialog = ({
                             sourceLabel: `${request.source.label} · ${candidate.subPath}`,
                             metadata: candidate.metadata,
                             body: candidate.body,
+                            replacement: candidate.replacement,
                             files: candidate.files
                           }
                         })

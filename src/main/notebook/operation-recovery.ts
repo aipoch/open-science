@@ -24,6 +24,8 @@ const log = createLogger('notebook:recovery')
 export type OperationChildLiveness = 'dead' | 'unknown'
 
 export type OperationRecoveryDeps = {
+  // Rechecks may only reconcile the operations captured at startup, never this process's new writes.
+  operationIds?: ReadonlySet<string>
   // Best-effort liveness of the operation's recorded child, as the two-state above. Callers pass a
   // platform check (see defaultOperationChildLiveness). Never 'alive' — see the type note.
   operationChildLiveness: (record: RuntimeOperationRecord) => Promise<OperationChildLiveness>
@@ -58,7 +60,10 @@ export type OperationRecoveryDeps = {
   onReconciled?: (record: RuntimeOperationRecord, action: RecoveryAction) => void
   // Reports a record left pending because its child is unconfirmed or its recovery action failed.
   // Startup uses this to retain shared disposable state without rereading the journal.
-  onRetained?: (record: RuntimeOperationRecord) => void
+  onRetained?: (
+    record: RuntimeOperationRecord,
+    reason: import('../../shared/notebook-env').NotebookRecoveryStatus['operations'][number]['reason']
+  ) => void
   // Fills in a record's childPid/childStartedAt from the SYNCHRONOUS PID sidecar when the journal's
   // async childPid update was lost to a crash. Returns the record enriched (or unchanged). This is what
   // makes a missing childPid provably mean "never spawned" (safe to reconcile) rather than a guess.
@@ -88,6 +93,7 @@ export const reconcileInterruptedOperations = async (
   const reconciled: RuntimeOperationRecord[] = []
 
   for (const raw of pending) {
+    if (deps.operationIds && !deps.operationIds.has(raw.operationId)) continue
     try {
       // Fill in the childPid from the synchronous sidecar if the journal's async update was lost to a
       // crash, so the checks below act on the child that actually spawned.
@@ -114,7 +120,10 @@ export const reconcileInterruptedOperations = async (
         // journal entry so a LATER startup — when the pid is provably gone — reconciles it. The env
         // self-heals on a subsequent boot; we never destroy data on a guess.
         await deps.blockUnknownChildTarget(record)
-        deps.onRetained?.(record)
+        deps.onRetained?.(
+          record,
+          record.childPid === undefined ? 'child-unrecorded' : 'child-unconfirmed'
+        )
         deps.onReconciled?.(record, 'skipped-child-unknown')
         continue
       }
@@ -134,7 +143,7 @@ export const reconcileInterruptedOperations = async (
           await deps.markRepairRequired(record)
         }
         await deps.blockUnknownChildTarget(record)
-        deps.onRetained?.(record)
+        deps.onRetained?.(record, 'archive-unconfirmed')
         continue
       }
       if (record.archivePublications) {
@@ -160,7 +169,7 @@ export const reconcileInterruptedOperations = async (
           })
         }
       }
-      deps.onRetained?.(raw)
+      deps.onRetained?.(raw, 'recovery-failed')
       log.error('operation recovery failed; leaving journal entry', {
         operationId: raw.operationId,
         ...errorLogFields(error)

@@ -101,7 +101,19 @@ export type RuntimeBundleSource = {
   kind: 'official' | 'override'
   baseUrl: string
 }
+export type NotebookRecoveryStatus = {
+  checkedAt?: number
+  corruptJournal: boolean
+  operations: Array<{
+    operationId: string
+    runtimeId: string
+    targetPath?: string
+    reason: 'child-unconfirmed' | 'child-unrecorded' | 'archive-unconfirmed' | 'recovery-failed'
+  }>
+}
+
 export type ProvisionStatus = {
+  recovery?: NotebookRecoveryStatus
   pythonReady: boolean
   rReady: boolean
   version: number
@@ -110,6 +122,8 @@ export type ProvisionStatus = {
   // True when recovery quarantined the language's app-managed default prefix, or an explicit repair
   // left its durable marker armed after failing. The env may still read as ready or may be absent, so
   // the UI needs this signal to surface Reset instead of a healthy card or an ordinary setup retry.
+  pythonRepairRequired?: boolean
+  rRepairRequired?: boolean
   pythonRecoveryBlocked?: boolean
   rRecoveryBlocked?: boolean
 }

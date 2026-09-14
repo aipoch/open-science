@@ -1,3 +1,4 @@
+import { once } from 'node:events'
 import { describe, it, expect } from 'vitest'
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
@@ -599,7 +600,7 @@ gate('r_loop.R', () => {
             expect(evidence.confirmedReadPaths).toEqual([
               'data/inputs/differential-results-333333333333.xlsx'
             ])
-            pngs.push(readFileSync(join(dataRoot, '对角线火山图.png')))
+            pngs.push(readFileSync(join(dataRoot, 'Synthetic volcano plot.png')))
           } finally {
             child.kill()
           }
@@ -904,8 +905,8 @@ with open("inputs/expression-matrix-444444444444.csv","w") as f:
             reasonCodes: []
           })
           expect(pythonEvidence.confirmedReadPaths?.slice().sort()).toEqual([
-            'data/inputs/expression-matrix-444444444444.csv',
-            'data/inputs/differential-results-333333333333.xlsx'
+            'data/inputs/differential-results-333333333333.xlsx',
+            'data/inputs/expression-matrix-444444444444.csv'
           ])
           expect(pythonEvidence.workingFiles.map((f) => f.relativePath)).toEqual([
             'data/processed/diff_results.csv'
@@ -2629,8 +2630,8 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
     const { child, send, inspect } = startLoop(rscriptBin(), {})
     try {
       await send(
-        "forced <- FALSE; x <- 41L; label <- '活跃变量'; .private <- 'hidden'; 1L -> run; 'user con' ->> con; " +
-          'items <- seq_len(100000L); blob <- raw(2000000L); huge_label <- strrep("活", 1000000L); ' +
+        "forced <- FALSE; x <- 41L; label <- 'active value'; .private <- 'hidden'; 1L -> run; 'user con' ->> con; " +
+          'items <- seq_len(100000L); blob <- raw(2000000L); huge_label <- strrep("€", 1000000L); ' +
           'makeActiveBinding("active_value", function() stop("must not evaluate"), .GlobalEnv); ' +
           'delayedAssign("lazy_value", stop("must not force"), assign.env = .GlobalEnv); ' +
           'create_lazy <- base::delayedAssign; ' +
@@ -2690,7 +2691,8 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
           'indirect_lazy <- 9L; indirect_eager <- 100L'
       )
       const refreshed = await inspect(true)
-      expect(refreshed.namespace?.variables.map(({ name }) => name)).toEqual([
+      // R sorts with the host's LC_COLLATE; compare membership in a fixed JS order.
+      expect(refreshed.namespace?.variables.map(({ name }) => name).sort()).toEqual([
         '.Random.seed',
         '.private',
         'active_value',
@@ -3760,4 +3762,26 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
       rmSync(figuresDir, { recursive: true, force: true })
     }
   }, 60_000)
+})
+
+gate('R execution boundaries', () => {
+  it('starts a fresh namespace after a real kernel process is killed', async () => {
+    const first = startLoop(rscriptBin(), {})
+    try {
+      await first.send('old_value <- 42')
+      const exited = once(first.child, 'exit')
+      first.child.kill('SIGKILL')
+      await exited
+      const second = startLoop(rscriptBin(), {})
+      try {
+        expect(
+          (await second.send('exists("old_value", envir=.GlobalEnv, inherits=FALSE)')).stdout
+        ).toContain('FALSE')
+      } finally {
+        second.child.kill()
+      }
+    } finally {
+      first.child.kill()
+    }
+  }, 60000)
 })

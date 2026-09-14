@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
+import { sessionExportLocked, usePackageOperationStore } from '../../stores/package-operation-store'
 import type { BackgroundResultActivityItem } from '../../../../shared/background-result-delivery'
 import type { JobSummary } from '../../../../shared/compute'
 import type { NotebookRunRecord, NotebookSessionReference } from '../../../../shared/notebook'
@@ -47,6 +48,12 @@ const useSessionBackgroundTasks = (
   projectId: string | undefined,
   notebook: NotebookSessionReference | undefined
 ): SessionBackgroundTasks => {
+  const exportLocked = usePackageOperationStore((state) =>
+    sessionExportLocked(
+      state.operation,
+      sessionId && projectId ? { id: sessionId, projectId } : undefined
+    )
+  )
   const identityKey = sessionId && projectId ? `${projectId}\0${sessionId}` : undefined
   const [snapshot, setSnapshot] = useState<TaskSnapshot>(EMPTY_TASK_SNAPSHOT)
   const [now, setNow] = useState(() => Date.now())
@@ -58,7 +65,8 @@ const useSessionBackgroundTasks = (
     const load = async (): Promise<void> => {
       const version = ++requestVersion
       const [state, activity, jobs] = await Promise.all([
-        notebook
+        // Notebook state can initialize runtime resources, so respect the export admission lock.
+        notebook && !exportLocked
           ? window.api.notebook.state(notebook).catch(() => undefined)
           : Promise.resolve(undefined),
         window.api.backgroundResultDelivery?.getSessionActivity
@@ -105,7 +113,7 @@ const useSessionBackgroundTasks = (
       stopCompute?.()
       window.clearInterval(poll)
     }
-  }, [identityKey, notebook, projectId, sessionId])
+  }, [exportLocked, identityKey, notebook, projectId, sessionId])
 
   const current = snapshot.identityKey === identityKey ? snapshot : EMPTY_TASK_SNAPSHOT
   const { runs, deliveries, computeJobs } = current

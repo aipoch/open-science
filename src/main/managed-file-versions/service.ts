@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { isImportedResearchSession } from '../storage/session-package-state'
 import {
   parseVersionHistoryCursor,
   versionHistoryPage,
@@ -255,6 +256,14 @@ class ManagedFileVersionService {
     assertSafeStorageSegment(request.projectId, 'project id')
     assertSafeStorageSegment(request.sessionId, 'session id')
     assertSafeStorageSegment(request.sourceFileId, 'legacy artifact id')
+    if (
+      await isImportedResearchSession(
+        this.options.storageRoot,
+        request.projectId,
+        request.sessionId
+      )
+    )
+      operationError('PROJECT_NOT_WRITABLE', 'Imported research history is read-only.')
     if (!(request.content instanceof Uint8Array)) {
       operationError('INVALID_REQUEST', 'Legacy Artifact content must be bytes.')
     }
@@ -1122,6 +1131,14 @@ class ManagedFileVersionService {
     client: PrismaClient | Prisma.TransactionClient,
     logicalFile: ManagedLogicalFile
   ): Promise<void> {
+    if (
+      await isImportedResearchSession(
+        this.options.storageRoot,
+        logicalFile.projectId,
+        logicalFile.sessionId
+      )
+    )
+      operationError('PROJECT_NOT_WRITABLE', 'Imported research history is read-only.')
     const [project, deleting, origin, sync, projection] = await Promise.all([
       client.project.findUnique({
         where: { id: logicalFile.projectId },
@@ -1177,6 +1194,14 @@ class ManagedFileVersionService {
   private async writeUnavailableReason(
     logicalFile: ManagedLogicalFile
   ): Promise<'PROJECT_NOT_WRITABLE' | 'FILE_DELETED' | undefined> {
+    if (
+      await isImportedResearchSession(
+        this.options.storageRoot,
+        logicalFile.projectId,
+        logicalFile.sessionId
+      )
+    )
+      return 'PROJECT_NOT_WRITABLE'
     const client = await this.options.getClient()
     const [project, deleting, origin, sync, projection] = await Promise.all([
       client.project.findUnique({

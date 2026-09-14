@@ -107,6 +107,7 @@ const composeAcpRuntimePromptOwners = (
     if (!base.artifactTurns) return undefined
     return base.artifactTurns.openRootExecution({
       executionId,
+      workspaceCwd: session.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().cwd,
       appSessionId: sessionId,
       artifactStorageSessionId:
         base.sessionCapabilities.artifactRoutingIdFor(sessionId) ?? sessionId,

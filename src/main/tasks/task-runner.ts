@@ -15,8 +15,10 @@ import {
 import type {
   ArtifactFile,
   FinalizeRunArtifactsRequest,
-  FinalizeRunArtifactsResult
+  FinalizeRunArtifactsResult,
+  ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
+import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import { artifactCreatedAtMs } from '../../shared/artifacts'
 import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
@@ -204,6 +206,9 @@ type TaskAgentPort = {
 }
 
 type TaskArtifactPort = {
+  resolveVersionDescriptors(
+    request: ResolveArtifactVersionDescriptorsRequest
+  ): Promise<ArtifactVersionDescriptor[]>
   finalizeRun(request: FinalizeRunArtifactsRequest): Promise<FinalizeRunArtifactsResult>
 }
 
@@ -539,6 +544,10 @@ const toPersistedArtifact = (
       : undefined)
   return {
     id: artifact.id,
+    artifactId: artifact.artifactId,
+    versionId: artifact.versionId,
+    versionNumber: artifact.versionNumber,
+    sha256: artifact.checksum,
     kind: 'managed-file',
     path: artifact.path,
     fileUrl: artifact.fileUrl,
@@ -1205,11 +1214,24 @@ class TaskRunner {
       throw new TaskRunnerError('artifact_not_found', `Artifact not found: ${artifactId}`)
     }
     const { artifact, session } = owner
+    // Older Task completions omitted native identity fields. Resolve their Version id through
+    // the owning Project/Session authority; paths and the latest head are not version identities.
+    const descriptor =
+      !artifact.artifactId || !artifact.versionId
+        ? (
+            await this.dependencies.artifacts.resolveVersionDescriptors({
+              projectId: session.projectId,
+              appSessionId: session.id,
+              versionIds: [artifact.versionId ?? artifact.id]
+            })
+          )[0]
+        : undefined
+    const versionId = artifact.versionId ?? descriptor?.versionId
     const resource = await this.dependencies.previewResources.acquire({
       source: 'artifact',
       projectId: session.projectId,
-      fileId: artifact.artifactId ?? artifact.id,
-      ...(artifact.versionId ? { versionId: artifact.versionId } : {}),
+      fileId: artifact.artifactId ?? descriptor?.artifactId ?? artifact.id,
+      ...(versionId ? { versionId } : {}),
       mimeType: artifact.mimeType
     })
     return {

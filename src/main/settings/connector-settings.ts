@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
+import { BootstrapError } from '../../shared/bootstrap'
 
 import type {
   AddCustomServerRequest,
@@ -591,6 +592,15 @@ class ConnectorSettingsModule {
     const apiKey = request.apiKey.trim()
     await this.repository.setOpenAlexCredential(apiKey ? encryptKey(apiKey) : undefined)
     return this.connectorsSnapshot()
+  }
+
+  async bootstrapOpenAlex(key: string): Promise<void> {
+    const existing = (await this.repository.getSettings()).connectors
+    const ref = existing?.openAlexApiKeyRef
+    if (ref && tryDecryptKey(ref) !== key) throw new BootstrapError('configuration_conflict')
+    const result = await this.validateOpenAlexCredential({ apiKey: key })
+    if (!result.valid) throw new BootstrapError('credential_invalid')
+    await this.repository.publishBootstrapOpenAlex(existing, ref ?? encryptKey(key))
   }
 
   async validateOpenAlexCredential(

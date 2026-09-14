@@ -186,7 +186,7 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
               {status.kind === 'setupRequired' && status.platform === 'win32' ? (
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   {t(
-                    'Securely route Notebook Python, R, REPL, Bash, and package downloads through your approved domains. Until set up, Notebook continues using standard execution.'
+                    'Route Notebook Python, R, REPL, Bash, and package downloads through network protection with approved domains and restricted public HTTPS reads. Until set up, Notebook continues using standard execution.'
                   )}
                 </p>
               ) : null}
@@ -388,7 +388,7 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
 
       {message?.kind === 'error' ? (
         <p
-          className="rounded-lg border border-status-failure-border bg-status-failure-subtle/50 px-3 py-2 text-xs text-status-failure-strong"
+          className="text-xs text-destructive whitespace-pre-wrap [overflow-wrap:anywhere]"
           role="alert"
         >
           {message.text}

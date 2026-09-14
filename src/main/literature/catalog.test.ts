@@ -3135,7 +3135,7 @@ describe('LiteratureCatalog', () => {
     await expect(catalog.search({ scope: 'collections' })).resolves.toMatchObject({
       entries: expect.arrayContaining([
         expect.objectContaining({ id: parent.id, itemCount: 1 }),
-        expect.objectContaining({ id: child.id, parentId: parent.id })
+        expect.objectContaining({ id: child.id, parentId: parent.id, revision: 1 })
       ])
     })
     await catalog.transact({

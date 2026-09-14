@@ -29,7 +29,9 @@ describe('disabled automatic domain access', () => {
         })
       )
 
-    expect.soft(await inspect(settings).inspect(host, 443)).toMatchObject({ kind: 'ask', host })
+    expect
+      .soft(await inspect(settings).inspect(host, 443))
+      .toMatchObject({ kind: 'ask', source: 'explicit', host })
     expect.soft(notebookNetworkSettingsAllowDomain(settings, host)).toBe(false)
     expect(await inspect(settings).inspect(sibling, 443)).toMatchObject({ kind: 'allow' })
 
@@ -119,7 +121,20 @@ describe('notebook network policy', () => {
     })
   })
 
-  it('leaves public domains to the approval and allowlist flow', () => {
+  it('does not give unknown public reads persistent target or preview permission', async () => {
+    const settings = DEFAULT_NOTEBOOK_NETWORK_SETTINGS
+    const policy = buildNotebookNetworkPolicy(settings)
+    const destination = new DestinationPolicy(policy)
+
+    expect(await destination.inspect('unknown.research.example', 443)).toMatchObject({
+      kind: 'ask',
+      source: 'unknown'
+    })
+    expect(notebookNetworkSettingsAllowDomain(settings, 'unknown.research.example')).toBe(false)
+    expect(buildNotebookNetworkPolicy(settings)).toEqual(policy)
+  })
+
+  it('leaves public domains to request inspection and target approval', () => {
     const policy = buildNotebookNetworkPolicy(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
 
     expect(policy.deniedDomains).toEqual([])

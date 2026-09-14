@@ -3,7 +3,7 @@
 // level, and grants the current folder. The breadcrumb bar doubles as a path field (click its
 // empty area to type a path), and its leading drive crumb opens a drive/volume switcher.
 import { ErrorNotice } from '@/components/error-notice'
-import { ChevronDown, CircleAlert, Folder, Home, Info, X } from 'lucide-react'
+import { ChevronDown, Folder, Home, Info, X } from 'lucide-react'
 import { RadioGroup } from 'radix-ui'
 import * as Dialog from '@/components/ui/dialog'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -613,17 +613,8 @@ const GrantFolderAccessDialogContent = ({
             </div>
           ) : null}
           {grantFailed ? (
-            <div
-              role="alert"
-              data-testid="grant-access-error"
-              className="flex items-start gap-2 rounded-lg bg-danger-900 px-3 py-2 text-xs leading-[18px] text-danger-000 ring-1 ring-inset ring-danger-000/25"
-            >
-              <CircleAlert
-                className="mt-px size-3.5 shrink-0"
-                strokeWidth={1.8}
-                aria-hidden="true"
-              />
-              <span>{t('Directory could not be accessed.')}</span>
+            <div data-testid="grant-access-error">
+              <ErrorNotice role="alert" description={t('Directory could not be accessed.')} />
             </div>
           ) : null}
           <div className="flex items-center gap-2.5">

@@ -92,7 +92,6 @@ export const LanguageSaveToast = (): React.JSX.Element | null => {
       title={`${t('Could not save the language.')} ${t('The saved language has been restored. Select a language to try again.')}`}
       dismissLabel={t('Dismiss')}
       onDismiss={() => useLocaleStore.setState({ saveFailed: false })}
-      className="top-auto bottom-3"
       testId="language-save-error-toast"
     />
   )

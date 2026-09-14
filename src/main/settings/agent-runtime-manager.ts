@@ -4,6 +4,7 @@ import { access, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createServer } from 'node:net'
 import { promisify } from 'node:util'
+import { BootstrapError } from '../../shared/bootstrap'
 
 import type {
   ClaudeDetectResult,
@@ -14,7 +15,7 @@ import type {
   InstallCodeBuddyRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
-  Preflight,
+  ReadinessPreflight,
   ValidateProviderResult
 } from '../../shared/settings'
 import {
@@ -433,7 +434,7 @@ export class AgentRuntimeManager {
       options.resolveCodexProxyEnvironment ?? resolveSystemProxyEnvironment
   }
 
-  async getPreflight(providers: ProviderPreflightAccess): Promise<Preflight> {
+  async getPreflight(providers: ProviderPreflightAccess): Promise<ReadinessPreflight> {
     return this.trackDetection(async (signal) => {
       const settings = await this.repository.getSettings()
       signal.throwIfAborted()
@@ -458,18 +459,16 @@ export class AgentRuntimeManager {
       const activeEndpoints = activeProvider
         ? providers.resolveProviderApiEndpoints(activeProvider, activeModel)
         : undefined
-      const activeProviderCompatible =
-        activeProvider && configuredModelAvailable
-          ? isProviderUsableByFramework(
-              { apiEndpoints: activeEndpoints, type: activeProvider.type },
-              framework
-            ) &&
-            (framework.id !== 'codex' || isModelBridgeSupported(activeProvider, activeModel))
-          : false
-      const activeProviderKeyUsable =
-        activeProvider && activeProvider.lastValidatedAt !== undefined
-          ? await providers.isProviderKeyUsable(activeProvider)
-          : false
+      const activeProviderCompatible = activeProvider
+        ? isProviderUsableByFramework(
+            { apiEndpoints: activeEndpoints, type: activeProvider.type },
+            framework
+          ) &&
+          (framework.id !== 'codex' || isModelBridgeSupported(activeProvider, activeModel))
+        : false
+      const activeProviderKeyUsable = activeProvider
+        ? await providers.isProviderKeyUsable(activeProvider)
+        : false
       const activeValidationTarget = activeProvider
         ? {
             model: activeModel,
@@ -497,6 +496,7 @@ export class AgentRuntimeManager {
         isProviderKeyUsable: (provider) =>
           provider.id === activeProvider?.id && activeProviderKeyUsable,
         activeProviderCompatible,
+        activeProviderModelAvailable: configuredModelAvailable,
         activeValidationTarget
       })
     })
@@ -651,6 +651,35 @@ export class AgentRuntimeManager {
         if (cached && !(await this.pathExists(cached))) await this.repository.clearCodexInfo()
       }
     }, signal)
+  }
+
+  async bootstrapCodex(onEvent: (event: ClaudeInstallEvent) => void): Promise<void> {
+    await this.repository.selectBootstrapCodex()
+    const healthy = (): Promise<boolean> =>
+      this.trackDetection(async (signal) => {
+        const settings = await this.repository.getSettings()
+        const codex = settings.codex
+        if (
+          !codex?.resolvedPath ||
+          !codex.nativePath ||
+          !codexVersionsFromProbe(await this.probeConfiguredCodexRuntime(codex, signal))
+        )
+          return false
+        const ready = await this.codexDetectDeps.smokeInitialize(
+          codex.resolvedPath,
+          { codexPath: codex.nativePath },
+          signal
+        )
+        signal.throwIfAborted()
+        return ready
+      })
+    if (await healthy()) return this.repository.selectBootstrapCodex()
+    await this.detectCodex()
+    if (await healthy()) return this.repository.selectBootstrapCodex()
+    const installed = await this.installCodex({ source: 'managed' }, onEvent)
+    if (!installed.ok || !(await healthy())) throw new BootstrapError('runtime_unavailable')
+    // Installation may overlap a human Settings change; never change the selection back.
+    await this.repository.selectBootstrapCodex()
   }
 
   async installClaude(

@@ -79,8 +79,8 @@ export const useSpecialistEditorForm = ({
   const saveEditorDraft = useSpecialistStore((state) => state.saveEditorDraft)
   const clearEditorDraft = useSpecialistStore((state) => state.clearEditorDraft)
   // Editor drafts survive unmounts — opening a capability's detail page navigates Settings away —
-  // so a returning editor re-seeds from the draft instead of the stored profile. A draft restores
-  // only while the profile revision it was taken from still matches; the create form additionally
+  // so a returning editor re-seeds from the draft with its original revision, even after a remote
+  // edit. The editor exposes the conflict instead of discarding local input. The create form
   // yields to a new initialInput (e.g. a marketplace import's prefill) so an abandoned
   // earlier draft cannot swallow the new prefill.
   const draftKey = editSpecialist ? editSpecialist.id : CREATE_SPECIALIST_DRAFT_KEY
@@ -88,7 +88,7 @@ export const useSpecialistEditorForm = ({
   const restoredDraft =
     storedDraft !== undefined &&
     (editSpecialist !== undefined
-      ? storedDraft.form.baseRevision === editSpecialist.revision
+      ? storedDraft.form.id === editSpecialist.id
       : initialInput === undefined || storedDraft.initialInput === initialInput)
       ? storedDraft
       : undefined

@@ -128,16 +128,18 @@ const PermissionUndoItem = ({
       onKeyDown={(event) => {
         if (event.key === 'Escape') dismiss(undo.token)
       }}
-      className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-2xl bg-popover px-3 py-2 text-sm text-popover-foreground shadow-card"
+      className="pointer-events-auto flex w-full flex-wrap items-start gap-2 rounded-lg border border-border bg-card p-4 text-sm text-foreground shadow-dialog"
     >
       <KeyRound className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="max-w-[min(28rem,55vw)] truncate">{t(undo.messageKey, messageParams)}</span>
+      <span className="min-w-0 flex-1 basis-40 whitespace-normal [overflow-wrap:anywhere]">
+        {t(undo.messageKey, messageParams)}
+      </span>
       {undo.canRestore !== false ? (
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="relative ml-1 h-8 whitespace-nowrap px-2 font-medium text-primary hover:text-primary before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-['']"
+          className="relative ml-1 min-h-8 h-auto max-w-full whitespace-normal [overflow-wrap:anywhere] px-2 font-medium text-primary hover:text-primary before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-['']"
           disabled={isRestoring}
           onClick={() => void restore(undo.token)}
         >
@@ -219,17 +221,17 @@ const ArchiveUndoItem = ({
       onKeyDown={(event) => {
         if (event.key === 'Escape') dismiss(undo.key)
       }}
-      className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-2xl bg-popover px-3 py-2 text-sm text-popover-foreground shadow-card"
+      className="pointer-events-auto flex w-full flex-wrap items-start gap-2 rounded-lg border border-border bg-card p-4 text-sm text-foreground shadow-dialog"
     >
       <Archive className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="max-w-[min(28rem,55vw)] truncate">
+      <span className="min-w-0 flex-1 basis-40 whitespace-normal [overflow-wrap:anywhere]">
         {'messageKey' in undo ? t(undo.messageKey, undo.messageParams) : undo.message}
       </span>
       <Button
         type="button"
         variant="ghost"
         size="sm"
-        className="relative ml-1 h-8 whitespace-nowrap px-2 font-medium text-primary hover:text-primary before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-['']"
+        className="relative ml-1 min-h-8 h-auto max-w-full whitespace-normal [overflow-wrap:anywhere] px-2 font-medium text-primary hover:text-primary before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-['']"
         aria-keyshortcuts={isShortcutTarget ? shortcut.aria : undefined}
         disabled={isRestoring}
         onClick={() => void restore(undo.key)}
@@ -360,7 +362,7 @@ const PermissionUndoSnackbar = ({
     <div
       aria-live="polite"
       data-testid="permission-undo-stack"
-      className="pointer-events-none z-toast fixed top-[max(1.5rem,env(safe-area-inset-top))] left-1/2 max-h-[min(70svh,32rem)] -translate-x-1/2 overflow-y-auto overscroll-contain"
+      className="pointer-events-none w-full overflow-y-auto overscroll-contain"
     >
       <div className="flex flex-col items-center gap-2 p-1">
         <AnimatePresence>

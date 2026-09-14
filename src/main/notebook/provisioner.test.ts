@@ -1345,7 +1345,7 @@ describe('default specs', () => {
       name: DEFAULT_R_ENV,
       language: 'r',
       version: '4.4',
-      packages: ['r-base=4.4', 'r-jsonlite']
+      packages: ['r-base=4.4', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2']
     })
     expect(DEFAULT_MANAGED_VERSION).toEqual({ python: '3.12', r: '4.4' })
     // version drives the packId-keyed offline lock the local bundle adapter looks up.
@@ -1355,7 +1355,7 @@ describe('default specs', () => {
 
   it('the named-env base floor constants stay lean', () => {
     expect(BASE_PYTHON_PACKAGES).toEqual(['python=3.12', 'matplotlib-base', 'nomkl'])
-    expect(BASE_R_PACKAGES).toEqual(['r-base', 'r-jsonlite'])
+    expect(BASE_R_PACKAGES).toEqual(['r-base', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2'])
   })
 })
 
@@ -1512,7 +1512,7 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
     expect(argvs[0]).toEqual(expect.arrayContaining(['--file', expect.stringContaining(checksum)]))
     expect(nativeSpawn).toHaveBeenCalledOnce()
     expect(nativeWorker).toHaveBeenCalledWith(
-      expect.stringMatching(/python$/u),
+      expect.stringMatching(/python(\.exe)?$/u),
       expect.arrayContaining(['--require-hashes']),
       expect.any(Object),
       expect.any(Function),
@@ -1868,7 +1868,9 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
 
     await provisioner.createNamedEnvironment('r-stats', 'r')
 
-    expect(argvs[0]).toEqual(expect.arrayContaining(['r-base', 'r-jsonlite']))
+    expect(argvs[0]).toEqual(
+      expect.arrayContaining(['r-base', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2'])
+    )
   })
 
   it('holds the shared pkgs cache lock, so a concurrent exclusive repair cannot run mid-create', async () => {
@@ -3167,6 +3169,7 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     const status = provisioner.status()
     expect(status.pythonRecoveryBlocked).toBe(true)
     expect(status.rRecoveryBlocked).toBe(false)
+    expect(status.pythonRepairRequired).not.toBe(true)
     expect(isPrefixBlocked).toHaveBeenCalledWith(blockedPrefix)
   })
 
@@ -3177,6 +3180,7 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     const status = new DefaultRuntimeProvisioner(makeDeps(root)).status()
 
     expect(status.pythonRecoveryBlocked).toBe(true)
+    expect(status.pythonRepairRequired).toBe(true)
     expect(status.rRecoveryBlocked).not.toBe(true)
   })
 

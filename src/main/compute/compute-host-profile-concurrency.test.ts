@@ -228,3 +228,27 @@ it.each([2, 0])(
     expect((await repository.get(providerId))?.probeResult?.ok).toBe(false)
   }
 )
+
+it('round trips independent health facts while keeping legacy observations unknown', async () => {
+  const host = (await repository.get(providerId))!
+  const legacy = {
+    ok: true,
+    probedAt: new Date().toISOString(),
+    exitCode: 0,
+    errorTail: null,
+    authenticationRevision: host.authentication!.revision
+  }
+  await repository.updateProbeResult(providerId, legacy, host.shape, host.id)
+  expect((await repository.get(providerId))!.probeResult?.scratchWritable).toBeUndefined()
+  const checked = {
+    ...legacy,
+    ok: false,
+    sshConnected: true,
+    commandExecutable: true,
+    scratchWritable: false,
+    scratchPath: '/readonly',
+    schedulerAvailable: false
+  }
+  await repository.updateProbeResult(providerId, checked, host.shape, host.id)
+  expect((await repository.get(providerId))!.probeResult).toEqual(checked)
+})

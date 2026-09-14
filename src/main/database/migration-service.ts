@@ -909,6 +909,8 @@ const verifyForeignKeyIntegrity = async (client: PrismaClient): Promise<void> =>
 
 const verifyManagedFileVersionDomain = async (client: PrismaClient): Promise<void> => {
   await verifyForeignKeyIntegrity(client)
+  // Repeated saves can durably reference a pending revision before the turn finalizes. Accept
+  // that ancestry only within the same unfinished Agent ownership context, including crash staging.
   const violations = await migrationSqlExecutor.query<Array<{ kind: string; id: string }>>(
     client,
     `
@@ -939,8 +941,22 @@ const verifyManagedFileVersionDomain = async (client: PrismaClient): Promise<voi
         SELECT 1 FROM "ArtifactVersion" AS "parent"
         WHERE "parent"."id" = "version"."basedOnVersionId"
           AND "parent"."artifactId" = "version"."artifactId"
-          AND "parent"."state" = 'finalized'
           AND "parent"."versionNumber" < "version"."versionNumber"
+          AND (
+            "parent"."state" = 'finalized'
+            OR (
+              "parent"."state" = 'pending'
+              AND "version"."state" IN ('staging', 'pending')
+              AND "parent"."originKind" = 'agent_generated'
+              AND "version"."originKind" = 'agent_generated'
+              AND "parent"."artifactRunId" = "version"."artifactRunId"
+              AND "parent"."rootFrameId" = "version"."rootFrameId"
+              AND "parent"."agentFrameId" = "version"."agentFrameId"
+              AND "parent"."messageBranchId" = "version"."messageBranchId"
+              AND "parent"."runtimeSegmentId" = "version"."runtimeSegmentId"
+              AND "parent"."promptMessageId" = "version"."promptMessageId"
+            )
+          )
       )
     UNION ALL
     SELECT 'upload-based-on', "version"."id"

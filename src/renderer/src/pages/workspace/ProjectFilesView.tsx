@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 // Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
 import type { TFunction } from 'i18next'
 import { ChevronDown, LayoutGrid, List, Maximize2, Minimize2, Search, X } from 'lucide-react'
@@ -5,7 +6,6 @@ import { ToggleGroup } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ActionToast } from '@/components/ActionToast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -127,15 +127,12 @@ const PageLoadError = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
-    <div
-      role="alert"
-      aria-atomic="true"
-      className="flex items-start justify-between gap-3 px-4 py-3 text-[11px] text-danger-000"
-    >
-      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{message}</span>
-      <Button type="button" variant="outline" className="h-7 shrink-0 px-2.5" onClick={onRetry}>
-        {t('Retry')}
-      </Button>
+    <div className="px-4 py-3">
+      <ErrorNotice
+        role="alert"
+        description={message}
+        primaryButton={{ label: t('Retry'), onClick: onRetry }}
+      />
     </div>
   )
 }
@@ -524,6 +521,30 @@ const ProjectFilesViewContent = ({
 
   return (
     <div data-testid="files-view" className="flex h-full min-h-0 w-full flex-col bg-bg-10">
+      {grantedRootMutationError ? (
+        <div
+          className="m-2 shrink-0 max-h-[40%] overflow-y-auto"
+          data-testid="granted-root-error-toast"
+        >
+          <ErrorNotice
+            role="alert"
+            title={grantedRootMutationErrorTitle!}
+            description={grantedRootMutationError.detail}
+            primaryButton={{
+              label: t('Retry'),
+              onClick: () =>
+                void runGrantedRootMutation(
+                  grantedRootMutationError.kind,
+                  grantedRootMutationError.retry
+                )
+            }}
+            dismissButton={{
+              label: t('Close'),
+              onClick: () => setGrantedRootMutationError(undefined)
+            }}
+          />
+        </div>
+      ) : null}
       <div
         className={cn(
           'flex shrink-0 items-center justify-between gap-3 px-4 pb-2',
@@ -848,22 +869,6 @@ const ProjectFilesViewContent = ({
         onOpenChange={setGrantDialogOpen}
         onGranted={handleSelectGrantedRoot}
       />
-      {grantedRootMutationError ? (
-        <ActionToast
-          title={grantedRootMutationErrorTitle!}
-          detail={grantedRootMutationError.detail}
-          actionLabel={t('Retry')}
-          dismissLabel={t('Close')}
-          onAction={() =>
-            void runGrantedRootMutation(
-              grantedRootMutationError.kind,
-              grantedRootMutationError.retry
-            )
-          }
-          onDismiss={() => setGrantedRootMutationError(undefined)}
-          testId="granted-root-error-toast"
-        />
-      ) : null}
     </div>
   )
 }

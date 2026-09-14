@@ -3161,523 +3161,150 @@ describe('notebook local RPC server', () => {
     }
   })
 
-  it('dispatches Artifact Version creation through the authenticated main-process bridge', async () => {
+  it('binds complete Artifact saves to immutable capability scope and drains accepted work', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectId: 'default-project',
-      repository: new NotebookRunRepository(root)
-    })
-    const requests: unknown[] = []
-    const server = new NotebookLocalRpcServer(service, {
-      transport: 'tcp',
-      token: 'secret-token',
-      artifactProvenance: {
-        createVersion: async (request) => {
-          requests.push(request)
-          return {
-            id: 'version-1',
-            artifactId: 'artifact-1',
-            versionId: 'version-1',
-            versionNumber: 1,
-            checksum: 'a'.repeat(64),
-            createdAt: '2026-07-27T00:00:00.000Z',
-            projectId: 'project-1',
-            sessionId: 'session-1',
-            runId: 'artifact-run-1',
-            name: 'sin.png',
-            path: '/managed/content',
-            fileUrl: 'file:///managed/content',
-            mimeType: 'image/png',
-            size: 12,
-            mtimeMs: 1
-          }
-        }
-      }
-    })
-    const connection = await server.ensureStarted()
-    const artifactToken = server.issueArtifactRunCapability(artifactCapabilityBinding)
-    const request = {
       projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactStorageSessionId: 'artifact-session-1',
-      artifactRunId: 'artifact-run-1',
-      writeOperationId: 'write-1',
-      writeRequestChecksum: 'b'.repeat(64),
-      resourceReservationId: 'reservation-1',
-      resourceSizeBytes: 12,
-      resourceChecksum: 'a'.repeat(64),
-      rootFrameId: 'frame-root',
-      agentFrameId: 'frame-root',
-      messageBranchId: 'branch-root',
-      messageBranchAncestry: ['forged-branch'],
-      messageAncestry: ['forged-message'],
-      runtimeSegmentId: 'runtime-1',
-      promptMessageId: 'message-user-1',
-      agentName: 'forged-agent',
-      notebookSessionId: 'forged-notebook-session',
-      filename: 'sin.png',
-      contentType: 'image/png'
-    }
-
-    try {
-      const response = await fetch(connection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${artifactToken}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({ method: 'artifactCreateVersion', params: request })
-      })
-      const payload = (await response.json()) as {
-        result: { artifactId: string; versionId: string }
-      }
-
-      expect(response.status).toBe(200)
-      expect(payload.result).toMatchObject({ artifactId: 'artifact-1', versionId: 'version-1' })
-      expect(requests).toEqual([
-        {
-          ...request,
-          messageBranchAncestry: ['branch-parent', 'branch-root'],
-          messageAncestry: ['message-parent', 'message-user-1'],
-          agentName: 'Claude Code',
-          notebookSessionId: 'notebook-session-1'
-        }
-      ])
-    } finally {
-      await server.close()
-    }
-  })
-
-  it('binds Artifact reservations to the capability and releases ownership on revoke and close', async () => {
-    const reserveWrite = vi.fn(async () => ({
-      id: 'reservation-1',
-      fileBytes: 12,
-      expiresAt: Date.now() + 60_000
-    }))
-    const releaseWriteReservation = vi.fn(async () => undefined)
-    const releaseRunWriteReservations = vi.fn(async () => undefined)
-    const releaseAllWriteReservations = vi.fn(async () => undefined)
-    const createVersion = vi.fn()
-    const server = new NotebookLocalRpcServer({} as never, {
-      transport: 'tcp',
-      token: 'secret-token',
-      artifactProvenance: {
-        createVersion,
-        reserveWrite,
-        releaseWriteReservation,
-        releaseRunWriteReservations,
-        releaseAllWriteReservations
-      }
-    })
-    const connection = await server.ensureStarted()
-    const token = server.issueArtifactRunCapability(artifactCapabilityBinding)
-    let closed = false
-    const call = (method: string, params: Record<string, unknown>): Promise<Response> =>
-      fetch(connection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({ method, params })
-      })
-
-    try {
-      const reserved = await call('artifactReserveWrite', {
-        projectId: 'project-1',
-        appSessionId: 'session-1',
-        artifactStorageSessionId: 'artifact-session-1',
-        artifactRunId: 'artifact-run-1',
-        writeOperationId: 'write-1',
-        filename: 'sin.png',
-        fileBytes: 12
-      })
-      await expect(reserved.json()).resolves.toEqual({
-        result: expect.objectContaining({ id: 'reservation-1', fileBytes: 12 })
-      })
-      expect(reserveWrite).toHaveBeenCalledWith({
-        projectId: 'project-1',
-        appSessionId: 'session-1',
-        artifactStorageSessionId: 'artifact-session-1',
-        artifactRunId: 'artifact-run-1',
-        writeOperationId: 'write-1',
-        filename: 'sin.png',
-        fileBytes: 12
-      })
-
-      const released = await call('artifactReleaseWrite', {
-        projectId: 'project-1',
-        appSessionId: 'session-1',
-        artifactStorageSessionId: 'artifact-session-1',
-        artifactRunId: 'artifact-run-1',
-        reservationId: 'reservation-1'
-      })
-      expect(released.status).toBe(200)
-      expect(releaseWriteReservation).toHaveBeenCalledWith({
-        projectId: 'project-1',
-        appSessionId: 'session-1',
-        artifactStorageSessionId: 'artifact-session-1',
-        artifactRunId: 'artifact-run-1',
-        reservationId: 'reservation-1'
-      })
-
-      const bypass = await call('artifactCreateVersion', {
-        ...artifactCapabilityBinding,
-        writeOperationId: 'write-without-reservation',
-        writeRequestChecksum: 'a'.repeat(64),
-        filename: 'bypass.txt'
-      })
-      expect(bypass.status).toBe(400)
-      await expect(bypass.json()).resolves.toEqual({
-        error: 'Artifact Version creation requires a write reservation.'
-      })
-      expect(createVersion).not.toHaveBeenCalled()
-
-      await server.revokeArtifactRunCapability(token)
-      expect(releaseRunWriteReservations).toHaveBeenCalledWith({
-        projectId: 'project-1',
-        appSessionId: 'session-1',
-        artifactStorageSessionId: 'artifact-session-1',
-        artifactRunId: 'artifact-run-1'
-      })
-      await server.close()
-      closed = true
-      expect(releaseAllWriteReservations).toHaveBeenCalledOnce()
-    } finally {
-      if (!closed) await server.close()
-    }
-  })
-
-  it('revokes new Artifact requests while draining one already-authorized write', async () => {
-    const root = await createStorageRoot()
-    const service = new NotebookRuntimeService({
-      configRoot: root,
-      dataRoot: root,
-      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
-    const createStarted = createDeferred()
-    const releaseCreate = createDeferred()
-    let now = 1_000
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const accepted = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const saveVersion = vi.fn(async () => {
+      entered()
+      await gate
+      return { versionId: 'version-1' } as never
+    })
     const server = new NotebookLocalRpcServer(service, {
       transport: 'tcp',
-      token: 'secret-token',
-      now: () => now,
-      artifactProvenance: {
-        createVersion: async () => {
-          createStarted.resolve()
-          await releaseCreate.promise
-          return {
-            id: 'version-1',
-            artifactId: 'artifact-1',
-            versionId: 'version-1',
-            versionNumber: 1,
-            checksum: 'a'.repeat(64),
-            createdAt: '2026-07-27T00:00:00.000Z',
-            projectId: 'project-1',
-            sessionId: 'session-1',
-            runId: 'artifact-run-1',
-            name: 'sin.png',
-            path: '/managed/content',
-            fileUrl: 'file:///managed/content',
-            mimeType: 'image/png',
-            size: 12,
-            mtimeMs: 1
-          }
-        }
-      }
+      artifactProvenance: { createVersion: vi.fn(), saveVersion }
     })
     const connection = await server.ensureStarted()
-    const token = server.issueArtifactRunCapability(artifactCapabilityBinding, 100)
-    const call = (): Promise<Response> =>
+    const roots = [root]
+    const binding = {
+      ...artifactCapabilityBinding,
+      sourceScope: { allowedImportRoots: roots, workspaceCwd: root }
+    }
+    const token = server.issueArtifactRunCapability(binding)
+    roots.push('/forged-after-issuance')
+    const params = {
+      ...artifactCapabilityBinding,
+      filename: 'result.txt',
+      writeOperationId: 'write-1',
+      source: { kind: 'inline', content: 'b2s=', encoding: 'base64' },
+      agentName: 'forged',
+      sourceScope: { allowedImportRoots: ['/'] }
+    }
+    const call = (
+      capability = token,
+      request = params,
+      method = 'artifactSaveVersion'
+    ): Promise<Response> =>
       fetch(connection.endpoint, {
         method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          method: 'artifactCreateVersion',
-          params: {
-            ...artifactCapabilityBinding,
-            writeOperationId: 'write-drain',
-            writeRequestChecksum: 'a'.repeat(64),
-            resourceReservationId: 'reservation-drain',
-            resourceSizeBytes: 12,
-            resourceChecksum: 'a'.repeat(64),
-            filename: 'sin.png'
-          }
-        })
+        headers: { authorization: `Bearer ${capability}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ method, params: request })
       })
-
     try {
-      const acceptedRequest = call()
-      await createStarted.promise
-      now = 1_101
-      const expiredRequest = await call()
-      expect(expiredRequest.status).toBe(401)
-      await expect(expiredRequest.json()).resolves.toEqual({
-        error: 'Artifact RPC capability expired.'
-      })
-
+      const pending = call()
+      await accepted
+      expect(saveVersion).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentName: 'Claude Code',
+          messageBranchAncestry: [...artifactCapabilityBinding.messageBranchAncestry]
+        }),
+        { allowedImportRoots: [root], workspaceCwd: root },
+        expect.any(AbortSignal),
+        expect.any(Function)
+      )
       let drained = false
-      const firstDrain = Promise.resolve(server.revokeArtifactRunCapability(token)).then(() => {
+      const drain = server.revokeArtifactRunCapability(token).then(() => {
         drained = true
       })
-      const repeatedDrain = Promise.resolve(server.revokeArtifactRunCapability(token))
-      await Promise.resolve()
+      expect((await call()).status).toBe(401)
       expect(drained).toBe(false)
-
-      const rejectedRequest = await call()
-      expect(rejectedRequest.status).toBe(401)
-
-      releaseCreate.resolve()
-      await expect(acceptedRequest.then((response) => response.status)).resolves.toBe(200)
-      await expect(Promise.all([firstDrain, repeatedDrain])).resolves.toEqual([
-        undefined,
-        undefined
-      ])
+      release()
+      expect((await pending).status).toBe(200)
+      await drain
       expect(drained).toBe(true)
     } finally {
-      releaseCreate.resolve()
+      release()
       await server.close()
     }
   })
 
-  it('rejects an Artifact capability when the request names a different run', async () => {
+  it('rejects mismatched, expired, missing-scope and old split Artifact protocols before dispatch', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectId: 'default-project',
+      projectId: 'project-1',
       repository: new NotebookRunRepository(root)
     })
+    let now = 0
+    const saveVersion = vi.fn()
     const createVersion = vi.fn()
     const server = new NotebookLocalRpcServer(service, {
       transport: 'tcp',
-      token: 'secret-token',
-      artifactProvenance: { createVersion }
-    })
-    const connection = await server.ensureStarted()
-    const artifactToken = server.issueArtifactRunCapability(artifactCapabilityBinding)
-
-    try {
-      const response = await fetch(connection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${artifactToken}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          method: 'artifactCreateVersion',
-          params: {
-            ...artifactCapabilityBinding,
-            artifactRunId: 'artifact-run-forged',
-            writeOperationId: 'write-forged',
-            writeRequestChecksum: 'a'.repeat(64),
-            filename: 'sin.png'
-          }
-        })
-      })
-
-      expect(response.status).toBe(403)
-      await expect(response.json()).resolves.toEqual({
-        error: 'Artifact RPC capability does not match artifactRunId.'
-      })
-      expect(createVersion).not.toHaveBeenCalled()
-    } finally {
-      await server.close()
-    }
-  })
-
-  it('rejects expired and revoked Artifact run capabilities', async () => {
-    const root = await createStorageRoot()
-    let now = 1_000
-    const service = new NotebookRuntimeService({
-      configRoot: root,
-      dataRoot: root,
-      projectId: 'default-project',
-      repository: new NotebookRunRepository(root)
-    })
-    const createVersion = vi.fn()
-    const server = new NotebookLocalRpcServer(service, {
-      transport: 'tcp',
-      token: 'secret-token',
       now: () => now,
-      artifactProvenance: { createVersion }
+      artifactProvenance: { createVersion, saveVersion }
     })
     const connection = await server.ensureStarted()
-    const expiredToken = server.issueArtifactRunCapability(artifactCapabilityBinding, 100)
-    now = 1_101
-
-    const call = (token: string): Promise<Response> =>
+    const binding = { ...artifactCapabilityBinding, sourceScope: { allowedImportRoots: [] } }
+    const token = server.issueArtifactRunCapability(binding, 100)
+    const params = {
+      ...artifactCapabilityBinding,
+      filename: 'result.txt',
+      writeOperationId: 'write-1',
+      source: { kind: 'inline', content: '', encoding: 'base64' }
+    }
+    const call = (
+      capability: string,
+      method: string,
+      request: Record<string, unknown> = params
+    ): Promise<Response> =>
       fetch(connection.endpoint, {
         method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          method: 'artifactCreateVersion',
-          params: {
-            ...artifactCapabilityBinding,
-            writeOperationId: 'write-1',
-            writeRequestChecksum: 'a'.repeat(64),
-            filename: 'sin.png'
-          }
-        })
+        headers: { authorization: `Bearer ${capability}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ method, params: request })
       })
-
     try {
-      const expired = await call(expiredToken)
-      expect(expired.status).toBe(401)
-      await expect(expired.json()).resolves.toEqual({ error: 'Artifact RPC capability expired.' })
-
-      const replayOnlyToken = server.issueArtifactRunCapability({
-        ...artifactCapabilityBinding,
-        allowedMethods: ['artifactReplayVersion']
-      })
-      const disallowed = await call(replayOnlyToken)
-      expect(disallowed.status).toBe(403)
-      await expect(disallowed.json()).resolves.toEqual({
-        error: 'Artifact RPC capability does not allow artifactCreateVersion.'
-      })
-
-      const revokedToken = server.issueArtifactRunCapability(artifactCapabilityBinding)
-      server.revokeArtifactRunCapability(revokedToken)
-      const revoked = await call(revokedToken)
-      expect(revoked.status).toBe(401)
-      await expect(revoked.json()).resolves.toEqual({ error: 'Invalid notebook RPC token.' })
+      expect(
+        (await call(token, 'artifactSaveVersion', { ...params, artifactRunId: 'forged-run' }))
+          .status
+      ).toBe(403)
+      expect(
+        (
+          await call(
+            server.issueArtifactRunCapability(artifactCapabilityBinding),
+            'artifactSaveVersion'
+          )
+        ).status
+      ).toBe(403)
+      for (const method of [
+        'artifactCreateVersion',
+        'artifactReserveWrite',
+        'artifactReleaseWrite',
+        'artifactReplayVersion'
+      ] as const) {
+        const legacy = server.issueArtifactRunCapability({ ...binding, allowedMethods: [method] })
+        const response = await call(legacy, method)
+        expect(response.status).toBe(409)
+        expect(await response.text()).toContain('Restart')
+      }
+      now = 101
+      expect((await call(token, 'artifactSaveVersion')).status).toBe(401)
+      expect(saveVersion).not.toHaveBeenCalled()
       expect(createVersion).not.toHaveBeenCalled()
     } finally {
       await server.close()
-    }
-  })
-
-  it('keeps the default Artifact capability valid throughout a long-running turn', async () => {
-    const root = await createStorageRoot()
-    let now = 1_000
-    const service = new NotebookRuntimeService({
-      configRoot: root,
-      dataRoot: root,
-      projectId: 'default-project',
-      repository: new NotebookRunRepository(root)
-    })
-    const createVersion = vi.fn().mockResolvedValue({ versionId: 'version-1' })
-    const server = new NotebookLocalRpcServer(service, {
-      transport: 'tcp',
-      token: 'secret-token',
-      now: () => now,
-      artifactProvenance: { createVersion }
-    })
-    const connection = await server.ensureStarted()
-    const token = server.issueArtifactRunCapability(artifactCapabilityBinding)
-    now += 31 * 60 * 1_000
-
-    try {
-      const response = await fetch(connection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          method: 'artifactCreateVersion',
-          params: {
-            ...artifactCapabilityBinding,
-            writeOperationId: 'write-long-turn',
-            writeRequestChecksum: 'a'.repeat(64),
-            resourceReservationId: 'reservation-long-turn',
-            resourceSizeBytes: 12,
-            resourceChecksum: 'a'.repeat(64),
-            filename: 'sin.png'
-          }
-        })
-      })
-
-      expect(response.status).toBe(200)
-      expect(createVersion).toHaveBeenCalledOnce()
-    } finally {
-      await server.close()
-    }
-  })
-
-  it('dispatches exact Artifact Version replays and reports an unconfigured replay bridge', async () => {
-    const root = await createStorageRoot()
-    const service = new NotebookRuntimeService({
-      configRoot: root,
-      dataRoot: root,
-      projectId: 'default-project',
-      repository: new NotebookRunRepository(root)
-    })
-    const replayRequests: unknown[] = []
-    const request = {
-      projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactStorageSessionId: 'artifact-session-1',
-      artifactRunId: 'artifact-run-1',
-      writeOperationId: 'write-1',
-      writeRequestChecksum: 'b'.repeat(64),
-      rootFrameId: 'frame-root',
-      agentFrameId: 'frame-root',
-      messageBranchId: 'branch-root',
-      runtimeSegmentId: 'runtime-1',
-      promptMessageId: 'message-user-1'
-    }
-    const server = new NotebookLocalRpcServer(service, {
-      transport: 'tcp',
-      token: 'secret-token',
-      artifactProvenance: {
-        createVersion: vi.fn(),
-        replayVersion: async (replayRequest) => {
-          replayRequests.push(replayRequest)
-          return undefined
-        }
-      }
-    })
-    const connection = await server.ensureStarted()
-    const replayToken = server.issueArtifactRunCapability(artifactCapabilityBinding)
-
-    try {
-      const response = await fetch(connection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${replayToken}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({ method: 'artifactReplayVersion', params: request })
-      })
-      await expect(response.json()).resolves.toEqual({})
-      expect(response.status).toBe(200)
-      expect(replayRequests).toEqual([request])
-    } finally {
-      await server.close()
-    }
-
-    const unconfigured = new NotebookLocalRpcServer(service, {
-      transport: 'tcp',
-      token: 'secret-token',
-      artifactProvenance: { createVersion: vi.fn() }
-    })
-    const unconfiguredConnection = await unconfigured.ensureStarted()
-    const unconfiguredToken = unconfigured.issueArtifactRunCapability(artifactCapabilityBinding)
-    try {
-      const response = await fetch(unconfiguredConnection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${unconfiguredToken}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({ method: 'artifactReplayVersion', params: request })
-      })
-      await expect(response.json()).resolves.toEqual({
-        error: 'Artifact Provenance persistence is not configured.'
-      })
-      expect(response.status).toBe(500)
-    } finally {
-      await unconfigured.close()
     }
   })
 

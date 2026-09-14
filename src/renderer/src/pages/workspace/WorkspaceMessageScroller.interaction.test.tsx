@@ -4203,7 +4203,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const session = createSession({
       status: 'running',
-      activeRun: { promptMessageId: 'prompt-2', startedAt: 1710000000200 },
+      activeRun: { promptMessageId: 'prompt-4', startedAt: 1710000000200 },
       messages: [
         createMessage({ id: 'prompt-1', content: 'First prompt' }),
         createMessage({
@@ -4212,7 +4212,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           content: 'First response',
           responseToMessageId: 'prompt-1'
         }),
-        createMessage({ id: 'prompt-2', content: 'Second prompt' })
+        createMessage({ id: 'prompt-2', content: 'Second prompt' }),
+        createMessage({ id: 'prompt-3', content: 'Third prompt' }),
+        createMessage({ id: 'prompt-4', content: 'Fourth prompt' })
       ]
     })
 
@@ -4227,7 +4229,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(rail).not.toBeNull()
     expect(rail?.className).toContain('hidden')
     expect(rail?.className).toContain('md:block')
-    expect(rail?.querySelectorAll('button')).toHaveLength(2)
+    expect(rail?.querySelectorAll('button')).toHaveLength(4)
     expect(
       Array.from(rail?.querySelectorAll('button span') ?? []).every((indicator) =>
         indicator.classList.contains('scale-x-[0.4]')

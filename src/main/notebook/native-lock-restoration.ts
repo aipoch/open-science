@@ -276,7 +276,7 @@ const nativeLockRestoreState = (
   let projectSelectionUnresolved = false
   for (const component of lock.components) {
     if (component.ecosystem === 'conda' || component.resolution !== 'locked') continue
-    if (!condaPackages.has(requiredTool(component))) continue
+    if (lock.schemaVersion !== 2 && !condaPackages.has(requiredTool(component))) continue
     const packages = lockedPackageVersions(component)
     if (required.every((pkg) => packages.has(pkg!.name))) {
       // Project locks describe possible installations, including extras and platform branches.

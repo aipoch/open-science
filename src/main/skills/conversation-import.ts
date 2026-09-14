@@ -530,6 +530,7 @@ class ConversationSkillImporter {
         body: '',
         files: [],
         alreadyImported: candidate.alreadyImported,
+        ...(candidate.installedId ? { replaceableId: candidate.installedId } : {}),
         githubUrl: candidate.url
       })),
       skipped: []

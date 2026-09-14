@@ -45,7 +45,8 @@ export const createProvenanceTestFixture = async (): Promise<{
   stagePng: (payload: string, filename?: string) => Promise<void>
   dispose: () => Promise<void>
 }> => {
-  const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-contract-'))
+  // Leave room for version IDs and atomic-save staging below Windows' directory path limit.
+  const storageRoot = await mkdtemp(join(tmpdir(), 'os-p-'))
   const client = createProjectDbClient(storageRoot)
   try {
     await migrateApplicationDatabase(client)

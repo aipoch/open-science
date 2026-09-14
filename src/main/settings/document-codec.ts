@@ -157,7 +157,17 @@ const sanitizeManualInterpreters = (
 
 const sanitizeRuntimeEnablementEntry = (value: unknown): RuntimeEnablement => ({
   enabled: asBooleanRecord(isRecord(value) ? value.enabled : undefined),
-  installAuthorized: asBooleanRecord(isRecord(value) ? value.installAuthorized : undefined)
+  installAuthorized: asBooleanRecord(isRecord(value) ? value.installAuthorized : undefined),
+  ...(isRecord(value) && isRecord(value.installLibraries)
+    ? {
+        installLibraries: Object.fromEntries(
+          Object.entries(value.installLibraries).filter(
+            (entry): entry is [string, string] =>
+              typeof entry[1] === 'string' && entry[1].length > 0
+          )
+        )
+      }
+    : {})
 })
 
 const sanitizeRuntimeEnablement = (

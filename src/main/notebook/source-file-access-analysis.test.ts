@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { analyzeRSources } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
+const analyzedPythonPath = (value: string): string =>
+  process.platform === 'win32' ? value.replaceAll('/', '\\') : value
+
 describe('analyzeNotebookSourceFileAccess', () => {
   it.each([
     ['python', "frame.to_csv('result.csv', mode='w')"],
@@ -1185,7 +1188,7 @@ describe('analyzeNotebookSourceFileAccess', () => {
         "    stream.write('done')"
       ].join('\n'),
       [],
-      ['results/summary.txt']
+      [analyzedPythonPath('results/summary.txt')]
     ],
     [
       'NumPy save',
@@ -1223,7 +1226,7 @@ describe('analyzeNotebookSourceFileAccess', () => {
         'plt.savefig(output)'
       ].join('\n'),
       [],
-      ['figures/daily/chart.png']
+      [analyzedPythonPath('figures/daily/chart.png')]
     ],
     [
       'Path.with_suffix',
@@ -1234,7 +1237,7 @@ describe('analyzeNotebookSourceFileAccess', () => {
         'plt.savefig(output)'
       ].join('\n'),
       [],
-      ['figures/chart.png']
+      [analyzedPythonPath('figures/chart.png')]
     ],
     [
       'Path.with_name',
@@ -1245,7 +1248,7 @@ describe('analyzeNotebookSourceFileAccess', () => {
         'plt.savefig(output)'
       ].join('\n'),
       [],
-      ['figures/chart.png']
+      [analyzedPythonPath('figures/chart.png')]
     ]
   ])('extracts %s paths', async (_name, source, reads, writes) => {
     await expect(analyzeNotebookSourceFileAccess('python', source)).resolves.toEqual({

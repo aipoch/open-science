@@ -46,16 +46,26 @@ const lookupPdfDoi = (doi: string): Promise<LiteratureItemInput> => {
     doiCaches.set(lookup, cache)
   }
   const cached = cache.get(doi)
-  if (cached && cached.expires > Date.now()) return cached.result
+  if (cached && cached.expires > Date.now()) {
+    cache.delete(doi)
+    cache.set(doi, cached)
+    return cached.result
+  }
   const result = lookup(doi)
-  const entry = { expires: Date.now() + DOI_CACHE_MS, result }
+  // The TTL covers reusable results, not time spent waiting for the network.
+  const entry = { expires: Number.POSITIVE_INFINITY, result }
   cache.delete(doi)
   cache.set(doi, entry)
   while (cache.size > DOI_CACHE_SIZE) cache.delete(cache.keys().next().value!)
   const entries = cache
-  void result.catch(() => {
-    if (entries.get(doi) === entry) entries.delete(doi)
-  })
+  void result.then(
+    () => {
+      entry.expires = Date.now() + DOI_CACHE_MS
+    },
+    () => {
+      if (entries.get(doi) === entry) entries.delete(doi)
+    }
+  )
   return result
 }
 

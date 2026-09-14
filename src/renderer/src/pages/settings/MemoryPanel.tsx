@@ -1,6 +1,6 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { AlertDialog } from 'radix-ui'
 import {
-  AlertTriangle,
   ArrowUpRight,
   Bell,
   Check,
@@ -103,13 +103,7 @@ const translateMemoryError = (t: Translate, error: unknown): string => {
 }
 
 const MemoryErrorBanner = ({ message }: { message: string }): React.JSX.Element => (
-  <div
-    role="alert"
-    className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
-  >
-    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-    <p className="min-w-0 break-words leading-5">{message}</p>
-  </div>
+  <ErrorNotice role="alert" tone="amber" description={message} />
 )
 
 const confirmButtonClassName =

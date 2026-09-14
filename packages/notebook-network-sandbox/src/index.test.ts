@@ -6,6 +6,7 @@ const backend = vi.hoisted(() => ({
   updateConfig: vi.fn(),
   annotateStderr: vi.fn(),
   resetCommandConnections: vi.fn(),
+  setCommandExecutionActive: vi.fn(),
   cleanupAfterCommand: vi.fn(),
   refreshWindowsProtection: vi.fn(),
   reset: vi.fn()

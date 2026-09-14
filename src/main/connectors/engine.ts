@@ -154,7 +154,8 @@ export class ParserEngine {
     const doFetch = async (
       url: string,
       accept: string,
-      init?: RequestInit
+      init?: RequestInit,
+      retries = this.retries
     ): Promise<{ response: Response; bodyText?: string }> => {
       for (let attempt = 0; ; attempt++) {
         signal.throwIfAborted()
@@ -237,7 +238,7 @@ export class ParserEngine {
             throw new ConnectorRequestTimeoutError(url, this.timeoutMs, attempt + 1)
           }
           // Immediate network failures may be transient, so retry them within the bounded budget.
-          if (attempt < this.retries) {
+          if (attempt < retries) {
             await abortableDelay(connectorRetryDelay(attempt, null, this.backoffMs), signal)
             continue
           }
@@ -253,7 +254,7 @@ export class ParserEngine {
         const retryAfter = res.headers?.get?.('retry-after') ?? null
         const delay = retryable ? connectorRetryDelay(attempt, retryAfter, this.backoffMs) : 0
         const insufficientBudget = delay >= deadline - Date.now()
-        if (attempt < this.retries && retryable && !(retryAfter && insufficientBudget)) {
+        if (attempt < retries && retryable && !(retryAfter && insufficientBudget)) {
           await abortableDelay(delay, signal)
           continue
         }
@@ -278,9 +279,19 @@ export class ParserEngine {
           headers: response.headers
         }
       },
-      fetchText: async (url) => {
-        const { response, bodyText } = await doFetch(url, 'text/plain, application/xml, */*')
+      fetchText: async (url, accept = 'text/plain, application/xml, */*') => {
+        const { response, bodyText } = await doFetch(url, accept)
         return bodyText === undefined ? response.text() : bodyText
+      },
+      postForm: async (url, body) => {
+        // Native fetch supplies the multipart boundary. Do not resubmit a job after a lost reply.
+        const { response, bodyText } = await doFetch(
+          url,
+          'application/json',
+          { method: 'POST', body },
+          0
+        )
+        return bodyText === undefined ? response.json() : JSON.parse(bodyText)
       },
       postJson: async (url, body) => {
         const { response, bodyText } = await doFetch(url, 'application/json', {

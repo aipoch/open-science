@@ -9,6 +9,8 @@ export const STORAGE_USAGE_CATEGORY_KEYS = [
   'uploads',
   'runtime',
   'notebooks',
+  'models',
+  'pdf-structure',
   'execution-file-evidence',
   'workspaces'
 ] as const

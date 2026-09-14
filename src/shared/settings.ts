@@ -297,6 +297,8 @@ export type ProviderValidationFailure = {
 
 // Renderer-facing provider view: masked and stripped of every secret field.
 export type ProviderView = {
+  // Human configuration revision; legacy records start at zero.
+  configRevision?: number
   id: string
   type: ProviderType
   codexAuthMode?: CodexSubscriptionAuthMode
@@ -669,9 +671,16 @@ export type AppIconPreview = AppIconVariantInfo & {
   previewDataUrl: string
 }
 
-// The hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.
-// Per-framework readiness is exposed alongside `agentReady`, which reflects the currently-selected
-// framework — the gate a session actually depends on.
+export type ReadinessStatus = 'ready' | 'missing' | 'not_ready'
+
+export type ProviderReadinessReason =
+  'credential_invalid' | Exclude<ValidationCategory, 'ok' | 'auth'>
+
+export type ProviderReadiness =
+  { status: 'ready' | 'missing' } | { status: 'not_ready'; reason?: ProviderReadinessReason }
+
+// The hard startup gates. The booleans keep the wizard's existing gate contract; the structured
+// projections distinguish absent resources from configured resources that cannot currently run.
 export type Preflight = {
   claudeReady: boolean
   opencodeReady: boolean
@@ -681,6 +690,11 @@ export type Preflight = {
   agentFrameworkId: AgentFrameworkId
   agentReady: boolean
   activeProviderReady: boolean
+}
+
+export type ReadinessPreflight = Preflight & {
+  runtimeReadiness: { status: ReadinessStatus }
+  providerReadiness: ProviderReadiness
 }
 
 // A provider draft as entered in the renderer form. The plaintext `key` is present only when the user
@@ -717,6 +731,7 @@ export type UpsertProviderRequest = ProviderDraft & {
   // Edit flows set this so a stale draft cannot recreate a provider that was removed after the
   // renderer loaded it. It affects command semantics only and is never persisted.
   requireExisting?: boolean
+  expectedConfigRevision?: number
   // Explicitly refreshes an existing imported Codex subscription from the user's CLI profile.
   // Ordinary edits remain app-owned and never cross that external profile boundary.
   reimportCodexAuthentication?: boolean
@@ -1113,6 +1128,7 @@ export type SkillView = {
   availability?: 'identity-conflict'
   // Ephemeral row identity for conflicting packages that reuse the same durable id.
   catalogEntryKey?: string
+  directoryName?: string
   // Stable invocation name from SKILL.md.
   name: string
   // Presentation label supplied by the catalog source, falling back to name.
@@ -1210,6 +1226,8 @@ export type UpdateSkillRequest = {
 
 export type DeleteSkillRequest = {
   id: string
+  source?: Extract<SkillSource, 'imported' | 'personal'>
+  directoryName?: string
 }
 
 // Import a single skill from a public GitHub URL.
@@ -1245,7 +1263,17 @@ export type PreviewSkillZipRequest = {
 // Read-only SKILL.md content shown before import. Every source adapter returns this renderer-safe
 // shape: sourceLabel is a display path/URL (never an absolute host path), metadata contains parsed
 // frontmatter fields other than name/description, and files contains relative names only.
+export type SkillReplacementPreview = {
+  targetId: string
+  sourceLabel?: string
+  added: string[]
+  modified: string[]
+  removed: string[]
+  comparisonUnavailable?: boolean
+}
+
 export type SkillImportPreviewContent = {
+  replacement?: SkillReplacementPreview
   name: string
   description: string
   sourceLabel: string
@@ -1284,6 +1312,7 @@ export type ImportSkillZipBatchResult = {
 // exactly one existing imported skill of different content — the id of that skill, offered as a
 // replace target.
 export type SkillBundlePreview = {
+  replacement?: SkillReplacementPreview
   subPath: string
   name: string
   description: string

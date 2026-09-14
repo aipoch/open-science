@@ -452,6 +452,7 @@ describe('Compute service architecture', () => {
     expect(publicOperations).toEqual(
       [
         'appendDetails',
+        'bindJobHarvestRetry',
         'callCommand',
         'cancelJob',
         'clearScratchRoot',
@@ -466,6 +467,7 @@ describe('Compute service architecture', () => {
         'listDir',
         'probe',
         'replaceDetails',
+        'retryJobHarvest',
         'setConcurrencyLimit',
         'setExecutionMode',
         'setScratchRoot',
@@ -500,6 +502,7 @@ describe('Compute service architecture', () => {
     ])
 
     expect(referencedMembersOn(computePaths.jobRuntime, ['deps', 'computeService'])).toEqual([
+      'bindJobHarvestRetry',
       'handleJobCancellationConfirmed',
       'handleJobUpdated',
       'startQueueReconciliation',
@@ -532,7 +535,7 @@ describe('Compute service architecture', () => {
     const computeContracts = RENDERER_CONTRACT_CATALOG.filter(
       ({ channel }) => channel?.startsWith('compute:') === true
     )
-    expect(computeContracts).toHaveLength(38)
+    expect(computeContracts).toHaveLength(39)
     const remoteRestricted = computeContracts.filter(
       ({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub'
     )

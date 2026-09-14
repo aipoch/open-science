@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { QRCodeSVG } from '@rc-component/qrcode'
 import * as Dialog from '@/components/ui/dialog'
@@ -352,27 +353,16 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
       return (
         <TooltipProvider delayDuration={200}>
           <div className="p-5" data-testid="remote-control-load-error">
-            <div
-              className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            <ErrorNotice
               role="alert"
-            >
-              <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              <div className="min-w-0 flex-1">
-                <div className="font-medium">{t("Remote access couldn't be loaded.")}</div>
-                <div className="mt-1 break-words text-xs">{actionError}</div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-3"
-                  disabled={busy !== null}
-                  onClick={retryInitialLoad}
-                >
-                  <RefreshCw className="size-3.5" aria-hidden="true" />
-                  {t('Try again')}
-                </Button>
-              </div>
-            </div>
+              title={t("Remote access couldn't be loaded.")}
+              description={actionError}
+              primaryButton={{
+                label: t('Try again'),
+                disabled: busy !== null,
+                onClick: retryInitialLoad
+              }}
+            />
           </div>
         </TooltipProvider>
       )
@@ -566,56 +556,43 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
             })}
           </div>
 
-          {modeError ? (
-            <div className="rounded-lg border border-destructive/35 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-              {t(modeError)}
-            </div>
-          ) : null}
+          {modeError ? <ErrorNotice role="alert" description={t(modeError)} /> : null}
 
           {incompleteShutdown ? (
-            <div
+            <ErrorNotice
               role="alert"
-              className="rounded-lg border border-status-warning-foreground/30 bg-status-warning-surface dark:bg-status-warning-dark-surface px-3 py-2 text-sm"
-            >
-              <p>
-                {t(
-                  'Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.'
-                )}
-              </p>
-              {snapshot.canManage ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-3"
-                  disabled={busy !== null}
-                  onClick={() => {
-                    operationTriggerRef.current = offModeRef.current
-                    void run('mode:off', () => window.api.remoteAccess.setMode({ mode: 'off' }))
-                  }}
-                >
-                  <RefreshCw className="size-3.5" aria-hidden="true" />
-                  {t('Retry turning off')}
-                </Button>
-              ) : null}
-            </div>
+              description={t(
+                'Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.'
+              )}
+              primaryButton={
+                snapshot.canManage
+                  ? {
+                      label: t('Retry turning off'),
+                      disabled: busy !== null,
+                      onClick: () => {
+                        operationTriggerRef.current = offModeRef.current
+                        void run('mode:off', () => window.api.remoteAccess.setMode({ mode: 'off' }))
+                      }
+                    }
+                  : undefined
+              }
+            />
           ) : null}
 
           {providerError ? (
-            <div
+            <ErrorNotice
               role="alert"
-              className="rounded-lg border border-status-warning-foreground/30 bg-status-warning-surface dark:bg-status-warning-dark-surface px-3 py-2 text-sm"
-            >
-              <p>
-                {snapshot.enabled
+              title={
+                snapshot.enabled
                   ? t(
                       'Local remote access remains enabled, but the latest external status check failed.'
                     )
-                  : t('The latest external status check failed.')}
-              </p>
-              <p className="mt-1 break-words text-xs text-muted-foreground">{t(providerError)}</p>
-              {snapshot.mode === 'off' ? <div className="mt-3">{detectButton}</div> : null}
-            </div>
+                  : t('The latest external status check failed.')
+              }
+              description={t(providerError)}
+            >
+              {snapshot.mode === 'off' ? detectButton : null}
+            </ErrorNotice>
           ) : null}
 
           {!snapshot.canManage ? (

@@ -1,7 +1,13 @@
 import type { GatewayCredentials } from '../gateway/command-gateway.js'
 
-const proxyEnvironment = (port: number, credentials: GatewayCredentials): NodeJS.ProcessEnv => {
-  const gatewayHost = '127.0.0.1'
+const proxyEnvironment = (
+  port: number,
+  credentials: GatewayCredentials,
+  gatewayHost = '127.0.0.1'
+): NodeJS.ProcessEnv => {
+  // macOS seatbelt `(remote ip ...)` accepts only `localhost` or `*`. Callers that wrap curl in
+  // sandbox-exec must pass `localhost`; 127.0.0.1 is denied with EPERM. Windows and Linux bind
+  // 127.0.0.1 and keep the default.
   const authority = `${encodeURIComponent(credentials.username)}:${encodeURIComponent(credentials.password)}@${gatewayHost}:${port}`
   const http = `http://${authority}`
   const socks = `socks5h://${authority}`

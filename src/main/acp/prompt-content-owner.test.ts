@@ -11,7 +11,11 @@ import { MAX_ACP_MESSAGE_IMAGE_BYTES } from '../../shared/acp'
 import { createLiteratureAttachmentVersionReference } from '../../shared/literature'
 import { createUploadVersionReference, type UploadedAttachment } from '../../shared/uploads'
 import { estimateHistoryTokens } from '../../shared/history-preamble'
-import { extractPdfText, MAX_AUTO_PROCESS_IMAGE_BYTES } from '../uploads/attachment-media'
+import {
+  extractPdfText,
+  MAX_AUTO_PROCESS_IMAGE_BYTES,
+  MAX_AUTO_EXTRACT_PDF_BYTES
+} from '../uploads/attachment-media'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import {
@@ -179,6 +183,96 @@ describe('AcpPromptContentOwner', () => {
       expect(pdf.resource.text).toContain('--- Page 3 ---\nQuoted marker remains on page 2')
     }
   })
+
+  it.each([
+    ['总结整篇论文的贡献', true, 'full-document', false],
+    ['这个方法有哪些局限？', true, 'auto', false],
+    ['Explain Figure 3.', true, 'auto', false],
+    ['What is the exact value for treatment A in Table 2?', true, 'auto', false],
+    ['Does Figure 3 support the authors claim?', true, 'auto', false],
+    ['Explain this figure on the current page.', true, 'current-page', false],
+    ['Explain Figure 3.', false, 'auto', false],
+    ['Explain this figure on the current page.', false, 'current-page', false],
+    ['Explain this figure on the current page.', true, 'current-page', true]
+  ] as const)(
+    'delivers evidence boundaries for %s (active=%s)',
+    async (text, active, scope, oversized) => {
+      const root = await createRoot()
+      const sourcePath = join(root, 'paper.pdf')
+      await writeFile(sourcePath, '%PDF-1.4 fake')
+      const extract = vi.mocked(extractPdfText).mockResolvedValue({
+        text: '--- Page 2 ---\nThe authors report a treatment effect.',
+        pageCount: 3,
+        truncated: false
+      })
+      const callsBefore = extract.mock.calls.length
+      const resolver = createManagedFileReferenceResolver({})
+      vi.spyOn(resolver, 'resolve').mockResolvedValue({
+        absolutePath: sourcePath,
+        uri: pathToFileURL(sourcePath).href,
+        name: 'paper.pdf',
+        mimeType: 'application/pdf',
+        size: oversized ? MAX_AUTO_EXTRACT_PDF_BYTES + 1 : 14,
+        allowSkillImportReference: false
+      })
+      const owner = new AcpPromptContentOwner({ fileReferenceResolver: resolver })
+      const prepared = await owner.prepare({
+        appSessionId: 'session-1',
+        projectId: 'project-1',
+        text,
+        historyImages: [],
+        historyUploads: [],
+        currentUploads: [],
+        references: [
+          {
+            id: 'literature-attachment-1',
+            name: 'paper.pdf',
+            source: 'literature',
+            path: createLiteratureAttachmentVersionReference('version-1'),
+            versionId: 'version-1',
+            mimeType: 'application/pdf',
+            pdfContextDocumentId: 'binding-1',
+            pdfContextDocumentCount: 2,
+            pdfContextActive: active,
+            pdfReadingPosition: { pageNumber: 2, pageCount: 3 }
+          }
+        ],
+        codexSkillInputs: [],
+        skillImportEnabled: false
+      })
+      try {
+        const prompt = contentBlocks(prepared.content)
+          .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+          .join('\n')
+        expect(prompt).not.toContain('For questions about linked literature,')
+        if (active) {
+          expect(prompt.match(/For specific figures/g)).toHaveLength(1)
+          expect(prompt).toContain(
+            '`list_pdf_elements` for the requested linked documentId (this PDF: "binding-1")'
+          )
+          expect(prompt).toContain('`read_pdf_element` with its exact elementRef')
+          expect(prompt).toContain('not arbitrary Structure nodes')
+          expect(prompt).toContain(
+            'combine prose and element evidence only when the question needs both'
+          )
+          expect(prompt).toContain('Do not list elements for every paper summary')
+          expect(prompt).toContain('List captions and previews locate evidence')
+          expect(prompt).toContain('Read the selected element before making those claims')
+          expect(prompt).toContain('Missing cached evidence does not prove absence')
+          expect(prompt).toContain('cannot replace missing visual evidence')
+          expect(prompt).toContain('itemId and linked-PDF documentId are not interchangeable')
+          if (scope === 'auto') expect(prompt).toContain('For prose questions')
+        } else {
+          expect(prompt).not.toContain('`list_pdf_elements`')
+        }
+        expect(extract.mock.calls.length - callsBefore).toBe(
+          scope === 'current-page' && !oversized ? 1 : 0
+        )
+      } finally {
+        prepared.close()
+      }
+    }
+  )
 
   it('uses document context for a document-wide question despite a visible PDF page', async () => {
     const root = await createRoot()

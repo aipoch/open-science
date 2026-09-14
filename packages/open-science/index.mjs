@@ -179,6 +179,22 @@ export class OpenScienceClient {
     )
   }
 
+  bootstrap(request, options) {
+    return this.request('/api/v1/bootstrap', { ...options, method: 'POST', body: request })
+  }
+
+  installCli(options) {
+    return this.request('/api/v1/cli/install', { ...options, method: 'POST' })
+  }
+
+  doctor(options) {
+    return this.request('/api/v1/doctor', { ...options, method: 'GET' })
+  }
+
+  listRuntimes(options) {
+    return this.request('/api/v1/runtimes', { ...options, method: 'GET' })
+  }
+
   listConnectors(options) {
     return this.request(`/api/v1/connectors`, { ...options, method: 'GET' })
   }
@@ -346,6 +362,9 @@ export class OpenScienceClient {
     if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
       throw new TypeError('timeoutMs must be a positive number.')
     }
+    if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
+      throw new TypeError('pollIntervalMs must be a positive number.')
+    }
     const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs
     for (;;) {
       signal?.throwIfAborted()
@@ -355,14 +374,13 @@ export class OpenScienceClient {
       const remainingMs = deadline === undefined ? undefined : Math.max(1, deadline - Date.now())
       let run
       try {
-        run = await this.getRun(runId, { signal, timeoutMs: remainingMs })
+        run = await this.getRun(runId, {
+          signal,
+          timeoutMs: Math.min(this.requestTimeoutMs, remainingMs ?? this.requestTimeoutMs)
+        })
       } catch (error) {
         signal?.throwIfAborted()
-        if (
-          deadline !== undefined &&
-          (Date.now() >= deadline ||
-            (error instanceof OpenScienceApiError && error.code === 'timeout'))
-        ) {
+        if (deadline !== undefined && Date.now() >= deadline) {
           throw new OpenScienceApiError(`Timed out waiting for run ${runId}.`, { code: 'timeout' })
         }
         throw error
@@ -714,7 +732,9 @@ export const connectToOpenScience = async ({
         return true
       } catch (error) {
         signal?.throwIfAborted()
-        lastError = error
+        // A stale candidate must not hide an earlier authorization or configuration failure.
+        const transportCode = error?.cause?.code ?? error?.code
+        if (transportCode !== 'ECONNREFUSED') lastError = error
         return false
       }
     }

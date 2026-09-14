@@ -179,10 +179,16 @@ describe('UpdateService.check', () => {
     expect(JSON.stringify(records)).not.toContain('release notes')
   })
 
-  it('reports available with the platform download when newer', async () => {
+  it('reports available with the known platform download when a future platform is added', async () => {
     const broadcast = vi.fn()
     const service = new UpdateService({
-      fetchImpl: (() => Promise.resolve(jsonResponse(manifest))) as unknown as typeof fetch,
+      fetchImpl: (() =>
+        Promise.resolve(
+          jsonResponse({
+            ...manifest,
+            downloads: { ...manifest.downloads, 'linux-arm64': { format: 2 } }
+          })
+        )) as unknown as typeof fetch,
       platform: 'darwin',
       arch: 'arm64',
       currentVersion: '0.2.0',

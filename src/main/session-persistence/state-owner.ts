@@ -33,6 +33,7 @@ import {
 import { mergeMainOwnedRelayProjection } from './relay-projection'
 import { loadSessionMutationAuthority as loadAuthority } from './repository'
 import { saveSessionWithRevision } from './save-session'
+import { preserveImportedSession } from './imported-session'
 
 type SessionMetadata = Readonly<Pick<PersistedChatSession, 'id' | 'projectId' | 'title'>>
 
@@ -81,7 +82,7 @@ type SessionStateRepository = {
   saveSession(
     session: PersistedChatSession,
     expectedRevision?: number
-  ): Promise<PersistedChatSession | void>
+  ): Promise<PersistedChatSession>
 }
 
 type SessionStateFileIndex = {
@@ -902,6 +903,8 @@ class SessionPersistenceStateOwner {
       )
     }
     const authority = authoritative.status === 'found' ? authoritative.session : undefined
+    if (authority?.packageOrigin) session = preserveImportedSession(authority, session)
+    else if (session.packageOrigin) session = { ...session, packageOrigin: undefined }
     const { session: submittedSession, expectedRevision } = resolveRevisionedSessionSave(
       authority,
       session,

@@ -422,10 +422,12 @@ const NotebookNetworkApprovalDetail = ({
     <div className="space-y-2 text-xs leading-5 text-muted-foreground">
       <p>{t('Notebook code requested access to {{destination}}.', { destination })}</p>
       {approval.reason ? <p>{t('Reason: {{reason}}', { reason: approval.reason })}</p> : null}
-      {approval.runtime && approval.runtime !== 'bash' ? (
+      {approval.runtime &&
+      approval.runtime !== 'bash' &&
+      request.options.some((option) => option.kind === 'allow_once') ? (
         <p>
           {t(
-            'Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.'
+            'Allow once applies to the next execution of the same command in this session and runtime. It allows multiple connections to this domain during that execution.'
           )}
         </p>
       ) : null}
@@ -1099,7 +1101,7 @@ const PermissionApprovalCard = ({
                 portaled={embedded}
                 onceDescription={
                   networkRuntime && networkRuntime !== 'bash'
-                    ? t('Next execution in this runtime')
+                    ? t('Next matching execution')
                     : undefined
                 }
               />

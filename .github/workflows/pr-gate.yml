@@ -17,6 +17,7 @@ on:
           - classified
           - unit-coverage
           - i18n
+          - runtime-bundle
           - windows-e2e
           - e2e
 
@@ -161,6 +162,23 @@ jobs:
               >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "runtime-bundle" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["manual:runtime-bundle"],"lanes":["policy","runtime_bundle"],"bundles":["policy","static"],"reasonChains":["workflow_dispatch runtime-bundle -> focused dry-run"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy","runtime_bundle"]' >> "$GITHUB_OUTPUT"
+            printf '%s\n' \
+              '## PR Gate preflight' \
+              '' \
+              '- Mode: **selective (focused dry-run)**' \
+              '- Selected lanes: policy, runtime_bundle' \
+              '- Execution bundles: policy, static' \
+              '' \
+              '### Reason chains' \
+              '' \
+              '- `workflow_dispatch runtime-bundle -> focused dry-run`' \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "e2e" ]]; then
             plan='{"schemaVersion":1,"mode":"selective","roots":["manual:e2e"],"lanes":["policy","build","e2e_functional_macos","e2e_workspace_macos","e2e_accessibility_macos","e2e_visual_macos","e2e_functional_windows","e2e_workspace_windows"],"bundles":["policy","macos_e2e","windows_e2e"],"reasonChains":["workflow_dispatch e2e -> real desktop jobs and renderer pilot"]}'
             echo "plan=$plan" >> "$GITHUB_OUTPUT"
@@ -194,6 +212,7 @@ jobs:
             'interface_contracts',
             'cli_sdk',
             'i18n',
+            'runtime_bundle',
             'unit_macos',
             'linux_runtime',
             'windows_runtime',
@@ -389,6 +408,14 @@ jobs:
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'i18n') }}
         continue-on-error: true
         run: npx vitest run src/renderer/src/i18n/resources.test.ts
+      - name: Verify published runtime bundle
+        id: runtime_bundle
+        # Trusted-base classification cannot name a lane that does not exist on main yet, so the
+        # introducing PR's full plan would otherwise skip this check. After merge, version-file
+        # changes select the overlay lane; full plans keep fail-closed CDN coverage.
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'runtime_bundle') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
+        continue-on-error: true
+        run: node scripts/verify-runtime-bundle.mjs linux-64 osx-arm64 osx-64 win-64
       - name: Enforce selected static checks
         if: ${{ always() }}
         shell: bash
@@ -398,6 +425,7 @@ jobs:
           FORMAT_OUTCOME: ${{ steps.format.outcome }}
           I18N_OUTCOME: ${{ steps.i18n.outcome }}
           INTERFACE_CONTRACTS_OUTCOME: ${{ steps.interface_contracts.outcome }}
+          RUNTIME_BUNDLE_OUTCOME: ${{ steps.runtime_bundle.outcome }}
           LINT_OUTCOME: ${{ steps.lint.outcome }}
           TYPECHECK_NODE_OUTCOME: ${{ steps.typechecks.outputs.node }}
           TYPECHECKS_OUTCOME: ${{ steps.typechecks.outcome }}
@@ -420,6 +448,7 @@ jobs:
           check interface_contracts "$INTERFACE_CONTRACTS_OUTCOME"
           check cli_sdk "$CLI_SDK_OUTCOME"
           check i18n "$I18N_OUTCOME"
+          check runtime_bundle "$RUNTIME_BUNDLE_OUTCOME"
           exit "$failed"
 
   unit_shard:
@@ -459,6 +488,7 @@ jobs:
           --testTimeout=30000
           --shard=${{ matrix.shard }}/3
           --reporter=blob
+          --reporter=github-actions
           --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
       - name: Upload full-suite blob report
         if: ${{ always() }}
@@ -774,9 +804,88 @@ jobs:
           check windows_path "$WINDOWS_PATH_OUTCOME"
           exit "$failed"
 
+  macos_e2e_setup:
+    name: Prepare macOS E2E
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'macos_e2e') }}
+    runs-on: macos-14
+    timeout-minutes: 15
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      node_version: ${{ steps.node.outputs.node-version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        id: node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Build Electron application
+        run: npm run build:e2e
+      - name: Build web application
+        run: npm run build:web
+      - name: Test snapshot transport
+        run: npx vitest run scripts/ci/e2e-setup-snapshot.test.ts
+      - name: Pack E2E setup
+        run: node scripts/ci/e2e-setup-snapshot.mjs pack "$RUNNER_TEMP/e2e-setup"
+      - name: Upload E2E setup
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-setup-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-setup/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  windows_e2e_setup:
+    name: Prepare Windows E2E
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      node_version: ${{ steps.node.outputs.node-version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        id: node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
+      - name: Build Electron application
+        run: npm run build:e2e
+      - name: Test snapshot transport
+        run: npx vitest run scripts/ci/e2e-setup-snapshot.test.ts
+      - name: Pack E2E setup
+        shell: bash
+        run: node scripts/ci/e2e-setup-snapshot.mjs pack "$RUNNER_TEMP/e2e-setup"
+      - name: Upload E2E setup
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-setup-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-setup/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
   macos_e2e:
     name: macOS build and E2E (${{ matrix.group }})
-    needs: preflight
+    needs: [preflight, macos_e2e_setup]
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'macos_e2e') }}
     runs-on: macos-14
     timeout-minutes: 30
@@ -792,10 +901,18 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: node scripts/ci/npm-ci.mjs
+          node-version: ${{ needs.macos_e2e_setup.outputs.node_version }}
+          package-manager-cache: false
+      # Artifact IDs survive failed-job reruns without selecting another producer attempt.
+      - name: Download E2E setup
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.macos_e2e_setup.outputs.artifact_id }}
+          path: ${{ runner.temp }}/e2e-setup/
+          merge-multiple: true
+      - name: Restore E2E setup
+        id: setup
+        run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
       - name: Test macOS-native behavior
         id: unit_macos_native
         if: ${{ matrix.group == 'journeys' && fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
@@ -808,18 +925,9 @@ jobs:
             src/main/notebook/managed-runtime-guard.test.ts
           npx vitest run src/main/notebook/kernel-executor.test.ts \
             -t 'executes the repl loop through the production network sandbox'
-      - name: Build Electron application
-        id: build_electron
-        continue-on-error: true
-        run: npm run build:e2e
-      - name: Build web application
-        id: build_web
-        if: ${{ matrix.group == 'regressions' || (matrix.group == 'journeys' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'build')) }}
-        continue-on-error: true
-        run: npm run build:web
       - name: Run functional journeys
         id: e2e_functional_macos
-        if: ${{ matrix.group == 'journeys' && steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_macos') }}
+        if: ${{ matrix.group == 'journeys' && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_macos') }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_macos
@@ -838,7 +946,7 @@ jobs:
           if-no-files-found: warn
       - name: Run workspace journeys
         id: e2e_workspace_macos
-        if: ${{ matrix.group == 'journeys' && steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_macos') }}
+        if: ${{ matrix.group == 'journeys' && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_macos') }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace_macos
@@ -860,7 +968,7 @@ jobs:
         run: npx playwright install chromium --only-shell
       - name: Run supplemental regressions
         id: e2e_regressions_macos
-        if: ${{ matrix.group == 'regressions' && steps.build_electron.outcome == 'success' && steps.build_web.outcome == 'success' }}
+        if: ${{ matrix.group == 'regressions' && steps.setup.outcome == 'success' }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/regressions_macos
@@ -868,7 +976,7 @@ jobs:
         run: npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout=1200000
       - name: Run supplemental delegation
         id: e2e_delegation_macos
-        if: ${{ matrix.group == 'delegation' && steps.build_electron.outcome == 'success' }}
+        if: ${{ matrix.group == 'delegation' && steps.setup.outcome == 'success' }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/delegation_macos
@@ -876,7 +984,7 @@ jobs:
         run: npm run test:e2e:delegation -- --fail-on-flaky-tests --global-timeout=1200000
       - name: Run renderer layout pilot
         id: renderer_layout
-        if: ${{ matrix.group == 'presentation' }}
+        if: ${{ matrix.group == 'presentation' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos') }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout
@@ -884,7 +992,7 @@ jobs:
         run: npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=300000
       - name: Run accessibility checks
         id: e2e_accessibility_macos
-        if: ${{ matrix.group == 'presentation' && steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_macos') }}
+        if: ${{ matrix.group == 'presentation' && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_macos') }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/accessibility-macos
@@ -903,7 +1011,7 @@ jobs:
           if-no-files-found: warn
       - name: Run visual regression
         id: e2e_visual_macos
-        if: ${{ matrix.group == 'presentation' && steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos') }}
+        if: ${{ matrix.group == 'presentation' && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos') }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/visual_macos
@@ -937,8 +1045,7 @@ jobs:
         shell: bash
         env:
           RENDERER_LAYOUT_OUTCOME: ${{ steps.renderer_layout.outcome }}
-          BUILD_ELECTRON_OUTCOME: ${{ steps.build_electron.outcome }}
-          BUILD_WEB_OUTCOME: ${{ steps.build_web.outcome }}
+          SETUP_OUTCOME: ${{ steps.setup.outcome }}
           E2E_ACCESSIBILITY_OUTCOME: ${{ steps.e2e_accessibility_macos.outcome }}
           E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_macos.outcome }}
           E2E_VISUAL_OUTCOME: ${{ steps.e2e_visual_macos.outcome }}
@@ -957,8 +1064,7 @@ jobs:
             fi
           }
           check renderer_layout "$RENDERER_LAYOUT_OUTCOME"
-          check build_electron "$BUILD_ELECTRON_OUTCOME"
-          check build_web "$BUILD_WEB_OUTCOME"
+          check setup "$SETUP_OUTCOME"
           check e2e_functional_macos "$E2E_FUNCTIONAL_OUTCOME"
           check e2e_workspace_macos "$E2E_WORKSPACE_OUTCOME"
           check e2e_accessibility_macos "$E2E_ACCESSIBILITY_OUTCOME"
@@ -971,7 +1077,7 @@ jobs:
 
   windows_e2e:
     name: Windows E2E (shard ${{ matrix.shard }}/3)
-    needs: preflight
+    needs: [preflight, windows_e2e_setup]
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') }}
     runs-on: windows-latest
     timeout-minutes: 35
@@ -987,14 +1093,18 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
-      - name: Build Electron application
-        id: build_electron
-        continue-on-error: true
-        run: npm run build:e2e
+          node-version: ${{ needs.windows_e2e_setup.outputs.node_version }}
+          package-manager-cache: false
+      - name: Download E2E setup
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.windows_e2e_setup.outputs.artifact_id }}
+          path: ${{ runner.temp }}/e2e-setup/
+          merge-multiple: true
+      - name: Restore E2E setup
+        id: setup
+        shell: bash
+        run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
       - name: Install headless Chromium
         if: ${{ matrix.shard == 1 }}
         run: npx playwright install chromium --only-shell
@@ -1008,7 +1118,7 @@ jobs:
         run: npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=180000
       - name: Run functional journeys
         id: e2e_functional_windows
-        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
+        if: ${{ steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows
@@ -1028,7 +1138,7 @@ jobs:
           if-no-files-found: warn
       - name: Run workspace journeys
         id: e2e_workspace_windows
-        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') }}
+        if: ${{ steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace_windows
@@ -1049,7 +1159,7 @@ jobs:
       # The new manifest never emits it, so ordinary PRs do not pay this Windows accessibility cost.
       - name: Run legacy Windows accessibility compatibility
         id: e2e_accessibility_windows
-        if: ${{ matrix.shard == 1 && steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows') }}
+        if: ${{ matrix.shard == 1 && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows') }}
         continue-on-error: true
         run: npm run test:e2e:accessibility -- --fail-on-flaky-tests
       - name: Upload legacy accessibility failure artifacts
@@ -1080,7 +1190,7 @@ jobs:
         shell: bash
         env:
           RENDERER_LAYOUT_OUTCOME: ${{ steps.renderer_layout.outcome }}
-          BUILD_ELECTRON_OUTCOME: ${{ steps.build_electron.outcome }}
+          SETUP_OUTCOME: ${{ steps.setup.outcome }}
           E2E_ACCESSIBILITY_OUTCOME: ${{ steps.e2e_accessibility_windows.outcome }}
           E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_windows.outcome }}
           E2E_WORKSPACE_OUTCOME: ${{ steps.e2e_workspace_windows.outcome }}
@@ -1094,7 +1204,7 @@ jobs:
             fi
           }
           check renderer_layout "$RENDERER_LAYOUT_OUTCOME"
-          check build_electron "$BUILD_ELECTRON_OUTCOME"
+          check setup "$SETUP_OUTCOME"
           check e2e_functional_windows "$E2E_FUNCTIONAL_OUTCOME"
           check e2e_workspace_windows "$E2E_WORKSPACE_OUTCOME"
           check e2e_accessibility_windows "$E2E_ACCESSIBILITY_OUTCOME"

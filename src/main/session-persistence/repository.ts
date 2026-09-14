@@ -2,7 +2,9 @@ import { decodeSessionComputePolicy, type SessionComputePolicy } from './compute
 import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
 import { Buffer } from 'node:buffer'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
+import { isSessionPackagePending } from '../storage/session-package-state'
+import { preserveImportedSession } from './imported-session'
 
 import {
   createEmptySessionManifest,
@@ -48,7 +50,17 @@ const MANIFEST_FILE = 'manifest.json'
 const PRE_S2_BACKUP_SUFFIX = '.pre-s2-backup'
 const PRE_SUBAGENT_MODEL_BACKUP_SUFFIX = '.pre-subagent-model-backup'
 const RECOVERABLE_TEMPORARY_FILE_PATTERN =
-  /^(.+\.json)\.(?:\d{13}-\d+|\d+|\d+-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.tmp$/iu
+  /^(.+\.json)\.(?:\d{13}-\d+|\d+|(\d+)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.tmp$/iu
+
+const temporarySessionPrimaryName = (fileName: string): string | undefined => {
+  const temporary = RECOVERABLE_TEMPORARY_FILE_PATTERN.exec(fileName)
+  if (!temporary) return undefined
+  // Match the durable reader: only current PID/UUID names carry a validated PID.
+  // Legacy numeric suffixes have no reliable live-writer ownership marker.
+  const pid = Number(temporary[2])
+  if (temporary[2] !== undefined && (!Number.isSafeInteger(pid) || pid <= 0)) return undefined
+  return temporary[1]
+}
 
 const nextSessionRevision = (revision: number): number => {
   if (!Number.isSafeInteger(revision) || revision < 0 || revision >= Number.MAX_SAFE_INTEGER) {
@@ -129,6 +141,7 @@ type SessionScanMetrics = {
 
 type PreparedSessionWrite = {
   sanitizedSession: PersistedChatSession
+  document: ReturnType<typeof createSessionFile>
   contents: string
 }
 
@@ -381,6 +394,7 @@ class SessionRepository {
   }
 
   private async inspectActiveProjectBoundary(projectId: string): Promise<FilesystemBoundaryState> {
+    if (await isSessionPackagePending(this.storageDir, projectId)) return 'missing'
     const sessions = await this.inspectDirectoryBoundary(this.sessionsDir)
     if (sessions !== 'valid') return sessions
     return this.inspectDirectoryBoundary(this.projectDir(projectId))
@@ -524,8 +538,23 @@ class SessionRepository {
     const result = await this.loadAuthorityWithSuspendedProjection(loadAuthority)
     return this.operationScheduler.runGlobal(async () => {
       const freshResult = await this.refreshProjectionBuildAuthority(result)
-      if (freshResult.diagnostics?.isComplete === false) {
-        return { result: freshResult, sessions: projectIncompleteSummaries(freshResult) }
+      // A caller may supply a catalog without diagnostics. An initialized projection with pending
+      // recovery is independently incomplete; rebuilding must not erase its unresolved authority.
+      if (
+        freshResult.diagnostics?.isComplete === false ||
+        ((await this.projection!.isInitialized()) && !(await this.projection!.isReady()))
+      ) {
+        return {
+          result: {
+            ...freshResult,
+            diagnostics: {
+              ...freshResult.diagnostics,
+              isComplete: false,
+              warnings: freshResult.diagnostics?.warnings ?? []
+            }
+          },
+          sessions: projectIncompleteSummaries(freshResult)
+        }
       }
       for (const session of freshResult.sessions) assertSessionProjectionStorageShape(session)
       const assignments = await this.projection!.numberAssignments()
@@ -971,6 +1000,16 @@ class SessionRepository {
     session: PersistedChatSession,
     expectedRevision?: number
   ): Promise<PersistedChatSession> {
+    // Imported IDs keep the readonly authority check off ordinary Session save hot paths,
+    // including when imported history belongs to an existing Project.
+    const importedAuthority =
+      session.id.startsWith('import-') || session.projectId.startsWith('import-')
+        ? await loadSessionMutationAuthority(this, session.projectId, session.id)
+        : undefined
+    if (importedAuthority?.status === 'unreadable')
+      throw new Error('Cannot modify unreadable imported research history.')
+    if (importedAuthority?.status === 'found')
+      session = preserveImportedSession(importedAuthority.session, session)
     const key = `${session.projectId}:${session.id}`
     let actualRevision = Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0)
     if (
@@ -979,9 +1018,15 @@ class SessionRepository {
     ) {
       throw new Error('Session expected revision must be a non-negative integer.')
     }
-    await this.assertExistingSessionWithinLimit(this.sessionFilePath(session.projectId, session.id))
+    const hadPrimaryAuthority = await this.assertExistingSessionWithinLimit(
+      this.sessionFilePath(session.projectId, session.id)
+    )
     if (expectedRevision !== undefined) {
-      const current = await loadSessionMutationAuthority(this, session.projectId, session.id)
+      // Both checks own the same serialized save lane. Reuse this operation's authority read;
+      // the next save must load again so revision and readonly checks never use a stale cache.
+      const current =
+        importedAuthority ??
+        (await loadSessionMutationAuthority(this, session.projectId, session.id))
       if (current.status === 'unreadable') {
         throw new Error('Cannot compare Session revision because durable JSON is unreadable.')
       }
@@ -1011,20 +1056,46 @@ class SessionRepository {
     if (this.projection && this.projectionWritesSuspended) {
       assertSessionProjectionStorageShape(session)
     }
-    const projectedSession =
+    const preparedProjection =
       this.projection && !this.projectionWritesSuspended
         ? await this.projection.prepareSave(session)
-        : session
+        : undefined
     const durableSession: PersistedChatSession = {
-      ...projectedSession,
+      ...(preparedProjection?.session ?? session),
       revision: nextRevision
     }
-    await this.writeSession(
-      durableSession,
-      projectedSession === session && !projectionWillAssignNumber
-        ? unprojectedWrite
-        : this.prepareSessionWrite(durableSession)
-    )
+    // prepareSave only assigns the authoritative number. Reuse the normalized graph instead
+    // of materializing it again; retain the final byte check before writing authority.
+    try {
+      let preparedWrite = unprojectedWrite
+      if (unprojectedWrite.document.session.number !== durableSession.number) {
+        const document = {
+          ...unprojectedWrite.document,
+          session: { ...unprojectedWrite.document.session, number: durableSession.number }
+        }
+        preparedWrite = {
+          ...unprojectedWrite,
+          document,
+          contents: this.serializeJsonForWrite(document, this.dependencies.maxSessionBytes)
+        }
+      }
+      await this.writeSession(durableSession, preparedWrite)
+    } catch (error) {
+      if (preparedProjection?.created && !hadPrimaryAuthority) {
+        try {
+          if (await this.hasNoSessionAuthorityFiles(session.projectId, session.id)) {
+            await this.projection!.abortUnpublishedSave(preparedProjection)
+          }
+        } catch (compensationError) {
+          throw new AggregateError(
+            [error, compensationError],
+            'Session publication and allocation cleanup failed.',
+            { cause: error }
+          )
+        }
+      }
+      throw error
+    }
     if (this.projectionWritesSuspended) {
       this.suspendedProjectionSessionWrites.set(key, {
         projectId: session.projectId,
@@ -1093,10 +1164,19 @@ class SessionRepository {
       await this.projection?.markPending(safeProjectId, safeSessionId, 'delete')
     }
 
-    // The valid primary proves matching quarantines are superseded authority covered by this
-    // explicit Session deletion. Remove every backup first so any failure leaves that proof in
+    // The valid primary proves matching temps/quarantines are authority covered by this
+    // explicit Session deletion. Remove every candidate first so any failure leaves that proof in
     // place and the operation safely retryable; only then remove the current primary.
     const primaryPath = this.sessionFilePath(safeProjectId, safeSessionId)
+    const entries = await this.dependencies.readDirectoryEntries(this.projectDir(safeProjectId))
+    for (const entry of entries) {
+      if (entry.isFile() && temporarySessionPrimaryName(entry.name) === basename(primaryPath)) {
+        await this.dependencies.remove(join(this.projectDir(safeProjectId), entry.name), {
+          force: true,
+          recursive: false
+        })
+      }
+    }
     for (const suffix of [PRE_S2_BACKUP_SUFFIX, PRE_SUBAGENT_MODEL_BACKUP_SUFFIX]) {
       await this.dependencies.remove(`${primaryPath}${suffix}`, {
         force: true,
@@ -1280,12 +1360,11 @@ class SessionRepository {
       )
     }
     const sanitizedSession = sanitizeSessionUploadedAttachments(session)
+    const document = createSessionFile(encodeSessionDataPaths(sanitizedSession))
     return {
       sanitizedSession,
-      contents: this.serializeJsonForWrite(
-        createSessionFile(encodeSessionDataPaths(sanitizedSession)),
-        this.dependencies.maxSessionBytes
-      )
+      document,
+      contents: this.serializeJsonForWrite(document, this.dependencies.maxSessionBytes)
     }
   }
 
@@ -1315,13 +1394,27 @@ class SessionRepository {
     await this.atomicWriteContents(filePath, contents)
   }
 
-  private async assertExistingSessionWithinLimit(filePath: string): Promise<void> {
+  private async assertExistingSessionWithinLimit(filePath: string): Promise<boolean> {
     try {
       if ((await lstat(filePath)).size > this.dependencies.maxSessionBytes) {
         throw new SessionSizeLimitError(this.dependencies.maxSessionBytes)
       }
+      return true
     } catch (error) {
-      if (isMissingFileError(error)) return
+      if (isMissingFileError(error)) return false
+      throw error
+    }
+  }
+
+  private async hasNoSessionAuthorityFiles(projectId: string, sessionId: string): Promise<boolean> {
+    try {
+      const entries = await this.dependencies.readDirectoryEntries(this.projectDir(projectId))
+      const primary = `${assertSafeSegment(sessionId)}.json`
+      // Retain evidence even when only a temporary, backup, or quarantined file remains.
+      return !entries.some(({ name }) => name === primary || name.startsWith(`${primary}.`))
+    } catch (error) {
+      if (isMissingFileError(error) || (error as NodeJS.ErrnoException).code === 'ENOTDIR')
+        return true
       throw error
     }
   }
@@ -1606,6 +1699,8 @@ class SessionRepository {
       scanMetrics?: SessionScanMetrics
     } = {}
   ): Promise<ProjectSessionLoadDiagnostics> {
+    if (await isSessionPackagePending(this.storageDir, projectId))
+      return { sessions: [], isComplete: true }
     const directoryBoundary = await this.inspectDirectoryBoundary(projectDir)
     if (directoryBoundary === 'invalid') {
       return { sessions: [], isComplete: false }
@@ -1625,19 +1720,9 @@ class SessionRepository {
         },
         { maxBytes: this.dependencies.maxSessionBytes }
       )
-    } catch (error) {
+    } catch {
       recoveryComplete = false
-      if (error instanceof DurableJsonReadLimitError) {
-        const primaryFileName = RECOVERABLE_TEMPORARY_FILE_PATTERN.exec(error.fileName)?.[1]
-        if (primaryFileName) {
-          options.warnings?.push({
-            kind: 'too-large',
-            projectId,
-            fileName: primaryFileName,
-            recovered: false
-          })
-        }
-      }
+      // The per-Session read below reports the barrier, including temp-only authority.
     }
     const sessionFiles = await this.listSessionFileNames(projectDir, {
       missingIsIncomplete: options.missingDirectoryIsIncomplete,
@@ -1787,7 +1872,12 @@ class SessionRepository {
       }
     }
     if (read.status === 'missing') {
-      if (!options.missingIsIncomplete) return { isComplete: true }
+      if (!options.missingIsIncomplete) {
+        const files = await this.listSessionFileNames(dirname(filePath))
+        if (files.isComplete && !files.names.includes(basename(filePath))) {
+          return { isComplete: true }
+        }
+      }
       return {
         isComplete: false,
         warning: {
@@ -1865,9 +1955,10 @@ class SessionRepository {
     }
   }
 
-  // Lists only committed session JSON files. Quarantines are associated with their former primary so
+  // Lists Session primary identities. Quarantines are associated with their former primary so
   // terminal scans can distinguish orphan authority from a backup superseded by valid current JSON.
-  // In-progress temp writes stay excluded and non-ENOENT directory failures disable reconciliation.
+  // Include the primary identity of unresolved temps so missing JSON cannot authorize deletion.
+  // The durable reader still excludes live writers; non-ENOENT failures disable reconciliation.
   private async listSessionFileNames(
     dir: string,
     options: { missingIsIncomplete?: boolean; directoryBoundaryValidated?: boolean } = {}
@@ -1890,15 +1981,22 @@ class SessionRepository {
       const entries = await this.dependencies.readDirectoryEntries(dir)
 
       return {
-        names: entries
-          .filter(
-            (entry) =>
-              entry.isFile() &&
-              entry.name.endsWith('.json') &&
-              !entry.name.includes('.tmp') &&
-              !entry.name.includes('.invalid-')
+        names: [
+          ...new Set(
+            entries.flatMap((entry) => {
+              if (!entry.isFile()) return []
+              if (
+                entry.name.endsWith('.json') &&
+                !entry.name.includes('.tmp') &&
+                !entry.name.includes('.invalid-')
+              ) {
+                return [entry.name]
+              }
+              const primary = temporarySessionPrimaryName(entry.name)
+              return primary ? [primary] : []
+            })
           )
-          .map((entry) => entry.name),
+        ],
         isComplete: entries.every((entry) => entry.isFile() || !entry.name.includes('.json')),
         quarantinedPrimaryFileNames: entries.flatMap((entry) => {
           if (!entry.isFile()) return []

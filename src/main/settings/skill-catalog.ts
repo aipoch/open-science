@@ -1,5 +1,10 @@
 import { lstat, readdir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
+import type { MarketplacePackage } from '../skills/marketplace-package'
+import type {
+  SkillMarketplaceEntry,
+  SkillMarketplaceInstallation
+} from '../../shared/skill-marketplace'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
@@ -55,6 +60,7 @@ import { readSkillFile } from '../skills/skill-files'
 import { buildSkillExportArchive, type SkillExportArchive } from '../skills/export'
 import {
   SAFE_SKILL_DIRECTORY_NAME,
+  SAFE_SKILL_NAME,
   UserSkillRepository,
   isReservedSkillName
 } from '../skills/user-skill-repository'
@@ -374,6 +380,9 @@ class SkillCatalogModule {
       ...this.toSkillView(skill, disabled),
       available,
       catalogEntryKey,
+      ...(skill.source === 'imported' || skill.source === 'personal'
+        ? { directoryName: skill.name }
+        : {}),
       ...(available ? {} : { availability: 'identity-conflict' as const })
     }))
   }
@@ -632,12 +641,26 @@ class SkillCatalogModule {
 
   async deleteSkill(
     request: DeleteSkillRequest,
-    guard?: (skillId: string) => Promise<void>
+    guard?: (request: DeleteSkillRequest) => Promise<void>
   ): Promise<SkillView[]> {
-    await this.userSkills.delete(request.id, guard)
-    await this.options.repository.setSkillEnabled(request.id, true)
+    if (
+      !request.source &&
+      (await this.skillRegistry.list()).some((skill) => skill.id === request.id)
+    ) {
+      throw new Error('Built-in Skills cannot be deleted.')
+    }
+    await this.userSkills.delete(
+      request.id,
+      request.source,
+      request.directoryName,
+      guard ? () => guard(request) : undefined
+    )
     await this.refreshRegisteredHelpers()
-    return this.listSkills()
+    const skills = await this.listSkills()
+    if (!skills.some((skill) => skill.id === request.id)) {
+      await this.options.repository.setSkillEnabled(request.id, true)
+    }
+    return skills
   }
 
   async importSkill(request: ImportSkillRequest, signal?: AbortSignal): Promise<ImportSkillResult> {
@@ -649,6 +672,77 @@ class SkillCatalogModule {
     )
     await this.refreshRegisteredHelpers()
     return { ...outcome, skills: await this.listSkills() }
+  }
+
+  async marketplaceInstallation(
+    id: string,
+    version: string,
+    reservedNames?: string[]
+  ): Promise<SkillMarketplaceInstallation> {
+    const installation = await this.userSkills.marketplaceInstallation(
+      id,
+      version,
+      reservedNames ?? (await this.bundledSkillNames())
+    )
+    return installation.kind === 'installed'
+      ? { ...installation, localSkillId: `imported-${id}` }
+      : installation
+  }
+
+  async marketplaceInstallations(
+    entries: SkillMarketplaceEntry[]
+  ): Promise<Record<string, SkillMarketplaceInstallation>> {
+    const localSkills = await this.userSkills.list()
+    const localIds = new Set(localSkills.map((skill) => skill.id))
+    const reservedNames = await this.bundledSkillNames()
+    const takenNames = new Set(
+      [...reservedNames, ...localSkills.map((skill) => skill.name)].map((name) =>
+        name.toLowerCase()
+      )
+    )
+    const installations: Record<string, SkillMarketplaceInstallation> = {}
+    // Only local candidates need content hashing; catalog size must not multiply full disk scans.
+    for (const entry of entries) {
+      if (!SAFE_SKILL_NAME.test(entry.id) || isReservedSkillName(entry.id)) {
+        installations[entry.id] = { kind: 'conflict' }
+      } else if (localIds.has(`imported-${entry.id}`)) {
+        installations[entry.id] = await this.marketplaceInstallation(
+          entry.id,
+          entry.version,
+          reservedNames
+        )
+      } else if (takenNames.has(entry.id)) {
+        installations[entry.id] = { kind: 'conflict' }
+      }
+    }
+    return installations
+  }
+
+  async installMarketplace(
+    pkg: MarketplacePackage,
+    expectedVersion: string | null
+  ): Promise<Pick<ImportSkillResult, 'id' | 'status'> & { refreshFailed?: boolean }> {
+    const outcome = await this.installMarketplacePackage(pkg, expectedVersion)
+    try {
+      await this.refreshMarketplace()
+      return outcome
+    } catch {
+      // The transaction already committed; a reload failure must not invite another first install.
+      return { ...outcome, refreshFailed: true }
+    }
+  }
+
+  installMarketplacePackage(
+    pkg: MarketplacePackage,
+    expectedVersion: string | null
+  ): ReturnType<UserSkillRepository['installMarketplace']> {
+    return this.bundledSkillNames().then((reservedNames) =>
+      this.userSkills.installMarketplace(pkg, expectedVersion, reservedNames)
+    )
+  }
+
+  async refreshMarketplace(): Promise<void> {
+    await this.refreshRegisteredHelpers()
   }
 
   async importSkillZip(request: ImportSkillZipRequest): Promise<ImportSkillResult> {
@@ -925,9 +1019,15 @@ class SkillCatalogModule {
           ? '~/.claude/skills'
           : '~/.codex/skills'
     const sourceLabel = `${sourceRoot}/${canonical.slug}`
+    const discovered = await this.discoverAgentHomeSkills(availableSources)
+    const pathKey = process.platform === 'win32' ? sourcePath.toLowerCase() : sourcePath
+    const aliases = discovered.find(
+      (item) =>
+        (process.platform === 'win32' ? item.realPath.toLowerCase() : item.realPath) === pathKey
+    )?.aliases ?? [request]
     try {
       return {
-        ...(await this.userSkills.previewAgentHomeSkill(sourcePath)),
+        ...(await this.userSkills.previewAgentHomeSkill(sourcePath, canonical, aliases)),
         sourceLabel
       }
     } catch (error) {

@@ -77,6 +77,7 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { ActionToast } from '@/components/ActionToast'
 import { ErrorNotice } from '@/components/error-notice'
 import { LiteratureErrorNotice } from './LiteratureErrorNotice'
+import { ProjectPicker } from '@/components/ProjectPicker'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -1058,7 +1059,11 @@ function LiteratureNoteControl({
       />
       {failed ? (
         <div className="flex items-center gap-2 px-2 text-xs text-status-warning-foreground">
-          <p role="alert" className="truncate" title={t('Draft preserved. Escape to discard.')}>
+          <p
+            role="alert"
+            className="whitespace-normal [overflow-wrap:anywhere]"
+            title={t('Draft preserved. Escape to discard.')}
+          >
             {t('Draft preserved. Escape to discard.')}
           </p>
           <button
@@ -1519,6 +1524,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     []
   )
   const [startingReadingProjectId, setStartingReadingProjectId] = useState<string>()
+  const [readingProjectQuery, setReadingProjectQuery] = useState('')
   const [readingProjectError, setReadingProjectError] = useState<string>()
   const [citationStyles, setCitationStyles] = useState<LiteratureCitationStyleView[]>()
   const [citationStylesOpen, setCitationStylesOpen] = useState(false)
@@ -2448,8 +2454,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     collectionEditorRef.current?.openEdit(collection)
   }
 
+  const promotedCollections = collectionPendingDelete
+    ? collections.filter(({ parentId }) => parentId === collectionPendingDelete.id)
+    : []
+  const rootCollectionNames = new Set(
+    collections.filter(({ parentId }) => !parentId).map(({ name }) => name.toLowerCase())
+  )
+  const conflictingCollections = promotedCollections.filter(({ name }) =>
+    rootCollectionNames.has(name.toLowerCase())
+  )
+
   const deleteCollection = async (): Promise<void> => {
-    if (!collectionPendingDelete || isDeletingCollection) return
+    if (!collectionPendingDelete || isDeletingCollection || conflictingCollections.length) return
     const deletingCollection = collectionPendingDelete
     setIsDeletingCollection(true)
     setCollectionDeleteError(undefined)
@@ -2471,6 +2487,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             )
           : t('Collection could not be deleted.')
       )
+      await loadCollections().catch(() => undefined)
     } finally {
       setIsDeletingCollection(false)
     }
@@ -3226,6 +3243,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       void startReadingInProject(selectedProject.id, reading)
       return
     }
+    setReadingProjectQuery('')
     setPendingLiteratureReading(reading)
   }
 
@@ -4094,6 +4112,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           onSelect={() => {
                             setCollectionDeleteError(undefined)
                             setCollectionPendingDelete(selectedCollection)
+                            void loadCollections().catch(() =>
+                              setCollectionDeleteError(t('Literature could not be loaded.'))
+                            )
                           }}
                         >
                           <span className="flex size-4 shrink-0 items-center justify-center">
@@ -4602,6 +4623,27 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               onClose={() => setBatchLookup(undefined)}
               onChanged={receiveBackgroundItems}
             />
+          ) : null}
+          {dismissedCandidateUndo ? (
+            <fieldset
+              className="contents"
+              disabled={isBatching || Boolean(pendingCandidateId)}
+              aria-busy={isBatching || Boolean(pendingCandidateId)}
+            >
+              <ActionToast
+                title={t('Dismissed from Inbox')}
+                detail={dismissedCandidateUndo.detail}
+                actionLabel={dismissedCandidateUndo.needsRecheck ? t('Recheck') : t('Undo')}
+                dismissLabel={t('Close')}
+                onAction={() => void restoreDismissedCandidates()}
+                onDismiss={() => {
+                  setDismissedCandidateUndo(undefined)
+                  setUndoNotice(undefined)
+                }}
+                testId="literature-dismiss-undo"
+                className="static w-full max-w-none shadow-none"
+              />
+            </fieldset>
           ) : null}
           {linkFailure && linkFailure.scopeKey === entriesKey ? (
             <div className="mt-2">
@@ -6477,6 +6519,42 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   'References in this collection will remain in All references. This action cannot be undone.'
                 )}
               </AlertDialog.Description>
+              {promotedCollections.length ? (
+                <div className="mt-3 space-y-2 text-sm">
+                  <p>{t('Child collections will move to the top level.')}</p>
+                  <ul className="space-y-2">
+                    {promotedCollections.map((child) => (
+                      <li
+                        key={child.id}
+                        className="flex flex-wrap items-center justify-between gap-2"
+                      >
+                        <span className="min-w-0 break-words">{child.name}</span>
+                        {conflictingCollections.some(({ id }) => id === child.id) ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isDeletingCollection}
+                            onClick={() => {
+                              setCollectionPendingDelete(undefined)
+                              openEditCollection(child)
+                            }}
+                          >
+                            {t('Rename conflicting collection')}
+                          </Button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {conflictingCollections.length ? (
+                    <p role="alert">
+                      {t(
+                        'A child collection would duplicate a top-level name. Rename it before deleting this collection.'
+                      )}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               {collectionDeleteError ? (
                 <p className="mt-3 text-sm text-danger-000" role="alert">
                   {collectionDeleteError}
@@ -6499,7 +6577,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               <Button
                 type="button"
                 variant="destructive"
-                disabled={isDeletingCollection}
+                disabled={isDeletingCollection || conflictingCollections.length > 0}
                 onClick={() => void deleteCollection()}
               >
                 {isDeletingCollection ? (
@@ -6650,6 +6728,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         open={Boolean(pendingLiteratureReading) && !readingProjectFormDialog.dialogProps.open}
         onOpenChange={(open) => {
           if (open || startingReadingProjectId) return
+          setReadingProjectQuery('')
           setPendingLiteratureReading(undefined)
           setReadingProjectError(undefined)
         }}
@@ -6706,28 +6785,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 ) : null}
                 {projectsLoaded ? (
                   activeProjects.length > 0 ? (
-                    <div className="grid gap-2">
-                      {activeProjects.map((project) => (
-                        <Button
-                          key={project.id}
-                          type="button"
-                          variant="outline"
-                          className="min-w-0 justify-start"
-                          disabled={Boolean(startingReadingProjectId)}
-                          onClick={() => void startReadingInProject(project.id)}
-                        >
-                          {startingReadingProjectId === project.id ? (
-                            <LoaderCircle
-                              className="size-4 animate-spin motion-reduce:animate-none"
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            <FolderOpen className="size-4" aria-hidden="true" />
-                          )}
-                          <span className="truncate">{project.name}</span>
-                        </Button>
-                      ))}
-                    </div>
+                    <ProjectPicker
+                      projects={activeProjects}
+                      query={readingProjectQuery}
+                      onQueryChange={setReadingProjectQuery}
+                      disabled={Boolean(startingReadingProjectId)}
+                      pendingId={startingReadingProjectId}
+                      onSelect={(id) => void startReadingInProject(id)}
+                    />
                   ) : (
                     <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border-300/80 bg-bg-100 p-4">
                       <FolderPlus className="size-5 text-muted-foreground" aria-hidden="true" />
@@ -6788,6 +6853,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           }}
           onContinue={(documents) => {
             setBatchReading(undefined)
+            setReadingProjectQuery('')
             setReadingProjectError(undefined)
             if (selectedProject) void startReadingInProject(selectedProject.id, documents)
             else setPendingLiteratureReading(documents)
@@ -6815,26 +6881,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               .catch(() => undefined)
         }}
       />
-      {dismissedCandidateUndo ? (
-        <fieldset
-          className="contents"
-          disabled={isBatching || Boolean(pendingCandidateId)}
-          aria-busy={isBatching || Boolean(pendingCandidateId)}
-        >
-          <ActionToast
-            title={t('Dismissed from Inbox')}
-            detail={dismissedCandidateUndo.detail}
-            actionLabel={dismissedCandidateUndo.needsRecheck ? t('Recheck') : t('Undo')}
-            dismissLabel={t('Close')}
-            onAction={() => void restoreDismissedCandidates()}
-            onDismiss={() => {
-              setDismissedCandidateUndo(undefined)
-              setUndoNotice(undefined)
-            }}
-            testId="literature-dismiss-undo"
-          />
-        </fieldset>
-      ) : null}
     </main>
   )
 }

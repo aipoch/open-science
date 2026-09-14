@@ -820,6 +820,19 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         existing?.unsavedTitle === true && existing.title !== session.title
           ? { title: existing.title, unsavedTitle: true as const }
           : {}
+      // A newer idle snapshot may have been captured before this client's prompt was appended.
+      // Its missing prompt cannot acknowledge or cancel that local run. Check the complete graph,
+      // since a terminal snapshot can acknowledge the prompt while displaying a different Branch.
+      const unacknowledgedRun =
+        existing?.status === 'running' &&
+        existing.activeRun &&
+        session.status === 'idle' &&
+        !session.archivedAt &&
+        !(session.conversationGraph?.messages ?? session.messages).some(
+          (message) => message.id === existing.activeRun?.promptMessageId
+        )
+          ? { activeRun: existing.activeRun, status: existing.status }
+          : {}
       const hydratedWithTransientState = {
         ...hydratedSession,
         archivedAt: existing
@@ -827,7 +840,8 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           : session.archivedAt,
         ...retainedPlanHistory,
         ...currentPlanProjection,
-        ...unsavedLocalTitle
+        ...unsavedLocalTitle,
+        ...unacknowledgedRun
       }
       markExternallyHydratedSession(hydratedWithTransientState, session)
       const nextSessions = [
@@ -1016,10 +1030,20 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         } as Partial<State>
       }
 
+      const preserveLocalBranch =
+        mode === 'merge-upload-identities' &&
+        current.conversationGraph &&
+        session.conversationGraph &&
+        current.conversationGraph.frames.find(
+          (frame) => frame.id === current.conversationGraph?.rootFrameId
+        )?.activeBranchId !==
+          session.conversationGraph.frames.find(
+            (frame) => frame.id === session.conversationGraph?.rootFrameId
+          )?.activeBranchId
       let projected: ChatSession
       if (current === source && mode === 'replace-persisted-if-current') {
         projected = withTransientSessionState(session, current)
-      } else if (current === source) {
+      } else if (current === source && !preserveLocalBranch) {
         const flat = mergeDurableUploadProjection(
           source.messages,
           source.messages,

@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+const ipcEvents = await vi.hoisted(async () => {
+  const { EventEmitter } = await import('node:events')
+  return new EventEmitter()
+})
+
 const fixture = vi.hoisted(() => {
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   return {
@@ -10,7 +15,13 @@ const fixture = vi.hoisted(() => {
     shutdownRemote: vi.fn(async () => {}),
     exited: Promise.resolve(),
     finishExit: () => {},
-    failAt: 'web' as 'icon' | 'remote' | 'web',
+    failAt: 'web' as 'icon' | 'remote' | 'web' | 'none',
+    ready: Promise.resolve(),
+    finishReady: () => {},
+    shutdownBackends: undefined as (() => Promise<unknown>) | undefined,
+    configureDesktop: vi.fn(),
+    syncViewState: vi.fn(async () => {}),
+    sender: { id: 7, send: vi.fn(), isDestroyed: () => false },
     failure: Object.assign(new Error('listen EADDRINUSE'), { code: 'EADDRINUSE' }),
     electron: {
       app: {
@@ -30,12 +41,13 @@ const fixture = vi.hoisted(() => {
       protocol: { registerSchemesAsPrivileged: vi.fn() },
       nativeImage: {},
       nativeTheme: {},
-      ipcMain: {},
+      ipcMain: ipcEvents,
       powerMonitor: {},
       crashReporter: {}
     }
   }
 })
+vi.mock('electron', () => fixture.electron)
 vi.mock('node:module', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:module')>()
   return {
@@ -117,7 +129,12 @@ vi.mock('./settings/repository', () => ({
 vi.mock('./ipc', () => ({
   registerIpcHandlers: async () => ({
     dispose: fixture.disposeRuntime,
-    notificationInbox: { configureDesktop: vi.fn() },
+    notificationInbox: {
+      configureDesktop: fixture.configureDesktop,
+      syncViewState: fixture.syncViewState,
+      refreshBadge: vi.fn()
+    },
+    taskNotifications: { setActivationHandler: () => fixture.finishReady() },
     settingsService: {
       getAppIconVariant: async () => {
         if (fixture.failAt === 'icon') throw fixture.failure
@@ -136,12 +153,22 @@ vi.mock('./tray', () => ({
   refreshAppTrayLocale: vi.fn(),
   setTrayIconVariant: vi.fn()
 }))
-vi.mock('./app-lifecycle', () => ({ installAppLifecycle: vi.fn() }))
+vi.mock('./app-lifecycle', () => ({
+  installAppLifecycle: (options: { shutdownBackends: () => Promise<unknown> }) => {
+    fixture.shutdownBackends = options.shutdownBackends
+    return {
+      showMainWindow: vi.fn(),
+      getMainWindow: () => ({ webContents: fixture.sender, isFocused: () => true }),
+      isMainWindowHidden: () => false,
+      onSystemShutdown: vi.fn()
+    }
+  }
+}))
 vi.mock('./ipc-handler-registry', () => ({ disposeIpcHandlerRegistry: vi.fn() }))
 vi.mock('./web-service', () => ({
   createWebServiceController: () => ({
     ensureStarted: async () => {
-      throw fixture.failure
+      if (fixture.failAt === 'web') throw fixture.failure
     },
     dispose: fixture.disposeWeb
   }),
@@ -183,18 +210,20 @@ vi.mock('./notifications/desktop-badge', () => ({
 vi.mock('./notifications/notification-inbox-controller', () => ({
   wireNotificationInboxController: vi.fn()
 }))
-vi.mock('./notifications/unread-task-ipc', () => ({
-  registerUnreadTaskIpc: () => ({ confirmSessionVisible: async () => false })
-}))
 
 const monitorListeners = process.listeners('uncaughtExceptionMonitor')
 beforeEach(() => {
   vi.resetModules()
   vi.clearAllMocks()
+  ipcEvents.removeAllListeners()
   fixture.exited = new Promise<void>((resolve) => {
     fixture.finishExit = resolve
   })
   fixture.electron.app.exit.mockImplementation(() => fixture.finishExit())
+  fixture.ready = new Promise<void>((resolve) => {
+    fixture.finishReady = resolve
+  })
+  fixture.shutdownBackends = undefined
   fixture.failAt = 'web'
   fixture.disposeWeb.mockReset().mockResolvedValue()
   fixture.disposeRuntime.mockReset().mockResolvedValue()
@@ -258,3 +287,79 @@ it.each(['reject', 'hang'] as const)(
     )
   }
 )
+
+it.each(['icon', 'remote', 'web'] as const)(
+  'removes the real visibility IPC listener when %s startup fails',
+  async (stage) => {
+    fixture.failAt = stage
+    const external = vi.fn()
+    ipcEvents.on('notifications:sync-unread-view', external)
+    await import('./index')
+    await fixture.exited
+    expect(fixture.startupFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ error: fixture.failure })
+    )
+    expect(ipcEvents.listeners('notifications:sync-unread-view')).toEqual([external])
+  }
+)
+
+it('stops visibility writes before runtime disposal and fails pending probes closed on shutdown', async () => {
+  fixture.failAt = 'none'
+  const external = vi.fn()
+  ipcEvents.on('notifications:sync-unread-view', external)
+  const emitView = (): void => {
+    ipcEvents.emit(
+      'notifications:sync-unread-view',
+      { sender: fixture.sender },
+      { visibleSessionId: 'session-1' }
+    )
+  }
+  await import('./index')
+  await fixture.ready
+  emitView()
+  await Promise.resolve()
+  expect(fixture.syncViewState).toHaveBeenCalledOnce()
+  const desktop = fixture.configureDesktop.mock.calls[0][0] as {
+    confirmSessionVisible: (sessionId: string) => Promise<boolean>
+  }
+  const settled = vi.fn()
+  void desktop.confirmSessionVisible('session-1').then(settled)
+  expect(fixture.sender.send).toHaveBeenCalledWith(
+    'notifications:probe-unread-view',
+    expect.any(Number)
+  )
+  let finishRuntime!: () => void
+  const runtimePaused = new Promise<void>((resolve) => {
+    finishRuntime = resolve
+  })
+  let enterRuntime!: () => void
+  const runtimeEntered = new Promise<void>((resolve) => {
+    enterRuntime = resolve
+  })
+  fixture.disposeRuntime.mockImplementation(async () => {
+    emitView()
+    enterRuntime()
+    await runtimePaused
+  })
+  const shutdown = fixture.shutdownBackends!()
+  await runtimeEntered
+  expect.soft(fixture.syncViewState).toHaveBeenCalledOnce()
+  expect.soft(settled).toHaveBeenCalledExactlyOnceWith(false)
+  expect.soft(ipcEvents.listeners('notifications:sync-unread-view')).toEqual([external])
+  finishRuntime()
+  await shutdown
+  await fixture.shutdownBackends!()
+  await Promise.resolve()
+  expect.soft(fixture.syncViewState).toHaveBeenCalledOnce()
+  expect.soft(settled).toHaveBeenCalledExactlyOnceWith(false)
+  expect.soft(ipcEvents.listeners('notifications:sync-unread-view')).toEqual([external])
+  expect(fixture.disposeRuntime).toHaveBeenCalledOnce()
+  fixture.sender.send.mockClear()
+  emitView()
+  const retired = vi.fn()
+  void desktop.confirmSessionVisible('session-2').then(retired)
+  await Promise.resolve()
+  expect.soft(retired).toHaveBeenCalledExactlyOnceWith(false)
+  expect.soft(fixture.sender.send).not.toHaveBeenCalled()
+  expect(fixture.syncViewState).toHaveBeenCalledOnce()
+})

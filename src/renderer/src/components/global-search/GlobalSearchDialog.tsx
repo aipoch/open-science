@@ -35,7 +35,6 @@ import { SearchDetails } from './SearchDetails'
 import { SearchResultFilters } from './SearchResultFilters'
 import { ErrorNotice } from '@/components/error-notice'
 import { useSearchSummaryCounts } from './use-search-summary-counts'
-import { useRecentSearches } from './use-recent-searches'
 import { SearchHighlight } from './SearchHighlight'
 import {
   emptySearchPage,
@@ -107,7 +106,6 @@ export const GlobalSearchDialog = ({
     updateStickyHeadings(listRef.current)
   })
   const [query, setQuery] = useState('')
-  const { recentSearches, rememberSearch } = useRecentSearches()
   const [category, setCategory] = useState<SearchCategory | 'all'>('all')
   const [currentProjectOnly, setCurrentProjectOnly] = useState(false)
   const [sort, setSort] = useState<SearchSort>('relevance')
@@ -126,6 +124,11 @@ export const GlobalSearchDialog = ({
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const view = useNavigationStore((state) => state.view)
   const restrictToProject = currentProjectOnly && view === 'workspace' && !!activeProjectId
+  const activeFilterCount =
+    Number(restrictToProject) +
+    Number(sort !== 'relevance') +
+    Number(days !== 0) +
+    Number(['messages', 'uploads', 'generated', 'library'].includes(category) && subtype !== 'all')
   // Transcript stream chunks do not affect search metadata or restart its requests.
   const sessionMetadata = useSessionStore(
     useShallow((state) =>
@@ -293,7 +296,6 @@ export const GlobalSearchDialog = ({
     onOpenChange(false)
   }
   const openResult = (result: SearchResult): void => {
-    rememberSearch(query)
     const nav = useNavigationStore.getState()
     if (result.kind === 'uploads' || result.kind === 'generated') {
       const show = (): void => {
@@ -673,59 +675,69 @@ export const GlobalSearchDialog = ({
                 </Button>
               </Dialog.Close>
             </div>
-            <div className="global-search-chips" aria-label={t('Search categories')}>
-              {(['all', ...SEARCH_CATEGORIES] as const).map((key) => {
-                const Icon = key === 'all' ? Grid2X2 : icons[key]
-                const count =
-                  key === 'all'
-                    ? SEARCH_CATEGORIES.reduce(
-                        (sum, category) => sum + groups[category].totalCount,
-                        0
-                      )
-                    : groups[key].totalCount
-                return (
-                  <button
-                    type="button"
-                    key={key}
-                    data-category={key}
-                    aria-pressed={category === key}
-                    onClick={() => {
-                      setCategory(key)
-                      setSubtype('all')
-                      resetSelection()
-                    }}
-                    className="search-category-chip transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <Icon aria-hidden="true" />
-                    {labels[key]}
-                    {query.trim() && (
-                      <small>
-                        {(
-                          key === 'all'
-                            ? SEARCH_CATEGORIES.some(
-                                (category) => groups[category].loading || groups[category].error
-                              )
-                            : groups[key].loading || groups[key].error
+            <div className="global-search-toolbar">
+              <div className="global-search-chips" aria-label={t('Search categories')}>
+                {(['all', ...SEARCH_CATEGORIES] as const).map((key) => {
+                  const Icon = key === 'all' ? Grid2X2 : icons[key]
+                  const count =
+                    key === 'all'
+                      ? SEARCH_CATEGORIES.reduce(
+                          (sum, category) => sum + groups[category].totalCount,
+                          0
                         )
-                          ? '…'
-                          : count}
-                      </small>
-                    )}
-                  </button>
-                )
-              })}
-              <button
-                type="button"
-                data-testid="global-search-advanced-toggle"
-                aria-expanded={advancedOpen}
-                aria-controls={advancedPanelId}
-                onClick={() => setAdvancedOpen((open) => !open)}
-                className="search-category-chip search-advanced-toggle transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <SlidersHorizontal aria-hidden="true" />
-                {t('Advanced filters')}
-              </button>
+                      : groups[key].totalCount
+                  return (
+                    <button
+                      type="button"
+                      key={key}
+                      data-category={key}
+                      aria-pressed={category === key}
+                      onClick={() => {
+                        setCategory(key)
+                        setSubtype('all')
+                        resetSelection()
+                      }}
+                      className="search-category-chip transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <Icon aria-hidden="true" />
+                      {labels[key]}
+                      {query.trim() && (
+                        <small>
+                          {(
+                            key === 'all'
+                              ? SEARCH_CATEGORIES.some(
+                                  (category) => groups[category].loading || groups[category].error
+                                )
+                              : groups[key].loading || groups[key].error
+                          )
+                            ? '…'
+                            : count}
+                        </small>
+                      )}
+                    </button>
+                  )
+                })}
+                <button
+                  type="button"
+                  data-testid="global-search-advanced-toggle"
+                  aria-expanded={advancedOpen}
+                  aria-controls={advancedPanelId}
+                  onClick={() => setAdvancedOpen((open) => !open)}
+                  className="search-category-chip search-advanced-toggle transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <SlidersHorizontal aria-hidden="true" />
+                  {t('Advanced filters')}
+                  {activeFilterCount > 0 && (
+                    <span className="search-filter-count">{activeFilterCount}</span>
+                  )}
+                </button>
+              </div>
             </div>
+            <p className="px-4 pb-2 text-xs text-muted-foreground">
+              {t(
+                'Uploaded files: names and indexed content. Generated files: names only. Unindexed content is not searched.'
+              )}
+            </p>
           </header>
           <div className="global-search-body min-h-0 flex-1" data-expanded={!!selected}>
             <section
@@ -738,23 +750,6 @@ export const GlobalSearchDialog = ({
                 onScroll={scrollMore}
                 onWheel={scrollMore}
               >
-                {!query.trim() && recentSearches.length > 0 && (
-                  <div className="search-recent-queries" aria-label={t('Recent searches')}>
-                    {recentSearches.map((value) => (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() => {
-                          setQuery(value)
-                          resetSelection()
-                          inputRef.current?.focus()
-                        }}
-                      >
-                        {value}
-                      </button>
-                    ))}
-                  </div>
-                )}
                 <div id={listboxId} role="listbox" aria-label={t('Search results')}>
                   {shownCategories.map((key) => {
                     const group = groups[key]

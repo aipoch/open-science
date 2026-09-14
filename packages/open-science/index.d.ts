@@ -1,3 +1,19 @@
+export type BootstrapRequest =
+  | { action: 'status' | 'runtime' | 'codex-prepare' | 'codex-complete' }
+  | { action: 'provider'; key: string; model: string }
+  | { action: 'openalex'; key: string }
+export type BootstrapResult =
+  | { ok: true; providerId?: string; next?: { runtime?: string[]; provider?: string[] } }
+  | {
+      ok: false
+      code:
+        | 'invalid_request'
+        | 'configuration_conflict'
+        | 'runtime_unavailable'
+        | 'credential_invalid'
+        | 'bootstrap_failed'
+    }
+
 // Keep these standalone published types aligned with the safe Settings contracts.
 // connector-types.test.ts verifies complete request and response equivalence.
 export type ToolPermission = 'allow' | 'ask' | 'block'
@@ -200,6 +216,36 @@ export type DelegationPolicy = 'allow' | 'deny'
 export type TurnIntent = 'plan-first'
 export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export type AgentFramework = 'claude-code' | 'opencode' | 'codex' | 'codebuddy'
+export type ReadinessStatus = 'ready' | 'missing' | 'not_ready'
+export type ProviderReadinessReason =
+  | 'credential_invalid'
+  | 'network'
+  | 'model-not-found'
+  | 'bad-url'
+  | 'timeout'
+  | 'incompatible'
+  | 'server-error'
+  | 'unknown'
+export type DoctorReport = {
+  ready: boolean
+  checks: {
+    daemon: { status: 'ready' }
+    runtime: { status: ReadinessStatus; framework: AgentFramework }
+    provider:
+      { status: 'ready' | 'missing' } | { status: 'not_ready'; reason?: ProviderReadinessReason }
+    skills: { status: 'ready'; enabled: string[] }
+  }
+  next: Array<{
+    code: 'runtime_missing' | 'runtime_not_ready' | 'provider_missing' | 'provider_not_ready'
+    argv?: readonly string[]
+  }>
+}
+export type AgentRuntime = {
+  framework: AgentFramework
+  status: ReadinessStatus
+  version?: string
+  source?: 'managed' | 'external'
+}
 export type AgentConfiguration = {
   providerId: string
   model?: string
@@ -238,7 +284,9 @@ export type ModelRouting =
     }
 export type RequestOptions = {
   idempotencyKey?: string
+  /** Aborts this request, not work already accepted by the service. */
   signal?: AbortSignal
+  /** Per-request deadline in milliseconds, including response-body consumption. */
   timeoutMs?: number
 }
 export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
@@ -457,6 +505,12 @@ export class OpenScienceClient {
     requestTimeoutMs?: number
   })
   health(options?: RequestOptions): Promise<unknown>
+  bootstrap(request: BootstrapRequest, options?: RequestOptions): Promise<BootstrapResult>
+  installCli(
+    options?: RequestOptions
+  ): Promise<{ installed: boolean; onPath: boolean; target: string; pathHint?: string }>
+  doctor(options?: RequestOptions): Promise<DoctorReport>
+  listRuntimes(options?: RequestOptions): Promise<AgentRuntime[]>
   listConnectors(options?: RequestOptions): Promise<ConnectorsSnapshot>
   getConnector(
     id: string,
@@ -588,13 +642,18 @@ export class OpenScienceClient {
     options?: RequestOptions
   ): Promise<Run>
   getRun(runId: string, options?: RequestOptions): Promise<Run>
+  /** Explicitly cancels the server run and waits for finalization. */
   cancelRun(runId: string, options?: RequestOptions): Promise<Run>
   waitForRun(
     runId: string,
     options?: {
+      /** Finite positive delay between polls; defaults to 250 milliseconds. */
       pollIntervalMs?: number
+      /** Returns a still-running run when it needs attention; defaults to false. */
       returnOnAttention?: boolean
+      /** Stops local waiting without cancelling the run. */
       signal?: AbortSignal
+      /** Total wait budget; omitted means no total deadline. Each poll retains requestTimeoutMs. */
       timeoutMs?: number
     }
   ): Promise<Run>

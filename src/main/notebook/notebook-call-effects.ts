@@ -245,8 +245,13 @@ const R_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = new Map
   ['read.FCS', { kind: 'read', position: 0, keywords: ['filename'] }],
   ['read.flowSet', { kind: 'read', position: 0, keywords: ['files'], inputForm: 'paths' }],
   ['write.FCS', { kind: 'write', position: 1, keywords: ['filename'] }],
+  // ArchR keeps ArrowFiles/project as its first positional argument and the
+  // output directory as the second. Named outputDirectory still takes priority.
+  ['saveArchRProject', { kind: 'write', position: 1, keywords: ['outputDirectory'] }],
+  ['ArchRProject', { kind: 'write', position: 1, keywords: ['outputDirectory'] }],
   ['tximport', { kind: 'read', position: 0, keywords: ['files'], inputForm: 'paths' }],
   ['readMSData', { kind: 'read', position: 0, keywords: ['files'], inputForm: 'paths' }],
+  ['createArrowFiles', { kind: 'read', position: 0, keywords: ['inputFiles'], inputForm: 'paths' }],
   ['Spectra', { kind: 'read', position: 0, keywords: ['object'], inputForm: 'paths' }],
   ...[
     'dget',
@@ -301,6 +306,8 @@ const R_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = new Map
     'read_xls',
     'read_xlsx',
     'read_xpt',
+    'readVcf',
+    'read.vcfR',
     'read_yaml',
     'read_xml',
     'h5read',
@@ -402,6 +409,8 @@ const R_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = new Map
   ['read_outcome_data', { kind: 'read', position: 0, keywords: ['filename'] }],
   ['getGEO', { kind: 'read', position: 1, keywords: ['filename'] }],
   ['Read10X_h5', { kind: 'read', position: 0, keywords: ['filename'] }],
+  ['Read10X', { kind: 'read', position: 0, keywords: ['data.dir'] }],
+  ['Load10X_Spatial', { kind: 'read', position: 0, keywords: ['data.dir'] }],
   ...[
     'read_csv',
     'read_csv2',

@@ -166,6 +166,7 @@ const environmentManifest: NotebookEnvironmentManifest = {
 
 const createHarness = (
   options: {
+    afterCommit?: () => Promise<void>
     now?: () => number
     appendFailure?: Error
     updateFailure?: Error
@@ -255,6 +256,7 @@ const createHarness = (
         return options.omitUpdatedRun ? documentWith([]) : document
       }
     },
+    afterCommit: options.afterCommit,
     notifyChanged: () => events.push(`notify:${document.runs[0]?.status}`),
     now: options.now ?? (() => 200)
   })
@@ -879,4 +881,33 @@ describe('NotebookRunTerminalizationOwner', () => {
       'notify:completed'
     ])
   })
+})
+
+it('keeps execution completed when a post-commit projection fails and retries without execution', async () => {
+  let projectionAttempts = 0
+  let executions = 0
+  const harness = createHarness({
+    afterCommit: async () => {
+      if (++projectionAttempts === 1) throw new Error('projection failed')
+    }
+  })
+  const admission = await harness.owner.admit({ session, queuedRun: queuedRun('projection-retry') })
+  await expect(
+    harness.owner.runAdmitted({
+      session,
+      queuedRun: admission.run,
+      invoke: async () => {
+        executions += 1
+        return completedResult()
+      }
+    })
+  ).rejects.toThrow('projection failed')
+  expect(harness.document().runs[0]).toMatchObject({
+    status: 'completed',
+    text: { stdout: 'hello\n' }
+  })
+  await harness.owner.reconcilePending(session)
+  expect(projectionAttempts).toBe(2)
+  expect(executions).toBe(1)
+  expect(harness.document().runs[0].status).toBe('completed')
 })

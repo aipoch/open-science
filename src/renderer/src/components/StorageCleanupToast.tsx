@@ -26,7 +26,6 @@ const StorageCleanupToast = (): React.JSX.Element | null => {
         openSettingsToPanel('storage')
       }}
       onDismiss={() => setDismissed(true)}
-      className="top-32"
       testId="storage-cleanup-toast"
     />
   )

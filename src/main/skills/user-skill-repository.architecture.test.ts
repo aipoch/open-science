@@ -145,7 +145,8 @@ const publicOperations = (): string[] => {
         getModifiers(member)?.some((modifier) =>
           [SyntaxKind.PrivateKeyword, SyntaxKind.ProtectedKeyword].includes(modifier.kind)
         )
-      return !hidden && isMethodDeclaration(member) && isIdentifier(member.name)
+      // Overload signatures describe the same operation; inventory its implementation once.
+      return !hidden && isMethodDeclaration(member) && member.body && isIdentifier(member.name)
         ? [member.name.text]
         : []
     })
@@ -170,6 +171,7 @@ describe('User Skill repository architecture', () => {
   it('locks the compatibility export and operation inventories', () => {
     expect(exportInventory()).toEqual([
       'type:ImportOutcome',
+      'value:MarketplaceInstallConflict',
       'value:SAFE_SKILL_DIRECTORY_NAME',
       'value:SAFE_SKILL_NAME',
       'value:UserSkillRepository',
@@ -187,8 +189,10 @@ describe('User Skill repository architecture', () => {
       'importFromGitHub',
       'importFromZip',
       'importFromZipBatch',
+      'installMarketplace',
       'list',
       'listAgentHomeSkills',
+      'marketplaceInstallation',
       'matchImportedAgentHomeSkills',
       'previewAgentHomeSkill',
       'previewGitHubSkill',

@@ -1,3 +1,5 @@
+import { useSessionStore } from '@/stores/session-store'
+import { usePackageOperationStore, sessionExportLocked } from '../../stores/package-operation-store'
 import { Tabs } from 'radix-ui'
 import {
   createEnvironmentFromLock,
@@ -168,7 +170,13 @@ const partialEnvironmentLockSummary = (
 ): string => {
   const details = new Set<string>()
   for (const reason of reasons ?? []) {
-    if (reason === 'environment-manifest-partial') {
+    if (reason === 'external-interpreter-required') {
+      details.add(
+        t(
+          'Download the lock bundle to restore packages with a matching interpreter. This does not recreate the full environment.'
+        )
+      )
+    } else if (reason === 'environment-manifest-partial') {
       details.add(t('Package inventory was incomplete.'))
     } else if (
       reason === 'non-conda-package-detected' ||
@@ -182,7 +190,9 @@ const partialEnvironmentLockSummary = (
     }
   }
   return [
-    t('Inspection only; this partial lock cannot run a reproducibility check.'),
+    ...(reasons?.includes('external-interpreter-required')
+      ? []
+      : [t('Inspection only; this partial lock cannot run a reproducibility check.')]),
     ...details
   ].join(' ')
 }
@@ -734,6 +744,16 @@ const ArtifactProvenancePanel = ({
     message: string
   }>()
   const environmentLockEntries = useArtifactEnvironmentLockStore((state) => state.entries)
+  const importedSession = useSessionStore((state) =>
+    Boolean(
+      state.sessions.find(
+        (session) => session.id === item.sessionId && session.projectId === projectId
+      )?.packageOrigin
+    )
+  )
+  const exportingSession = usePackageOperationStore((state) =>
+    sessionExportLocked(state.operation, { id: item.sessionId, projectId })
+  )
   const [notebookExportFailure, setNotebookExportFailure] = useState<{
     key: string
     message: string
@@ -1763,7 +1783,10 @@ const ArtifactProvenancePanel = ({
                   />
                 </div>
               ) : codeReconstructionResult?.status === 'error' ? (
-                <p className="min-w-0 flex-1 truncate text-sm text-danger-000" role="alert">
+                <p
+                  className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere] text-sm text-danger-000"
+                  role="alert"
+                >
                   {codeReconstructionResult.message}
                 </p>
               ) : codeReconstructionState?.state === 'unavailable' ? (
@@ -1971,6 +1994,7 @@ const ArtifactProvenancePanel = ({
         ) : null}
         {provenance && activeTab === 'reproducibility' && deferredSectionReady ? (
           <ArtifactReproducibilityPanel
+            readOnly={importedSession}
             key={provenanceKey}
             projection={provenance.execution?.reproducibility}
             analysisRevision={provenance.execution?.analysisRevision}
@@ -2123,7 +2147,12 @@ const ArtifactProvenancePanel = ({
                               size="sm"
                               className="max-w-full whitespace-nowrap text-xs"
                               aria-label={t('Create reusable environment')}
-                              disabled={creatingEnvironment || details === undefined}
+                              disabled={
+                                creatingEnvironment ||
+                                details === undefined ||
+                                importedSession ||
+                                exportingSession
+                              }
                               onClick={() => void createEnvironmentFromLock(lockRequest(lock))}
                             >
                               {creating ? (

@@ -1,12 +1,31 @@
 import type { MessageSearchRequest, MessageSearchPage } from './message-search'
 import type {
+  SkillMarketplaceCatalog,
+  SkillMarketplaceCatalogRequest,
+  SkillMarketplaceBatch,
+  SkillMarketplaceBatchRequest,
+  SkillMarketplaceBatchStartResult,
+  SkillMarketplaceDetail,
+  SkillMarketplaceDetailRequest,
+  SkillMarketplaceInstallRequest,
+  SkillMarketplaceInstallResult,
+  SkillMarketplaceResult
+} from './skill-marketplace'
+import type {
   LiteratureExportRecordRequest,
   LiteratureExportRecordResult
 } from './literature-export'
 import type { LiteratureChangedEvent } from './literature'
+import type {
+  ParsePdfStructureRequest,
+  ReadCachedPdfStructureRequest,
+  ReadPdfStructureThumbnailRequest,
+  PdfStructureResult
+} from './pdf-structure'
 import type { ProvenanceReadResult } from './provenance-read-result'
 import type { LiteratureJobRequest, LiteratureJobsResult } from './literature-jobs'
 import type { LiteratureFullTextRequest, LiteratureFullTextResult } from './literature'
+import type { LocalModelSnapshot } from './local-models'
 import type {
   AcpCancelPromptRequest,
   AcpAgentRuntimeUpdate,
@@ -140,6 +159,7 @@ import type {
 } from './specialist-package'
 import type {
   CancelComputeJobRequest,
+  RetryComputeJobHarvestRequest,
   ComputeApprovalDecision,
   ComputeApprovalRequest,
   ComputeJobsListFilter,
@@ -362,6 +382,12 @@ import type {
 } from './session-persistence-flush'
 import type { ExportConversationRequest, ExportConversationResult } from './conversation-export'
 import type {
+  SessionPackageRequest,
+  SessionPackageExportResult,
+  SessionPackageImportRequest,
+  SessionPackageImportResult
+} from './session-package'
+import type {
   ClaudeDetectResult,
   ClaudeInstallEvent,
   ClaudeInstallResult,
@@ -474,7 +500,7 @@ import type {
   StorageStatus
 } from './storage'
 import type { CliLauncherStatus } from './cli'
-import type { AppInfo, DownloadProgress, UpdateStatus } from './update'
+import type { AppInfo, DownloadProgress, UpdateApplyOptions, UpdateStatus } from './update'
 import type {
   AppendUploadTransferRequest,
   BeginUploadTransferRequest,
@@ -1077,6 +1103,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'compute.jobsCancel': callable<(request: CancelComputeJobRequest) => Promise<JobStatusResult>>()(
     'compute',
     ['compute:jobs:cancel']
+  ),
+  'compute.jobsRetryHarvest': callable<(request: RetryComputeJobHarvestRequest) => Promise<void>>()(
+    'compute',
+    ['compute:jobs:retry-harvest']
   ),
   'compute.jobsSetRemoteCleanup': callable<
     (request: SetComputeJobRemoteCleanupRequest) => Promise<void>
@@ -1750,7 +1780,12 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     ) => Promise<RuntimeEnablement>
   >()('runtime', ['runtime:set-environment-enabled', LOCAL, RUNTIME_ENABLEMENT]),
   'runtime.setInstallAuthorized': callable<
-    (language: NotebookLanguage, envId: string, authorized: boolean) => Promise<RuntimeEnablement>
+    (
+      language: NotebookLanguage,
+      envId: string,
+      authorized: boolean,
+      library?: string
+    ) => Promise<RuntimeEnablement>
   >()('runtime', ['runtime:set-install-authorized', LOCAL, RUNTIME_INSTALL_AUTH]),
   'runtime.unregisterInterpreter': callable<
     (language: NotebookLanguage, path: string) => Promise<string[]>
@@ -1778,6 +1813,40 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.exportConversation': callable<
     (request: ExportConversationRequest) => Promise<ExportConversationResult>
   >()('sessions', ['sessions:export-conversation', MAPPED_ELECTRON]),
+  'sessions.exportPackage': callable<
+    (request: SessionPackageRequest) => Promise<SessionPackageExportResult>
+  >()('sessions', [
+    'sessions:export-package',
+    MAPPED_ELECTRON,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.importPackage': callable<
+    (request?: SessionPackageImportRequest, file?: File) => Promise<SessionPackageImportResult>
+  >()('sessions', [
+    'sessions:import-package',
+    MAPPED_ELECTRON,
+    'session-package-import-file',
+    POSITIONAL,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.packageOperation': callable<
+    (
+      request: import('./session-package').PackageOperationRequest
+    ) => Promise<import('./session-package').PackageOperationSnapshot | null>
+  >()('sessions', [
+    'sessions:package-operation',
+    MAPPED_ELECTRON,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.onPackageOperation': callable<
+    (
+      listener: (snapshot: import('./session-package').PackageOperationSnapshot) => void
+    ) => RemoveListener
+  >()('sessions', ['sessions:package-operation-changed', EVENT]),
   'sessions.list': callable<() => Promise<ListSessionSummariesResult>>()('sessions', [
     'sessions:list'
   ]),
@@ -1946,6 +2015,29 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   ]),
   'settings.getSettings': callable<() => Promise<SettingsSnapshot>>()('settings', [
     'settings:get-settings'
+  ]),
+  'settings.listSkillMarketplace': callable<
+    (
+      request?: SkillMarketplaceCatalogRequest
+    ) => Promise<SkillMarketplaceResult<SkillMarketplaceCatalog>>
+  >()('settings', ['settings:list-skill-marketplace']),
+  'settings.getSkillMarketplaceDetail': callable<
+    (
+      request: SkillMarketplaceDetailRequest
+    ) => Promise<SkillMarketplaceResult<SkillMarketplaceDetail>>
+  >()('settings', ['settings:get-skill-marketplace-detail']),
+  'settings.installSkillMarketplace': callable<
+    (request: SkillMarketplaceInstallRequest) => Promise<SkillMarketplaceInstallResult>
+  >()('settings', ['settings:install-skill-marketplace']),
+  'settings.startSkillMarketplaceBatch': callable<
+    (request: SkillMarketplaceBatchRequest) => Promise<SkillMarketplaceBatchStartResult>
+  >()('settings', ['settings:start-skill-marketplace-batch']),
+  'settings.getSkillMarketplaceBatch': callable<() => Promise<SkillMarketplaceBatch | null>>()(
+    'settings',
+    ['settings:get-skill-marketplace-batch']
+  ),
+  'settings.stopSkillMarketplaceBatch': callable<(id: string) => Promise<boolean>>()('settings', [
+    'settings:stop-skill-marketplace-batch'
   ]),
   'settings.getSkillDetail': callable<(id: string) => Promise<SkillDetailView>>()('settings', [
     'settings:get-skill-detail'
@@ -2556,12 +2648,68 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     undefined,
     RUNTIME_VALIDATED
   ]),
-  'update.apply': callable<() => Promise<UpdateStatus>>()('update', ['update:apply', LOCAL]),
+  'update.apply': callable<(options?: UpdateApplyOptions) => Promise<UpdateStatus>>()('update', [
+    'update:apply',
+    LOCAL
+  ]),
   'update.cancel': callable<() => Promise<UpdateStatus>>()('update', ['update:cancel', LOCAL]),
   'update.check': callable<() => Promise<UpdateStatus>>()('update', ['update:check']),
   'update.download': callable<() => Promise<UpdateStatus>>()('update', ['update:download', LOCAL]),
   'update.getAppInfo': callable<() => Promise<AppInfo>>()('update', ['update:get-app-info']),
   'update.getStatus': callable<() => Promise<UpdateStatus>>()('update', ['update:get-status']),
+  'pdfStructure.readCached': callable<
+    (request: ReadCachedPdfStructureRequest) => Promise<PdfStructureResult | undefined>
+  >()('pdf-structure', [
+    'pdf-structure:read-cached',
+    LOCAL,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'pdfStructure.parse': callable<
+    (request: ParsePdfStructureRequest) => Promise<PdfStructureResult>
+  >()('pdf-structure', ['pdf-structure:parse', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
+  'pdfStructure.cancel': callable<(requestId: string) => Promise<void>>()('pdf-structure', [
+    'pdf-structure:cancel',
+    LOCAL,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'pdfStructure.readThumbnail': callable<
+    (request: ReadPdfStructureThumbnailRequest) => Promise<string | undefined>
+  >()('pdf-structure', [
+    'pdf-structure:read-thumbnail',
+    LOCAL,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'pdfStructure.clearCache': callable<
+    () => Promise<{ removedBytes: number; retainedEntries: number }>
+  >()('pdf-structure', [
+    'pdf-structure:clear-cache',
+    LOCAL,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'localModels.getSnapshot': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
+    'local-models:get-snapshot',
+    LOCAL
+  ]),
+  'localModels.install': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
+    'local-models:install',
+    LOCAL
+  ]),
+  'localModels.cancel': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
+    'local-models:cancel',
+    LOCAL
+  ]),
+  'localModels.remove': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
+    'local-models:remove',
+    LOCAL
+  ]),
   'update.onProgress': callable<
     (listener: (progress: DownloadProgress) => void) => RemoveListener
   >()('update', ['update:progress', EVENT]),
@@ -2599,6 +2747,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'uploads.onTransferProgress': callable<
     (listener: AcpListener<UploadTransferProgress>) => RemoveListener
   >()('uploads', ['uploads:transfer-progress', ELECTRON_EVENT], { optionalMember: true }),
+  'uploads.recoverDraft': callable<
+    (request: { receipt: string }) => Promise<UploadedAttachment | null>
+  >()('uploads', ['uploads:recover-draft', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'uploads.readPreview': callable<
     (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
   >()('uploads', ['uploads:read-preview']),
@@ -2734,6 +2885,8 @@ const RENDERER_CAPABILITY_ORDER = Object.freeze([
   'specialist',
   'storage',
   'update',
+  'local-models',
+  'pdf-structure',
   'uploads',
   'window'
 ] as const)

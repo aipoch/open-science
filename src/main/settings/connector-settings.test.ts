@@ -43,6 +43,40 @@ const { ALL_CONNECTOR_IDS } = await import('../connectors/registry')
 
 // Exercises the durable Connector owner against a real on-disk repository.
 describe('ConnectorSettingsModule', () => {
+  it('validates OpenAlex before saving, persists enablement, and refuses to replace a key', async () => {
+    const probe = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 }))
+    service = new ConnectorSettingsModule(repository, probe)
+    const before = await repository.getSettings()
+    await expect(service.bootstrapOpenAlex('synthetic-key')).rejects.toMatchObject({
+      code: 'credential_invalid'
+    })
+    expect(await repository.getSettings()).toEqual(before)
+    await repository.setConnectorDisabled('literature', true)
+    probe.mockResolvedValue(new Response(null, { status: 200 }))
+    await service.bootstrapOpenAlex('synthetic-key')
+    const first = await new SettingsRepository(dir).getSettings()
+    expect(first.connectors?.openAlexApiKeyRef).toBeTruthy()
+    expect(first.connectors?.disabledConnectorIds ?? []).not.toContain('literature')
+    await service.bootstrapOpenAlex('synthetic-key')
+    expect((await repository.getSettings()).connectors?.openAlexApiKeyRef).toBe(
+      first.connectors?.openAlexApiKeyRef
+    )
+    await expect(service.bootstrapOpenAlex('replacement')).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    expect(await repository.getSettings()).toEqual(first)
+  })
+
+  it('preserves an OpenAlex key changed while a bootstrap probe is pending', async () => {
+    service = new ConnectorSettingsModule(repository, async () => {
+      await service.setOpenAlexCredential({ apiKey: 'human-key' })
+      return new Response(null, { status: 200 })
+    })
+    await expect(service.bootstrapOpenAlex('synthetic-key')).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    expect(keychain.encryptedValues).toContain('human-key')
+  })
   let dir: string
   let service: InstanceType<typeof ConnectorSettingsModule>
   let repository: InstanceType<typeof SettingsRepository>

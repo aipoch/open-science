@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { fireEvent } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -151,6 +152,224 @@ afterEach(() => {
 })
 
 describe('StoragePanel', () => {
+  const renderEditor = async (): Promise<void> => {
+    vi.mocked(window.api.storage.getInfo).mockResolvedValue({ ...richInfo, isDefault: false })
+    await act(async () => root.render(<StoragePanel />))
+    await openEditor()
+  }
+  const browse = async (): Promise<void> => {
+    await act(async () => clickButton((button) => button.textContent?.trim() === 'Browse…'))
+  }
+  const confirmAdopt = async (): Promise<void> => {
+    await act(async () => clickButton((button) => button.textContent?.trim() === 'Use this folder'))
+    await act(async () => {
+      const dialog = document.body.querySelector('[role="alertdialog"]')!
+      Array.from(dialog.querySelectorAll('button'))
+        .find((button) => button.textContent?.trim() === 'Use this folder')!
+        .click()
+    })
+  }
+
+  it('reports inspection rejection, preserves the input and allows a fresh inspection', async () => {
+    vi.mocked(window.api.storage.pickDirectory).mockResolvedValue('/candidate')
+    vi.mocked(window.api.storage.inspectDataRoot).mockRejectedValueOnce(
+      new Error('IPC unavailable')
+    )
+    await renderEditor()
+    await browse()
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not check this folder. Try again.'
+    )
+    expect(container.querySelector('input')?.value).toBe('/candidate')
+    expect(
+      Array.from(container.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Change location'
+      )?.disabled
+    ).toBe(true)
+    await browse()
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(
+      Array.from(container.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Change location'
+      )?.disabled
+    ).toBe(false)
+  })
+
+  it('reports picker rejection and permits another browse', async () => {
+    vi.mocked(window.api.storage.pickDirectory)
+      .mockRejectedValueOnce(new Error('IPC unavailable'))
+      .mockResolvedValueOnce('/candidate')
+    await renderEditor()
+    await browse()
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not open the folder picker. Try again.'
+    )
+    await browse()
+    expect(container.querySelector('input')?.value).toBe('/candidate')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it.each(['reject', 'business'] as const)(
+    'releases adoption busy state on %s failure and retries',
+    async (failure) => {
+      vi.mocked(window.api.storage.pickDirectory).mockResolvedValue('/candidate')
+      vi.mocked(window.api.storage.inspectDataRoot).mockResolvedValue({
+        kind: 'adopt',
+        dataRoot: '/candidate/OpenScience'
+      })
+      if (failure === 'reject')
+        vi.mocked(window.api.storage.setDataRootAndRelaunch).mockRejectedValueOnce(
+          new Error('IPC unavailable')
+        )
+      else
+        vi.mocked(window.api.storage.setDataRootAndRelaunch).mockResolvedValueOnce({
+          ok: false,
+          error: 'Could not switch to this folder.'
+        })
+      await renderEditor()
+      await browse()
+      await confirmAdopt()
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+        'Could not switch to this folder.'
+      )
+      expect(container.querySelector('input')?.value).toBe('/candidate')
+      expect(container.textContent).not.toContain('Switching…')
+      await confirmAdopt()
+      expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledTimes(2)
+      expect(container.textContent).toContain('Switching…')
+      expect(container.querySelector('input')?.matches(':disabled')).toBe(true)
+    }
+  )
+
+  it('reports default inspection rejection and allows retry', async () => {
+    vi.mocked(window.api.storage.inspectDataRoot).mockRejectedValueOnce(
+      new Error('IPC unavailable')
+    )
+    await renderEditor()
+    const useDefault = async (): Promise<void> => {
+      await act(async () =>
+        clickButton((b) => b.textContent?.includes('move it back to the default location') ?? false)
+      )
+    }
+    await useDefault()
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'The default location is not usable.'
+    )
+    await useDefault()
+    expect(window.api.storage.detectActive).toHaveBeenCalledOnce()
+  })
+
+  it.each(['resolve', 'reject'] as const)(
+    'ignores a stale inspection %s after a newer path',
+    async (outcome) => {
+      let resolve!: (value: { kind: 'adopt'; dataRoot: string }) => void
+      let reject!: (error: Error) => void
+      vi.mocked(window.api.storage.pickDirectory)
+        .mockResolvedValueOnce('/a')
+        .mockResolvedValueOnce('/b')
+      vi.mocked(window.api.storage.inspectDataRoot).mockImplementationOnce(
+        () =>
+          new Promise((yes, no) => {
+            resolve = yes
+            reject = no
+          })
+      )
+      await renderEditor()
+      await browse()
+      await browse()
+      await act(async () => {
+        if (outcome === 'resolve') resolve({ kind: 'adopt', dataRoot: '/a/OpenScience' })
+        else reject(new Error('late failure'))
+      })
+      expect(container.querySelector('input')?.value).toBe('/b')
+      expect(container.textContent).not.toContain('Use this folder')
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+    }
+  )
+
+  it.each(['picker', 'default', 'inspection'] as const)(
+    'invalidates pending %s work on cancel',
+    async (operation) => {
+      let finish!: () => void
+      await renderEditor()
+      if (operation === 'picker') {
+        vi.mocked(window.api.storage.pickDirectory).mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finish = () => resolve('/late')
+            })
+        )
+        await browse()
+      } else {
+        vi.mocked(window.api.storage.inspectDataRoot).mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finish = () => resolve({ kind: 'adopt', dataRoot: '/late/OpenScience' })
+            })
+        )
+        if (operation === 'default')
+          await act(async () =>
+            clickButton(
+              (b) => b.textContent?.includes('move it back to the default location') ?? false
+            )
+          )
+        else {
+          vi.mocked(window.api.storage.pickDirectory).mockResolvedValueOnce('/late')
+          await browse()
+        }
+      }
+      await act(async () => clickButton((b) => b.textContent?.trim() === 'Cancel'))
+      await act(async () => finish())
+      expect(container.querySelector('input')).toBeNull()
+      expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+      await openEditor()
+      expect(container.querySelector('input')?.value).toBe('')
+      expect(container.textContent).not.toContain('Use this folder')
+    }
+  )
+
+  it('invalidates an old classification as soon as typing starts', async () => {
+    vi.mocked(window.api.storage.pickDirectory).mockResolvedValue('/candidate')
+    await renderEditor()
+    await browse()
+    vi.mocked(window.api.storage.inspectDataRoot).mockImplementation(() => new Promise(() => {}))
+    await act(async () =>
+      fireEvent.change(container.querySelector('input')!, { target: { value: '/other' } })
+    )
+    expect(
+      Array.from(container.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Change location'
+      )?.disabled
+    ).toBe(true)
+  })
+
+  it('explains retained workspaces, pending cleanup and the limits of usage sizes', async () => {
+    useStorageInfoStore.setState({
+      status: richInfo,
+      info: {
+        ...richInfo,
+        cleanupPending: true,
+        usage: {
+          totalBytes: 17,
+          categories: [
+            {
+              key: 'workspaces',
+              bytes: 17,
+              children: [{ name: 'retained', bytes: 17, retainedAfterDelete: true }]
+            }
+          ]
+        }
+      },
+      scannedAt: Date.now()
+    })
+    await act(async () => root.render(<StoragePanel />))
+    clickButton((b) => b.textContent?.includes('Session workspaces') ?? false)
+    expect(container.textContent).toContain('Retained after deletion')
+    expect(container.textContent).toContain('Cleanup from an earlier move is still pending.')
+    expect(container.textContent).toContain('They are not estimates of space freed by deletion.')
+    expect(container.querySelector('button[aria-label="Open folder"]')).not.toBeNull()
+  })
+
   it('opens an individual retained Session workspace from its usage row', async () => {
     useStorageInfoStore.setState({
       status: richInfo,

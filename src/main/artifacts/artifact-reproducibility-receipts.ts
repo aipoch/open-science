@@ -1,3 +1,4 @@
+import type { ReproducibilitySource } from './reproducibility-source'
 import type { Dirent } from 'node:fs'
 import { validOutputComparisonReport } from './output-comparison'
 import { lstat, readFile, readdir } from 'node:fs/promises'
@@ -31,6 +32,10 @@ import {
   writeDurableJsonFile
 } from '../storage/durable-json-file'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
+import {
+  readReproducibilityEnvironmentLock,
+  readReproducibilitySource
+} from './reproducibility-source'
 
 type ArtifactReproducibilityReceiptPayload = Omit<ArtifactReproducibilityReceipt, 'receiptChecksum'>
 
@@ -662,6 +667,94 @@ const validateArtifactReproducibilityReceiptStorage = async (
 class ArtifactReproducibilityReceiptStore {
   constructor(private readonly dependencies: ArtifactReproducibilityReceiptStoreDependencies) {}
 
+  async source(
+    request: ArtifactReproducibilityReceiptScope
+  ): Promise<ReproducibilitySource | undefined> {
+    return readReproducibilitySource(await this.dependencies.resolveVersionDirectory(request))
+  }
+
+  async environmentLock(
+    request: ArtifactReproducibilityReceiptScope,
+    checksum: string
+  ): Promise<string | undefined> {
+    const source = await this.source(request)
+    if (!source?.lockChecksums.includes(checksum)) return undefined
+    return readReproducibilityEnvironmentLock(
+      join(await this.dependencies.resolveVersionDirectory(request), 'reproducibility-locks'),
+      checksum
+    )
+  }
+
+  private async readScope(
+    request: ArtifactReproducibilityReceiptScope
+  ): Promise<ArtifactReproducibilityReceiptScope> {
+    return (await this.source(request))?.sourceScope ?? request
+  }
+
+  // Enumerate only this Version's verified history and referenced payloads, never Project/runtime
+  // trees, unfinished writes or unreferenced outputs.
+  async packageFiles(
+    request: ArtifactReproducibilityReceiptScope,
+    signal?: AbortSignal
+  ): Promise<{
+    metadata: string[]
+    outputs: Array<{ path: string; filename: string; checksum: string; sizeBytes: number }>
+    lockChecksums: string[]
+    targetChecksums: string[]
+  }> {
+    const directory = await this.receiptDirectory(request)
+    const metadata = new Set<string>()
+    const outputs = new Map<
+      string,
+      { path: string; filename: string; checksum: string; sizeBytes: number }
+    >()
+    const locks = new Set<string>()
+    const targetChecksums = new Set<string>()
+    const cleared = new Set(await clearedOutputReceipts(directory))
+    if (cleared.size) metadata.add(`${RETENTION_DIRECTORY}/${CLEARED_OUTPUTS_FILENAME}`)
+    let cursor: string | undefined
+    do {
+      signal?.throwIfAborted()
+      const page = await this.list({ ...request, cursor, limit: MAX_PAGE_SIZE })
+      for (const receipt of page.receipts) {
+        targetChecksums.add(receipt.artifactVersion.targetChecksum)
+        metadata.add(`sha256-${receipt.receiptChecksum}.json`)
+        if (receipt.checkLog) {
+          await this.getCheckLog({ ...request, receiptChecksum: receipt.receiptChecksum })
+          metadata.add(`${LOG_DIRECTORY}/sha256-${receipt.checkLog.logChecksum}.json`)
+        }
+        for (const lock of receipt.environmentLocks) locks.add(lock.lockChecksum)
+        if (!cleared.has(receipt.receiptChecksum))
+          for (const comparison of receipt.comparisons) {
+            if (!comparison.outputCaptured) continue
+            const checksum = comparison.actualChecksum!
+            outputs.set(checksum, {
+              path: `${OUTPUT_DIRECTORY}/sha256-${checksum}.bin`,
+              checksum,
+              filename: comparison.relativePath,
+              sizeBytes: comparison.actualSizeBytes!
+            })
+          }
+      }
+      if (page.latestFailedAttempt) {
+        await this.getCheckLog({ ...request, attemptId: page.latestFailedAttempt.attemptId })
+        metadata.add(`${FAILURE_DIRECTORY}/${LATEST_FAILURE_FILENAME}`)
+        metadata.add(
+          `${LOG_DIRECTORY}/sha256-${page.latestFailedAttempt.checkLog.logChecksum}.json`
+        )
+      }
+      if (metadata.size + outputs.size > 10000)
+        throw new Error('Reproducibility history exceeds the package limit.')
+      cursor = page.nextCursor
+    } while (cursor)
+    return {
+      metadata: [...metadata],
+      outputs: [...outputs.values()],
+      lockChecksums: [...locks],
+      targetChecksums: [...targetChecksums]
+    }
+  }
+
   private async receiptDirectory(request: ArtifactReproducibilityReceiptScope): Promise<string> {
     return join(await this.dependencies.resolveVersionDirectory(request), RECEIPT_DIRECTORY)
   }
@@ -695,10 +788,12 @@ class ArtifactReproducibilityReceiptStore {
   async outputStorage(
     request: ArtifactReproducibilityReceiptScope
   ): Promise<ArtifactReproducibilityOutputStorage> {
+    const source = await this.source(request)
     const directory = await this.receiptDirectory(request)
     return {
       ...(await reproducibilityOutputUsage(directory)),
-      clearedReceiptChecksums: await clearedOutputReceipts(directory)
+      clearedReceiptChecksums: await clearedOutputReceipts(directory),
+      ...(source ? { omittedOutputChecksums: source.omittedOutputChecksums } : {})
     }
   }
 
@@ -736,6 +831,8 @@ class ArtifactReproducibilityReceiptStore {
       (comparison) => comparison.entityId === entityId && comparison.outputCaptured
     )
     if (!output) throw new Error('Reproduced output is unavailable.')
+    if ((await this.source(request))?.omittedOutputChecksums.includes(output.actualChecksum!))
+      throw new Error('Reproduced output was not included in this package.')
     return readRetainedReproducibilityOutput(
       await this.receiptDirectory(request),
       output.actualChecksum!,
@@ -829,7 +926,7 @@ class ArtifactReproducibilityReceiptStore {
     if (result.status === 'missing') {
       throw new Error(`Reproducibility receipt disappeared: ${basename(filePath)}`)
     }
-    if (!matchesRequest(result.value, request)) {
+    if (!matchesRequest(result.value, await this.readScope(request))) {
       throw new Error(`Reproducibility receipt identity mismatch: ${basename(filePath)}`)
     }
     return result.value
@@ -962,7 +1059,7 @@ class ArtifactReproducibilityReceiptStore {
       decodeFailedAttempt
     )
     if (result.status === 'missing') return undefined
-    if (!matchesArtifactVersionScope(result.value.artifactVersion, request)) {
+    if (!matchesArtifactVersionScope(result.value.artifactVersion, await this.readScope(request))) {
       throw new Error('Failed reproducibility attempt identity mismatch.')
     }
     return result.value
@@ -1011,8 +1108,10 @@ class ArtifactReproducibilityReceiptStore {
     }
     const latestFailedAttempt =
       start === 0 ? await this.latestFailure(directory, request) : undefined
+    const source = await this.source(request)
     return {
       receipts,
+      ...(source ? { sourceArtifactVersion: source.sourceScope } : {}),
       ...(latestFailedAttempt ? { latestFailedAttempt } : {}),
       ...(start + selected.length < index.receipts.length && selected.length > 0
         ? { nextCursor: selected.at(-1)!.receiptChecksum }
@@ -1031,7 +1130,7 @@ class ArtifactReproducibilityReceiptStore {
       decodeArtifactReproducibilityReceipt(filePath, contents)
     )
     if (result.status === 'missing') return undefined
-    if (!matchesRequest(result.value, request)) {
+    if (!matchesRequest(result.value, await this.readScope(request))) {
       throw new Error(`Reproducibility receipt identity mismatch: ${basename(filePath)}`)
     }
     return result.value
@@ -1117,6 +1216,16 @@ const pruneArtifactReproducibilityOutputs = (
   owner: object,
   request: ArtifactReproducibilityReceiptScope
 ): Promise<void> => receiptStore(owner).pruneOutputs(request)
+const getArtifactReproducibilityEnvironmentLock = (
+  owner: object,
+  request: ArtifactReproducibilityReceiptScope,
+  checksum: string
+): Promise<string | undefined> => receiptStore(owner).environmentLock(request, checksum)
+const getArtifactReproducibilitySource = (
+  owner: object,
+  request: ArtifactReproducibilityReceiptScope
+): Promise<ReproducibilitySource | undefined> => receiptStore(owner).source(request)
+
 const getArtifactReproducibilityOutput = (
   owner: object,
   request: ArtifactReproducibilityReceiptScope,
@@ -1125,6 +1234,8 @@ const getArtifactReproducibilityOutput = (
 ): Promise<Buffer> => receiptStore(owner).getOutput(request, checksum, entityId)
 
 export {
+  getArtifactReproducibilityEnvironmentLock,
+  getArtifactReproducibilitySource,
   getArtifactReproducibilityOutputStorage,
   clearArtifactReproducibilityOutputs,
   pruneArtifactReproducibilityOutputs,

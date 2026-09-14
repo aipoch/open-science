@@ -74,6 +74,12 @@ import type {
   SelectWslProfileRequest
 } from '../../shared/wsl-setup'
 import { SettingsService } from './service'
+import type {
+  SkillMarketplaceDetailRequest,
+  SkillMarketplaceCatalogRequest,
+  SkillMarketplaceBatchRequest,
+  SkillMarketplaceInstallRequest
+} from '../../shared/skill-marketplace'
 import { connectorTemplateExportSelection } from './connector-template'
 import type { SettingsWorkflows } from './workflows'
 import { createLogger } from '../logger'
@@ -389,6 +395,28 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:remove-notebook-network', () => service.removeNotebookNetwork())
 
   ipcMainHandle('settings:list-skills', () => service.listSkills())
+  ipcMainHandle(
+    'settings:list-skill-marketplace',
+    (_event, request?: SkillMarketplaceCatalogRequest) => service.listSkillMarketplace(request)
+  )
+  ipcMainHandle('settings:get-skill-marketplace-batch', () => service.getSkillMarketplaceBatch())
+  ipcMainHandle('settings:stop-skill-marketplace-batch', (_event, id: string) =>
+    service.stopSkillMarketplaceBatch(id)
+  )
+  ipcMainHandle(
+    'settings:start-skill-marketplace-batch',
+    (_event, request: SkillMarketplaceBatchRequest) =>
+      workflows.skills.startSkillMarketplaceBatch(request)
+  )
+  ipcMainHandle(
+    'settings:install-skill-marketplace',
+    (_event, request: SkillMarketplaceInstallRequest) =>
+      workflows.skills.installSkillMarketplace(request)
+  )
+  ipcMainHandle(
+    'settings:get-skill-marketplace-detail',
+    (_event, request: SkillMarketplaceDetailRequest) => service.getSkillMarketplaceDetail(request)
+  )
   ipcMainHandle('settings:get-github-token-status', () => service.getGitHubTokenStatus())
   ipcMainHandle('settings:save-github-token', (_event, request: SaveGitHubTokenRequest) =>
     service.saveGitHubToken(readGitHubToken(request))

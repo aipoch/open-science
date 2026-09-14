@@ -358,12 +358,16 @@ test('keeps representative conversation, project, and recovery states visually s
     await completedSessionDismiss.click()
     await expect(completedSessionDismiss).toBeHidden()
   }
-  const recoveryAction = recoveryAlert.getByRole('button', {
+  const recoveryNotice = recoveryAlert.locator('xpath=../..')
+  const recoveryAction = recoveryNotice.getByRole('button', {
     name: 'View affected conversations'
   })
-  const recoveryMessage = recoveryAlert.locator('p').nth(1)
+  // ErrorNotice puts the title in a heading and the body in a single description paragraph.
+  const recoveryMessage = recoveryAlert.locator('p')
   for (const width of [320, 375, 414, 768]) {
     await setViewport(page, width)
+    await expect(recoveryAction).toBeVisible()
+    await expect(recoveryAction).toBeInViewport({ ratio: 1 })
     const [alertBox, actionBox, messageBox] = await Promise.all([
       recoveryAlert.boundingBox(),
       recoveryAction.boundingBox(),
@@ -375,7 +379,16 @@ test('keeps representative conversation, project, and recovery states visually s
     expect(alertBox.x).toBeGreaterThanOrEqual(0)
     expect(alertBox.x + alertBox.width).toBeLessThanOrEqual(width)
     expect(actionBox.y).toBeGreaterThanOrEqual(messageBox.y + messageBox.height)
-    await expect(recoveryAction).toHaveCSS('white-space', 'nowrap')
+    expect(actionBox.x).toBeGreaterThanOrEqual(0)
+    expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(width)
+    // Compact ErrorNotice actions may wrap; their text must remain readable without clipping.
+    expect(
+      await recoveryAction.evaluate(
+        (button) =>
+          button.scrollWidth <= button.clientWidth + 1 &&
+          button.scrollHeight <= button.clientHeight + 1
+      )
+    ).toBe(true)
   }
   await setViewport(page, 1280)
   await expectStableScreenshot(page, 'session-recovery-warning.png')

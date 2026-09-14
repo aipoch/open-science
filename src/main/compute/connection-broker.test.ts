@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { spawn } from 'node:child_process'
 import { createConnection } from 'node:net'
-import { platform } from 'node:os'
+import { platform, tmpdir } from 'node:os'
+import { mkdtemp, mkdir, stat, rm } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
 vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: () => process.cwd() }
@@ -116,6 +118,50 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
         expect(askpass.wasUnsupportedPromptRejected?.()).toBe(true)
       } finally {
         await askpass.dispose()
+      }
+    }
+  )
+
+  it.runIf(platform() !== 'win32')(
+    'allocates private, byte-bounded sockets under a long Unicode TMPDIR and removes only its own directory',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'ap-test-'))
+      const longRoot = join(root, '长'.repeat(35))
+      await mkdir(longRoot)
+      vi.stubEnv('TMPDIR', longRoot)
+      try {
+        const first = await createAskpassEnvironment('secret', ['researcher@cluster'])
+        const second = await createAskpassEnvironment('other', ['researcher@cluster'])
+        const socketPath = first.env['OPEN_SCIENCE_ASKPASS_SOCKET']!
+        const directory = dirname(socketPath)
+        try {
+          expect(Buffer.byteLength(socketPath)).toBeLessThan(104)
+          expect((await stat(directory)).mode & 0o777).toBe(0o700)
+          expect((await stat(socketPath)).mode & 0o777).toBe(0o600)
+          await expect(
+            askAskpass(
+              { ...first.env, OPEN_SCIENCE_ASKPASS_CAPABILITY: 'wrong' },
+              "researcher@cluster's password:"
+            )
+          ).resolves.toEqual({})
+          await expect(askAskpass(first.env, "researcher@cluster's password:")).resolves.toEqual({
+            password: 'secret'
+          })
+        } finally {
+          await first.dispose()
+        }
+        await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+        try {
+          await expect(askAskpass(second.env, "researcher@cluster's password:")).resolves.toEqual({
+            password: 'other'
+          })
+        } finally {
+          await second.dispose()
+        }
+        expect((await stat(longRoot)).isDirectory()).toBe(true)
+      } finally {
+        vi.unstubAllEnvs()
+        await rm(root, { recursive: true, force: true })
       }
     }
   )

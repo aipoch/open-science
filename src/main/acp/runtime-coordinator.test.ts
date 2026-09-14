@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 
 import type {
@@ -18,6 +20,10 @@ import type { AgentFrameworkId } from '../../shared/settings'
 import { DelegateMessageParkedError } from '../delegation/execution-port'
 import type { RootDelegatedWorkControl } from '../delegation/production-composition'
 import { createProjectHandlers } from '../projects/ipc'
+import { ArchiveCoordinator } from '../archive/coordinator'
+import { ArchiveAvailabilityError } from '../archive/availability-error'
+import type { Project } from '../../shared/projects'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 
 const createDeferred = <Value = void>(): {
   promise: Promise<Value>
@@ -2701,6 +2707,166 @@ describe('AcpRuntimeCoordinator', () => {
 
     await expect(building).rejects.toThrow(/quitting/i)
     expect(vi.mocked(created.runtime.disposeReviewerSession)).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['session', 'preparation'],
+    ['project', 'preparation'],
+    ['session', 'dispatch'],
+    ['project', 'dispatch']
+  ] as const)('serializes %s archive with a user prompt waiting in %s', async (scope, phase) => {
+    const preparing = createDeferred<void>()
+    const releasePreparation = createDeferred<void>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'opencode',
+        sessionIds: ['session-1'],
+        callbacks,
+        beforePromptStart: async () => {
+          if (phase !== 'dispatch') return
+          preparing.resolve()
+          await releasePreparation.promise
+        }
+      })
+      return created.runtime
+    })
+    let project: Project = {
+      id: 'project-1',
+      name: 'Project',
+      description: '',
+      isExample: false,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    let stored: PersistedChatSession = {
+      id: 'session-1',
+      projectId: project.id,
+      title: 'Session',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const archiveCoordinator = new ArchiveCoordinator(
+      {
+        get: async () => project,
+        updateArchive: async (_request, archivedAt) => {
+          project = { ...project, archivedAt, archiveRevision: 1 }
+          return project
+        }
+      },
+      {
+        sessionProjectId: async () => project.id,
+        assertProjectArchivable: async () => [stored.id],
+        assertSessionAvailable: async () => {
+          if (stored.archivedAt !== undefined)
+            throw new ArchiveAvailabilityError('session-archived')
+        },
+        updateArchive: async (_request, isBusy) => {
+          if (await isBusy()) throw new Error('Session is busy')
+          stored = { ...stored, archivedAt: Date.now(), revision: 1 }
+          return stored
+        }
+      },
+      {
+        isSessionBusy: () => coordinator.getActivePromptSessions().length > 0,
+        isProjectBusy: () => coordinator.getActivePromptSessions().length > 0,
+        liveSessionProjectId: (sessionId) => coordinator.liveSessionProjectId(sessionId)
+      }
+    )
+    // Importing ipc.ts boots Electron. Execute its actual guard registrations, as the existing
+    // coordinator-contract tests do for archive activity wiring, without a production seam.
+    const source = ts.createSourceFile(
+      'ipc.ts',
+      readFileSync(new URL('../ipc.ts', import.meta.url), 'utf8'),
+      ts.ScriptTarget.Latest,
+      true
+    )
+    const registrations: string[] = []
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ['runtime.setPromptAdmissionGuard', 'runtime.setPromptDispatchAdmissionGuard'].includes(
+          node.expression.getText(source)
+        )
+      )
+        registrations.push(node.getText(source))
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+    expect(registrations).toHaveLength(2)
+    const script = ts.transpileModule(registrations.join(';\n'), {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+    }).outputText
+    new Function(
+      'runtime',
+      'archiveCoordinator',
+      'sessionSpecialistReconfiguration',
+      'completionHandoffLifecycle',
+      'sideChatRuntime',
+      script
+    )(
+      coordinator,
+      archiveCoordinator,
+      {
+        assertUserPromptReady: async () => {
+          if (phase !== 'preparation') return
+          preparing.resolve()
+          await releasePreparation.promise
+        }
+      },
+      { canStartUserPrompt: async () => true },
+      { hasForParent: () => false }
+    )
+    await coordinator.createSession({ cwd: stored.cwd, projectId: project.id })
+    const outcome = coordinator
+      .sendPrompt({ sessionId: stored.id, text: 'Queued before archive' })
+      .then(
+        () => 'dispatched',
+        (error) => (error instanceof Error ? error.message : String(error))
+      )
+    await preparing.promise
+    const archive = (): Promise<unknown> =>
+      scope === 'session'
+        ? archiveCoordinator.updateSessionArchive({
+            projectId: project.id,
+            sessionId: stored.id,
+            archived: true,
+            expectedRevision: stored.revision ?? 0
+          })
+        : archiveCoordinator.updateProjectArchive({
+            id: project.id,
+            archived: true,
+            expectedArchiveRevision: project.archiveRevision ?? 0
+          })
+    if (phase === 'preparation') {
+      expect(created.sendPrompt).not.toHaveBeenCalled()
+      await archive()
+      expect(scope === 'session' ? stored.archivedAt : project.archivedAt).toEqual(
+        expect.any(Number)
+      )
+      releasePreparation.resolve()
+      expect(await outcome).toMatch(/archived/i)
+      expect(created.sendPrompt).not.toHaveBeenCalled()
+      await coordinator.sendAppContinuation({
+        sessionId: stored.id,
+        text: 'Finish existing cleanup'
+      })
+      expect(created.sendAppContinuation).toHaveBeenCalledOnce()
+    } else {
+      try {
+        expect(created.sendPrompt).toHaveBeenCalledOnce()
+        await expect(archive()).rejects.toThrow(/busy|finish or stop/i)
+        expect(stored.archivedAt).toBeUndefined()
+        expect(project.archivedAt).toBeUndefined()
+      } finally {
+        releasePreparation.resolve()
+        await outcome
+      }
+      await expect(archive()).resolves.toHaveProperty('archivedAt')
+    }
   })
 
   it('blocks user prompts on startup admission while allowing recovery continuations through', async () => {

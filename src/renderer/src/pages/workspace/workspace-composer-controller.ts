@@ -1,3 +1,11 @@
+import { useTranslation } from 'react-i18next'
+import {
+  composerDraftStorageFailed,
+  readComposerDraft,
+  writeComposerDraft,
+  registerComposerDraftWriter,
+  removeComposerDrafts
+} from './composer-draft-storage'
 import type { PdfReadingPositionSource } from '../../../../shared/session-pdf-context'
 import {
   useCallback,
@@ -167,6 +175,7 @@ type WorkspaceComposerController = {
       caret?: ComposerCaretPosition
     ) => void
     cancelTransfer: (transfer: ComposerUploadTransfer) => void
+    retryTransfer: (transfer: ComposerUploadTransfer) => void
     removeAttachment: (attachment: UploadedAttachment) => void
     restorePastedText: (pastedTextId: string) => void
     undo: (caret?: ComposerCaretPosition) => boolean
@@ -235,10 +244,18 @@ const useWorkspaceComposerController = ({
   uploads,
   onSessionSizeLimit
 }: WorkspaceComposerControllerInput): WorkspaceComposerController => {
+  const { t } = useTranslation()
+  const retryMessage = t('Upload interrupted or unavailable. Remove it and select the file again.')
+  const projectIdRef = useRef(activeProjectId ?? 'default-project')
   const { draftsRef, versionsRef, deletedDraftKeysRef } = useWorkspaceComposerDrafts()
   // Read the parked memory snapshot once at mount; subsequent edits use live controller state.
-  // eslint-disable-next-line react-hooks/refs
-  const [initialDraft] = useState(() => draftsRef.current[currentDraftKey] ?? blank())
+  const [initialDraft] = useState(
+    // eslint-disable-next-line react-hooks/refs
+    () =>
+      draftsRef.current[currentDraftKey] ??
+      readComposerDraft(activeProjectId ?? 'default-project', currentDraftKey, retryMessage) ??
+      blank()
+  )
   const [queuedEdit, setQueuedEdit] = useState(initialDraft.queuedEdit)
   const queuedEditRef = useRef<ComposerDraft['queuedEdit']>(initialDraft.queuedEdit)
   const setupSessionTokenRef = useRef(initialDraft.setupSessionToken)
@@ -276,6 +293,9 @@ const useWorkspaceComposerController = ({
     key: number
     position: ComposerCaretPosition
   }>()
+  const draftProjectsRef = useRef<Record<string, string>>({
+    [currentDraftKey]: activeProjectId ?? 'default-project'
+  })
   const activeDraftKeyRef = useRef(currentDraftKey)
   const docRef = useRef(doc)
   const annotationsRef = useRef(annotations)
@@ -327,9 +347,11 @@ const useWorkspaceComposerController = ({
     setCaretRequest({ key: caretRequestKeyRef.current, position })
   }, [])
 
+  const persistDraftsRef = useRef((): void => undefined)
   const markChanged = useCallback(
     (draftKey = activeDraftKeyRef.current): void => {
       versionsRef.current[draftKey] = (versionsRef.current[draftKey] ?? 0) + 1
+      queueMicrotask(() => persistDraftsRef.current())
     },
     [versionsRef]
   )
@@ -365,6 +387,7 @@ const useWorkspaceComposerController = ({
     stageFiles,
     stagePastedText,
     cancelTransfer,
+    retryTransfer,
     removeAttachment,
     restorePastedText,
     undo,
@@ -401,9 +424,53 @@ const useWorkspaceComposerController = ({
           queuedEdit: queuedEditRef.current,
           automaticReadingEnabled: automaticReadingEnabledRef.current
         }
+        writeComposerDraft(projectIdRef.current, draftKey, drafts[draftKey])
       }
     }
   }, [draftsRef, deletedDraftKeysRef, captureDraftAttachments])
+
+  const persistDrafts = useCallback((): void => {
+    const projectId = projectIdRef.current
+    const key = activeDraftKeyRef.current
+    if (!deletedDraftKeysRef.current.has(key))
+      writeComposerDraft(projectId, key, {
+        doc: historyRef.current[key]?.scratch ?? docRef.current,
+        annotations: annotationsRef.current,
+        ...captureDraftAttachments(),
+        automaticReadingEnabled: automaticReadingEnabledRef.current
+      })
+    // Parked drafts are saved at the route boundary; asynchronous upload completions need a flush too.
+    for (const [draftKey, draft] of Object.entries(draftsRef.current)) {
+      const draftProject = draftProjectsRef.current[draftKey]
+      if (draftProject && !deletedDraftKeysRef.current.has(draftKey))
+        writeComposerDraft(draftProject, draftKey, draft)
+    }
+    if (composerDraftStorageFailed())
+      setError(t('Draft storage is unavailable. Copy your draft before leaving this page.'))
+  }, [captureDraftAttachments, deletedDraftKeysRef, draftsRef, setError, t])
+  useLayoutEffect(() => {
+    persistDraftsRef.current = persistDrafts
+    persistDrafts()
+  })
+  useEffect(() => {
+    persistDraftsRef.current = persistDrafts
+    const unregister = registerComposerDraftWriter(persistDrafts)
+    window.addEventListener('pagehide', persistDrafts)
+    const beforeUnload = (event: BeforeUnloadEvent): void => {
+      persistDrafts()
+      if (composerDraftStorageFailed()) {
+        event.preventDefault()
+        event.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => {
+      persistDraftsRef.current = (): void => undefined
+      unregister()
+      window.removeEventListener('pagehide', persistDrafts)
+      window.removeEventListener('beforeunload', beforeUnload)
+    }
+  }, [persistDrafts])
 
   const pendingPdfContextSelection = usePreviewWorkbenchStore((state) =>
     !activeSession && activeProjectId
@@ -831,12 +898,19 @@ const useWorkspaceComposerController = ({
         automaticReadingEnabled: automaticReadingEnabledRef.current
       }
     }
+    const outgoingDraft = draftsRef.current[previousDraftKey]
+    if (outgoingDraft) writeComposerDraft(projectIdRef.current, previousDraftKey, outgoingDraft)
+    projectIdRef.current = activeProjectId ?? 'default-project'
+    draftProjectsRef.current[currentDraftKey] = projectIdRef.current
     delete historyRef.current[previousDraftKey]
     setHistoryBrowsingKey(undefined)
     setHistoryStatus('')
     setCaretRequest(undefined)
 
-    const nextDraft = draftsRef.current[currentDraftKey] ?? blank()
+    const nextDraft =
+      draftsRef.current[currentDraftKey] ??
+      readComposerDraft(activeProjectId ?? 'default-project', currentDraftKey, retryMessage) ??
+      blank()
     setActiveDoc(nextDraft.doc)
     setActiveAnnotations(nextDraft.annotations)
     activateDraftAttachments(nextDraft)
@@ -859,7 +933,8 @@ const useWorkspaceComposerController = ({
     activateDraftAttachments,
     setActiveAnnotations,
     setActiveDoc,
-    transfers
+    transfers,
+    retryMessage
   ])
 
   // Save the outgoing draft and activate the target before applying its prefill.
@@ -1191,6 +1266,11 @@ const useWorkspaceComposerController = ({
       clearPastedTextUndo(draftKey)
       clearUndo(draftKey)
       delete draftsRef.current[draftKey]
+      writeComposerDraft(
+        draftProjectsRef.current[draftKey] ?? projectIdRef.current,
+        draftKey,
+        blank()
+      )
       if (activeDraftKeyRef.current !== draftKey) return true
       setActiveSetupSessionToken(undefined)
       setActiveDoc(emptyDoc)
@@ -1237,6 +1317,16 @@ const useWorkspaceComposerController = ({
         !preserveOnConflict &&
         (versionsRef.current[snapshot.draftKey] ?? 0) !== snapshot.version
       ) {
+        setError(
+          t(
+            'Sending failed. Your newer draft was kept. Copy the earlier draft from the details below.'
+          ),
+          [
+            docToText(snapshot.doc),
+            ...snapshot.annotations.map((annotation) => JSON.stringify(annotation)),
+            ...snapshot.attachments.map((attachment) => attachment.originalName || attachment.name)
+          ].join('\n')
+        )
         releaseHistoryResources([{ attachments: snapshot.attachments, attachmentTransfers: [] }])
         return false
       }
@@ -1280,7 +1370,9 @@ const useWorkspaceComposerController = ({
       setActiveAnnotations,
       setActiveDoc,
       setActiveAutomaticReadingEnabled,
-      transfers.length
+      transfers.length,
+      setError,
+      t
     ]
   )
 
@@ -1380,6 +1472,7 @@ const useWorkspaceComposerController = ({
       stageFiles,
       stagePastedText,
       cancelTransfer,
+      retryTransfer,
       removeAttachment: removeComposerAttachment,
       restorePastedText,
       undo,
@@ -1402,6 +1495,7 @@ const useWorkspaceComposerController = ({
       settleSessionDeletion: (draftKey, deleted): void => {
         settleSessionDeletion(draftKey, deleted)
         if (!deleted) return
+        removeComposerDrafts(draftProjectsRef.current[draftKey] ?? projectIdRef.current, draftKey)
         delete draftsRef.current[draftKey]
         delete versionsRef.current[draftKey]
         deletedDraftKeysRef.current.add(draftKey)

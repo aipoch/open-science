@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { shallow } from 'zustand/vanilla/shallow'
+import {
+  packageOperationActive,
+  usePackageOperationStore
+} from '../../stores/package-operation-store'
 
 import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
@@ -7,6 +12,7 @@ import {
   type ReconcilePendingArtifactsResult
 } from '../../../../shared/artifacts'
 import {
+  activateConversationBranch,
   projectConversationMessage,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages
@@ -14,6 +20,7 @@ import {
 import type { RendererFailureContext } from '../../../../shared/diagnostics'
 import {
   ConversationGraphMaterializationError,
+  SessionRevisionConflictError,
   isSessionSizeLimitError,
   isSessionRevisionConflictError,
   sessionRevision,
@@ -88,6 +95,34 @@ const hydratePersistedSessionIfPresent = (
 
 const deleteSession = (request: DeleteSessionRequest): Promise<SessionDeletionResult> =>
   window.api.sessions.deleteSession(request)
+
+const MAX_HISTORY_BODY_BYTES = 64 * 1024 * 1024
+
+// A soft retention weight, not a measurement of the JS heap or serialized file size. Count UTF-16
+// text and object/slot overhead once on load, including inactive branches, without copying text.
+// Bound traversal too: unusually wide metadata is conservatively treated as an oversized body.
+const estimateHistoryBodyBytes = (session: ChatSession): number => {
+  const pending: object[] = [session]
+  const seen = new WeakSet<object>(pending)
+  let bytes = 64
+  let values = 0
+  while (pending.length > 0) {
+    const current = pending.pop()!
+    for (const key in current) {
+      if (!Object.hasOwn(current, key)) continue
+      const value: unknown = Reflect.get(current, key)
+      bytes += 16 + key.length * 2
+      if (typeof value === 'string') bytes += value.length * 2
+      else if (value !== null && typeof value === 'object' && !seen.has(value)) {
+        seen.add(value)
+        pending.push(value)
+        bytes += 64
+      }
+      if (bytes > MAX_HISTORY_BODY_BYTES || ++values > 100_000) return MAX_HISTORY_BODY_BYTES + 1
+    }
+  }
+  return bytes
+}
 
 const toPersistedSessionForAuthorityMaterialization = (
   session: ChatSession
@@ -643,6 +678,34 @@ class SessionPersistenceGenerationChangedError extends Error {
   }
 }
 
+class SessionExportSaveDeferred extends Error {
+  constructor(readonly released: Promise<void>) {
+    super('Session save waits for package export.')
+  }
+}
+
+const deferExportedSessionSave = (target: string): void => {
+  const blocked = (): boolean => {
+    const operation = usePackageOperationStore.getState().operation
+    return (
+      operation?.kind === 'export' &&
+      packageOperationActive(operation) &&
+      target === `session:${operation.session?.sessionId}`
+    )
+  }
+  if (!blocked()) return
+  throw new SessionExportSaveDeferred(
+    new Promise<void>((resolve) => {
+      const remove = usePackageOperationStore.subscribe(() => {
+        if (!blocked()) {
+          remove()
+          resolve()
+        }
+      })
+    })
+  )
+}
+
 // Serializes every renderer-originated Session write through one ordering seam. Store snapshots at
 // the queue tail use latest-wins coalescing; explicit Session and Manifest writes remain barriers, so
 // Artifact finalization cannot be overtaken by an older store snapshot.
@@ -651,6 +714,8 @@ const createOrderedSessionPersistence = (
 ): OrderedSessionPersistence => {
   let queue: Promise<unknown> = Promise.resolve()
   let pendingWriteCount = 0
+  let activeFlushes = 0
+  const deferredSaves = new Set<Promise<unknown>>()
   const acknowledgedRevisions = new Map<string, number>()
   const acknowledgedSessions = new Map<string, PersistedChatSession>()
   const pendingLatestByTarget = new Map<string, PendingLatestSessionSave>()
@@ -669,7 +734,7 @@ const createOrderedSessionPersistence = (
         ? STREAMING_SESSION_SAVE_INTERVAL_MS
         : LATEST_SESSION_SAVE_INTERVAL_MS
       const waitMs = latestSessionSaveStartedAt + intervalMs - performance.now()
-      if (waitMs <= 0 || entry.bypassCadence) break
+      if (waitMs <= 0 || entry.bypassCadence || activeFlushes > 0) break
       const recheck = await new Promise<boolean>((resolve) => {
         const timeout = setTimeout(() => resolve(false), waitMs)
         entry.releaseCadence = () => {
@@ -721,30 +786,54 @@ const createOrderedSessionPersistence = (
       failedWritesByTarget.delete(target)
       return result
     } catch (error) {
-      if (!(error instanceof SessionPersistenceGenerationChangedError)) {
+      if (
+        !(error instanceof SessionPersistenceGenerationChangedError) &&
+        !(error instanceof SessionExportSaveDeferred)
+      ) {
         failedWritesByTarget.set(target, error)
       }
       throw error
     }
   }
 
-  const enqueue = <Result>(target: string, task: () => Promise<Result>): Promise<Result> => {
-    releasePendingLatestCadence()
-    pendingLatestByTarget.clear()
+  // Exported targets wait outside the shared queue. Explicit writes for another Session and its
+  // manifest can still establish their usual durable barrier before starting a new conversation.
+  const schedule = <Result>(target: string, task: () => Promise<Result>): Promise<Result> => {
     pendingWriteCount += 1
-    const run = queue
-      .then(
-        () => trackWrite(target, task),
-        () => trackWrite(target, task)
-      )
-      .finally(() => {
-        pendingWriteCount -= 1
-      })
+    const run = queue.then(async () => {
+      try {
+        deferExportedSessionSave(target)
+        return { kind: 'completed' as const, value: await trackWrite(target, task) }
+      } catch (error) {
+        if (error instanceof SessionExportSaveDeferred)
+          return { kind: 'deferred' as const, released: error.released }
+        throw error
+      }
+    })
     queue = run.then(
       () => undefined,
       () => undefined
     )
     return run
+      .then(async (result) => {
+        if (result.kind === 'completed') return result.value
+        const resumed = result.released.then(() => schedule(target, task))
+        deferredSaves.add(resumed)
+        try {
+          return await resumed
+        } finally {
+          deferredSaves.delete(resumed)
+        }
+      })
+      .finally(() => {
+        pendingWriteCount -= 1
+      })
+  }
+
+  const enqueue = <Result>(target: string, task: () => Promise<Result>): Promise<Result> => {
+    releasePendingLatestCadence()
+    pendingLatestByTarget.clear()
+    return schedule(target, task)
   }
 
   const saveSubmittedSession = async (
@@ -793,6 +882,7 @@ const createOrderedSessionPersistence = (
       // A fast IPC/disk round-trip otherwise defeats latest-wins coalescing and rewrites the entire
       // Session at the live presentation frame rate. Keep the entry replaceable while it waits.
       await waitForLatestSessionSaveCadence(entry)
+      deferExportedSessionSave(target)
       if (pendingLatestByTarget.get(target) === entry) pendingLatestByTarget.delete(target)
       if (entry.generation !== hydrationGeneration) {
         throw new SessionPersistenceGenerationChangedError()
@@ -801,21 +891,9 @@ const createOrderedSessionPersistence = (
       acknowledgeSession(durable)
       return durable
     }
-    pendingWriteCount += 1
-    const run = queue
-      .then(
-        () => trackWrite(target, runTask),
-        () => trackWrite(target, runTask)
-      )
-      .finally(() => {
-        pendingWriteCount -= 1
-      })
+    const run = schedule(target, runTask)
     entry.promise = run
     pendingLatestByTarget.set(target, entry)
-    queue = run.then(
-      () => undefined,
-      () => undefined
-    )
     return run
   }
 
@@ -865,10 +943,22 @@ const createOrderedSessionPersistence = (
       }),
     saveManifest: (request) => enqueue('manifest', () => api.saveManifest(request)),
     flush: async () => {
-      releasePendingLatestCadence()
-      await queue
-      const failure = failedWritesByTarget.values().next()
-      if (!failure.done) throw failure.value
+      // Runtime/store updates can admit new snapshots while earlier writes are in flight.
+      // Keep cadence disabled until every overlapping flush has finished.
+      activeFlushes += 1
+      try {
+        releasePendingLatestCadence()
+        for (;;) {
+          const draining = queue
+          await draining
+          await Promise.allSettled([...deferredSaves])
+          if (queue === draining && deferredSaves.size === 0) break
+        }
+        const failure = failedWritesByTarget.values().next()
+        if (!failure.done) throw failure.value
+      } finally {
+        activeFlushes -= 1
+      }
     }
   }
 }
@@ -1415,6 +1505,28 @@ const hasStagedUploads = (session: ChatSession): boolean =>
     )
   )
 
+// Main-owned metadata and the transient navigation guard must not enqueue a local snapshot.
+// A same-client receipt can update Main-owned fields before the save response arrives.
+// Keep branchContextResetRequired in the comparison: clearing it is a renderer-persisted change.
+const withoutMainOwnedOrTransientSessionMetadata = (session: ChatSession): ChatSession => ({
+  ...session,
+  branchSwitchBlocked: undefined,
+  agentPromptInFlight: undefined,
+  awaitingFirstAgentOutput: undefined,
+  revision: undefined,
+  archivedAt: undefined,
+  enabledComputeHosts: undefined,
+  selectedComputeHosts: undefined,
+  computeConcurrencyLimit: undefined
+})
+
+const selectedRootBranchId = (
+  session: Pick<PersistedChatSession, 'conversationGraph'> | undefined
+): string | undefined =>
+  session?.conversationGraph?.frames.find(
+    (frame) => frame.id === session.conversationGraph?.rootFrameId
+  )?.activeBranchId
+
 // Builds an incremental saver: on each store change it persists only sessions whose reference changed
 // and updates the manifest when selection moves. Explicit deletion owns its durable coordinator call.
 const createStoreSaver = (
@@ -1437,15 +1549,21 @@ const createStoreSaver = (
       .map((session) => [session.id, toPersistedSession(session)])
   )
   persistence.seedAcknowledgedSessions([...acknowledgedSessions.values()])
+  // Keep an explicit local selection until its own receipt; a queued runtime update can coalesce
+  // with that save, and an older receipt must not clear a newer navigation intent.
+  const pendingBranchSelections = new Map<
+    string,
+    NonNullable<PersistedChatSession['conversationGraph']>
+  >()
 
   const recoverRevisionConflict = async (
     error: unknown,
     submitted: PersistedChatSession,
+    base: PersistedChatSession | undefined,
     options: SaveSessionOptions | undefined,
     save: SessionPersistenceApi['saveSession']
   ): Promise<PersistedChatSession> => {
     if (!isSessionRevisionConflictError(error)) throw error
-    const base = acknowledgedSessions.get(submitted.id)
     if (!base) throw error
     return saveAfterSessionRevisionConflict(
       error,
@@ -1570,9 +1688,50 @@ const createStoreSaver = (
 
       const hasUnsavedLocalTitle =
         session.unsavedTitle === true && Boolean(authority && session.title !== authority.title)
+      const rootBranchId = selectedRootBranchId(session)
+      const graph = session.conversationGraph
+      const previousGraph = previousSession?.conversationGraph
+      if (
+        graph &&
+        previousGraph &&
+        (rootBranchId !== selectedRootBranchId(previousSession) ||
+          // Hydration retains the local root selection but can adopt remote descendant choices.
+          (!authority &&
+            (graph.activeFrameId !== previousGraph.activeFrameId ||
+              previousGraph.frames.some(
+                (previousFrame) =>
+                  graph.frames.find((frame) => frame.id === previousFrame.id)?.activeBranchId !==
+                  previousFrame.activeBranchId
+              ))))
+      ) {
+        pendingBranchSelections.set(session.id, graph)
+      }
+      const selectionIntent = pendingBranchSelections.get(session.id)
+      const hasRetainedLocalRootBranch =
+        !selectionIntent &&
+        rootBranchId !== undefined &&
+        authority?.conversationGraph &&
+        rootBranchId !== selectedRootBranchId(authority)
+      // A retained local reset applies to this window's Branch. Publishing it against another
+      // client's selected Branch would also write this window's old selection back to disk.
       const hasUnsavedContextReset =
+        !hasRetainedLocalRootBranch &&
         Boolean(session.branchContextResetRequired) !==
-        Boolean(authority?.branchContextResetRequired)
+          Boolean(authority?.branchContextResetRequired)
+      if (
+        previousSession &&
+        previousSession !== session &&
+        !isForced &&
+        !hasUnsavedLocalTitle &&
+        !(authority && hasUnsavedContextReset) &&
+        !streamingDirtySessionIds.has(session.id) &&
+        shallow(
+          withoutMainOwnedOrTransientSessionMetadata(previousSession),
+          withoutMainOwnedOrTransientSessionMetadata(session)
+        )
+      ) {
+        continue
+      }
       if (
         (previousById.get(session.id) !== session ||
           isForced ||
@@ -1601,16 +1760,71 @@ const createStoreSaver = (
         ]
 
         const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+        const sourceAuthority = acknowledgedSessions.get(session.id)
+        let submittedAuthority = sourceAuthority
+        const serializeSession = (): PersistedChatSession => {
+          let persisted = toPersistedSession(session, nextStreamingMessages)
+          // Explicit navigation already carries all ancestor and descendant selections. Only
+          // passive saves restore the authority's root Branch over a retained window-local view.
+          const selected = selectionIntent ? undefined : selectedRootBranchId(sourceAuthority)
+          const graph = persisted.conversationGraph
+          if (
+            selected &&
+            graph &&
+            selected !== selectedRootBranchId(persisted) &&
+            graph.branches.some((branch) => branch.id === selected)
+          ) {
+            const conversationGraph = activateConversationBranch(graph, selected)
+            persisted = {
+              ...persisted,
+              conversationGraph,
+              messages: resolveActiveConversationMessages(conversationGraph).map(
+                projectConversationMessage
+              ),
+              ...resolveActiveConversationActivities(conversationGraph),
+              branchContextResetRequired: sourceAuthority?.branchContextResetRequired
+            }
+          }
+          // A passive queued snapshot can predate a remotely created Branch. Rebase its changes
+          // before using a newer revision. Explicit navigation already selects the intended Branch.
+          submittedAuthority = acknowledgedSessions.get(session.id)
+          if (
+            !selectionIntent &&
+            sourceAuthority &&
+            submittedAuthority &&
+            selectedRootBranchId(sourceAuthority) !== selectedRootBranchId(submittedAuthority)
+          ) {
+            const rebased = rebaseSessionAfterRevisionConflict(
+              sourceAuthority,
+              persisted,
+              submittedAuthority
+            )
+            if (!rebased) {
+              throw new SessionRevisionConflictError(
+                sessionRevision(sourceAuthority),
+                sessionRevision(submittedAuthority)
+              )
+            }
+            persisted = rebased
+          }
+          return persisted
+        }
+
         const applyDurableSession = (
           durableSession: PersistedChatSession,
           options: SaveSessionOptions | undefined,
           recoveredRevisionConflict = false
         ): void => {
+          if (selectionIntent && pendingBranchSelections.get(session.id) === selectionIntent) {
+            pendingBranchSelections.delete(session.id)
+          }
+          const keepLocalBranch = selectedRootBranchId(durableSession) !== rootBranchId
           useSessionStore.getState().applyDurableSessionProjection({
             source: session,
             session: durableSession,
             mode:
-              recoveredRevisionConflict || (options?.conflictRebaseFields?.length ?? 0) > 0
+              !keepLocalBranch &&
+              (recoveredRevisionConflict || (options?.conflictRebaseFields?.length ?? 0) > 0)
                 ? 'replace-persisted-if-current'
                 : 'merge-upload-identities'
           })
@@ -1621,9 +1835,7 @@ const createStoreSaver = (
           failureContext: { conflictRebaseFields },
           run: isForced
             ? async () => {
-                const persisted = observePersistencePhase('session-serialize', () =>
-                  toPersistedSession(session, nextStreamingMessages)
-                )
+                const persisted = observePersistencePhase('session-serialize', serializeSession)
                 persisted.revision =
                   acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
                 let durableSession: PersistedChatSession
@@ -1636,6 +1848,7 @@ const createStoreSaver = (
                       const recovered = await recoverRevisionConflict(
                         error,
                         submitted,
+                        submittedAuthority,
                         saveOptions,
                         retry
                       )
@@ -1657,9 +1870,7 @@ const createStoreSaver = (
                 persistence.saveLatestSession(
                   target,
                   async (coalescedOptions) => {
-                    const persisted = observePersistencePhase('session-serialize', () =>
-                      toPersistedSession(session, nextStreamingMessages)
-                    )
+                    const persisted = observePersistencePhase('session-serialize', serializeSession)
                     persisted.revision =
                       acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
                     let durableSession: PersistedChatSession
@@ -1673,6 +1884,7 @@ const createStoreSaver = (
                         durableSession = await recoverRevisionConflict(
                           error,
                           persisted,
+                          submittedAuthority,
                           coalescedOptions,
                           api.saveSession
                         )
@@ -1729,6 +1941,9 @@ const createStoreSaver = (
       }
     }
 
+    for (const id of pendingBranchSelections.keys()) {
+      if (!nextById.has(id)) pendingBranchSelections.delete(id)
+    }
     previousSessions = nextSessions
     previousSelection = state.selectedSessionId
     previousStreamingMessages = nextStreamingMessages
@@ -2080,14 +2295,20 @@ const useSessionPersistence = (): SessionPersistenceState => {
       const loadingSessionContent = new Set<string>()
       // ponytail: only unchanged, passively loaded history is reclaimable. Edited/runtime-owned
       // sessions stay resident; extend this policy only with a proven save-acknowledgement contract.
-      const readOnlyHistory = new Map<string, { loaded: ChatSession; summary: ChatSession }>()
+      const readOnlyHistory = new Map<
+        string,
+        { loaded: ChatSession; summary: ChatSession; bytes: number }
+      >()
       const trimReadOnlyHistory = (): void => {
         if (!isMounted || readOnlyHistory.size === 0) return
         const state = useSessionStore.getState()
         const byId = indexById(state.sessions)
+        let retainedBytes = 0
         for (const [id, entry] of readOnlyHistory) {
           if (byId.get(id) !== entry.loaded) {
             readOnlyHistory.delete(id)
+          } else {
+            retainedBytes += entry.bytes
           }
         }
         const selected = state.selectedSessionId && readOnlyHistory.get(state.selectedSessionId)
@@ -2096,10 +2317,11 @@ const useSessionPersistence = (): SessionPersistenceState => {
           readOnlyHistory.set(selected.loaded.id, selected)
         }
         for (const [id, entry] of readOnlyHistory) {
-          if (readOnlyHistory.size <= 16) break
+          if (readOnlyHistory.size <= 16 && retainedBytes <= MAX_HISTORY_BODY_BYTES) break
           if (id === state.selectedSessionId) continue
           if (!save.releaseReadOnlySession(entry.loaded, entry.summary)) continue
           readOnlyHistory.delete(id)
+          retainedBytes -= entry.bytes
         }
       }
 
@@ -2151,6 +2373,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
               ) {
                 readOnlyHistory.set(loaded.id, {
                   loaded,
+                  bytes: estimateHistoryBodyBytes(loaded),
                   summary: {
                     ...selected,
                     title: loaded.title,

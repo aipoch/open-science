@@ -3,7 +3,7 @@
 // Phase 1 (issue 01) covers host record management only: the SQLite/Prisma layer owns ComputeHost
 // rows (see src/main/compute). Probe/SSH execution and approvals land in later issues. Timestamps are
 // normalized to epoch milliseconds at the repository boundary so the renderer treats them like other
-// persisted timestamps. No credentials are ever stored — only an ssh alias and optional overrides.
+// persisted timestamps. Credentials are encrypted and stored separately; this projection exposes status only.
 
 // Host topology, inferred by probe in a later issue. Persisted so downstream issues can branch on it;
 // Phase 1 never reads it for behavior.
@@ -81,6 +81,13 @@ export type ProbeResult = {
   cpus?: number
   memMib?: number
   gpus?: ProbeGpu[]
+  // Optional recent facts; missing in legacy snapshots means unknown, never current admission.
+  sshConnected?: boolean
+  commandExecutable?: boolean
+  scratchPath?: string
+  scratchWritable?: boolean
+  // Required Slurm CLI presence plus a successful squeue query; not allocation/submission permission.
+  schedulerAvailable?: boolean
   detectedScheduler?: 'slurm' | 'pbs' | 'lsf' | 'none'
 }
 
@@ -437,7 +444,7 @@ export type ComputeJob = {
   // Optional: absent means no poll error has been recorded for this job.
   last_poll_error?: string
   // Phase 3b harvest fields (compute-harvest issue 01). All optional; null until Phase 3b fills them.
-  // harvest_error: non-null means the harvest completed but with errors (harvest_failed outcome).
+  // harvest_error: latest collection error; only harvested_at confirms collection is final.
   harvest_error?: string
   // left_on_remote: JSON string [{uri, size_mb, reason}] — files not downloaded from remote.
   left_on_remote?: string
@@ -547,6 +554,9 @@ export type CancelComputeJobRequest = Readonly<{
   sessionId: string
   projectId: string
 }>
+
+// Retries only unfinished local result collection for the original, fully scoped Job.
+export type RetryComputeJobHarvestRequest = CancelComputeJobRequest
 
 // Error codes for compute jobs (Phase 3a subset of spec §12).
 export type ComputeJobErrorCode =

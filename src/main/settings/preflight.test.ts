@@ -32,6 +32,7 @@ const run = (overrides: Partial<PreflightInput> = {}): ReturnType<typeof compute
     agentFrameworkId: 'claude-code',
     isProviderKeyUsable: alwaysUsable,
     activeProviderCompatible: true,
+    activeProviderModelAvailable: true,
     ...overrides
   })
 
@@ -44,18 +45,24 @@ describe('computePreflight', () => {
       codexReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
-      activeProviderReady: true
+      activeProviderReady: true,
+      runtimeReadiness: { status: 'ready' },
+      providerReadiness: { status: 'ready' }
     })
   })
 
   it('is not claude-ready when the recorded path no longer exists', () => {
-    expect(run({ claudePathExists: false }).claudeReady).toBe(false)
+    expect(run({ claudePathExists: false })).toMatchObject({
+      claudeReady: false,
+      runtimeReadiness: { status: 'not_ready' }
+    })
   })
 
   it('is not claude-ready when no path was ever recorded', () => {
-    expect(
-      run({ settings: baseSettings({ claude: {} }), claudePathExists: false }).claudeReady
-    ).toBe(false)
+    expect(run({ settings: baseSettings({ claude: {} }), claudePathExists: false })).toMatchObject({
+      claudeReady: false,
+      runtimeReadiness: { status: 'missing' }
+    })
   })
 
   it('tracks opencode readiness from its own stored path', () => {
@@ -108,7 +115,10 @@ describe('computePreflight', () => {
       providers: [{ ...customProvider, lastValidatedAt: undefined }]
     })
 
-    expect(run({ settings }).activeProviderReady).toBe(false)
+    expect(run({ settings })).toMatchObject({
+      activeProviderReady: false,
+      providerReadiness: { status: 'not_ready' }
+    })
   })
 
   it('is not provider-ready when only another model target was validated', () => {
@@ -137,16 +147,22 @@ describe('computePreflight', () => {
         {
           ...customProvider,
           lastValidatedAt: 100,
-          lastValidationFailure: { at: 200, category: 'auth' }
+          lastValidationFailure: { at: 200, category: 'network' }
         }
       ]
     })
 
-    expect(run({ settings }).activeProviderReady).toBe(false)
+    expect(run({ settings })).toMatchObject({
+      activeProviderReady: false,
+      providerReadiness: { status: 'not_ready', reason: 'network' }
+    })
   })
 
   it('is not provider-ready when the active provider key is unusable', () => {
-    expect(run({ isProviderKeyUsable: () => false }).activeProviderReady).toBe(false)
+    expect(run({ isProviderKeyUsable: () => false })).toMatchObject({
+      activeProviderReady: false,
+      providerReadiness: { status: 'not_ready', reason: 'credential_invalid' }
+    })
   })
 
   it('is not provider-ready when the active provider is incompatible with the framework', () => {

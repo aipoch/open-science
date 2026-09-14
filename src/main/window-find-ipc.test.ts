@@ -1,4 +1,10 @@
-import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
+import { ipcMain } from 'electron'
+import { afterEach, describe, expect, it, type Mock, vi } from 'vitest'
+
+import { createElectronSurfaceAdapter } from './ipc-surfaces/adapter'
+import type { NamedElectronSurfaceAdapter } from './runtime-electron-wiring'
+import { disposeIpcHandlerRegistry } from './ipc-handler-registry'
 
 import { registerFindOverlayOwner } from './find-overlay-registry'
 import {
@@ -9,16 +15,10 @@ import {
   type WindowFindResult
 } from '../shared/window-controls'
 
-const handlers = new Map<string, (event: unknown, payload: unknown) => void>()
-
-vi.mock('electron', () => ({
-  ipcMain: {
-    on: (channel: string, listener: (event: unknown, payload: unknown) => void) => {
-      handlers.set(channel, listener)
-    }
-  },
-  BrowserWindow: {}
-}))
+vi.mock('electron', async () => {
+  const { EventEmitter } = await import('node:events')
+  return { ipcMain: new EventEmitter(), BrowserWindow: {} }
+})
 
 const { registerWindowFindIpcHandlers } = await import('./window-find-ipc')
 
@@ -27,15 +27,9 @@ type FindInPageOptions = { findNext: boolean; forward: boolean; matchCase: boole
 
 // The MAIN window: the webContents that actually gets searched and emits found-in-page.
 type TargetWindow = {
-  webContents: {
+  webContents: EventEmitter & {
     findInPage: Mock<(text: string, options: FindInPageOptions) => number>
     stopFindInPage: Mock<(action: 'clearSelection') => void>
-    on: Mock<
-      (
-        event: 'found-in-page',
-        listener: (event: unknown, result: FoundInPageResult) => void
-      ) => void
-    >
   }
   emitFoundInPage: (result: FoundInPageResult) => void
 }
@@ -47,24 +41,14 @@ type OverlaySender = {
 }
 
 const createTargetWindow = (): TargetWindow => {
-  const foundListeners: Array<(event: unknown, result: FoundInPageResult) => void> = []
-  const webContents = {
+  const webContents = Object.assign(new EventEmitter(), {
     findInPage: vi.fn<(text: string, options: FindInPageOptions) => number>(() => 17),
-    stopFindInPage: vi.fn<(action: 'clearSelection') => void>(),
-    on: vi.fn<
-      (
-        event: 'found-in-page',
-        listener: (event: unknown, result: FoundInPageResult) => void
-      ) => void
-    >((_event, listener) => {
-      foundListeners.push(listener)
-    })
-  }
-
+    stopFindInPage: vi.fn<(action: 'clearSelection') => void>()
+  })
   return {
     webContents,
-    emitFoundInPage: (result: FoundInPageResult): void => {
-      for (const listener of foundListeners) listener({}, result)
+    emitFoundInPage: (result) => {
+      webContents.emit('found-in-page', {}, result)
     }
   }
 }
@@ -74,14 +58,19 @@ const createOverlay = (): OverlaySender => ({
 })
 
 describe('window find IPC', () => {
-  beforeEach(() => handlers.clear())
+  afterEach(() => {
+    ipcMain.removeAllListeners()
+    disposeIpcHandlerRegistry()
+    vi.restoreAllMocks()
+  })
 
   it('searches the resolved MAIN window and returns the match count to the overlay sender', () => {
     const target = createTargetWindow()
     const overlay = createOverlay()
     registerWindowFindIpcHandlers({ resolveMainWindow: () => target })
 
-    handlers.get(WINDOW_FIND_REQUEST_CHANNEL)!(
+    ipcMain.emit(
+      WINDOW_FIND_REQUEST_CHANNEL,
       { sender: overlay },
       { requestId: 1, text: 'protein', findNext: true, forward: true }
     )
@@ -108,11 +97,13 @@ describe('window find IPC', () => {
     const overlay = createOverlay()
     registerWindowFindIpcHandlers({ resolveMainWindow: () => target })
 
-    handlers.get(WINDOW_FIND_REQUEST_CHANNEL)!(
+    ipcMain.emit(
+      WINDOW_FIND_REQUEST_CHANNEL,
       { sender: overlay },
       { requestId: 1, text: 'protein', findNext: true, forward: true }
     )
-    handlers.get(WINDOW_FIND_REQUEST_CHANNEL)!(
+    ipcMain.emit(
+      WINDOW_FIND_REQUEST_CHANNEL,
       { sender: overlay },
       { requestId: 2, text: 'variant', findNext: true, forward: true }
     )
@@ -133,7 +124,7 @@ describe('window find IPC', () => {
     const overlay = createOverlay()
     registerWindowFindIpcHandlers({ resolveMainWindow: () => target })
 
-    handlers.get(WINDOW_FIND_CLEAR_CHANNEL)!({ sender: overlay }, undefined)
+    ipcMain.emit(WINDOW_FIND_CLEAR_CHANNEL, { sender: overlay }, undefined)
 
     expect(target.webContents.stopFindInPage).toHaveBeenCalledWith('clearSelection')
   })
@@ -147,7 +138,7 @@ describe('window find IPC', () => {
     registerFindOverlayOwner(overlay, { mainWindow: target, closeOverlay })
     registerWindowFindIpcHandlers()
 
-    handlers.get(WINDOW_FIND_CLOSE_CHANNEL)!({ sender: overlay }, undefined)
+    ipcMain.emit(WINDOW_FIND_CLOSE_CHANNEL, { sender: overlay }, undefined)
 
     expect(closeOverlay).toHaveBeenCalledTimes(1)
   })
@@ -156,11 +147,107 @@ describe('window find IPC', () => {
     const target = createTargetWindow()
     registerWindowFindIpcHandlers({ resolveMainWindow: () => null })
 
-    handlers.get(WINDOW_FIND_REQUEST_CHANNEL)!(
+    ipcMain.emit(
+      WINDOW_FIND_REQUEST_CHANNEL,
       { sender: createOverlay() },
       { requestId: 1, text: 'protein', findNext: true, forward: true }
     )
 
     expect(target.webContents.findInPage).not.toHaveBeenCalled()
+  })
+})
+
+// Exercise the production installation contract; EventEmitter retains duplicate listeners,
+// unlike the single-handler map used by the earlier request-only tests.
+describe('window find installation lifecycle', () => {
+  afterEach(() => {
+    ipcMain.removeAllListeners()
+    disposeIpcHandlerRegistry()
+    vi.restoreAllMocks()
+  })
+
+  const install = (target: TargetWindow): ReturnType<NamedElectronSurfaceAdapter['install']> =>
+    createElectronSurfaceAdapter('desktop-utilities', () =>
+      registerWindowFindIpcHandlers({ resolveMainWindow: () => target })
+    ).install()
+  const request = { requestId: 1, text: 'protein', findNext: true, forward: true }
+  const result = { requestId: 17, activeMatchOrdinal: 1, matches: 4, finalUpdate: true }
+  const channels = [
+    WINDOW_FIND_REQUEST_CHANNEL,
+    WINDOW_FIND_CLEAR_CHANNEL,
+    WINDOW_FIND_CLOSE_CHANNEL
+  ]
+
+  it('stops dispatching requests after the surface is uninstalled', async () => {
+    const target = createTargetWindow()
+    const overlay = createOverlay()
+    const external = vi.fn()
+    ipcMain.on(WINDOW_FIND_REQUEST_CHANNEL, external)
+    const installation = await install(target)
+    await installation.uninstall()
+    await installation.uninstall()
+    ipcMain.emit(WINDOW_FIND_REQUEST_CHANNEL, { sender: overlay }, request)
+    expect(target.webContents.findInPage).not.toHaveBeenCalled()
+    expect(external).toHaveBeenCalledOnce()
+    expect(ipcMain.listeners(WINDOW_FIND_REQUEST_CHANNEL)).toEqual([external])
+    expect(ipcMain.listenerCount(WINDOW_FIND_CLEAR_CHANNEL)).toBe(0)
+    expect(ipcMain.listenerCount(WINDOW_FIND_CLOSE_CHANNEL)).toBe(0)
+  })
+
+  it('does not publish late native results after uninstall', async () => {
+    const target = createTargetWindow()
+    const overlay = createOverlay()
+    const installation = await install(target)
+    ipcMain.emit(WINDOW_FIND_REQUEST_CHANNEL, { sender: overlay }, request)
+    expect(target.webContents.findInPage).toHaveBeenCalledOnce()
+    await installation.uninstall()
+    target.emitFoundInPage(result)
+    expect(overlay.send).not.toHaveBeenCalled()
+    expect(target.webContents.listenerCount('found-in-page')).toBe(0)
+  })
+
+  it('handles each request and result only once after reinstall', async () => {
+    const target = createTargetWindow()
+    const overlay = createOverlay()
+    const first = await install(target)
+    ipcMain.emit(WINDOW_FIND_REQUEST_CHANNEL, { sender: overlay }, request)
+    await first.uninstall()
+    const second = await install(target)
+    target.webContents.findInPage.mockClear()
+    ipcMain.emit(WINDOW_FIND_REQUEST_CHANNEL, { sender: overlay }, request)
+    expect(target.webContents.findInPage).toHaveBeenCalledOnce()
+    target.emitFoundInPage(result)
+    expect(overlay.send).toHaveBeenCalledOnce()
+    await second.uninstall()
+  })
+
+  it('rolls back event listeners when registration fails partway through', () => {
+    const external = vi.fn()
+    ipcMain.on(WINDOW_FIND_REQUEST_CHANNEL, external)
+    const on = ipcMain.on.bind(ipcMain)
+    vi.spyOn(ipcMain, 'on').mockImplementation((channel, listener) => {
+      if (channel === WINDOW_FIND_CLOSE_CHANNEL) throw new Error('listener installation failed')
+      return on(channel, listener)
+    })
+    expect(() => install(createTargetWindow())).toThrow('listener installation failed')
+    expect(ipcMain.listeners(WINDOW_FIND_REQUEST_CHANNEL)).toEqual([external])
+    expect(ipcMain.listenerCount(WINDOW_FIND_CLEAR_CHANNEL)).toBe(0)
+    expect(ipcMain.listenerCount(WINDOW_FIND_CLOSE_CHANNEL)).toBe(0)
+  })
+
+  it('releases searched window subscriptions on destruction without touching other listeners', async () => {
+    const target = createTargetWindow()
+    const external = vi.fn()
+    target.webContents.on('found-in-page', external)
+    const installation = await install(target)
+    const overlay = createOverlay()
+    ipcMain.emit(WINDOW_FIND_REQUEST_CHANNEL, { sender: overlay }, request)
+    target.webContents.emit('destroyed')
+    target.emitFoundInPage(result)
+    expect(overlay.send).not.toHaveBeenCalled()
+    expect(target.webContents.listeners('found-in-page')).toEqual([external])
+    expect(target.webContents.listenerCount('destroyed')).toBe(0)
+    await installation.uninstall()
+    for (const channel of channels) expect(ipcMain.listenerCount(channel)).toBe(0)
   })
 })

@@ -1,3 +1,4 @@
+import { removeComposerDrafts } from '@/pages/workspace/composer-draft-storage'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
 import {
@@ -141,6 +142,7 @@ const useLifecycleSync = ({
       })
     })
     const removeProjectDeleted = window.api.projects.onDeleted(({ projectId, status }) => {
+      removeComposerDrafts(projectId)
       applyOrQueue(
         `project:${projectId}`,
         () => {
@@ -283,7 +285,8 @@ const useLifecycleSync = ({
         }
       })
     })
-    const removeSessionDeleted = window.api.sessions.onDeleted(({ sessionId }) => {
+    const removeSessionDeleted = window.api.sessions.onDeleted(({ projectId, sessionId }) => {
+      removeComposerDrafts(projectId, sessionId)
       applyOrQueue(
         `session:${sessionId}`,
         () => {

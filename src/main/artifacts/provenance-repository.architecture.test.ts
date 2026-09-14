@@ -220,6 +220,8 @@ describe('Artifact Provenance repository architecture', () => {
   it('keeps the established public facade and private projection helpers', () => {
     expect(methods(facade, 'public')).toEqual(
       [
+        'saveVersion',
+        'withSessionMutation',
         'activateFinalizedRun',
         'createVersion',
         'deleteProjectProvenance',
@@ -254,6 +256,10 @@ describe('Artifact Provenance repository architecture', () => {
     )
     expect(methods(facade, 'private')).toEqual(
       [
+        'writeGeneratedVersion',
+        'replayVersionWithinSession',
+        'replayRoutingPublisher',
+        'reconcileSessionWithinSession',
         'inspectVersionContent',
         'openVersionContent',
         'resolveOwnedVersion',
@@ -447,6 +453,7 @@ describe('Artifact Provenance repository architecture', () => {
         'src/main/artifacts/provenance-reproducibility-projection.test.ts',
         'src/main/artifacts/provenance-repository.architecture.test.ts',
         'src/main/artifacts/provenance-repository.test.ts',
+        'src/main/artifacts/provenance-startup.integration.test.ts',
         'src/main/artifacts/reviewer-turn-file-evidence-reader.test.ts',
         'src/main/artifacts/provenance-write-contract.test.ts',
         'src/main/artifacts/write-budget-owner.test.ts',
@@ -460,6 +467,7 @@ describe('Artifact Provenance repository architecture', () => {
         'src/main/artifacts/ipc.test.ts',
         'src/main/artifacts/mcp-server.test.ts',
         'src/main/data-content-application-commands.test.ts',
+        'src/main/database/managed-file-version-domain.test.ts',
         'src/main/notebook/local-rpc-notebook-adapter.test.ts',
         'src/preload/index.test.ts',
         'src/shared/renderer-contract-catalog.test.ts',

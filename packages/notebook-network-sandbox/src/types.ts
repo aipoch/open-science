@@ -51,6 +51,7 @@ export type NotebookSandboxProcessOutcome = Readonly<{
 export type NotebookNetworkAccessRequest = Readonly<{
   host: string
   port?: number
+  purpose?: 'probe' | 'block'
   signal: AbortSignal
 }>
 
@@ -95,6 +96,7 @@ export type NotebookSandboxedProcess = Readonly<{
   confirmProcessTreeTermination?: () => Promise<boolean>
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
   annotateStderr: (stderr: string) => string
+  setExecutionActive: (active: boolean) => void
   resetNetworkConnections: () => void
   cleanup: (
     reason: NotebookSandboxCleanupReason,

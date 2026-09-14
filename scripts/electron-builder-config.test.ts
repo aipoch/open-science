@@ -46,7 +46,10 @@ describe('electron-builder native image processing', () => {
       to: 'notebook-network-sandbox/wsl2/manifest.json'
     })
     expect(config.mac?.extraResources).toHaveLength(1)
-    expect(config.linux?.extraResources).toHaveLength(1)
+    expect(config.linux?.extraResources).toEqual([
+      { from: 'resources/bin/linux/${arch}/micromamba', to: 'micromamba' },
+      { from: 'build/deb-cli-launcher', to: 'open-science-cli' }
+    ])
   })
 })
 
@@ -239,4 +242,19 @@ describe('electron-builder macOS icons', () => {
       )
     ).toBe(true)
   })
+})
+
+it('registers .science as a viewable document without changing the per-user installer', () => {
+  const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
+    fileAssociations: { ext: string; role: string; mimeType: string }[]
+    nsis: { perMachine: boolean; allowElevation: boolean }
+  }
+  expect(config.fileAssociations).toContainEqual(
+    expect.objectContaining({
+      ext: 'science',
+      role: 'Viewer',
+      mimeType: 'application/x-open-science-session'
+    })
+  )
+  expect(config.nsis).toMatchObject({ perMachine: false, allowElevation: false })
 })

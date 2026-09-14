@@ -51,17 +51,19 @@ const ConfirmActionDialog = ({
     <AlertDialog.Portal>
       <AlertDialog.Overlay className={`${dialogOverlayClassName} z-[70]`} />
       <AlertDialog.Content
-        className={dialogPanelClassName('z-[70] w-[min(420px,calc(100vw-2rem))] p-0')}
+        className={dialogPanelClassName(
+          'z-[70] flex w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden p-0'
+        )}
         data-testid={testId}
         onCloseAutoFocus={onCloseAutoFocus}
         onEscapeKeyDown={(event) => {
-          if (loading) event.preventDefault()
+          if (loading || event.isComposing) event.preventDefault()
         }}
       >
         <div className={dialogHeaderClassName}>
           <AlertDialog.Title className={dialogTitleClassName}>{title}</AlertDialog.Title>
         </div>
-        <div className={dialogBodyClassName}>
+        <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto`}>
           <AlertDialog.Description className={dialogDescriptionClassName}>
             {description}
           </AlertDialog.Description>

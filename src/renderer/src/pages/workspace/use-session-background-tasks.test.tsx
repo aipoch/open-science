@@ -3,6 +3,7 @@ import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { usePackageOperationStore } from '../../stores/package-operation-store'
 import type { BackgroundResultActivityItem } from '../../../../shared/background-result-delivery'
 import type { NotebookRunRecord, NotebookSessionReference } from '../../../../shared/notebook'
 import {
@@ -149,8 +150,45 @@ describe('useSessionBackgroundTasks', () => {
   afterEach(() => {
     act(() => root?.unmount())
     document.body.innerHTML = ''
+    usePackageOperationStore.setState({ operation: null })
+    vi.useRealTimers()
     vi.unstubAllGlobals()
     latest = undefined
+  })
+
+  it('pauses Notebook polling while its Session is exporting and resumes after release', async () => {
+    vi.useFakeTimers()
+    const state = vi.fn().mockResolvedValue({ runs: [run()] })
+    stubApi({
+      backgroundResultDelivery: emptyDeliveryApi(),
+      notebook: { state, onChanged: vi.fn(() => () => undefined) }
+    })
+    await mount('session-1', 'project-1', notebook)
+    expect(state).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      usePackageOperationStore.getState().receive({
+        id: 'export-1',
+        kind: 'export',
+        state: 'awaiting-selection',
+        session: { projectId: 'project-1', sessionId: 'session-1' },
+        progress: { phase: 'selecting' }
+      })
+    })
+    state.mockClear()
+    state.mockRejectedValue(
+      new Error('This Session is locked while its research package is being exported.')
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000)
+    })
+    expect(state).not.toHaveBeenCalled()
+    expect(latest?.runs).toHaveLength(1)
+    state.mockResolvedValue({ runs: [] })
+    await act(async () => {
+      usePackageOperationStore.getState().receive(null)
+    })
+    expect(state).toHaveBeenCalledTimes(1)
+    expect(latest?.runs).toHaveLength(0)
   })
 
   it('collects background Runs, deliveries, and Compute Jobs with a unified summary', async () => {

@@ -1,5 +1,6 @@
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, join, posix } from 'node:path'
+import { conditionalRestoreScript } from '../notebook/conditional-restore-script'
 
 import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
 
@@ -84,10 +85,15 @@ type ArtifactReproducibilityReceiptExporterDependencies = {
     | Pick<ArtifactVersionDescriptor, 'versionId' | 'artifactId' | 'versionNumber' | 'checksum'>
     | undefined
   >
+  readSourceScope?: (
+    request: ArtifactReproducibilityReceiptScope
+  ) => Promise<ArtifactReproducibilityReceiptScope | undefined>
   readOutputStorage?: (
     request: ArtifactReproducibilityReceiptScope
   ) => Promise<ArtifactReproducibilityOutputStorage>
-  downloadsDirectory: string
+  // Resolved lazily: Electron's 'downloads' path can be unavailable in isolated profiles, and
+  // wiring-time resolution once broke packaged startup (only save dialogs actually need it).
+  downloadsDirectory: () => string
   readReceipt: (
     request: ArtifactReproducibilityReceiptScope,
     receiptChecksum: string
@@ -107,7 +113,10 @@ type ArtifactReproducibilityReceiptExporterDependencies = {
   readExecution?: (
     request: ArtifactReproducibilityReceiptScope
   ) => Promise<PersistedArtifactExecutionSnapshot>
-  readEnvironmentLock?: (lockChecksum: string) => Promise<string | undefined>
+  readEnvironmentLock?: (
+    lockChecksum: string,
+    request: ArtifactReproducibilityReceiptScope
+  ) => Promise<string | undefined>
   showSaveDialog: (
     owner: unknown,
     options: SaveDialogOptions
@@ -238,7 +247,9 @@ const comparisonResult = (
 const buildVerificationReport = (
   receipt: ArtifactReproducibilityReceipt,
   outputsCleared = false,
-  versionNumber?: number
+  versionNumber?: number,
+  sourceEvidence = false,
+  outputsOmitted = false
 ): string => {
   const environmentRows = receipt.environmentLocks.length
     ? receipt.environmentLocks.map(
@@ -299,6 +310,12 @@ const buildVerificationReport = (
       return `| ${markdownCell(comparison.relativePath)} | ${markdownCell(report?.outcome ?? (comparison.contentComparisonUnavailableReason ? 'Unavailable' : comparison.status === 'matched' ? 'Not needed (identical bytes)' : 'Not recorded'))} | ${markdownCell(report?.reason ?? comparison.contentComparisonUnavailableReason)} |`
     }),
     '',
+    sourceEvidence
+      ? '> These checks were recorded by the source installation, not rerun here.'
+      : '',
+    outputsOmitted
+      ? '> Some reproduced outputs were not included in the imported package. See outputs/not-included.json.'
+      : '',
     outputsCleared
       ? '> Reproduced outputs were cleared by the user. Verification metadata and logs are retained.'
       : receipt.comparisons.some((comparison) => comparison.outputCaptured)
@@ -313,11 +330,21 @@ const buildVerificationArchive = (
   checkLog?: ArtifactReproducibilityCheckLogRecord,
   outputs: Record<string, Uint8Array> = {},
   outputsCleared = false,
-  versionNumber?: number
+  versionNumber?: number,
+  sourceEvidence = false,
+  outputsOmitted = false
 ): Uint8Array => {
   const entries: Zippable = {
     'report.md': [
-      strToU8(buildVerificationReport(receipt, outputsCleared, versionNumber)),
+      strToU8(
+        buildVerificationReport(
+          receipt,
+          outputsCleared,
+          versionNumber,
+          sourceEvidence,
+          outputsOmitted
+        )
+      ),
       { mtime: ZIP_MTIME }
     ],
     'verification-receipt.json': [
@@ -399,6 +426,29 @@ const buildEnvironmentLockReadme = (
   info: ArtifactEnvironmentLockBundleInfo,
   lock?: NotebookEnvironmentLock
 ): string => {
+  if (lock?.schemaVersion === 2)
+    return [
+      '# Conditional package restoration',
+      '',
+      'This bundle restores packages using an interpreter you provide. It does not recreate the interpreter, OS, system libraries, or guarantee identical results.',
+      '',
+      `Required runtime: ${lock.kernelKind} ${lock.externalRuntime!.version}; ${lock.platform}/${lock.architecture}.`,
+      `Required package manager: ${lock.kernelKind === 'r' ? 'renv' : 'pip'} ${lock.externalRuntime!.installerVersion}.`,
+      '',
+      'For R, jsonlite must also be available to the supplied Rscript. R repository/version records are not cryptographic package archive pins; repository availability and content remain prerequisites.',
+      '',
+      'Inspect the bundle and its sources. From the extracted directory, use Python 3.9 or later to run:',
+      '',
+      '```sh',
+      'python restore-packages.py --interpreter /path/to/interpreter --destination /path/to/new-library',
+      '```',
+      '',
+      'Pass Rscript for R or python for Python. Use a new destination whose parent exists. The script checks runtime/platform/architecture and package-manager versions before installation, and leaves any failed destination for inspection.',
+      'The destination belongs to you. Open Science does not register, adopt, or delete it; inspect and remove failed destinations yourself. Activate the supplied interpreter in your shell first if it requires Conda or other native library paths.',
+      '',
+      'For R execution, explicitly put the new library first in .libPaths(). For Python, use the new environment interpreter. Re-execute the original code with the original inputs and compare outputs; successful package restoration alone is not a successful reproducibility check.',
+      ''
+    ].join('\n')
   const native = lock ? nativeLockRestoreState(lock) : undefined
   const quote = (value: string): string => `'${value.replace(/'/gu, `'"'"'`)}'`
   const nativeCommands: string[] = []
@@ -499,6 +549,7 @@ const buildEnvironmentLockArchive = (
     ['bundle-manifest.json', `${JSON.stringify(info, null, 2)}\n`],
     ['README.md', buildEnvironmentLockReadme(info, lock)]
   ])
+  if (lock.schemaVersion === 2) contents.set('restore-packages.py', conditionalRestoreScript)
   const addFile = (path: string, content: string): void => {
     const existing = contents.get(path)
     if (existing === undefined) {
@@ -649,7 +700,10 @@ const createArtifactReproducibilityReceiptExporter = (
     if (!requirement) {
       throw new Error('Environment lock is not referenced by this Artifact dependency recipe.')
     }
-    const serialized = await dependencies.readEnvironmentLock(request.lockChecksum)
+    const serialized = await dependencies.readEnvironmentLock(
+      request.lockChecksum,
+      receiptScope(request)
+    )
     if (!serialized) throw new Error('Environment lock was not found.')
     if (sha256(serialized) !== request.lockChecksum) {
       throw new Error('Environment lock checksum mismatch.')
@@ -727,7 +781,13 @@ const createArtifactReproducibilityReceiptExporter = (
       const { entityId, ...scope } = request
       assertExportRequest({ ...scope, suggestedName: 'result' })
       const receipt = await dependencies.readReceipt(scope, request.receiptChecksum)
-      if (!receipt || !matchesRequest(receipt, scope))
+      if (
+        !receipt ||
+        !matchesRequest(receipt, {
+          ...((await dependencies.readSourceScope?.(scope)) ?? scope),
+          receiptChecksum: request.receiptChecksum
+        })
+      )
         throw new Error('Reproducibility receipt was not found.')
       const validated = validateReceipt(receipt)
       const comparison = validated.comparisons.find(
@@ -773,7 +833,13 @@ const createArtifactReproducibilityReceiptExporter = (
       assertExportRequest(request)
       const receipt = await dependencies.readReceipt(receiptScope(request), request.receiptChecksum)
       if (!receipt) throw new Error('Reproducibility receipt was not found.')
-      if (!matchesRequest(receipt, request)) {
+      const sourceScope = await dependencies.readSourceScope?.(receiptScope(request))
+      if (
+        !matchesRequest(receipt, {
+          ...(sourceScope ?? request),
+          receiptChecksum: request.receiptChecksum
+        })
+      ) {
         throw new Error('Reproducibility receipt identity mismatch.')
       }
       const validated = validateReceipt(receipt)
@@ -784,10 +850,12 @@ const createArtifactReproducibilityReceiptExporter = (
         : undefined
       if (request.outputEntityId && !selectedOutput)
         throw new Error('Reproduced output is unavailable.')
+      const outputStorage = await dependencies.readOutputStorage?.(receiptScope(request))
       const outputsCleared =
-        (
-          await dependencies.readOutputStorage?.(receiptScope(request))
-        )?.clearedReceiptChecksums.includes(validated.receiptChecksum) ?? false
+        outputStorage?.clearedReceiptChecksums.includes(validated.receiptChecksum) ?? false
+      const omitted = outputStorage?.omittedOutputChecksums ?? []
+      if (selectedOutput && omitted.includes(selectedOutput.actualChecksum!))
+        throw new Error('Reproduced output was not included in this package.')
       if (selectedOutput && outputsCleared) throw new Error('Reproduced output was cleared.')
       if (selectedOutput) {
         if (!dependencies.readOutput) throw new Error('Reproduced output storage is unavailable.')
@@ -799,7 +867,7 @@ const createArtifactReproducibilityReceiptExporter = (
         const selected = await dependencies.showSaveDialog(owner, {
           title: (dependencies.translate ?? englishNativeTranslator)('Save file'),
           defaultPath: join(
-            dependencies.downloadsDirectory,
+            dependencies.downloadsDirectory(),
             outputFilename(selectedOutput.relativePath)
           ),
           filters: []
@@ -823,7 +891,7 @@ const createArtifactReproducibilityReceiptExporter = (
       const selected = await dependencies.showSaveDialog(owner, {
         title: translate('Save file'),
         defaultPath: join(
-          dependencies.downloadsDirectory,
+          dependencies.downloadsDirectory(),
           verificationArchiveName(request.suggestedName, validated.completedAt)
         ),
         filters: [{ name: translate('ZIP archive'), extensions: ['zip'] }]
@@ -836,7 +904,12 @@ const createArtifactReproducibilityReceiptExporter = (
       const manifest: Array<{ entityId: string; relativePath: string; archivePath: string }> = []
       const archivedChecksums = new Map<string, string>()
       for (const [index, comparison] of validated.comparisons.entries()) {
-        if (!comparison.outputCaptured || outputsCleared) continue
+        if (
+          !comparison.outputCaptured ||
+          outputsCleared ||
+          omitted.includes(comparison.actualChecksum!)
+        )
+          continue
         if (!dependencies.readOutput) throw new Error('Reproduced output storage is unavailable.')
         let archivePath = archivedChecksums.get(comparison.actualChecksum!)
         if (!archivePath) {
@@ -854,13 +927,17 @@ const createArtifactReproducibilityReceiptExporter = (
           archivePath
         })
       }
+      if (omitted.length)
+        outputs['outputs/not-included.json'] = strToU8(
+          JSON.stringify({ omittedOutputChecksums: omitted })
+        )
       if (manifest.length)
         outputs['outputs/manifest.json'] = strToU8(JSON.stringify(manifest, null, 2))
       const version = await dependencies.readVersion?.(receiptScope(request))
       if (
         version &&
-        (version.versionId !== validated.artifactVersion.versionId ||
-          version.artifactId !== validated.artifactVersion.artifactId ||
+        (version.versionId !== request.versionId ||
+          version.artifactId !== request.artifactId ||
           version.checksum !== validated.artifactVersion.targetChecksum ||
           !Number.isSafeInteger(version.versionNumber) ||
           version.versionNumber < 1)
@@ -873,13 +950,17 @@ const createArtifactReproducibilityReceiptExporter = (
           checkLog,
           outputs,
           outputsCleared,
-          version?.versionNumber
+          version?.versionNumber,
+          Boolean(sourceScope),
+          omitted.length > 0
         )
       )
       return { saved: true }
     },
     describeEnvironmentLock: async (request) => (await resolveEnvironmentLock(request)).info,
     createEnvironmentFromLock: async (request) => {
+      if (await dependencies.readSourceScope?.(receiptScope(request)))
+        throw new Error('Imported Sessions are read-only.')
       const { info, lock } = await resolveEnvironmentLock(request)
       return materializeEnvironmentLock(request.projectId, info, lock)
     },
@@ -891,7 +972,7 @@ const createArtifactReproducibilityReceiptExporter = (
       const selected = await dependencies.showSaveDialog(owner, {
         title: translate('Save file'),
         defaultPath: join(
-          dependencies.downloadsDirectory,
+          dependencies.downloadsDirectory(),
           environmentLockArchiveName(request.lockChecksum)
         ),
         filters: [{ name: translate('ZIP archive'), extensions: ['zip'] }]

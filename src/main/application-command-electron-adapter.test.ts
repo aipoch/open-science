@@ -46,6 +46,11 @@ const validatedChannels = [
   'memory:snapshot',
   'memory:update-category',
   'memory:update-entry',
+  'pdf-structure:cancel',
+  'pdf-structure:clear-cache',
+  'pdf-structure:parse',
+  'pdf-structure:read-cached',
+  'pdf-structure:read-thumbnail',
   'projects:create',
   'projects:delete',
   'projects:get',
@@ -56,8 +61,11 @@ const validatedChannels = [
   'projects:update-archive',
   'sessions:delete-session',
   'sessions:edit-details',
+  'sessions:export-package',
   'sessions:filter-pdf-context-candidates',
+  'sessions:import-package',
   'sessions:link-pdf-context',
+  'sessions:package-operation',
   'sessions:set-delegation-policy',
   'sessions:unlink-pdf-context',
   'sessions:update-archive',
@@ -67,7 +75,8 @@ const validatedChannels = [
   'tags:set-assignment',
   'tags:snapshot',
   'tags:update',
-  'uploads:finalize-session'
+  'uploads:finalize-session',
+  'uploads:recover-draft'
 ] as const
 
 const eventWithLease = (): IpcMainInvokeEvent => {

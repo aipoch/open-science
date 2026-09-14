@@ -20,6 +20,9 @@ type ProjectFormDialogProps = {
   isSubmitting: boolean
   error: string | undefined
   errorDetail?: string
+  conflictProject?: Project
+  onLoadLatest?: () => void
+  onKeepDraft?: () => void
   onNameChange: (value: string) => void
   onDescriptionChange: (value: string) => void
   onAgentContextChange: (value: string) => void
@@ -55,12 +58,14 @@ const useProjectFormDialog = (
   const [agentContextDraft, setAgentContextDraft] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorDetail, setErrorDetail] = useState<string>()
+  const [conflictProject, setConflictProject] = useState<Project>()
   const [formError, setFormError] = useState<string | undefined>(undefined)
 
   const openCreateDialog = useCallback((): void => {
     // A submission is in flight: ignore reopens so the pending mutation keeps its drafts.
     if (isSubmitting) return
 
+    setConflictProject(undefined)
     setFormState({ mode: 'create' })
     setNameDraft('')
     setDescriptionDraft('')
@@ -74,6 +79,7 @@ const useProjectFormDialog = (
       // A submission is in flight: ignore reopens so the pending mutation keeps its drafts.
       if (isSubmitting) return
 
+      setConflictProject(undefined)
       setFormState({
         mode: 'edit',
         projectId: project.id,
@@ -102,7 +108,7 @@ const useProjectFormDialog = (
 
     const name = nameDraft.trim()
 
-    if (!formState || !name || isSubmitting) return
+    if (!formState || !name || isSubmitting || conflictProject) return
 
     const description = descriptionDraft.trim()
     const agentContext = agentContextDraft.trim()
@@ -138,11 +144,25 @@ const useProjectFormDialog = (
           else openProject(project.id, 'user')
         }
       })
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         setErrorDetail(error instanceof Error ? error.message : String(error))
+        if (
+          error instanceof Error &&
+          error.message === 'Project changed elsewhere.' &&
+          formState.mode === 'edit'
+        ) {
+          try {
+            const latest = await window.api.projects.get(formState.projectId)
+            if (latest) setConflictProject(latest)
+          } catch {
+            // Keep the stale revision: retry remains conditional if the latest read fails.
+          }
+        }
         setFormError(
           error instanceof Error && error.message === 'Project changed elsewhere.'
-            ? t('Project changed elsewhere. Reopen Project Settings and try again.')
+            ? t(
+                'Project changed elsewhere. Your draft is kept. Compare the latest values before saving again.'
+              )
             : t('Could not save project. Please try again.')
         )
       })
@@ -175,6 +195,20 @@ const useProjectFormDialog = (
       isSubmitting,
       error: formError,
       errorDetail,
+      conflictProject,
+      onLoadLatest: conflictProject ? () => openEditDialog(conflictProject) : undefined,
+      onKeepDraft: conflictProject
+        ? () => {
+            setFormState({
+              mode: 'edit',
+              projectId: conflictProject.id,
+              expectedUpdatedAt: conflictProject.updatedAt
+            })
+            setConflictProject(undefined)
+            setFormError(undefined)
+            setErrorDetail(undefined)
+          }
+        : undefined,
       onNameChange: setNameDraft,
       onDescriptionChange: setDescriptionDraft,
       onAgentContextChange: setAgentContextDraft,

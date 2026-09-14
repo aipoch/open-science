@@ -34,6 +34,7 @@ import { startDiagnosticOperation } from '../diagnostics/operation'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import {
   buildNotebookKernelEnvironment,
+  normalizeRProcessLocale,
   environmentPathRoots,
   notebookTrustBundleEnvironment
 } from './process-environment'
@@ -64,6 +65,7 @@ type NotebookNetworkDecisionRequest = Readonly<{
   port?: number
   runtime?: NotebookSandboxInvocation['runtime']
   reason?: string
+  allowOnce: boolean
   signal: AbortSignal
 }>
 
@@ -80,6 +82,32 @@ const sameCleanupDomain = (left: NotebookSandboxTarget, right: NotebookSandboxTa
 
 const cleanupComplete = (result: NotebookSandboxCleanupResult): boolean =>
   result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
+
+const WINDOWS_PROBE_DIRECTORY_LOCK_CODES = new Set([
+  'EBUSY',
+  'EPERM',
+  'EACCES',
+  'ENOTEMPTY',
+  'EAGAIN',
+  'EMFILE',
+  'ENFILE'
+])
+
+const removeDirectoryAfterWindowsProbeLock = async (path: string): Promise<void> => {
+  let lastError: unknown
+  for (let attempt = 0; attempt < 16; attempt++) {
+    try {
+      await rm(path, { recursive: true, force: true })
+      return
+    } catch (error) {
+      lastError = error
+      const code = (error as NodeJS.ErrnoException).code
+      if (!code || !WINDOWS_PROBE_DIRECTORY_LOCK_CODES.has(code)) throw error
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)))
+    }
+  }
+  throw lastError
+}
 
 const statusLogFields = (status: NotebookNetworkStatus): Record<string, unknown> => {
   switch (status.kind) {
@@ -486,6 +514,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         if (executionActive) throw new Error('Notebook sandbox execution is already active.')
         wrapped.resetNetworkConnections()
         executionActive = true
+        wrapped.setExecutionActive(true)
         const grantKey = commandGrantKey(
           invocation.sessionId,
           invocation.runtime,
@@ -499,6 +528,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ended = true
           activeExecutionGrants = new Set()
           executionActive = false
+          wrapped.setExecutionActive(false)
           wrapped.resetNetworkConnections()
         }
       },
@@ -527,33 +557,23 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const destinationKey = blockedDestinationKey(request.sessionId, normalized.hostname)
     const blockedCommands = this.blockedDestinationCommands.get(destinationKey)
     const blockedRuntimes = blockedCommands ? new Set(blockedCommands.keys()) : undefined
-    const runtime = request.runtime
-      ? blockedRuntimes?.has(request.runtime)
-        ? request.runtime
-        : undefined
-      : blockedRuntimes?.size === 1
-        ? [...blockedRuntimes][0]
-        : undefined
-    if (!blockedRuntimes || !runtime) {
-      return this.networkAccessResult(normalized.hostname, 'denied', request.runtime, {
-        decisionSource: 'no-matching-block'
-      })
-    }
-    const commands = blockedCommands!.get(runtime)
+    // Failure records may fill in omitted context, but are not admission tickets.
+    // Only bash accepts a caller-supplied execution command. Kernel grants use
+    // their recorded process invocation, not caller-supplied Notebook source code.
+    const runtime =
+      request.runtime ?? (blockedRuntimes?.size === 1 ? [...blockedRuntimes][0] : undefined)
+    const commands = runtime ? blockedCommands?.get(runtime) : undefined
     const commandText =
-      request.command && commands?.has(request.command)
-        ? request.command
-        : commands?.size === 1
-          ? [...commands][0]
-          : undefined
-    if (!commands || !commandText) {
-      return this.networkAccessResult(normalized.hostname, 'denied', runtime, {
-        decisionSource: 'no-matching-command'
-      })
-    }
-    commands.delete(commandText)
-    if (commands.size === 0) blockedCommands!.delete(runtime)
-    if (blockedCommands!.size === 0) this.blockedDestinationCommands.delete(destinationKey)
+      runtime === 'bash'
+        ? (request.command ?? (commands?.size === 1 ? [...commands][0] : undefined))
+        : request.command
+          ? commands?.has(request.command)
+            ? request.command
+            : undefined
+          : commands?.size === 1
+            ? [...commands][0]
+            : undefined
+    const allowOnce = Boolean(runtime && commandText)
 
     const controller = request.signal ? undefined : new AbortController()
     const signal = request.signal ?? controller!.signal
@@ -568,6 +588,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       hostname: normalized.hostname,
       runtime,
       reason: request.reason,
+      allowOnce,
       signal
     })
     if (decision === 'unavailable') {
@@ -581,6 +602,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       })
     }
     if (decision === 'allowOnce') {
+      // An invalid selection must never turn missing context into a broad grant.
+      if (!runtime || !commandText) {
+        return this.networkAccessResult(normalized.hostname, 'unavailable', runtime, {
+          decisionSource: 'missing-command-context'
+        })
+      }
+      commands?.delete(commandText)
+      if (commands?.size === 0) blockedCommands?.delete(runtime)
+      if (blockedCommands?.size === 0) this.blockedDestinationCommands.delete(destinationKey)
       const grantKey = commandGrantKey(request.sessionId, runtime, commandText)
       const grants = this.nextExecutionGrants.get(grantKey) ?? new Set<string>()
       grants.add(normalized.hostname)
@@ -790,7 +820,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       throw new Error('Enable protected mode before verifying R access.')
     const prefix = windowsCondaPrefixForR(executable, this.platform)
     const env = {
-      ...buildNotebookKernelEnvironment(this.platform),
+      ...normalizeRProcessLocale(buildNotebookKernelEnvironment(this.platform), this.platform),
       ...(prefix ? { PATH: condaActivatedPath(prefix, process.env.PATH, this.platform) } : {})
     }
     const cwd = await mkdtemp(join(tmpdir(), 'open-science-r-access-'))
@@ -846,7 +876,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         const { stdout } = await promisify(execFile)(invocation.executable, [...invocation.args], {
           cwd,
           env: invocation.env,
-          timeout: 20_000,
+          // This bounds the native host, including ACL preparation and rollback, rather
+          // than only R execution. Live kernels can make directory propagation exceed 20s.
+          timeout: 60_000,
           windowsHide: true,
           maxBuffer: 1024 * 1024
         })
@@ -895,7 +927,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         cause: verificationError
       })
     }
-    await rm(cwd, { recursive: true, force: true })
+    // Windows can retain directory handles briefly after the probe's process tree has exited.
+    // Retry only after termination and sandbox cleanup are confirmed; persistent locks still fail.
+    // Node's fs.rm retries omit EACCES, which hosted Windows runners can surface for a live cwd.
+    await removeDirectoryAfterWindowsProbeLock(cwd)
     if (verificationError !== undefined) throw verificationError
     return verified
   }
@@ -1135,13 +1170,14 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     executionActive: boolean,
     commandGrants: ReadonlySet<string>,
     allowedNetworkHosts: ReadonlySet<string>,
-    request: { host: string; signal: AbortSignal }
+    request: { host: string; signal: AbortSignal; purpose?: 'probe' | 'block' }
   ): Promise<boolean> {
     if (request.signal.aborted) return Promise.resolve(false)
     const normalized = validateCustomAllowedDomain(request.host)
     if (!normalized.ok || !executionActive) return Promise.resolve(false)
     if (allowedNetworkHosts.has(normalized.hostname)) return Promise.resolve(true)
     if (commandGrants.has(normalized.hostname)) return Promise.resolve(true)
+    if (request.purpose === 'probe') return Promise.resolve(false)
     const key = blockedDestinationKey(sessionId, normalized.hostname)
     const runtimes = this.blockedDestinationCommands.get(key) ?? new Map()
     const commands = runtimes.get(runtime) ?? new Set<string>()

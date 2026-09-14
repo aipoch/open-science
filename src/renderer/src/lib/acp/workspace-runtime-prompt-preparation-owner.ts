@@ -387,8 +387,10 @@ const prepareExistingWorkspacePrompt = async (
         )
         contextResetFromResume = true
       }
-
-      // #936: accepted events from the retired generation must settle before the next run opens.
+    }
+    // Resetting a Branch also retires its prior turn. Drain accepted stops before appending
+    // the new prompt, or the persistence flush can settle it before provider dispatch.
+    if (shouldResumeSession || agentContextResetPerformed) {
       await request.drainRuntimeEvents?.(sessionId)
     }
   } catch (error) {

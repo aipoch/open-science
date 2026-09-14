@@ -32,6 +32,31 @@ const createPort = (): MockPort => ({
 })
 
 describe('electron renderer contract adapter', () => {
+  it('resolves dropped packages through the native File boundary', async () => {
+    const port = createPort()
+    port.invoke.mockResolvedValue({ ok: true, result: null })
+    port.getPathForFile.mockReturnValue('/data/research.science')
+    const adapter = createElectronRendererContractAdapter(port)
+    const file = { name: 'research.science' }
+    await adapter.invoke('sessions.importPackage', { projectId: 'target' }, file)
+    expect(port.getPathForFile).toHaveBeenCalledExactlyOnceWith(file)
+    expect(port.invoke).toHaveBeenCalledExactlyOnceWith(
+      'sessions:import-package',
+      { projectId: 'target' },
+      '/data/research.science'
+    )
+  })
+
+  it('rejects a dropped File without a native path instead of opening a picker', async () => {
+    const port = createPort()
+    port.getPathForFile.mockReturnValue('')
+    const adapter = createElectronRendererContractAdapter(port)
+    await expect(
+      adapter.invoke('sessions.importPackage', { projectId: 'target' }, {})
+    ).rejects.toThrow()
+    expect(port.invoke).not.toHaveBeenCalled()
+  })
+
   it.each([
     {
       publicPath: 'diagnostics.reportRendererFailure',
@@ -138,6 +163,18 @@ describe('electron renderer contract adapter', () => {
     expect(port.invoke).toHaveBeenNthCalledWith(2, 'acp:connect', {})
     expect(port.invoke).toHaveBeenNthCalledWith(3, 'acp:create-session', {})
     expect(port.invoke).toHaveBeenNthCalledWith(4, 'acp:create-session', {})
+  })
+
+  it('forwards the explicitly authorized external R library', async () => {
+    const port = createPort()
+    const adapter = createElectronRendererContractAdapter(port)
+    await adapter.invoke('runtime.setInstallAuthorized', 'r', 'external-r', true, '/user/R/library')
+    expect(port.invoke).toHaveBeenCalledWith('runtime:set-install-authorized', {
+      language: 'r',
+      envId: 'external-r',
+      authorized: true,
+      library: '/user/R/library'
+    })
   })
 
   it('preserves positional request arguments and result identity', async () => {

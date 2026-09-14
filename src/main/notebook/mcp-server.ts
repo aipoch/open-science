@@ -56,7 +56,9 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
   'Retry once at most; repeated kernel-process failures mean stop Notebook tools and report the failure.',
-  'After OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED, call `request_network_access` with the exact hostname, runtime, reason, and failed bash command when applicable. Never call speculatively; retry only after an allowed result.',
+  'Beyond restricted reads, call `request_network_access`. A failed connection is not required.',
+  'Follow recovery guidance; never bypass protection/TLS. Check settings for setup failures.',
+  'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
   'Dependency status is not an execution verdict: `clear` means unchanged; `stale` means a tracked dependency changed after that run; `unknown` means incomplete tracking. `stale` does not mean the run failed or its captured output is incorrect; rerun only for current state.',
   'Call `write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })` from `open-science-artifacts`. Reuse saved relative filename and runId; inline small text. On validation errors, correct once; never repeat identical failed arguments.',
   '</open_science_notebook_instructions>'
@@ -123,8 +125,8 @@ const backgroundRunToolSchema = {
 const requestNetworkAccessToolSchema = {
   hostname: z.string().trim().min(1).max(253),
   reason: z.string().trim().min(1).max(1_000),
-  runtime: z.enum(['python', 'r', 'repl', 'bash']).optional().describe('Blocked runtime.'),
-  command: z.string().min(1).optional().describe('Exact failed bash command.')
+  runtime: z.enum(['python', 'r', 'repl', 'bash']).optional(),
+  command: z.string().min(1).optional().describe('Exact bash command, not Notebook source.')
 }
 
 const managePackagesToolSchema = {
@@ -1547,7 +1549,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'request_network_access',
     title: 'Request Notebook network access',
     description:
-      'Call only after Notebook execution reports OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED. Provide the exact hostname, blocked runtime, reason, and exact command for bash. Retry the failed execution only when the result is allowed.',
+      'Request before connecting or after OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED. Once: bash runtime+command or matching failure; otherwise Global. Execute or retry only when the result is allowed.',
     method: 'requestNetworkAccess',
     inputSchema: requestNetworkAccessToolSchema,
     mapResult: (raw) => raw,

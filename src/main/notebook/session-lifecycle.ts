@@ -35,6 +35,7 @@ import { resolveProjectId } from '../../shared/project-scope'
 import { reconcileWorkingFileEvidence } from './working-file-observer'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import type { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
+import { assertResearchSessionWritable } from '../storage/session-package-state'
 
 type RuntimeSession = NotebookSessionAggregate
 const log = createLogger('notebook:file-evidence-lifecycle')
@@ -58,6 +59,7 @@ type NotebookKernelStatusPersistenceFailure = {
 }
 
 type NotebookSessionLifecycleOptions = {
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void
   storageRoot: string
   defaultProjectId: string
   repository: NotebookRunRepository
@@ -140,15 +142,18 @@ class NotebookSessionLifecycleOwner {
 
   ensure(request: NotebookSessionRequest): Promise<RuntimeSession> {
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
+    const lane = this.laneForRequest(request)
+    let releaseAdmission: (() => void) | undefined
     try {
       this.assertScopeAvailable(projectId, request.sessionId)
+      releaseAdmission = this.options.admitSessionWork?.(projectId, request.sessionId)
     } catch (error) {
       return Promise.reject(error)
     }
-    const lane = this.laneForRequest(request)
     const ensuring = this.options.sessions.getOrCreate(lane, async () => {
       await this.options.ensureProcessRecovery()
       this.assertDeletionAvailable(projectId, request.sessionId)
+      await assertResearchSessionWritable(this.options.storageRoot, projectId, request.sessionId)
       let document = await this.options.repository.loadOrCreate({
         projectId: projectId,
         sessionId: request.sessionId,
@@ -237,6 +242,7 @@ class NotebookSessionLifecycleOwner {
     this.pendingEnsuresBySession.set(request.sessionId, sessionPending)
     void ensuring
       .finally(() => {
+        releaseAdmission?.()
         pending.delete(ensuring)
         if (pending.size === 0 && this.pendingEnsuresByProject.get(projectId) === pending) {
           this.pendingEnsuresByProject.delete(projectId)
@@ -258,8 +264,10 @@ class NotebookSessionLifecycleOwner {
     operation: (deletionSignal: AbortSignal) => Promise<Result>
   ): Promise<Result> {
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
+    let releaseAdmission: (() => void) | undefined
     try {
       this.assertScopeAvailable(projectId, request.sessionId)
+      releaseAdmission = this.options.admitSessionWork?.(projectId, request.sessionId)
     } catch (error) {
       return Promise.reject(error)
     }
@@ -294,6 +302,7 @@ class NotebookSessionLifecycleOwner {
     }
     void running
       .finally(() => {
+        releaseAdmission?.()
         controllers.delete(controller)
         if (
           controllers.size === 0 &&

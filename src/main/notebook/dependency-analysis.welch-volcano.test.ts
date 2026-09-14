@@ -7,9 +7,22 @@ import { NotebookDependencyAnalyzer } from './dependency-analysis'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 import cells from './reported-r-welch-volcano.fixture.json'
+import bhCells from './bh-r-welch-volcano.fixture.json'
 
-const runsFor = (includeFailed = false): NotebookRunRecord[] =>
-  cells
+// Both inputs exercise the same analyzer contract; the companion replaces only
+// its matching cells and leaves the reported execution unchanged.
+const variants = [
+  { name: 'reported', cells },
+  {
+    name: 'BH companion',
+    cells: cells.map(
+      (cell) => bhCells.find((replacement) => replacement.runId === cell.runId) ?? cell
+    )
+  }
+]
+
+const runsFor = (includeFailed = false, sourceCells = cells): NotebookRunRecord[] =>
+  sourceCells
     .filter((cell) => includeFailed || cell.status === 'completed')
     .map((cell, index) => ({
       runId: cell.runId,
@@ -27,69 +40,86 @@ const runsFor = (includeFailed = false): NotebookRunRecord[] =>
       outputs: [],
       workingFiles: []
     }))
-it.each(cells.filter((c) => c.status === 'completed'))(
-  'captures Welch volcano cell $runId with its upstream values',
-  async ({ script, runId }) => {
-    const root = await mkdtemp(join(tmpdir(), 'welch-cell-'))
-    const runs = runsFor()
-    const analyzer = new NotebookDependencyAnalyzer({
-      storageRoot: root,
-      repository: { readSessionRuns: async () => runs }
+it.each(
+  variants.flatMap(({ name, cells }) =>
+    cells.filter((cell) => cell.status === 'completed').map((cell) => ({ ...cell, name, cells }))
+  )
+)('captures $name cell $runId with its upstream values', async ({ script, runId, cells }) => {
+  const root = await mkdtemp(join(tmpdir(), 'welch-cell-'))
+  const runs = runsFor(false, cells)
+  const analyzer = new NotebookDependencyAnalyzer({
+    storageRoot: root,
+    repository: { readSessionRuns: async () => runs }
+  })
+  try {
+    const context = await analyzer.sourceFileAccessContext({
+      projectId: 'p',
+      sessionId: 's',
+      currentRunId: runId,
+      language: 'r',
+      environment: 'r',
+      kernelEpochId: 'epoch'
     })
+    const { facts } = await analyzeRNotebookSource(script, context)
+    expect(
+      facts.state === 'unknown' ? facts.reasons.filter((r) => r !== 'external-state') : [],
+      JSON.stringify(facts)
+    ).toEqual([])
+    const access = await analyzeNotebookSourceFileAccess('r', script, context)
+    expect(access, JSON.stringify(access)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it.each(variants)(
+  'reconstructs the $name producer through its upstream cells',
+  async ({ cells }) => {
+    const root = await mkdtemp(join(tmpdir(), 'welch-volcano-'))
+    const runs = runsFor(false, cells)
+    const producer = runs.at(-1)!
     try {
+      const analyzer = new NotebookDependencyAnalyzer({
+        storageRoot: root,
+        repository: { readSessionRuns: async () => runs }
+      })
+      const projection = await analyzer.project({
+        projectId: 'p',
+        sessionId: 's',
+        completedRun: producer
+      })
+      expect(projection.stalenessByRunId[producer.runId], JSON.stringify(projection)).toEqual({
+        state: 'clear'
+      })
+      const upstream = new Set<string>()
+      const pending = [producer.runId]
+      while (pending.length) {
+        for (const dependency of projection.dependenciesByRunId?.[pending.pop()!] ?? []) {
+          if (upstream.has(dependency)) continue
+          upstream.add(dependency)
+          pending.push(dependency)
+        }
+      }
+      expect([...upstream].sort()).toEqual(['2', '3', '4', '6'])
       const context = await analyzer.sourceFileAccessContext({
         projectId: 'p',
         sessionId: 's',
-        currentRunId: runId,
+        currentRunId: producer.runId,
         language: 'r',
         environment: 'r',
         kernelEpochId: 'epoch'
       })
-      const { facts } = await analyzeRNotebookSource(script, context)
-      expect(
-        facts.state === 'unknown' ? facts.reasons.filter((r) => r !== 'external-state') : [],
-        JSON.stringify(facts)
-      ).toEqual([])
-      const access = await analyzeNotebookSourceFileAccess('r', script, context)
-      expect(access, JSON.stringify(access)).toMatchObject({
-        readState: 'complete',
-        writeState: 'complete',
-        externalState: 'complete'
-      })
+      const access = await analyzeNotebookSourceFileAccess('r', producer.script, context)
+      expect(access.writes).toEqual(['diagonal_volcano.png', 'diagonal_volcano_diff.csv'])
     } finally {
       await rm(root, { recursive: true, force: true })
     }
   }
 )
-
-it('reconstructs the producer through CSV preparation and Welch test cells', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'welch-volcano-'))
-  const runs = runsFor()
-  try {
-    const analyzer = new NotebookDependencyAnalyzer({
-      storageRoot: root,
-      repository: { readSessionRuns: async () => runs }
-    })
-    const projection = await analyzer.project({
-      projectId: 'p',
-      sessionId: 's',
-      completedRun: runs.at(-1)!
-    })
-    expect(projection.stalenessByRunId['7'], JSON.stringify(projection)).toEqual({ state: 'clear' })
-    const upstream = new Set<string>()
-    const pending = ['7']
-    while (pending.length) {
-      for (const dependency of projection.dependenciesByRunId?.[pending.pop()!] ?? []) {
-        if (upstream.has(dependency)) continue
-        upstream.add(dependency)
-        pending.push(dependency)
-      }
-    }
-    expect([...upstream].sort()).toEqual(['2', '3', '4', '6'])
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
 
 it('keeps failed state uncertain and supports rebuilding in a fresh kernel', async () => {
   const root = await mkdtemp(join(tmpdir(), 'welch-recovery-'))

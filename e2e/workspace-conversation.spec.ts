@@ -866,6 +866,7 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
     80
   )
 
+  await sessionActions.getByRole('menuitem', { name: 'Export', exact: true }).hover()
   await page.getByRole('menuitem', { name: 'Export conversation…' }).click()
   const exportDialog = page.getByRole('dialog', { name: 'Export conversation' })
   await expect(exportDialog).toBeVisible()

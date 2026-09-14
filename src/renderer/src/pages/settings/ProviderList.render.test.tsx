@@ -154,21 +154,10 @@ describe('ProviderList', () => {
     expect(del?.textContent?.trim()).toBe('')
   })
 
-  it('disables delete for the selected provider so it cannot drop back to onboarding', () => {
-    renderList([provider({ id: 'p1' }), provider({ id: 'p2', name: 'Other' })], 'p1')
+  it('allows deleting the selected or only provider so its sessions can become unavailable', () => {
+    renderList([provider({ id: 'p1' })], 'p1')
 
-    const deletes = Array.from(container.querySelectorAll('button')).filter(
-      (button) => button.getAttribute('aria-label') === 'Delete'
-    )
-    // p1 is selected -> its delete is disabled; p2 is unselected with siblings -> enabled.
-    expect((deletes[0] as HTMLButtonElement).disabled).toBe(true)
-    expect((deletes[1] as HTMLButtonElement).disabled).toBe(false)
-  })
-
-  it('disables delete when only one provider remains', () => {
-    renderList([provider()])
-
-    expect((buttonByLabel('Delete') as HTMLButtonElement).disabled).toBe(true)
+    expect((buttonByLabel('Delete') as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('exposes an icon action name as a hover tooltip on focus', async () => {

@@ -89,8 +89,11 @@ describe('WslSetupSessionOwner', () => {
     const owner = new WslSetupSessionOwner(root, { platform: 'win32' })
     const token = owner.mintLocalToken()
     const separator = token.indexOf('.')
-    const modified = `${token.slice(0, separator + 1)}x${token.slice(separator + 2)}`
+    const secretStart = token.slice(separator + 1, separator + 2)
+    const flipped = secretStart === 'x' ? 'y' : 'x'
+    const modified = `${token.slice(0, separator + 1)}${flipped}${token.slice(separator + 2)}`
 
+    expect(modified).not.toBe(token)
     expect(owner.authorizeToken(modified)).toBe(false)
     expect(owner.authorizeToken(token)).toBe(true)
   })

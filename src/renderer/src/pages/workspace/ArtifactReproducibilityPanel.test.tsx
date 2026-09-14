@@ -272,6 +272,81 @@ describe('ArtifactReproducibilityPanel', () => {
     vi.restoreAllMocks()
   })
 
+  it('shows imported checks as source evidence and blocks execution without hiding history', async () => {
+    const artifactVersion = {
+      projectId: 'target',
+      appSessionId: 'imported',
+      artifactId: 'local-artifact',
+      versionId: 'local-version'
+    }
+    const start = vi.fn()
+    ;(window as unknown as { api: unknown }).api = {
+      artifacts: {
+        startReproducibilityCheck: start,
+        cancelReproducibilityCheck: vi.fn(),
+        onReproducibilityCheckChanged: vi.fn(() => () => undefined),
+        getReproducibilityCheck: vi.fn(async () => undefined),
+        listReproducibilityReceipts: vi.fn(async () => ({
+          receipts: [receipt('matched')],
+          sourceArtifactVersion: {
+            projectId: 'source',
+            appSessionId: 'source-session',
+            artifactId: 'source-artifact',
+            versionId: 'source-version'
+          }
+        }))
+      }
+    }
+    await act(async () =>
+      root.render(
+        <ArtifactReproducibilityPanel
+          projection={projection()}
+          executionAvailable
+          artifactVersion={artifactVersion}
+        />
+      )
+    )
+    expect(container.textContent).toContain('Checks from the source installation')
+    const startButton = within(container).getByRole('button', { name: 'Check again' })
+    expect((startButton as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(startButton)
+    expect(start).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Verification history')
+  })
+
+  it('distinguishes omitted imported outputs from cleared output storage', async () => {
+    const value = receipt('different')
+    const comparison = { ...value.comparisons[0]!, outputCaptured: true as const }
+    ;(window as unknown as { api: unknown }).api = {
+      artifacts: {
+        getReproducibilityOutputStorage: async () => ({
+          sizeBytes: 0,
+          fileCount: 0,
+          clearedReceiptChecksums: [],
+          omittedOutputChecksums: [comparison.actualChecksum]
+        }),
+        readReproducibilityOutput: vi.fn(),
+        clearReproducibilityOutputs: vi.fn()
+      }
+    }
+    await act(async () =>
+      root.render(
+        <ReproducibilityOutputStorage
+          scope={value.artifactVersion}
+          receiptKey={value.receiptChecksum}
+          running={false}
+          readOnly
+        >
+          <ReproducibilityOutput receipt={value} comparison={comparison} />
+        </ReproducibilityOutputStorage>
+      )
+    )
+    expect(container.textContent).toContain('Not included in this package')
+    expect(container.textContent).not.toContain('Output cleared')
+    expect(within(container).queryByRole('button', { name: 'View output' })).toBeNull()
+    expect(within(container).queryByRole('button', { name: 'Clear reproduced outputs' })).toBeNull()
+  })
+
   it.each([
     ['equal', 'Decoded content is identical'],
     ['within-tolerance', 'Content is within the selected tolerance'],
@@ -460,51 +535,68 @@ describe('ArtifactReproducibilityPanel', () => {
     expect(readReproducibilityOutput).toHaveBeenCalledTimes(1)
   })
 
-  it('loads reproduced output on demand, caches previews, and downloads the selected generation', async () => {
-    const value = receipt('different')
-    const comparison = { ...value.comparisons[0]!, outputCaptured: true as const }
-    const readReproducibilityOutput = vi.fn(async () => ({
-      filename: 'result.csv',
-      original: { kind: 'text', text: 'original' },
-      reproduced: { kind: 'text', text: '<script>reproduced</script>' }
-    }))
-    const exportReproducibilityReceipt = vi.fn(async () => ({ saved: true }))
-    ;(window as unknown as { api: unknown }).api = {
-      artifacts: { readReproducibilityOutput, exportReproducibilityReceipt }
-    }
-    await act(async () =>
-      root.render(<ReproducibilityOutput receipt={value} comparison={comparison} />)
-    )
-    expect(readReproducibilityOutput).not.toHaveBeenCalled()
-    const click = async (label: string): Promise<void> => {
-      const button = Array.from(container.querySelectorAll('button')).find(
-        (item) => item.textContent === label
-      )!
-      await act(async () => fireEvent.click(button))
-    }
-    await click('View output')
-    expect(container.querySelector('script')).toBeNull()
-    expect(container.textContent).toContain('<script>reproduced</script>')
-    expect(container.querySelectorAll('figure')).toHaveLength(2)
-    expect(readReproducibilityOutput).toHaveBeenCalledWith({
-      projectId: value.artifactVersion.projectId,
-      appSessionId: value.artifactVersion.appSessionId,
-      artifactId: value.artifactVersion.artifactId,
-      versionId: value.artifactVersion.versionId,
-      receiptChecksum: value.receiptChecksum,
-      entityId: comparison.entityId
-    })
-    await click('Hide output')
-    await click('View output')
-    expect(readReproducibilityOutput).toHaveBeenCalledTimes(1)
-    await click('Download output')
-    expect(exportReproducibilityReceipt).toHaveBeenCalledWith(
-      expect.objectContaining({
+  it.each([false, true])(
+    'loads reproduced output on demand, caches previews, and downloads the selected generation (imported=%s)',
+    async (imported) => {
+      const localScope = imported
+        ? {
+            projectId: 'local-project',
+            appSessionId: 'local-session',
+            artifactId: 'local-artifact',
+            versionId: 'local-version'
+          }
+        : undefined
+      const value = receipt('different')
+      const comparison = { ...value.comparisons[0]!, outputCaptured: true as const }
+      const readReproducibilityOutput = vi.fn(async () => ({
+        filename: 'result.csv',
+        original: { kind: 'text', text: 'original' },
+        reproduced: { kind: 'text', text: '<script>reproduced</script>' }
+      }))
+      const exportReproducibilityReceipt = vi.fn(async () => ({ saved: true }))
+      ;(window as unknown as { api: unknown }).api = {
+        artifacts: { readReproducibilityOutput, exportReproducibilityReceipt }
+      }
+      await act(async () =>
+        root.render(
+          <ReproducibilityOutput scope={localScope} receipt={value} comparison={comparison} />
+        )
+      )
+      expect(readReproducibilityOutput).not.toHaveBeenCalled()
+      const click = async (label: string): Promise<void> => {
+        const button = Array.from(container.querySelectorAll('button')).find(
+          (item) => item.textContent === label
+        )!
+        await act(async () => fireEvent.click(button))
+      }
+      await click('View output')
+      expect(container.querySelector('script')).toBeNull()
+      expect(container.textContent).toContain('<script>reproduced</script>')
+      expect(container.querySelectorAll('figure')).toHaveLength(2)
+      expect(readReproducibilityOutput).toHaveBeenCalledWith({
+        projectId: localScope?.projectId ?? value.artifactVersion.projectId,
+        appSessionId: localScope?.appSessionId ?? value.artifactVersion.appSessionId,
+        artifactId: localScope?.artifactId ?? value.artifactVersion.artifactId,
+        versionId: localScope?.versionId ?? value.artifactVersion.versionId,
         receiptChecksum: value.receiptChecksum,
-        outputEntityId: comparison.entityId
+        entityId: comparison.entityId
       })
-    )
-  })
+      await click('Hide output')
+      await click('View output')
+      expect(readReproducibilityOutput).toHaveBeenCalledTimes(1)
+      await click('Download output')
+      expect(exportReproducibilityReceipt).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: localScope?.projectId ?? value.artifactVersion.projectId,
+          appSessionId: localScope?.appSessionId ?? value.artifactVersion.appSessionId,
+          artifactId: localScope?.artifactId ?? value.artifactVersion.artifactId,
+          versionId: localScope?.versionId ?? value.artifactVersion.versionId,
+          receiptChecksum: value.receiptChecksum,
+          outputEntityId: comparison.entityId
+        })
+      )
+    }
+  )
 
   it('keeps legacy output limitations explicit and retries a failed preview after reopening', async () => {
     const value = receipt('different')

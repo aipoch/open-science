@@ -1,6 +1,25 @@
 import { homedir } from 'node:os'
+import { z } from 'zod'
+import { MarketplaceInstallConflict } from '../skills/user-skill-repository'
+import { SkillMarketplaceService } from '../skills/marketplace-service'
+import { SkillMarketplaceInstallQueue } from '../skills/marketplace-install-queue'
+import type {
+  SkillMarketplaceCatalog,
+  SkillMarketplaceCatalogRequest,
+  SkillMarketplaceBatchRequest,
+  SkillMarketplaceDetail,
+  SkillMarketplaceDetailRequest,
+  SkillMarketplaceInstallRequest,
+  SkillMarketplaceInstallResult,
+  SkillMarketplaceResult
+} from '../../shared/skill-marketplace'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import {
+  BootstrapError,
+  bootstrapRequestSchema,
+  type BootstrapResult
+} from '../../shared/bootstrap'
 
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type {
@@ -32,7 +51,7 @@ import type {
   InstallCodeBuddyRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
-  Preflight,
+  ReadinessPreflight,
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
   ResolveSkillDocumentRequest,
@@ -258,6 +277,110 @@ export type SettingsServiceOptions = {
 // object shared by the settings IPC handlers and the ACP runtime. Secrets are decrypted here only
 // transiently; nothing that leaves this object (views, spawn config aside) carries plaintext.
 class SettingsService {
+  private readonly skillMarketplace = new SkillMarketplaceService()
+  private readonly skillMarketplaceQueue = new SkillMarketplaceInstallQueue({
+    retainSnapshot: (request) => this.skillMarketplace.retainSnapshot(request),
+    install: (request, signal) => this.performSkillMarketplaceInstall(request, false, signal),
+    refresh: () => this.skills.refreshMarketplace()
+  })
+
+  startSkillMarketplaceBatch(
+    request: SkillMarketplaceBatchRequest,
+    notifyChanged: () => void
+  ): ReturnType<SkillMarketplaceInstallQueue['start']> {
+    return this.skillMarketplaceQueue.start(request, notifyChanged)
+  }
+
+  getSkillMarketplaceBatch(): ReturnType<SkillMarketplaceInstallQueue['get']> {
+    return this.skillMarketplaceQueue.get()
+  }
+
+  stopSkillMarketplaceBatch(id: string): boolean {
+    return this.skillMarketplaceQueue.stop(id)
+  }
+
+  async listSkillMarketplace(
+    request?: SkillMarketplaceCatalogRequest
+  ): Promise<SkillMarketplaceResult<SkillMarketplaceCatalog>> {
+    const result = await this.skillMarketplace.list(request)
+    if (!result.ok) return result
+    return {
+      ok: true,
+      value: {
+        ...result.value,
+        installations: await this.skills.marketplaceInstallations(result.value.entries)
+      }
+    }
+  }
+
+  async getSkillMarketplaceDetail(
+    request: SkillMarketplaceDetailRequest
+  ): Promise<SkillMarketplaceResult<SkillMarketplaceDetail>> {
+    const result = await this.skillMarketplace.detail(request)
+    if (!result.ok) return result
+    return {
+      ok: true,
+      value: {
+        ...result.value,
+        installation: await this.skills.marketplaceInstallation(
+          result.value.entry.id,
+          result.value.entry.version
+        )
+      }
+    }
+  }
+
+  async installSkillMarketplace(
+    request: SkillMarketplaceInstallRequest
+  ): Promise<SkillMarketplaceInstallResult> {
+    return this.performSkillMarketplaceInstall(request, true)
+  }
+
+  private async performSkillMarketplaceInstall(
+    request: SkillMarketplaceInstallRequest,
+    refresh: boolean,
+    signal?: AbortSignal
+  ): Promise<SkillMarketplaceInstallResult> {
+    const parsed = z
+      .strictObject({
+        snapshotId: z.string().regex(/^[a-f0-9]{64}$/),
+        id: z
+          .string()
+          .max(128)
+          .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+        expectedVersion: z.string().max(128).nullable()
+      })
+      .safeParse(request)
+    if (!parsed.success) return { ok: false, error: 'conflict' }
+    const { expectedVersion, ...identity } = parsed.data
+    const downloaded = await this.skillMarketplace.download(identity, signal)
+    if (!downloaded.ok) return downloaded
+    try {
+      signal?.throwIfAborted()
+      const result: {
+        id: string
+        status: 'imported' | 'unchanged' | 'updated'
+        refreshFailed?: boolean
+      } = refresh
+        ? await this.skills.installMarketplace(downloaded.value, expectedVersion)
+        : await this.skills.installMarketplacePackage(downloaded.value, expectedVersion)
+      return {
+        ok: true,
+        value: {
+          id: result.id,
+          status: result.status,
+          version: downloaded.value.receipt.version,
+          ...(result.refreshFailed ? { refreshFailed: true } : {})
+        }
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof MarketplaceInstallConflict ? 'conflict' : 'installation-failed'
+      }
+    }
+  }
+
   private readonly repository: SettingsRepository
   private readonly preferences: SettingsPreferencesModule
   private readonly notebookRuntimeSettings: NotebookRuntimeSettingsModule
@@ -287,7 +410,7 @@ class SettingsService {
   private deviceCredentialAuthenticator?: (credentialId: string) => Promise<void>
   private deviceCredentialAuthenticationCanceller?: (credentialId: string) => Promise<void>
   private deviceCredentialDisconnector?: (credentialId: string) => Promise<void>
-  private skillDeletionGuard?: (skillId: string) => Promise<void>
+  private skillDeletionGuard?: (request: DeleteSkillRequest) => Promise<void>
 
   hasActiveInstall(): boolean {
     return this.installCoordinator.getActiveId() !== undefined
@@ -303,6 +426,7 @@ class SettingsService {
 
   async dispose(): Promise<void> {
     const outcomes = await Promise.allSettled([
+      this.skillMarketplaceQueue.dispose(),
       this.providers.dispose(),
       this.runtimeManager.dispose()
     ])
@@ -474,9 +598,10 @@ class SettingsService {
   async setInstallAuthorized(
     language: NotebookLanguage,
     envId: string,
-    authorized: boolean
+    authorized: boolean,
+    library?: string
   ): Promise<RuntimeEnablement> {
-    return this.notebookRuntimeSettings.setInstallAuthorized(language, envId, authorized)
+    return this.notebookRuntimeSettings.setInstallAuthorized(language, envId, authorized, library)
   }
 
   async getAgentEnvironmentCreationEnabled(): Promise<boolean> {
@@ -1023,7 +1148,7 @@ class SettingsService {
     return this.skills.deleteSkill(request, this.skillDeletionGuard)
   }
 
-  setSkillDeletionGuard(guard: (skillId: string) => Promise<void>): void {
+  setSkillDeletionGuard(guard: (request: DeleteSkillRequest) => Promise<void>): void {
     this.skillDeletionGuard = guard
   }
 
@@ -1112,8 +1237,71 @@ class SettingsService {
     return this.skills.importAgentHomeSkills(request)
   }
   // Computes the startup gates from a fresh or immediate startup-chain runtime probe.
-  async getPreflight(): Promise<Preflight> {
+  async getPreflight(): Promise<ReadinessPreflight> {
     return this.runtimeManager.getPreflight(this.providers)
+  }
+
+  async bootstrap(
+    input: unknown,
+    onEvent: (event: ClaudeInstallEvent) => void
+  ): Promise<BootstrapResult> {
+    const parsed = bootstrapRequestSchema.safeParse(input)
+    if (!parsed.success) return { ok: false, code: 'invalid_request' }
+    const request = parsed.data
+    try {
+      if (request.action === 'status') {
+        const settings = await this.repository.getSettings()
+        const canPrepareCodex =
+          settings.agentFrameworkId === 'codex' ||
+          (!settings.agentFrameworkId && settings.providers.length === 0)
+        const provider =
+          settings.providers.find(({ id }) => id === settings.activeProviderId) ??
+          settings.providers[0]
+        const providerArgv = !provider
+          ? ['codex', 'login']
+          : provider.type === 'codex-isolated' && provider.codexAuthMode === 'isolated'
+            ? ['codex', 'login', '--force']
+            : provider.id === 'cli-openai' &&
+                provider.type === 'official' &&
+                provider.vendorId === 'openai' &&
+                provider.model
+              ? [
+                  'provider',
+                  'add',
+                  '--type',
+                  'official',
+                  '--vendor',
+                  'openai',
+                  '--model',
+                  settings.activeModel ?? provider.model,
+                  '--api-key-env',
+                  'OPENAI_API_KEY',
+                  '--json'
+                ]
+              : undefined
+        return {
+          ok: true,
+          next: canPrepareCodex
+            ? { runtime: ['runtime', 'install', 'codex', '--json'], provider: providerArgv }
+            : {}
+        }
+      }
+      if (request.action === 'runtime' || request.action === 'codex-prepare') {
+        await this.runtimeManager.bootstrapCodex(onEvent)
+        if (request.action === 'codex-prepare') await this.providers.prepareBootstrapCodex()
+      } else if (request.action === 'codex-complete') {
+        return { ok: true, providerId: await this.providers.completeBootstrapCodex() }
+      } else if (request.action === 'provider') {
+        return {
+          ok: true,
+          providerId: await this.providers.bootstrapOpenAi(request.key, request.model)
+        }
+      } else await this.connectors.bootstrapOpenAlex(request.key)
+      return { ok: true }
+    } catch (error) {
+      // Installer/provider exceptions can contain secret inputs. Only return our closed codes.
+      return { ok: false, code: error instanceof BootstrapError ? error.code : 'bootstrap_failed' }
+    }
   }
 
   // Re-runs the complete host inspection on every app launch, for the SELECTED framework's runtime, so

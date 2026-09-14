@@ -1,3 +1,4 @@
+import { literatureFailure } from './provider-error'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -151,6 +152,7 @@ class LiteratureFullTextFinder {
       return { mode: 'search', candidates: [], notices: ['missing-identifiers'] }
     const found: Candidate[] = []
     const notices: SearchResult['notices'] = []
+    const failures: NonNullable<SearchResult['failures']> = []
     // Independent sources start together; append their results in a stable order below.
     const unpaywall = (async (): Promise<Candidate[]> => {
       if (!doi) return []
@@ -161,7 +163,8 @@ class LiteratureFullTextFinder {
           return []
         }
         return await findUnpaywallPdfs(doi, email, this.options.fetch)
-      } catch {
+      } catch (error) {
+        failures.push(literatureFailure(error, 'search', 'unpaywall'))
         notices.push('unpaywall-unavailable')
         return []
       }
@@ -171,7 +174,8 @@ class LiteratureFullTextFinder {
         if (result.noRecord && (doi || pmid || pmcid)) notices.push('pmc-no-record')
         return result.candidates
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        failures.push(literatureFailure(error, 'search', 'pmc'))
         notices.push('pmc-unavailable')
         return []
       })
@@ -256,7 +260,8 @@ class LiteratureFullTextFinder {
             }
           }
         }
-      } catch {
+      } catch (error) {
+        failures.push(literatureFailure(error, 'search', 'europe-pmc'))
         notices.push('europe-pmc-unavailable')
       }
       return candidates
@@ -304,7 +309,8 @@ class LiteratureFullTextFinder {
             })
           }
         }
-      } catch {
+      } catch (error) {
+        failures.push(literatureFailure(error, 'search', 'openalex'))
         notices.push('openalex-unavailable')
       }
       return candidates
@@ -335,7 +341,7 @@ class LiteratureFullTextFinder {
       return { id, ...candidate }
     })
     while (this.candidates.size > 128) this.candidates.delete(this.candidates.keys().next().value!)
-    return { mode: 'search', candidates, notices }
+    return { mode: 'search', candidates, notices, ...(failures.length ? { failures } : {}) }
   }
 
   private async attach(

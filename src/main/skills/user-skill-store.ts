@@ -35,6 +35,12 @@ export const USER_SOURCES: ReadonlyArray<Extract<SkillSource, 'imported' | 'pers
 
 export type UserSkillSource = (typeof USER_SOURCES)[number]
 
+const assertUserSkillSource = (source: unknown): void => {
+  if (!USER_SOURCES.includes(source as UserSkillSource)) {
+    throw new Error('Invalid user Skill source.')
+  }
+}
+
 export const SAFE_SKILL_DIRECTORY_NAME = /^[a-z0-9-]+$/
 
 export { frontmatterBlock }
@@ -121,6 +127,7 @@ export class UserSkillStore {
   ) {}
 
   sourceDir(source: UserSkillSource): string {
+    assertUserSkillSource(source)
     return join(this.storageRoot, 'skills', source)
   }
 
@@ -226,10 +233,29 @@ export class UserSkillStore {
     return skills
   }
 
-  async resolveSkillId(id: string): Promise<{ source: UserSkillSource; directoryName: string }> {
+  async resolveSkillId(
+    id: string,
+    sourceFilter?: UserSkillSource,
+    directoryName?: string
+  ): Promise<{ source: UserSkillSource; directoryName: string }> {
+    if (sourceFilter !== undefined) assertUserSkillSource(sourceFilter)
+    if (directoryName !== undefined && !SAFE_SKILL_DIRECTORY_NAME.test(directoryName)) {
+      throw new Error('Invalid user Skill directory name.')
+    }
+    if (sourceFilter !== undefined && directoryName !== undefined) {
+      const conventional = parseUserSkillId(id)
+      if (conventional?.source === sourceFilter && conventional.directoryName === directoryName) {
+        return conventional
+      }
+      const metadata = await readSpecialistPackageSkillMetadata(
+        this.skillDirectory(sourceFilter, directoryName)
+      )
+      if (metadata?.id === id) return { source: sourceFilter, directoryName }
+      throw new Error(`Not a user skill id: ${id}`)
+    }
     const conventional = parseUserSkillId(id)
-    if (conventional) return conventional
-    for (const source of USER_SOURCES) {
+    if (conventional && (!sourceFilter || conventional.source === sourceFilter)) return conventional
+    for (const source of sourceFilter ? [sourceFilter] : USER_SOURCES) {
       for (const directoryName of await this.listDirectoryNames(source)) {
         const metadata = await readSpecialistPackageSkillMetadata(
           this.skillDirectory(source, directoryName)
@@ -365,10 +391,15 @@ export class UserSkillStore {
     }, ['personal'])
   }
 
-  async delete(id: string, guard?: (skillId: string) => Promise<void>): Promise<void> {
+  async delete(
+    id: string,
+    source?: UserSkillSource,
+    directoryName?: string,
+    guard?: (skillId: string) => Promise<void>
+  ): Promise<void> {
     return this.transactions.runMutationRecovered(async () => {
       await guard?.(id)
-      const parsed = await this.resolveSkillId(id)
+      const parsed = await this.resolveSkillId(id, source, directoryName)
       const metadata = await readSpecialistPackageSkillMetadata(
         this.skillDirectory(parsed.source, parsed.directoryName)
       )

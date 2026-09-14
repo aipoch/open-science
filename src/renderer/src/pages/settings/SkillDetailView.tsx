@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { ScrollText } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -164,12 +165,7 @@ const SkillDetailView = ({
       ) : null}
 
       {operationError ? (
-        <p
-          role="alert"
-          className="mt-4 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-        >
-          {operationError}
-        </p>
+        <ErrorNotice role="alert" tone="amber" className="mt-4" description={operationError} />
       ) : null}
 
       <ResourceAvailability

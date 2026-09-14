@@ -144,6 +144,7 @@ class NotebookNetworkSandbox {
         try {
           const allowed = await command.onNetworkAccessRequest({
             host: request.host,
+            purpose: request.purpose,
             ...(request.port === undefined ? {} : { port: request.port }),
             signal: command.controller.signal
           })
@@ -236,6 +237,7 @@ class NotebookNetworkSandbox {
         : {}),
       ...(wrapped.beginSpawn ? { beginSpawn: wrapped.beginSpawn } : {}),
       annotateStderr: (stderr) => this.#backend.annotateStderr(commandId, stderr),
+      setExecutionActive: (active) => this.#backend.setCommandExecutionActive(commandId, active),
       resetNetworkConnections: () => this.#backend.resetCommandConnections(commandId),
       cleanup: (reason, processOutcome) => {
         if (cleanupPromise) return cleanupPromise

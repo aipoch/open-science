@@ -42,6 +42,7 @@ import type {
 } from '../../shared/artifacts'
 import { resolveDataRoot } from '../storage-root'
 import { withDataRootWrite } from '../storage/migration-state'
+import { assertResearchSessionWritable } from '../storage/session-package-state'
 import {
   readBoundedManagedFilePreviewLease,
   type ManagedFilePreviewReadLease,
@@ -122,7 +123,8 @@ type ArtifactHandlerDependencies = {
     | 'getVersionMessages'
     | 'getVersionReview'
     | 'resolveVersionDescriptors'
-  >
+  > &
+    Partial<Pick<ArtifactProvenanceRepository, 'withSessionMutation'>>
   codeReconstruction?: {
     get(request: GetArtifactCodeReconstructionRequest): Promise<ArtifactCodeReconstructionState>
     generate(
@@ -189,13 +191,21 @@ const createArtifactHandlers = (
       ),
     reconcilePendingArtifacts: (request) =>
       withDataRootWrite(async () => {
-        const reconcileCompatibility = (pendingPaths: string[]): Promise<ArtifactFile[]> =>
-          repository.reconcilePendingArtifactPaths({
-            projectId: resolveProjectId(request),
-            sessionId: request.sessionId,
-            messageId: request.messageId,
-            pendingPaths
-          })
+        const reconcileCompatibility = (pendingPaths: string[]): Promise<ArtifactFile[]> => {
+          const reconcile = (): Promise<ArtifactFile[]> =>
+            repository.reconcilePendingArtifactPaths({
+              projectId: resolveProjectId(request),
+              sessionId: request.sessionId,
+              messageId: request.messageId,
+              pendingPaths
+            })
+          return dependencies.provenance?.withSessionMutation
+            ? dependencies.provenance.withSessionMutation(
+                { projectId: resolveProjectId(request), appSessionId: request.sessionId },
+                reconcile
+              )
+            : reconcile()
+        }
         if (dependencies.recoverPendingArtifacts) {
           const recovered = await dependencies.recoverPendingArtifacts(request)
           if (recovered) {
@@ -332,7 +342,14 @@ const createArtifactHandlers = (
       }
       // Hold one migration lease across evidence reads, model work, and the cache commit so a data
       // root move cannot switch beneath an in-flight reconstruction.
-      return withDataRootWrite(() => codeReconstruction.generate(request))
+      return withDataRootWrite(async () => {
+        await assertResearchSessionWritable(
+          resolveDataRoot(),
+          request.projectId,
+          request.appSessionId
+        )
+        return codeReconstruction.generate(request)
+      })
     },
     resolveVersionDescriptors: (request) => {
       if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
@@ -349,10 +366,28 @@ const finalizeRunArtifacts = async (
   provenance?: Pick<
     ArtifactProvenanceRepository,
     'finalizeRun' | 'activateFinalizedRun' | 'listRunVersions'
-  >,
+  > &
+    Partial<Pick<ArtifactProvenanceRepository, 'withSessionMutation'>>,
   logger: Pick<Logger, 'error'> = log
 ): Promise<ArtifactFile[]> => {
   const claim = runRegistry.resolve(request.claimId)
+  if (provenance?.withSessionMutation) {
+    return provenance.withSessionMutation(
+      { projectId: claim.projectId, appSessionId: claim.sessionId },
+      () =>
+        finalizeRunArtifacts(
+          repository,
+          runRegistry,
+          request,
+          {
+            finalizeRun: provenance.finalizeRun.bind(provenance),
+            activateFinalizedRun: provenance.activateFinalizedRun.bind(provenance),
+            listRunVersions: provenance.listRunVersions.bind(provenance)
+          },
+          logger
+        )
+    )
+  }
 
   if (claim.finalizedMessageId) {
     // A retry for the same message should return the final list; a different message is a bug.

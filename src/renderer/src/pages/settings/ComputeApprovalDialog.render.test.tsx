@@ -126,7 +126,7 @@ describe('ComputeApprovalDialog', () => {
     expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
     expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
     expect(dialog?.className).toContain('z-[60]')
-    expect(dialog?.className).toContain('overflow-hidden')
+    expect(dialog?.className).toContain('overflow-y-auto')
     expect(dialog?.textContent).toContain('Allow remote command?')
     expect(
       Array.from(document.body.querySelectorAll<HTMLElement>('div')).some((element) =>

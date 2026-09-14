@@ -18,6 +18,7 @@ import { dirname, join, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { loadManagedCodexErrorHandler } from './codex-error.test-utils'
 
 import {
   ACP_MODEL_CALL_USAGE_META_KEY,
@@ -187,6 +188,7 @@ import {
   spawnCodexWithInstallAdmission,
   patchCodexAcpContextUsageSource,
   patchCodexAcpModelCatalogStartupSource,
+  patchCodexAcpPromptFailureSource,
   patchCodexAcpSkillInputSource,
   patchCodexAcpTurnUsageSource,
   resolveManagedCodexPlatform,
@@ -1385,6 +1387,61 @@ describe('installManagedCodex', () => {
 
     await expect(readFile(managedCodexAdapterEntry(root))).rejects.toThrow()
     expect(await readFile(join(root, 'unrelated-runtime'), 'utf8')).toBe('keep-me')
+  })
+})
+
+describe('Codex terminal error normalization', () => {
+  it.each([
+    ['serverOverloaded', true, -32603],
+    ['usageLimitExceeded', true, -32603],
+    ['unauthorized', true, -32603],
+    ['unauthorized', false, -32000]
+  ] as const)(
+    'preserves %s with authConfigured=%s as an ACP error',
+    async (code, auth, rpcCode) => {
+      const root = await mkdtemp(join(tmpdir(), 'codex-terminal-error-'))
+      try {
+        const handler = await loadManagedCodexErrorHandler(root)
+        handler.sessionState.authConfigured = auth
+        await handler.createErrorEvent({
+          turnId: 'turn-1',
+          willRetry: false,
+          error: {
+            message: 'Provider could not finish.',
+            codexErrorInfo: code,
+            additionalDetails: null
+          }
+        })
+        expect(handler.getFailure()).toMatchObject({
+          code: rpcCode,
+          data: { codexErrorInfo: code, message: 'Provider could not finish.' }
+        })
+        const adapterPath = join(root, 'index.js')
+        const normalized = await readFile(adapterPath, 'utf8')
+        await ensureManagedCodexContextUsage(adapterPath)
+        expect(await readFile(adapterPath, 'utf8')).toBe(normalized)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('rejects a drifted or ambiguous upstream terminal error target', async () => {
+    const source = await readFile(
+      new URL('./fixtures/codex-acp-1.6.2-error-handler.txt', import.meta.url),
+      'utf8'
+    )
+    expect(() =>
+      patchCodexAcpPromptFailureSource(
+        source.replace(
+          'return createAgentTextMessageChunk(`${params.error.message}',
+          'return createAgentTextMessageChunk(`${params.error.detail}'
+        )
+      )
+    ).toThrow('Pinned Codex ACP prompt-failure patch no longer matches the adapter bundle')
+    expect(() => patchCodexAcpPromptFailureSource(`${source}\n${source}`)).toThrow(
+      'Pinned Codex ACP prompt-failure patch no longer matches the adapter bundle'
+    )
   })
 })
 

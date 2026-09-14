@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: citation style manager · genre: modern-minimal · theme: existing Open Science tokens · enrichment: none */
 import { ArrowLeft, BookOpenText, FileText, LoaderCircle, Trash2, Upload } from 'lucide-react'
@@ -479,12 +480,7 @@ const CitationStylesView = ({
         </div>
 
         {error ? (
-          <p
-            role="alert"
-            className="mt-5 rounded-lg bg-danger-900 px-3 py-2 text-sm text-danger-000"
-          >
-            {errorMessage()}
-          </p>
+          <ErrorNotice role="alert" tone="amber" className="mt-5" description={errorMessage()} />
         ) : null}
 
         {loading && styles === undefined ? (

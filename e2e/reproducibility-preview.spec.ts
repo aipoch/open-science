@@ -182,3 +182,28 @@ for (const { width, locale, zoom } of [
     await expect(dialog).toBeVisible()
   })
 }
+
+for (const scenario of ['import', 'export']) {
+  test(`keeps package ${scenario} evidence inspectable without execution`, async ({
+    page
+  }, testInfo) => {
+    await page.goto(`${url}?package=${scenario}`)
+    await expect(
+      page.getByText(
+        scenario === 'import'
+          ? 'Checks from the source installation'
+          : 'This Session is being exported. Try again when export finishes.',
+        { exact: true }
+      )
+    ).toBeVisible()
+    await expect(
+      page.getByRole('button', {
+        name: scenario === 'import' ? 'Check again' : 'Check reproducibility',
+        exact: true
+      })
+    ).toBeDisabled()
+    await page.getByRole('heading', { name: 'Dependency', exact: true }).click()
+    await expect(page.locator('[data-slot="tooltip-content"]')).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath(`package-${scenario}-reproducibility.png`) })
+  })
+}

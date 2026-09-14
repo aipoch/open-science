@@ -80,6 +80,7 @@ const computePaths = [
   'compute.jobsList',
   'compute.jobsMarkConsumed',
   'compute.jobsPendingNotification',
+  'compute.jobsRetryHarvest',
   'compute.jobsSetRemoteCleanup',
   'compute.jobsTransitionAnalysis',
   'compute.list',

@@ -85,6 +85,7 @@ type StorageCommandOwnerDeps = {
   getActiveSideChatSessions: () => LegacySessionSource[]
   getActiveDelegatedSessions: () => LegacySessionSource[]
   hasActiveReviewerWork: () => boolean
+  hasActivePackageOperation?: () => boolean
   settingsService: {
     setDataRoot: (path: string, options?: SetDataRootOptions) => Promise<void>
     // Marks the one-time legacy-data-move prompt as answered so it is never shown again.
@@ -391,6 +392,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     })
 
   const directHandoffBlocker = (): string | undefined => {
+    if (deps.hasActivePackageOperation?.())
+      return 'Wait for the Session package operation to finish before moving data.'
     const activeSessions = detectActive()
     const reviewerActive = deps.hasActiveReviewerWork()
     if (activeSessions.length === 0 && !reviewerActive) return undefined
@@ -418,6 +421,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     request: StorageParentRequest,
     handoffTarget: RendererSessionPersistenceTarget = { surface: 'electron-renderer' }
   ): Promise<MigrationOutcome> => {
+    if (deps.hasActivePackageOperation?.())
+      return {
+        ok: false,
+        error: 'Wait for the Session package operation to finish before moving data.'
+      }
     if (activeStaged || resolutionInProgress) {
       return {
         ok: false,
