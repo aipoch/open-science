@@ -52,7 +52,7 @@ async function rpc(
     },
     applicationEvents: new ApplicationEventHub(),
     bootstrap: {
-      appName: 'Open Science',
+      appName: 'Open-Science',
       appVersion: '0.0.0',
       configRoot: '/fake/root',
       platform: 'test',

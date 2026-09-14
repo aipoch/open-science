@@ -64,3 +64,15 @@ describe('main startup ordering', () => {
     expect(mainSource).not.toContain('await settingsService.setClosePreference(preference)')
   })
 })
+
+it('pins initial locations under the synchronous lock before native profile initialization can run', () => {
+  const lock = mainSource.indexOf('app.requestSingleInstanceLock()')
+  const pin = mainSource.indexOf('pinFreshApplicationLocations(')
+  const firstAwait = mainSource.indexOf(
+    '= await Promise.all([',
+    mainSource.indexOf('async function startElectronApp')
+  )
+  expect(lock).toBeGreaterThan(-1)
+  expect(pin).toBeGreaterThan(lock)
+  expect(firstAwait).toBeGreaterThan(pin)
+})

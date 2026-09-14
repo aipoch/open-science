@@ -766,7 +766,7 @@ describe('codexFramework', () => {
           visibility: 'list',
           supported_in_api: true,
           base_instructions: expect.stringContaining(
-            'inside Open Science through the Agent Client Protocol'
+            'inside Open-Science through the Agent Client Protocol'
           ),
           include_skills_usage_instructions: true,
           default_reasoning_level: 'none',
@@ -1108,7 +1108,7 @@ describe('codexFramework', () => {
     })
   })
 
-  it('delivers Open Science session guidance as persistent developer instructions', () => {
+  it('delivers Open-Science session guidance as persistent developer instructions', () => {
     const framework = createCodexFramework()
 
     const config = framework.prepareModelConfig(
@@ -1212,7 +1212,7 @@ describe('codexFramework', () => {
   it('runs an app-managed JavaScript adapter with Electron as Node', () => {
     const spawnProcess = vi.fn().mockReturnValue(fakeChild)
     const framework = createCodexFramework({
-      execPath: '/Applications/Open Science/Electron',
+      execPath: '/Applications/Open-Science/Electron',
       platform: 'darwin',
       spawnProcess
     })
@@ -1225,7 +1225,7 @@ describe('codexFramework', () => {
       })
     ).toBe(fakeChild)
     expect(spawnProcess).toHaveBeenCalledWith(
-      '/Applications/Open Science/Electron',
+      '/Applications/Open-Science/Electron',
       ['/data/codex-acp/dist/index.js', '--flag'],
       expect.objectContaining({
         env: expect.objectContaining({

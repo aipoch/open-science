@@ -854,8 +854,21 @@ class SettingsRepository {
           : { onboardingCompletedAt: update.onboardingCompletedAt }),
         ...settings,
         ...(notebookRuntimeEnablement ? { notebookRuntimeEnablement } : {}),
-        dataRoot: update.dataRoot
+        dataRoot: update.dataRoot,
+        dataRootIsInitialDefault: undefined
       }
+    })
+  }
+
+  // Pin the inferred location without invoking relocation or changing any persisted runtime paths.
+  async pinInitialDataRoot(dataRoot: string, fresh: boolean): Promise<StoredSettings> {
+    return this.mutate((settings) => {
+      if (settings.dataRoot && settings.dataRoot !== dataRoot) {
+        throw new Error(
+          'The data location changed during startup. Restart to use the saved location.'
+        )
+      }
+      return { ...settings, dataRoot, ...(fresh ? { dataRootIsInitialDefault: true } : {}) }
     })
   }
 

@@ -1,3 +1,18 @@
+vi.mock('./storage/electron-profile', () => ({
+  resolveBootstrapConfigRoot: () => '/isolated-test',
+  resolveElectronProfile: () => '/isolated-test/profile',
+  profileHasHistory: () => false,
+  pinFreshApplicationLocations: vi.fn()
+}))
+vi.mock('./storage/location-evidence', () => ({ directoryHasFiles: () => false }))
+vi.mock('./storage/initialize-location', () => ({
+  prepareApplicationLocations: async () => ({
+    settingsStore: {},
+    repository: { getSettings: async () => ({}) }
+  }),
+  initializeDataLocation: vi.fn()
+}))
+vi.mock('./brand-upgrade/native-paths', () => ({ upgradeNativeBrandEntries: () => false }))
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 const { ipcEvents, startupWindow } = await vi.hoisted(async () => {
@@ -41,6 +56,9 @@ const fixture = vi.hoisted(() => {
       app: {
         isPackaged: true,
         setName: vi.fn(),
+        setPath: vi.fn(),
+        setAppLogsPath: vi.fn(),
+        requestSingleInstanceLock: vi.fn(() => true),
         getPath: () => '/isolated-test',
         getVersion: () => '0.0.0',
         on: vi.fn(),
@@ -51,6 +69,7 @@ const fixture = vi.hoisted(() => {
         setBadgeCount: vi.fn(),
         isUnityRunning: () => false
       },
+      Menu: { setApplicationMenu: vi.fn(), buildFromTemplate: vi.fn() },
       BrowserWindow: { getAllWindows: () => [] },
       protocol: { registerSchemesAsPrivileged: vi.fn() },
       nativeImage: {},

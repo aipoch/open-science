@@ -656,7 +656,7 @@ describe('AcpTurnSkillOwner', () => {
     expect(prepared.codexSkillInputs).toEqual([])
     expect(prepared.skillActivityInputs).toEqual([{ name: 'mcp-pubmed', path: pubmedPath }])
     expect(prepared.skillScopeGuidance).toContain('mcp-pubmed')
-    expect(prepared.skillScopeGuidance).toContain('already loaded by Open Science')
+    expect(prepared.skillScopeGuidance).toContain('already loaded by Open-Science')
     expect(prepared.skillScopeGuidance).toContain('PUBMED_ROUTE_SENTINEL')
     expect(prepared.skillScopeGuidance).toContain(
       'PACKAGE_DIR=${CODEBUDDY_CONFIG_DIR}/skill-runtime/.claude/skills/mcp-pubmed'

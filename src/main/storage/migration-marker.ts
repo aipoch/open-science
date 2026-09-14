@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { join, relative } from 'node:path'
 
 // Sentinel file dropped INTO a staging data root while a migration copy is in flight. Its presence
-// means "this OpenScience folder is a half-baked/uncommitted staging copy, not the live data root",
+// means "this Open-Science folder is a half-baked/uncommitted staging copy, not the live data root",
 // which both computeDefaultDataRoot (ignore it when picking the default) and the commit/discard gates
 // key off. Kept in a standalone module that imports ONLY node builtins so storage-root's pure getter
 // can call hasPendingMigrationMarker without pulling in electron or migration-service (import cycle).

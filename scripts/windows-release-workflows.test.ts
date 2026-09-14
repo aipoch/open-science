@@ -319,7 +319,7 @@ describe('post-merge Windows validation', () => {
     })
     expect(verify.run).toContain('Get-AuthenticodeSignature')
     expect(verify.run).toContain(
-      '$expectedTestCertificateSubject = "CN=Test certificate for \'Open Science [OSS]\'"'
+      '$expectedTestCertificateSubject = "CN=Test certificate for \'Open-Science [OSS]\'"'
     )
     expect(verify.run).toContain('$expectedUntrustedRootMessage =')
     expect(verify.run).toContain("$signature.Status -eq 'UnknownError'")

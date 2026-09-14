@@ -66,7 +66,7 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
   ): ReturnType<ComputeService['submitJob']> => {
     const result = await service.submitJob(
       scope.providerId,
-      'Open Science Slurm certification',
+      'Open-Science Slurm certification',
       schedulerHeader + command,
       { timeoutSeconds: 60, ...options },
       scope
@@ -292,7 +292,7 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
     try {
       const submitted = await service.submitJob(
         scope.providerId,
-        'Open Science direct SSH environment regression',
+        'Open-Science direct SSH environment regression',
         'python -c "import sys; assert sys.prefix != sys.base_prefix"\nprintf direct-ready',
         { environment: envName, timeoutSeconds: 30 },
         scope

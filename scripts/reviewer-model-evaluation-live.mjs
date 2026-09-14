@@ -10,7 +10,7 @@ import sharp from 'sharp'
 import { CAPTURE_SCHEMA_VERSION, sealReviewerModelCapture } from './reviewer-model-evaluation.mjs'
 
 const RUNNER_VERSION = '1.0.0'
-const SYSTEM_PROMPT = `You are the Open Science Reviewer auditing exactly one completed Conversation Turn. Use only tool evidence. Trace, do not recompute or conduct research. Missing or unsupported evidence limits coverage and is not a finding. Rendered labels, pages, table values, and visible content require a matching content view. Method, execution, existence, and generation claims default to trace and must not open binary content. Submit exactly one accepted result with submit_findings and no prose afterward.`
+const SYSTEM_PROMPT = `You are the Open-Science Reviewer auditing exactly one completed Conversation Turn. Use only tool evidence. Trace, do not recompute or conduct research. Missing or unsupported evidence limits coverage and is not a finding. Rendered labels, pages, table values, and visible content require a matching content view. Method, execution, existence, and generation claims default to trace and must not open binary content. Submit exactly one accepted result with submit_findings and no prose afterward.`
 const getArg = (name, fallback) => {
   const prefix = `--${name}=`
   return process.argv.find((value) => value.startsWith(prefix))?.slice(prefix.length) ?? fallback
@@ -19,7 +19,7 @@ const repetitions = Number(getArg('runs', '1'))
 const outputArgument = getArg('output', 'test/fixtures/reviewer-model-evaluation.json')
 const requested = new Set(getArg('fixtures', '').split(',').filter(Boolean))
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-app.setName('Open Science (DEV)')
+app.setName('Open-Science (DEV)')
 
 const turn = (claim, user = 'Complete the requested analysis.') => ({
   blocks: [

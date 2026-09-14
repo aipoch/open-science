@@ -22,8 +22,8 @@ const AppIconSection = (): React.JSX.Element | null => {
   const listAppIcons = window.api.settings.listAppIcons
   const labels = { light: t('Light'), dark: t('Dark') }
   const descriptions = {
-    light: t('The light Open Science logo.'),
-    dark: t('The dark Open Science logo.')
+    light: t('The light Open-Science logo.'),
+    dark: t('The dark Open-Science logo.')
   }
 
   useEffect(() => {

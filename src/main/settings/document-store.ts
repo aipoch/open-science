@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import {
@@ -38,6 +38,16 @@ const migrateSettingsDocument = (value: unknown): StoredSettings | undefined => 
 
 const decodeSettingsDocument = (contents: string): StoredSettings => {
   const value: unknown = JSON.parse(contents)
+  // A damaged pointer must never sanitize to an unset pointer and start a second empty workspace.
+  if (
+    isRecord(value) &&
+    value.dataRoot !== undefined &&
+    (typeof value.dataRoot !== 'string' || !isAbsolute(value.dataRoot) || !value.dataRoot.trim())
+  ) {
+    throw new DurableJsonRecoveryBarrierError(
+      'The saved data location (dataRoot) is invalid. Restore its absolute path before restarting.'
+    )
+  }
   const version = isRecord(value) ? value.version : undefined
   if (Number.isSafeInteger(version) && Number(version) > SETTINGS_FILE_VERSION) {
     throw new UnsupportedSettingsDocumentVersionError(Number(version))

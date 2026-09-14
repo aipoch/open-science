@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream, statSync } from 'node:fs'
+import { createReadStream, existsSync, statSync } from 'node:fs'
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -233,9 +233,22 @@ export const createProductionMicromambaRunner = (
   const env = deps.env ?? process.env
   const home = deps.home ?? env.USERPROFILE ?? env.HOME
   const localAppData = env.LOCALAPPDATA ?? (home ? join(home, 'AppData', 'Local') : undefined)
+  const isolated =
+    env.OPEN_SCIENCE_E2E_STORAGE_ROOT?.trim() ||
+    env.OPEN_SCIENCE_CONFIG_ROOT?.trim() ||
+    env.OPEN_SCIENCE_STORAGE_ROOT?.trim()
+  const oldTools = localAppData
+    ? join(localAppData, 'OpenScience', 'tools', 'micromamba')
+    : undefined
   const toolsDir =
     deps.localToolsDir ??
-    (localAppData ? join(localAppData, 'OpenScience', 'tools', 'micromamba') : undefined)
+    (isolated
+      ? join(isolated, 'tools', 'micromamba')
+      : oldTools && existsSync(join(oldTools, 'selection.json'))
+        ? oldTools
+        : localAppData
+          ? join(localAppData, 'Open-Science', 'tools', 'micromamba')
+          : undefined)
   if (!toolsDir) {
     if (locations.length === 0) return undefined
     throw new Error('Could not resolve a local tools directory for micromamba.')

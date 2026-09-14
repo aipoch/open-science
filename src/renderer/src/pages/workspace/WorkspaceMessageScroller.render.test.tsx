@@ -273,7 +273,7 @@ describe('WorkspaceMessageScroller empty conversation banner', () => {
     const html = await renderScroller(createSession({}))
 
     expect(html).toContain('data-testid="empty-conversation-banner"')
-    expect(html).toContain('What will you research in Open Science?')
+    expect(html).toContain('What will you research in Open-Science?')
   })
 
   it('hides the banner once the conversation has messages', async () => {

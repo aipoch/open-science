@@ -213,7 +213,7 @@ fn ensure_sublayer(engine: HANDLE, descriptor: &FenceDescriptor<'_>, key: &GUID)
         }
         bail!("preserving a Windows Filtering Platform sublayer not owned by this installation");
     }
-    let mut name = "Open Science Notebook protection\0"
+    let mut name = "Open-Science Notebook protection\0"
         .encode_utf16()
         .collect::<Vec<_>>();
     let mut description =
@@ -328,7 +328,7 @@ fn add_filter(
     };
     let mut conditions = conditions;
     let mut weight_slot = weight;
-    let mut name = format!("Open Science Notebook {role}\0")
+    let mut name = format!("Open-Science Notebook {role}\0")
         .encode_utf16()
         .collect::<Vec<_>>();
     let mut description = "Owned Notebook AppContainer network boundary\0"

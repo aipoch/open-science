@@ -7,6 +7,7 @@ import { PdfStructureReader } from './literature/pdf-structure/reader'
 import { createSpecialistApplicationOwner } from './specialist/application-commands'
 import { dirname, join } from 'node:path'
 import { mkdir } from 'node:fs/promises'
+import { initializeDataLocation } from './storage/initialize-location'
 
 import {
   app,
@@ -549,6 +550,7 @@ const createApplicationModules = async (
     settingsStore ?? resolveConfigRoot(),
     (operation) => specialistPackageSkillAdapter.runMutationExclusive(operation)
   )
+  await initializeDataLocation(settingsRepository)
   initializeWsl2BashPreview({
     platform: process.platform,
     arch: process.arch,

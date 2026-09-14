@@ -66,7 +66,7 @@ const normalizeRemoteItPublicUrl = (value: string): string => {
 const configurationLoadError = (error: unknown): Error => {
   const detail = toErrorMessage(error)
   return new Error(
-    `Remote access configuration could not be loaded. Fix or remove remote-access.json, then restart Open Science. ${detail}`
+    `Remote access configuration could not be loaded. Fix or remove remote-access.json, then restart Open-Science. ${detail}`
   )
 }
 

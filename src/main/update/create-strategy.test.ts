@@ -19,7 +19,7 @@ vi.mock('../logger', async (importOriginal) => ({
 // autoUpdater), so stub them enough to instantiate without a real Electron runtime.
 vi.mock('electron', () => ({
   app: {
-    getPath: () => '/Applications/Open Science.app/Contents/MacOS/Open Science',
+    getPath: () => '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
     getVersion: () => '0.0.0',
     isPackaged: false
   },

@@ -26,7 +26,7 @@ export const normalizeBibtexEntry = (entry: Record<string, unknown>): Record<str
   }
 }
 
-const literalNamePrefix = 'Open Science literal creator: '
+const literalNamePrefix = 'Open-Science literal creator: '
 
 const lineValue = (value: string): string => value.replace(/[\r\n]+/gu, ' ').trim()
 const nameText = (name: CslName): string =>

@@ -436,7 +436,7 @@ const OnboardingWizard = ({
           rel="noreferrer"
           className="font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000 transition-colors duration-150 ease-out hover:text-text-100"
         >
-          Open Science
+          Open-Science
         </a>
 
         <div

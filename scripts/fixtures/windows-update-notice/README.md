@@ -26,7 +26,7 @@ hook for the previous installer and the working tree hook for the target install
 the tag must exist locally. Tiny native payloads return 25 and 26 respectively.
 Runtime cleanup scripts are successful stubs, so the fixture cannot manage real
 application resources. Install/profile/temp paths live under the supplied fixture
-directory; the product name and registry GUID are distinct from Open Science.
+directory; the product name and registry GUID are distinct from Open-Science.
 
 The runner refuses an existing fixture registration or nonempty install directory.
 For the permission scenario it changes only the fixture uninstaller's DACL, proves
@@ -34,7 +34,7 @@ write access is denied, then restores and verifies its exact original DACL in
 `finally`. The lock scenario holds that same file with read-only sharing. Normal
 completion and assertion failures uninstall the fixture. If the runner is forcibly
 terminated, inspect the fixture registration and files before running again; do not
-remove any real Open Science installation or change its permissions.
+remove any real Open-Science installation or change its permissions.
 
 | Scenario                           | Expected public behavior                                                             |
 | ---------------------------------- | ------------------------------------------------------------------------------------ |

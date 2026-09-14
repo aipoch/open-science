@@ -4,11 +4,11 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const projectRoot = resolve(__dirname, '../..')
-const displayName = 'Open Science'
+const displayName = 'Open-Science'
 const appId = 'com.aipoch.open-science'
 
 describe('app display branding', () => {
-  it('uses the Open Science display name in shell and workspace surfaces', () => {
+  it('uses the Open-Science display name in shell and workspace surfaces', () => {
     const mainSource = readFileSync(resolve(projectRoot, 'src/main/index.ts'), 'utf8')
     const windowsSource = readFileSync(resolve(projectRoot, 'src/main/windows.ts'), 'utf8')
     const rendererHtmlSource = readFileSync(resolve(projectRoot, 'src/renderer/index.html'), 'utf8')

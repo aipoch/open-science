@@ -780,7 +780,7 @@ const writeCodexAuthenticationSnapshot = async (
 
 // Provider setup imports an existing login plus the safe, non-secret subset of its active provider
 // route. Global model defaults, MCP servers, Skills, sessions, memories, hooks, and tokens embedded in
-// provider config remain outside Open Science.
+// provider config remain outside Open-Science.
 export const importCodexAuthentication = async (
   sourceHome: string,
   destinationHome: string

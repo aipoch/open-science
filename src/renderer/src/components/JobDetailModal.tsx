@@ -421,10 +421,10 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
                 )
               : latestJob.last_poll_error.includes('recovery_pending')
                 ? t(
-                    'Checking whether the original job started. Open Science will check again without resubmitting it.'
+                    'Checking whether the original job started. Open-Science will check again without resubmitting it.'
                   )
                 : t(
-                    'The latest remote observation failed. The last confirmed execution state is shown; Open Science will check again.'
+                    'The latest remote observation failed. The last confirmed execution state is shown; Open-Science will check again.'
                   )}
         </div>
       ) : null}
@@ -436,7 +436,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
             tone="amber"
             title={
               latestJob.harvested_at === undefined
-                ? t('Harvest pending. Open Science will retry automatically.')
+                ? t('Harvest pending. Open-Science will retry automatically.')
                 : t('Harvest failed. Remote files were left untouched.')
             }
             description={

@@ -436,7 +436,7 @@ const createLiteratureLibraryMcpServer = (
     {
       title: 'Search literature library',
       description:
-        "Browse or search the user's Open Science literature metadata library. Results use a compact projection with abstractPreview, abstractLength, and abstractTruncated so a 20-record page stays within the Agent response budget. authors lists only authors; creatorCount counts all contributors. This does not search external providers or read PDF full text. Omit query to browse records. Scope defaults to project and only returns records linked to the trusted current Project. Use library only when the user explicitly requests their global Library, collection with collectionId for an explicitly selected Collection, or items with the exact itemIds explicitly selected by the user. Each page defaults to 20 records, which is also the maximum. When nextOffset is returned, pass it as offset to continue.",
+        "Browse or search the user's Open-Science literature metadata library. Results use a compact projection with abstractPreview, abstractLength, and abstractTruncated so a 20-record page stays within the Agent response budget. authors lists only authors; creatorCount counts all contributors. This does not search external providers or read PDF full text. Omit query to browse records. Scope defaults to project and only returns records linked to the trusted current Project. Use library only when the user explicitly requests their global Library, collection with collectionId for an explicitly selected Collection, or items with the exact itemIds explicitly selected by the user. Each page defaults to 20 records, which is also the maximum. When nextOffset is returned, pass it as offset to continue.",
       inputSchema: {
         query: z.string().trim().min(1).max(2_000).optional(),
         scope: z.enum(LITERATURE_LIBRARY_SCOPES).optional(),
@@ -506,7 +506,7 @@ const createLiteratureLibraryMcpServer = (
       {
         title: 'Format citation document',
         description:
-          'Format and attach an already-saved DOCX that contains semantic {{cite:itemId}} markers and an optional {{bibliography}} marker. Open Science resolves the Literature items, formats the visible citations and bibliography, embeds Zotero-compatible Word Fields, and attaches the resulting DOCX with trusted citation provenance. The returned file is already attached; do not call write_artifact_file. Do not construct Zotero fields or repeat Literature metadata yourself.',
+          'Format and attach an already-saved DOCX that contains semantic {{cite:itemId}} markers and an optional {{bibliography}} marker. Open-Science resolves the Literature items, formats the visible citations and bibliography, embeds Zotero-compatible Word Fields, and attaches the resulting DOCX with trusted citation provenance. The returned file is already attached; do not call write_artifact_file. Do not construct Zotero fields or repeat Literature metadata yourself.',
         inputSchema: {
           filename: z
             .string()
@@ -545,7 +545,7 @@ const createLiteratureLibraryMcpServer = (
       {
         title: 'Prepare LaTeX bundle',
         description:
-          'Prepare and attach an already-saved UTF-8 .tex file that contains semantic {{cite:itemId}} markers and an optional {{bibliography}} marker. Open Science resolves the Literature items, replaces markers with stable \\cite{key} commands, generates references.bib and a revision manifest, and attaches an Overleaf-compatible ZIP with trusted citation provenance. The source should use BibLaTeX with \\addbibresource{references.bib}; {{bibliography}} becomes \\printbibliography. The returned file is already attached; do not call write_artifact_file.',
+          'Prepare and attach an already-saved UTF-8 .tex file that contains semantic {{cite:itemId}} markers and an optional {{bibliography}} marker. Open-Science resolves the Literature items, replaces markers with stable \\cite{key} commands, generates references.bib and a revision manifest, and attaches an Overleaf-compatible ZIP with trusted citation provenance. The source should use BibLaTeX with \\addbibresource{references.bib}; {{bibliography}} becomes \\printbibliography. The returned file is already attached; do not call write_artifact_file.',
         inputSchema: {
           filename: z
             .string()
@@ -706,7 +706,7 @@ const createLiteratureLibraryMcpServer = (
     {
       title: 'Save literature discoveries',
       description:
-        'Save one to ten literature records discovered by the Agent to the user-level Literature Inbox for review. Open Science supplies the trusted current Project and Session origin; do not include origin fields. Each receipt in results corresponds to the completed input prefix; failure.inputIndex is zero-based and later inputs were not attempted. Reused receipts are not newly created rows. Prefer refs with pmid:<id> or doi:<id> so Open Science can retrieve the metadata. Use candidates only for records without a supported identifier. filename remains available for a prepared Notebook batch.',
+        'Save one to ten literature records discovered by the Agent to the user-level Literature Inbox for review. Open-Science supplies the trusted current Project and Session origin; do not include origin fields. Each receipt in results corresponds to the completed input prefix; failure.inputIndex is zero-based and later inputs were not attempted. Reused receipts are not newly created rows. Prefer refs with pmid:<id> or doi:<id> so Open-Science can retrieve the metadata. Use candidates only for records without a supported identifier. filename remains available for a prepared Notebook batch.',
       inputSchema: {
         refs: z
           .array(z.string().trim().min(1).max(512))

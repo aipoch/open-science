@@ -54,7 +54,7 @@ describe('Compute authentication presentation', () => {
     ],
     [
       'host_key_unknown',
-      'Verify this Host key in a terminal before connecting from Open Science.',
+      'Verify this Host key in a terminal before connecting from Open-Science.',
       'Review Host settings'
     ],
     [

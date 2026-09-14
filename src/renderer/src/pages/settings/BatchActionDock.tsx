@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V3
- * component: batch action dock · genre: modern-minimal · theme: Open Science
+ * component: batch action dock · genre: modern-minimal · theme: Open-Science
  * States inherit shared controls and owner-provided loading/error/success feedback.
  */
 import type { ComponentProps, ReactNode } from 'react'

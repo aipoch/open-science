@@ -34,7 +34,7 @@ type ProjectStore = ProjectStoreData & {
 }
 
 // Keep raw IPC diagnostics in the developer channel while renderer state remains path-safe.
-const SAFE_PROJECT_LOAD_ERROR = 'Open Science could not load projects. Retry to continue.'
+const SAFE_PROJECT_LOAD_ERROR = 'Open-Science could not load projects. Retry to continue.'
 
 const reportProjectLoadError = (error: unknown): void => {
   console.warn('Project list loading failed', error)

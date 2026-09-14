@@ -96,7 +96,7 @@ export type StoredProvider = {
   // "unverified" warning survives a restart.
   lastValidationFailure?: ProviderValidationFailure
   // claude-shared credentials live in the user's global profile and cannot be removed safely by the
-  // app. This timestamp records an app-local disconnect so Open Science stops using that profile
+  // app. This timestamp records an app-local disconnect so Open-Science stops using that profile
   // until the user explicitly signs in again.
   disconnectedAt?: number
 }
@@ -286,6 +286,8 @@ export type StoredSettings = {
   // Absolute path of the relocatable data root (artifacts/notebooks/runtime/uploads). Absent means
   // "use the config root" (default). Only written after a successful migration; a change needs a restart.
   dataRoot?: string
+  // Only a newly initialized, still-empty default may participate in onboarding drive selection.
+  dataRootIsInitialDefault?: boolean
   // Set once the one-time legacy-absolute-path-to-$DATA normalization pass has completed successfully.
   // Absent means it still needs to run (or a previous attempt failed and should retry).
   pathsNormalizedAt?: number

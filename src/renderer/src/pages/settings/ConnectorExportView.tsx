@@ -98,7 +98,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
               setSaved(false)
             }}
           >
-            {t('Open Science Connector')}
+            {t('Open-Science Connector')}
           </Button>
           <Button
             type="button"

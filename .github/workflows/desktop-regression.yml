@@ -109,7 +109,7 @@ jobs:
         id: packaged_app
         run: |
           set -euo pipefail
-          executable=$(find extracted -type f -path '*/Open Science.app/Contents/MacOS/Open Science' -print -quit)
+          executable=$(find extracted -type f -path '*/Open-Science.app/Contents/MacOS/Open-Science' -print -quit)
           test -n "$executable"
           echo "executable=$(node -e 'process.stdout.write(require("path").resolve(process.argv[1]))' "$executable")" >> "$GITHUB_OUTPUT"
 

@@ -42,7 +42,7 @@ const TERMINATION_TIMEOUT_MS = 10_000
 const MCP_REQUEST_TIMEOUT_MS = 30_000
 const SMOKE_ROOT_PREFIX = 'open-science-installer-smoke-'
 const APP_GUID = 'a65c5229-0b29-5716-a0fe-d8755e62f3ca'
-const APP_DISPLAY_NAME = 'Open Science'
+const APP_DISPLAY_NAME = 'Open-Science'
 const RPC_SMOKE_ROOT_PREFIX = 'open-science-rpc-smoke-'
 const UPGRADE_SENTINEL_PREFIX = 'installer-smoke-upgrade-sentinel-'
 const UPGRADE_SENTINEL_CONTENT = 'previous-version-profile-preserved\n'
@@ -146,7 +146,7 @@ const requestPackagedAppShutdown = async (endpoint, auth, fetchImpl = fetchWithT
 
 const parsePackagedAppEndpoint = (output) => {
   const match = output.match(
-    /Open Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
+    /Open-Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
   )
   if (!match) return undefined
 
@@ -164,7 +164,7 @@ const readPackagedAppConfigRoot = async (
   { auth, legacyConfigRoots = [], readToken = readFile } = {}
 ) => {
   if (
-    bootstrap.appName !== 'Open Science' ||
+    bootstrap.appName !== 'Open-Science' ||
     bootstrap.appVersion !== expectedVersion ||
     bootstrap.platform !== 'win32'
   ) {
@@ -989,7 +989,7 @@ const assertDatabaseDowngradeBlocked = ({ becameHealthy, output }) => {
   if (becameHealthy) {
     throw new Error(`Ledger-aware downgrade unexpectedly became healthy.\n${output}`)
   }
-  if (!/database_newer_than_app|newer version of Open Science/i.test(output)) {
+  if (!/database_newer_than_app|newer version of Open-Science/i.test(output)) {
     throw new Error(
       `Ledger-aware downgrade did not report the expected compatibility error.\n${output}`
     )

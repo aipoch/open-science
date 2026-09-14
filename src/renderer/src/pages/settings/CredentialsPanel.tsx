@@ -473,7 +473,7 @@ export function CredentialsPanel({
         <p className="mt-1 text-sm text-muted-foreground">
           {fileCredentialNotice ??
             t(
-              'API keys and credentials used by Open Science on your behalf, stored encrypted on this computer.'
+              'API keys and credentials used by Open-Science on your behalf, stored encrypted on this computer.'
             )}
         </p>
         <div className="mt-4 divide-y divide-border rounded-xl border border-border">

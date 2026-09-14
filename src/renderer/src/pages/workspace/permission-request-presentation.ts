@@ -349,6 +349,7 @@ const humanizeMcpName = (name: string | undefined): string | undefined => {
         .filter(Boolean)
         .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
         .join(' ')
+        .replace(/^Open ?Science\b/iu, 'Open-Science')
     )
     .filter(Boolean)
 

@@ -492,7 +492,7 @@ describe('Windows installer smoke plan', () => {
   })
 
   it('authenticates token-free readiness through state while accepting legacy token output', async () => {
-    const output = 'Open Science Web: http://127.0.0.1:52378/'
+    const output = 'Open-Science Web: http://127.0.0.1:52378/'
     expect(parsePackagedAppEndpoint(output)).toEqual({
       endpoint: 'http://127.0.0.1:52378'
     })
@@ -510,7 +510,7 @@ describe('Windows installer smoke plan', () => {
 
     const legacyOutput = `
 [main] app starting
-Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0CrcdTs42uvLE
+Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0CrcdTs42uvLE
 `
     const legacyService = {
       auth: 'token=iUFHGSACwBz2k1kSJfPixHbclDywVg0CrcdTs42uvLE',
@@ -553,7 +553,7 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     await expect(
       readPackagedAppConfigRoot(
         {
-          appName: 'Open Science',
+          appName: 'Open-Science',
           appVersion: '0.8.0',
           configRoot,
           platform: 'win32'
@@ -563,7 +563,7 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     ).resolves.toBe(configRoot)
     await expect(
       readPackagedAppConfigRoot(
-        { appName: 'Open Science', appVersion: '0.8.0', platform: 'win32' },
+        { appName: 'Open-Science', appVersion: '0.8.0', platform: 'win32' },
         '0.8.0'
       )
     ).rejects.toThrow(/config root/)
@@ -579,7 +579,7 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
 
     await expect(
       readPackagedAppConfigRoot(
-        { appName: 'Open Science', appVersion: '0.7.0', platform: 'win32' },
+        { appName: 'Open-Science', appVersion: '0.7.0', platform: 'win32' },
         '0.7.0',
         {
           auth: 'token=legacy-token',
@@ -907,7 +907,7 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     const run = vi.fn(async (_executable: string, args: string[]) => {
       if (args[0] === 'delete') return { code: 0, stdout: '', stderr: '' }
       const output = args[1].includes('CurrentVersion')
-        ? `DisplayName    REG_SZ    Open Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    ${install}\r\nUninstallString    REG_SZ    "${uninstall}"\r\nQuietUninstallString    REG_SZ    "${uninstall}" /S\r\n`
+        ? `DisplayName    REG_SZ    Open-Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    ${install}\r\nUninstallString    REG_SZ    "${uninstall}"\r\nQuietUninstallString    REG_SZ    "${uninstall}" /S\r\n`
         : `InstallLocation    REG_SZ    ${install}\r\n`
       return { code: 0, stdout: output, stderr: '' }
     })
@@ -929,12 +929,12 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
 
   it('preserves unrelated installer registrations', async () => {
     const root = 'C:\\Temp\\open-science-installer-smoke-owned'
-    const unrelated = 'C:\\Program Files\\Open Science\\Uninstall open-science.exe'
+    const unrelated = 'C:\\Program Files\\Open-Science\\Uninstall open-science.exe'
     const run = vi.fn(async (_executable: string, args: string[]) => {
       if (args[0] === 'delete') throw new Error('unrelated registration was deleted')
       const output = args[1].includes('CurrentVersion')
-        ? `DisplayName    REG_SZ    Open Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    \r\nUninstallString    REG_SZ    "${unrelated}"\r\nQuietUninstallString    REG_SZ    "${unrelated}" /S\r\n`
-        : 'InstallLocation    REG_SZ    C:\\Program Files\\Open Science\r\n'
+        ? `DisplayName    REG_SZ    Open-Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    \r\nUninstallString    REG_SZ    "${unrelated}"\r\nQuietUninstallString    REG_SZ    "${unrelated}" /S\r\n`
+        : 'InstallLocation    REG_SZ    C:\\Program Files\\Open-Science\r\n'
       return { code: 0, stdout: output, stderr: '' }
     })
 
@@ -951,7 +951,7 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
       if (!args[1].includes('CurrentVersion')) return { code: 1, stdout: '', stderr: '' }
       return {
         code: 0,
-        stdout: `DisplayName    REG_SZ    Open Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    \r\nUninstallString    REG_SZ    "${uninstall}"\r\nQuietUninstallString    REG_SZ    "${uninstall}" /S\r\n`,
+        stdout: `DisplayName    REG_SZ    Open-Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    \r\nUninstallString    REG_SZ    "${uninstall}"\r\nQuietUninstallString    REG_SZ    "${uninstall}" /S\r\n`,
         stderr: ''
       }
     })
@@ -978,7 +978,7 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
       if (!args[1].includes('CurrentVersion')) return { code: 1, stdout: '', stderr: '' }
       return {
         code: 0,
-        stdout: `DisplayName    REG_SZ    Open Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    \r\nUninstallString    REG_SZ    "${uninstall}"\r\n`,
+        stdout: `DisplayName    REG_SZ    Open-Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    \r\nUninstallString    REG_SZ    "${uninstall}"\r\n`,
         stderr: ''
       }
     })

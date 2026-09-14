@@ -1,4 +1,4 @@
-/* Hallmark · component: merge review · theme: Open Science · P5 H5 E4 S5 R5 V4 */
+/* Hallmark · component: merge review · theme: Open-Science · P5 H5 E4 S5 R5 V4 */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, Paperclip } from 'lucide-react'

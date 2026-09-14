@@ -1,0 +1,105 @@
+# Brand and location compatibility
+
+The product displays **Open-Science** (or **open-science** where lowercase is appropriate).
+Display names are separate from persistent identities and filesystem locations.
+
+## Existing installations
+
+An absolute saved `dataRoot` stays authoritative, including custom paths containing an old brand.
+Without a saved choice, startup examines the current and historical default roots and the original
+configuration root for actual data or runtime files. Empty scaffolding does not identify an existing
+installation. A single verified location is recorded before locale, database, or application writers
+start. Uncommitted migration targets are never adopted by inference. Multiple candidates, unreadable
+locations, damaged settings, and lost pointers with remaining configuration require recovery.
+
+The Electron profile has a separate `electron-profile.json` selection in the configuration root.
+It retains the original physical profile, session cache, and log location. A missing recorded profile
+is never silently recreated. Losing the record while historical configuration remains requires
+restoring the original choice. The recovery dialog identifies the relevant file and location.
+Restore the original settings/profile record or set its absolute path to the verified existing
+folder; do not delete the remaining configuration to bypass recovery.
+
+No brand upgrade relocates research data or rewrites database/session/attachment/runtime paths.
+Settings still supports an explicit, verified change of data location. Displayed paths are the real
+paths. The initial empty default is recorded separately so onboarding may still select an appropriate
+local drive, while later onboarding runs cannot replace a populated or missing saved root.
+
+## Fresh installations and development
+
+| Resource                           | New default                                                                           |
+| ---------------------------------- | ------------------------------------------------------------------------------------- |
+| Research data                      | `~/Open-Science`                                                                      |
+| Development data                   | `~/Open-Science-DEV`                                                                  |
+| Configuration                      | `~/.open-science` (development: `~/.open-science-project`)                            |
+| Electron profile                   | Platform application-data folder / `Open-Science` (development: `Open-Science (DEV)`) |
+| Windows tool cache                 | Local application-data folder / `Open-Science/tools/micromamba`                       |
+| Windows runtime working cache      | Verified `Open-ScienceTmp` parent, or existing supported fallback                     |
+| New remote jobs                    | `<scratch>/.open-science/jobs/<id>`                                                   |
+| New compute activation definitions | `~/.open-science/environments/<name>.sh`                                              |
+
+`OPEN_SCIENCE_CONFIG_ROOT` and `OPEN_SCIENCE_USER_DATA` explicitly isolate both packaged and development
+runs. `OPEN_SCIENCE_E2E_STORAGE_ROOT` remains supported. The development-only
+`OPEN_SCIENCE_STORAGE_ROOT` alias remains compatible. `OPEN_SCIENCE_ALLOW_MULTI_INSTANCE=1` permits
+parallel development instances. All such paths must be absolute. System-entry repair is disabled for
+explicitly isolated test instances, which must never rewrite the user's real Dock or shortcuts.
+
+Existing Windows tool receipts and owned working caches remain readable at their original paths.
+New installations never create `OpenScience` tool or `OpenScienceTmp` cache directories. Old and new
+cache cleanup uses the same ownership, canonical-root, and ACL checks. Existing remote job workdirs
+remain unchanged, including recovery of historical records without a stored workdir. Old activation
+files are sourced in place; two definitions with the same name require an explicit resolution.
+
+The first location selection is recorded synchronously under the single-instance lock, before native
+profile writers and logging can run. An interrupted `.bootstrap` record is consumed when recovered;
+completed records cannot recreate a missing data directory. Only known process-lock files are ignored
+when distinguishing an untouched profile from historical state.
+
+## Installed application and launcher updates
+
+- macOS packaging names the bundle, executable, menu, and display metadata `Open-Science`. Squirrel's
+  normal update rename is supplemented by verified in-place renaming of recognized old `.app` names.
+  An occupied destination or duplicate bundle blocks repair with a clear recovery message. The app
+  registers the new bundle, repairs its exact existing Dock references, and relaunches the new physical
+  executable before initializing updater and CLI owners. User-named bundles are not renamed.
+- Windows retains the application ID, executable identity, and `.science` ProgID. Display descriptions,
+  installer, uninstall entry, and shortcuts use the new brand. The installer preserves the matching
+  same-location installation's shortcut choices during manual and updater upgrades. Renames emit shell
+  rename notifications instead of unpinning. Startup repairs owned taskbar and implicit shortcut
+  filenames with sparse updates that preserve arguments and working directories. Windows may cache
+  a pinned tooltip until the next sign-in; this cannot be certified by a file rename alone.
+- Linux retains package/desktop identifiers. Package metadata and launchers use the new product path;
+  Debian registers the replacement CLI alternative before removing exact historical product targets.
+  Unrelated manual alternatives remain untouched. Owned user desktop-entry copies retain their
+  arguments while updating their display and installation references. AppImages only repair their own entries; they do not redirect a coexisting deb installation.
+- CLI discovery accepts old/new installation directories crossed with old/new executable names.
+  Old managed launcher and Windows PATH-receipt ownership markers remain accepted for repair.
+
+Native shell integration must also be tested on each target OS. Host-independent tests or installer
+compilation do not certify Windows taskbar, Linux desktop, signing, or live updater behavior.
+
+## Intentionally retained old spellings
+
+| Spelling or family                                                                                                         | Reason                                                                                                               |
+| -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `OpenScience`, `OpenScience-DEV`, `Open Science (DEV)`, `Open Science.app` in location/upgrade code                        | Read existing data, profiles, applications, and shortcuts without moving research data.                              |
+| `Open Science` / `Open Science (DEV)` before Electron readiness                                                            | Existing macOS Keychain and Linux OSCrypt credential identity; the visible app name changes after initialization.    |
+| Windows `Open Science Session package`                                                                                     | Persisted `.science` ProgID. Its display description changes; registering a second class would break upgrades.       |
+| `OpenScienceTmp`, `.openscience/jobs`, `.openscience/environments`, `openscience-<job-id>`                                 | Existing owned caches, remote records, activation files, and scheduler recovery; new resources use the new spelling. |
+| `OpenScienceAPI`, `OpenScienceClient`, `OpenScienceApiError`, exported functions, GraphQL operation names, settings fields | Valid language/API identifiers and persisted contracts; inserting a hyphen would break syntax or consumers.          |
+| `openscience-skills`, marketplace protocols, repository URLs, signing key IDs, content digest prefix                       | Published and signed third-party-facing contracts. Display copy is updated without changing signed bytes.            |
+| `# Open Science:` Codex route markers; old CLI/PATH receipt ownership headers                                              | Exact managed-block/receipt recognition across upgrades. They are technical ownership markers.                       |
+| `CN=Open Science`, `Open Science Local CA`                                                                                 | Certificate subject/identity compatibility.                                                                          |
+| `CHANGELOG.md`, rollback-to-0.7.3 fixtures and old-version paths                                                           | Historical facts and explicit old-version compatibility.                                                             |
+| Center for Open Science / Open Science Framework; external benchmark names                                                 | Third-party names, not this product's brand.                                                                         |
+| `Electron.app` in development tooling                                                                                      | Upstream Electron runtime filename; its development product display metadata is Open-Science (DEV).                  |
+
+NCBI request `tool=OpenScience` remains a stable external client identifier.
+
+Regression fixtures deliberately keep old spellings to prove backward compatibility. This table does
+not authorize adding new old-brand user-facing copy or new old-brand default locations.
+
+New Windows Notebook ownership records use `Aipoch/Open-Science/notebook-sandbox`. Existing records
+under `Aipoch/OpenScience/notebook-sandbox` stay in place; two populated roots require explicit
+recovery. Isolated runs keep ownership under the configuration root. AppContainer, WFP, mutex and
+named-pipe identifiers such as `Aipoch.OpenScience.Notebook` and `OpenScience.RAccess` are retained
+security identities so upgrades and uninstall can manage the original resources.

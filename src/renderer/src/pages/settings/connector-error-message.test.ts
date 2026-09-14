@@ -22,7 +22,7 @@ describe('localizeConnectorError', () => {
     'MCP server must define either command or url.',
     'MCP server transport does not match its connection fields.',
     'MCP server names must remain unique after normalization.',
-    'MCP server name was normalized for Open Science.',
+    'MCP server name was normalized for Open-Science.',
     'Credential values were excluded and must be entered locally.',
     'The MCP client configuration must contain at least one server.',
     'MCP Registry server.json manifests cannot be imported as installed MCP client configurations.',

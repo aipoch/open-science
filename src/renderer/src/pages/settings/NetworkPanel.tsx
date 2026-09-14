@@ -284,7 +284,7 @@ const NetworkPanel = ({
           <div className="rounded-xl border border-border p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm text-foreground">{t('Open Science domains')}</p>
+                <p className="text-sm text-foreground">{t('Open-Science domains')}</p>
                 <p className="text-xs text-muted-foreground">
                   {t('{{count}} custom domains allowed', {
                     count: notebookNetwork.allowedDomains.length,
@@ -309,7 +309,7 @@ const NetworkPanel = ({
           <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Proxy')}</h3>
           <p className="mb-3 text-xs text-muted-foreground">
             {t(
-              'How Open Science, ACP agents, notebook runtimes, and installers reach the internet.'
+              'How Open-Science, ACP agents, notebook runtimes, and installers reach the internet.'
             )}
           </p>
           <div className="rounded-xl border border-border p-4">

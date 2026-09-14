@@ -113,7 +113,7 @@ describe('specialist session IPC', () => {
         .fn()
         .mockResolvedValue(
           new Map([
-            [profile.id, { sourceId: 'official', publisher: 'Open Science', version: '1.0.0' }]
+            [profile.id, { sourceId: 'official', publisher: 'Open-Science', version: '1.0.0' }]
           ])
         ),
       inspectGitHubSource: vi.fn(),
@@ -142,7 +142,7 @@ describe('specialist session IPC', () => {
           ...importedProfile,
           marketplaceProvenance: {
             sourceId: 'official',
-            publisher: 'Open Science',
+            publisher: 'Open-Science',
             version: '1.0.0'
           }
         },

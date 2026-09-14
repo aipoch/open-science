@@ -47,7 +47,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
-  initDataRoot(undefined)
+  initDataRoot(undefined, false)
   await disconnect?.()
   disconnect = undefined
 

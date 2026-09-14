@@ -240,7 +240,7 @@ const createWebServiceController = (
     void tasks.initialize().catch((error) => log.error('Task journal restoration failed', error))
 
     const url = authUrl(token, server.port)
-    log.info(`Open Science Web: http://127.0.0.1:${server.port}/`, {
+    log.info(`Open-Science Web: http://127.0.0.1:${server.port}/`, {
       host: '127.0.0.1',
       port: server.port,
       attached

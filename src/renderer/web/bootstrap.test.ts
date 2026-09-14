@@ -337,7 +337,7 @@ describe('Web bootstrap event connection', () => {
       'alert'
     )
     expect(document.getElementById('open-science-connection-message')?.textContent).toBe(
-      '访问授权已失效。请从主机上的 Open Science 重新打开 Web 链接，或返回远程访问入口页面重新配对。'
+      '访问授权已失效。请从主机上的 Open-Science 重新打开 Web 链接，或返回远程访问入口页面重新配对。'
     )
     expect(document.querySelector('button')?.textContent).toBe('重试')
   })

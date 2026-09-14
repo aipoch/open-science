@@ -8,7 +8,7 @@ import type { CliLauncherStatus } from '../../shared/cli'
 import { defaultFileDurability } from '../storage/file-durability'
 
 const MANAGED_LAUNCHER_HEADER_V1 =
-  'Open Science command-line launcher. Managed by the app. Format version: 1.'
+  'Open-Science command-line launcher. Managed by the app. Format version: 1.'
 const LEGACY_POSIX_HEADER =
   '# Open Science command-line launcher. Managed by the app (Settings -> General -> Command line'
 const LEGACY_POSIX_BODIES = new Set([
@@ -96,7 +96,7 @@ const posixShim = (env: CliLauncherEnv): string => {
       '# Edits are overwritten on reinstall. Mounts the AppImage for this CLI process.',
       `app_image=${quote(env.appImagePath!)}`,
       'mount_output=$(mktemp "${TMPDIR:-/tmp}/open-science-cli.XXXXXX") || {',
-      "  echo 'Open Science could not create a temporary file for the AppImage mount.' >&2",
+      "  echo 'Open-Science could not create a temporary file for the AppImage mount.' >&2",
       '  exit 1',
       '}',
       'mount_pid=',
@@ -118,7 +118,7 @@ const posixShim = (env: CliLauncherEnv): string => {
       '    wait "$mount_pid"',
       '    mount_status=$?',
       '    if [ "$mount_status" -eq 0 ]; then mount_status=1; fi',
-      "    echo 'Open Science AppImage exited before reporting its mount point.' >&2",
+      "    echo 'Open-Science AppImage exited before reporting its mount point.' >&2",
       '    exit "$mount_status"',
       '  fi',
       '  sleep 0.05',
@@ -127,7 +127,7 @@ const posixShim = (env: CliLauncherEnv): string => {
       `app_exec="$mount_dir"/${quote(executable)}`,
       `cli_entry="$mount_dir"/${quote(cliEntry)}`,
       'if [ ! -x "$app_exec" ] || [ ! -f "$cli_entry" ]; then',
-      "  echo 'Open Science AppImage is missing its executable or CLI entry.' >&2",
+      "  echo 'Open-Science AppImage is missing its executable or CLI entry.' >&2",
       '  exit 1',
       'fi',
       'OPEN_SCIENCE_APP_PATH="$app_image" ELECTRON_RUN_AS_NODE=1 \\',
@@ -193,7 +193,8 @@ const defaultRunCommand: CommandRunner = (command, args) => {
 
 const WINDOWS_PATH_PENDING_NAME = '.open-science-path-pending'
 const WINDOWS_PATH_RECEIPT_NAME = '.open-science-path-receipt'
-const WINDOWS_PATH_RECEIPT_OWNER = 'Open Science Windows PATH entry. Managed by the app.'
+const WINDOWS_PATH_RECEIPT_OWNER = 'Open-Science Windows PATH entry. Managed by the app.'
+const LEGACY_WINDOWS_PATH_RECEIPT_OWNER = 'Open Science Windows PATH entry. Managed by the app.'
 // The file name is the journal state: pending is flushed before the registry mutation, then renamed
 // to the owned receipt as the commit step. The snapshots let a later run reconcile a crash safely.
 const windowsPathPendingPath = (binDir: string): string => join(binDir, WINDOWS_PATH_PENDING_NAME)
@@ -202,7 +203,7 @@ const powershellLiteral = (value: string): string => `'${value.replace(/'/g, "''
 
 type WindowsPathJournal = {
   version: 1
-  owner: typeof WINDOWS_PATH_RECEIPT_OWNER
+  owner: typeof WINDOWS_PATH_RECEIPT_OWNER | typeof LEGACY_WINDOWS_PATH_RECEIPT_OWNER
   binDir: string
   beforePath: string | null
   afterPath: string
@@ -218,7 +219,8 @@ const parseWindowsPathJournal = (
     const beforePath = value.beforePath
     if (
       value.version !== 1 ||
-      value.owner !== WINDOWS_PATH_RECEIPT_OWNER ||
+      (value.owner !== WINDOWS_PATH_RECEIPT_OWNER &&
+        value.owner !== LEGACY_WINDOWS_PATH_RECEIPT_OWNER) ||
       typeof value.binDir !== 'string' ||
       normalizeWindowsPathEntry(value.binDir) !== normalizeWindowsPathEntry(binDir) ||
       (beforePath !== null && typeof beforePath !== 'string') ||
@@ -259,15 +261,15 @@ export const buildWindowsPathCommand = (binDir: string): { command: string; args
     '}',
     'function Read-PathJournal($path) {',
     '  try { $journal = [IO.File]::ReadAllText($path) | ConvertFrom-Json }',
-    "  catch { throw 'The PATH ownership journal is not managed by Open Science.' }",
+    "  catch { throw 'The PATH ownership journal is not managed by Open-Science.' }",
     '  $beforeIsValid = $null -eq $journal.beforePath -or $journal.beforePath -is [string]',
     "  $expectedAfter = (@(Get-PathParts $journal.beforePath) + $binDir) -join ';'",
-    '  if ($journal.version -ne 1 -or $journal.owner -cne $receiptOwner -or',
+    "  if ($journal.version -ne 1 -or ($journal.owner -cne $receiptOwner -and $journal.owner -cne 'Open Science Windows PATH entry. Managed by the app.') -or",
     "      $journal.binDir.TrimEnd([char[]]'\\/') -ine $binDir.TrimEnd([char[]]'\\/') -or",
     '      -not $beforeIsValid -or (Get-MatchCount $journal.beforePath) -ne 0 -or',
     '      $journal.afterPath -isnot [string] -or',
     '      $journal.afterPath -cne $expectedAfter) {',
-    "    throw 'The PATH ownership journal is not managed by Open Science.'",
+    "    throw 'The PATH ownership journal is not managed by Open-Science.'",
     '  }',
     '  return $journal',
     '}',
@@ -342,7 +344,7 @@ const buildWindowsPathRemovalCommand = (
     `$receiptOwner = ${powershellLiteral(WINDOWS_PATH_RECEIPT_OWNER)}`,
     `$state = ${powershellLiteral(state)}`,
     'try { $journal = [IO.File]::ReadAllText($journalPath) | ConvertFrom-Json }',
-    "catch { throw 'The PATH ownership journal is not managed by Open Science.' }",
+    "catch { throw 'The PATH ownership journal is not managed by Open-Science.' }",
     '  $beforeIsValid = $null -eq $journal.beforePath -or $journal.beforePath -is [string]',
     "$beforeParts = @($journal.beforePath -split ';' | Where-Object { $_ -ne '' })",
     "$normalizedBinDir = $binDir.TrimEnd([char[]]'\\/')",
@@ -350,12 +352,12 @@ const buildWindowsPathRemovalCommand = (
     "    $_.TrimEnd([char[]]'\\/') -ieq $normalizedBinDir",
     '  }).Count',
     "  $expectedAfter = (@($beforeParts) + $binDir) -join ';'",
-    'if ($journal.version -ne 1 -or $journal.owner -cne $receiptOwner -or',
+    "if ($journal.version -ne 1 -or ($journal.owner -cne $receiptOwner -and $journal.owner -cne 'Open Science Windows PATH entry. Managed by the app.') -or",
     "    $journal.binDir.TrimEnd([char[]]'\\/') -ine $binDir.TrimEnd([char[]]'\\/') -or",
     '    -not $beforeIsValid -or $beforeMatchCount -ne 0 -or',
     '    $journal.afterPath -isnot [string] -or',
     '    $journal.afterPath -cne $expectedAfter) {',
-    "  throw 'The PATH ownership journal is not managed by Open Science.'",
+    "  throw 'The PATH ownership journal is not managed by Open-Science.'",
     '}',
     '$beforePath = $journal.beforePath',
     '$afterPath = $journal.afterPath',
@@ -383,7 +385,7 @@ class UnmanagedCliLauncherError extends Error {}
 
 const refuseUnmanagedCliLauncher = (target: string): never => {
   throw new UnmanagedCliLauncherError(
-    `Refusing to modify ${target} because it is not managed by Open Science. ` +
+    `Refusing to modify ${target} because it is not managed by Open-Science. ` +
       'Move or rename the existing file, then try again.'
   )
 }
@@ -490,15 +492,20 @@ const openManagedWindowsPathJournal = async (
 
 const isManagedCliLauncher = (content: string): boolean => {
   const lines = content.split(/\r?\n/)
+  // New shims use the new brand, while both historical ownership generations remain repairable.
+  const header = lines[1]?.replace(
+    'Open Science command-line launcher.',
+    'Open-Science command-line launcher.'
+  )
   if (lines[0] === '#!/bin/sh') {
     return (
-      lines[1] === `# ${MANAGED_LAUNCHER_HEADER_V1}` ||
+      header === `# ${MANAGED_LAUNCHER_HEADER_V1}` ||
       (lines[1] === LEGACY_POSIX_HEADER && LEGACY_POSIX_BODIES.has(lines[2] ?? ''))
     )
   }
   return (
     lines[0]?.toLowerCase() === '@echo off' &&
-    (lines[1] === `rem ${MANAGED_LAUNCHER_HEADER_V1}` || lines[1] === LEGACY_WINDOWS_HEADER)
+    (header === `rem ${MANAGED_LAUNCHER_HEADER_V1}` || lines[1] === LEGACY_WINDOWS_HEADER)
   )
 }
 

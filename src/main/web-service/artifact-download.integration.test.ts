@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 // @ts-expect-error The published ESM entry uses a sibling index.d.ts.
 import { OpenScienceClient } from '../../../packages/open-science/index.mjs'
 // @ts-expect-error The public CLI entry is JavaScript.
@@ -38,6 +39,7 @@ it.each(['historical', 'native'] as const)(
   'downloads a %s Task artifact by its listed Version id through HTTP',
   async (identity) => {
     const fixture = await createProvenanceTestFixture()
+    initDataRoot(fixture.storageRoot)
     const sessions = new SessionRepository(fixture.storageRoot)
     const messages: PersistedChatSession['messages'] = [
       {
@@ -228,7 +230,7 @@ it.each(['historical', 'native'] as const)(
         applicationEvents: new ApplicationEventHub(),
         tasks,
         bootstrap: {
-          appName: 'Open Science',
+          appName: 'Open-Science',
           appVersion: 'test',
           configRoot: fixture.storageRoot,
           platform: process.platform,

@@ -72,6 +72,6 @@ it('handles cancellation during export validation before reaching later sensitiv
     if (cancellation) clearImmediate(cancellation)
     await service.close()
     await fixture.dispose()
-    initDataRoot(undefined)
+    initDataRoot(undefined, false)
   }
 })
