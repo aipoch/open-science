@@ -1,22 +1,40 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { groupPageLines } from './literature-pdf-caption-group.mjs'
+import { captionKind, groupPageLines } from './literature-pdf-caption-group.mjs'
 import { isUprightText } from './literature-pdf-orientation.mjs'
+
+const isLegendHeading = (text) =>
+  /^(?:figure\s+(?:legends|captions)|List of Figures)\s*$/i.test(text.trim())
 
 // Accepted manuscripts can put all legends before a consecutive block of plates.
 // Match only an explicit legend section, ordered 1..N, followed by exactly N
-// text-free pages. The requested plate still needs recorded raster evidence.
+// text-free or explicitly numbered pages. Cropping still requires native graphic evidence.
 export function matchFigureSequence(pages) {
-  const heading = pages.findIndex((page) =>
-    page.lines.some((line) =>
-      /^(?:figure\s+(?:legends|captions)|List of Figures)\s*$/i.test(line.text.trim())
-    )
-  )
+  const heading = pages.findIndex((page) => page.lines.some((line) => isLegendHeading(line.text)))
   if (heading < 0) return new Map()
   const captions = []
+  const repeatsCaption = (line, index) => {
+    const expected = captions[index]?.lines[0]?.replace(/\s+/g, ' ').trim()
+    const actual = line.text.replace(/\s+/g, ' ').trim()
+    return (
+      expected &&
+      Math.min(expected.length, actual.length) >= 18 &&
+      (expected.startsWith(actual) || actual.startsWith(expected))
+    )
+  }
   let lastLegend = heading
   let central = false
   for (let i = heading; i < pages.length && pages[i].lines.length; i++) {
     if (i > heading && pages[i].lines.some((l) => /^Table\s+\d+\s*[.:]/i.test(l.text))) break
+    // A repeated standalone Figure 1 starts the numbered plates, not a
+    // continuation of the final legend. Axis/diagram text belongs to that plate.
+    if (
+      i > heading &&
+      captions.length >= 2 &&
+      pages[i].lines.some(
+        (l) => /^(?:Figure|Fig\.)\s*1\.?$/i.test(l.text.trim()) || repeatsCaption(l, 0)
+      )
+    )
+      break
     lastLegend = i
     for (const line of pages[i].lines) {
       const number = /^(?:Figure|Fig\.)\s*(\d+)\s*[.:]\s*/i.exec(line.text)
@@ -53,7 +71,10 @@ export function matchFigureSequence(pages) {
   }
   const plates = []
   for (let i = firstPlate; i < pages.length; i++) {
-    const labels = pages[i].lines.filter((l) => /^(?:Figure|Fig\.)\s*\d+\.?$/i.test(l.text.trim()))
+    if (pages[i].lines.some((line) => isLegendHeading(line.text))) break
+    const labels = pages[i].lines.filter(
+      (l) => /^(?:Figure|Fig\.)\s*\d+\.?$/i.test(l.text.trim()) || repeatsCaption(l, plates.length)
+    )
     if (
       pages[i].lines.length &&
       !(labels.length === 1 && Number(/\d+/.exec(labels[0].text)[0]) === plates.length + 1)
@@ -100,10 +121,28 @@ export async function readFigureSequence(document) {
           }
         ]
       })
-      pages.push({ pageNumber: number, lines: groupPageLines({ lines }) })
+      pages.push({ pageNumber: number, height: viewport.height, lines: groupPageLines({ lines }) })
     } finally {
       page.cleanup()
     }
   }
-  return matchFigureSequence(pages)
+  // Short publisher footers can survive the stream filter. Require the same
+  // text at the same bottom-margin position on three pages; keep figure numbers.
+  const isFooter = (line, page) => line.y > page.height * 0.97 && !captionKind(line.text)
+  const cleaned = pages.map((page) => ({
+    ...page,
+    lines: page.lines.filter(
+      (line) =>
+        !isFooter(line, page) ||
+        pages.filter((other) =>
+          other.lines.some(
+            (candidate) =>
+              candidate.text === line.text &&
+              isFooter(candidate, other) &&
+              Math.abs(candidate.bottom / other.height - line.bottom / page.height) <= 1 / 256
+          )
+        ).length < 3
+    )
+  }))
+  return matchFigureSequence(cleaned)
 }

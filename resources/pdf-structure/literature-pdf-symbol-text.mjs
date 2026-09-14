@@ -221,7 +221,13 @@ const publisherSymbols = new Map([
   ['TeX_CM_Bold_Maths_Symbols', new Map([[136, ['¼', '=', 885]]])],
   ['AdvTT454a7a89', new Map([[98, ['b', '<', 562]]])],
   ['AdvPS3F4C13', new Map([[117, ['u', 'ω', 718]]])],
-  ['AdvP0003', new Map([[106, ['j', '−', 833]]])],
+  [
+    'AdvP0003',
+    new Map([
+      [106, ['j', '−', 833]],
+      [81, ['Q', '≥', 552, 'Q']]
+    ])
+  ],
   [
     'AdvP0004',
     new Map([
@@ -247,8 +253,28 @@ const publisherSymbols = new Map([
       [92, ['\\', '<', 1000]]
     ])
   ],
-  ['AdvPSMP11', new Map([[98, ['b', 'β', 500]]])],
-  ['AdvPSMP10', new Map([[98, ['b', 'β', 552]]])],
+  [
+    'AdvPSMP11',
+    new Map([
+      [98, ['b', 'β', 500]],
+      [108, ['l', 'μ', 552]]
+    ])
+  ],
+  [
+    'AdvPSMP10',
+    new Map([
+      [98, ['b', 'β', 552]],
+      [118, ['v', 'χ', 500]]
+    ])
+  ],
+  ['AdvP697C', new Map([[97, ['a', 'α', 635, 'a']]])],
+  [
+    'AdvP7DED',
+    new Map([
+      [97, ['a', 'α', 666]],
+      [53, ['5', '=', 833, 'five']]
+    ])
+  ],
   ['AdvPi1', new Map([[52, ['4', '>', 1000]]])],
   [
     'AdvMacMthSyN',
@@ -289,6 +315,7 @@ const publisherSymbols = new Map([
   [
     'AdvP4C4E74',
     new Map([
+      [48, ['0', '′', 270, 'zero']],
       [188, ['¼', '=', 770]],
       [136, ['à', '=', 770]],
       [2, ['\u0002', '±', 770]],
@@ -342,8 +369,9 @@ const publisherSymbols = new Map([
 ])
 
 export async function repairPdfSymbolText(page, content, operators) {
-  const originalContent = content
   if (content.items.some((item) => item.transform)) operators ??= await page.getOperatorList()
+  content = repairSpacedTextOffsets(content, operators)
+  const originalContent = content
   // Myriad's fitted numeral glyphs retain Adobe private-use codes in some
   // PDFs. Check the font and its encoding entry rather than replacing private
   // Unicode globally: other fonts may paint unrelated outlines at these slots.
@@ -426,7 +454,7 @@ export async function repairPdfSymbolText(page, content, operators) {
             'Ω',
             'Ω'
           ].some((char) => item.str.includes(char)) ||
-            /^[jG9](?:$|[\d.])|(?:^|\d)Y(?:$|\d)/.test(item.str) ||
+            /^[jGQ9](?:$|[\d.])|(?:^|\d)Y(?:$|\d)/.test(item.str) ||
             item.str === 'e' ||
             item.str === 'm' ||
             item.str === 'u' ||
@@ -435,10 +463,12 @@ export async function repairPdfSymbolText(page, content, operators) {
             item.str === '[' ||
             item.str === ',' ||
             item.str === 'D' ||
+            item.str === 'C' ||
             item.str === 'o' ||
             item.str === 'a' ||
             item.str === 'b' ||
             (item.str.includes('v') && page.commonObjs?.get))) ||
+        item.str === '0' ||
         item.str === '4' ||
         ['1', '2', 'l', '´', 'k', 'g'].includes(item.str) ||
         item.str === '5' ||
@@ -462,7 +492,7 @@ export async function repairPdfSymbolText(page, content, operators) {
     else if (op === OPS.restore) font = fontStack.pop()
     else if (op === OPS.setFont) font = args[0]
     else if (op === OPS.showText && font) {
-      const fontInfo = page.commonObjs.get(font)
+      const fontInfo = page.commonObjs?.get(font) ?? {}
       const name = fontInfo.name?.replace(/^[A-Z]{6}\+/, '')
       // These legacy Pi subsets label mathematical outlines with Latin glyph
       // names. Require the complete observed encoding as well as each glyph's
@@ -575,6 +605,9 @@ export async function repairPdfSymbolText(page, content, operators) {
                           ? ['\u0015', '≥', 770]
                           : name === 'AdvP4C4E74' &&
                               (fontInfo.differences?.[1] === 'C21' ||
+                                (fontInfo.differences?.[2] === 'C21' &&
+                                  fontInfo.differences?.[3] === 'C14' &&
+                                  fontInfo.differences?.[188] === 'onequarter') ||
                                 (fontInfo.differences?.[2] === 'C0' &&
                                   fontInfo.differences?.[188] === 'onequarter')) &&
                               fontInfo.differences?.[254] === 'thorn' &&
@@ -591,13 +624,39 @@ export async function repairPdfSymbolText(page, content, operators) {
             ? new Map([
                 ['C0', '−'],
                 ['C6', '±'],
-                ['C2', '×']
+                ['C2', '×'],
+                [
+                  'thorn',
+                  glyph.unicode === 'þ' &&
+                  glyph.originalCharCode === 254 &&
+                  ['C21', 'C3'].includes(fontInfo.differences?.[2]) &&
+                  fontInfo.differences?.[3] === undefined &&
+                  fontInfo.differences?.[188] === 'onequarter'
+                    ? '+'
+                    : undefined
+                ],
+                ['C20', glyph.unicode === '\u0014' ? '≤' : undefined],
+                ['C21', glyph.unicode === '\u0015' ? '≥' : undefined]
               ]).get(fontInfo.differences?.[glyph.originalCharCode])
             : undefined
+        const namedStar =
+          name === 'AdvP4C4E74' &&
+          glyph.width === 500 &&
+          fontInfo.differences?.[glyph.originalCharCode] === 'C3' &&
+          glyph.unicode === '\u0002'
+            ? '*'
+            : undefined
         const tex = texSymbols.get(glyph.originalCharCode)
-        const pi = latinPi?.get(glyph.originalCharCode)
-        const correction =
-          pi && pi[2] === glyph.width
+        const pi =
+          latinPi?.get(glyph.originalCharCode) ??
+          (name === 'MathematicalPi-Four' &&
+          glyph.originalCharCode === 2 &&
+          fontInfo.differences?.[2] === 'H11549'
+            ? ['\u0002', '=', 833]
+            : undefined)
+        const correction = namedStar
+          ? [glyph.unicode, namedStar]
+          : pi && pi[2] === glyph.width
             ? pi
             : namedAdv
               ? [glyph.unicode, namedAdv]
@@ -611,8 +670,8 @@ export async function repairPdfSymbolText(page, content, operators) {
                   : name === 'AdvPS44A44B'
                     ? glyph.originalCharCode === 101 && glyph.width === 750
                       ? ['e', '–']
-                      : glyph.originalCharCode === 68 && glyph.width === 1000
-                        ? ['D', '+']
+                      : [67, 68].includes(glyph.originalCharCode) && glyph.width === 1000
+                        ? [String.fromCharCode(glyph.originalCharCode), '+']
                         : undefined
                     : name === 'TeX_CM_Maths_Symbols'
                       ? tex?.[2] === undefined || tex[2] === glyph.width
@@ -695,15 +754,17 @@ export function removeClippedFormText(content, operators, originalContent = cont
     } else if (op === OPS.setFont) font = args[0]
     else if (op === OPS.showText && font) {
       if (!streams.has(font)) streams.set(font, [])
-      streams
-        .get(font)
-        .push(
-          ...args[0]
-            .filter((g) => g && typeof g === 'object')
-            .flatMap((g) =>
-              [...g.unicode].filter((c) => !/\s/u.test(c)).map((char) => ({ char, clip }))
-            )
-        )
+      streams.get(font).push(
+        ...args[0]
+          .filter((g) => g && typeof g === 'object')
+          .flatMap((g) =>
+            // Match PDF.js Latin ligature normalization, including its
+            // long-s exception; never normalize the visible item itself.
+            [...g.unicode.replace(/[ﬀ-ﬆ]/gu, (c) => (c === 'ﬅ' ? 'ſt' : c.normalize('NFKC')))]
+              .filter((c) => !/\s/u.test(c))
+              .map((char) => ({ char, clip }))
+          )
+      )
     }
   }
   const original = new Map()
@@ -713,8 +774,23 @@ export function removeClippedFormText(content, operators, originalContent = cont
         item.fontName,
         (original.get(item.fontName) ?? '') + item.str.replace(/\s/gu, '')
       )
-  for (const [font, chars] of streams)
-    if (chars.map((c) => c.char).join('') !== original.get(font)) streams.delete(font)
+  for (const [font, chars] of streams) {
+    const text = chars.map((c) => c.char).join('')
+    const source = original.get(font)
+    // PDF.js can omit an off-page suffix. A single clip for the entire font
+    // stream makes its item-to-clip assignment unambiguous even in that case.
+    const uniformClip = chars[0]?.clip
+    if (
+      text !== source &&
+      !(
+        source &&
+        text.startsWith(source) &&
+        uniformClip &&
+        chars.every((c) => c.clip === uniformClip)
+      )
+    )
+      streams.delete(font)
+  }
   const positions = new Map()
   return {
     ...content,
@@ -1005,6 +1081,90 @@ export function removeBackgroundNumericPadding(content, operators) {
         gap >= -0.01 &&
         gap < item.height * 0.5
       )
+    })
+  }
+}
+
+// PDF.js text extraction adds Tc to an empty TJ string before a leading
+// numeric adjustment; Canvas rendering applies only that numeric adjustment.
+// Match the complete native glyph stream before removing the extra advance.
+// A text-line/matrix reset also resets the accumulated extraction offset.
+export function repairSpacedTextOffsets(content, operators) {
+  if (!operators?.fnArray.includes(OPS.setCharSpacing)) return content
+  const streams = new Map(),
+    stack = []
+  let font,
+    size = 0,
+    charSpace = 0,
+    error = 0
+  for (let n = 0; n < operators.fnArray.length; n++) {
+    const op = operators.fnArray[n],
+      args = operators.argsArray[n]
+    if (op === OPS.save) stack.push({ font, size, charSpace, error })
+    else if (op === OPS.restore)
+      ({ font, size, charSpace, error } = stack.pop() ?? { size: 0, charSpace: 0, error: 0 })
+    else if (op === OPS.setFont) [font, size] = args
+    else if (op === OPS.setCharSpacing) charSpace = args[0]
+    else if (
+      [
+        OPS.beginText,
+        OPS.setTextMatrix,
+        OPS.moveText,
+        OPS.setLeadingMoveText,
+        OPS.nextLine
+      ].includes(op)
+    )
+      error = 0
+    else if (op === OPS.showText && font) {
+      if (!streams.has(font)) streams.set(font, [])
+      let empty = true
+      for (const g of args[0]) {
+        if (typeof g === 'number') {
+          if (g !== 0 && empty) error += charSpace
+          empty = true
+          continue
+        }
+        if (!g || typeof g.unicode !== 'string') continue
+        empty = false
+        for (const char of g.unicode
+          .replace(/[ﬀ-ﬆ]/gu, (c) => (c === 'ﬅ' ? 'ſt' : c.normalize('NFKC')))
+          .replace(/\s/gu, ''))
+          streams.get(font).push({ char, error, size })
+      }
+    }
+  }
+  const text = new Map()
+  for (const i of content.items)
+    if ('str' in i) text.set(i.fontName, (text.get(i.fontName) ?? '') + i.str.replace(/\s/gu, ''))
+  for (const [font, g] of streams)
+    if (g.map((i) => i.char).join('') !== text.get(font)) streams.delete(font)
+  const positions = new Map()
+  return {
+    ...content,
+    items: content.items.map((i) => {
+      const g = streams.get(i.fontName)
+      if (!g || !('str' in i)) return i
+      const at = positions.get(i.fontName) ?? 0,
+        length = [...i.str.replace(/\s/gu, '')].length
+      positions.set(i.fontName, at + length)
+      const part = g.slice(at, at + length),
+        first = part[0]
+      if (
+        !first?.error ||
+        !(first.size > 0) ||
+        !i.transform ||
+        i.dir !== 'ltr' ||
+        part.some((x) => x.error !== first.error || x.size !== first.size)
+      )
+        return i
+      return {
+        ...i,
+        transform: [
+          ...i.transform.slice(0, 4),
+          i.transform[4] - (first.error * i.transform[0]) / first.size,
+          i.transform[5] - (first.error * i.transform[1]) / first.size
+        ]
+      }
     })
   }
 }

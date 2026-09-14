@@ -3,7 +3,7 @@
 // Usage: node scripts/spikes/literature-pdf-extract.mjs PDF ASSETS ORT_PACKAGE PAGES NEW_OUTPUT
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,7 +23,7 @@ import {
   associateTableCaptions,
   associateGraphicalAbstract
 } from './literature-pdf-association.mjs'
-import { associateTableNotes } from './literature-pdf-table-notes.mjs'
+import { associateTableNotes, associateContinuedTableNotes } from './literature-pdf-table-notes.mjs'
 import {
   hasTableEvidence,
   refineTable,
@@ -318,7 +318,7 @@ try {
           }
         }
       }
-      pageInference.tables = deduplicateTableRegions(pageInference.tables, tokens)
+      pageInference.tables = deduplicateTableRegions(pageInference.tables, tokens, pageCaptions)
       const refined = pageInference.tables.map((raw) =>
         refineTable(raw, tokens, pageCaptions, [], rules)
       )
@@ -363,7 +363,12 @@ try {
       const adjacentFigures = associateAdjacentFigure(pageGeometry, geometry.pages, captions)
       const captionedFigureRegions = [
         ...adjacentFigures,
-        ...associateFigures(pageGeometry, captions)
+        ...associateFigures(
+          pageGeometry,
+          captions,
+          [],
+          rules.map((r) => r.map((v) => v / 1.5))
+        )
       ].filter((f) => f.rect)
       const acceptedTables = refined.map(
         (table, index) =>
@@ -372,33 +377,34 @@ try {
             !captionedFigureRegions.some((f) => {
               const r = table.cropRect.map((v) => v / 1.5)
               return (
-                pageGeometry.graphicsBounds.some((g) => {
-                  const b = g.normalizedRect.map(
-                    (v, i) => v * (i % 2 ? pageGeometry.height : pageGeometry.width)
-                  )
-                  const intersection =
-                    Math.max(0, Math.min(r[2], b[2]) - Math.max(r[0], b[0])) *
-                    Math.max(0, Math.min(r[3], b[3]) - Math.max(r[1], b[1]))
-                  if (intersection / ((r[2] - r[0]) * (r[3] - r[1])) > 0.8) return true
-                  // Detector padding can extend beyond an embedded risk table.
-                  // Require the actual assigned source text to lie in the raster
-                  // as well as the full predicted region in its captioned figure.
-                  const source = table.cells.flatMap((cell) => cell.sourceRects ?? [])
-                  if (!source.length) return false
-                  const text = [
-                    Math.min(...source.map((s) => s[0])),
-                    Math.min(...source.map((s) => s[1])),
-                    Math.max(...source.map((s) => s[2])),
-                    Math.max(...source.map((s) => s[3]))
-                  ].map((v) => v / 1.5)
-                  const coverage =
-                    Math.max(0, Math.min(text[2], b[2]) - Math.max(text[0], b[0])) *
-                    Math.max(0, Math.min(text[3], b[3]) - Math.max(text[1], b[1]))
-                  return (
-                    g.kind === 'image' &&
-                    coverage / ((text[2] - text[0]) * (text[3] - text[1])) > 0.8
-                  )
-                }) &&
+                (f.ownsContainedTables ||
+                  pageGeometry.graphicsBounds.some((g) => {
+                    const b = g.normalizedRect.map(
+                      (v, i) => v * (i % 2 ? pageGeometry.height : pageGeometry.width)
+                    )
+                    const intersection =
+                      Math.max(0, Math.min(r[2], b[2]) - Math.max(r[0], b[0])) *
+                      Math.max(0, Math.min(r[3], b[3]) - Math.max(r[1], b[1]))
+                    if (intersection / ((r[2] - r[0]) * (r[3] - r[1])) > 0.8) return true
+                    // Detector padding can extend beyond an embedded risk table.
+                    // Require the actual assigned source text to lie in the raster
+                    // as well as the full predicted region in its captioned figure.
+                    const source = table.cells.flatMap((cell) => cell.sourceRects ?? [])
+                    if (!source.length) return false
+                    const text = [
+                      Math.min(...source.map((s) => s[0])),
+                      Math.min(...source.map((s) => s[1])),
+                      Math.max(...source.map((s) => s[2])),
+                      Math.max(...source.map((s) => s[3]))
+                    ].map((v) => v / 1.5)
+                    const coverage =
+                      Math.max(0, Math.min(text[2], b[2]) - Math.max(text[0], b[0])) *
+                      Math.max(0, Math.min(text[3], b[3]) - Math.max(text[1], b[1]))
+                    return (
+                      g.kind === 'image' &&
+                      coverage / ((text[2] - text[0]) * (text[3] - text[1])) > 0.8
+                    )
+                  })) &&
                 r[0] >= f.rect[0] - 12 &&
                 r[2] <= f.rect[2] + 12 &&
                 r[1] >= f.rect[1] - 12 &&
@@ -433,10 +439,18 @@ try {
           thumbnail: await crop(table.rect, id)
         })
       }
-      const localFigures = associateFigures(pageGeometry, captions, [
-        ...recognizedTableRects,
-        ...pageAlgorithms.map((a) => a.rect)
-      ])
+      const localFigures = associateFigures(
+        pageGeometry,
+        captions,
+        [
+          ...recognizedTableRects,
+          ...notes.flatMap((items, index) =>
+            acceptedTables[index] ? items.map((n) => n.rect) : []
+          ),
+          ...pageAlgorithms.map((a) => a.rect)
+        ],
+        rules.map((r) => r.map((v) => v / 1.5))
+      )
       let pageFigures =
         localFigures.length || recognizedTableRects.length
           ? localFigures
@@ -460,7 +474,17 @@ try {
             (g.normalizedRect[3] - g.normalizedRect[1]) >
             (plateCaption ? 0.03 : 0.25)
       )
-      if (plateCaption && plateImages.length) {
+      // A numbered vector plate can supply native evidence without a raster.
+      // Its bounds alone may omit axis text; use the common plate union below.
+      const plateNumber = /^(?:Figure|Fig\.)\s*(\d+)\b/i.exec(plateCaption?.lines[0] ?? '')?.[1]
+      const numberedPlate =
+        plateNumber &&
+        pageFigures.length === 1 &&
+        pageFigures[0].rect &&
+        /^(?:Figure|Fig\.)\s*(\d+)\.?$/i.exec(
+          pageFigures[0].caption?.lines.join(' ') ?? ''
+        )?.[1] === plateNumber
+      if (plateCaption && (plateImages.length || numberedPlate)) {
         const footerTop = Math.min(
           pageGeometry.height,
           ...pageGeometry.lines
@@ -487,7 +511,11 @@ try {
               l.y + l.height < Math.min(footerTop, pageGeometry.height * 0.99)
           )
           .map((l) => [l.x, l.y, l.x + l.width, l.y + l.height])
-        const parts = [...plateBounds, ...plateLabels]
+        const parts = [
+          ...plateBounds,
+          ...plateLabels,
+          ...(numberedPlate ? [pageFigures[0].rect] : [])
+        ]
         const plateRect = [
           Math.min(...parts.map((r) => r[0])),
           Math.max(0, Math.min(...parts.map((r) => r[1]))),
@@ -501,19 +529,6 @@ try {
             graphicsCount: 1
           }
         ]
-        if (!geometry.pages.some((p) => p.pageNumber === plateCaption.page)) {
-          const source = await document.getPage(plateCaption.page)
-          const viewport = source.getViewport({ scale: 1 })
-          geometry.pages.push({
-            pageNumber: plateCaption.page,
-            width: viewport.width,
-            height: viewport.height,
-            rotation: source.rotate,
-            renderRotation: source.rotate,
-            headingCandidates: []
-          })
-          source.cleanup()
-        }
       } else if (
         !pageFigures.length &&
         !recognizedTableRects.length &&
@@ -543,6 +558,23 @@ try {
             graphicsCount: 1
           }
         ]
+      }
+      if (
+        plateCaption &&
+        pageFigures.some((candidate) => candidate.caption === plateCaption) &&
+        !geometry.pages.some((p) => p.pageNumber === plateCaption.page)
+      ) {
+        const source = await document.getPage(plateCaption.page)
+        const viewport = source.getViewport({ scale: 1 })
+        geometry.pages.push({
+          pageNumber: plateCaption.page,
+          width: viewport.width,
+          height: viewport.height,
+          rotation: source.rotate,
+          renderRotation: source.rotate,
+          headingCandidates: []
+        })
+        source.cleanup()
       }
       for (const [index, candidate] of pageFigures.entries()) {
         const id = `p${pageNumber}-figure-${index + 1}`
@@ -601,6 +633,14 @@ try {
         })
       }
       for (const table of groupTableParts(pageTables, pageGeometry)) {
+        table.notes = [
+          ...(table.notes ?? []),
+          ...associateContinuedTableNotes(
+            table,
+            pageGeometry,
+            geometry.pages.find((p) => p.pageNumber === pageNumber + 1)
+          )
+        ]
         tables.push({
           ...table,
           region: normalize(table.cropRect, viewport.width, viewport.height),
@@ -631,6 +671,16 @@ try {
   }
   for (const item of [...figures, ...algorithms, ...tables]) {
     restoreCaption(item.caption)
+    for (const data of [item, ...(item.parts ?? [])])
+      for (const note of data.notes ?? []) {
+        const source = geometry.pages.find((p) => p.pageNumber === (note.page ?? item.page))
+        note.rect = originalRect(
+          note.rect,
+          source.width,
+          source.height,
+          (source.renderRotation - source.rotation + 360) % 360
+        )
+      }
     const p = geometry.pages.find((p) => p.pageNumber === item.page)
     const rotation = (p.renderRotation - p.rotation + 360) % 360
     if (!rotation) continue
@@ -647,8 +697,6 @@ try {
         cell.sourceRects = cell.sourceRects.map(restore)
       }
       for (const row of data.rows ?? []) row.rect = restore(row.rect)
-      for (const note of data.notes ?? [])
-        note.rect = originalRect(note.rect, p.width, p.height, rotation)
       if (data.sourceViewport && rotation !== 180)
         data.sourceViewport = { ...data.sourceViewport, width: height, height: width }
     }
@@ -656,43 +704,11 @@ try {
     item.parts?.forEach(restoreTable)
   }
   captions.forEach(restoreCaption)
-  const scriptNames = [
-    'literature-pdf-orientation.mjs',
-    'literature-pdf-extract.mjs',
-    'literature-pdf-crop.mjs',
-    'literature-pdf-structure.mjs',
-    'literature-pdf-graphics.mjs',
-    'literature-pdf-onnx.mjs',
-    'literature-pdf-caption-group.mjs',
-    'literature-pdf-association.mjs',
-    'literature-pdf-table-notes.mjs',
-    'literature-pdf-page-geometry.mjs',
-    'literature-pdf-table-refine.mjs',
-    'literature-pdf-table-evidence.mjs',
-    'literature-pdf-table-regions.mjs',
-    'literature-pdf-source-records.mjs',
-    'literature-pdf-table-geometry.mjs',
-    'literature-pdf-table-row-repair.mjs',
-    'literature-pdf-table-cell-merges.mjs',
-    'literature-pdf-table-cell-text.mjs',
-    'literature-pdf-record-grid.mjs',
-    'literature-pdf-aligned-numeric-grid.mjs',
-    'literature-pdf-native-header-grid.mjs',
-    'literature-pdf-segmented-record-grid.mjs',
-    'literature-pdf-numbered-matrix.mjs',
-    'literature-pdf-ruled-narrative-grid.mjs',
-    'literature-pdf-wrapped-proportion-grid.mjs',
-    'literature-pdf-binary-comparison-grid.mjs',
-    'literature-pdf-wrapped-summary-grid.mjs',
-    'literature-pdf-deviation-grid.mjs',
-    'literature-pdf-ruled-effect-grid.mjs',
-    'literature-pdf-regression-grid.mjs',
-    'literature-pdf-wrapped-count-grid.mjs',
-    'literature-pdf-ruled-stub-grid.mjs',
-    'literature-pdf-figure-sequence.mjs',
-    'literature-pdf-table-group.mjs',
-    'literature-pdf-symbol-text.mjs'
-  ]
+  // Match the engine adapter's resource discovery so newly extracted private
+  // helpers cannot silently disappear from standalone extraction evidence.
+  const scriptNames = (await readdir(dirname(fileURLToPath(import.meta.url))))
+    .filter((name) => name.endsWith('.mjs'))
+    .sort()
   const fingerprint = createHash('sha256')
   for (const name of scriptNames)
     fingerprint.update(name).update(await readFile(new URL(name, import.meta.url)))

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { union } from './literature-pdf-table-geometry.mjs'
+import { union, isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import {
   tableSourceItems,
@@ -17,6 +17,8 @@ export function recoverRuledNarrativeGrid(table, items, captions, rules) {
     .filter((o) => o.label === 'table column')
     .sort((a, b) => a.rect[0] - b.rect[0])
   if (predicted.length !== 2) return
+  const pairs = recoverBulletedPairs(table, items, rules, predicted)
+  if (pairs) return pairs
   const list = recoverBulletedList(table, items, rules, predicted)
   if (list) return list
   const cut = left + (predicted[0].rect[2] + predicted[1].rect[0]) / 2
@@ -161,5 +163,74 @@ function recoverBulletedList(table, items, rules, predicted) {
     spans: [],
     completeSpans: true,
     ownedTokens: new Set(source)
+  }
+}
+
+// Parallel top-level bullets delimit narrative records. Right-column bullets
+// may subdivide a rationale; only aligned left-column bullets start new rows.
+function recoverBulletedPairs(table, items, rules, columns) {
+  const [left, top, right, bottom] = table.cropRect,
+    cut = left + (columns[0].rect[2] + columns[1].rect[0]) / 2
+  const source = tableSourceItems(items, table.cropRect),
+    bullets = source.filter((i) => i.text === '•' && i.rect[0] < cut)
+  if (
+    bullets.length < 3 ||
+    bullets.length > 12 ||
+    bullets.some((i) => Math.abs(i.rect[0] - bullets[0].rect[0]) > 1)
+  )
+    return
+  const height = bullets[0].height
+  const borders = rules
+    .filter(
+      (r) =>
+        r[1] === r[3] && r[0] <= left + 12 && r[2] >= right - 12 && r[1] >= top && r[1] <= bottom
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    borders.length !== 3 ||
+    borders[1][1] >= bullets[0].rect[1] ||
+    bullets[0].rect[1] - borders[1][1] > height
+  )
+    return
+  const ys = [
+    borders[0][1],
+    borders[1][1],
+    ...bullets.slice(1).map((i) => i.rect[1] - 0.05),
+    borders[2][1]
+  ]
+  const groups = ys
+    .slice(1)
+    .map((y, n) =>
+      source.filter((i) => (i.rect[1] + i.rect[3]) / 2 >= ys[n] && (i.rect[1] + i.rect[3]) / 2 < y)
+    )
+  if (
+    !hasUniqueRecordTokens(source, groups) ||
+    groups.some((g) => !readSourceRow(g, [left, cut, right]))
+  )
+    return
+  for (const g of groups.slice(1)) {
+    const rhs = g.filter((i) => i.rect[0] >= cut)
+    if (
+      !rhs.some((i) => i.text === '•') ||
+      !rhs.some((i) => /\p{L}/u.test(i.text)) ||
+      g.some(
+        (i) =>
+          (i.rect[1] < ys[groups.indexOf(g)] || i.rect[3] > ys[groups.indexOf(g) + 1]) &&
+          !g.some((a) => a !== i && isAdjacentTableScript(i, a))
+      )
+    )
+      return
+  }
+  return {
+    rows: ys.slice(1).map((y, n) => [left, ys[n], right, y]),
+    columns: [
+      [left, top, cut, bottom],
+      [cut, top, right, bottom]
+    ],
+    headerRows: [0],
+    spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    repair: 'parallel-bullet-records-recovered'
   }
 }

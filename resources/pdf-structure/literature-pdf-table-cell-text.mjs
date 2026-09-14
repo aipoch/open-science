@@ -263,17 +263,53 @@ export function populateTableCellText({
   // adjacent larger source token with an assigned cell in the same column, never by text content.
   const anchors = new Map()
   // Some manuscript fonts report a full em for a raised footnote glyph.
-  // Require an adjoining statistical header and its independent note marker.
-  const raisedHeaderMarkers = new Set()
-  const isRaisedHeaderMarker = (item, anchor, cell) =>
-    /^[a-z]$/.test(item.text) &&
-    headerRows.includes(cell.row) &&
-    /^(?:P|N\s*=\s*\d+)$/i.test(anchor.text.trim()) &&
-    Math.abs(item.height - anchor.height) <= anchor.height * 0.02 &&
-    Math.abs(item.rect[0] - anchor.rect[2]) <= anchor.height * 0.02 &&
+  // Require an adjoining label and its independent note marker below the table.
+  const raisedNoteMarkers = new Set()
+  const isRaisedNoteMarker = (item, anchor, cell) =>
+    ((/^[a-z]$/.test(item.text) &&
+      headerRows.includes(cell.row) &&
+      /^(?:P|N\s*=\s*\d+)$/i.test(anchor.text.trim()) &&
+      Math.abs(item.height - anchor.height) <= anchor.height * 0.02 &&
+      Math.abs(item.rect[0] - anchor.rect[2]) <= anchor.height * 0.02) ||
+      (/^[†‡]$/.test(item.text) &&
+        /\p{L}/u.test(anchor.text) &&
+        item.height >= anchor.height * 0.8 &&
+        item.height <= anchor.height * 1.1 &&
+        item.rect[0] >= anchor.rect[2] &&
+        item.rect[0] - anchor.rect[2] <= anchor.height * 0.35)) &&
     anchor.baseline - item.baseline > anchor.height * 0.5 &&
     anchor.baseline - item.baseline < anchor.height * 0.7 &&
     pageItems.some((note) => note !== item && note.text === item.text && note.rect[1] > bottom)
+  // An author may print a third raised marker without its own note. A matching
+  // dagger pair establishes the font's raised-marker geometry; keep the glyph.
+  const raisedSymbols = items.filter(
+    (item) =>
+      /^[†‡]$/.test(item.text) &&
+      items.some(
+        (anchor) =>
+          assignments.has(anchor) && isRaisedNoteMarker(item, anchor, assignments.get(anchor))
+      )
+  )
+  const isRepeatedRaisedSymbol = (item, anchor, cell) =>
+    item.text === '¥' &&
+    cell.column === 0 &&
+    /\p{L}/u.test(anchor.text) &&
+    new Set(raisedSymbols.map((symbol) => symbol.text)).size === 2 &&
+    item.rect[0] >= anchor.rect[2] &&
+    item.rect[0] - anchor.rect[2] <= anchor.height * 0.35 &&
+    raisedSymbols.every((symbol) => {
+      const owner = items.find(
+        (candidate) =>
+          assignments.has(candidate) &&
+          isRaisedNoteMarker(symbol, candidate, assignments.get(candidate))
+      )
+      return (
+        Math.abs(symbol.height - item.height) < anchor.height * 0.02 &&
+        Math.abs(owner.height - anchor.height) < anchor.height * 0.02 &&
+        Math.abs(owner.baseline - symbol.baseline - (anchor.baseline - item.baseline)) <
+          anchor.height * 0.02
+      )
+    })
   for (const item of items.filter((i) => i.horizontal).sort((a, b) => b.height - a.height)) {
     const matches = items
       .filter((anchor) => {
@@ -281,7 +317,9 @@ export function populateTableCellText({
         return (
           cell &&
           anchor.horizontal &&
-          (isRaisedHeaderMarker(item, anchor, cell) || isAdjacentTableScript(item, anchor)) &&
+          (isRaisedNoteMarker(item, anchor, cell) ||
+            isRepeatedRaisedSymbol(item, anchor, cell) ||
+            isAdjacentTableScript(item, anchor)) &&
           (item.rect[0] + item.rect[2]) / 2 >= cell.rect[0] &&
           (item.rect[0] + item.rect[2]) / 2 <= cell.rect[2]
         )
@@ -295,7 +333,11 @@ export function populateTableCellText({
       continue
     }
     const anchor = matches[0]
-    if (isRaisedHeaderMarker(item, anchor, assignments.get(anchor))) raisedHeaderMarkers.add(item)
+    if (
+      isRaisedNoteMarker(item, anchor, assignments.get(anchor)) ||
+      isRepeatedRaisedSymbol(item, anchor, assignments.get(anchor))
+    )
+      raisedNoteMarkers.add(item)
     if (assignments.get(item) !== assignments.get(anchor))
       repairs.push('inline-fragment-reassigned')
     assignments.set(item, assignments.get(anchor))
@@ -315,7 +357,10 @@ export function populateTableCellText({
         Math.abs(i.baseline - item.baseline) < item.height * 0.2 &&
         i.height < anchors.get(i).height * 0.8
     )
-    if (previous.length !== 1) continue
+    // Several adjacent fragments (a comma and the preceding letter, for
+    // example) can all belong to the same script. Only conflicting anchors
+    // are ambiguous; counting fragments would strand the final glyph.
+    if (!previous.length || new Set(previous.map((i) => anchors.get(i))).size !== 1) continue
     anchors.set(item, anchors.get(previous[0]))
     assignments.set(item, assignments.get(previous[0]))
   }
@@ -358,6 +403,34 @@ export function populateTableCellText({
       while (anchors.has(anchor)) anchor = anchors.get(anchor)
       lineOf.get(anchor).push(item)
     }
+    // Only a single continuous URL can join across wrapped lines. Require
+    // source-aligned lines and URL separators at every wrap; preserve hyphens.
+    const urlLines = lines.map((line) => line.slice().sort((a, b) => a.rect[0] - b.rect[0]))
+    const urlText = urlLines.map((line) =>
+      line
+        .map((item) => item.text)
+        .join('')
+        .trim()
+    )
+    const joinedUrl =
+      urlLines.length > 1 &&
+      /^https?:\/\/[^/\s]+\//.test(urlText[0]) &&
+      urlText.every(
+        (text, index) =>
+          /^[^\s<>"']+$/.test(text) &&
+          (!index || (!/^https?:/i.test(text) && /[/._?&=#%~-]$/.test(urlText[index - 1])))
+      ) &&
+      urlLines.every(
+        (line, index) =>
+          line.every(
+            (item, n) =>
+              Math.abs(item.height - urlLines[0][0].height) < item.height * 0.15 &&
+              (!n || item.rect[0] - line[n - 1].rect[2] < item.height * 0.6)
+          ) &&
+          (!index ||
+            (Math.abs(line[0].rect[0] - urlLines[0][0].rect[0]) < line[0].height &&
+              line[0].baseline - urlLines[index - 1][0].baseline < line[0].height * 1.8))
+      )
     const runs = []
     const append = (text, position = 'normal') => {
       text = text.replace(/\s+/g, ' ')
@@ -382,16 +455,21 @@ export function populateTableCellText({
         Math.abs(line[0].rect[0] - previous[0].rect[0]) <= previous[0].height
       if (
         lineIndex &&
+        !joinedUrl &&
         !recordGrid?.joinedTokens?.has(line[0]) &&
         (!(recordGrid || rows[cell.row].hyphenatedStub || wrappedStub) ||
           !/[-\u2010\u2011]$/.test(runs.at(-1)?.text ?? ''))
       )
-        append(' ')
+        if (/^[•⋄]$/.test(line[0].text) && lines.some((l) => /^[•⋄]$/.test(l[0].text))) {
+          if (runs.at(-1)?.position === 'normal') runs.at(-1).text += '\n'
+          else runs.push({ text: '\n', position: 'normal' })
+        } else append(' ')
       for (const [index, item] of line.entries()) {
         // Compact treatment schedules use smaller inter-word spaces than the
         // regular table grid. Preserve those gaps after source-backed recovery.
         if (
           index &&
+          !joinedUrl &&
           item.rect[0] - line[index - 1].rect[2] > item.height * (scheduleGrid ? 0.08 : 0.15)
         )
           append(' ')
@@ -409,7 +487,7 @@ export function populateTableCellText({
           Math.abs(item.rect[0] - line[index - 1].rect[2]) < item.height * 0.08
         append(
           joinedIdentifier ? item.text.trimStart() : item.text,
-          anchor && (item.height < anchor.height * 0.8 || raisedHeaderMarkers.has(item))
+          anchor && (item.height < anchor.height * 0.8 || raisedNoteMarkers.has(item))
             ? item.baseline < anchor.baseline
               ? 'superscript'
               : 'subscript'

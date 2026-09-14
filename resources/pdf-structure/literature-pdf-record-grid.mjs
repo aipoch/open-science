@@ -1,4 +1,10 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import {
+  tableSourceItems,
+  readSourceRow,
+  groupSourceRowsWithScripts
+} from './literature-pdf-source-records.mjs'
+import { union } from './literature-pdf-table-geometry.mjs'
 
 // Treatment schedules have two columns, with full-width regimen/cycle notes.
 // Recover only when repeated dose lines establish one clear gutter; retain the
@@ -1045,6 +1051,82 @@ export function recoverBaselineComparisonGrid(table, items, captions) {
     rows,
     columns: xs.slice(1).map((x, c) => [xs[c], start, x, rows.at(-1)[3]]),
     spans: [],
+    completeSpans: true
+  }
+}
+
+// A two-column demographic table has a complete summary column, explicit
+// section headings and one native header divider. Source baselines recover
+// omitted/model-overlapped rows; a wrapped stub stays with its own value.
+export function recoverDemographicRecords(table, items, captions, rules) {
+  if (!captions.some((c) => /^Table\s/i.test(c.lines[0]))) return
+  const [left, top, right, bottom] = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length !== 2) return
+  const cut = left + (columns[0].rect[2] + columns[1].rect[0]) / 2
+  const source = tableSourceItems(items, table.cropRect)
+  const header = source.filter((i) => i.rect[1] < top + 36)
+  if (
+    !header.some((i) => /^Demographics$/.test(i.text)) ||
+    !header.some((i) => /Total sample/.test(i.text))
+  )
+    return
+  const divider = rules
+    .filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[0] <= left + 16 &&
+        r[2] >= right - 16 &&
+        r[1] > Math.max(...header.map((i) => i.rect[3])) &&
+        r[1] < top + 45
+    )
+    .sort((a, b) => a[1] - b[1])[0]
+  if (!divider) return
+  const body = source.filter((i) => i.rect[1] >= divider[1])
+  const height = body.map((i) => i.height).sort((a, b) => a - b)[Math.floor(body.length / 2)]
+  const groups = groupSourceRowsWithScripts(body, height, 0.35)
+  if (!groups) return
+  const records = []
+  let counts = 0,
+    sections = 0
+  for (const group of groups) {
+    const cells = readSourceRow(group, [left, cut, right])
+    if (!cells || !cells[0]) return
+    const rect = union(group)
+    if (cells[1]) {
+      if (!/^[\d.,]+\([\d.,;%–−-]+\)$/.test(cells[1])) return
+      counts++
+      records.push({ rect, section: false })
+    } else if (/\p{L}/u.test(cells[0]) && Math.abs(rect[0] - header[0].rect[0]) < height * 0.15) {
+      sections++
+      records.push({ rect, section: true })
+    } else {
+      const previous = records.at(-1)
+      if (
+        !previous ||
+        previous.section ||
+        !/^[a-z(+]/.test(cells[0]) ||
+        rect[1] - previous.rect[3] > height
+      )
+        return
+      previous.rect[3] = rect[3]
+    }
+  }
+  if (counts < 12 || sections < 3) return
+  return {
+    rows: [
+      [left, Math.min(...header.map((i) => i.rect[1])), right, divider[1]],
+      ...records.map((r) => [left, r.rect[1], right, r.rect[3]])
+    ],
+    columns: [
+      [left, top, cut, bottom],
+      [cut, top, right, bottom]
+    ],
+    spans: records.flatMap((r, n) =>
+      r.section ? [{ row: n + 1, column: 0, rowSpan: 1, colSpan: 2 }] : []
+    ),
     completeSpans: true
   }
 }

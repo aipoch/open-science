@@ -107,8 +107,14 @@ export function startsDetachedTextColumn(pending, item) {
 }
 
 export function captionKind(text) {
+  // Publisher/appendix prefixes belong to the displayed label. Normalize only
+  // for classification; keep the original caption text and source rectangle.
+  text = (text ?? '')
+    .replace(/^TaggedEnd(?=Table\s+\d)/, '')
+    .replace(/^Appendix\s+(?=(?:Figure|Fig\.|Table)\b)/i, '')
+  if (/^(?:Figure|Fig\.?)\s+\d+\s+(?:but\b|\(available\b)/i.test(text)) return undefined
   if (
-    /^(?:Table|Fig\.?|Figure)\s+[AS]?\d+\s+(?:shows?|shown|presents?|presented|illustrates?|depicts?|reiterates?)\b/i.test(
+    /^(?:Table|Fig\.?|Figure)\s+[AS]?\d+(?:\s+and\s+(?:Table|Fig\.?|Figure)\s+[AS]?\d+)?\s+(?:shows?|shown|presents?|presented|illustrates?|depicts?|reiterates?)\b/i.test(
       text ?? ''
     )
   )
@@ -117,7 +123,9 @@ export function captionKind(text) {
   if (/^Appendix\s+[A-Z][.:]\s+(?:CONSORT\s+)?(?:flow diagram|flowchart)\.?$/i.test(text ?? ''))
     return 'figure'
   // Single-table articles can use an explicit label without a sequence number.
-  if (/^Table[.:]\s+\p{Lu}\p{L}/u.test(text ?? '')) return 'table'
+  if (/^(?:Table|Figure)[.:]\s+\p{Lu}\p{L}/u.test(text))
+    return /^Table/.test(text) ? 'table' : 'figure'
+  if (/^(?:Figure|Fig\.?)\s+[AS]?\d+\s*[—–-]\s*Continued\.?$/i.test(text)) return 'figure'
   if (/^Figure\s+(?:[n▪■]\s+)?(?:Flow diagram|Flowchart)\b/.test(text ?? '')) return 'figure'
   // Pathology journals use decorated Image labels; a closing marker followed
   // by a period is an inline reference, not a caption heading.
@@ -288,14 +296,32 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       // A reference wrapped after "listed in" is part of the same paragraph.
       // Require its preceding source line, matching typography and tight leading.
       if (
-        /^Table\s+\d+\s+for\s+[a-z]/.test(start.text) &&
+        (/^Table\s+\d+\s+for\s+[a-z]/.test(start.text) ||
+          /^(?:Figure|Fig\.)\s+\d+[.:]\s+[A-Z]/.test(start.text)) &&
         runs.some(
           (line) =>
             /\b(?:listed|shown|provided|presented|reported) in$/.test(line.text) &&
             Math.abs(line.x - start.x) <= 2 &&
             Math.abs(line.fontSize - start.fontSize) <= 0.5 &&
             line.bottom <= start.y &&
-            start.y - line.bottom <= start.fontSize * 0.5
+            start.y - line.bottom <=
+              start.fontSize * (captionKind(start.text) === 'figure' ? 1.5 : 0.5)
+        )
+      )
+        continue
+      // A bare reference wrapped onto the final line of a prose paragraph
+      // retains that paragraph's font, leading and small indentation.
+      if (
+        /^(?:Fig\.?|Figure)\s+\d+\s*\.$/i.test(start.text) &&
+        runs.some(
+          (line) =>
+            line.text.length > 40 &&
+            !/[.!?:]$/.test(line.text) &&
+            Math.abs(line.fontSize - start.fontSize) < 0.5 &&
+            start.x - line.x >= -1 &&
+            start.x - line.x < start.fontSize &&
+            line.bottom <= start.y &&
+            start.y - line.bottom < start.fontSize * 0.5
         )
       )
         continue
@@ -339,8 +365,19 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
             lines.push(tail)
         }
       }
+      const sideLegend =
+        captionKind(start.text) === 'figure' &&
+        (page.graphicsBounds ?? []).some(
+          ({ normalizedRect: r }) =>
+            (r[2] - r[0]) * (r[3] - r[1]) > 0.03 &&
+            r[1] * page.height <= start.y &&
+            r[3] * page.height >= start.bottom &&
+            ((r[2] * page.width <= start.x && start.x - r[2] * page.width < 60) ||
+              (r[0] * page.width >= start.right && r[0] * page.width - start.right < 60))
+        )
       // Hanging legends align their continuation with the title after the figure
-      // number. Require two adjacent prose lines at that indent before adopting it.
+      // number. Require two adjacent prose lines, or a closed lowercase tail
+      // beside a graphic when the first caption line is unfinished.
       const hangingTableTitle =
         captionKind(start.text) === 'table' && /\b(?:of|with|for|and)$/i.test(start.text)
       const hanging =
@@ -351,10 +388,14 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
             line.y - start.y <= start.fontSize * 1.6 &&
             line.x - start.x >= start.fontSize * 2 &&
             line.x - start.x <= start.fontSize * 6 &&
-            line.text.length >= (hangingTableTitle ? 12 : 30) &&
+            line.text.length >= (hangingTableTitle || sideLegend ? 12 : 30) &&
             Math.abs(line.fontSize - start.fontSize) <= 0.7 &&
             !captionKind(line.text) &&
             ((hangingTableTitle && /[.)]$/.test(line.text) && line.right <= start.right + 2) ||
+              (sideLegend &&
+                !/[.!?]$/.test(start.text) &&
+                /^[a-z].*\.$/.test(line.text) &&
+                line.right <= start.right + 2) ||
               runs.some(
                 (next) =>
                   next.y > line.y + 2 &&
@@ -364,16 +405,6 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
                   Math.abs(next.fontSize - start.fontSize) <= 0.7 &&
                   !captionKind(next.text)
               ))
-        )
-      const sideLegend =
-        captionKind(start.text) === 'figure' &&
-        (page.graphicsBounds ?? []).some(
-          ({ normalizedRect: r }) =>
-            (r[2] - r[0]) * (r[3] - r[1]) > 0.03 &&
-            r[1] * page.height <= start.y &&
-            r[3] * page.height >= start.bottom &&
-            ((r[2] * page.width <= start.x && start.x - r[2] * page.width < 60) ||
-              (r[0] * page.width >= start.right && r[0] * page.width - start.right < 60))
         )
       // Some journals place the descriptive title in a separate full-width
       // ruled strip below an italic table number. Do not mistake that strip
