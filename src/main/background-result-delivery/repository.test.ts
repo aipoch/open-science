@@ -3,9 +3,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { BackgroundResultSourceRef } from '../../shared/background-result-delivery'
+import { BackgroundResultDeliveryOwner } from './owner'
+
+import type {
+  BackgroundResultDelivery,
+  BackgroundResultSourceRef
+} from '../../shared/background-result-delivery'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { BackgroundResultDeliveryRepository } from './repository'
 
@@ -32,6 +37,76 @@ describe('BackgroundResultDeliveryRepository', () => {
   afterEach(async () => {
     await client.$disconnect()
     await rm(root, { recursive: true, force: true })
+  })
+
+  it('preserves an unsent continuation for a new owner after disposal during dispatch preparation', async () => {
+    const source = localRun('run-dispose')
+    await repository.enqueue(source)
+    let entered!: () => void
+    let resume!: () => void
+    const preparing = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const resumed = new Promise<void>((resolve) => {
+      resume = resolve
+    })
+    const beginDispatch = repository.beginDispatch.bind(repository)
+    vi.spyOn(repository, 'beginDispatch').mockImplementationOnce(async (...args) => {
+      const count = await beginDispatch(...args)
+      entered()
+      await resumed
+      return count
+    })
+    const sendContinuation = vi.fn((request: { continuationMessageId: string }) => ({
+      admitted: Promise.resolve(),
+      result: Promise.resolve({
+        stopReason: 'end_turn',
+        continuationMessageId: request.continuationMessageId
+      })
+    }))
+    const options = {
+      repository,
+      resolveSources: async (rows: readonly BackgroundResultDelivery[]) =>
+        rows.map((row) => ({
+          delivery: row,
+          availability: 'terminal' as const,
+          activity: { ...row, active: false, needsAttention: false },
+          outcome: { sourceKind: 'local-run' as const, runId: row.sourceId, resultSummary: '42' }
+        })),
+      waitForAuthoritiesReady: async (): Promise<void> => undefined,
+      sendContinuation,
+      isContinuationSaved: async (): Promise<boolean> => sendContinuation.mock.calls.length > 0,
+      canStartSessionTurn: (): boolean => true,
+      createId: (): string => 'continuation-dispose'
+    }
+    const owner = new BackgroundResultDeliveryOwner(options)
+    let replacement: BackgroundResultDeliveryOwner | undefined
+    try {
+      const draining = owner.drainSession(source.sessionId)
+      await preparing
+      owner.dispose()
+      resume()
+      await draining
+      expect(sendContinuation).not.toHaveBeenCalled()
+      expect(await repository.findBySource(source)).toMatchObject({
+        state: 'pending',
+        attemptCount: 0,
+        continuationMessageId: 'continuation-dispose'
+      })
+      replacement = new BackgroundResultDeliveryOwner(options)
+      await expect(replacement.drainSession(source.sessionId)).resolves.toBe('consumed')
+      expect(sendContinuation).toHaveBeenCalledOnce()
+      expect(await repository.findBySource(source)).toMatchObject({
+        state: 'consumed',
+        attemptCount: 0,
+        continuationMessageId: 'continuation-dispose'
+      })
+    } finally {
+      resume()
+      owner.dispose()
+      replacement?.dispose()
+      vi.restoreAllMocks()
+    }
   })
 
   it('settles a local admission and terminal enqueue race as one pending fact', async () => {

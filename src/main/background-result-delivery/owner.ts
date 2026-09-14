@@ -122,6 +122,7 @@ class BackgroundResultDeliveryOwner {
   private readonly projectFences = new Set<string>()
   private readonly claimRecoveryTimer: ReturnType<typeof setInterval>
   private authorityReady: Promise<void> | undefined
+  private disposed = false
 
   constructor(private readonly options: BackgroundResultDeliveryOwnerOptions) {
     this.createId = options.createId ?? randomUUID
@@ -143,6 +144,7 @@ class BackgroundResultDeliveryOwner {
 
   private isFenced(source: Pick<BackgroundResultSourceRef, 'projectId' | 'sessionId'>): boolean {
     return (
+      this.disposed ||
       this.projectFences.has(source.projectId) ||
       this.sessionFences.has(this.sessionKey(source.projectId, source.sessionId))
     )
@@ -154,7 +156,7 @@ class BackgroundResultDeliveryOwner {
   }
 
   private schedule(sessionId: string): void {
-    if (this.scheduled.has(sessionId)) return
+    if (this.disposed || this.scheduled.has(sessionId)) return
     const timer = setTimeout(() => {
       this.scheduled.delete(sessionId)
       void this.drainSession(sessionId)
@@ -187,7 +189,7 @@ class BackgroundResultDeliveryOwner {
   }
 
   private publishChanged(projectId: string): void {
-    this.options.onChanged?.({ projectId })
+    if (!this.disposed) this.options.onChanged?.({ projectId })
   }
 
   private publishDeliveryChanges(deliveries: readonly BackgroundResultDelivery[]): void {
@@ -259,16 +261,21 @@ class BackgroundResultDeliveryOwner {
   }
 
   dispose(): void {
+    this.disposed = true
     for (const timer of this.scheduled.values()) clearTimeout(timer)
     this.scheduled.clear()
     clearInterval(this.claimRecoveryTimer)
   }
 
   async recover(): Promise<void> {
+    if (this.disposed) return
     await this.waitForAuthority()
+    if (this.disposed) return
     if (this.options.loadSessionCatalog) {
       const ownership = await this.options.repository.listOwnership()
+      if (this.disposed) return
       const catalog = await this.options.loadSessionCatalog()
+      if (this.disposed) return
       if (catalog.complete) {
         const sessions = new Set(
           catalog.sessions.map(({ projectId, sessionId }) => this.sessionKey(projectId, sessionId))
@@ -281,7 +288,9 @@ class BackgroundResultDeliveryOwner {
         await this.options.repository.deleteIds(orphanIds)
       }
     }
+    if (this.disposed) return
     await this.options.repository.recoverExpiredClaims(this.now())
+    if (this.disposed) return
     for (const sessionId of await this.options.repository.listPendingSessionIds())
       await this.drainSession(sessionId)
   }
@@ -289,8 +298,12 @@ class BackgroundResultDeliveryOwner {
   async drainSession(
     sessionId: string
   ): Promise<'idle' | 'queued' | 'consumed' | 'needs-attention'> {
+    if (this.disposed) return 'idle'
     await this.waitForAuthority()
-    if (!(await this.options.canStartSessionTurn(sessionId))) {
+    if (this.disposed) return 'idle'
+    const canStart = await this.options.canStartSessionTurn(sessionId)
+    if (this.disposed) return 'idle'
+    if (!canStart) {
       this.schedule(sessionId)
       return 'queued'
     }
@@ -313,6 +326,7 @@ class BackgroundResultDeliveryOwner {
 
     const allIds = deliveries.map(({ id }) => id)
     const priorCorrelation = deliveries[0]?.continuationMessageId
+    let continuationStarted = false
     try {
       if (
         priorCorrelation &&
@@ -347,6 +361,10 @@ class BackgroundResultDeliveryOwner {
       }
 
       const resolved = await this.options.resolveSources(deliveries)
+      if (this.disposed) {
+        await this.options.repository.releaseClaim(allIds, claimToken)
+        return 'idle'
+      }
       const terminal = resolved.filter((item) => item.availability === 'terminal' && item.outcome)
       const deferred = resolved.filter(
         (item) => item.availability === 'not-ready' || item.availability === 'unavailable'
@@ -358,6 +376,10 @@ class BackgroundResultDeliveryOwner {
           claimToken
         )
       }
+      if (this.disposed) {
+        await this.options.repository.releaseClaim(allIds, claimToken)
+        return 'idle'
+      }
       let missingState: 'pending' | 'needs-attention' = 'pending'
       if (missing.length > 0) {
         missingState = await this.options.repository.failClaim(
@@ -365,6 +387,10 @@ class BackgroundResultDeliveryOwner {
           claimToken,
           this.maxDeliveryAttempts
         )
+      }
+      if (this.disposed) {
+        await this.options.repository.releaseClaim(allIds, claimToken)
+        return 'idle'
       }
       if (terminal.length === 0) {
         this.publishDeliveryChanges(deliveries)
@@ -391,7 +417,9 @@ class BackgroundResultDeliveryOwner {
           claimToken,
           continuationMessageId
         )
-        if (dispatchable !== ids.length) return undefined
+        // A repository write can settle after disposal; do not admit a new agent turn then.
+        if (this.disposed || dispatchable !== ids.length) return undefined
+        continuationStarted = true
         const continuation = this.options.sendContinuation({
           sessionId,
           text: buildDeliveryPrompt(terminal.map(({ outcome }) => outcome!)),
@@ -443,6 +471,10 @@ class BackgroundResultDeliveryOwner {
       this.publishDeliveryChanges(deliveries)
       return 'consumed'
     } catch (error) {
+      if (this.disposed && !continuationStarted) {
+        await this.options.repository.releaseClaim(allIds, claimToken)
+        return 'idle'
+      }
       if (await this.options.repository.areConsumed(allIds, sessionId).catch(() => false))
         return 'consumed'
       const state = await this.options.repository.failClaim(
