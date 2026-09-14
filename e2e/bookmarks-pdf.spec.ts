@@ -191,6 +191,17 @@ test('restores text and region bookmarks on intrinsically rotated PDF pages', as
     contentType: 'image/png'
   })
 
+  // At fit width both landscape pages can fit in a tall window. Zoom in before testing
+  // navigation so the second-page marker starts outside the visible reading area.
+  const viewControls = page.getByRole('group', { name: 'PDF view controls' })
+  for (let step = 0; step < 4; step += 1) {
+    await viewControls.getByRole('button', { name: 'Zoom in', exact: true }).click()
+  }
+  await expect(viewControls).toContainText('200%')
+  await restoredTextMarker.scrollIntoViewIfNeeded()
+  await expect(bookmarks).not.toBeVisible()
+  await page.getByRole('button', { name: 'Bookmarks (2)' }).click()
+
   const regionRevealButton = bookmarks
     .getByRole('listitem')
     .filter({ hasText: 'PDF region on page 2' })
