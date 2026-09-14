@@ -10,6 +10,7 @@ const fixture = vi.hoisted(() => {
   return {
     log,
     startupFailure: vi.fn(),
+    disposeLocaleIpc: vi.fn(),
     disposeRuntime: vi.fn(async () => {}),
     disposeWeb: vi.fn(async () => {}),
     shutdownRemote: vi.fn(async () => {}),
@@ -107,7 +108,7 @@ vi.mock('./locale/owner', () => ({
     subscribe = (): ReturnType<typeof vi.fn> => vi.fn()
   }
 }))
-vi.mock('./locale/ipc', () => ({ registerLocalePreferenceIpc: () => vi.fn() }))
+vi.mock('./locale/ipc', () => ({ registerLocalePreferenceIpc: () => fixture.disposeLocaleIpc }))
 vi.mock('./window-shortcuts', () => ({ installWindowShortcuts: vi.fn() }))
 vi.mock('./network-ipc', () => ({ registerNetworkIpcHandlers: vi.fn() }))
 vi.mock('./database/database-startup-logging', () => ({
@@ -225,6 +226,7 @@ beforeEach(() => {
   })
   fixture.shutdownBackends = undefined
   fixture.failAt = 'web'
+  fixture.disposeLocaleIpc.mockReset()
   fixture.disposeWeb.mockReset().mockResolvedValue()
   fixture.disposeRuntime.mockReset().mockResolvedValue()
 })
@@ -247,6 +249,21 @@ it('disposes acquired application surfaces when explicit web startup fails befor
   expect.soft(fixture.disposeRuntime).toHaveBeenCalledOnce()
   expect.soft(fixture.disposeWeb).toHaveBeenCalledOnce()
   expect.soft(fixture.shutdownRemote).toHaveBeenCalledOnce()
+})
+
+it('reports the original startup failure when shell IPC cleanup throws', async () => {
+  const cleanupFailure = new Error('locale IPC cleanup failed')
+  fixture.disposeLocaleIpc.mockImplementation(() => {
+    throw cleanupFailure
+  })
+  await import('./index')
+  await fixture.exited
+
+  expect(fixture.disposeLocaleIpc).toHaveBeenCalledOnce()
+  expect(fixture.electron.app.exit).toHaveBeenCalledWith(1)
+  expect(fixture.startupFailure).toHaveBeenCalledWith(
+    expect.objectContaining({ error: fixture.failure })
+  )
 })
 
 it.each(['icon', 'remote'] as const)(
