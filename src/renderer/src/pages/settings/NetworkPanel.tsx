@@ -274,7 +274,7 @@ const NetworkPanel = ({
       ) : null}
 
       {!isConfiguring && notebookNetworkAvailable ? (
-        <section aria-label={t('Notebook network access')}>
+        <section aria-label={t('Notebook network access')} data-settings-anchor="network.domains">
           <h3 className="mb-1 text-sm font-semibold text-foreground">
             {t('Notebook network access')}
           </h3>
@@ -344,7 +344,7 @@ const NetworkPanel = ({
         </section>
       ) : null}
 
-      <section aria-label={t('Package mirror')}>
+      <section aria-label={t('Package mirror')} data-settings-anchor="network.mirror">
         <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Package mirror')}</h3>
         <p className="mb-3 text-xs text-muted-foreground">
           {t(

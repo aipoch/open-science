@@ -12,6 +12,9 @@ type SettingsSearchEntry = {
   labelKey: string
   // Extra English match terms that are never displayed.
   keywords?: string
+  // Value of the data-settings-anchor attribute marking this entry's exact jump target inside the
+  // panel. Entries without one fall back to the panel's first content block.
+  anchor?: string
 }
 
 // Cross-panel search index: one to three representative entries per panel, each reusing existing
@@ -21,138 +24,223 @@ const SETTINGS_SEARCH_INDEX: ReadonlyArray<SettingsSearchEntry> = [
     id: 'model.add-provider',
     panel: 'model',
     labelKey: 'Add provider',
-    keywords: 'api key vendor'
+    keywords: 'api key vendor',
+    anchor: 'model.add-provider'
   },
-  { id: 'model.main', panel: 'model', labelKey: 'Main model', keywords: 'default thinking' },
+  {
+    id: 'model.main',
+    panel: 'model',
+    labelKey: 'Main model',
+    keywords: 'default thinking',
+    anchor: 'model.main'
+  },
   {
     id: 'model.scenarios',
     panel: 'model',
     labelKey: 'Scenario models',
-    keywords: 'subagent reviewer vision session details'
+    keywords: 'subagent reviewer vision session details',
+    anchor: 'model.scenarios'
   },
   {
     id: 'agent.framework',
     panel: 'agent',
     labelKey: 'Agent framework',
-    keywords: 'claude codex opencode backend'
+    keywords: 'claude codex opencode backend',
+    anchor: 'agent.framework'
   },
   {
     id: 'skills.manage',
     panel: 'skills',
     labelKey: 'Manage skills',
-    keywords: 'enable disable bulk'
+    keywords: 'enable disable bulk',
+    anchor: 'skills.manage'
   },
   {
     id: 'skills.add',
     panel: 'skills',
     labelKey: 'Add skill',
-    keywords: 'import upload zip github'
+    keywords: 'import upload zip github',
+    anchor: 'skills.add'
   },
-  { id: 'skills.conversation-imports', panel: 'skills', labelKey: 'Conversation imports' },
+  {
+    id: 'skills.conversation-imports',
+    panel: 'skills',
+    labelKey: 'Conversation imports',
+    anchor: 'skills.conversation-imports'
+  },
   {
     id: 'specialists.add',
     panel: 'specialists',
     labelKey: 'Add specialist',
-    keywords: 'create custom role'
+    keywords: 'create custom role',
+    anchor: 'specialists.add'
   },
   {
     id: 'specialists.marketplace',
     panel: 'specialists',
     labelKey: 'Marketplace',
-    keywords: 'browse install'
+    keywords: 'browse install',
+    anchor: 'specialists.marketplace'
   },
-  { id: 'memory.new-category', panel: 'memory', labelKey: 'New category', keywords: 'remember' },
+  {
+    id: 'memory.new-category',
+    panel: 'memory',
+    labelKey: 'New category',
+    keywords: 'remember',
+    anchor: 'memory.new-category'
+  },
   {
     id: 'connectors.add',
     panel: 'connectors',
     labelKey: 'Add connector',
-    keywords: 'mcp server'
+    keywords: 'mcp server',
+    anchor: 'connectors.add'
   },
   {
     id: 'connectors.import',
     panel: 'connectors',
     labelKey: 'Import Connector or MCP configuration',
     keywords: 'json claude desktop'
+    // No anchor: the import action lives inside the Add connector dropdown, which is unmounted at
+    // jump time — fall back to the panel's first block immediately instead of waiting.
   },
-  { id: 'network.proxy', panel: 'network', labelKey: 'Proxy', keywords: 'http https' },
+  {
+    id: 'network.proxy',
+    panel: 'network',
+    labelKey: 'Proxy',
+    keywords: 'http https',
+    anchor: 'network.proxy'
+  },
   {
     id: 'network.mirror',
     panel: 'network',
     labelKey: 'Package mirror',
-    keywords: 'npm pypi registry conda'
+    keywords: 'npm pypi registry conda',
+    anchor: 'network.mirror'
   },
   {
     id: 'network.domains',
     panel: 'network',
     labelKey: 'Notebook network access',
-    keywords: 'domains allowlist'
+    keywords: 'domains allowlist',
+    anchor: 'network.domains'
   },
   {
     id: 'remote-control.app-access',
     panel: 'remote-control',
     labelKey: 'App access',
-    keywords: 'remote browser link pair'
+    keywords: 'remote browser link pair',
+    anchor: 'remote-control.app-access'
   },
   {
     id: 'credentials.new',
     panel: 'credentials',
     labelKey: 'New credential',
-    keywords: 'token key'
+    keywords: 'token key',
+    anchor: 'credentials.new'
   },
   {
     id: 'credentials.literature',
     panel: 'credentials',
     labelKey: 'Literature access',
-    keywords: 'openalex unpaywall'
+    keywords: 'openalex unpaywall',
+    anchor: 'credentials.literature'
   },
-  { id: 'credentials.github', panel: 'credentials', labelKey: 'GitHub' },
-  { id: 'tags.new', panel: 'tags', labelKey: 'New Tag', keywords: 'label organize color' },
+  {
+    id: 'credentials.github',
+    panel: 'credentials',
+    labelKey: 'GitHub',
+    anchor: 'credentials.github'
+  },
+  {
+    id: 'tags.new',
+    panel: 'tags',
+    labelKey: 'New Tag',
+    keywords: 'label organize color',
+    anchor: 'tags.new'
+  },
   {
     id: 'permissions.default-mode',
     panel: 'permissions',
     labelKey: 'Default permission mode',
-    keywords: 'allow deny approve tools'
+    keywords: 'allow deny approve tools',
+    anchor: 'permissions.default-mode'
   },
   {
     id: 'runtimes.runtimes',
     panel: 'runtimes',
     labelKey: 'Notebook runtimes',
-    keywords: 'python r kernel jupyter environment'
+    keywords: 'python r kernel jupyter environment',
+    anchor: 'runtimes.runtimes'
   },
   {
     id: 'storage.application',
     panel: 'storage',
     labelKey: 'Application storage',
-    keywords: 'disk data size'
+    keywords: 'disk data size',
+    anchor: 'storage.application'
   },
   {
     id: 'storage.location',
     panel: 'storage',
     labelKey: 'Change location',
-    keywords: 'folder move directory'
+    keywords: 'folder move directory',
+    anchor: 'storage.location'
   },
   {
     id: 'compute.add-host',
     panel: 'compute',
     labelKey: 'Add SSH host',
-    keywords: 'ssh remote server gpu'
+    keywords: 'ssh remote server gpu',
+    anchor: 'compute.add-host'
   },
-  { id: 'usage.list', panel: 'usage', labelKey: 'Usage', keywords: 'tokens cost analytics' },
-  { id: 'archived.list', panel: 'archived', labelKey: 'Archived', keywords: 'project restore' },
+  {
+    id: 'usage.list',
+    panel: 'usage',
+    labelKey: 'Usage',
+    keywords: 'tokens cost analytics',
+    anchor: 'usage.list'
+  },
+  {
+    id: 'archived.list',
+    panel: 'archived',
+    labelKey: 'Archived',
+    keywords: 'project restore',
+    anchor: 'archived.list'
+  },
   {
     id: 'general.appearance',
     panel: 'general',
     labelKey: 'Appearance',
-    keywords: 'theme dark light'
+    keywords: 'theme dark light',
+    anchor: 'general.appearance'
   },
-  { id: 'general.language', panel: 'general', labelKey: 'Language', keywords: 'locale' },
-  { id: 'general.notifications', panel: 'general', labelKey: 'Notifications' },
-  { id: 'general.diagnostics', panel: 'general', labelKey: 'Diagnostics', keywords: 'log file' },
+  {
+    id: 'general.language',
+    panel: 'general',
+    labelKey: 'Language',
+    keywords: 'locale',
+    anchor: 'general.language'
+  },
+  {
+    id: 'general.notifications',
+    panel: 'general',
+    labelKey: 'Notifications',
+    anchor: 'general.notifications'
+  },
+  {
+    id: 'general.diagnostics',
+    panel: 'general',
+    labelKey: 'Diagnostics',
+    keywords: 'log file',
+    anchor: 'general.diagnostics'
+  },
   {
     id: 'general.cli',
     panel: 'general',
     labelKey: 'Command line tool',
-    keywords: 'cli install path shell'
+    keywords: 'cli install path shell',
+    anchor: 'general.cli'
   }
 ]
 
@@ -161,54 +249,84 @@ type SettingsGlobalSearchProps = {
   onNavigate: (panel: SettingsPanelId) => void
 }
 
-// Briefly rings the first content block of the freshly navigated panel so the jump target is
-// visible. Polls until the target panel has actually rendered (lazy panels load async), so the
-// highlight never lands on the previous panel. Purely visual: inline styles over the existing
-// --primary token, no persistence. Returns a cancel function that stops polling and strips any
-// active ring — callers run it on unmount and before starting another highlight.
-const highlightNavigatedPanel = (panel: SettingsPanelId): (() => void) => {
+// Elements that can already receive keyboard focus; anything else is lent a temporary tabindex.
+const FOCUSABLE_SELECTOR = 'a[href], button, input, select, textarea, [tabindex]'
+
+const HIGHLIGHT_CLASS = 'settings-search-highlight'
+const HIGHLIGHT_FADE_CLASS = 'settings-search-highlight-fading'
+
+// Rings and focuses the search jump target once the freshly navigated panel has rendered, so the
+// user sees exactly where they landed. Entries with an anchor jump to their own setting element;
+// the anchor gets a grace period (lazy chunks, async data) before falling back to the panel's
+// first content block. Polls until the target panel has actually rendered, so the highlight never
+// lands on the previous panel. Purely visual and focus-only: no persistence. Returns a cancel
+// function that stops polling and strips any active ring — callers run it on unmount and before
+// starting another highlight.
+const highlightNavigatedPanel = (panel: SettingsPanelId, anchor?: string): (() => void) => {
   const startedAt = Date.now()
   const timers: number[] = []
   let highlighted: HTMLElement | null = null
+  let addedTabIndex = false
+
+  const stripRing = (): void => {
+    if (!highlighted) return
+    if (highlighted.isConnected) {
+      highlighted.classList.remove(HIGHLIGHT_CLASS, HIGHLIGHT_FADE_CLASS)
+      if (addedTabIndex) highlighted.removeAttribute('tabindex')
+    }
+    highlighted = null
+    addedTabIndex = false
+  }
+
+  // Prefer the panel's first section/header; panels without section markup fall back to the
+  // panel root once the lazy chunk has had time to replace the loading boundary.
+  const fallbackTarget = (root: Element, elapsed: number): HTMLElement | null =>
+    root.querySelector<HTMLElement>('section, [data-slot="settings-panel-header"]') ??
+    (elapsed > 1200 ? root.querySelector<HTMLElement>(':scope > div > :first-child') : null)
+
   const attempt = (): void => {
     const root = document.querySelector(
       `[data-slot="settings-content-scroll"][data-settings-active-panel="${panel}"]`
     )
-    // Prefer the panel's first section/header; panels without section markup fall back to the
-    // panel root once the lazy chunk has had time to replace the loading boundary.
-    const target =
-      root?.querySelector<HTMLElement>('section, [data-slot="settings-panel-header"]') ??
-      (root && Date.now() - startedAt > 1200
-        ? root.querySelector<HTMLElement>(':scope > div > :first-child')
-        : null)
+    if (!root) {
+      if (Date.now() - startedAt < 3000) timers.push(window.setTimeout(attempt, 150))
+      return
+    }
+    const elapsed = Date.now() - startedAt
+    let target: HTMLElement | null = null
+    if (anchor) {
+      target = root.querySelector<HTMLElement>(`[data-settings-anchor="${anchor}"]`)
+      // Anchored entries wait for their exact target instead of ringing the wrong block early.
+      if (!target && elapsed > 1200) target = fallbackTarget(root, elapsed)
+    } else {
+      target = fallbackTarget(root, elapsed)
+    }
     if (target) {
       highlighted = target
+      target.classList.add(HIGHLIGHT_CLASS)
+      if (!target.matches(FOCUSABLE_SELECTOR)) {
+        target.setAttribute('tabindex', '-1')
+        addedTabIndex = true
+      }
+      // Scroll first with the highlight's scroll-margin for breathing room, then move focus
+      // without scrolling again.
       target.scrollIntoView({ block: 'nearest' })
-      target.style.transition = 'box-shadow 200ms ease-out'
-      target.style.borderRadius = '8px'
-      target.style.boxShadow = '0 0 0 2px var(--primary)'
+      target.focus({ preventScroll: true })
       timers.push(
         window.setTimeout(() => {
-          target.style.boxShadow = ''
-          target.style.borderRadius = ''
-          target.style.transition = ''
-          if (highlighted === target) highlighted = null
-        }, 1600)
+          if (highlighted?.isConnected) highlighted.classList.add(HIGHLIGHT_FADE_CLASS)
+        }, 1400),
+        window.setTimeout(stripRing, 1600)
       )
       return
     }
-    if (Date.now() - startedAt < 3000) timers.push(window.setTimeout(attempt, 150))
+    if (elapsed < 3000) timers.push(window.setTimeout(attempt, 150))
   }
   attempt()
 
   return () => {
     for (const timer of timers) window.clearTimeout(timer)
-    if (highlighted?.isConnected) {
-      highlighted.style.boxShadow = ''
-      highlighted.style.borderRadius = ''
-      highlighted.style.transition = ''
-    }
-    highlighted = null
+    stripRing()
   }
 }
 
@@ -258,7 +376,7 @@ const SettingsGlobalSearch = ({
     setActiveIndex(0)
     onNavigate(entry.panel)
     cancelHighlightRef.current?.()
-    cancelHighlightRef.current = highlightNavigatedPanel(entry.panel)
+    cancelHighlightRef.current = highlightNavigatedPanel(entry.panel, entry.anchor)
   }
 
   return (
@@ -355,5 +473,5 @@ const SettingsGlobalSearch = ({
   )
 }
 
-export { SettingsGlobalSearch }
-export type { SettingsGlobalSearchProps }
+export { SettingsGlobalSearch, SETTINGS_SEARCH_INDEX }
+export type { SettingsGlobalSearchProps, SettingsSearchEntry }
