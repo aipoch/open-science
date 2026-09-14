@@ -5955,6 +5955,15 @@
     "Could not move this annotation. It may have changed or the target is full.": "Diese Anmerkung konnte nicht verschoben werden. Sie wurde möglicherweise geändert oder das Ziel ist voll.",
     "Add to this Side chat": "Zu diesem Side-Chat hinzufügen",
     "Add to main conversation": "Zur Hauptkonversation hinzufügen",
-    "Move to Side chat": "In den Side-Chat verschieben"
+    "Move to Side chat": "In den Side-Chat verschieben",
+    "Revoke trusted browser?": "Vertrauenswürdigen Browser widerrufen?",
+    "{{browser}} must complete two-step verification again on its next visit. The 180-day trust ends immediately.": "{{browser}} muss die zweistufige Verifizierung beim nächsten Besuch erneut abschließen. Das 180-Tage-Vertrauen endet sofort.",
+    "Revoke": "Widerrufen",
+    "Code expires in {{time}}": "Code läuft in {{time}} ab",
+    "Code expired": "Code abgelaufen",
+    "Approve only if you started this sign-in and the six-digit code matches the one shown in the requesting browser.": "Bestätigen Sie nur, wenn Sie diese Anmeldung gestartet haben und der sechsstellige Code im anfragenden Browser mit dem hier angezeigten übereinstimmt.",
+    "Revoke all trusted browsers?": "Alle vertrauenswürdigen Browser widerrufen?",
+    "Every trusted browser must complete two-step verification again on its next visit. The 180-day trust ends immediately.": "Jeder vertrauenswürdige Browser muss die zweistufige Verifizierung beim nächsten Besuch erneut abschließen. Das 180-Tage-Vertrauen endet sofort.",
+    "{{browser}} trusted for 180 days.": "{{browser}} wurde für 180 Tage als vertrauenswürdig markiert."
   }
 }

@@ -6262,6 +6262,15 @@
     "Could not move this annotation. It may have changed or the target is full.": "Не удалось переместить аннотацию. Возможно, она изменилась или целевой чат заполнен.",
     "Add to this Side chat": "Добавить в этот боковой чат",
     "Add to main conversation": "Добавить в основной диалог",
-    "Move to Side chat": "Переместить в боковой чат"
+    "Move to Side chat": "Переместить в боковой чат",
+    "Revoke trusted browser?": "Отозвать доверенный браузер?",
+    "{{browser}} must complete two-step verification again on its next visit. The 180-day trust ends immediately.": "При следующем посещении {{browser}} потребуется снова пройти двухэтапную аутентификацию. Доверие на 180 дней прекращается немедленно.",
+    "Revoke": "Отозвать",
+    "Code expires in {{time}}": "Срок действия кода истекает через {{time}}",
+    "Code expired": "Срок действия кода истёк",
+    "Approve only if you started this sign-in and the six-digit code matches the one shown in the requesting browser.": "Подтверждайте, только если вы начали этот вход и шестизначный код в запрашивающем браузере совпадает с показанным здесь.",
+    "Revoke all trusted browsers?": "Отозвать все доверенные браузеры?",
+    "Every trusted browser must complete two-step verification again on its next visit. The 180-day trust ends immediately.": "Каждому доверенному браузеру при следующем посещении потребуется снова пройти двухэтапную аутентификацию. Доверие на 180 дней прекращается немедленно.",
+    "{{browser}} trusted for 180 days.": "{{browser}} получил доверие на 180 дней."
   }
 }
