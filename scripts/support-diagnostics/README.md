@@ -1,78 +1,81 @@
-# Open Science 一键脱敏诊断（Windows）
+# Open Science offline diagnostics (Windows)
 
-用于调查技能目录超限、Notebook/Bash/REPL 工具失败，以及会话恢复前后的故障。
-这是一份离线采集工具，不是修复程序，也不能保证仅凭旧日志找到根因。
+Collect a redacted report for omitted Skills, failing Notebook/Bash/REPL tools, and Session recovery problems. This utility collects evidence; it does not repair the application or guarantee that existing logs reveal the root cause.
 
-**当前版本：1.1.0，报告格式：2。** 修正了 1.0 版没有解开会话文件 `{ version, session }` 外层包装的问题。旧报告可能显示 `session read`，但没有真正检查其中的工具活动；不能用其中的零次错误排除故障。请使用此版本重新采集。
+**Collector version: 1.1.0. Report format: 2.** Version 1.1.0 fixes decoding of the persisted `{ version, session }` envelope. A version 1.0 report could say a Session was read without inspecting its tool activities. Zero errors in that report cannot rule out a failure; collect again with this version.
 
-## 用户怎么操作
+## Run the collector
 
-1. **先保留现场**：错误出现后，让当前任务停止运行，等待几秒让记录保存。先不要删除会话、卸载环境或重装应用。无需为了采集再次执行失败的代码。
-2. 把 ZIP **全部解压**到普通本地文件夹，例如“下载”。不要直接在 ZIP 预览中运行，不要放在网络盘或指向其他目录的链接里。
-3. 双击 **diagnose.cmd**。无需管理员权限，无需安装 Python、Node 或额外模块。
-4. 完成后，同目录会新增 `diagnosis-日期时间-随机编号` 文件夹。用记事本打开其中的 **diagnosis.txt**，必要时也检查 **diagnosis.json**。
-5. **只把这两个报告文件发给支持人员**。不要附带原始日志、会话 JSON、配置文件或整个 Open Science 数据目录。
+1. After the error, stop the current task and wait a few seconds for its records to be saved. Preserve the Session and environment. You do not need to rerun the failing code.
+2. Extract the entire ZIP into an ordinary local folder, such as Downloads. Do not run it inside the ZIP preview, on a network share, or through a directory link.
+3. Double-click **diagnose.cmd**. Administrator privileges, Python, Node.js, and additional modules are not required.
+4. Open **diagnosis.txt** in the new `diagnosis-<timestamp>-<random identifier>` folder next to the script. Review **diagnosis.json** as needed.
+5. Send **only those two report files** to support. Do not attach raw logs, Session JSON, configuration files, or the entire Open Science data directory.
 
-黑色窗口最后会停留，按任意键关闭。脚本不会打开或关闭 Open Science，不会自动上传，也不会自动发送报告。每次运行创建新目录，不覆盖旧报告。
+The console pauses at the end. The utility does not start or stop Open Science, upload anything, or send the report. Each run creates a new output directory without overwriting earlier reports.
 
-建议在错误刚发生时运行。日志分析窗口是“读取到的最后日志时间之前 7 天”，并非运行脚本时刻之前 7 天，所以旧日志仍可用于调查。报告统一使用 **UTC**，北京时间需加 8 小时。
+Collect soon after the failure. The analysis window covers the seven days before the last timestamp found in the logs, rather than the time the collector runs, so older logs remain useful. Report timestamps use **UTC**; add eight hours for Beijing time.
 
-## 自动读取什么
+## Collection scope
 
-- 正式版日志：`%APPDATA%\Open Science\logs\main.log` 及至多两份轮转日志。
-- 从近期工具失败中选出最多三个会话，只查找 `%USERPROFILE%\.open-science\sessions\<项目目录>\<会话ID>.json` 中的对应文件。**会话在配置目录，不在设置里的科研数据目录。** 不扫描整个磁盘，也不读取其他会话内容。
-- 会话工具结果中的固定错误特征，例如 `Invalid notebook RPC token`。保留分支和 Frame 的匿名关联，区分所属 Frame 的当前分支与其他分支/祖先；不会把全部分支拼成当前对话。
-- 支持当前 v2、历史 v1 外层包装及旧版无包装会话；仅解析，不转换或改写原文件。报告逐个列出会话解析状态、匿名会话编号、活动总数、窗口内检查数、失败数和包含工具输出的活动数。文件读取成功与会话解析成功分别显示。
-- 只观察日志中的应用版本、框架、时间、计数、HTTP 状态、已知生命周期事件和工具名。模型名称、会话/工具/分支标识替换为本次报告内的编号。
+- Release logs at `%APPDATA%\Open Science\logs\main.log`, plus at most two rotated logs.
+- At most three Sessions selected from recent tool failures. The collector looks only for their matching files under `%USERPROFILE%\.open-science\sessions\<project directory>\<session ID>.json`. Sessions live in the configuration directory, not the research data directory selected in Settings. It does not scan the entire disk or read unrelated Sessions.
+- Fixed signatures in persisted tool results, such as `Invalid notebook RPC token`. Anonymous branch and Frame associations distinguish each Frame's saved active branch from other branches; activities are not flattened into a single conversation.
+- Current v2 envelopes, historical v1 envelopes, and legacy unwrapped Sessions. Inputs are parsed without conversion or modification. Reports record decoding status, anonymous Session identity, total activity count, inspected count within the time window, failure count, and tool-output count. Reading a file and decoding its Session are reported separately.
+- Application versions, frameworks, timestamps, counts, HTTP status codes, known lifecycle events, and tool categories. Model names and Session/tool/branch identifiers become report-local aliases.
 
-脚本在内存中解析上述文件，因此会临时读到其中的内容；**报告只使用固定字段和固定错误分类重新生成，不复制原始输入对象**。
+The collector temporarily reads input contents into memory. **Reports are rebuilt from allowlisted fields and fixed error classifications; raw input objects are never copied into reports.**
 
-## 脱敏边界
+## Privacy boundary
 
-报告**不包含**对话正文、用户问题、提示词、执行代码、命令参数、终端原文、工具返回原文、文件名/完整路径、用户名、原始会话 ID、模型名称、提供商地址、API Key、令牌、Cookie、附件或图片。
+Reports exclude conversation text, questions, prompts, executed code, command arguments, terminal output, raw tool results, filenames/full paths, usernames, original Session IDs, model names, provider endpoints, API keys, tokens, cookies, attachments, and images.
 
-不读取凭据配置、环境变量全集、浏览器数据、进程命令行、Notebook 数据文件或数据库。未知错误只报告 `unknown` 或没有匹配特征，不保留错误原文。
+The collector does not read credential configuration, the complete environment, browser data, process command lines, Notebook data files, or databases. Unknown errors produce `unknown` or no matching signature; their original text is omitted.
 
-报告仍会包含诊断必需的**事件时间、应用版本、工具类别、调用失败情况、技能数量和匿名关联**。请在发送前确认这些元数据适合共享。相同事件可能同时出现在日志和会话中，观察次数不等于唯一故障次数。
+Reports still contain diagnostic metadata: **event times, application versions, tool categories, call failures, Skill counts, and anonymous associations**. Review this metadata before sharing. One failure can appear in both a log and a Session, so observation counts are not unique failure counts.
 
-本次编号不跨报告稳定，原始编号映射只在内存中，不写入任何文件。脚本不会删除、修复或迁移应用数据；持久化新增内容仅是两个诊断报告。
+Aliases are not stable across reports. Their source mappings stay in memory and are never written. The script does not delete, repair, or migrate application data. The only new persisted data is the two report files.
 
-## 如果报告提示没有日志或没有会话错误正文
+## Missing or incomplete evidence
 
-`no-session-error-content-collected`、`missing`、`unreadable-or-unsafe`、`size-limit`、解析失败等表示证据不完整，**不表示应用正常**。报告也不保证能确定哪一步撤销了令牌。
+`no-session-error-content-collected`, `missing`, `unreadable-or-unsafe`, `size-limit`, and decoding failures mean that evidence is incomplete. **They do not mean the application is healthy.** A report cannot always determine which operation revoked a token.
 
-- 日志已轮转、会话被删除、错误正文未保存、活动还未落盘，都会导致缺少证据。
-- `decoded` 表示会话结构已解析；`session-no-inspectable-activities` 表示没有可检查活动，`session-no-tool-output` 表示已检查活动没有工具输出。`session-envelope-version-unsupported` 表示文件来自未知格式版本。请连同这些覆盖信息一起回传报告。
-- 超大文件、目录链接、网络路径、未知会话图版本会跳过并报告。单份日志最多 8 MiB，会话文件最多 16 MiB，总读取预算 64 MiB；每份日志最多处理末尾 25,000 行，最多输出 4,000 个事件、检查 100 个项目目录、每个会话末尾 10,000 条活动。
-- 如果记录仍在写入，会标记 `changed-during-read`。停止当前任务并稍后再运行；脚本不会强制终止任务。
-- PowerShell 被单位策略阻止时，请交给支持人员或 IT 检查。不要修改全局执行策略或关闭安全软件。CMD 的 `-ExecutionPolicy Bypass` **仅对这次 PowerShell 子进程生效**，不修改系统设置。
+- Log rotation, deleted Sessions, unsaved activity, or missing persisted error text can limit evidence.
+- `decoded` means the Session structure was parsed. `session-no-inspectable-activities` means no activities could be inspected. `session-no-tool-output` means inspected activities had no tool output. `session-envelope-version-unsupported` means an unknown persisted format. Include these coverage details when sharing reports.
+- Oversized files, directory links, network paths, and unknown conversation-graph versions are skipped and reported. Limits are 8 MiB per log, 16 MiB per Session, 64 MiB total input, the last 25,000 lines per log, 4,000 output events, 100 project directories, and the last 10,000 activities per Session.
+- `changed-during-read` means an input changed during collection. Stop the current task and collect again later; the script does not terminate tasks.
+- If organizational policy blocks PowerShell, ask support or IT to investigate. Do not change global execution policy or disable security software. The launcher's `-ExecutionPolicy Bypass` applies only to that PowerShell child process and does not change system settings.
 
-## 支持人员：分析指定文件
+## Support: analyze explicit inputs
 
-把一份 `main.log` **拖到 diagnose.cmd 上**，即可分析这份文件。这种“复制日志”模式**不会自动读取本机会话**，避免把支持人员自己的数据混入用户报告。
+Drag a copied `main.log` onto **diagnose.cmd** to analyze it. This mode does not automatically read Sessions from the support operator's computer.
 
-需要指定会话时，在解压目录打开 PowerShell，执行下例，并替换示例路径：
+To include a specific Session, open PowerShell in the extracted folder and substitute the local input paths:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\diagnose.ps1 -LogPath 'C:\Support\main.log' -SessionPath 'C:\Support\affected-session.json'
 ```
 
-会话文件必须是应用持久化的单个 Session JSON；Markdown/PDF 导出或会话 ZIP 不能直接代替。用户可在文件资源管理器地址栏输入 `%USERPROFILE%\.open-science\sessions`，根据支持人员给出的会话 ID 找到文件。**在用户电脑本地执行后，只回传生成的报告，不传原始 JSON。**
+The Session input must be a single persisted Session JSON file, not a Markdown/PDF export or Session ZIP. Users can open `%USERPROFILE%\.open-science\sessions` in File Explorer and locate the Session ID supplied by support. **Run collection locally on the user's computer and return the reports, not the original JSON.**
 
-非默认配置根目录或开发版可明确指定，脚本不会自行猜测：
+For a nondefault configuration root or development installation, specify the location explicitly:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\diagnose.ps1 -LogPath 'C:\Support\logs' -ConfigRoot 'C:\Support\app-config' -SessionId 'support-provided-session-id'
 ```
 
-`-OutputRoot` 可指定已存在的可写本地输出目录。所有输入路径都作为文件路径处理，不执行文件中的文字，不发起 RPC 请求，不重新运行任何 Notebook 或 Shell 命令。
+`-OutputRoot` selects an existing writable local output directory. All inputs are treated as file paths. Their text is not executed; collection does not make RPC requests or rerun Notebook or Shell commands.
 
-## 如何解读
+## Interpret the report
 
-- `invalid-notebook-rpc-token`：指定诊断字段/工具输出中出现了该错误特征。优先检查同一匿名会话前后的连接恢复、后端替换、能力构建和退出事件；不能只凭相邻时间就认定因果关系。
-- `skills-list-omitted`：目录可见性下降，不代表技能文件被删除。
-- `skill-selection-failed` / `provider-http-error`：技能选择或模型上游请求失败，需要与本地 RPC 鉴权区分。
-- `persisted-tool-result` 且没有特征：工具失败已经记录，但具体原因不在本工具识别范围内。请保留现场，等待有针对性的下一步检查。
-- `exact-active-branch`：该活动的分支恰好等于所属 Frame 保存的 `activeBranchId`；不是对整个当前对话分支祖先关系的重建。
+- `invalid-notebook-rpc-token`: a diagnostic field or tool result contains this signature. Inspect the same anonymous Session's nearby recovery, backend replacement, capability construction, and shutdown events. Temporal proximity alone does not establish causation.
+- `skills-list-omitted`: the model has less catalog visibility; Skill files have not necessarily been deleted.
+- `skill-selection-failed` / `provider-http-error`: Skill selection or upstream model requests failed. Distinguish these from local RPC authentication.
+- `persisted-tool-result` without a signature: a tool failure was saved, but its cause is outside the collector's recognized signatures. Preserve the evidence for targeted investigation.
+- `exact-active-branch`: the activity's branch exactly matches its Frame's persisted `activeBranchId`. This does not reconstruct all ancestors of the active conversation branch.
 
-工具不会将“没有找到错误”输出为“健康”，不会自动接受旧令牌，也不会为了消除警告调整模型上下文预算。
+The collector never equates no matching error with a healthy application, accepts stale credentials, or changes a model's context budget to suppress a warning.
+
+## Developer verification
+
+Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/support-diagnostics/verify.ps1` for synthetic privacy and boundary checks. Run `npm test -- scripts/support-diagnostics/diagnose.integration.test.ts` on Windows to exercise the production Session writer and actual PowerShell collector together. This integration test is explicitly skipped on other platforms. Ship only `README.md`, `diagnose.cmd`, and `diagnose.ps1` in a customer ZIP; verification fixtures and tests are developer-only.
