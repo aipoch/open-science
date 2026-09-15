@@ -488,6 +488,63 @@ describe('variants-gnomad', () => {
     expect(variables).toMatchObject({ start: 1, stop: 1_000_001 })
   })
 
+  it.each([
+    ['chr1', '1'],
+    ['CHR22', '22'],
+    ['x', 'X'],
+    [' chrY ', 'Y']
+  ])('region_variants: normalizes chromosome %j to %s', async (chrom, expected) => {
+    const { variables, out } = await run(
+      'region_variants',
+      { chrom, start: 1, stop: 100 },
+      { data: { region: { variants: [] } } }
+    )
+    expect(variables.chrom).toBe(expected)
+    expect(out).toMatchObject({ chrom: expected })
+  })
+
+  it.each(['23', 'chrUn', ''])(
+    'region_variants: rejects invalid chromosome %j before dispatch',
+    async (chrom) => {
+      const fetchImpl = vi.fn()
+      await expect(
+        new ParserEngine({ fetchImpl }).call(
+          tool('region_variants'),
+          { chrom, start: 1, stop: 100 },
+          {}
+        )
+      ).rejects.toThrow(/chrom must identify chromosome 1-22, X, or Y/)
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['M', 'MT', 'chrM'])(
+    'region_variants: directs mitochondrial chromosome %j to the dedicated tool',
+    async (chrom) => {
+      const fetchImpl = vi.fn()
+      await expect(
+        new ParserEngine({ fetchImpl }).call(
+          tool('region_variants'),
+          { chrom, start: 1, stop: 100 },
+          {}
+        )
+      ).rejects.toThrow(/use mitochondrial_variants/)
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    [{ chrom: '1', start: 0, stop: 100 }, /start must be an integer between 1/],
+    [{ chrom: '1', start: 101, stop: 100 }, /start must be less than or equal to stop/],
+    [{ chrom: '1', start: 1.5, stop: 100 }, /start must be an integer between 1/]
+  ])('region_variants: rejects invalid coordinates before dispatch', async (args, error) => {
+    const fetchImpl = vi.fn()
+    await expect(
+      new ParserEngine({ fetchImpl }).call(tool('region_variants'), args, {})
+    ).rejects.toThrow(error)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   // ---- liftover_variant ---------------------------------------------------------------------
 
   it('liftover_variant: maps source_build to the rg variable (directionality) and sorts results', async () => {
@@ -780,6 +837,23 @@ describe('variants-gnomad', () => {
       )
     ).rejects.toThrow(/region_start and region_stop together/)
   })
+
+  it.each([
+    [{ region_start: 0, region_stop: 100 }, /region_start must be an integer between 1/],
+    [
+      { region_start: 101, region_stop: 100 },
+      /region_start must be less than or equal to region_stop/
+    ]
+  ])(
+    'mitochondrial_variants: rejects invalid region coordinates before dispatch',
+    async (args, error) => {
+      const fetchImpl = vi.fn()
+      await expect(
+        new ParserEngine({ fetchImpl }).call(tool('mitochondrial_variants'), args, {})
+      ).rejects.toThrow(error)
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  )
 
   it('mitochondrial_variants: absent gene returns a compact empty result', async () => {
     const { out } = await run(

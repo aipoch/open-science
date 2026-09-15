@@ -50,6 +50,7 @@ const DEFAULT_DATASET = 'gnomad_r4'
 const DEFAULT_SV_DATASET = 'gnomad_sv_r4'
 // Region queries are capped so a runaway window can't ask gnomAD for the whole genome.
 const MAX_REGION_BP = 1_000_000
+const MAX_GRAPHQL_INT = 2_147_483_647
 
 // ---- GraphQL documents (adapted from upstream queries.py) ----------------------------------
 
@@ -291,13 +292,31 @@ function gqlData(result: GqlResponse): NonNullable<GqlResponse['data']> | null {
   return result.data ?? null
 }
 
-// Coerces a value to an integer, clamped to an optional [min, max]. Non-finite input falls back.
-function clampInt(value: unknown, min?: number, max?: number, fallback = 0): number {
-  const n = Math.trunc(Number(value))
-  let v = Number.isFinite(n) ? n : fallback
-  if (min != null && v < min) v = min
-  if (max != null && v > max) v = max
-  return v
+// Region coordinates are 1-based GraphQL Ints. Reject malformed values instead of silently
+// clamping them, which could turn a caller error into a plausible but incorrect empty result.
+function regionCoordinate(value: unknown, name: string): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > MAX_GRAPHQL_INT
+  ) {
+    throw new Error(`${name} must be an integer between 1 and ${MAX_GRAPHQL_INT}`)
+  }
+  return value
+}
+
+function shortVariantChrom(value: unknown): string {
+  const input = String(value).trim()
+  const withoutPrefix = input.replace(/^chr/i, '')
+  if (/^(?:M|MT)$/i.test(withoutPrefix)) {
+    throw new Error('chrom is mitochondrial; use mitochondrial_variants for chrM/MT region queries')
+  }
+  const chrom = /^[XY]$/i.test(withoutPrefix) ? withoutPrefix.toUpperCase() : withoutPrefix
+  if (!/^(?:[1-9]|1[0-9]|2[0-2]|X|Y)$/.test(chrom)) {
+    throw new Error('chrom must identify chromosome 1-22, X, or Y')
+  }
+  return chrom
 }
 
 // Enforces the upstream "pass exactly one of gene_symbol / gene_id" ValueError — a usage error, not
@@ -628,9 +647,13 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     input: {
       type: 'object',
       properties: {
-        chrom: { type: 'string' },
-        start: { type: 'integer' },
-        stop: { type: 'integer' },
+        chrom: {
+          type: 'string',
+          description:
+            'Chromosome 1-22, X, or Y; an optional chr prefix and lowercase x/y are accepted'
+        },
+        start: { type: 'integer', minimum: 1, maximum: MAX_GRAPHQL_INT },
+        stop: { type: 'integer', minimum: 1, maximum: MAX_GRAPHQL_INT },
         dataset: { type: 'string', enum: [...DATASETS], default: DEFAULT_DATASET }
       },
       required: ['chrom', 'start', 'stop']
@@ -641,10 +664,11 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     example:
       'const result = await host.mcp("variants", "region_variants", {"chrom": "1", "start": 55039475, "stop": 55064852, "dataset": "gnomad_r4"})',
     run: async (ctx, a) => {
-      const chrom = String(a.chrom)
-      const start = clampInt(a.start, 0)
-      const stop = clampInt(a.stop, 0)
+      const chrom = shortVariantChrom(a.chrom)
+      const start = regionCoordinate(a.start, 'start')
+      const stop = regionCoordinate(a.stop, 'stop')
       const dataset = checkDataset(String(a.dataset ?? DEFAULT_DATASET), DATASETS)
+      if (start > stop) throw new Error('start must be less than or equal to stop')
       // Region size cap is a usage error (matches upstream ValueError), not an empty result.
       if (stop - start > MAX_REGION_BP) {
         throw new Error(`region exceeds ${MAX_REGION_BP} bp; split the query`)
@@ -838,8 +862,8 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
       properties: {
         gene_symbol: { type: 'string' },
         gene_id: { type: 'string' },
-        region_start: { type: 'integer' },
-        region_stop: { type: 'integer' },
+        region_start: { type: 'integer', minimum: 1, maximum: MAX_GRAPHQL_INT },
+        region_stop: { type: 'integer', minimum: 1, maximum: MAX_GRAPHQL_INT },
         dataset: { type: 'string', enum: [...DATASETS], default: DEFAULT_DATASET }
       }
     },
@@ -857,8 +881,9 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
         if (a.gene_symbol != null || a.gene_id != null) {
           throw new Error('pass gene OR region, not both')
         }
-        const start = clampInt(a.region_start, 0)
-        const stop = clampInt(a.region_stop, 0)
+        const start = regionCoordinate(a.region_start, 'region_start')
+        const stop = regionCoordinate(a.region_stop, 'region_stop')
+        if (start > stop) throw new Error('region_start must be less than or equal to region_stop')
         const data = gqlData(
           await postGql(ctx, MITO_VARIANTS_REGION_QUERY, { start, stop, dataset })
         )
