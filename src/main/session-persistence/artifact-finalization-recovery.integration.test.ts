@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -22,7 +22,10 @@ import {
 } from '../../shared/artifacts'
 import type { PersistedChatMessage, PersistedChatSession } from '../../shared/session-persistence'
 import { createPngBytes, createPngInlineSource } from '../artifacts/artifact-test-fixtures'
-import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
+import {
+  FinalizedArtifactBindingConflictError,
+  ProvenanceMessageSnapshotRepository
+} from '../artifacts/provenance-message-snapshot'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { requireAgentArtifactVersion } from '../artifacts/provenance-version-kind'
 import { ArtifactRepository } from '../artifacts/repository'
@@ -637,6 +640,230 @@ describe('artifact finalization startup recovery', () => {
       )
     }
   )
+
+  it.each([
+    { legacyRebound: false, inactive: false },
+    { legacyRebound: false, inactive: true },
+    { legacyRebound: true, inactive: false },
+    { legacyRebound: true, inactive: true }
+  ])(
+    'reported save failure: saves a reopened Session (legacyRebound=$legacyRebound, inactive=$inactive)',
+    async ({ legacyRebound, inactive }) => {
+      const historicalSessionId = 'pending-session-123-1'
+      const compatibility = new ArtifactRepository(storageRoot)
+      const prepared = await prepareRecovery(compatibility, 1, historicalSessionId)
+      await finalizeAndLinkVersion({ ...prepared, makeLinkedMessageInactive: inactive })
+      const snapshots = new ProvenanceMessageSnapshotRepository({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const original = (await sessions.loadSession(PROJECT_ID, SESSION_ID))!
+      await snapshots.captureFinalizedMessages(original)
+      await expect(snapshots.validateFinalizedMessageBindings(original)).resolves.toBeUndefined()
+      const versionBefore = await client.artifactVersion.findUniqueOrThrow({
+        where: { id: prepared.version.versionId }
+      })
+      expect(versionBefore.messageSnapshotId).toEqual(expect.any(String))
+
+      if (legacyRebound) {
+        // Replay the actual sanitizeSession transformation removed by 0fea6ceb5. Older builds
+        // rebound only Session graph IDs when loading a pending-session root; Artifact identities
+        // remained durable in SQLite. This fixture models already-written historical data, not a
+        // mocked save rejection and not proof that the reporter has this exact historical layout.
+        await sessions.saveSession({
+          ...original,
+          conversationGraph: rebindConversationGraphSessionId(
+            original.conversationGraph!,
+            historicalSessionId,
+            SESSION_ID
+          )
+        })
+      }
+
+      const sessionPath = join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`)
+      const beforeRecovery = await readFile(sessionPath, 'utf8')
+      expect(
+        (await sessions.loadSession(PROJECT_ID, SESSION_ID))?.conversationGraph?.rootFrameId
+      ).toBe(`root-frame-${legacyRebound ? SESSION_ID : historicalSessionId}`)
+
+      const reopened = new SessionPersistenceCoordinator(
+        new SessionRepository(storageRoot),
+        files,
+        undefined,
+        snapshots,
+        undefined,
+        prepared.provenance
+      )
+      const loaded = await reopened.loadAll()
+      const session = loaded.sessions.find((candidate) => candidate.id === SESSION_ID)!
+      expect(session).toBeDefined()
+      const title = 'Continue the restored conversation'
+      const save = reopened.saveSession({ ...session, title, updatedAt: session.updatedAt + 1 })
+
+      // A reopened conversation must remain writable without discarding immutable Artifact evidence.
+      await expect(save).resolves.toMatchObject({ title })
+      expect(session.conversationGraph).toEqual(original.conversationGraph)
+      await expect(sessions.loadSession(PROJECT_ID, SESSION_ID)).resolves.toMatchObject({ title })
+      await expect(
+        client.artifactVersion.findUniqueOrThrow({ where: { id: prepared.version.versionId } })
+      ).resolves.toMatchObject({
+        id: versionBefore.id,
+        rootFrameId: versionBefore.rootFrameId,
+        agentFrameId: versionBefore.agentFrameId,
+        messageBranchId: versionBefore.messageBranchId,
+        messageId: versionBefore.messageId,
+        messageSnapshotId: versionBefore.messageSnapshotId,
+        checksum: versionBefore.checksum,
+        state: 'finalized'
+      })
+      const backups = (await readdir(dirname(sessionPath))).filter((name) =>
+        name.includes('.pre-artifact-binding-')
+      )
+      expect(backups).toHaveLength(legacyRebound ? 1 : 0)
+      if (legacyRebound) {
+        await expect(readFile(join(dirname(sessionPath), backups[0]), 'utf8')).resolves.toBe(
+          beforeRecovery
+        )
+      }
+      await reopened.loadAll()
+      expect(
+        (await readdir(dirname(sessionPath))).filter((name) =>
+          name.includes('.pre-artifact-binding-')
+        )
+      ).toEqual(backups)
+    }
+  )
+
+  const prepareBindingRepair = async (
+    historicalId = 'pending-session-123-1',
+    outputCount = 1
+  ): Promise<
+    Awaited<ReturnType<typeof prepareRecovery>> & {
+      snapshots: ProvenanceMessageSnapshotRepository
+      rebound: PersistedChatSession
+      sessionPath: string
+      coordinator: (repository?: SessionRepository) => SessionPersistenceCoordinator
+    }
+  > => {
+    const compatibility = new ArtifactRepository(storageRoot)
+    const prepared = await prepareRecovery(compatibility, outputCount, historicalId)
+    await finalizeAndLinkVersion(prepared)
+    const snapshots = new ProvenanceMessageSnapshotRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const original = (await sessions.loadSession(PROJECT_ID, SESSION_ID))!
+    await snapshots.captureFinalizedMessages(original)
+    const rebound = await sessions.saveSession({
+      ...original,
+      conversationGraph: rebindConversationGraphSessionId(
+        original.conversationGraph!,
+        historicalId,
+        SESSION_ID
+      )
+    })
+    const sessionPath = join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`)
+    const coordinator = (
+      repository = new SessionRepository(storageRoot)
+    ): SessionPersistenceCoordinator =>
+      new SessionPersistenceCoordinator(
+        repository,
+        files,
+        undefined,
+        snapshots,
+        undefined,
+        prepared.provenance
+      )
+    return { ...prepared, snapshots, rebound, sessionPath, coordinator }
+  }
+
+  it.each([
+    'missing-snapshot',
+    'checksum-mismatch',
+    'missing-proof',
+    'mixed-roots',
+    'unrelated-root',
+    'changed-transcript',
+    'colliding-branch',
+    'live-runtime'
+  ])('legacy binding repair preserves ambiguous or unsafe authority: %s', async (fault) => {
+    const fixture = await prepareBindingRepair(
+      fault === 'unrelated-root' ? 'unrelated-session' : undefined,
+      fault === 'mixed-roots' ? 2 : 1
+    )
+    const snapshot = await client.artifactMessageSnapshot.findFirstOrThrow({
+      where: { projectId: PROJECT_ID, sessionId: SESSION_ID }
+    })
+    if (fault === 'missing-snapshot') await rm(join(storageRoot, ...snapshot.storageKey.split('/')))
+    if (fault === 'checksum-mismatch')
+      await writeFile(join(storageRoot, ...snapshot.storageKey.split('/')), '{}')
+    if (fault === 'missing-proof')
+      await client.artifactVersion.update({
+        where: { id: fixture.version.versionId },
+        data: { messageSnapshotId: null }
+      })
+    if (fault === 'mixed-roots')
+      await client.artifactVersion.update({
+        where: { id: fixture.versions[1].versionId },
+        data: { rootFrameId: `root-frame-${SESSION_ID}` }
+      })
+    if (fault === 'changed-transcript') {
+      const changed = structuredClone(fixture.rebound)
+      changed.messages[0].content = 'This is a different prompt'
+      changed.conversationGraph!.messages[0].content = changed.messages[0].content
+      await sessions.saveSession(changed)
+    }
+    if (fault === 'colliding-branch') {
+      const changed = structuredClone(fixture.rebound)
+      changed.conversationGraph!.branches.push({
+        ...changed.conversationGraph!.branches[0],
+        id: 'message-branch-pending-session-123-1',
+        headMessageId: undefined
+      })
+      await sessions.saveSession(changed)
+    }
+    const before = await readFile(fixture.sessionPath, 'utf8')
+    const coordinator = fixture.coordinator(
+      new SessionRepository(storageRoot, {
+        hasLiveRuntimeSession: () => fault === 'live-runtime'
+      })
+    )
+
+    const loaded = await coordinator.loadAll()
+    await expect(readFile(fixture.sessionPath, 'utf8')).resolves.toBe(before)
+    expect(
+      (await readdir(dirname(fixture.sessionPath))).filter((name) =>
+        name.includes('.pre-artifact-binding-')
+      )
+    ).toEqual([])
+    const session = loaded.sessions.find(({ id }) => id === SESSION_ID)!
+    await expect(
+      coordinator.saveSession({ ...session, title: 'Must remain guarded' })
+    ).rejects.toBeInstanceOf(FinalizedArtifactBindingConflictError)
+  })
+
+  it('legacy binding repair refuses a conflicting backup and succeeds after the obstruction is removed', async () => {
+    const fixture = await prepareBindingRepair()
+    const before = await readFile(fixture.sessionPath, 'utf8')
+    const checksum = createHash('sha256').update(before).digest('hex')
+    const backupPath = `${fixture.sessionPath}.pre-artifact-binding-${checksum}.backup`
+    await writeFile(backupPath, 'existing evidence must not be overwritten')
+
+    await fixture.coordinator().loadAll()
+    await expect(readFile(fixture.sessionPath, 'utf8')).resolves.toBe(before)
+    await expect(readFile(backupPath, 'utf8')).resolves.toBe(
+      'existing evidence must not be overwritten'
+    )
+
+    await rm(backupPath)
+    const coordinator = fixture.coordinator()
+    const loaded = await coordinator.loadAll()
+    const session = loaded.sessions.find(({ id }) => id === SESSION_ID)!
+    await expect(
+      coordinator.saveSession({ ...session, title: 'Recovered' })
+    ).resolves.toMatchObject({ title: 'Recovered' })
+    await expect(readFile(backupPath, 'utf8')).resolves.toBe(before)
+  })
 
   it('replays an explicitly requested finalized Version that is already linked', async () => {
     const compatibility = new ArtifactRepository(storageRoot)
@@ -1450,6 +1677,7 @@ describe('artifact finalization startup recovery', () => {
   const finalizeAndLinkVersion = async (input: {
     provenance: ArtifactProvenanceRepository
     version: Awaited<ReturnType<ArtifactProvenanceRepository['createVersion']>>
+    versions?: Awaited<ReturnType<ArtifactProvenanceRepository['createVersion']>>[]
     context: {
       rootFrameId: string
       agentFrameId: string
@@ -1463,7 +1691,7 @@ describe('artifact finalization startup recovery', () => {
       projectId: PROJECT_ID,
       appSessionId: SESSION_ID,
       artifactRunId: RUN_ID,
-      artifactVersionIds: [input.version.versionId],
+      artifactVersionIds: (input.versions ?? [input.version]).map((version) => version.versionId),
       ...input.context,
       messageId: 'message-1'
     })

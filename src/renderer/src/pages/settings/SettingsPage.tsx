@@ -1,3 +1,5 @@
+import { Notice } from '@/components/notice'
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { ConnectorBulkManageView } from './ConnectorBulkManageView'
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
@@ -1472,21 +1474,18 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               </div>
 
               {preflightFailed ? (
-                <div
+                <Notice
+                  level="error"
                   role="alert"
-                  className="mx-5 mt-3 flex items-center gap-3 text-sm text-destructive"
-                >
-                  <p>
-                    {t('Could not refresh environment readiness. Saved settings are unchanged.')}
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void refreshPreflight().catch(() => undefined)}
-                  >
-                    {t('Retry preflight')}
-                  </Button>
-                </div>
+                  className="mx-3 mt-3"
+                  description={t(
+                    'Could not refresh environment readiness. Saved settings are unchanged.'
+                  )}
+                  primaryButton={{
+                    label: t('Retry preflight'),
+                    onClick: () => void refreshPreflight().catch(() => undefined)
+                  }}
+                />
               ) : null}
 
               {settingsWriteError ? (
@@ -1943,12 +1942,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         framework={activeFramework}
                       />
                       {statusMessage ? (
-                        <p
-                          className={`mt-3 text-sm ${statusOk ? 'text-primary' : 'text-destructive'}`}
-                          role="alert"
-                        >
-                          {statusMessage}
-                        </p>
+                        statusOk ? (
+                          <p className="mt-3 text-sm text-primary" role="alert">
+                            {statusMessage}
+                          </p>
+                        ) : (
+                          <InlineNotice level="error" role="alert" className="mt-3">
+                            {statusMessage}
+                          </InlineNotice>
+                        )
                       ) : null}
                       <div className="mt-6 flex justify-end gap-2">
                         <Button
@@ -1975,9 +1977,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       }
                     >
                       {postSaveValidationFailed ? (
-                        <p className="mx-5 mt-5 text-sm text-destructive" role="alert">
+                        <InlineNotice level="error" className="mx-5 mt-5" role="alert">
                           {t('Could not test the provider connection.')}
-                        </p>
+                        </InlineNotice>
                       ) : null}
                       <ProvidersPanel
                         onCreateProvider={openCreate}

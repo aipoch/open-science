@@ -5228,8 +5228,7 @@ describe('ConversationPanel fix loop lock', () => {
 
     const controls = container.querySelector('[data-testid="mock-agent-controls"]')
     const chooseButton = notice?.querySelector<HTMLButtonElement>('button')
-    expect(chooseButton?.parentElement).toBe(notice)
-    expect(chooseButton?.classList.contains('ml-auto')).toBe(true)
+    expect(chooseButton?.closest('[data-testid="specialist-unavailable-notice"]')).toBe(notice)
     expect(controls?.getAttribute('data-open-request')).toBe('0')
     act(() => {
       chooseButton?.click()

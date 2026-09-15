@@ -1,4 +1,8 @@
-import { spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import {
+  spawnSync,
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams
+} from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import {
   chmod,
@@ -29,6 +33,7 @@ import {
   rBin,
   rScriptBin
 } from './runtime-paths'
+import { terminateProcessTree } from '../process-tree'
 import { TimeoutController } from './timeout-controller'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES, NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
@@ -1546,6 +1551,195 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       await executor.shutdown()
     }
   }, 15_000)
+
+  it.each(['win32', 'linux'] as const)(
+    'waits for process teardown before settling cancellation on %s',
+    async (platform) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-drain-', platform)
+      let release!: () => void
+      const stopping = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let teardownStarted = false
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform,
+        cancellationGraceMs: 1,
+        terminateTree: async (...args) => {
+          teardownStarted = true
+          await stopping
+          return terminateProcessTree(...args)
+        }
+      })
+      let settled = false
+      try {
+        await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+        const cancellation = new AbortController()
+        const run = executor
+          .execute({
+            ...baseRequest(cwdDir),
+            code: '__IGNORE_SIGINT__',
+            signal: cancellation.signal
+          })
+          .then((result) => {
+            settled = true
+            return result
+          })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        await vi.waitFor(() => expect(teardownStarted).toBe(true))
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(settled).toBe(false)
+        release()
+        await expect(run).resolves.toMatchObject({ status: 'cancelled' })
+      } finally {
+        release()
+        await executor.shutdown()
+      }
+    },
+    15_000
+  )
+
+  it.each(['win32', 'linux'] as const)(
+    'rejects cancellation when the process tree cannot be reaped on %s',
+    async (platform) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-unreaped-', platform)
+      const unreapedChildren = new Set<ChildProcess>()
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform,
+        cancellationGraceMs: 1,
+        terminateTree: async (child) => {
+          unreapedChildren.add(child)
+          return { reaped: false }
+        }
+      })
+      try {
+        await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          code: '__IGNORE_SIGINT__',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        await expect(run).rejects.toThrow('process tree could not be stopped')
+        expect([...unreapedChildren][0]?.exitCode).toBeNull()
+        await expect(executor.execute({ ...baseRequest(cwdDir), code: 'again' })).rejects.toThrow(
+          'process tree could not be stopped'
+        )
+        await expect(executor.terminate('python', DEFAULT_PY_ENV)).rejects.toThrow(
+          'runtime switch refused'
+        )
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
+      } finally {
+        await executor.shutdown()
+        for (const child of unreapedChildren) await terminateProcessTree(child)
+      }
+    },
+    15_000
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'retains an unreaped barrier when a cancelled kernel exits before the grace timer',
+    async () => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-early-exit-', 'linux')
+      const children = new Set<ChildProcess>()
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform: 'linux',
+        cancellationGraceMs: 10_000,
+        terminateTree: async (child) => {
+          children.add(child)
+          return { reaped: false }
+        }
+      })
+      try {
+        await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+        const child = procFor(executor, 'python')?.child
+        if (!child) throw new Error('Expected a running kernel')
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          code: '__IGNORE_SIGINT__',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        // An actual child exit wins before the grace timer; the OS reaping boundary reports that
+        // surviving descendants could not be confirmed stopped.
+        child.kill('SIGKILL')
+        await expect.soft(run).rejects.toThrow('process tree could not be stopped')
+        await expect.soft(executor.shutdown()).resolves.toEqual({ reaped: false })
+        await expect(executor.execute({ ...baseRequest(cwdDir), code: 'again' })).rejects.toThrow(
+          'process tree could not be stopped'
+        )
+      } finally {
+        await executor.shutdown()
+        for (const child of children) await terminateProcessTree(child)
+      }
+    },
+    15_000
+  )
+
+  it.each(['win32', 'linux'] as const)(
+    'reports rejected cancellation cleanup as unreaped on %s',
+    async (platform) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-cleanup-reject-', platform)
+      const terminated = vi.fn()
+      const cleanup = vi.fn(async () => {
+        throw new Error('sandbox cleanup rejected')
+      })
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform,
+        cancellationGraceMs: 1,
+        onTerminated: terminated,
+        processSandbox: {
+          wrap: async (invocation) => ({
+            ...invocation,
+            annotateStderr: (stderr: string) => stderr,
+            cleanup
+          })
+        }
+      })
+      try {
+        expect(
+          await executor.execute({
+            ...baseRequest(cwdDir),
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            code: 'warm'
+          })
+        ).toMatchObject({ status: 'completed', stderr: '' })
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          code: '__IGNORE_SIGINT__',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        await expect(run).rejects.toThrow('process tree could not be stopped')
+        expect.soft(terminated).toHaveBeenCalledWith('python', DEFAULT_PY_ENV)
+        await expect.soft(executor.shutdown()).resolves.toEqual({ reaped: false })
+        await expect(
+          executor.execute({
+            ...baseRequest(cwdDir),
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            code: 'again'
+          })
+        ).rejects.toThrow('process tree could not be stopped')
+      } finally {
+        await executor.shutdown().catch(() => undefined)
+      }
+    },
+    15_000
+  )
 
   it('drops and respawns the kernel when Windows cancellation cannot preserve it', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-windows-cancel-', 'win32')
@@ -3825,9 +4019,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
           sessionId: 'session-1',
           projectId: 'project-1'
         })
-        .then((result) => {
+        .finally(() => {
           completed = true
-          return result
         })
 
       await vi.waitFor(() => expect(registerOwnedProcessGroup).toHaveBeenCalledOnce())
@@ -3839,7 +4032,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       )
       expect(completed).toBe(false)
       sandbox.release()
-      await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      await expect(execution).rejects.toThrow('process tree could not be stopped')
+      await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
     } finally {
       releaseReaping?.()
       sandbox.release()
@@ -3906,9 +4100,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
           sessionId: 'session-1',
           projectId: 'project-1'
         })
-        .then((result) => {
+        .finally(() => {
           completed = true
-          return result
         })
 
       await vi.waitFor(() =>
@@ -3918,7 +4111,11 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       )
       expect(completed).toBe(false)
       sandbox.release()
-      await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      if (process.platform === 'win32') {
+        await expect(execution).rejects.toThrow('process tree could not be stopped')
+      } else {
+        await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      }
       expect(sandbox.cleanup).toHaveBeenCalledOnce()
     } finally {
       sandbox.release()

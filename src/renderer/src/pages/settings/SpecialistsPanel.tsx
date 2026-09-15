@@ -150,7 +150,8 @@ const SEVERITY_ICON = {
 
 const SEVERITY_CLASSES = {
   error: 'border-red-200 bg-red-50 text-red-800',
-  warning: 'border-amber-200 bg-amber-50 text-amber-800',
+  warning:
+    'border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 bg-status-warning-surface dark:bg-status-warning-dark-surface text-status-warning-foreground dark:text-status-warning-dark-foreground',
   info: 'border-blue-200 bg-blue-50 text-blue-800'
 } as const
 
@@ -905,7 +906,7 @@ const InstalledSpecialistsPanel = ({
                       ? 'bg-success-000/10 text-success-000'
                       : blocking
                         ? 'bg-danger-000/10 text-danger-000'
-                        : 'bg-warning-100/10 text-warning-100'
+                        : 'bg-status-warning-surface/10 dark:bg-status-warning-dark-surface/10 text-status-warning-foreground dark:text-status-warning-dark-foreground'
                   }`}
                 >
                   {canInstallPackage
@@ -1752,7 +1753,7 @@ const InstalledSpecialistsPanel = ({
                               </Badge>
                             ) : null}
                             {sourceMissing ? (
-                              <Badge className="h-5 border-warning-100/40 bg-warning-100/10 px-1.5 text-[11px] font-normal text-warning-900">
+                              <Badge className="h-5 border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 bg-status-warning-surface/10 dark:bg-status-warning-dark-surface/10 px-1.5 text-[11px] font-normal text-status-warning-foreground dark:text-status-warning-dark-foreground">
                                 {t('Source removed')}
                               </Badge>
                             ) : null}
@@ -1978,7 +1979,7 @@ const InstalledSpecialistsPanel = ({
                                   variant="outline"
                                   className={
                                     item.modifiedSinceImport
-                                      ? 'h-5 border-warning-100 bg-warning-100/60 px-1.5 text-[11px] font-normal text-warning-900'
+                                      ? 'h-5 border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 bg-status-warning-surface/60 dark:bg-status-warning-dark-surface/60 px-1.5 text-[11px] font-normal text-status-warning-foreground dark:text-status-warning-dark-foreground'
                                       : 'h-5 px-1.5 text-[11px] font-normal text-muted-foreground'
                                   }
                                   data-specialist-metadata="local-status"

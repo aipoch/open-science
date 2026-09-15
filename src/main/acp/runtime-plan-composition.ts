@@ -5,9 +5,10 @@ import type {
   PlanResponseCommand,
   PlanResponseIdentity
 } from '../../shared/session-plan/contract'
-import { PlanCommandError } from '../../shared/session-plan/contract'
+import { formatPlanProtectedContext, PlanCommandError } from '../../shared/session-plan/contract'
 import type { SessionPlanStepStatus } from '../../shared/session-persistence'
 import { createLogger, errorLogFields } from '../logger'
+import { renderAppMcpToolReferences } from '../agent-framework/app-mcp-names'
 import type { PlanResponseResult } from '../session-plan/plan-service'
 import { matchesPlanDelivery } from '../session-plan/plan-delivery'
 import type { AcpRuntimeOptions } from './runtime'
@@ -54,6 +55,7 @@ const waitForPlanApproval = (
 ): Promise<unknown> => {
   if (!signal) return approval
   if (signal.aborted) {
+    void approval.catch(() => undefined)
     onTransportDetached?.()
     return Promise.reject(new Error('Session Plan RPC transport disconnected.'))
   }
@@ -86,6 +88,7 @@ const composeAcpRuntimePlanWorkflow = (
   session: AcpRuntimeSessionOwners,
   hooks: Readonly<{
     deliveries?: Pick<SessionPlanDeliveryOwner, 'accept' | 'begin' | 'clear' | 'rearmUnaccepted'>
+    pauseProvider?: (sessionId: string, sequence: number) => () => void
   }> = {}
 ) => {
   const service = base.planService
@@ -174,9 +177,31 @@ const composeAcpRuntimePlanWorkflow = (
     if (interactions.approvalInteractionIdFor(sessionId) !== interactionId) return
     interactions.rejectApproval(sessionId, reason)
   }
+  const pausePendingProvider = (execution: AcpPromptSessionInteractionScope): boolean => {
+    const response = interactions.approvalResponseFor(execution.sessionId)
+    if (
+      !hooks.pauseProvider ||
+      !response ||
+      execution.signal.aborted ||
+      sessionInteractions.current(execution.sessionId) !== execution
+    )
+      return false
+    if (!interactions.providerPauseFor(execution.sessionId)) {
+      interactions.suspendProvider(execution.sessionId, execution.sequence, response, () =>
+        hooks.pauseProvider!(execution.sessionId, execution.sequence)
+      )
+    }
+    return true
+  }
   const call = async (input: AcpSessionPlanCall): Promise<unknown> => {
     const approvalToken = interactions.approvalTokenFor(input.sessionId)
     if (!service) throw new Error('Session Plan capability is not configured.')
+    if (interactions.providerPauseFor(input.sessionId)) {
+      throw new PlanCommandError(
+        'plan-review-pending',
+        'The Session Plan response has not been delivered. Wait for Open Science to resume this task before making another Plan call.'
+      )
+    }
     if (input.operation === 'generate') {
       const execution = sessionInteractions.current(input.sessionId)
       if (!execution || execution.kind !== 'prompt') {
@@ -202,6 +227,15 @@ const composeAcpRuntimePlanWorkflow = (
         if (current) publishProjection(input.sessionId, current)
         throw error
       }
+      if (execution.signal.aborted || sessionInteractions.current(input.sessionId) !== execution) {
+        interactions.releaseApprovalReservation(input.sessionId, interactionId)
+        interactions.release(input.sessionId, result.projection.artifactVersionId)
+        publishProjection(input.sessionId, result.projection)
+        throw new PlanCommandError(
+          'interaction-mismatch',
+          'The Plan was saved pending review, but its generating interaction ended. It has not been approved.'
+        )
+      }
       let approval: Promise<unknown>
       try {
         approval = interactions.parkReservedApproval(input.sessionId, interactionId)
@@ -216,13 +250,25 @@ const composeAcpRuntimePlanWorkflow = (
         revision: result.projection.revision
       })
       publishProjection(input.sessionId, result.projection)
-      return waitForPlanApproval(approval, input.signal, () =>
-        rejectApprovalForInteraction(
-          input.sessionId,
-          interactionId,
-          'The Session Plan RPC transport disconnected while awaiting approval.'
+      const waitingToken = interactions.approvalTokenFor(input.sessionId)
+      return waitForPlanApproval(approval, input.signal, () => {
+        // A healthy MCP call already blocks its caller. Only loss of that wait requires
+        // application-owned Provider suspension. Keep the human response waiter alive.
+        if (
+          interactions.approvalTokenFor(input.sessionId) !== waitingToken ||
+          execution.signal.aborted ||
+          sessionInteractions.current(input.sessionId) !== execution
         )
-      )
+          return
+        if (!pausePendingProvider(execution)) {
+          rejectApprovalForInteraction(
+            input.sessionId,
+            interactionId,
+            'The Session Plan RPC transport disconnected while awaiting approval.',
+            waitingToken
+          )
+        }
+      })
     }
     if (input.operation === 'approve' || input.operation === 'reject') {
       const projection = await service.getProjection(input.projectId, input.sessionId)
@@ -418,6 +464,31 @@ const composeAcpRuntimePlanWorkflow = (
     }
     return result
   }
+  const handoffPausedResponse = <Result extends PlanResponseResult>(
+    sessionId: string,
+    result: Result,
+    approvalToken: object | undefined
+  ): Result | undefined => {
+    const pause = interactions.providerPauseFor(sessionId)
+    const current = sessionInteractions.current(sessionId)
+    if (
+      !pause ||
+      current?.kind !== 'prompt' ||
+      current.sequence !== pause.interactionSequence ||
+      !interactions.resolveApproval(sessionId, result, approvalToken)
+    )
+      return undefined
+    if ('projection' in result) publishProjection(sessionId, result.projection)
+    else
+      interactions.authorizeAgentDecision({
+        sessionId,
+        artifactVersionId: result.artifactVersionId,
+        interactionSequence: current.sequence
+      })
+    const response = { ...result }
+    Reflect.deleteProperty(response, 'deliveryCommandId')
+    return response
+  }
   const respond = async (input: PlanResponseCommand): Promise<PlanResponseResult> => {
     if (!service) throw new Error('Session Plan capability is not configured.')
     const approvalInteractionId = interactions.approvalInteractionIdFor(input.sessionId)
@@ -524,6 +595,8 @@ const composeAcpRuntimePlanWorkflow = (
       if (interaction?.kind === 'prompt') {
         interactions.releaseAgentDecisionAuthorization(input.sessionId, interaction.sequence)
       }
+      const pausedResponse = handoffPausedResponse(input.sessionId, result, approvalToken)
+      if (pausedResponse) return pausedResponse
       const sameWaiterIsLive =
         interactionIsLive &&
         !retriedAfterDecisionDetach &&
@@ -539,6 +612,12 @@ const composeAcpRuntimePlanWorkflow = (
       ) {
         publishProjection(input.sessionId, result.projection)
         return result
+      }
+      // Transport loss can race the durable live-delivery claim. Move that claim back to
+      // queued before handing the response to the suspended Provider continuation.
+      if (result.deliveryCommandId && interactions.providerPauseFor(input.sessionId)) {
+        await rearmDeliveryReceipt(input.projectId, input.sessionId, result.deliveryCommandId)
+        return handoffPausedResponse(input.sessionId, result, approvalToken) ?? result
       }
       const handedOffResult = { ...result }
       const resolved =
@@ -621,8 +700,14 @@ const composeAcpRuntimePlanWorkflow = (
     if (!sameFeedbackWaiterIsLive) {
       return result
     }
+    const pausedFeedback = handoffPausedResponse(input.sessionId, result, approvalToken)
+    if (pausedFeedback) return pausedFeedback
     if (!(await beginDeliveryReceipt(input.projectId, input.sessionId, result.deliveryCommandId))) {
       return result
+    }
+    if (interactions.providerPauseFor(input.sessionId)) {
+      await rearmDeliveryReceipt(input.projectId, input.sessionId, result.deliveryCommandId)
+      return handoffPausedResponse(input.sessionId, result, approvalToken) ?? result
     }
     const afterBegin = sessionInteractions.current(input.sessionId)
     const handedOffFeedback = { ...result }
@@ -737,6 +822,8 @@ const composeAcpRuntimePlanWorkflow = (
     sessionId: string,
     interaction: AcpPromptSessionInteractionScope
   ): void => {
+    const pause = interactions.providerPauseFor(sessionId, interaction.sequence)
+    if (pause) interactions.releaseProviderPause(sessionId, pause)
     interactions.releaseAgentDecisionAuthorization(sessionId, interaction.sequence)
     if (interaction.promptMessageId) {
       rejectApprovalForInteraction(
@@ -782,9 +869,73 @@ const composeAcpRuntimePlanWorkflow = (
       throw error
     }
   }
+  const resumeAfterProviderStop: NonNullable<
+    AcpPromptTurnPlanWorkflow['resumeAfterProviderStop']
+  > = async (interaction) => {
+    const pause = interactions.observeProviderStop(interaction.sessionId, interaction.sequence)
+    if (!pause) return undefined
+    const result = (await pause.response) as PlanResponseResult
+    if (
+      interaction.signal.aborted ||
+      sessionInteractions.current(interaction.sessionId) !== interaction
+    )
+      return undefined
+    const projectId = session.sessionEnvironment.projectId(interaction.sessionId)
+    if (!result.deliveryCommandId || !service || !deliveryOwner) {
+      throw new Error('The paused Plan response has no durable delivery receipt.')
+    }
+    const commandId = result.deliveryCommandId
+    const context = await service.getDeliveryContext({
+      projectId,
+      sessionId: interaction.sessionId,
+      commandId
+    })
+    await assertVisibleToDurableBranch(projectId, interaction.sessionId, context.projection)
+    interactions.releaseProviderPause(interaction.sessionId, pause)
+    const instruction =
+      'kind' in result && result.kind === 'feedback'
+        ? 'The user provided Session Plan feedback. The Plan remains pending. Interpret the user Message, then call generate_plan with a decision-only payload for an unambiguous approval or dismissal, or generate a revised Plan for requested changes. Do not execute pending Plan steps.'
+        : context.projection.approval === 'approved'
+          ? 'The user approved this Session Plan. Continue the approved work.'
+          : 'The user dismissed this Session Plan. Acknowledge the decision and do not execute the rejected Plan.'
+    return {
+      content:
+        renderAppMcpToolReferences(base.backendGeneration.current.framework.id, instruction) +
+        ('kind' in result && result.kind === 'feedback'
+          ? '\n\nUser Message:\n' + result.text
+          : '') +
+        '\n\n' +
+        formatPlanProtectedContext(context.projection),
+      dispatch: async () => {
+        if (!(await beginDeliveryReceipt(projectId, interaction.sessionId, commandId))) {
+          throw new Error('The Plan response could not claim its delivery receipt.')
+        }
+      },
+      notDispatched: async () => {
+        await rearmDeliveryReceipt(projectId, interaction.sessionId, commandId)
+      },
+      accepted: async () => {
+        if (!(await deliveryOwner.accept(projectId, interaction.sessionId, commandId))) {
+          throw new Error(
+            'The Agent responded, but Plan delivery acceptance could not be saved. Delivery is uncertain; do not repeat it.'
+          )
+        }
+        await clearDeliveryReceipt(projectId, interaction.sessionId, commandId)
+      }
+    }
+  }
   const prompt: AcpPromptTurnPlanWorkflow = Object.freeze({
     preflight,
     admit,
+    isProviderPaused: (interaction) =>
+      Boolean(interactions.providerPauseFor(interaction.sessionId, interaction.sequence)),
+    toolWaitFailed: (interaction) => {
+      pausePendingProvider(interaction)
+    },
+    providerStopped: (interaction) => {
+      interactions.observeProviderStop(interaction.sessionId, interaction.sequence)
+    },
+    resumeAfterProviderStop,
     providerAccepted,
     beforeRelease,
     afterRelease

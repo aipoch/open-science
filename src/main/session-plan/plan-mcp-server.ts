@@ -225,7 +225,7 @@ const createPlanMcpServer = (handler: PlanMcpHandler): ModelContextProtocolServe
     {
       title: 'Generate or decide Session Plan',
       description:
-        'Generation and decision use separate call shapes. For generation, submit one complete payload with all four top-level fields: task_summary, phases, desired_outputs, and feasibility. For a decision, submit only decision:"approved" or decision:"rejected". If validation fails, repair each reported path in the complete payload; never resend the same invalid arguments unchanged. Generation blocks until the user responds. Text responses always return as kind:feedback and remain ordinary user Messages; interpret the full meaning, then submit an unambiguous approval or rejection as a decision-only call, or revise and regenerate when changes are requested. An approved Plan remains active context on its durable Message Branch across later Attempts and context reconstruction. Never infer approval from message text alone. The legacy approval-only payload approve:true remains accepted.',
+        'Generation and decision use separate call shapes. For generation, submit one complete payload with all four top-level fields: task_summary, phases, desired_outputs, and feasibility. For a decision, submit only decision:"approved" or decision:"rejected". If validation fails, repair each reported path in the complete payload; never resend the same invalid arguments unchanged. Generation blocks until the user responds. If the tool wait times out or disconnects, Open Science retains the Plan and pauses the Provider turn until the review response can be delivered. Tool cancellation or timeout does not approve the Plan or prove submission failed; do not resubmit or execute steps because of a transport result. Text responses always return as kind:feedback and remain ordinary user Messages; interpret the full meaning, then submit an unambiguous approval or rejection as a decision-only call, or revise and regenerate when changes are requested. An approved Plan remains active context on its durable Message Branch across later Attempts and context reconstruction. Never infer approval from message text alone. The legacy approval-only payload approve:true remains accepted.',
       inputSchema: generatePlanToolSchema
     },
     async ({ decision, approve, task_summary, phases, desired_outputs, feasibility }, extra) => {
@@ -272,6 +272,9 @@ const createPlanMcpServer = (handler: PlanMcpHandler): ModelContextProtocolServe
             desired_outputs,
             feasibility
           })
+          // A review pause cancels this transport before an approval result can rebind the cache.
+          // Pending updates remain rejected by the service; the next approved Plan is server-bound.
+          executionArtifactVersionId = undefined
           const result = await handler.generate(document, extra.signal)
           executionArtifactVersionId = projectionVersionId(result) ?? executionArtifactVersionId
           return result
@@ -362,6 +365,7 @@ const createPlanMcpServerForEnvironment = (
 ): ModelContextProtocolServer =>
   createPlanMcpServer({
     generate: async (content, signal) => {
+      executionVersionByEnvironment.delete(environment)
       const result = await callPlanRpc(environment, 'generate', content, signal)
       const versionId = projectionVersionId(result)
       if (versionId) executionVersionByEnvironment.set(environment, versionId)

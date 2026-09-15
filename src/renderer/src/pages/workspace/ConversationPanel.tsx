@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
@@ -1411,22 +1412,17 @@ const ConversationPanel = ({
                   />
 
                   {activeSession && specialistUnavailable ? (
-                    <div
+                    <InlineNotice
                       role="status"
                       aria-live="polite"
                       data-testid="specialist-unavailable-notice"
-                      className="relative z-10 mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-warning-100/50 bg-warning-100/10 px-3 py-2"
+                      className="relative z-10 mb-2"
                     >
-                      <AlertTriangle
-                        className="mt-0.5 size-3.5 shrink-0 text-warning-900"
-                        strokeWidth={2}
-                        aria-hidden="true"
-                      />
                       <div className="min-w-0 flex-1">
-                        <div className="text-[12px] font-medium leading-5 text-warning-900">
+                        <div className="text-sm font-medium text-foreground">
                           {t('This Specialist is no longer available')}
                         </div>
-                        <div className="text-[11px] leading-4 text-text-100">
+                        <div className="text-sm leading-6 text-muted-foreground">
                           {t('Choose another Specialist before sending a message.')}{' '}
                           {t('Your draft is preserved.')}
                         </div>
@@ -1435,12 +1431,12 @@ const ConversationPanel = ({
                         type="button"
                         variant="outline"
                         size="xs"
-                        className="ml-auto border-warning-100/50 bg-transparent text-warning-900 hover:bg-warning-100/20 hover:text-warning-900"
+                        className="mt-2"
                         onClick={() => setAgentControlsOpenRequest((request) => request + 1)}
                       >
                         {t('Choose Specialist')}
                       </Button>
-                    </div>
+                    </InlineNotice>
                   ) : null}
 
                   {/* Reconfigure failure banner: shown directly above the composer when a pre-send

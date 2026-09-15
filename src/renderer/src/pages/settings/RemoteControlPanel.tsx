@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { QRCodeSVG } from '@rc-component/qrcode'
@@ -727,13 +728,14 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                           {snapshot.accessUrl}
                         </div>
                         {copyStatus === 'error' ? (
-                          <div
+                          <InlineNotice
+                            level="error"
                             role="alert"
-                            className="mt-2 text-xs text-destructive"
+                            className="mt-2"
                             data-testid="remote-link-copy-error"
                           >
                             {t('Could not copy the browser link. Select it and copy it manually.')}
-                          </div>
+                          </InlineNotice>
                         ) : null}
                         <span
                           role="status"

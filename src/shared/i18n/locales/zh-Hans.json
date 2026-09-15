@@ -5876,6 +5876,8 @@
     "This folder cannot be used to install packages for this R. Click Recheck and use a detected personal package folder, or use an app-managed R environment.": "此文件夹无法用于安装这个 R 的软件包。请点击“重新检测”并使用检测到的个人软件包文件夹，或使用应用托管的 R 环境。",
     "If you have already set up a personal package folder in this R, select that folder here.": "如果您已在此 R 中设置了个人软件包文件夹，可在这里选择该文件夹。",
     "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "未找到此 R 的个人软件包文件夹。可以使用应用托管的 R 环境；如需继续使用此 R，请先在 R 中设置个人软件包文件夹，再点击“重新检测”。",
+    "{{count}} unchanged lines omitted_other": "已省略 {{count}} 行未修改内容",
+    "No newline at end of file": "文件末尾没有换行",
     "Read web pages": "读取网页",
     "Allow web reading?": "允许读取网页？",
     "Conversation approval allows web reading across websites for this conversation and its subagents.": "会话授权允许本会话及其子智能体读取不同网站的网页。",

@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: device credential editor · genre: modern-minimal · theme: existing Settings tokens · slop: pass */
@@ -545,13 +546,13 @@ export function DeviceCredentialEditor({
         {activeCredential?.kind === 'oauth' &&
         activeCredential.needsSecret &&
         encryptionAvailable ? (
-          <p className="text-sm text-status-warning-foreground" role="status">
+          <InlineNotice level="warning" role="status">
             {activeCredential.needsClientSecret
               ? t(
                   'Replace the client secret before signing in. Your Connector bindings will be kept.'
                 )
               : t('The saved sign-in state could not be read. Sign in again to restore it.')}
-          </p>
+          </InlineNotice>
         ) : null}
 
         {kind !== 'oauth' ? (
@@ -575,22 +576,21 @@ export function DeviceCredentialEditor({
         ) : null}
 
         {message ? (
-          <p
-            className={
-              message.tone === 'success'
-                ? 'text-sm text-status-success-foreground'
-                : 'text-sm text-destructive'
-            }
-            role={message.tone === 'error' ? 'alert' : 'status'}
-          >
-            {message.text}
-          </p>
+          message.tone === 'success' ? (
+            <p className="text-sm text-status-success-foreground" role="status">
+              {message.text}
+            </p>
+          ) : (
+            <InlineNotice level="error" role="alert">
+              {message.text}
+            </InlineNotice>
+          )
         ) : null}
 
         {!encryptionAvailable ? (
-          <p className="text-sm text-destructive">
+          <InlineNotice level="error" role="note">
             {t('Secure key storage is unavailable. Unlock the system keychain and try again.')}
-          </p>
+          </InlineNotice>
         ) : null}
 
         {activeCredential?.kind === 'oauth' ? (

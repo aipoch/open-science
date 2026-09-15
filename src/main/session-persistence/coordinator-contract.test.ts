@@ -1,3 +1,5 @@
+import { materializeSessionConversationGraph } from '../../shared/session-persistence'
+import { forkEditedConversationMessage } from '../../shared/conversation-graph'
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { ArchiveCoordinator, type SessionRuntimeActivity } from '../archive/coordinator'
@@ -124,6 +126,102 @@ const createFileIndex = (overrides: Partial<SessionFileIndex> = {}): SessionFile
 })
 
 describe('SessionPersistenceCoordinator contracts', () => {
+  it('preserves the latest conversation and replay marker when binding a resumed Task provider', async () => {
+    const current = materializeSessionConversationGraph(
+      createSession({
+        title: 'Web title',
+        updatedAt: 10,
+        messages: [
+          {
+            id: 'web-message',
+            role: 'user',
+            content: 'Existing conversation',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        pendingHistoryReplay: { kind: 'before-message', messageId: 'web-message' }
+      })
+    )
+    const { repository } = createRepository([current])
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const saved = await coordinator.bindTaskSession({
+      session: {
+        id: current.id,
+        projectId: current.projectId,
+        cwd: current.cwd,
+        providerSessionId: 'resumed-provider',
+        providerContinuityToken: 'resumed-continuity',
+        updatedAt: 3
+      },
+      contextReset: true
+    })
+    expect(saved).toMatchObject({
+      title: current.title,
+      messages: current.messages,
+      conversationGraph: {
+        ...current.conversationGraph,
+        branches: current.conversationGraph.branches.map((branch) => ({
+          ...branch,
+          updatedAt: 11
+        }))
+      },
+      pendingHistoryReplay: current.pendingHistoryReplay,
+      providerSessionId: 'resumed-provider',
+      providerContinuityToken: 'resumed-continuity',
+      status: current.status,
+      updatedAt: 11
+    })
+    expect(saved.activeRun).toBeUndefined()
+  })
+
+  it.each(['archived', 'busy', 'branch'] as const)(
+    'does not admit a prepared Task after the Session becomes %s',
+    async (change) => {
+      const user = {
+        id: 'original-user',
+        role: 'user' as const,
+        content: 'Research',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const original = materializeSessionConversationGraph(createSession({ messages: [user] }))
+      const prepared = {
+        ...original,
+        messages: [...original.messages, { ...user, id: 'next-user', content: 'Follow up' }],
+        activeRun: { promptMessageId: 'next-user', startedAt: 3 },
+        status: 'running' as const
+      }
+      const current =
+        change === 'archived'
+          ? { ...original, archivedAt: 3 }
+          : change === 'busy'
+            ? { ...original, activeRun: { promptMessageId: 'other-user', startedAt: 3 } }
+            : {
+                ...original,
+                messages: [],
+                conversationGraph: forkEditedConversationMessage(
+                  original.conversationGraph,
+                  user.id,
+                  'new-branch',
+                  3
+                )
+              }
+      const { repository } = createRepository([current])
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+      await expect(
+        coordinator.admitTaskTurn({ session: prepared, contextReset: false })
+      ).rejects.toThrow(
+        change === 'archived' ? /archived/ : change === 'busy' ? /active run/ : /branch changed/
+      )
+      expect(repository.saveSession).not.toHaveBeenCalled()
+    }
+  )
+
   it.each(
     (['read', 'write', 'delete'] as const).flatMap((operation) =>
       [false, true].map((withGlobalBarrier) => ({ operation, withGlobalBarrier }))

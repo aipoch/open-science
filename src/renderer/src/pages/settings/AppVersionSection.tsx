@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: Settings About · macrostructure: identity + resource list
  * genre: modern-minimal · theme: Open Science Settings
@@ -95,16 +96,15 @@ const AppVersionSection = ({
               </p>
               <p className="mt-0.5 text-xs font-normal text-muted-foreground">{APP.copyright}</p>
               {statusLine ? (
-                <p
-                  className={
-                    status.state === 'error'
-                      ? 'mt-1 text-xs text-destructive'
-                      : 'mt-1 text-xs text-muted-foreground'
-                  }
-                  role={status.state === 'error' ? 'alert' : 'status'}
-                >
-                  {statusLine}
-                </p>
+                status.state !== 'error' ? (
+                  <p className="mt-1 text-xs text-muted-foreground" role="status">
+                    {statusLine}
+                  </p>
+                ) : (
+                  <InlineNotice level="error" role="alert" className="mt-2">
+                    {statusLine}
+                  </InlineNotice>
+                )
               ) : null}
             </div>
           </div>

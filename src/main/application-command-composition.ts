@@ -168,6 +168,8 @@ const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
   'settings:set-agent-routing',
   'sessions:fail-task-run',
   'sessions:settle-task-completion',
+  'sessions:bind-task-session',
+  'sessions:admit-task-turn',
   'sessions:stage-task-completion',
   'sessions:update-configuration'
 ])
@@ -197,6 +199,8 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'settings:set-agent-routing',
   'sessions:load-all',
   'sessions:save-session',
+  'sessions:bind-task-session',
+  'sessions:admit-task-turn',
   'sessions:stage-task-completion',
   'sessions:settle-task-completion',
   'sessions:fail-task-run',

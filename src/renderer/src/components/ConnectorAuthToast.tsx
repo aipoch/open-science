@@ -23,6 +23,7 @@ const ConnectorAuthToast = (): React.JSX.Element | null => {
 
   return (
     <ActionToast
+      level="warning"
       key={notice.id}
       title={t('{{name}} needs sign-in', { name: notice.displayName })}
       detail={t(

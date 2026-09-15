@@ -1,3 +1,5 @@
+import { Notice } from '@/components/notice'
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { AlertDialog } from 'radix-ui'
 import {
   CheckCircle2,
@@ -388,7 +390,9 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
           <div
             className={cn(
               'space-y-3 rounded-lg border p-3',
-              storagePassed ? 'border-border bg-muted/40' : 'border-amber-500/30 bg-amber-500/5'
+              storagePassed
+                ? 'border-border bg-muted/40'
+                : 'border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 bg-status-warning-surface/5 dark:bg-status-warning-dark-surface/5'
             )}
           >
             <div className="flex items-start gap-2">
@@ -399,7 +403,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                 />
               ) : (
                 <TriangleAlert
-                  className="mt-0.5 size-4 shrink-0 text-amber-600"
+                  className="mt-0.5 size-4 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
                   aria-hidden="true"
                 />
               )}
@@ -413,14 +417,14 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
               </div>
             </div>
             {revealError ? (
-              <p className="text-xs text-destructive" role="alert">
+              <InlineNotice level="error" role="alert">
                 {revealError}
-              </p>
+              </InlineNotice>
             ) : null}
             {environmentCheckError ? (
-              <p className="text-xs text-destructive" role="alert">
+              <InlineNotice level="error" role="alert">
                 {environmentCheckError}
-              </p>
+              </InlineNotice>
             ) : null}
             <div className="flex flex-wrap items-center gap-2">
               <Button type="button" variant="outline" onClick={() => void handleRevealAppStorage()}>
@@ -465,15 +469,12 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       >
         {storageStatus === null ? (
           storageLoadError ? (
-            <div className="space-y-2">
-              <p className="text-sm text-destructive" role="alert">
-                {t('Could not scan storage usage. Try again.')}
-              </p>
-              <Button type="button" variant="outline" onClick={retryStorageInfo}>
-                <RefreshCw className="size-4" aria-hidden="true" />
-                {t('Retry')}
-              </Button>
-            </div>
+            <Notice
+              level="error"
+              role="alert"
+              description={t('Could not scan storage usage. Try again.')}
+              primaryButton={{ label: t('Retry'), onClick: retryStorageInfo }}
+            />
           ) : (
             <p className="text-sm text-muted-foreground">{t('Loading…')}</p>
           )
@@ -551,15 +552,15 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                   </p>
                 ) : null}
                 {pathError ? (
-                  <p className="mt-2 text-xs text-destructive" role="alert">
+                  <InlineNotice level="error" className="mt-2" role="alert">
                     {pathError}
-                  </p>
+                  </InlineNotice>
                 ) : null}
 
                 {defaultError ? (
-                  <p className="mt-2 text-xs text-destructive" role="alert">
+                  <InlineNotice level="error" className="mt-2" role="alert">
                     {defaultError}
-                  </p>
+                  </InlineNotice>
                 ) : null}
 
                 {(kind === 'move' || kind === 'adopt' || kind === 'recover') && inspection ? (
@@ -626,15 +627,15 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                 )}
 
                 {kind === 'invalid' && inspection?.error ? (
-                  <p className="mt-2 text-xs text-destructive" role="alert">
+                  <InlineNotice level="error" className="mt-2" role="alert">
                     {inspection.error}
-                  </p>
+                  </InlineNotice>
                 ) : null}
 
                 {adoptError ? (
-                  <p className="mt-2 text-xs text-destructive" role="alert">
+                  <InlineNotice level="error" className="mt-2" role="alert">
                     {adoptError}
-                  </p>
+                  </InlineNotice>
                 ) : null}
 
                 <div className="mt-3 flex gap-2">
@@ -710,29 +711,26 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
         >
           {info === null ? (
             storageLoadError ? (
-              <div className="space-y-2">
-                <p className="text-sm text-destructive" role="alert">
-                  {t('Could not scan storage usage. Try again.')}
-                </p>
-                <Button type="button" variant="outline" onClick={retryStorageInfo}>
-                  <RefreshCw className="size-4" aria-hidden="true" />
-                  {t('Retry')}
-                </Button>
-              </div>
+              <Notice
+                level="error"
+                role="alert"
+                description={t('Could not scan storage usage. Try again.')}
+                primaryButton={{ label: t('Retry'), onClick: retryStorageInfo }}
+              />
             ) : (
               <p className="text-sm text-muted-foreground">{t('Scanning…')}</p>
             )
           ) : (
             <>
               {storageLoadError ? (
-                <p className="mb-3 text-sm text-destructive" role="alert">
+                <InlineNotice level="error" className="mb-3" role="alert">
                   {t('Could not scan storage usage. Try again.')}
-                </p>
+                </InlineNotice>
               ) : null}
               {workspaceOpenError ? (
-                <p className="mb-3 text-sm text-destructive" role="alert">
+                <InlineNotice level="error" className="mb-3" role="alert">
                   {workspaceOpenError}
-                </p>
+                </InlineNotice>
               ) : null}
               <p className="mb-3 text-xs text-muted-foreground">
                 {t(

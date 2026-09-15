@@ -1841,7 +1841,7 @@ const WorkspaceMessageItemImpl = ({
                     {message.interrupted ? (
                       <span
                         data-slot="user-message-interrupted"
-                        className="italic text-amber-600 dark:text-amber-400"
+                        className="italic text-status-warning-foreground dark:text-status-warning-dark-foreground"
                       >
                         {t('This turn was interrupted.')}
                       </span>

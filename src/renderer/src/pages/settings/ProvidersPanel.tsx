@@ -1,3 +1,4 @@
+import { Notice } from '@/components/notice'
 import type { TFunction } from 'i18next'
 import { useEffect, useRef, useState } from 'react'
 import { Plus } from 'lucide-react'
@@ -555,10 +556,12 @@ const ProvidersPanel = ({
           onLogoutXai={() => void handleXaiLogout()}
         />
         {providerTestError ? (
-          <div className="mt-2">
-            <p className="text-sm text-destructive" role="alert">
-              {providerErrorCopy(providerTestError, t)}
-            </p>
+          <Notice
+            level="error"
+            role="alert"
+            className="mt-2"
+            description={providerErrorCopy(providerTestError, t)}
+          >
             <DiagnosticDetails
               detail={
                 typeof providerTestError === 'string' || !providerTestError.detail
@@ -566,7 +569,7 @@ const ProvidersPanel = ({
                   : localizeProviderResourceMessage(providerTestError.detail, t)
               }
             />
-          </div>
+          </Notice>
         ) : null}
         {/* The add action lives with the list: a dashed ghost row appended after the last provider,
             matching the Available-group placeholder treatment. */}
