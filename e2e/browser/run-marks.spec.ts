@@ -148,3 +148,29 @@ test('keeps visible conversation segments dark without hover and updates them on
     animations: 'disabled'
   })
 })
+
+test('moves one preview card between marks and disables motion when requested', async ({
+  page
+}) => {
+  await page.goto('/run-marks.html?count=4')
+  const marks = page.getByRole('navigation', { name: 'Run marks' }).getByRole('button')
+  await marks.nth(0).hover()
+  const preview = page.getByRole('tooltip')
+  await expect(preview).toBeVisible()
+  await preview.evaluate((element) => element.setAttribute('data-test-retained', 'true'))
+  await expect(preview).toHaveCSS('width', '256px')
+  const initialTop = await preview.evaluate((element) => element.getBoundingClientRect().top)
+  await marks.nth(3).hover()
+  await expect(preview).toHaveAttribute('data-test-retained', 'true')
+  await expect(preview).toContainText('4. Compare')
+  await expect
+    .poll(() => preview.evaluate((element) => element.getBoundingClientRect().top))
+    .toBeGreaterThan(initialTop + 40)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await marks.nth(1).focus()
+  await expect(preview).toBeVisible()
+  await expect(preview).toHaveCSS('transition-property', 'none')
+  await expect(marks.nth(1)).toHaveAttribute('aria-describedby', await preview.getAttribute('id'))
+})
