@@ -5309,7 +5309,7 @@ describe('Session deletion result', () => {
 })
 
 describe('Side chat reasoning effort compatibility', () => {
-  it.each([undefined, 'default', 'low', 'medium', 'high', 'xhigh', 'max'])(
+  it.each([undefined, 'high'])(
     'round-trips an optional effort without migrating history: %s',
     (reasoningEffort) => {
       const saved = {

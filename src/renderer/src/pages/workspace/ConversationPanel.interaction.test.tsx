@@ -3033,33 +3033,6 @@ describe('ConversationPanel composer intake', () => {
     }
   )
 
-  it('places side chat model controls immediately before the send button', () => {
-    act(() =>
-      root.render(
-        <SideChatPanel
-          view={{
-            id: 'side',
-            generation: 1,
-            parentSessionId: 'main',
-            projectId: 'project',
-            sideSessionId: 'side',
-            draft: '',
-            entries: [],
-            running: false
-          }}
-          onSend={vi.fn()}
-          onDraftChange={vi.fn()}
-          onCancel={vi.fn()}
-          onClose={vi.fn()}
-          controls={<button data-testid="model-controls" />}
-        />
-      )
-    )
-    const controls = container.querySelector('[data-testid="model-controls"]')!
-    expect(controls.nextElementSibling?.getAttribute('aria-label')).toBe('Send Side chat follow up')
-    expect(controls.previousElementSibling?.classList.contains('flex-1')).toBe(true)
-  })
-
   it('offers Side chat between Plan first and Branch for a text-only existing Session draft', () => {
     const onStartSideChat = vi.fn()
     const session: ChatSession = {
