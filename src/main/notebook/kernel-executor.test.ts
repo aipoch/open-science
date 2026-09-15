@@ -720,6 +720,60 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   }, 30_000)
 
+  it('AUDIT: observes producer files in the directory selected by helper initialization', async () => {
+    cwdDir = realpathSync(await makeDefaultEnvCwd('os-kernel-helper-cwd-evidence-'))
+    const request = baseRequest(cwdDir)
+    const producerDir = join(request.dataRoot, 'analysis')
+    await mkdir(producerDir, { recursive: true })
+    await writeFile(join(producerDir, 'input.csv'), '42')
+    await writeFile(join(request.dataRoot, 'input.csv'), 'wrong input')
+    const helperHost = new NotebookHelperModuleHost({
+      resolve: async (id) => ({
+        id,
+        language: 'python',
+        source: `import os; os.chdir(${JSON.stringify(producerDir)})\ndef helper_answer():\n    return 42`,
+        exports: ['helper_answer']
+      })
+    })
+    const plan = await helperHost.plan(
+      { id: 'helper-cwd-epoch', processKey: 'python:default-python' },
+      await helperHost.preflight('python', ['cwd-helper'])
+    )
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+    try {
+      const result = await executor.execute({
+        ...request,
+        cwd: request.dataRoot,
+        helperModules: plan.injections,
+        language: 'python',
+        runId: 'helper-cwd-run',
+        code: [
+          'with open("input.csv") as source: data = source.read()',
+          'with open("generated.csv", "w") as output: output.write(data)'
+        ].join('\n')
+      })
+      expect(result).toMatchObject({
+        status: 'completed',
+        cwdBefore: realpathSync(request.dataRoot),
+        cwdAfter: realpathSync(producerDir),
+        helperModulesInitialized: ['cwd-helper']
+      })
+      expect(await readFile(join(producerDir, 'generated.csv'), 'utf8')).toBe('42')
+      expect(result.confirmedReadPaths).toEqual(['data/analysis/input.csv'])
+      expect(result.workingFiles).toContainEqual(
+        expect.objectContaining({
+          path: resolve(producerDir, 'generated.csv'),
+          relativePath: 'data/analysis/generated.csv'
+        })
+      )
+    } finally {
+      await executor.shutdown()
+    }
+  }, 30_000)
+
   it('runs a cell, echoes stdout, and reports the working directory', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-exec-')
     const executor = makeExecutor()

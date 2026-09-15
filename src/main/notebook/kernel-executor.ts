@@ -565,6 +565,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
           },
           () => undefined
         )
+        request = { ...request, cwd: proc.cwd }
         // A matched success response proves the whole transaction published even when a soft
         // timeout/cancellation raced with it. Never report or commit a partial helper plan.
         if (initialization.response.error === null) {
