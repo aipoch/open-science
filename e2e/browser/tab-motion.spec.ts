@@ -25,7 +25,7 @@ const recordMotion = async (list: Locator): Promise<void> => {
 const frames = (list: Locator): Promise<Array<{ x: number; y: number; width: number }>> =>
   list.evaluate(
     (element) =>
-      (element as Element & { motionFrames: Array<{ x: number; y: number; width: number }> })
+      (element as typeof element & { motionFrames: Array<{ x: number; y: number; width: number }> })
         .motionFrames
   )
 const expectAligned = async (list: Locator): Promise<void> => {
