@@ -6325,6 +6325,21 @@
     "Open-Science is installed": "Open-Science установлен",
     "Quit this copy and reopen Open-Science from Applications to enable updates.": "Закройте эту копию и снова откройте Open-Science из папки «Программы», чтобы включить обновления.",
     "Installed in Applications": "Установлено в «Программы»",
-    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "Не удалось установить Open-Science в папку «Программы». Перетащите приложение туда в Finder или продолжите работу с этой копией."
+    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "Не удалось установить Open-Science в папку «Программы». Перетащите приложение туда в Finder или продолжите работу с этой копией.",
+    "A Skill with this name is already installed. Review its differences before updating it in place.": "Навык с таким именем уже установлен. Просмотрите различия перед его обновлением на месте.",
+    "Affected Specialists": "Затронутые специалисты",
+    "Review Skill update": "Проверить обновление навыка",
+    "Text comparison is unavailable for this file. It will be replaced or removed as listed above.": "Сравнение текста для этого файла недоступно. Он будет заменён или удалён согласно списку выше.",
+    "The Skill or its affected Specialists changed after preview. Refresh and review the update again.": "После просмотра изменился навык или состав затронутых специалистов. Обновите данные и повторно просмотрите изменения.",
+    "The existing installation cannot be safely verified. No files were replaced.": "Невозможно безопасно проверить существующую установку. Файлы не были заменены.",
+    "The installed files match the previous Marketplace release.": "Установленные файлы соответствуют предыдущему выпуску маркетплейса.",
+    "The original installed content is unavailable. Local changes cannot be determined.": "Исходное установленное содержимое недоступно. Невозможно определить локальные изменения.",
+    "The update could not be completed. Close this preview and review the current installation again.": "Не удалось завершить обновление. Закройте окно и повторно просмотрите текущую установку.",
+    "This Skill has local changes. Updating will replace them.": "Этот навык содержит локальные изменения. Обновление заменит их.",
+    "This Skill is also enabled for the Main Agent.": "Этот навык также включён для главного агента.",
+    "This release would downgrade the Skill or change an existing release. Installation remains blocked.": "Этот выпуск понизит версию навыка или изменит существующий выпуск. Установка остаётся заблокированной.",
+    "Update existing Skill": "Обновить существующий навык",
+    "Update the existing Skill in place. Its identity and Specialist relationships will be preserved.": "Обновить существующий навык на месте. Его идентичность и связи со специалистами будут сохранены.",
+    "View installed Skill": "Открыть установленный навык"
   }
 }

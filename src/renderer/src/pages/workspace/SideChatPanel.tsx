@@ -450,8 +450,8 @@ const SideChatPanel = ({
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-            {controls}
             <div className="flex-1" />
+            {controls}
             <TooltipProvider delayDuration={200}>
               <Tooltip>
                 <TooltipTrigger asChild>

@@ -415,6 +415,7 @@ export type PersistedSideChat = Readonly<{
   providerSessionId?: string
   providerContinuityToken?: string
   model?: string
+  reasoningEffort?: ReasoningEffort
   historyPreamble: string
   entries: readonly SideChatEntry[]
   createdAt: number
@@ -1436,6 +1437,7 @@ const sanitizePersistedSideChatWithLegacyRelays = (
       'providerSessionId',
       'providerContinuityToken',
       'model',
+      'reasoningEffort',
       'historyPreamble',
       'entries',
       'pendingRelays',
@@ -1513,6 +1515,7 @@ const sanitizePersistedSideChatWithLegacyRelays = (
     ...(providerSessionId !== undefined ? { providerSessionId } : {}),
     ...(providerContinuityToken !== undefined ? { providerContinuityToken } : {}),
     ...(model !== undefined ? { model } : {}),
+    ...(isReasoningEffort(value.reasoningEffort) ? { reasoningEffort: value.reasoningEffort } : {}),
     historyPreamble,
     entries: entries as SideChatEntry[],
     createdAt,

@@ -14,6 +14,8 @@ const createRoot: typeof createReactRoot = (...args) => {
 }
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { useSettingsStore } from '@/stores/settings-store'
+import { useSessionStore } from '@/stores/session-store'
 import { SideChatProvider, useSideChatController } from './use-side-chat-controller'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -1022,3 +1024,225 @@ it('restores siblings after restart and omits a confirmed closed Side chat', asy
   container.remove()
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
 })
+
+describe('Side chat model choices', () => {
+  const originalSettings = useSettingsStore.getState()
+  const originalSessions = useSessionStore.getState().sessions
+  afterEach(() => {
+    act(() => {
+      useSettingsStore.setState(originalSettings)
+      useSessionStore.setState({ sessions: originalSessions })
+    })
+  })
+
+  it('inherits the current main conversation model without a global model, and keeps pending choices local', async () => {
+    const modelA = {
+      providerId: 'local-provider',
+      model: 'model-a',
+      reasoningEffort: 'default' as const
+    }
+    const modelB = {
+      providerId: 'local-provider',
+      model: 'model-b',
+      reasoningEffort: 'default' as const
+    }
+    useSettingsStore.setState({ activeProviderId: undefined, activeModel: undefined })
+    useSessionStore.setState({
+      sessions: [
+        { id: 'model-parent', agentConfiguration: { ...modelA, reasoningEffort: 'default' } }
+      ] as never
+    })
+    let listener: ((event: never) => void) | undefined
+    const start = vi.fn(async (request) => ({
+      sideSessionId: request.sideSessionId,
+      frameworkId: 'claude-code'
+    }))
+    const send = vi.fn(async () => undefined)
+    window.api = {
+      sideChat: {
+        start,
+        send,
+        cancel: vi.fn(),
+        close: vi.fn(async () => undefined),
+        onEvent: (callback: Parameters<Window['api']['sideChat']['onEvent']>[0]) => {
+          listener = callback as never
+          return () => undefined
+        },
+        onRelayDelivered: () => () => undefined
+      }
+    } as unknown as Window['api']
+    const root = createRoot(document.createElement('div'))
+    let chat!: ReturnType<typeof useSideChatController>
+    const Harness = (): null => {
+      chat = useSideChatController({ sessionId: 'model-parent', projectId: 'project' })
+      return null
+    }
+    act(() => root.render(createElement(SideChatProvider, null, createElement(Harness))))
+    let firstId!: string
+    act(() => {
+      firstId = chat.createDraft!()!
+    })
+    expect(chat.view?.modelSelection).toEqual(modelA)
+    act(() => chat.setDraft('Keep this draft'))
+    act(() =>
+      useSessionStore.setState({
+        sessions: [
+          { id: 'model-parent', agentConfiguration: { ...modelB, reasoningEffort: 'default' } }
+        ] as never
+      })
+    )
+    expect(chat.view?.modelSelection).toEqual(modelA)
+    act(() => {
+      chat.createDraft!()
+    })
+    expect(chat.view?.modelSelection).toEqual(modelB)
+    expect(chat.views?.find((view) => view.id === firstId)?.modelSelection).toEqual(modelA)
+    await act(async () => {
+      expect(await chat.send('First turn')).toBe(true)
+    })
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ modelSelection: modelB, text: 'First turn' })
+    )
+    act(() => chat.setModelSelection(modelA))
+    expect(chat.view?.running).toBe(true)
+    expect(start.mock.calls[0][0].modelSelection).toEqual(modelB)
+    expect(send).not.toHaveBeenCalled()
+    await act(async () => {
+      listener?.({
+        parentSessionId: 'model-parent',
+        sideSessionId: chat.view!.sideSessionId,
+        event: { kind: 'stop' }
+      } as never)
+      expect(await chat.send('Next turn')).toBe(true)
+    })
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Next turn', modelSelection: modelA })
+    )
+    expect(useSettingsStore.getState().activeProviderId).toBeUndefined()
+    expect(useSettingsStore.getState().activeModel).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].agentConfiguration?.model).toBe('model-b')
+  })
+
+  it('hydrates the saved side chat model instead of inheriting the parent again', async () => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'model-parent',
+          agentConfiguration: {
+            providerId: 'parent-provider',
+            model: 'parent-model',
+            reasoningEffort: 'default'
+          }
+        }
+      ] as never
+    })
+    const selection = { providerId: 'saved-provider', model: 'saved-model' }
+    const send = vi.fn(async () => undefined)
+    window.api = {
+      sideChat: {
+        list: vi.fn(async () => ({
+          revision: 1,
+          chats: [
+            {
+              revision: 1,
+              parentSessionId: 'model-parent',
+              projectId: 'project',
+              sideSessionId: 'saved-side-chat',
+              entries: [],
+              running: false,
+              modelSelection: selection
+            }
+          ]
+        })),
+        start: vi.fn(),
+        send,
+        cancel: vi.fn(),
+        close: vi.fn(async () => undefined),
+        onEvent: () => () => undefined,
+        onRelayDelivered: () => () => undefined
+      }
+    } as unknown as Window['api']
+    const root = createRoot(document.createElement('div'))
+    let chat!: ReturnType<typeof useSideChatController>
+    const Harness = (): null => {
+      chat = useSideChatController({ sessionId: 'model-parent', projectId: 'project' })
+      return null
+    }
+    await act(async () =>
+      root.render(createElement(SideChatProvider, null, createElement(Harness)))
+    )
+    expect(chat.view?.modelSelection).toEqual(selection)
+    await act(async () => {
+      expect(await chat.send('Continue')).toBe(true)
+    })
+    expect(send).toHaveBeenCalledWith({
+      sideSessionId: 'saved-side-chat',
+      text: 'Continue',
+      modelSelection: selection
+    })
+  })
+})
+
+it.each(['preview', 'session', 'page', 'project'] as const)(
+  'discards only untouched empty side chats when leaving the %s',
+  async (destination) => {
+    const { useNavigationStore } = await import('@/stores/navigation-store')
+    const { usePreviewWorkbenchStore, sideChatTabId } =
+      await import('@/stores/preview-workbench-store')
+    const previousNavigation = useNavigationStore.getState()
+    const previousPreview = usePreviewWorkbenchStore.getState()
+    const previousSelected = useSessionStore.getState().selectedSessionId
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'empty-project' })
+    usePreviewWorkbenchStore.setState({
+      activeProjectId: 'empty-project',
+      items: [],
+      activeItemId: undefined
+    })
+    useSessionStore.setState({ selectedSessionId: 'empty-parent' })
+    const start = vi.fn()
+    const close = vi.fn()
+    window.api = {
+      sideChat: {
+        start,
+        close,
+        onEvent: () => () => undefined,
+        onRelayDelivered: () => () => undefined
+      }
+    } as unknown as Window['api']
+    const root = createRoot(document.createElement('div'))
+    let chat!: ReturnType<typeof useSideChatController>
+    const Harness = (): null => {
+      chat = useSideChatController({ sessionId: 'empty-parent', projectId: 'empty-project' })
+      return null
+    }
+    act(() => root.render(createElement(SideChatProvider, null, createElement(Harness))))
+    let filledId!: string
+    let emptyId!: string
+    act(() => {
+      filledId = chat.createDraft!()!
+    })
+    act(() => chat.setDraft('Keep my unsent text'))
+    act(() => {
+      emptyId = chat.createDraft!()!
+    })
+    expect(chat.views).toHaveLength(2)
+    expect(start).not.toHaveBeenCalled()
+    act(() => {
+      if (destination === 'preview')
+        usePreviewWorkbenchStore.setState({ activeItemId: 'another-preview' })
+      else if (destination === 'session')
+        useSessionStore.setState({ selectedSessionId: 'another-parent' })
+      else if (destination === 'page') useNavigationStore.setState({ view: 'library' })
+      else useNavigationStore.setState({ activeProjectId: 'another-project' })
+    })
+    expect(chat.views?.map((view) => view.id)).toEqual([filledId])
+    expect(
+      usePreviewWorkbenchStore.getState().items.some((item) => item.id === sideChatTabId(emptyId))
+    ).toBe(false)
+    expect(close).not.toHaveBeenCalled()
+    act(() => root.unmount())
+    useNavigationStore.setState(previousNavigation)
+    usePreviewWorkbenchStore.setState(previousPreview)
+    useSessionStore.setState({ selectedSessionId: previousSelected })
+  }
+)

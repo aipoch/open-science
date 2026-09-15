@@ -43,6 +43,30 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('ResourceTagMenu', () => {
+  it('keeps the pointer cursor and inline spinner while an assignment is pending', async () => {
+    let resolve: () => void = () => undefined
+    setAssignment.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolvePromise) => {
+          resolve = resolvePromise
+        })
+    )
+    render(<ResourceTagMenu reference={reference} />)
+    openPicker()
+    const option = screen.getByRole('option', { name: 'ds-v4-flash' })
+    fireEvent.click(option)
+    expect(option.getAttribute('aria-disabled')).toBe('true')
+    expect(option.querySelector('.animate-spin')).not.toBeNull()
+    expect(option.className).toContain('cursor-pointer')
+    expect(option.className).not.toContain('cursor-wait')
+    fireEvent.click(option)
+    key('Enter')
+    expect(setAssignment).toHaveBeenCalledOnce()
+    await act(async () => resolve())
+    expect(option.querySelector('.animate-spin')).toBeNull()
+    expect(option.getAttribute('aria-disabled')).toBe('false')
+  })
+
   it('focuses search, navigates matches and Create with arrows, and selects with Enter', async () => {
     render(<ResourceTagMenu reference={reference} />)
     openPicker()

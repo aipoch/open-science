@@ -731,6 +731,15 @@ const createApplicationModules = async (
         await networkProxyRuntime.apply(settings)
         await notebookNetworkSandbox.updateParentProxy()
       },
+      readMarketplaceSpecialists: async (): Promise<
+        import('../shared/specialist').SpecialistListItem[]
+      > => {
+        const snapshot = await specialistService.listForSettingsSnapshot()
+        if (snapshot.integrity.status !== 'ok')
+          throw new Error('Specialist impact inspection is unavailable.')
+        return snapshot.items
+      },
+      withMarketplaceImpactLock: (operation) => specialistRepository.withReadLock(operation),
       withUserSkillRecoveryBarrier: (operation) =>
         specialistPackageRecovery.current?.(operation) ?? operation(),
       applyNotebookNetwork: async (settings) => notebookNetworkSandbox.applySettings(settings),
@@ -3351,7 +3360,18 @@ const createApplicationModules = async (
     {
       appVersion: app.getVersion(),
       configRoot,
-      captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
+      captureTarget: async (selection) => {
+        if (!selection) return settingsService.captureActiveExplicitAgentBackendTarget()
+        const { frameworkId } = await settingsService.captureActiveAgentBackendSelection()
+        return {
+          frameworkId,
+          providerId: selection.providerId,
+          model: selection.model
+            ? { kind: 'required', id: selection.model }
+            : { kind: 'provider-default' },
+          reasoningEffort: selection.reasoningEffort ?? 'default'
+        }
+      },
       resolveTarget: (target, context) =>
         settingsService.resolveExplicitAgentBackend(target, context),
       relay: sideChatRelay,

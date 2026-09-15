@@ -6016,6 +6016,21 @@
     "Open-Science is installed": "Open-Science ist installiert",
     "Quit this copy and reopen Open-Science from Applications to enable updates.": "Beenden Sie diese Kopie und öffnen Sie Open-Science erneut aus „Programme“, um Updates zu aktivieren.",
     "Installed in Applications": "In „Programme“ installiert",
-    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "Open-Science konnte nicht in „Programme“ installiert werden. Ziehen Sie es im Finder dorthin oder verwenden Sie diese Kopie weiter."
+    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "Open-Science konnte nicht in „Programme“ installiert werden. Ziehen Sie es im Finder dorthin oder verwenden Sie diese Kopie weiter.",
+    "A Skill with this name is already installed. Review its differences before updating it in place.": "Eine Fähigkeit mit diesem Namen ist bereits installiert. Prüfen Sie die Unterschiede vor der Aktualisierung.",
+    "Affected Specialists": "Betroffene Spezialisten",
+    "Review Skill update": "Aktualisierung der Fähigkeit prüfen",
+    "Text comparison is unavailable for this file. It will be replaced or removed as listed above.": "Für diese Datei ist kein Textvergleich verfügbar. Sie wird wie oben aufgeführt ersetzt oder entfernt.",
+    "The Skill or its affected Specialists changed after preview. Refresh and review the update again.": "Die Fähigkeit oder die betroffenen Spezialisten wurden nach der Vorschau geändert. Laden Sie neu und prüfen Sie die Aktualisierung erneut.",
+    "The existing installation cannot be safely verified. No files were replaced.": "Die vorhandene Installation kann nicht sicher überprüft werden. Es wurden keine Dateien ersetzt.",
+    "The installed files match the previous Marketplace release.": "Die installierten Dateien entsprechen der vorherigen Marktplatz-Version.",
+    "The original installed content is unavailable. Local changes cannot be determined.": "Der ursprünglich installierte Inhalt ist nicht verfügbar. Lokale Änderungen können nicht ermittelt werden.",
+    "The update could not be completed. Close this preview and review the current installation again.": "Die Aktualisierung konnte nicht abgeschlossen werden. Schließen Sie diese Vorschau und prüfen Sie die aktuelle Installation erneut.",
+    "This Skill has local changes. Updating will replace them.": "Diese Fähigkeit enthält lokale Änderungen. Durch die Aktualisierung werden diese ersetzt.",
+    "This Skill is also enabled for the Main Agent.": "Diese Fähigkeit ist auch für den Hauptagenten aktiviert.",
+    "This release would downgrade the Skill or change an existing release. Installation remains blocked.": "Diese Version würde die Fähigkeit herabstufen oder eine bestehende Veröffentlichung ändern. Die Installation bleibt blockiert.",
+    "Update existing Skill": "Vorhandene Fähigkeit aktualisieren",
+    "Update the existing Skill in place. Its identity and Specialist relationships will be preserved.": "Die vorhandene Fähigkeit wird am selben Ort aktualisiert. Ihre Identität und die Beziehungen zu Spezialisten bleiben erhalten.",
+    "View installed Skill": "Installierte Fähigkeit anzeigen"
   }
 }

@@ -276,7 +276,17 @@ const SkillsPanel = ({
       <SkillMarketplace
         view={view}
         onNavigate={onNavigate}
-        onManageLocal={() => onNavigate({ kind: 'list' })}
+        onManageLocal={(id) => {
+          if (id) onNavigate({ kind: 'detail', id })
+          else {
+            setFilter('all')
+            setSpecialistFilter('all')
+            setTagFilter('all')
+            setQuery('')
+            setCollapsed({})
+            onNavigate({ kind: 'list' })
+          }
+        }}
       />
     )
   }

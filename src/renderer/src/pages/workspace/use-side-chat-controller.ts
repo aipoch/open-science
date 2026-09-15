@@ -23,10 +23,19 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { getAcpRuntimeEventText } from '../../../../shared/acp'
-import type { SideChatEntry, SideChatSnapshot } from '../../../../shared/side-chat'
-import type { ChatSession } from '@/stores/session-store'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { useSettingsStore, selectFrameworkApiEndpoints } from '@/stores/settings-store'
+import { buildConfiguredModelCatalog } from '../../../../shared/configured-model-catalog'
+import { resolveSessionAgentConfiguration } from '../../../../shared/session-agent-configuration'
+import type {
+  SideChatModelSelection,
+  SideChatEntry,
+  SideChatSnapshot
+} from '../../../../shared/side-chat'
+import { useSessionStore, type ChatSession } from '@/stores/session-store'
 
 type SideChatView = Readonly<{
+  modelSelection?: SideChatModelSelection
   id?: string
   draftOnly?: boolean
   generation: number
@@ -53,6 +62,7 @@ type SideChatController = Readonly<{
   send: (text: string) => Promise<boolean>
   retryHydration?: () => void
   setAnnotations?: (value: SetStateAction<readonly Annotation[]>) => void
+  setModelSelection: (selection: SideChatModelSelection) => void
   setDraft: (value: SetStateAction<string>) => void
   cancel: () => void
   close: () => void
@@ -74,6 +84,7 @@ type SideChatRuntimeController = Readonly<{
   ) => Promise<boolean>
   send: (chatId: string, text: string) => Promise<boolean>
   setAnnotations: (chatId: string, value: SetStateAction<readonly Annotation[]>) => void
+  setModelSelection: (chatId: string, selection: SideChatModelSelection) => void
   setDraft: (chatId: string, value: SetStateAction<string>) => void
   cancel: (chatId: string) => void
   close: (chatId: string) => void
@@ -92,6 +103,36 @@ const hasMainConversation = (session: ChatSession | undefined): boolean =>
 
 const getLastSideChatUserEntryId = (entries: readonly SideChatEntry[]): string | undefined =>
   entries.findLast((entry) => entry.kind === 'message' && entry.role === 'user')?.id
+
+const inheritedModelSelection = (parentSessionId: string): SideChatModelSelection | undefined => {
+  const settings = useSettingsStore.getState()
+  const parent = useSessionStore
+    .getState()
+    .sessions.find((session) => session.id === parentSessionId)
+  const catalog = buildConfiguredModelCatalog({
+    providers: settings.providers,
+    activeProviderId: settings.activeProviderId,
+    claudeSubscriptionProviderId: settings.claudeSubscriptionProviderId,
+    includeAllClaudeSubscriptions: true,
+    frameworkId: settings.agentFrameworkId,
+    frameworkEndpoints: selectFrameworkApiEndpoints(settings)
+  })
+  const { configuration } = resolveSessionAgentConfiguration({
+    providers: settings.providers,
+    session: parent ?? {},
+    catalog,
+    activeProviderId: settings.activeProviderId,
+    activeModel: settings.activeModel,
+    activeReasoningEffort: settings.reasoningEffort
+  })
+  return configuration
+    ? {
+        providerId: configuration.providerId,
+        reasoningEffort: configuration.reasoningEffort,
+        ...(configuration.model ? { model: configuration.model } : {})
+      }
+    : undefined
+}
 
 const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
   const { t } = useTranslation()
@@ -132,6 +173,7 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       parentSessionId: snapshot.parentSessionId,
       projectId: snapshot.projectId,
       sideSessionId: snapshot.sideSessionId,
+      modelSelection: current?.modelSelection ?? snapshot.modelSelection,
       entries: snapshot.entries,
       liveTurnUserEntryId: snapshot.running
         ? getLastSideChatUserEntryId(snapshot.entries)
@@ -351,6 +393,13 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
     })
   }, [update, viewFromSnapshot])
 
+  const setModelSelection = useCallback(
+    (chatId: string, selection: SideChatModelSelection): void => {
+      update(chatId, (current) => (current ? { ...current, modelSelection: selection } : current))
+    },
+    [update]
+  )
+
   const retryHydration = useCallback((): void => hydrate(false), [hydrate])
 
   const createDraft = useCallback(
@@ -365,7 +414,8 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
         entries: [],
         draft: '',
         running: false,
-        draftOnly: true
+        draftOnly: true,
+        modelSelection: inheritedModelSelection(parent.sessionId)
       })
       usePreviewWorkbenchStore.getState().upsertAndActivateItem({
         id: sideChatTabId(id),
@@ -405,6 +455,7 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
           sideSessionId: id,
           parentSessionId: parent.sessionId,
           projectId: parent.projectId,
+          ...(current.modelSelection ? { modelSelection: current.modelSelection } : {}),
           text
         })
         const latest = viewsRef.current.get(id)
@@ -417,7 +468,13 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
         return true
       } catch (error) {
         if (viewsRef.current.has(id)) {
-          if (existingId) update(id, { ...current, running: false, error: errorText(error) })
+          if (existingId)
+            update(id, (latest) => ({
+              ...current,
+              modelSelection: latest?.modelSelection ?? current.modelSelection,
+              running: false,
+              error: errorText(error)
+            }))
           else update(id, undefined)
           throw error
         }
@@ -463,7 +520,11 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       }
       update(chatId, next)
       try {
-        await window.api.sideChat.send({ sideSessionId: current.sideSessionId, text })
+        await window.api.sideChat.send({
+          sideSessionId: current.sideSessionId,
+          ...(current.modelSelection ? { modelSelection: current.modelSelection } : {}),
+          text
+        })
         return true
       } catch (error) {
         // A rejected IPC call may have lost the response after admission. Reconcile first;
@@ -587,6 +648,45 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
     [t, update]
   )
 
+  useEffect(() => {
+    const discardEmpty = (matches: (view: SideChatView) => boolean): void => {
+      for (const [id, view] of viewsRef.current) {
+        if (
+          view.draftOnly &&
+          !view.running &&
+          !view.draft.trim() &&
+          !view.annotations?.length &&
+          view.entries.length === 0 &&
+          matches(view)
+        )
+          close(id)
+      }
+    }
+    const removeNavigation = useNavigationStore.subscribe((state, previous) => {
+      if (state.view !== previous.view || state.activeProjectId !== previous.activeProjectId) {
+        discardEmpty((view) => view.projectId === previous.activeProjectId)
+      }
+    })
+    const removeSession = useSessionStore.subscribe((state, previous) => {
+      if (state.selectedSessionId !== previous.selectedSessionId) {
+        discardEmpty((view) => view.parentSessionId === previous.selectedSessionId)
+      }
+    })
+    const removePreview = usePreviewWorkbenchStore.subscribe((state, previous) => {
+      if (
+        state.activeItemId !== previous.activeItemId ||
+        state.activeProjectId !== previous.activeProjectId
+      ) {
+        discardEmpty((view) => sideChatTabId(view.id!) === previous.activeItemId)
+      }
+    })
+    return () => {
+      removeNavigation()
+      removeSession()
+      removePreview()
+    }
+  }, [close])
+
   return useMemo<SideChatRuntimeController>(
     () => ({
       getView: (id) => viewsRef.current.get(id),
@@ -600,6 +700,7 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       start,
       send,
       setDraft,
+      setModelSelection,
       setAnnotations,
       cancel,
       close
@@ -615,6 +716,7 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       createDraft,
       send,
       setDraft,
+      setModelSelection,
       setAnnotations,
       start,
       views
@@ -738,6 +840,9 @@ const useSideChatController = (
     retryHydration: runtime?.hydrationError ? runtime.retryHydration : undefined,
     setAnnotations: (value) => {
       if (runtime && selectedId) runtime.setAnnotations(selectedId, value)
+    },
+    setModelSelection: (selection) => {
+      if (runtime && selectedId) runtime.setModelSelection(selectedId, selection)
     },
     setDraft: (text) => {
       if (runtime && selectedId) runtime.setDraft(selectedId, text)

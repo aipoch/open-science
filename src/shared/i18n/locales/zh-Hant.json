@@ -5855,6 +5855,21 @@
     "Open-Science is installed": "Open-Science 已安裝",
     "Quit this copy and reopen Open-Science from Applications to enable updates.": "結束目前副本並從「應用程式」重新開啟 Open-Science，即可啟用更新。",
     "Installed in Applications": "已安裝到應用程式",
-    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "無法將 Open-Science 安裝到「應用程式」。請在 Finder 中將它拖到該位置，或繼續使用目前副本。"
+    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "無法將 Open-Science 安裝到「應用程式」。請在 Finder 中將它拖到該位置，或繼續使用目前副本。",
+    "A Skill with this name is already installed. Review its differences before updating it in place.": "已安裝同名技能。原位更新前請查看差異。",
+    "Affected Specialists": "受影響的專家",
+    "Review Skill update": "查看技能更新",
+    "Text comparison is unavailable for this file. It will be replaced or removed as listed above.": "無法對此檔案進行文字比較。它將依上方所列的變更被取代或移除。",
+    "The Skill or its affected Specialists changed after preview. Refresh and review the update again.": "預覽後技能或受影響的專家已發生變化。請重新整理並再次查看更新。",
+    "The existing installation cannot be safely verified. No files were replaced.": "無法安全驗證現有安裝。未取代任何檔案。",
+    "The installed files match the previous Marketplace release.": "已安裝的檔案與先前的市集版本一致。",
+    "The original installed content is unavailable. Local changes cannot be determined.": "原始安裝內容無法取得，無法判斷是否有本機修改。",
+    "The update could not be completed. Close this preview and review the current installation again.": "未能完成更新。請關閉此預覽，重新查看目前的安裝。",
+    "This Skill has local changes. Updating will replace them.": "此技能有本機修改，更新將取代這些修改。",
+    "This Skill is also enabled for the Main Agent.": "此技能也已為主智能體啟用。",
+    "This release would downgrade the Skill or change an existing release. Installation remains blocked.": "此版本會降級技能或變更已發佈的版本，安裝仍被阻止。",
+    "Update existing Skill": "更新現有技能",
+    "Update the existing Skill in place. Its identity and Specialist relationships will be preserved.": "原位更新現有技能，保留其識別資訊和專家關聯。",
+    "View installed Skill": "查看已安裝技能"
   }
 }

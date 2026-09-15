@@ -55,7 +55,22 @@ const registerSideChatIpcHandlers = (
               budget: SIDE_CHAT_MESSAGE_LIMIT
             })
           : undefined
-        return runtime.start({ ...request, sideSessionId: startId, historyPreamble })
+        const inherited = parent?.agentConfiguration
+        const modelSelection =
+          request.modelSelection ??
+          (inherited
+            ? {
+                providerId: inherited.providerId,
+                reasoningEffort: inherited.reasoningEffort,
+                ...(inherited.model ? { model: inherited.model } : {})
+              }
+            : undefined)
+        return runtime.start({
+          ...request,
+          ...(modelSelection ? { modelSelection } : {}),
+          sideSessionId: startId,
+          historyPreamble
+        })
       })
     } finally {
       starts.delete(startId)

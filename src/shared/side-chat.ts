@@ -1,3 +1,9 @@
+export type SideChatModelSelection = Readonly<{
+  providerId: string
+  model?: string
+  reasoningEffort?: import('./settings').ReasoningEffort
+}>
+
 export const SIDE_CHAT_MESSAGE_LIMIT = 12_000
 
 export type SideChatTargetState = 'running' | 'waiting' | 'idle' | 'completed'
@@ -21,6 +27,7 @@ export type SideChatStartRequest = Readonly<{
   sideSessionId?: string
   parentSessionId: string
   projectId: string
+  modelSelection?: SideChatModelSelection
   text: string
 }>
 
@@ -31,6 +38,7 @@ export type SideChatStartResponse = Readonly<{
 }>
 
 export type SideChatPromptRequest = Readonly<{
+  modelSelection?: SideChatModelSelection
   sideSessionId: string
   text: string
 }>
@@ -46,6 +54,7 @@ export type SideChatEntry =
   | Readonly<{ id: string; kind: 'tool'; title: string; status?: string }>
 
 export type SideChatSnapshot = Readonly<{
+  modelSelection?: SideChatModelSelection
   revision: number
   parentSessionId: string
   projectId: string

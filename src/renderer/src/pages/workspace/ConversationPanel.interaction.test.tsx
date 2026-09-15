@@ -680,6 +680,7 @@ const createPanelDefaults = (): PanelProps => ({
     view: undefined,
     start: vi.fn().mockResolvedValue(false),
     send: vi.fn().mockResolvedValue(false),
+    setModelSelection: vi.fn(),
     setDraft: vi.fn(),
     cancel: vi.fn(),
     close: vi.fn()
@@ -2958,6 +2959,79 @@ describe('ConversationPanel composer intake', () => {
     expect(controls?.getAttribute('data-delegation-live')).toBe('true')
     expect(controls?.getAttribute('data-specialist-read-only')).toBe('false')
   })
+
+  it('opens an empty side chat directly from New side chat', () => {
+    const createDraft = vi.fn(() => 'empty-side-chat')
+    const start = vi.fn()
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'existing',
+          projectId: 'project-a',
+          title: 'Existing',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: planOriginMessages(),
+          createdAt: 1,
+          updatedAt: 2
+        }
+      },
+      sideChat: { createDraft },
+      conversation: { availability: { submit: false }, actions: { sideChat: { start } } },
+      composer: { view: { doc: { nodes: [] } } }
+    })
+    const button = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+    expect(button.disabled).toBe(false)
+    const menu = container.querySelector(
+      '[data-testid="branch-send-menu-trigger"]'
+    ) as HTMLButtonElement
+    const send = container.querySelector('[aria-label="Send message"]') as HTMLButtonElement
+    expect(menu.disabled).toBe(false)
+    expect(
+      menu.closest('[aria-label="Send message options"]')?.classList.contains('opacity-50')
+    ).toBe(false)
+    expect(send.disabled).toBe(true)
+    expect(send.classList.contains('disabled:opacity-50')).toBe(true)
+    act(() => button.click())
+    expect(createDraft).toHaveBeenCalledOnce()
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    undefined,
+    {
+      id: 'empty',
+      projectId: 'project-a',
+      title: 'New session',
+      cwd: '/workspace',
+      status: 'idle' as const,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2
+    }
+  ])(
+    'disables side chat and its empty menu before the main conversation begins: %j',
+    (activeSession) => {
+      const createDraft = vi.fn()
+      renderPanel({
+        view: { activeSession },
+        sideChat: { createDraft },
+        conversation: { availability: { submit: false } },
+        composer: { view: { doc: { nodes: [] } } }
+      })
+      const menu = container.querySelector(
+        '[data-testid="branch-send-menu-trigger"]'
+      ) as HTMLButtonElement
+      const side = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+      expect(menu.disabled).toBe(true)
+      expect(side.disabled).toBe(true)
+      expect(
+        menu.closest('[aria-label="Send message options"]')?.classList.contains('opacity-50')
+      ).toBe(true)
+      act(() => side.click())
+      expect(createDraft).not.toHaveBeenCalled()
+    }
+  )
 
   it('offers Side chat between Plan first and Branch for a text-only existing Session draft', () => {
     const onStartSideChat = vi.fn()

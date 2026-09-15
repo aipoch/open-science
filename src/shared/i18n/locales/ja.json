@@ -5855,6 +5855,21 @@
     "Open-Science is installed": "Open-Science がインストールされました",
     "Quit this copy and reopen Open-Science from Applications to enable updates.": "このコピーを終了し、「アプリケーション」から Open-Science を開き直すと更新が有効になります。",
     "Installed in Applications": "「アプリケーション」にインストール済み",
-    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "Open-Science を「アプリケーション」にインストールできませんでした。Finder でそこにドラッグするか、このコピーを引き続き使用してください。"
+    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "Open-Science を「アプリケーション」にインストールできませんでした。Finder でそこにドラッグするか、このコピーを引き続き使用してください。",
+    "A Skill with this name is already installed. Review its differences before updating it in place.": "同じ名前のスキルがインストールされています。既存のスキルを更新する前に差分を確認してください。",
+    "Affected Specialists": "影響を受けるスペシャリスト",
+    "Review Skill update": "スキルの更新を確認",
+    "Text comparison is unavailable for this file. It will be replaced or removed as listed above.": "このファイルのテキスト比較はできません。上記の一覧に従って置換または削除されます。",
+    "The Skill or its affected Specialists changed after preview. Refresh and review the update again.": "プレビュー後にスキルまたは影響を受けるスペシャリストが変更されました。再読み込みして更新を確認してください。",
+    "The existing installation cannot be safely verified. No files were replaced.": "既存のインストールを安全に検証できません。ファイルは置き換えられていません。",
+    "The installed files match the previous Marketplace release.": "インストール済みのファイルは以前のマーケットプレイスのリリースと一致しています。",
+    "The original installed content is unavailable. Local changes cannot be determined.": "元のインストール内容を取得できないため、ローカルでの変更の有無を判断できません。",
+    "The update could not be completed. Close this preview and review the current installation again.": "更新を完了できませんでした。このプレビューを閉じて、現在のインストールを再確認してください。",
+    "This Skill has local changes. Updating will replace them.": "このスキルにはローカルでの変更があります。更新すると置き換えられます。",
+    "This Skill is also enabled for the Main Agent.": "このスキルはメインエージェントでも有効になっています。",
+    "This release would downgrade the Skill or change an existing release. Installation remains blocked.": "このリリースはスキルをダウングレードするか、既存のリリースを変更します。インストールは引き続きブロックされます。",
+    "Update existing Skill": "既存のスキルを更新",
+    "Update the existing Skill in place. Its identity and Specialist relationships will be preserved.": "既存のスキルをその場で更新します。識別情報とスペシャリストとの関連は維持されます。",
+    "View installed Skill": "インストール済みスキルを表示"
   }
 }

@@ -5853,6 +5853,21 @@
     "Open-Science is installed": "Open-Science가 설치되었습니다",
     "Quit this copy and reopen Open-Science from Applications to enable updates.": "이 복사본을 종료하고 응용 프로그램에서 Open-Science를 다시 열어 업데이트를 활성화하세요.",
     "Installed in Applications": "응용 프로그램에 설치됨",
-    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "Open-Science를 응용 프로그램에 설치할 수 없습니다. Finder에서 해당 위치로 드래그하거나 이 복사본을 계속 사용하세요."
+    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "Open-Science를 응용 프로그램에 설치할 수 없습니다. Finder에서 해당 위치로 드래그하거나 이 복사본을 계속 사용하세요.",
+    "A Skill with this name is already installed. Review its differences before updating it in place.": "같은 이름의 스킬이 이미 설치되어 있습니다. 기존 스킬을 업데이트하기 전에 차이점을 검토하세요.",
+    "Affected Specialists": "영향받는 스페셜리스트",
+    "Review Skill update": "스킬 업데이트 검토",
+    "Text comparison is unavailable for this file. It will be replaced or removed as listed above.": "이 파일은 텍스트를 비교할 수 없습니다. 위 목록에 따라 교체되거나 제거됩니다.",
+    "The Skill or its affected Specialists changed after preview. Refresh and review the update again.": "미리보기 후 스킬 또는 영향받는 스페셜리스트가 변경되었습니다. 새로 고침하고 업데이트를 다시 검토하세요.",
+    "The existing installation cannot be safely verified. No files were replaced.": "기존 설치를 안전하게 검증할 수 없습니다. 파일은 교체되지 않았습니다.",
+    "The installed files match the previous Marketplace release.": "설치된 파일이 이전 마켓플레이스 릴리스와 일치합니다.",
+    "The original installed content is unavailable. Local changes cannot be determined.": "원래 설치 내용을 사용할 수 없어 로컬 변경 여부를 확인할 수 없습니다.",
+    "The update could not be completed. Close this preview and review the current installation again.": "업데이트를 완료하지 못했습니다. 이 미리보기를 닫고 현재 설치를 다시 검토하세요.",
+    "This Skill has local changes. Updating will replace them.": "이 스킬에 로컬 변경 사항이 있습니다. 업데이트하면 교체됩니다.",
+    "This Skill is also enabled for the Main Agent.": "이 스킬은 메인 에이전트에서도 활성화되어 있습니다.",
+    "This release would downgrade the Skill or change an existing release. Installation remains blocked.": "이 릴리스는 스킬을 다운그레이드하거나 기존 릴리스를 변경합니다. 설치는 계속 차단됩니다.",
+    "Update existing Skill": "기존 스킬 업데이트",
+    "Update the existing Skill in place. Its identity and Specialist relationships will be preserved.": "기존 스킬을 같은 위치에서 업데이트합니다. 식별 정보와 스페셜리스트 관계는 유지됩니다.",
+    "View installed Skill": "설치된 스킬 보기"
   }
 }
