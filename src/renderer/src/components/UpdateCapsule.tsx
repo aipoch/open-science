@@ -10,7 +10,7 @@ import { useTranslation } from 'react-i18next'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useUpdateStore } from '@/stores/update-store'
-import type { UpdateStatus } from '../../../shared/update'
+import { UPDATE_INSTALLATION_REQUIRED, type UpdateStatus } from '../../../shared/update'
 
 type UpdateCapsuleProps = {
   className?: string
@@ -36,6 +36,9 @@ const updateCopy = (
       action: status.applyKind === 'installer' ? t('Install') : t('Restart'),
       icon: RefreshCw
     }
+  }
+  if (status.error === UPDATE_INSTALLATION_REQUIRED) {
+    return { title: t('Installation required'), action: t('Install'), icon: ArrowUp }
   }
   if (status.state === 'error') {
     return { title: t('Update failed'), action: t('Retry'), icon: RotateCcw }

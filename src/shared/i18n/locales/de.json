@@ -6002,6 +6002,20 @@
     "Extraction progress": "Extraktionsfortschritt",
     "Remaining pages": "Verbleibende Seiten",
     "Pages not yet attempted: {{remaining}}": "Noch nicht versuchte Seiten: {{remaining}}",
-    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "Ein vorheriger PDF-Auftrag konnte die Bereinigung nicht abschließen. Analysieren Sie erneut, um die Bereinigung sicher zu wiederholen. Falls die Bereinigung weiterhin fehlschlägt, melden Sie das Problem."
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "Ein vorheriger PDF-Auftrag konnte die Bereinigung nicht abschließen. Analysieren Sie erneut, um die Bereinigung sicher zu wiederholen. Falls die Bereinigung weiterhin fehlschlägt, melden Sie das Problem.",
+    "Open Science is running on a read-only disk. Drag it to Applications, quit this copy, and reopen it from Applications before updating.": "Open Science läuft auf einem schreibgeschützten Datenträger. Ziehen Sie es in „Programme“, beenden Sie diese Kopie und öffnen Sie es vor dem Aktualisieren erneut aus „Programme“.",
+    "Show installation steps": "Installationsschritte anzeigen",
+    "Installation required": "Installation erforderlich",
+    "Install Open-Science before updating": "Installieren Sie Open-Science vor dem Aktualisieren",
+    "Finish installing Open-Science": "Installation von Open-Science abschließen",
+    "Drag Open-Science to Applications. You can continue using this copy without installing.": "Ziehen Sie Open-Science in „Programme“. Sie können diese Kopie auch ohne Installation weiterverwenden.",
+    "Applications": "Programme",
+    "Continue using": "Weiter verwenden",
+    "Install in Applications": "In „Programme“ installieren",
+    "Drag Open-Science to Applications": "Open-Science in „Programme“ ziehen",
+    "Open-Science is installed": "Open-Science ist installiert",
+    "Quit this copy and reopen Open-Science from Applications to enable updates.": "Beenden Sie diese Kopie und öffnen Sie Open-Science erneut aus „Programme“, um Updates zu aktivieren.",
+    "Installed in Applications": "In „Programme“ installiert",
+    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "Open-Science konnte nicht in „Programme“ installiert werden. Ziehen Sie es im Finder dorthin oder verwenden Sie diese Kopie weiter."
   }
 }

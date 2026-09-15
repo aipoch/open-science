@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { UPDATE_INSTALLATION_REQUIRED } from '../../../shared/update'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -417,4 +418,30 @@ describe('UpdateDialog', () => {
     expect(document.body.textContent).toContain('2.3 MB/s')
     expect(document.body.textContent).toContain('42%')
   })
+})
+
+it('opens installation guidance from a read-only update failure', () => {
+  const download = vi.fn(async () => {})
+  const originalDownload = useUpdateStore.getState().download
+  useUpdateStore.setState({
+    download,
+    isDialogOpen: true,
+    status: {
+      state: 'error',
+      current: '0.2.0',
+      latest: '0.3.0',
+      applyKind: 'restart',
+      error: UPDATE_INSTALLATION_REQUIRED
+    }
+  })
+  act(() => root.render(<UpdateDialog />))
+  expect(document.body.textContent).not.toContain('Retry')
+  expect(document.body.textContent).toContain('Show installation steps')
+  expect(document.body.textContent).toContain(UPDATE_INSTALLATION_REQUIRED)
+  const guidanceButton = Array.from(document.body.querySelectorAll('button')).find(
+    (button) => button.textContent === 'Show installation steps'
+  )!
+  act(() => guidanceButton.click())
+  expect(download).toHaveBeenCalledOnce()
+  useUpdateStore.setState({ download: originalDownload })
 })

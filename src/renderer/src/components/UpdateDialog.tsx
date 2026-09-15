@@ -26,7 +26,7 @@ import { cn } from '@/lib/utils'
 import { useUpdateStore } from '@/stores/update-store'
 import { APP } from '../../../shared/app-config'
 import { isLocale } from '../../../shared/locale'
-import { formatBytes } from '../../../shared/update'
+import { formatBytes, UPDATE_INSTALLATION_REQUIRED } from '../../../shared/update'
 
 const UPDATE_BACKGROUND_PROCESS_ERROR =
   'Could not stop background processes before updating. Please try again.'
@@ -56,6 +56,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
     }
   }, [open, dialogStatus?.error])
   const releaseUrl = `${APP.links.githubReleases}/tag/v${dialogStatus?.latest ?? ''}`
+  const isInstallationRequired = dialogStatus?.error === UPDATE_INSTALLATION_REQUIRED
   const isDownloading = dialogStatus?.state === 'downloading'
   const isReady = dialogStatus?.state === 'ready'
   const isApplying = dialogStatus?.state === 'applying'
@@ -191,36 +192,40 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                           : undefined
                       }
                       description={
-                        legacyRecovery
-                          ? t('Old Shell launch records are blocking this update.')
-                          : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_ERROR
-                            ? t(
-                                'Could not stop background processes before updating. Please try again.'
-                              )
-                            : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
+                        isInstallationRequired
+                          ? t(
+                              'Open Science is running on a read-only disk. Drag it to Applications, quit this copy, and reopen it from Applications before updating.'
+                            )
+                          : legacyRecovery
+                            ? t('Old Shell launch records are blocking this update.')
+                            : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_ERROR
                               ? t(
-                                  'Could not fully stop background processes before updating. Please try again.'
+                                  'Could not stop background processes before updating. Please try again.'
                                 )
-                              : dialogStatus.error === UPDATE_SETTINGS_INSTALL_ERROR
+                              : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
                                 ? t(
-                                    'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
+                                    'Could not fully stop background processes before updating. Please try again.'
                                   )
-                                : dialogStatus.error ===
-                                    'Research work is still running. Stop it before restarting to update.'
+                                : dialogStatus.error === UPDATE_SETTINGS_INSTALL_ERROR
                                   ? t(
-                                      'Research work is still running. Stop it before restarting to update.'
+                                      'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
                                     )
                                   : dialogStatus.error ===
-                                      'Subagents are still running. Return to their tasks and stop them before restarting to update.'
+                                      'Research work is still running. Stop it before restarting to update.'
                                     ? t(
-                                        'Subagents are still running. Return to their tasks and stop them before restarting to update.'
+                                        'Research work is still running. Stop it before restarting to update.'
                                       )
                                     : dialogStatus.error ===
-                                        'The installer is missing or has changed. Download the update again.'
+                                        'Subagents are still running. Return to their tasks and stop them before restarting to update.'
                                       ? t(
-                                          'The installer is missing or has changed. Download the update again.'
+                                          'Subagents are still running. Return to their tasks and stop them before restarting to update.'
                                         )
-                                      : (dialogStatus.error ?? t('Update failed'))
+                                      : dialogStatus.error ===
+                                          'The installer is missing or has changed. Download the update again.'
+                                        ? t(
+                                            'The installer is missing or has changed. Download the update again.'
+                                          )
+                                        : (dialogStatus.error ?? t('Update failed'))
                       }
                     >
                       {legacyRecovery ? (
@@ -343,6 +348,15 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                   {dialogStatus.applyKind === 'installer'
                     ? t('Verifying installer…')
                     : t('Preparing update…')}
+                </button>
+              ) : isInstallationRequired ? (
+                <button
+                  type="button"
+                  onClick={() => void download()}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                >
+                  <ExternalLink className="size-4" aria-hidden="true" />
+                  {t('Show installation steps')}
                 </button>
               ) : isReady ? (
                 <button

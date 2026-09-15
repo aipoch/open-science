@@ -5839,6 +5839,20 @@
     "Extraction progress": "추출 진행 상황",
     "Remaining pages": "남은 페이지",
     "Pages not yet attempted: {{remaining}}": "아직 시도하지 않은 페이지: {{remaining}}",
-    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "이전 PDF 작업의 정리를 완료하지 못했습니다. 다시 분석하여 안전하게 정리를 재시도하세요. 정리가 계속 실패하면 문제를 보고하세요."
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "이전 PDF 작업의 정리를 완료하지 못했습니다. 다시 분석하여 안전하게 정리를 재시도하세요. 정리가 계속 실패하면 문제를 보고하세요.",
+    "Open Science is running on a read-only disk. Drag it to Applications, quit this copy, and reopen it from Applications before updating.": "Open Science가 읽기 전용 디스크에서 실행 중입니다. 응용 프로그램으로 드래그하고 현재 사본을 종료한 후 응용 프로그램에서 다시 열어 업데이트하세요.",
+    "Show installation steps": "설치 단계 보기",
+    "Installation required": "설치 필요",
+    "Install Open-Science before updating": "업데이트하기 전에 Open-Science를 설치하세요",
+    "Finish installing Open-Science": "Open-Science 설치 완료",
+    "Drag Open-Science to Applications. You can continue using this copy without installing.": "Open-Science를 응용 프로그램으로 드래그하세요. 설치하지 않고 이 복사본을 계속 사용할 수도 있습니다.",
+    "Applications": "응용 프로그램",
+    "Continue using": "계속 사용",
+    "Install in Applications": "응용 프로그램에 설치",
+    "Drag Open-Science to Applications": "Open-Science를 응용 프로그램으로 드래그",
+    "Open-Science is installed": "Open-Science가 설치되었습니다",
+    "Quit this copy and reopen Open-Science from Applications to enable updates.": "이 복사본을 종료하고 응용 프로그램에서 Open-Science를 다시 열어 업데이트를 활성화하세요.",
+    "Installed in Applications": "응용 프로그램에 설치됨",
+    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "Open-Science를 응용 프로그램에 설치할 수 없습니다. Finder에서 해당 위치로 드래그하거나 이 복사본을 계속 사용하세요."
   }
 }

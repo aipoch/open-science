@@ -81,6 +81,7 @@ export type AppLifecycleDeps = {
   isMigrationInProgress: () => boolean
   // Requests an app quit (app.quit); the before-quit handler below turns it into an awaited teardown.
   quit: () => void
+  beforeExit?: () => void | Promise<void>
   // Number of live BrowserWindows (retained for existing lifecycle compositions).
   countWindows: () => number
   // Headless web mode starts the backend and tray without opening a renderer window.
@@ -613,7 +614,13 @@ export const installAppLifecycle = (
         } else {
           trayBox.current?.destroy()
           shutdownFinished = true
-          deps.app.exit(0)
+          try {
+            await deps.beforeExit?.()
+          } catch (error) {
+            deps.log?.error('application exit handoff failed', diagnosticErrorFields(error))
+          } finally {
+            deps.app.exit(0)
+          }
         }
       }
     })()

@@ -5841,6 +5841,20 @@
     "Extraction progress": "抽出の進行状況",
     "Remaining pages": "残りのページ",
     "Pages not yet attempted: {{remaining}}": "未試行のページ数：{{remaining}}",
-    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "前の PDF タスクのクリーンアップを完了できませんでした。再解析するとクリーンアップを安全に再試行します。それでも失敗する場合は、問題を報告してください。"
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "前の PDF タスクのクリーンアップを完了できませんでした。再解析するとクリーンアップを安全に再試行します。それでも失敗する場合は、問題を報告してください。",
+    "Open Science is running on a read-only disk. Drag it to Applications, quit this copy, and reopen it from Applications before updating.": "Open Science は読み取り専用ディスクから実行されています。「アプリケーション」にドラッグし、このコピーを終了して「アプリケーション」から開き直してから更新してください。",
+    "Show installation steps": "インストール手順を表示",
+    "Installation required": "インストールが必要です",
+    "Install Open-Science before updating": "更新する前に Open-Science をインストールしてください",
+    "Finish installing Open-Science": "Open-Science のインストールを完了",
+    "Drag Open-Science to Applications. You can continue using this copy without installing.": "Open-Science を「アプリケーション」にドラッグしてください。インストールせずにこのコピーを使い続けることもできます。",
+    "Applications": "アプリケーション",
+    "Continue using": "このまま使用",
+    "Install in Applications": "「アプリケーション」にインストール",
+    "Drag Open-Science to Applications": "Open-Science を「アプリケーション」にドラッグ",
+    "Open-Science is installed": "Open-Science がインストールされました",
+    "Quit this copy and reopen Open-Science from Applications to enable updates.": "このコピーを終了し、「アプリケーション」から Open-Science を開き直すと更新が有効になります。",
+    "Installed in Applications": "「アプリケーション」にインストール済み",
+    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "Open-Science を「アプリケーション」にインストールできませんでした。Finder でそこにドラッグするか、このコピーを引き続き使用してください。"
   }
 }

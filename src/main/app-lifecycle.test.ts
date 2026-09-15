@@ -154,6 +154,7 @@ const setup = (
     Pick<
       AppLifecycleDeps,
       | 'shutdownBackends'
+      | 'beforeExit'
       | 'prepareForQuit'
       | 'abortQuitPreparation'
       | 'flushSessionPersistence'
@@ -233,6 +234,7 @@ const setup = (
       onAppearanceChanged: overrides.onAppearanceChanged,
       platform: overrides.platform ?? 'linux',
       detectActiveSessions,
+      beforeExit: overrides.beforeExit,
       hasActiveReviewerWork: overrides.hasActiveReviewerWork ?? (() => false),
       getActiveSettingsInstallId:
         overrides.getActiveSettingsInstallId ??
@@ -435,21 +437,44 @@ describe('installAppLifecycle', () => {
   it('runs an awaited backend teardown then exits on a normal quit', async () => {
     // Default confirmClose resolves 'quit'; a normal quit goes through the confirm gate first,
     // then the real Electron re-issues before-quit once requestQuit's quit() lands.
-    const { app, tray, shutdownBackends, quit } = setup()
+    const beforeExit = vi.fn()
+    const { app, tray, shutdownBackends, quit } = setup({ beforeExit })
 
     const event = app.emit('before-quit')
     expect(event.defaultPrevented).toBe(true)
     expect(app.exit).not.toHaveBeenCalled() // still awaiting confirmation
+    expect(beforeExit).not.toHaveBeenCalled()
 
     await flush()
     expect(quit).toHaveBeenCalledTimes(1)
     expect(app.exit).not.toHaveBeenCalled() // still awaiting shutdown
+    expect(beforeExit).not.toHaveBeenCalled()
 
     app.emit('before-quit') // re-issued quit, now confirmed
     await flush()
     expect(shutdownBackends).toHaveBeenCalledTimes(1)
     expect(tray?.destroy).toHaveBeenCalledTimes(1)
     expect(app.exit).toHaveBeenCalledWith(0)
+    expect(beforeExit).toHaveBeenCalledOnce()
+    expect(beforeExit.mock.invocationCallOrder[0]).toBeLessThan(
+      app.exit.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('logs a failed exit handoff and still exits after teardown', async () => {
+    const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    const beforeExit = vi.fn(async () => {
+      throw new Error('relaunch unavailable')
+    })
+    const { app, closeOpts, shutdownBackends } = setup({ beforeExit, log })
+    closeOpts[0].requestQuit()
+    app.emit('before-quit')
+    await flush()
+
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(beforeExit).toHaveBeenCalledOnce()
+    expect(log.error).toHaveBeenCalledWith('application exit handoff failed', expect.any(Object))
+    expect(app.exit).toHaveBeenCalledExactlyOnceWith(0)
   })
 
   it('routes a system request through the existing shutdown owner', async () => {

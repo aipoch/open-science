@@ -5841,6 +5841,20 @@
     "Extraction progress": "提取进度",
     "Remaining pages": "剩余页面",
     "Pages not yet attempted: {{remaining}}": "尚未尝试的页数：{{remaining}}",
-    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "之前的 PDF 任务未能完成清理。请点击“重新解析”以安全地重试清理。如果清理仍然失败，请报告此问题。"
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "之前的 PDF 任务未能完成清理。请点击“重新解析”以安全地重试清理。如果清理仍然失败，请报告此问题。",
+    "Open Science is running on a read-only disk. Drag it to Applications, quit this copy, and reopen it from Applications before updating.": "Open Science 正在只读磁盘上运行。请将其拖到“应用程序”，退出当前副本，并从“应用程序”重新打开后再更新。",
+    "Show installation steps": "查看安装步骤",
+    "Installation required": "需要安装",
+    "Install Open-Science before updating": "请先安装 Open-Science 再更新",
+    "Finish installing Open-Science": "完成 Open-Science 安装",
+    "Drag Open-Science to Applications. You can continue using this copy without installing.": "将 Open-Science 拖到“应用程序”。您也可以不安装并继续使用当前副本。",
+    "Applications": "应用程序",
+    "Continue using": "继续使用",
+    "Install in Applications": "安装到应用程序",
+    "Drag Open-Science to Applications": "将 Open-Science 拖到应用程序",
+    "Open-Science is installed": "Open-Science 已安装",
+    "Quit this copy and reopen Open-Science from Applications to enable updates.": "退出当前副本并从“应用程序”重新打开 Open-Science，即可启用更新。",
+    "Installed in Applications": "已安装到应用程序",
+    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "无法将 Open-Science 安装到“应用程序”。请在访达中将它拖到该位置，或继续使用当前副本。"
   }
 }

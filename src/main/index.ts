@@ -421,6 +421,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         ? waitForStartupShell(startupWindow, { diagnostics: startupDiagnostics })
         : Promise.resolve()
       if (startupWindow) {
+        void startupShellRendered
+          .then(async () => {
+            const { isReadOnlyMacInstallation, showMacInstallationGuidance } =
+              await import('./mac-installation')
+            if (isReadOnlyMacInstallation()) void showMacInstallationGuidance('startup')
+          })
+          .catch(() => {})
         if (!forwardSecondInstanceDuringStartup) {
           throw new Error('Second-instance startup relay is not initialized.')
         }
@@ -840,6 +847,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           return tray
         },
         isMigrationInProgress: ctx.isMigrationInProgress,
+        beforeExit: async () => {
+          const { completeMacInstallationHandoff } = await import('./mac-installation')
+          completeMacInstallationHandoff()
+        },
         quit: () => app.quit(),
         countWindows: () => BrowserWindow.getAllWindows().length,
         createInitialWindow: !ctx.webMode.headless,

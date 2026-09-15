@@ -6311,6 +6311,20 @@
     "Extraction progress": "Ход извлечения",
     "Remaining pages": "Оставшиеся страницы",
     "Pages not yet attempted: {{remaining}}": "Страницы без попытки обработки: {{remaining}}",
-    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "Предыдущая задача PDF не смогла завершить очистку. Запустите анализ снова, чтобы безопасно повторить очистку. Если очистка снова не удастся, сообщите о проблеме."
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "Предыдущая задача PDF не смогла завершить очистку. Запустите анализ снова, чтобы безопасно повторить очистку. Если очистка снова не удастся, сообщите о проблеме.",
+    "Open Science is running on a read-only disk. Drag it to Applications, quit this copy, and reopen it from Applications before updating.": "Open Science запущен с диска только для чтения. Перетащите его в папку «Программы», закройте эту копию и снова откройте из папки «Программы» перед обновлением.",
+    "Show installation steps": "Показать шаги установки",
+    "Installation required": "Требуется установка",
+    "Install Open-Science before updating": "Установите Open-Science перед обновлением",
+    "Finish installing Open-Science": "Завершение установки Open-Science",
+    "Drag Open-Science to Applications. You can continue using this copy without installing.": "Перетащите Open-Science в папку «Программы». Эту копию также можно использовать без установки.",
+    "Applications": "Программы",
+    "Continue using": "Продолжить работу",
+    "Install in Applications": "Установить в «Программы»",
+    "Drag Open-Science to Applications": "Перетащить Open-Science в «Программы»",
+    "Open-Science is installed": "Open-Science установлен",
+    "Quit this copy and reopen Open-Science from Applications to enable updates.": "Закройте эту копию и снова откройте Open-Science из папки «Программы», чтобы включить обновления.",
+    "Installed in Applications": "Установлено в «Программы»",
+    "Open-Science could not be installed in Applications. Drag it there in Finder, or continue using this copy.": "Не удалось установить Open-Science в папку «Программы». Перетащите приложение туда в Finder или продолжите работу с этой копией."
   }
 }
