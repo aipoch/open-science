@@ -159,53 +159,52 @@ const WorkspaceLiteratureToolCard = ({
             <p className="line-clamp-4 break-words text-text-100">{summary.pdfElements.caption}</p>
           ) : null}
           {summary.pdfElements.imageIncluded ? <p>{t('Image delivered')}</p> : null}
-          {summary.pdfElements.limitations?.map((limitation, index) => (
-            <div key={index} className="space-y-1.5">
-              {summary.action === 'search' && (limitation.caption || limitation.pageStart) ? (
-                <p className="break-words text-[11px] text-text-200">
-                  {limitation.pageStart
-                    ? limitation.pageEnd && limitation.pageEnd !== limitation.pageStart
-                      ? t('Pages {{start}}–{{end}}', {
-                          start: limitation.pageStart,
-                          end: limitation.pageEnd
-                        })
-                      : t('Page {{page}}', { page: limitation.pageStart })
-                    : null}
-                  {limitation.pageStart && limitation.caption ? ' · ' : null}
-                  {limitation.caption}
-                </p>
-              ) : null}
-              {limitation.tableStructureConflict ? (
-                <ErrorNotice
-                  icon={TriangleAlert}
-                  tone="amber"
-                  description={t(
-                    'Extracted merged cells conflict with source rows or columns. Check the image or original PDF.'
-                  )}
-                />
-              ) : null}
-              {limitation.otherLimitations ? (
-                <ErrorNotice
-                  icon={TriangleAlert}
-                  tone="amber"
-                  description={t('Some evidence is unavailable or incomplete.')}
-                />
-              ) : null}
-              {limitation.summaryShortened ? (
-                <p className="text-[11px] text-text-300">
-                  {t(
-                    'Caption or table preview shortened in this list. Read the element for more detail.'
-                  )}
-                </p>
-              ) : null}
-            </div>
-          ))}
-          {summary.pdfElements.incomplete && !summary.pdfElements.limitations?.length ? (
+          {summary.pdfElements.incomplete ? (
             <ErrorNotice
+              className="border-0 bg-transparent p-0"
               icon={TriangleAlert}
               tone="amber"
-              description={t('Some evidence is unavailable or incomplete.')}
+              description={t(
+                'Some PDF content could not be extracted or delivered. Check the original PDF.'
+              )}
             />
+          ) : null}
+          {summary.pdfElements.limitations?.length ? (
+            <details className="text-[11px] text-text-300">
+              <summary className="w-fit cursor-pointer rounded-sm hover:text-text-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+                {t('Extraction notes')}
+              </summary>
+              <div className="mt-1.5 space-y-2">
+                {summary.pdfElements.limitations.map((limitation, index) => (
+                  <div key={index} className="space-y-1">
+                    {summary.action === 'search' && (limitation.caption || limitation.pageStart) ? (
+                      <p className="break-words text-text-200">
+                        {limitation.pageStart
+                          ? limitation.pageEnd && limitation.pageEnd !== limitation.pageStart
+                            ? t('Pages {{start}}–{{end}}', {
+                                start: limitation.pageStart,
+                                end: limitation.pageEnd
+                              })
+                            : t('Page {{page}}', { page: limitation.pageStart })
+                          : null}
+                        {limitation.pageStart && limitation.caption ? ' · ' : null}
+                        {limitation.caption}
+                      </p>
+                    ) : null}
+                    {limitation.tableStructureConflict ? (
+                      <p>
+                        {t(
+                          'Extracted merged cells conflict with source rows or columns. Check the image or original PDF.'
+                        )}
+                      </p>
+                    ) : null}
+                    {limitation.otherLimitations ? (
+                      <p>{t('Some evidence is unavailable or incomplete.')}</p>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </details>
           ) : null}
         </div>
       ) : null}
