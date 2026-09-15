@@ -1007,11 +1007,16 @@ const ConversationPanel = ({
     hasMainConversation(activeSession) &&
     actionability?.actions.startSideChat.allowed !== false &&
     canEditDraft &&
-    hasSideChatDraft &&
+    (hasSideChatDraft || Boolean(sideChatController.createDraft)) &&
     attachments.length === 0 &&
     attachmentTransfers.length === 0 &&
     !sideChatDisabledReason
   const canRetrySideChatHydration = Boolean(onRetrySideChatHydration)
+  const canOpenSendOptions =
+    canPlanFirst ||
+    canStartSideChat ||
+    canRetrySideChatHydration ||
+    (effectiveCanSend && Boolean(onBranchInNewSession) && canBranchInNewSession)
 
   const handlePlanFirst = (): void => {
     if (!canPlanFirst) return
@@ -1019,8 +1024,10 @@ const ConversationPanel = ({
   }
 
   const handleSideChat = (): void => {
-    if (canStartSideChat) onStartSideChat()
-    else onRetrySideChatHydration?.()
+    if (canStartSideChat) {
+      if (hasSideChatDraft) onStartSideChat()
+      else sideChatController.createDraft?.()
+    } else onRetrySideChatHydration?.()
   }
 
   // Converts the hidden file input selection into the shared staging callback.
@@ -2618,7 +2625,7 @@ const ConversationPanel = ({
                                   aria-label={t('Send message options')}
                                   className={cn(
                                     'flex rounded-md bg-primary text-primary-foreground [@media(pointer:coarse)]:mx-3',
-                                    !effectiveCanSend && 'opacity-50'
+                                    !effectiveCanSend && !canOpenSendOptions && 'opacity-50'
                                   )}
                                 >
                                   <Tooltip>
@@ -2629,7 +2636,10 @@ const ConversationPanel = ({
                                         size="icon"
                                         onClick={handleSubmit}
                                         disabled={!effectiveCanSend}
-                                        className={composerSplitSendPrimaryButtonClassName}
+                                        className={cn(
+                                          composerSplitSendPrimaryButtonClassName,
+                                          canOpenSendOptions && 'disabled:opacity-50'
+                                        )}
                                         aria-label={t('Send message')}
                                       >
                                         <ArrowUp
@@ -2658,15 +2668,11 @@ const ConversationPanel = ({
                                             type="button"
                                             variant="ghost"
                                             size="icon"
-                                            disabled={
-                                              !canPlanFirst &&
-                                              !canStartSideChat &&
-                                              !canRetrySideChatHydration &&
-                                              (!effectiveCanSend ||
-                                                !onBranchInNewSession ||
-                                                !canBranchInNewSession)
-                                            }
-                                            className={composerSplitSendMenuButtonClassName}
+                                            disabled={!canOpenSendOptions}
+                                            className={cn(
+                                              composerSplitSendMenuButtonClassName,
+                                              effectiveCanSend && 'disabled:opacity-50'
+                                            )}
                                             aria-label={t('More send options')}
                                             aria-haspopup="menu"
                                             data-testid="branch-send-menu-trigger"

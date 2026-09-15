@@ -24,7 +24,8 @@ import { useTranslation } from 'react-i18next'
 
 import { getAcpRuntimeEventText } from '../../../../shared/acp'
 import type { SideChatEntry, SideChatSnapshot } from '../../../../shared/side-chat'
-import type { ChatSession } from '@/stores/session-store'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { useSessionStore, type ChatSession } from '@/stores/session-store'
 
 type SideChatView = Readonly<{
   id?: string
@@ -586,6 +587,45 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
     },
     [t, update]
   )
+
+  useEffect(() => {
+    const discardEmpty = (matches: (view: SideChatView) => boolean): void => {
+      for (const [id, view] of viewsRef.current) {
+        if (
+          view.draftOnly &&
+          !view.running &&
+          !view.draft.trim() &&
+          !view.annotations?.length &&
+          view.entries.length === 0 &&
+          matches(view)
+        )
+          close(id)
+      }
+    }
+    const removeNavigation = useNavigationStore.subscribe((state, previous) => {
+      if (state.view !== previous.view || state.activeProjectId !== previous.activeProjectId) {
+        discardEmpty((view) => view.projectId === previous.activeProjectId)
+      }
+    })
+    const removeSession = useSessionStore.subscribe((state, previous) => {
+      if (state.selectedSessionId !== previous.selectedSessionId) {
+        discardEmpty((view) => view.parentSessionId === previous.selectedSessionId)
+      }
+    })
+    const removePreview = usePreviewWorkbenchStore.subscribe((state, previous) => {
+      if (
+        state.activeItemId !== previous.activeItemId ||
+        state.activeProjectId !== previous.activeProjectId
+      ) {
+        discardEmpty((view) => sideChatTabId(view.id!) === previous.activeItemId)
+      }
+    })
+    return () => {
+      removeNavigation()
+      removeSession()
+      removePreview()
+    }
+  }, [close])
 
   return useMemo<SideChatRuntimeController>(
     () => ({

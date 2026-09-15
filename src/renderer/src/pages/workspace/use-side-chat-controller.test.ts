@@ -14,6 +14,7 @@ const createRoot: typeof createReactRoot = (...args) => {
 }
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { useSessionStore } from '@/stores/session-store'
 import { SideChatProvider, useSideChatController } from './use-side-chat-controller'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -1022,3 +1023,67 @@ it('restores siblings after restart and omits a confirmed closed Side chat', asy
   container.remove()
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
 })
+
+it.each(['preview', 'session', 'page', 'project'] as const)(
+  'discards only untouched empty side chats when leaving the %s',
+  async (destination) => {
+    const { useNavigationStore } = await import('@/stores/navigation-store')
+    const { usePreviewWorkbenchStore, sideChatTabId } =
+      await import('@/stores/preview-workbench-store')
+    const previousNavigation = useNavigationStore.getState()
+    const previousPreview = usePreviewWorkbenchStore.getState()
+    const previousSelected = useSessionStore.getState().selectedSessionId
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'empty-project' })
+    usePreviewWorkbenchStore.setState({
+      activeProjectId: 'empty-project',
+      items: [],
+      activeItemId: undefined
+    })
+    useSessionStore.setState({ selectedSessionId: 'empty-parent' })
+    const start = vi.fn()
+    const close = vi.fn()
+    window.api = {
+      sideChat: {
+        start,
+        close,
+        onEvent: () => () => undefined,
+        onRelayDelivered: () => () => undefined
+      }
+    } as unknown as Window['api']
+    const root = createRoot(document.createElement('div'))
+    let chat!: ReturnType<typeof useSideChatController>
+    const Harness = (): null => {
+      chat = useSideChatController({ sessionId: 'empty-parent', projectId: 'empty-project' })
+      return null
+    }
+    act(() => root.render(createElement(SideChatProvider, null, createElement(Harness))))
+    let filledId!: string
+    let emptyId!: string
+    act(() => {
+      filledId = chat.createDraft!()!
+    })
+    act(() => chat.setDraft('Keep my unsent text'))
+    act(() => {
+      emptyId = chat.createDraft!()!
+    })
+    expect(chat.views).toHaveLength(2)
+    expect(start).not.toHaveBeenCalled()
+    act(() => {
+      if (destination === 'preview')
+        usePreviewWorkbenchStore.setState({ activeItemId: 'another-preview' })
+      else if (destination === 'session')
+        useSessionStore.setState({ selectedSessionId: 'another-parent' })
+      else if (destination === 'page') useNavigationStore.setState({ view: 'library' })
+      else useNavigationStore.setState({ activeProjectId: 'another-project' })
+    })
+    expect(chat.views?.map((view) => view.id)).toEqual([filledId])
+    expect(
+      usePreviewWorkbenchStore.getState().items.some((item) => item.id === sideChatTabId(emptyId))
+    ).toBe(false)
+    expect(close).not.toHaveBeenCalled()
+    act(() => root.unmount())
+    useNavigationStore.setState(previousNavigation)
+    usePreviewWorkbenchStore.setState(previousPreview)
+    useSessionStore.setState({ selectedSessionId: previousSelected })
+  }
+)
