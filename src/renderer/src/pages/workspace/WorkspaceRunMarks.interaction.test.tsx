@@ -350,6 +350,8 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(list?.style.height).toBe('100px')
     expect(list?.style.maxHeight).toBe('calc(100vh - 6rem)')
 
+    fireEvent.focus(screen.getAllByRole('button', { name: /Go to run/u })[0]!)
+    expect(screen.getByRole('tooltip')).toBeTruthy()
     viewportHeight = 240
     await act(async () => {
       notifyResize?.()
@@ -357,6 +359,14 @@ describe('WorkspaceRunMarks interaction', () => {
     })
 
     expect(rail.style.top).toBe('440px')
+    expect(screen.getByRole('tooltip')).toBeTruthy()
+    panel.getBoundingClientRect = () => createRect(80, 800, 200, 1_000)
+    await act(async () => {
+      notifyResize?.()
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+    })
+    expect(rail.style.top).toBe('480px')
+    expect(screen.queryByRole('tooltip')).toBeNull()
   })
 
   it('bounds dense spacing and follows transcript progress only beyond the visible rail edges', async () => {

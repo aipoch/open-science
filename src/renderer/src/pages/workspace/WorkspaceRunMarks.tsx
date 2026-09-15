@@ -66,6 +66,7 @@ const WorkspaceRunMarks = ({
   const previewId = useId()
   const [preview, setPreview] = useState<{
     id: string
+    railPosition: RunMarkRailPosition | null
     left: number
     top: number
     open: boolean
@@ -92,6 +93,7 @@ const WorkspaceRunMarks = ({
     setHighlightedIndex(index)
     setPreview({
       id: mark.id,
+      railPosition,
       left: Math.max(12, Math.min(preferredLeft, window.innerWidth - width - 12)),
       top: Math.max(
         RUN_MARK_PREVIEW_MARGIN_PX,
@@ -289,7 +291,10 @@ const WorkspaceRunMarks = ({
   }
 
   const previewMark = marks.find((mark) => mark.id === preview?.id)
-  const previewOpen = preview?.open && previewMark !== undefined
+  // A measured preview belongs to one rail position. ResizeObserver may move the rail
+  // without a window resize; invalidate the old anchor without another state update.
+  const previewOpen =
+    preview?.open && preview.railPosition === railPosition && previewMark !== undefined
 
   return createPortal(
     <>
@@ -342,7 +347,7 @@ const WorkspaceRunMarks = ({
                   <span
                     aria-hidden="true"
                     className={runMarkIndicatorClassName(
-                      highlightedIndex,
+                      previewOpen ? highlightedIndex : null,
                       index,
                       visibleIndices.includes(index)
                     )}

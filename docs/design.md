@@ -620,7 +620,7 @@ Active-dialog menus and other foreground child layers retain their own ordering.
   The 1px marks share one 256px-wide, 88px-high preview card. Moving between marks repositions that
   card with a 200ms transform transition; entry and exit fade without changing the button hit areas.
   The card is hoverable, closes after 120ms outside the rail/card, and dismisses on Escape,
-  transcript scrolling, viewport resizing, activation, or session/branch changes. Keyboard focus
+  transcript scrolling, viewport resizing, rail position changes, activation, or session/branch changes. Keyboard focus
   opens the same preview and supplies `aria-describedby`. Position is clamped to 12px viewport
   margins, with the preferred side mirrored in RTL. Reduced motion disables transitions and entry
   animation. The preview remains hidden below `md`, like the rail.
