@@ -171,10 +171,10 @@ dmg:
   iconTextSize: 12
   contents:
     - x: 130
-      y: 318
+      y: 286
       name: Open-Science.app
     - x: 530
-      y: 318
+      y: 286
       type: link
       path: /Applications
     - x: 530
