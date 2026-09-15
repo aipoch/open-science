@@ -271,7 +271,7 @@ function Get-ResetPlan([string]$Profile, [string]$AppData, [string]$ExplicitData
   $dataRoots = @($dataRoots | Select-Object -Unique)
   $targets = @()
   foreach ($root in $dataRoots) {
-    $runtime = Join-Path $root 'runtime'
+    $runtime = Get-CanonicalPath (Join-Path $root 'runtime')
     foreach ($candidate in (Get-ResetCacheCandidates $runtime $Identity $Profile $PublicRoot $TempRoots)) {
       if (-not (Test-Path -LiteralPath $candidate.Path)) { continue }
       $cache = Assert-ResetTarget $candidate.Path $Profile

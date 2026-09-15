@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync
@@ -359,5 +360,39 @@ describe.skipIf(process.platform !== 'win32')('Windows data reset', () => {
     )
     expect(result.status, result.stderr).toBe(7)
     expect(result.stdout).toContain('preview=True')
+  })
+
+  it('discovers a canonical runtime cache through an 8.3 custom data path', ({ skip }) => {
+    const f = fixture()
+    const customParent = join(f.root, 'custom data parent')
+    const custom = join(customParent, 'OpenScience')
+    mkdirSync(join(custom, 'runtime'), { recursive: true })
+    const shortParent = success(
+      `(New-Object -ComObject Scripting.FileSystemObject).GetFolder(${quote(customParent)}).ShortPath`
+    ).trim()
+    if (shortParent.toLowerCase() === customParent.toLowerCase()) {
+      skip('This Windows volume does not provide 8.3 directory aliases.')
+    }
+    const alias = join(shortParent, 'OpenScience')
+    const runtime = realpathSync.native(join(custom, 'runtime'))
+    const out = success(`
+      $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name;
+      $runtime = ${quote(runtime)};
+      $cache = Join-Path ${quote(f.profile)} (Get-CacheLeaf $runtime $identity);
+      New-Item -ItemType Directory -Path $cache | Out-Null;
+      @{ schema=1; canonicalRoot=$runtime.ToLowerInvariant(); userIdentity=$identity } |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $cache '.open-science-cache.json') -Encoding UTF8;
+      & "$env:SystemRoot\\System32\\icacls.exe" $cache /inheritance:r /grant:r ($identity + ':(OI)(CI)F') '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null;
+      if ($LASTEXITCODE -ne 0) { throw 'Fixture ACL setup failed' };
+      $plan = @(Get-ResetPlan ${quote(f.profile)} ${quote(f.appData)} ${quote(alias)} $identity '' @());
+      if (@($plan | Where-Object { $_.Path -eq $cache -and $_.Runtime -eq $runtime }).Count -ne 1) {
+        throw 'Canonical cache was not discovered from its runtime alias';
+      }
+      ${stopped} ${confirmed}
+      Invoke-Reset $plan ${quote(f.profile)} $identity;
+      if (Test-Path -LiteralPath $cache) { throw 'Canonical cache remains' };
+    `)
+    expect(out).toContain('Reset completed')
+    expect(existsSync(custom)).toBe(false)
   })
 })
