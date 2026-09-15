@@ -288,7 +288,7 @@ colors communicate a successful or failed probe/migration result.
 | Token                     | Tailwind class    | Value | Usage                                                                |
 | ------------------------- | ----------------- | ----- | -------------------------------------------------------------------- |
 | `--z-index-modal`         | `z-modal`         | `50`  | Standard portaled modal layer (e.g. the notification center popover) |
-| `--z-index-toast`         | `z-toast`         | `40`  | Background notices and undo snackbars below modal backdrops                      |
+| `--z-index-toast`         | `z-toast`         | `40`  | Background notices and undo snackbars below modal backdrops          |
 | `--z-index-markdown-menu` | `z-markdown-menu` | `200` | Streamdown Mermaid and table format menus above fullscreen content   |
 
 Background notices share `z-toast`: action toasts, the notification stack, persistent storage
