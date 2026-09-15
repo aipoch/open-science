@@ -150,8 +150,8 @@ mac:
   minimumSystemVersion: '12.0.0'
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    CFBundleName: Open Science
-    CFBundleDisplayName: Open Science
+    CFBundleName: Open-Science
+    CFBundleDisplayName: Open-Science
     NSCameraUsageDescription: Application requests access to the device's camera.
     NSMicrophoneUsageDescription: Application requests access to the device's microphone.
     NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
@@ -164,15 +164,20 @@ mac:
     - from: resources/bin/mac/${arch}/micromamba
       to: micromamba
 dmg:
+  title: Open-Science
+  background: build/dmg-background.png
+  iconSize: 88
+  iconTextSize: 12
   contents:
     - x: 130
-      y: 220
-    - x: 410
-      y: 220
+      y: 318
+      name: Open-Science.app
+    - x: 530
+      y: 318
       type: link
       path: /Applications
-    - x: 270
-      y: 70
+    - x: 530
+      y: 75
       type: file
       path: LICENSE
       name: LICENSE.txt
