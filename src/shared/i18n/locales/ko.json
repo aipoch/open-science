@@ -4558,6 +4558,7 @@
     "Could not refresh environment readiness. Saved settings are unchanged.": "환경 준비 상태를 새로 고치지 못했습니다. 저장된 설정은 그대로 유지됩니다.",
     "Retry preflight": "사전 점검 다시 시도",
     "The provider changed while loading models. Try again.": "모델을 불러오는 동안 모델 제공업체가 변경되었습니다. 다시 시도하세요.",
+    "Open Science could not find a file-backed Codex credential to import. Your existing Codex sign-in may be stored in the system credential store, which Open Science cannot import from. Continue with the Open Science Codex sign-in instead.": "Open Science가 가져올 수 있는 파일 기반 Codex 자격 증명을 찾지 못했습니다. 기존 Codex 로그인은 시스템 자격 증명 저장소에 저장되어 있을 수 있으며 Open Science는 해당 저장소에서 가져올 수 없습니다. 대신 Open Science의 Codex 로그인으로 계속하세요.",
     "Edit metadata": "서지 정보 편집",
     "Year": "연도",
     "Publication": "출판물",

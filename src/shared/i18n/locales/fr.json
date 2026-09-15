@@ -4864,6 +4864,7 @@
     "Could not refresh environment readiness. Saved settings are unchanged.": "Impossible d’actualiser l’état de préparation de l’environnement. Les paramètres enregistrés restent inchangés.",
     "Retry preflight": "Réessayer la vérification préalable",
     "The provider changed while loading models. Try again.": "Le fournisseur a été modifié pendant le chargement des modèles. Réessayez.",
+    "Open Science could not find a file-backed Codex credential to import. Your existing Codex sign-in may be stored in the system credential store, which Open Science cannot import from. Continue with the Open Science Codex sign-in instead.": "Open Science n’a pas trouvé d’identifiants Codex basés sur un fichier à importer. Votre connexion Codex existante est peut-être stockée dans le trousseau système, à partir duquel Open Science ne peut pas importer. Continuez plutôt avec la connexion Codex d’Open Science.",
     "Edit metadata": "Modifier les métadonnées",
     "Year": "Année",
     "Publication": "Publication",

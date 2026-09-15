@@ -4804,6 +4804,7 @@
     "Could not refresh environment readiness. Saved settings are unchanged.": "Der Bereitschaftsstatus der Umgebung konnte nicht aktualisiert werden. Gespeicherte Einstellungen bleiben unverändert.",
     "Retry preflight": "Vorprüfung wiederholen",
     "The provider changed while loading models. Try again.": "Der Anbieter wurde während des Ladens der Modelle geändert. Versuchen Sie es erneut.",
+    "Open Science could not find a file-backed Codex credential to import. Your existing Codex sign-in may be stored in the system credential store, which Open Science cannot import from. Continue with the Open Science Codex sign-in instead.": "Open Science hat keine dateibasierte Codex-Berechtigung zum Importieren gefunden. Ihre bestehende Codex-Anmeldung ist möglicherweise im System-Anmeldeinformationsspeicher gespeichert, aus dem Open Science nicht importieren kann. Fahren Sie stattdessen mit der Open-Science-Codex-Anmeldung fort.",
     "Citation styles": "Zitierstile",
     "Manage citation styles…": "Zitierstile verwalten…",
     "Back to references": "Zurück zu den Literaturangaben",

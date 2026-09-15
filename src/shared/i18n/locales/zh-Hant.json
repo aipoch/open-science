@@ -4561,6 +4561,7 @@
     "Could not refresh environment readiness. Saved settings are unchanged.": "無法重新整理環境就緒狀態。已儲存的設定不受影響。",
     "Retry preflight": "重試預先檢查",
     "The provider changed while loading models. Try again.": "載入模型期間供應商已變更。請重試。",
+    "Open Science could not find a file-backed Codex credential to import. Your existing Codex sign-in may be stored in the system credential store, which Open Science cannot import from. Continue with the Open Science Codex sign-in instead.": "Open Science 未找到可匯入的檔案式 Codex 憑證。您既有的 Codex 登入可能儲存在系統憑證庫中，Open Science 無法從中匯入。請改用 Open Science 的 Codex 登入繼續。",
     "Edit metadata": "編輯題錄",
     "Year": "年份",
     "Publication": "出版物",
