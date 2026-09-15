@@ -6227,6 +6227,8 @@
     "Elements: {{total}}": "Элементы: {{total}}",
     "Parsed pages: {{parsed}} / {{checked}}": "Обработано страниц: {{parsed}} / {{checked}}",
     "Image delivered": "Изображение предоставлено",
+    "Extracted merged cells conflict with source rows or columns. Check the image or original PDF.": "Извлечённые объединённые ячейки противоречат исходным строкам или столбцам. Проверьте изображение или исходный PDF.",
+    "Caption or table preview shortened in this list. Read the element for more detail.": "Подпись или предпросмотр таблицы сокращены в этом списке. Прочитайте элемент для получения подробностей.",
     "Some evidence is unavailable or incomplete.": "Некоторые подтверждающие данные недоступны или неполны.",
     "Show selected": "Показать выбранное",
     "Disable": "Отключить",

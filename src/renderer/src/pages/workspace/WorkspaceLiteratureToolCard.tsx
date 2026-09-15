@@ -159,7 +159,48 @@ const WorkspaceLiteratureToolCard = ({
             <p className="line-clamp-4 break-words text-text-100">{summary.pdfElements.caption}</p>
           ) : null}
           {summary.pdfElements.imageIncluded ? <p>{t('Image delivered')}</p> : null}
-          {summary.pdfElements.incomplete ? (
+          {summary.pdfElements.limitations?.map((limitation, index) => (
+            <div key={index} className="space-y-1.5">
+              {summary.action === 'search' && (limitation.caption || limitation.pageStart) ? (
+                <p className="break-words text-[11px] text-text-200">
+                  {limitation.pageStart
+                    ? limitation.pageEnd && limitation.pageEnd !== limitation.pageStart
+                      ? t('Pages {{start}}–{{end}}', {
+                          start: limitation.pageStart,
+                          end: limitation.pageEnd
+                        })
+                      : t('Page {{page}}', { page: limitation.pageStart })
+                    : null}
+                  {limitation.pageStart && limitation.caption ? ' · ' : null}
+                  {limitation.caption}
+                </p>
+              ) : null}
+              {limitation.tableStructureConflict ? (
+                <ErrorNotice
+                  icon={TriangleAlert}
+                  tone="amber"
+                  description={t(
+                    'Extracted merged cells conflict with source rows or columns. Check the image or original PDF.'
+                  )}
+                />
+              ) : null}
+              {limitation.otherLimitations ? (
+                <ErrorNotice
+                  icon={TriangleAlert}
+                  tone="amber"
+                  description={t('Some evidence is unavailable or incomplete.')}
+                />
+              ) : null}
+              {limitation.summaryShortened ? (
+                <p className="text-[11px] text-text-300">
+                  {t(
+                    'Caption or table preview shortened in this list. Read the element for more detail.'
+                  )}
+                </p>
+              ) : null}
+            </div>
+          ))}
+          {summary.pdfElements.incomplete && !summary.pdfElements.limitations?.length ? (
             <ErrorNotice
               icon={TriangleAlert}
               tone="amber"

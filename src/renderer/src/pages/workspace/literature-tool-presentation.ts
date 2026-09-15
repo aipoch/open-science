@@ -12,6 +12,14 @@ type LiteratureToolSummary = Readonly<{
     checkedPages?: number
     imageIncluded?: boolean
     incomplete: boolean
+    limitations?: readonly Readonly<{
+      caption?: string
+      pageStart?: number
+      pageEnd?: number
+      summaryShortened: boolean
+      tableStructureConflict: boolean
+      otherLimitations: boolean
+    }>[]
   }>
   query?: string
   documentNames: readonly string[]
@@ -126,6 +134,43 @@ const buildPdfElementToolSummary = (
     .map((item) => asPositiveInteger(item.pageEnd))
     .filter((page): page is number => page !== undefined)
   const coverage = isRecord(output?.coverage) ? output.coverage : undefined
+  // Group reasons per element: repeated element/table issues describe one limitation.
+  // Only known listing abbreviations are informational. Unknown and read-time warnings stay cautions.
+  const limitations = (elements ? [output, ...elements] : output ? [output] : []).flatMap(
+    (item) => {
+      if (!Array.isArray(item?.warnings) || item.warnings.length === 0) return []
+      let summaryShortened = false
+      let tableStructureConflict = false
+      let otherLimitations = false
+      for (const warning of item.warnings) {
+        if (
+          action === 'search' &&
+          (warning === 'Caption is truncated; inspect the source PDF for the complete text.' ||
+            warning === 'Table preview is truncated; inspect the source PDF for the complete text.')
+        ) {
+          summaryShortened = true
+        } else if (
+          warning === 'span-conflicts-with-source-rows' ||
+          warning === 'span-conflicts-with-source-columns'
+        ) {
+          tableStructureConflict = true
+        } else {
+          otherLimitations = true
+        }
+      }
+      const caption = asString(item.caption)
+      return [
+        {
+          caption: caption && caption.length > 120 ? `${caption.slice(0, 120)}…` : caption,
+          pageStart: asPositiveInteger(item.pageStart),
+          pageEnd: asPositiveInteger(item.pageEnd),
+          summaryShortened,
+          tableStructureConflict,
+          otherLimitations
+        }
+      ]
+    }
+  )
   return {
     action,
     documentNames,
@@ -141,9 +186,8 @@ const buildPdfElementToolSummary = (
         ? coverage.checkedPages.length
         : undefined,
       imageIncluded: typeof output?.imageIncluded === 'boolean' ? output.imageIncluded : undefined,
-      incomplete: [output, ...pages].some(
-        (item) => Array.isArray(item?.warnings) && item.warnings.length > 0
-      )
+      incomplete: limitations.some((item) => item.tableStructureConflict || item.otherLimitations),
+      limitations
     }
   }
 }

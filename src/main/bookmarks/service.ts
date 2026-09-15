@@ -15,6 +15,9 @@ import { createLiteratureAttachmentVersionReference } from '../../shared/literat
 import { createUploadVersionReference } from '../../shared/uploads'
 import type { ResolvedSessionPdfVersion } from '../literature/session-pdf-source-resolver'
 import type { BookmarkRepository } from './repository'
+import { createLogger, diagnosticErrorFields } from '../logger'
+
+const log = createLogger('bookmarks')
 
 type SessionAuthority = {
   loadSessionWithDiagnostics(
@@ -90,12 +93,16 @@ const canonicalPdfPath = (projectId: string, resolved: ResolvedSessionPdfVersion
 class BookmarkService {
   constructor(private readonly options: BookmarkServiceOptions) {}
 
-  private async resolveReadablePdfVersion(request: {
-    projectId: string
-    sourceKind: 'artifact-version' | 'upload-version' | 'literature-attachment-version'
-    sourceVersionId: string
-    expectedSourceFileId: string
-  }): Promise<ResolvedSessionPdfVersion | undefined> {
+  private async resolveReadablePdfVersion(
+    request: {
+      projectId: string
+      sourceKind: 'artifact-version' | 'upload-version' | 'literature-attachment-version'
+      sourceVersionId: string
+      expectedSourceFileId: string
+    },
+    onStage?: (stage: string) => void
+  ): Promise<ResolvedSessionPdfVersion | undefined> {
+    onStage?.('version-resolution')
     const resolved = await this.options.pdfVersions?.resolveVersion(request)
     if (
       !resolved ||
@@ -110,11 +117,16 @@ class BookmarkService {
     ) {
       return undefined
     }
+    onStage?.('content-open')
     const lease = await resolved.openContent()
     try {
+      onStage?.('content-verification')
       await lease.verifyUnchanged()
     } finally {
-      await lease.close()
+      await lease.close().catch((error: unknown) => {
+        onStage?.('content-close')
+        throw error
+      })
     }
     return resolved
   }
@@ -129,16 +141,22 @@ class BookmarkService {
 
   private async loadWritableSession(
     projectId: string,
-    sessionId: string
+    sessionId: string,
+    onStage?: (stage: string) => void
   ): Promise<PersistedChatSession> {
     const loaded = await this.options.sessions.loadSessionWithDiagnostics(projectId, sessionId)
     if (loaded.status === 'unreadable') {
+      onStage?.('session-unreadable')
       throw new Error('Cannot use Bookmarks while the durable Session is unreadable.')
     }
     if (loaded.status === 'missing' || loaded.session.projectId !== projectId) {
+      onStage?.('session-unavailable')
       throw new Error('Session not found.')
     }
-    if (loaded.session.packageOrigin) throw new Error('Imported Sessions are read-only.')
+    if (loaded.session.packageOrigin) {
+      onStage?.('session-read-only')
+      throw new Error('Imported Sessions are read-only.')
+    }
     return loaded.session
   }
 
@@ -273,35 +291,56 @@ class BookmarkService {
   async resolvePdfSource(
     request: ResolvePdfBookmarkSourceRequest
   ): Promise<BookmarkPdfSourceResult> {
-    await this.loadWritableSession(request.projectId, request.sessionId)
-    if (!this.options.pdfVersions) return { ok: false, reason: 'unsupported-source' }
-    const resolved = await this.resolveReadablePdfVersion({
-      projectId: request.projectId,
-      sourceKind: request.sourceKind,
-      sourceVersionId: request.versionId,
-      expectedSourceFileId: request.sourceFileId
-    })
-    if (!resolved) return { ok: false, reason: 'source-unavailable' }
-    if (
-      resolved.sourceKind !== request.sourceKind ||
-      resolved.sourceFileId !== request.sourceFileId ||
-      resolved.sourceVersionId !== request.versionId
-    ) {
-      return { ok: false, reason: 'identity-mismatch' }
+    let stage = 'session-load'
+    const onStage = (value: string): void => {
+      stage = value
     }
-    const path = canonicalPdfPath(request.projectId, resolved)
-    return {
-      ok: true,
-      source: {
-        kind: resolved.sourceKind,
-        projectId: request.projectId,
-        sourceFileId: resolved.sourceFileId,
-        versionId: resolved.sourceVersionId,
-        ...('sourceSessionId' in resolved ? { sessionId: resolved.sourceSessionId } : {}),
-        checksum: resolved.checksum,
-        name: resolved.filename,
-        path
+    try {
+      await this.loadWritableSession(request.projectId, request.sessionId, onStage)
+      if (!this.options.pdfVersions) return { ok: false, reason: 'unsupported-source' }
+      const resolved = await this.resolveReadablePdfVersion(
+        {
+          projectId: request.projectId,
+          sourceKind: request.sourceKind,
+          sourceVersionId: request.versionId,
+          expectedSourceFileId: request.sourceFileId
+        },
+        onStage
+      )
+      if (!resolved) return { ok: false, reason: 'source-unavailable' }
+      if (
+        resolved.sourceKind !== request.sourceKind ||
+        resolved.sourceFileId !== request.sourceFileId ||
+        resolved.sourceVersionId !== request.versionId
+      ) {
+        return { ok: false, reason: 'identity-mismatch' }
       }
+      stage = 'source-identity'
+      const path = canonicalPdfPath(request.projectId, resolved)
+      return {
+        ok: true,
+        source: {
+          kind: resolved.sourceKind,
+          projectId: request.projectId,
+          sourceFileId: resolved.sourceFileId,
+          versionId: resolved.sourceVersionId,
+          ...('sourceSessionId' in resolved ? { sessionId: resolved.sourceSessionId } : {}),
+          checksum: resolved.checksum,
+          name: resolved.filename,
+          path
+        }
+      }
+    } catch (error) {
+      try {
+        // Fixed diagnostic stages only: never retain source IDs, paths, messages, or stacks.
+        log.warn('PDF bookmark source verification failed', {
+          stage,
+          ...diagnosticErrorFields(error)
+        })
+      } catch {
+        // Diagnostics cannot replace the authoritative rejection.
+      }
+      throw error
     }
   }
 }

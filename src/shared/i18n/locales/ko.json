@@ -5758,6 +5758,8 @@
     "Elements: {{total}}": "요소: {{total}}",
     "Parsed pages: {{parsed}} / {{checked}}": "분석된 페이지: {{parsed}} / {{checked}}",
     "Image delivered": "이미지 제공됨",
+    "Extracted merged cells conflict with source rows or columns. Check the image or original PDF.": "추출된 병합 셀이 원본의 행 또는 열과 충돌합니다. 이미지 또는 원본 PDF를 확인하세요.",
+    "Caption or table preview shortened in this list. Read the element for more detail.": "이 목록에서는 캡션 또는 표 미리보기가 축약되었습니다. 자세한 내용은 해당 요소를 읽어 확인하세요.",
     "Some evidence is unavailable or incomplete.": "일부 근거를 사용할 수 없거나 근거가 불완전합니다.",
     "Show selected": "선택 항목 보기",
     "Disable": "비활성화",

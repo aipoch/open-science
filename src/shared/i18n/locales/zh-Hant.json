@@ -5760,6 +5760,8 @@
     "Elements: {{total}}": "元素：{{total}}",
     "Parsed pages: {{parsed}} / {{checked}}": "已解析頁面：{{parsed}} / {{checked}}",
     "Image delivered": "已提供圖片",
+    "Extracted merged cells conflict with source rows or columns. Check the image or original PDF.": "擷取的合併儲存格與原始列或欄有衝突。請核對圖片或原始 PDF。",
+    "Caption or table preview shortened in this list. Read the element for more detail.": "此清單中的圖說或表格預覽已縮短。讀取該元素以取得更多詳細資訊。",
     "Some evidence is unavailable or incomplete.": "部分證據無法使用或不完整。",
     "Show selected": "僅看已選",
     "Disable": "停用",

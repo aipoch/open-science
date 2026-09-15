@@ -6088,6 +6088,8 @@
     "Elements: {{total}}": "Éléments : {{total}}",
     "Parsed pages: {{parsed}} / {{checked}}": "Pages analysées : {{parsed}} / {{checked}}",
     "Image delivered": "Image fournie",
+    "Extracted merged cells conflict with source rows or columns. Check the image or original PDF.": "Les cellules fusionnées extraites sont en conflit avec les lignes ou colonnes d’origine. Vérifiez l’image ou le PDF original.",
+    "Caption or table preview shortened in this list. Read the element for more detail.": "La légende ou l’aperçu du tableau est abrégé dans cette liste. Lisez l’élément pour plus de détails.",
     "Some evidence is unavailable or incomplete.": "Certains éléments de preuve sont indisponibles ou incomplets.",
     "Show selected": "Afficher la sélection",
     "Disable": "Désactiver",
