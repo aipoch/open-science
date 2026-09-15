@@ -28,6 +28,10 @@ import { loadManagedCodexErrorHandler } from '../settings/codex-error.test-utils
 import { isProviderPromptError } from '../acp/prompt-error'
 import { randomUUID } from 'node:crypto'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import { fetchLocalRpc } from '../local-rpc-transport'
+import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
+import { NotebookRuntimeService } from '../notebook/runtime-service'
+import { NotebookRunRepository } from '../notebook/repository'
 import { SessionRepository } from '../session-persistence/repository'
 import { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { FileTaskRunJournal, type TaskRunJournalEntry } from './task-run-journal'
@@ -4623,6 +4627,123 @@ describe('TaskRunner', () => {
       }
     }
   )
+
+  it('persists a replaced Notebook turn stop failure after Task cancellation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'task-replaced-notebook-stop-'))
+    temporaryRoots.push(root)
+    let started!: () => void
+    const executionStarted = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    let stop!: () => void
+    const stopped = new Promise<void>((resolve) => {
+      stop = resolve
+    })
+    const failure = new NotebookExecutionStopError()
+    const notebook = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: project.id,
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async () => {
+          started()
+          await stopped
+          throw failure
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const rpc = new NotebookLocalRpcServer(notebook, { transport: 'tcp' })
+    const connection = await rpc.issueSessionConnection(
+      session.id,
+      project.id,
+      `root-frame-${session.id}`
+    )
+    const bind = (executionId: string): void =>
+      rpc.setArtifactTurnBinding(session.id, {
+        ownerExecutionId: executionId,
+        projectId: project.id,
+        provenanceContext: {
+          rootFrameId: `root-frame-${session.id}`,
+          agentFrameId: `root-frame-${session.id}`,
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: executionId,
+          promptMessageId: executionId
+        }
+      })
+    bind('old-execution')
+    const journal = new FileTaskRunJournal(root)
+    let pending: Promise<Response> | undefined
+    let cleanupError: unknown
+    let rpcOutcome: { status: number; body: unknown } | undefined
+    const runner = createRunner({
+      createId: randomUUID,
+      runJournal: journal,
+      sessions: { list: async () => [structuredClone(session)] },
+      agent: {
+        prompt: async (_request, observer) => {
+          pending = fetchLocalRpc(
+            connection,
+            {
+              method: 'POST',
+              headers: {
+                authorization: `Bearer ${connection.token}`,
+                'content-type': 'application/json'
+              },
+              body: JSON.stringify({
+                method: 'execute',
+                params: { sessionId: session.id, workspaceCwd: root, code: 'work()' }
+              })
+            },
+            'Task replaced Notebook turn'
+          )
+          await executionStarted
+          await observer?.onPromptAdmitted?.()
+          await stopped
+          const response = await pending
+          rpcOutcome = { status: response.status, body: await response.json() }
+          try {
+            await rpc.clearArtifactTurnBinding(session.id, 'old-execution')
+          } catch (error) {
+            cleanupError = error
+            throw error
+          }
+        },
+        cancelPrompt: async () => {
+          bind('new-execution')
+          stop()
+        }
+      }
+    })
+    try {
+      const run = await runner.startRun({
+        project: project.id,
+        sessionId: session.id,
+        prompt: 'Execute and cancel.'
+      })
+      await executionStarted
+      const cancelled = await runner.cancelRun(run.id)
+      expect(rpcOutcome).toEqual({ status: 500, body: { error: failure.message } })
+      expect.soft(cleanupError).toBe(failure)
+      expect.soft(cancelled).toMatchObject({
+        status: 'failed',
+        error: failure.message,
+        cancelledAt: undefined
+      })
+      expect((await journal.load()).find((entry) => entry.id === run.id)).toMatchObject({
+        status: 'failed',
+        error: failure.message
+      })
+    } finally {
+      stop()
+      await pending?.catch(() => undefined)
+      await runner.dispose()
+      connection.release?.()
+      await rpc.close()
+      await notebook.dispose()
+    }
+  })
 
   it('lets Artifact finalization failure win after cancellation is accepted', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined

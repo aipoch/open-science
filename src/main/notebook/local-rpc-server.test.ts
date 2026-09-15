@@ -406,7 +406,9 @@ describe('notebook local RPC server', () => {
 
   it.each(
     (['execute', 'executeControl'] as const).flatMap((method) =>
-      (['before-clear', 'during-clear'] as const).map((timing) => ({ method, timing }))
+      (['before-clear', 'during-clear', 'before-replace', 'during-replace'] as const).map(
+        (timing) => ({ method, timing })
+      )
     )
   )('retains a $method stop failure $timing for turn cleanup', async ({ method, timing }) => {
     const root = await createStorageRoot()
@@ -463,11 +465,24 @@ describe('notebook local RPC server', () => {
     ).then(async (response) => ({ status: response.status, body: await response.json() }))
     try {
       await started.promise
-      if (timing === 'before-clear') {
+      if (timing === 'before-clear' || timing === 'before-replace') {
         failStop.resolve()
         await expect(pending).resolves.toEqual({
           status: 500,
           body: { error: stopError.message }
+        })
+      }
+      if (timing === 'before-replace' || timing === 'during-replace') {
+        server.setArtifactTurnBinding('session-1', {
+          ownerExecutionId: 'turn-2',
+          projectId: 'default-project',
+          provenanceContext: {
+            rootFrameId: 'root-frame-session-1',
+            agentFrameId: 'root-frame-session-1',
+            messageBranchId: 'branch-2',
+            runtimeSegmentId: 'runtime-2',
+            promptMessageId: 'prompt-2'
+          }
         })
       }
       const clearing = server.clearArtifactTurnBinding('session-1', 'turn-1')
@@ -4010,15 +4025,26 @@ describe('notebook local RPC server', () => {
       projectId: 'project-1',
       provenanceContext: provenanceContext('prompt-2')
     })
-    server.clearArtifactTurnBinding('session-1', 'execution-1')
+    const invocationId = server.authorizeExecution({
+      sessionId: 'session-1',
+      toolCallId: 'new-turn-tool',
+      promptMessageId: 'prompt-2',
+      method: 'execute',
+      rawInput: { code: 'print("ok")', artifactVersionInputs: ['panel-a-v1'] }
+    })
+    await server.clearArtifactTurnBinding('session-1', 'execution-1')
 
     try {
-      await expect(execute()).resolves.toMatchObject({ status: 200 })
+      const replacement = await execute()
+      expect(replacement.status).toBe(200)
+      await expect(replacement.json()).resolves.toMatchObject({
+        result: { executionInvocationId: invocationId }
+      })
       expect(openRun).toHaveBeenLastCalledWith(
         expect.objectContaining({ promptMessageId: 'prompt-2' })
       )
 
-      server.clearArtifactTurnBinding('session-1', 'execution-2')
+      await server.clearArtifactTurnBinding('session-1', 'execution-2')
       const cleared = await execute()
       expect(cleared.status).toBe(500)
       await expect(cleared.json()).resolves.toEqual({

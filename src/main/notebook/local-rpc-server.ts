@@ -686,6 +686,12 @@ class NotebookLocalRpcServer {
   >()
 
   private readonly activeArtifactTurnBindings = new Map<string, BoundArtifactTurn>()
+  // Routing may advance before an older execution finishes draining. Keep its outcome until its
+  // owner clears it, including failures recorded after the HTTP request has already settled.
+  private readonly artifactTurnBindingsByExecution = new Map<
+    string,
+    Map<string, BoundArtifactTurn>
+  >()
   private readonly activeInputRunLeases = new Map<string, Set<NotebookInputRunLease>>()
   private readonly inputRunLeaseIds = new WeakMap<NotebookInputRunLease, string>()
   private static readonly artifactRequestBudget = new PendingRequestBudget()
@@ -1509,7 +1515,14 @@ class NotebookLocalRpcServer {
       this.claimedDurableExecutionAuthorizations.delete(sessionId)
       this.consumedExecutionToolCalls.delete(sessionId)
     }
-    this.activeArtifactTurnBindings.set(sessionId, { ...binding })
+    const boundTurn = { ...binding }
+    let ownedTurns = this.artifactTurnBindingsByExecution.get(sessionId)
+    if (!ownedTurns) {
+      ownedTurns = new Map()
+      this.artifactTurnBindingsByExecution.set(sessionId, ownedTurns)
+    }
+    ownedTurns.set(binding.ownerExecutionId, boundTurn)
+    this.activeArtifactTurnBindings.set(sessionId, boundTurn)
     const context = binding.provenanceContext
     if (context.agentFrameId === context.rootFrameId) {
       for (const capability of this.sessionRpcCapabilities.values()) {
@@ -1528,19 +1541,28 @@ class NotebookLocalRpcServer {
   }
 
   async clearArtifactTurnBinding(sessionId: string, ownerExecutionId: string): Promise<void> {
-    const binding = this.activeArtifactTurnBindings.get(sessionId)
-    if (binding?.ownerExecutionId !== ownerExecutionId) return
+    const ownedTurns = this.artifactTurnBindingsByExecution.get(sessionId)
+    const binding = ownedTurns?.get(ownerExecutionId)
+    if (!binding) return
     const draining = [...(this.serverLifecycle?.activeRequests ?? [])].filter(
       (request) =>
         request.foregroundTurn?.sessionId === sessionId &&
-        request.foregroundTurn.binding.ownerExecutionId === ownerExecutionId
+        request.foregroundTurn.binding === binding
     )
-    this.cancelCodeWriteProducers(sessionId)
-    this.activeArtifactTurnBindings.delete(sessionId)
-    this.executionAuthorizations.delete(sessionId)
-    this.claimedDurableExecutionAuthorizations.delete(sessionId)
-    this.consumedExecutionToolCalls.delete(sessionId)
+    // Replacement already cancelled the old producers. Never revoke the new turn's authority
+    // while draining an older owner.
+    if (this.activeArtifactTurnBindings.get(sessionId) === binding) {
+      this.cancelCodeWriteProducers(sessionId)
+      this.activeArtifactTurnBindings.delete(sessionId)
+      this.executionAuthorizations.delete(sessionId)
+      this.claimedDurableExecutionAuthorizations.delete(sessionId)
+      this.consumedExecutionToolCalls.delete(sessionId)
+    }
     await Promise.all(draining.map((request) => request.settled))
+    if (ownedTurns?.get(ownerExecutionId) === binding) {
+      ownedTurns.delete(ownerExecutionId)
+      if (ownedTurns.size === 0) this.artifactTurnBindingsByExecution.delete(sessionId)
+    }
     if (binding.stopFailure) throw binding.stopFailure
   }
 
