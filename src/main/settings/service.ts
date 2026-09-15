@@ -1,3 +1,4 @@
+import type { SpecialistListItem } from '../../shared/specialist'
 import { homedir } from 'node:os'
 import { z } from 'zod'
 import { MarketplaceInstallConflict } from '../skills/user-skill-repository'
@@ -219,6 +220,8 @@ export type SettingsServiceOptions = {
   userSkills?: UserSkillRepository
   withUserSkillRecoveryBarrier?: <T>(operation: () => Promise<T>) => Promise<T>
   githubFetch?: FetchLike
+  readMarketplaceSpecialists?: () => Promise<SpecialistListItem[]>
+  withMarketplaceImpactLock?: <T>(operation: () => Promise<T>) => Promise<T>
   // OpenAlex validation transport. Production injects Electron net.fetch so proxy settings apply.
   openAlexFetch?: typeof fetch
   // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
@@ -316,12 +319,47 @@ class SettingsService {
   async getSkillMarketplaceDetail(
     request: SkillMarketplaceDetailRequest
   ): Promise<SkillMarketplaceResult<SkillMarketplaceDetail>> {
-    const result = await this.skillMarketplace.detail(request)
+    const parsed = z
+      .strictObject({
+        snapshotId: z.string().regex(/^[a-f0-9]{64}$/),
+        id: z
+          .string()
+          .max(128)
+          .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+        previewUpdate: z.boolean().optional()
+      })
+      .safeParse(request)
+    if (!parsed.success) return { ok: false, error: 'snapshot-unavailable' }
+    const identity = { snapshotId: parsed.data.snapshotId, id: parsed.data.id }
+    const result = await this.skillMarketplace.detail(identity)
     if (!result.ok) return result
+    let updatePreview: SkillMarketplaceDetail['updatePreview']
+    if (parsed.data.previewUpdate) {
+      const downloaded = await this.skillMarketplace.download(identity)
+      if (!downloaded.ok) return downloaded
+      try {
+        updatePreview = await this.skills.previewMarketplaceUpdate(downloaded.value)
+      } catch (error) {
+        return {
+          ok: true,
+          value: {
+            ...result.value,
+            installation: {
+              kind: 'conflict',
+              reason:
+                error instanceof MarketplaceInstallConflict
+                  ? error.reason
+                  : 'installation-unverifiable'
+            }
+          }
+        }
+      }
+    }
     return {
       ok: true,
       value: {
         ...result.value,
+        ...(updatePreview ? { updatePreview } : {}),
         installation: await this.skills.marketplaceInstallation(
           result.value.entry.id,
           result.value.entry.version
@@ -348,11 +386,12 @@ class SettingsService {
           .string()
           .max(128)
           .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-        expectedVersion: z.string().max(128).nullable()
+        expectedVersion: z.string().max(128).nullable(),
+        updateToken: z.string().uuid().optional()
       })
       .safeParse(request)
     if (!parsed.success) return { ok: false, error: 'conflict' }
-    const { expectedVersion, ...identity } = parsed.data
+    const { expectedVersion, updateToken, ...identity } = parsed.data
     const downloaded = await this.skillMarketplace.download(identity, signal)
     if (!downloaded.ok) return downloaded
     try {
@@ -362,8 +401,12 @@ class SettingsService {
         status: 'imported' | 'unchanged' | 'updated'
         refreshFailed?: boolean
       } = refresh
-        ? await this.skills.installMarketplace(downloaded.value, expectedVersion)
-        : await this.skills.installMarketplacePackage(downloaded.value, expectedVersion)
+        ? await this.skills.installMarketplace(downloaded.value, expectedVersion, updateToken)
+        : await this.skills.installMarketplacePackage(
+            downloaded.value,
+            expectedVersion,
+            updateToken
+          )
       return {
         ok: true,
         value: {
@@ -376,7 +419,8 @@ class SettingsService {
     } catch (error) {
       return {
         ok: false,
-        error: error instanceof MarketplaceInstallConflict ? 'conflict' : 'installation-failed'
+        error: error instanceof MarketplaceInstallConflict ? 'conflict' : 'installation-failed',
+        ...(error instanceof MarketplaceInstallConflict ? { reason: error.reason } : {})
       }
     }
   }
@@ -489,6 +533,8 @@ class SettingsService {
       skillRegistry: options.skillRegistry ?? new SkillRegistry(),
       userSkills: options.userSkills,
       withUserSkillRecoveryBarrier: options.withUserSkillRecoveryBarrier,
+      readMarketplaceSpecialists: options.readMarketplaceSpecialists,
+      withMarketplaceImpactLock: options.withMarketplaceImpactLock,
       githubFetch: options.githubFetch
     })
     const allocateSettingsIdSequence = createSettingsIdSequence()

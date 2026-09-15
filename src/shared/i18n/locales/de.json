@@ -5991,6 +5991,21 @@
     "Extraction progress": "Extraktionsfortschritt",
     "Remaining pages": "Verbleibende Seiten",
     "Pages not yet attempted: {{remaining}}": "Noch nicht versuchte Seiten: {{remaining}}",
-    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "Ein vorheriger PDF-Auftrag konnte die Bereinigung nicht abschließen. Analysieren Sie erneut, um die Bereinigung sicher zu wiederholen. Falls die Bereinigung weiterhin fehlschlägt, melden Sie das Problem."
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "Ein vorheriger PDF-Auftrag konnte die Bereinigung nicht abschließen. Analysieren Sie erneut, um die Bereinigung sicher zu wiederholen. Falls die Bereinigung weiterhin fehlschlägt, melden Sie das Problem.",
+    "A Skill with this name is already installed. Review its differences before updating it in place.": "Eine Fähigkeit mit diesem Namen ist bereits installiert. Prüfen Sie die Unterschiede vor der Aktualisierung.",
+    "Affected Specialists": "Betroffene Spezialisten",
+    "Review Skill update": "Aktualisierung der Fähigkeit prüfen",
+    "Text comparison is unavailable for this file. It will be replaced or removed as listed above.": "Für diese Datei ist kein Textvergleich verfügbar. Sie wird wie oben aufgeführt ersetzt oder entfernt.",
+    "The Skill or its affected Specialists changed after preview. Refresh and review the update again.": "Die Fähigkeit oder die betroffenen Spezialisten wurden nach der Vorschau geändert. Laden Sie neu und prüfen Sie die Aktualisierung erneut.",
+    "The existing installation cannot be safely verified. No files were replaced.": "Die vorhandene Installation kann nicht sicher überprüft werden. Es wurden keine Dateien ersetzt.",
+    "The installed files match the previous Marketplace release.": "Die installierten Dateien entsprechen der vorherigen Marktplatz-Version.",
+    "The original installed content is unavailable. Local changes cannot be determined.": "Der ursprünglich installierte Inhalt ist nicht verfügbar. Lokale Änderungen können nicht ermittelt werden.",
+    "The update could not be completed. Close this preview and review the current installation again.": "Die Aktualisierung konnte nicht abgeschlossen werden. Schließen Sie diese Vorschau und prüfen Sie die aktuelle Installation erneut.",
+    "This Skill has local changes. Updating will replace them.": "Diese Fähigkeit enthält lokale Änderungen. Durch die Aktualisierung werden diese ersetzt.",
+    "This Skill is also enabled for the Main Agent.": "Diese Fähigkeit ist auch für den Hauptagenten aktiviert.",
+    "This release would downgrade the Skill or change an existing release. Installation remains blocked.": "Diese Version würde die Fähigkeit herabstufen oder eine bestehende Veröffentlichung ändern. Die Installation bleibt blockiert.",
+    "Update existing Skill": "Vorhandene Fähigkeit aktualisieren",
+    "Update the existing Skill in place. Its identity and Specialist relationships will be preserved.": "Die vorhandene Fähigkeit wird am selben Ort aktualisiert. Ihre Identität und die Beziehungen zu Spezialisten bleiben erhalten.",
+    "View installed Skill": "Installierte Fähigkeit anzeigen"
   }
 }

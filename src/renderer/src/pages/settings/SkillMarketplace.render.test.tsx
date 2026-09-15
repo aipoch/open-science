@@ -1182,6 +1182,61 @@ describe('Skill Marketplace', () => {
     expect(container.textContent).not.toContain('Skill installation failed')
   })
 
+  it('locates the exact conflicting Skill and requires a reviewed token before replacing it', async () => {
+    const blocked = {
+      ...marketplaceDetail,
+      installation: { kind: 'conflict', reason: 'name-taken', localSkillId: 'personal-existing' }
+    }
+    const preview = {
+      token: '11111111-1111-4111-8111-111111111111',
+      localSkillId: 'personal-existing',
+      displayName: 'Existing Skill',
+      source: 'personal',
+      installedVersion: '0.1.0',
+      localChanges: 'unknown',
+      mainEnabled: true,
+      specialists: [{ id: 'research', name: 'Research Specialist' }],
+      added: ['references/new.md'],
+      modified: ['SKILL.md'],
+      removed: ['old.txt'],
+      differences: [{ path: 'SKILL.md', patch: '-old instructions\n+new instructions' }]
+    }
+    detail.mockImplementation(async (request) => ({
+      ok: true,
+      value: request.previewUpdate ? { ...blocked, updatePreview: preview } : blocked
+    }))
+    const onManageLocal = vi.fn()
+    await act(async () =>
+      root.render(
+        <SkillMarketplace view={detailView} onNavigate={vi.fn()} onManageLocal={onManageLocal} />
+      )
+    )
+    await click('View installed Skill')
+    expect(onManageLocal).toHaveBeenCalledExactlyOnceWith('personal-existing')
+    await click('Review Skill update')
+    expect(install).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Research Specialist')
+    expect(document.body.textContent).toContain('Local changes cannot be determined.')
+    expect(document.body.textContent).toContain('+new instructions')
+    await click('Cancel', document)
+    expect(install).not.toHaveBeenCalled()
+    await click('Review Skill update')
+    install.mockResolvedValueOnce({ ok: false, error: 'conflict', reason: 'version-changed' })
+    await click('Update existing Skill', document)
+    expect(install).toHaveBeenCalledExactlyOnceWith({
+      id: marketplaceEntry.id,
+      snapshotId: marketplaceCatalog.snapshotId,
+      expectedVersion: null,
+      updateToken: preview.token
+    })
+    expect(
+      document.querySelector<HTMLButtonElement>('[role="dialog"] button:last-child')?.disabled
+    ).toBe(true)
+    expect(document.body.textContent).toContain('Close this preview')
+    await click('Cancel', document)
+    expect(install).toHaveBeenCalledTimes(1)
+  })
+
   it('does not offer an install action when the detail reports a local conflict', async () => {
     detail.mockResolvedValueOnce({
       ok: true,

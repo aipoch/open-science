@@ -1,3 +1,4 @@
+import { SkillMarketplaceUpdateDialog } from './SkillMarketplaceUpdateDialog'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { CircleCheck, ChevronDown, Download, LoaderCircle, Trash2 } from 'lucide-react'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -8,6 +9,7 @@ import type {
   SkillMarketplaceDetail,
   SkillMarketplaceInstallation,
   SkillMarketplaceInstallResult,
+  SkillMarketplaceUpdatePreview,
   SkillMarketplaceResult
 } from '../../../../shared/skill-marketplace'
 import { ErrorNotice } from '@/components/error-notice'
@@ -128,12 +130,14 @@ function MarketplaceInstallControls({
   compact?: boolean
   disabled?: boolean
   onOpenDetail?: () => void
-  onManageLocal?: () => void
+  onManageLocal?: (id?: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [confirm, setConfirm] = useState(false)
-  const [pending, setPending] = useState<'install' | 'uninstall' | 'toggle'>()
-  const packagePending = pending === 'install' || pending === 'uninstall'
+  const [pending, setPending] = useState<'install' | 'uninstall' | 'toggle' | 'preview'>()
+  const packagePending = pending === 'install' || pending === 'uninstall' || pending === 'preview'
+  const [updatePreview, setUpdatePreview] = useState<SkillMarketplaceUpdatePreview>()
+  const [updateError, setUpdateError] = useState<string>()
   const [failure, setFailure] = useState<Extract<SkillMarketplaceInstallResult, { ok: false }>>()
   const [refreshFailed, setRefreshFailed] = useState(false)
   const [uninstallConfirm, setUninstallConfirm] = useState(false)
@@ -141,6 +145,7 @@ function MarketplaceInstallControls({
   const [managementFailure, setManagementFailure] = useState<string>()
   const installed = installation.kind === 'installed' ? installation : undefined
   const localSkillId = installed?.localSkillId
+  const conflictSkillId = installation.kind === 'conflict' ? installation.localSkillId : undefined
   const localSkill = useSettingsStore((state) =>
     state.skills.find((skill) => skill.id === localSkillId)
   )
@@ -168,9 +173,71 @@ function MarketplaceInstallControls({
   }
   const conflict = installation.kind === 'conflict' || failure?.error === 'conflict'
   const canUninstallInline = Boolean(
-    installed && !installed.canUpdate && localSkillId && !conflict && !disabled && !pending
+    installed &&
+    !installed.protected &&
+    !installed.canUpdate &&
+    localSkillId &&
+    !conflict &&
+    !disabled &&
+    !pending
   )
   const uninstallArmed = canUninstallInline && uninstallPreview
+  const conflictReason =
+    failure?.reason ?? (installation.kind === 'conflict' ? installation.reason : undefined)
+  const conflictDescription =
+    conflictReason === 'name-taken'
+      ? t(
+          'A Skill with this name is already installed. Review its differences before updating it in place.'
+        )
+      : conflictReason === 'local-content-changed'
+        ? t('This Skill has local changes. Updating will replace them.')
+        : conflictReason === 'version-changed'
+          ? t(
+              'The Skill or its affected Specialists changed after preview. Refresh and review the update again.'
+            )
+          : conflictReason === 'release-mismatch'
+            ? t(
+                'This release would downgrade the Skill or change an existing release. Installation remains blocked.'
+              )
+            : conflictReason === 'invalid-name' || conflictReason === 'installation-unverifiable'
+              ? t('The existing installation cannot be safely verified. No files were replaced.')
+              : t(
+                  'Local changes or an existing Skill prevent installation. No files were replaced.'
+                )
+  const reviewUpdate = async (): Promise<void> => {
+    if (inFlight.current) return
+    inFlight.current = true
+    setPending('preview')
+    setFailure(undefined)
+    setUpdateError(undefined)
+    try {
+      const result = await window.api.settings.getSkillMarketplaceDetail({
+        id: entry.id,
+        snapshotId,
+        previewUpdate: true
+      })
+      if (!active.current) return
+      if (result.ok && result.value.updatePreview) setUpdatePreview(result.value.updatePreview)
+      else
+        setFailure(
+          result.ok
+            ? {
+                ok: false,
+                error: 'conflict',
+                reason:
+                  result.value.installation?.kind === 'conflict'
+                    ? result.value.installation.reason
+                    : 'installation-unverifiable'
+              }
+            : result
+        )
+    } catch {
+      if (active.current) setFailure({ ok: false, error: 'installation-failed' })
+    } finally {
+      inFlight.current = false
+      if (active.current) setPending(undefined)
+    }
+  }
   const manage = async (remove: boolean): Promise<void> => {
     if (!localSkillId || inFlight.current) return
     inFlight.current = true
@@ -200,7 +267,7 @@ function MarketplaceInstallControls({
       if (active.current) setPending(undefined)
     }
   }
-  const install = async (): Promise<void> => {
+  const install = async (updateToken?: string): Promise<void> => {
     if (inFlight.current) return
     inFlight.current = true
     setPending('install')
@@ -210,7 +277,8 @@ function MarketplaceInstallControls({
       result = await window.api.settings.installSkillMarketplace({
         id: entry.id,
         snapshotId,
-        expectedVersion: installed?.version ?? null
+        expectedVersion: installed?.version ?? null,
+        ...(updateToken ? { updateToken } : {})
       })
     } catch {
       result = { ok: false, error: 'installation-failed' }
@@ -220,14 +288,28 @@ function MarketplaceInstallControls({
     setPending(undefined)
     setConfirm(false)
     if (result.ok) {
+      setUpdatePreview(undefined)
+      setUpdateError(undefined)
       setRefreshFailed(result.value.refreshFailed === true)
       onChanged({
         kind: 'installed',
         version: result.value.version,
         canUpdate: false,
-        localSkillId: result.value.id
+        localSkillId: result.value.id,
+        ...(updateToken
+          ? {
+              requiresPreview: true,
+              protected: updatePreview ? updatePreview.specialists.length > 0 : installed?.protected
+            }
+          : {})
       })
-    } else setFailure(result)
+    } else if (updateToken)
+      setUpdateError(
+        t(
+          'The update could not be completed. Close this preview and review the current installation again.'
+        )
+      )
+    else setFailure(result)
   }
   return (
     <div
@@ -243,7 +325,7 @@ function MarketplaceInstallControls({
           )}
           primaryButton={{
             label: t('Retry'),
-            onClick: () => void install(),
+            onClick: () => void (installed.requiresPreview ? reviewUpdate() : install()),
             disabled: disabled || Boolean(pending)
           }}
         />
@@ -259,20 +341,16 @@ function MarketplaceInstallControls({
           tone={conflict ? 'amber' : 'red'}
           role={failure ? 'alert' : 'status'}
           title={failure ? t('Skill installation failed') : t('Skill installation blocked')}
-          description={
-            conflict
-              ? t(
-                  'Local changes or an existing Skill prevent installation. No files were replaced.'
-                )
-              : undefined
-          }
-          errorCode={failure?.error ?? 'conflict'}
+          description={conflict ? conflictDescription : undefined}
+          errorCode={[failure?.error ?? 'conflict', conflictReason, conflictSkillId]
+            .filter(Boolean)
+            .join(' · ')}
           diagnosticsLabel={t('Details')}
           primaryButton={
             conflict && onManageLocal
               ? {
-                  label: t('Manage local skills'),
-                  onClick: onManageLocal,
+                  label: conflictSkillId ? t('View installed Skill') : t('Manage local skills'),
+                  onClick: () => onManageLocal(conflictSkillId),
                   disabled: disabled || Boolean(pending)
                 }
               : {
@@ -306,6 +384,25 @@ function MarketplaceInstallControls({
           }
         />
       ) : null}
+      {conflict &&
+      !compact &&
+      conflictSkillId &&
+      (conflictReason === 'name-taken' || conflictReason === 'local-content-changed') ? (
+        <Button disabled={disabled || Boolean(pending)} onClick={() => void reviewUpdate()}>
+          {pending === 'preview' ? t('Loading…') : t('Review Skill update')}
+        </Button>
+      ) : null}
+      <SkillMarketplaceUpdateDialog
+        preview={updatePreview}
+        version={entry.version}
+        pending={Boolean(pending)}
+        error={updateError}
+        onCancel={() => {
+          setUpdatePreview(undefined)
+          setUpdateError(undefined)
+        }}
+        onConfirm={() => void install(updatePreview?.token)}
+      />
       {managementFailure ? (
         <ErrorNotice
           role="alert"
@@ -377,11 +474,16 @@ function MarketplaceInstallControls({
               if (inFlight.current) return
               if (compact && conflict) onOpenDetail?.()
               else if (installed && !installed.canUpdate) {
+                if (installed.protected) {
+                  onManageLocal?.(localSkillId)
+                  return
+                }
                 if (uninstallArmed) {
                   if (compact) void manage(true)
                   else setUninstallConfirm(true)
                 } else setUninstallArmed(true)
-              } else if (installed) setConfirm(true)
+              } else if (installed?.requiresPreview) void reviewUpdate()
+              else if (installed) setConfirm(true)
               else void install()
             }}
           >
@@ -400,7 +502,9 @@ function MarketplaceInstallControls({
             {packagePending
               ? pending === 'install'
                 ? t('Installing…')
-                : t('Uninstalling…')
+                : pending === 'preview'
+                  ? t('Loading…')
+                  : t('Uninstalling…')
               : uninstallArmed
                 ? t('Uninstall')
                 : compact && conflict
@@ -411,7 +515,7 @@ function MarketplaceInstallControls({
                       : t('Installed')
                     : t('Install')}
           </Button>
-          {!compact && localSkillId && installed?.canUpdate ? (
+          {!compact && localSkillId && installed?.canUpdate && !installed.protected ? (
             <Button
               ref={uninstallTrigger}
               variant="outline"
@@ -484,7 +588,7 @@ export function SkillMarketplace({
 }: {
   view: SkillMarketplaceView
   onNavigate: (view: SkillMarketplaceView) => void
-  onManageLocal?: () => void
+  onManageLocal?: (id?: string) => void
 }): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const heading = useRef<HTMLHeadingElement>(null)
@@ -691,7 +795,7 @@ export function SkillMarketplace({
         if (!skillMarketplaceStableVersionPattern.test(item.version)) continue
         const state = installations[item.id]
         if (!state || state.kind === 'not-installed') install++
-        else if (state.kind === 'installed' && state.canUpdate) update++
+        else if (state.kind === 'installed' && state.canUpdate && !state.requiresPreview) update++
       }
     return { install, update }
   }, [items, installations])
@@ -700,7 +804,7 @@ export function SkillMarketplace({
       if (!installations || !skillMarketplaceStableVersionPattern.test(item.version)) return false
       const state = installations[item.id]
       return batchMode === 'update'
-        ? state?.kind === 'installed' && state.canUpdate
+        ? state?.kind === 'installed' && state.canUpdate && !state.requiresPreview
         : !state || state.kind === 'not-installed'
     },
     [installations, batchMode]

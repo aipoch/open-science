@@ -6160,6 +6160,21 @@
     "Extraction progress": "Progreso de extracción",
     "Remaining pages": "Páginas restantes",
     "Pages not yet attempted: {{remaining}}": "Páginas aún sin intentar: {{remaining}}",
-    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "Una tarea de PDF anterior no pudo completar la limpieza. Vuelva a analizar para reintentar la limpieza de forma segura. Si la limpieza sigue fallando, informe del problema."
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "Una tarea de PDF anterior no pudo completar la limpieza. Vuelva a analizar para reintentar la limpieza de forma segura. Si la limpieza sigue fallando, informe del problema.",
+    "A Skill with this name is already installed. Review its differences before updating it in place.": "Ya hay una habilidad instalada con este nombre. Revise las diferencias antes de actualizarla en su ubicación actual.",
+    "Affected Specialists": "Especialistas afectados",
+    "Review Skill update": "Revisar la actualización de la habilidad",
+    "Text comparison is unavailable for this file. It will be replaced or removed as listed above.": "La comparación de texto no está disponible para este archivo. Se sustituirá o eliminará según la lista anterior.",
+    "The Skill or its affected Specialists changed after preview. Refresh and review the update again.": "La habilidad o los especialistas afectados han cambiado desde la vista previa. Actualice y vuelva a revisar la actualización.",
+    "The existing installation cannot be safely verified. No files were replaced.": "No se puede verificar de forma segura la instalación existente. No se ha sustituido ningún archivo.",
+    "The installed files match the previous Marketplace release.": "Los archivos instalados coinciden con la versión anterior del mercado.",
+    "The original installed content is unavailable. Local changes cannot be determined.": "El contenido instalado originalmente no está disponible. No se pueden determinar los cambios locales.",
+    "The update could not be completed. Close this preview and review the current installation again.": "No se ha podido completar la actualización. Cierre esta vista previa y vuelva a revisar la instalación actual.",
+    "This Skill has local changes. Updating will replace them.": "Esta habilidad tiene cambios locales. La actualización los sustituirá.",
+    "This Skill is also enabled for the Main Agent.": "Esta habilidad también está habilitada para el agente principal.",
+    "This release would downgrade the Skill or change an existing release. Installation remains blocked.": "Esta versión supondría una reversión de la habilidad o modificaría una versión existente. La instalación sigue bloqueada.",
+    "Update existing Skill": "Actualizar la habilidad existente",
+    "Update the existing Skill in place. Its identity and Specialist relationships will be preserved.": "Actualizar la habilidad existente en su ubicación actual. Se conservarán su identidad y sus relaciones con los especialistas.",
+    "View installed Skill": "Ver la habilidad instalada"
   }
 }
