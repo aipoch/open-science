@@ -364,6 +364,40 @@ describe('collapseRscript', () => {
 })
 
 describe('defaultCandidatePaths (targeted enumeration)', () => {
+  it.each(['x64-only', 'root-only', 'both'])(
+    'discovers Windows conda and app R with %s binaries and an unactivated PATH',
+    async (layout) => {
+      const root = mkdtempSync(join(tmpdir(), 'os-disc-conda-r-'))
+      const runtimeRoot = join(root, 'runtime')
+      const prefixes = [
+        join(root, 'miniconda3', 'envs', 'analysis'),
+        envPrefix(runtimeRoot, DEFAULT_R_ENV, 'win32')
+      ]
+      const expected: string[] = []
+      try {
+        for (const prefix of prefixes) {
+          const bin = join(prefix, 'Lib', 'R', 'bin')
+          mkdirSync(join(bin, 'x64'), { recursive: true })
+          if (layout !== 'x64-only') writeFileSync(join(bin, 'R.exe'), 'fixture')
+          if (layout !== 'root-only') writeFileSync(join(bin, 'x64', 'R.exe'), 'fixture')
+          expected.push(join(bin, ...(layout === 'x64-only' ? ['x64'] : []), 'R.exe'))
+        }
+        const paths = await defaultCandidatePaths(runtimeRoot, undefined, {
+          platform: 'win32',
+          home: root,
+          env: { PATH: join(root, 'empty-path') }
+        })('r')
+
+        expect(paths.filter((path) => path.startsWith(root))).toEqual(
+          expect.arrayContaining(expected)
+        )
+        expect(paths.filter((path) => path.startsWith(root))).toHaveLength(2)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('uses the injected platform for app-managed interpreter paths', async () => {
     const root = mkdtempSync(join(tmpdir(), 'os-disc-platform-'))
     const platform: NodeJS.Platform = process.platform === 'win32' ? 'linux' : 'win32'

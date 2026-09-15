@@ -192,12 +192,14 @@ const prefixInterpreter = (
   prefix: string,
   language: NotebookLanguage,
   platform: NodeJS.Platform
-): string =>
-  language === 'python'
-    ? platform === 'win32'
-      ? join(prefix, 'python.exe')
-      : join(prefix, 'bin', 'python')
-    : rBin(prefix, platform)
+): string => {
+  if (language === 'python') return pythonBin(prefix, platform)
+  const interpreter = rBin(prefix, platform)
+  // Preserve the existing identity when both layouts exist; older conda R builds may only have x64.
+  return platform === 'win32' && !existsSync(interpreter)
+    ? join(prefix, 'Lib', 'R', 'bin', 'x64', 'R.exe')
+    : interpreter
+}
 
 // A conda-forge Windows R interpreter lives in <prefix>\Lib\R\bin (optionally under x64) and depends on
 // DLLs in <prefix>\Library\bin. Return only that interpreter's own prefix: external CRAN R paths do
@@ -349,7 +351,7 @@ export const defaultCandidatePaths =
         const name = logicalEnvNameFromDirectory(directory)
         const prefix = join(appEnvsDir, directory)
         if (prefix !== envPrefix(runtimeRoot, name, platform)) continue
-        const p = language === 'python' ? pythonBin(prefix, platform) : rBin(prefix, platform)
+        const p = prefixInterpreter(prefix, language, platform)
         if (existsSync(p)) found.add(p)
       }
     } catch {
