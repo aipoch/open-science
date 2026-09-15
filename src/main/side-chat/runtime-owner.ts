@@ -460,7 +460,9 @@ class SideChatRuntimeOwner {
           activeChat ? (activeChat.modelSelection ?? savedModelSelection(activeChat)) : selection
         )
         let resolved = await this.options.resolveTarget(target, {
-          systemPromptAppends: [SIDE_CHAT_SYSTEM_PROMPT],
+          // Install Side chat instructions only after resolving the shared backend. OpenCode
+          // writes resolver appends into the Main Agent instruction file before profile isolation.
+          systemPromptAppends: [],
           includeSkillAndConnectorContext: false,
           // Subscription authentication uses native Codex; API-key routes still need the
           // compatibility bridge to enforce their host-message-only tool surface.
@@ -1067,7 +1069,9 @@ class SideChatRuntimeOwner {
       const resolveBackend = async (): Promise<ResolvedAgentBackend> => {
         const target = await this.options.captureTarget(selectedModel)
         let resolved = await this.options.resolveTarget(target, {
-          systemPromptAppends: [SIDE_CHAT_SYSTEM_PROMPT],
+          // Install Side chat instructions only after resolving the shared backend. OpenCode
+          // writes resolver appends into the Main Agent instruction file before profile isolation.
+          systemPromptAppends: [],
           includeSkillAndConnectorContext: false,
           // Subscription authentication uses native Codex; API-key routes still need the
           // compatibility bridge to enforce their host-message-only tool surface.

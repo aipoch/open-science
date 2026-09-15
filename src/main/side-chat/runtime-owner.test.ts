@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -10,7 +10,7 @@ import { SIDE_CHAT_MESSAGE_LIMIT, type SideChatModelSelection } from '../../shar
 import type { AcpCreateSessionResponse } from '../../shared/acp'
 import type { AcpRuntimeOptions } from '../acp/runtime'
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
-import type { ResolvedAgentBackend } from '../agent-framework'
+import type { AgentModelConfig, ResolvedAgentBackend } from '../agent-framework'
 import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { codexFramework } from '../agent-framework/codex'
 import { opencodeFramework } from '../agent-framework/opencode'
@@ -102,6 +102,155 @@ describe('Side chat relay instructions', () => {
       'Send only the advisory content; do not prepend a Side chat source or relay label.'
     )
   })
+})
+
+describe('Side chat OpenCode instruction isolation', () => {
+  it.each([
+    { operation: 'start', mainFirst: true },
+    { operation: 'resume', mainFirst: true },
+    { operation: 'start', mainFirst: false },
+    { operation: 'resume', mainFirst: false }
+  ] as const)(
+    'isolates Side chat $operation with mainFirst=$mainFirst through repeated reconnects',
+    async ({ operation, mainFirst }) => {
+      temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-main-instructions-'))
+      const provider = {
+        type: 'custom' as const,
+        baseUrl: 'https://example.test/v1',
+        model: 'm',
+        key: 'test-key'
+      }
+      const materialize = async (appends: string[]): Promise<AgentModelConfig> => {
+        const config = opencodeFramework.prepareModelConfig(provider, {
+          storageRoot: temporaryRoot!,
+          executablePath: '/managed/opencode',
+          systemPromptAppends: appends
+        })
+        for (const file of config.configFiles ?? []) {
+          await mkdir(join(file.path, '..'), { recursive: true })
+          await writeFile(file.path, file.content)
+        }
+        return config
+      }
+      const mainPrompt = 'You are the Main Agent. Execute the user request.'
+      let main = mainFirst ? await materialize([mainPrompt]) : undefined
+      const resolvedBackends: ResolvedAgentBackend[] = []
+      const resolveTarget = vi.fn(async (_target, context) => {
+        const config = await materialize(context.systemPromptAppends)
+        return {
+          ...backend(opencodeFramework, config.env),
+          persistentSystemPrompt: config.persistentSystemPrompt
+        }
+      })
+      let runtimeOptions: AcpRuntimeOptions | undefined
+      const owner = new SideChatRuntimeOwner({
+        appVersion: 'test',
+        configRoot: temporaryRoot,
+        captureTarget: async () => ({ ...target, frameworkId: 'opencode' }),
+        resolveTarget,
+        relay: createRelayOwner(),
+        persistence: createPersistence(),
+        onEvent: vi.fn(),
+        createRuntime: (options) => {
+          runtimeOptions = options
+          const connect = async (): Promise<AcpCreateSessionResponse> => {
+            // Consume the initial backend exactly as ACP does. Later calls must re-resolve,
+            // rather than accidentally testing the cached initial backend as a reconnect.
+            resolvedBackends.push(
+              await options.resolveBackend!({ forcedSkillIds: [], systemPromptAppends: [] })
+            )
+            return { sessionId: 'side-chat-test', frameworkId: 'opencode' }
+          }
+          return {
+            createSession: connect,
+            resumeSession: connect,
+            sendPrompt: async () => {
+              options.callbacks?.onProviderPromptAccepted?.('side-chat-test')
+              return { stopReason: 'end_turn' }
+            },
+            shutdownForQuit: async () => undefined,
+            deleteSession: async () => ({ sessionIds: [] })
+          } as never
+        }
+      })
+      if (operation === 'resume') {
+        owner.hydrate([
+          {
+            projectId: 'project',
+            parentSessionId: 'main',
+            sideChat: {
+              version: 1,
+              id: 'side-chat-test',
+              lifecycle: 'open',
+              frameworkId: 'opencode',
+              providerId: 'provider-a',
+              providerSessionId: 'provider-side',
+              historyPreamble: 'Main conversation snapshot.',
+              entries: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          }
+        ])
+        await owner.send({ sideSessionId: 'side-chat-test', text: 'Continue' })
+      } else {
+        await owner.start({
+          sideSessionId: 'side-chat-test',
+          parentSessionId: 'main',
+          projectId: 'project',
+          text: 'Hello'
+        })
+      }
+      const assertMainInstructions = async (): Promise<void> => {
+        const configFile = main!.configFiles!.find((file) => file.path.endsWith('opencode.json'))!
+        const paths = JSON.parse(configFile.content).instructions as string[]
+        expect(paths).toHaveLength(1)
+        const delivered = (await Promise.all(paths.map((path) => readFile(path, 'utf8')))).join(
+          '\n\n'
+        )
+        expect(delivered).toBe(mainPrompt)
+      }
+      const assertSideInstructions = async (resolved: ResolvedAgentBackend): Promise<void> => {
+        const setup = resolved.framework.buildSessionSetup({
+          systemPromptAppends: resolved.systemPromptAppends ?? []
+        })
+        expect(setup.promptPrefix).toContain('You are in a Side chat')
+        expect(setup.promptPrefix).toContain('open_science_host_message_send_message')
+        expect(setup.promptPrefix).not.toContain(mainPrompt)
+        expect(resolved.persistentSystemPrompt).toBeUndefined()
+        expect(resolved.env.XDG_CONFIG_HOME).toContain('side-chat-test/profile')
+        const diskConfig = JSON.parse(
+          await readFile(join(resolved.env.XDG_CONFIG_HOME!, 'opencode/opencode.json'), 'utf8')
+        )
+        expect(diskConfig).toEqual(JSON.parse(resolved.env.OPENCODE_CONFIG_CONTENT!))
+        expect(diskConfig).toMatchObject({
+          default_agent: 'open-science-side-chat',
+          permission: { '*': 'deny', open_science_host_message_send_message: 'allow' }
+        })
+        expect(diskConfig.instructions ?? []).toEqual([])
+      }
+      try {
+        expect(resolveTarget).toHaveBeenCalledTimes(1)
+        expect(resolvedBackends).toHaveLength(1)
+        await assertSideInstructions(resolvedBackends[0])
+        if (!main) main = await materialize([mainPrompt])
+        await assertMainInstructions()
+        for (let reconnect = 0; reconnect < 2; reconnect++) {
+          // A fresh Main backend can be prepared between Side chat connections.
+          main = await materialize([mainPrompt])
+          const resolved = await runtimeOptions!.resolveBackend!({
+            forcedSkillIds: [],
+            systemPromptAppends: []
+          })
+          expect(resolveTarget).toHaveBeenCalledTimes(reconnect + 2)
+          await assertSideInstructions(resolved)
+          await assertMainInstructions()
+        }
+      } finally {
+        await owner.shutdown()
+      }
+    }
+  )
 })
 
 describe('Side chat restricted backend profile', () => {
