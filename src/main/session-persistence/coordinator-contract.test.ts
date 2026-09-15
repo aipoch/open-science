@@ -512,6 +512,129 @@ describe('SessionPersistenceCoordinator contracts', () => {
     })
   })
 
+  it('inspects fresh Session-details startup authority without replacing hydrated metadata', async () => {
+    const initial = createSession({ title: 'Hydrated' })
+    const changed = createSession({ title: 'Changed after hydration', updatedAt: 3 })
+    const loadAllWithDiagnostics = vi
+      .fn()
+      .mockResolvedValueOnce({
+        result: { sessions: [initial], manifest: { version: 1 } },
+        isComplete: false,
+        warnings: [
+          {
+            kind: 'unreadable',
+            projectId: 'project-2',
+            fileName: 'unreadable.json',
+            recovered: false
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        result: { sessions: [changed], manifest: { version: 1 } },
+        isComplete: true
+      })
+    const { repository } = createRepository([], { loadAllWithDiagnostics })
+    const fileIndex = createFileIndex()
+    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+
+    await coordinator.loadAll()
+    const metadataBeforeInspection = await coordinator.sessionMetadataSnapshot()
+    vi.mocked(fileIndex.syncSession).mockClear()
+    vi.mocked(fileIndex.reconcileActiveSessions).mockClear()
+    vi.mocked(fileIndex.markReconciliationIncomplete).mockClear()
+
+    await expect(coordinator.inspectSessionDetailsStartupSessions()).resolves.toEqual([changed])
+    expect(loadAllWithDiagnostics).toHaveBeenLastCalledWith({ mode: 'read-only' })
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual(metadataBeforeInspection)
+    expect(metadataBeforeInspection.isComplete).toBe(false)
+    expect(fileIndex.syncSession).not.toHaveBeenCalled()
+    expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
+    expect(fileIndex.markReconciliationIncomplete).not.toHaveBeenCalled()
+  })
+
+  it('downgrades a complete catalog after a partial Session-details startup inspection', async () => {
+    const session = createSession()
+    const loadAllWithDiagnostics = vi
+      .fn()
+      .mockResolvedValueOnce({
+        result: { sessions: [session], manifest: { version: 1 } },
+        isComplete: true
+      })
+      .mockResolvedValueOnce({
+        result: { sessions: [session], manifest: { version: 1 } },
+        isComplete: false
+      })
+    const { repository } = createRepository([], { loadAllWithDiagnostics })
+    const fileIndex = createFileIndex()
+    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+
+    await coordinator.loadAll()
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toMatchObject({
+      isComplete: true
+    })
+    vi.mocked(fileIndex.markReconciliationIncomplete).mockClear()
+    vi.mocked(fileIndex.syncSession).mockClear()
+    vi.mocked(fileIndex.reconcileActiveSessions).mockClear()
+
+    await expect(coordinator.inspectSessionDetailsStartupSessions()).resolves.toEqual([session])
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toMatchObject({
+      sessions: [{ id: session.id, projectId: session.projectId, title: session.title }],
+      isComplete: false
+    })
+    expect(fileIndex.markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(fileIndex.syncSession).not.toHaveBeenCalled()
+    expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
+  })
+
+  it('propagates Session-details startup inspection failures without changing metadata', async () => {
+    const failure = new Error('sessions directory unavailable')
+    const { repository } = createRepository([], {
+      loadAllWithDiagnostics: vi.fn().mockRejectedValue(failure)
+    })
+    const fileIndex = createFileIndex()
+    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+    const metadataBeforeInspection = await coordinator.sessionMetadataSnapshot()
+
+    await expect(coordinator.inspectSessionDetailsStartupSessions()).rejects.toBe(failure)
+    await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual(metadataBeforeInspection)
+    expect(fileIndex.markReconciliationIncomplete).not.toHaveBeenCalled()
+    expect(fileIndex.syncSession).not.toHaveBeenCalled()
+    expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
+  })
+
+  it('keeps Session-details startup inspection behind the global mutation barrier', async () => {
+    const scanStarted = createDeferred()
+    const scanGate = createDeferred()
+    const current = createSession()
+    const { repository } = createRepository([current])
+    vi.mocked(repository.loadAllWithDiagnostics).mockImplementationOnce(async (options) => {
+      expect(options).toEqual({ mode: 'read-only' })
+      scanStarted.resolve()
+      await scanGate.promise
+      return {
+        result: { sessions: [current], manifest: { version: 1 } },
+        isComplete: true
+      }
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    const inspection = coordinator.inspectSessionDetailsStartupSessions()
+    await scanStarted.promise
+    const changed = createSession({ title: 'Changed after scan', updatedAt: 3 })
+    const save = coordinator.saveSession(changed)
+    await setImmediate()
+    expect(repository.saveSession).not.toHaveBeenCalled()
+
+    scanGate.resolve()
+    await expect(inspection).resolves.toEqual([current])
+    await expect(save).resolves.toMatchObject({
+      id: changed.id,
+      projectId: changed.projectId,
+      title: changed.title,
+      updatedAt: changed.updatedAt
+    })
+  })
+
   it('keeps runtime context as revisioned main-owned authority across renderer saves', async () => {
     const { repository, sessions } = createRepository()
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())

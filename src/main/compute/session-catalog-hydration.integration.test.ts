@@ -45,6 +45,104 @@ const computeHost: ComputeHost = {
 }
 
 describe('production Session catalog hydration wiring', () => {
+  it('uses fresh read-only enumeration after Project deletion recovery without rehydrating Compute hosts', async () => {
+    const session = createSession('session-1')
+    const inspectSessionDetailsStartupSessions = vi.fn(async () => [session])
+    const recoverPendingDeletions = vi.fn(async () => undefined)
+    const hydrateFromSessionCatalog = vi.fn(async (loadCatalog) => loadCatalog())
+    const hydration = createSessionCatalogHydration({
+      owner: () => ({ hydrateFromSessionCatalog }) as never,
+      projectRecovery: { recoverPendingDeletions },
+      sessionLoader: {
+        loadAll: vi.fn(async () => ({
+          sessions: [],
+          manifest: { version: 1 as const },
+          diagnostics: { isComplete: true, warnings: [] }
+        })),
+        loadAllReadOnly: vi.fn(),
+        inspectSessionDetailsStartupSessions
+      }
+    })
+
+    await hydration.loadAll()
+    recoverPendingDeletions.mockClear()
+    hydrateFromSessionCatalog.mockClear()
+    await expect(hydration.listSessionDetailsStartupSessions()).resolves.toEqual([session])
+    expect(recoverPendingDeletions).toHaveBeenCalledOnce()
+    expect(inspectSessionDetailsStartupSessions).toHaveBeenCalledOnce()
+    expect(hydrateFromSessionCatalog).not.toHaveBeenCalled()
+  })
+
+  it('keeps degraded read-only hydration when Project deletion recovery fails', async () => {
+    const session = createSession('session-1')
+    const inspectSessionDetailsStartupSessions = vi.fn()
+    const loadAllReadOnly = vi.fn(async () => ({
+      sessions: [session],
+      manifest: { version: 1 as const }
+    }))
+    const hydrateFromSessionCatalog = vi.fn(async (loadCatalog) => loadCatalog())
+    const recoverPendingDeletions = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('recovery unavailable'))
+    const hydration = createSessionCatalogHydration({
+      owner: () => ({ hydrateFromSessionCatalog }) as never,
+      projectRecovery: { recoverPendingDeletions },
+      sessionLoader: {
+        loadAll: vi.fn(async () => ({
+          sessions: [],
+          manifest: { version: 1 as const },
+          diagnostics: { isComplete: true, warnings: [] }
+        })),
+        loadAllReadOnly,
+        inspectSessionDetailsStartupSessions
+      }
+    })
+
+    await hydration.loadAll()
+    hydrateFromSessionCatalog.mockClear()
+    await expect(hydration.listSessionDetailsStartupSessions()).resolves.toEqual([session])
+    expect(loadAllReadOnly).toHaveBeenCalledOnce()
+    expect(hydrateFromSessionCatalog).toHaveBeenCalledOnce()
+    expect(inspectSessionDetailsStartupSessions).not.toHaveBeenCalled()
+  })
+
+  it('retries full hydration when the primary catalog was incomplete', async () => {
+    const session = createSession('session-1')
+    const loadAll = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessions: [],
+        manifest: { version: 1 as const },
+        diagnostics: { isComplete: false, warnings: [] }
+      })
+      .mockResolvedValueOnce({
+        sessions: [session],
+        manifest: { version: 1 as const },
+        diagnostics: { isComplete: true, warnings: [] }
+      })
+    const inspectSessionDetailsStartupSessions = vi.fn()
+    const hydration = createSessionCatalogHydration({
+      owner: () =>
+        ({
+          hydrateFromSessionCatalog: async (loadCatalog: () => Promise<unknown>) => loadCatalog()
+        }) as never,
+      projectRecovery: { recoverPendingDeletions: vi.fn(async () => undefined) },
+      sessionLoader: {
+        loadAll,
+        loadAllReadOnly: vi.fn(),
+        inspectSessionDetailsStartupSessions
+      }
+    })
+
+    await expect(hydration.loadAll()).resolves.toMatchObject({
+      diagnostics: { isComplete: false }
+    })
+    await expect(hydration.listSessionDetailsStartupSessions()).resolves.toEqual([session])
+    expect(loadAll).toHaveBeenCalledTimes(2)
+    expect(inspectSessionDetailsStartupSessions).not.toHaveBeenCalled()
+  })
+
   it('keeps the first Compute operation available to five Sessions created after an old complete snapshot', async () => {
     const durableSessions = new Map<string, PersistedChatSession>()
     const snapshotCaptured = Promise.withResolvers<void>()

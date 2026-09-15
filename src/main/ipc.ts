@@ -4053,7 +4053,6 @@ const createApplicationModules = async (
       appVersion: app.getVersion(),
       configRoot,
       settingsService,
-      sessionPersistenceBackend,
       sessionPersistenceCoordinator
     },
     (dependencies) => {
@@ -4067,8 +4066,7 @@ const createApplicationModules = async (
       })
       const owner = createSessionDetailsOwner({
         sessions: {
-          listSessions: async () =>
-            (await dependencies.sessionPersistenceBackend.loadAll()).sessions,
+          listSessions: () => sessionCatalogHydration.listSessionDetailsStartupSessions(),
           mutateSession: (projectId, sessionId, mutation) =>
             dependencies.sessionPersistenceCoordinator.mutateSessionDetailsAuthority(
               projectId,
