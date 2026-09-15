@@ -29,6 +29,7 @@ import {
   Zap
 } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
+import { motion } from 'motion/react'
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import {
   forwardRef,
@@ -215,6 +216,8 @@ const ArchivedPanel = lazy(async () => ({
 const TokenUsagePanel = lazy(async () => ({
   default: (await import('./TokenUsagePanel')).TokenUsagePanel
 }))
+
+const MotionDialogContent = motion.create(Dialog.Content)
 
 type SettingsPageProps = {
   open: boolean
@@ -1165,7 +1168,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     >
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none" />
-        <Dialog.Content
+        <MotionDialogContent
+          layoutRoot
           data-slot="settings-surface"
           onOpenAutoFocus={() => {
             returnFocusRef.current =
@@ -1512,7 +1516,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               ) : null}
             </TooltipProvider>
 
-            <div
+            <motion.div
+              layoutScroll
               data-slot="settings-content-scroll"
               data-settings-active-panel={activePanel}
               className="min-h-0 flex-1 overflow-y-auto"
@@ -1535,16 +1540,19 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               >
                 <SettingsPanelLoadingBoundary
                   panelKey={
-                    activePanel === 'skills' &&
-                    (skillsView.kind === 'marketplace' ||
-                      skillsView.kind === 'marketplace-detail' ||
-                      skillsView.kind === 'marketplace-batch')
-                      ? 'skills:marketplace'
-                      : activePanel === 'connectors' &&
-                          (connectorsView.kind === 'add' || connectorsView.kind === 'edit') &&
-                          connectorsView.credentialView === 'create'
-                        ? `${activePanel}:${Math.max(0, historyIndex - 1)}`
-                        : `${activePanel}:${historyIndex}`
+                    activePanel === 'model' &&
+                    (modelView.kind === 'list' || modelView.kind === 'local-models')
+                      ? 'model:tabs'
+                      : activePanel === 'skills' &&
+                          (skillsView.kind === 'marketplace' ||
+                            skillsView.kind === 'marketplace-detail' ||
+                            skillsView.kind === 'marketplace-batch')
+                        ? 'skills:marketplace'
+                        : activePanel === 'connectors' &&
+                            (connectorsView.kind === 'add' || connectorsView.kind === 'edit') &&
+                            connectorsView.credentialView === 'create'
+                          ? `${activePanel}:${Math.max(0, historyIndex - 1)}`
+                          : `${activePanel}:${historyIndex}`
                   }
                   onClose={onClose}
                 >
@@ -1996,9 +2004,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   )}
                 </SettingsPanelLoadingBoundary>
               </div>
-            </div>
+            </motion.div>
           </div>
-        </Dialog.Content>
+        </MotionDialogContent>
       </Dialog.Portal>
     </Dialog.Root>
   )

@@ -1,19 +1,26 @@
 import { expect, test, type Locator } from '@playwright/test'
 
+type MotionFrame = { x: number; y: number; width: number; bottomOffset: number }
+
 // Observe actual painted geometry across frames, not only final selected styles.
 const recordMotion = async (list: Locator): Promise<void> => {
   await list.evaluate((element) => {
-    const frames: Array<{ x: number; y: number; width: number }> = []
+    const frames: MotionFrame[] = []
     Object.assign(element, { motionFrames: frames })
     element.addEventListener(
       'pointerdown',
       () => {
         const start = performance.now()
         const sample = (): void => {
-          const box = element
-            .querySelector('[aria-selected="true"] > span[aria-hidden]')
-            ?.getBoundingClientRect()
-          if (box) frames.push({ x: box.x, y: box.y, width: box.width })
+          const tab = element.querySelector('[aria-selected="true"]')
+          const box = tab?.querySelector(':scope > span[aria-hidden]')?.getBoundingClientRect()
+          if (box && tab)
+            frames.push({
+              x: box.x,
+              y: box.y,
+              width: box.width,
+              bottomOffset: box.bottom - tab.getBoundingClientRect().bottom
+            })
           if (performance.now() - start < 400) requestAnimationFrame(sample)
         }
         requestAnimationFrame(sample)
@@ -22,11 +29,9 @@ const recordMotion = async (list: Locator): Promise<void> => {
     )
   })
 }
-const frames = (list: Locator): Promise<Array<{ x: number; y: number; width: number }>> =>
+const frames = (list: Locator): Promise<MotionFrame[]> =>
   list.evaluate(
-    (element) =>
-      (element as typeof element & { motionFrames: Array<{ x: number; y: number; width: number }> })
-        .motionFrames
+    (element) => (element as typeof element & { motionFrames: MotionFrame[] }).motionFrames
   )
 const expectAligned = async (list: Locator): Promise<void> => {
   await expect
@@ -114,3 +119,68 @@ for (const locale of ['en', 'de', 'zh-Hans']) {
     await page.screenshot({ path: testInfo.outputPath(`tabs-${locale}-dark.png`) })
   })
 }
+
+test('animates model selection through the production SettingsPage history', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/tab-motion.html?settings')
+  const list = page.getByRole('tablist', { name: 'Models', exact: true })
+  const tabs = list.getByRole('tab')
+  await expect(tabs.first()).toHaveAttribute('aria-selected', 'true')
+  await list.evaluate((element) => {
+    element.setAttribute('data-original-list', 'true')
+  })
+  const from = (await tabs.first().boundingBox())!
+  const to = (await tabs.last().boundingBox())!
+  await recordMotion(list)
+  await tabs.last().click()
+  await expect(tabs.last()).toHaveAttribute('aria-selected', 'true')
+  await expect(list).toHaveAttribute('data-original-list', 'true')
+  await expectAligned(list)
+  expect((await frames(list)).some(({ x }) => x > from.x + 2 && x < to.x - 2)).toBe(true)
+  await page.getByRole('button', { name: 'Back', exact: true }).click()
+  await expect(tabs.first()).toHaveAttribute('aria-selected', 'true')
+  await expect(list).toHaveAttribute('data-original-list', 'true')
+  await expectAligned(list)
+})
+
+test('keeps a capability indicator level when switching after a scroll', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.setViewportSize({ width: 900, height: 600 })
+  await page.goto('/tab-motion.html')
+  const scroller = page.locator('[data-scroll-frame]')
+  await scroller.evaluate((element) => {
+    element.scrollTop = 120
+  })
+  const list = page.locator('[data-capabilities]').getByRole('tablist')
+  const from = (await list.getByRole('tab').first().boundingBox())!
+  await recordMotion(list)
+  await list.getByRole('tab').last().click()
+  await expectAligned(list)
+  const samples = await frames(list)
+  expect(samples.length).toBeGreaterThan(1)
+  expect(samples.every(({ y }) => Math.abs(y - from.y) < 1)).toBe(true)
+})
+
+test('tracks the actual settings scroller while animating a partially scrolled model tab', async ({
+  page
+}) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.setViewportSize({ width: 900, height: 360 })
+  await page.goto('/tab-motion.html?settings')
+  const list = page.getByRole('tablist', { name: 'Models', exact: true })
+  await list.getByRole('tab').last().click()
+  await expectAligned(list)
+  const scroller = page.locator('[data-slot="settings-content-scroll"]')
+  await scroller.evaluate((element) => {
+    element.scrollTop = 12
+  })
+  expect(await scroller.evaluate((element) => element.scrollTop)).toBe(12)
+  const target = (await list.getByRole('tab').first().boundingBox())!
+  await recordMotion(list)
+  await page.mouse.click(target.x + target.width / 2, target.y + target.height / 2)
+  await expect(list.getByRole('tab').first()).toHaveAttribute('aria-selected', 'true')
+  await expectAligned(list)
+  const samples = await frames(list)
+  expect(samples.length).toBeGreaterThan(1)
+  expect(samples.every(({ bottomOffset }) => Math.abs(bottomOffset) < 1)).toBe(true)
+})

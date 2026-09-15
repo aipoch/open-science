@@ -15,8 +15,6 @@ import {
 } from './settings-search-shortcut'
 import { TagFilter } from './ResourceTagControls'
 
-const MotionTabsList = motion.create(Tabs.List)
-
 type ConnectorRow = {
   id: string
   name: string
@@ -419,8 +417,7 @@ const SpecialistCapabilitiesSection = ({
             )}
           >
             <div className="mb-3 flex items-center justify-between">
-              <MotionTabsList
-                layoutRoot
+              <Tabs.List
                 className="isolate inline-flex gap-0.5 rounded-lg bg-muted p-1"
                 aria-label={t('Capability type')}
               >
@@ -456,7 +453,7 @@ const SpecialistCapabilitiesSection = ({
                     {selectedConnectorIds.length}
                   </span>
                 </Tabs.Trigger>
-              </MotionTabsList>
+              </Tabs.List>
 
               {/* Add button + dropdown — right side of the same row */}
               {activeTab === 'skills' ? (

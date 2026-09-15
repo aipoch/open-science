@@ -1,7 +1,11 @@
 import '@/assets/main.css'
 import { useState } from 'react'
+import { motion } from 'motion/react'
 import { createRoot } from 'react-dom/client'
 import { initI18n, prepareI18nLocale } from '@/i18n'
+import { SettingsPage } from '@/pages/settings/SettingsPage'
+import { useTagStore } from '@/stores/tag-store'
+import { useMemoryStore } from '@/stores/memory-store'
 import { ModelPanel } from '@/pages/settings/ModelPanel'
 import { SpecialistCapabilitiesSection } from '@/pages/settings/SpecialistCapabilitiesSection'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -12,6 +16,8 @@ const locale = requestedLocale === 'de' || requestedLocale === 'zh-Hans' ? reque
 document.documentElement.classList.toggle('dark', params.has('dark'))
 // Only native loading is stubbed. Tabs, panels, styles, i18n and animation are production code.
 window.api = {
+  platform: 'darwin',
+  settings: {},
   localModels: {
     getSnapshot: async () => ({
       availability: 'notInstalled',
@@ -26,12 +32,19 @@ window.api = {
   }
 } as unknown as typeof window.api
 useSettingsStore.setState({
+  isLoaded: true,
+  load: async () => true,
   skills: [],
   connectors: [],
   customServers: [],
   loadSkills: async () => undefined,
   loadConnectors: async () => undefined
 })
+
+const unsubscribe = (): (() => void) => () => undefined
+useTagStore.setState({ load: async () => undefined, listen: unsubscribe })
+useMemoryStore.setState({ listen: unsubscribe })
+if (params.has('settings')) useSettingsStore.getState().openSettingsToPanel('model')
 
 export function Models(): React.JSX.Element {
   const [local, setLocal] = useState(false)
@@ -46,8 +59,11 @@ export function Fixture(): React.JSX.Element {
   const [mode, setMode] = useState<'full' | 'selected'>('selected')
   const [skills, setSkills] = useState<string[]>([])
   const [connectors, setConnectors] = useState<string[]>([])
+  if (params.has('settings')) return <SettingsPage open onClose={() => undefined} />
   return (
-    <main
+    <motion.main
+      layoutRoot
+      layoutScroll
       className="fixed inset-6 overflow-y-auto rounded-xl border border-border bg-background text-foreground"
       data-scroll-frame
     >
@@ -76,7 +92,7 @@ export function Fixture(): React.JSX.Element {
         )}
         <div className="h-[600px]" aria-hidden="true" />
       </div>
-    </main>
+    </motion.main>
   )
 }
 void Promise.resolve(prepareI18nLocale(locale)).then(() => {

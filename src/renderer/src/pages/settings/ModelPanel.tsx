@@ -21,8 +21,6 @@ import {
 } from '../../../../shared/local-models'
 import { SettingsSection } from './SettingsLayout'
 
-const MotionTabsList = motion.create(Tabs.List)
-
 const size = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MiB`
 
 const LocalModelsPanel = (): React.JSX.Element => {
@@ -288,11 +286,7 @@ export const ModelPanel = ({
       value={local ? 'local' : 'agent'}
       onValueChange={(value) => onChange(value === 'local')}
     >
-      <MotionTabsList
-        layoutRoot
-        aria-label={t('Models')}
-        className="flex gap-6 border-b border-border px-5"
-      >
+      <Tabs.List aria-label={t('Models')} className="flex gap-6 border-b border-border px-5">
         <Tabs.Trigger value="agent" className={tabClass}>
           <Brain className="size-4" aria-hidden="true" />
           {t('Agent models')}
@@ -303,7 +297,7 @@ export const ModelPanel = ({
           {t('Local parsing models')}
           {local && indicator}
         </Tabs.Trigger>
-      </MotionTabsList>
+      </Tabs.List>
       <Tabs.Content value="agent">{children}</Tabs.Content>
       <Tabs.Content value="local">
         <LocalModelsPanel />
