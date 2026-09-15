@@ -12,7 +12,6 @@ export const assertSettledHistory = (session: PersistedChatSession): void => {
   if (
     session.status !== 'idle' ||
     hasCurrentRunningDelegatedAttempt(session) ||
-    context?.sideChatRelays?.length ||
     context?.delegatedWork?.messageCommands?.some(
       (command) =>
         command.receipt.status === 'queued' ||

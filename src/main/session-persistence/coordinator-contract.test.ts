@@ -787,7 +787,9 @@ const archiveRuntime = (
     countNonTerminalBySession: (sessionId: string) => Promise<number>
     findNonTerminal: () => Promise<{ project_id: string }[]>
   },
-  detect: () => { projectId: string; sessionId: string }[] = () => []
+  detectArchive: () => { projectId: string; sessionId: string }[] = () => [],
+  detectExport: () => { projectId: string; sessionId: string }[] = () => [],
+  hasSideChat: (sessionId: string) => boolean = () => false
 ): SessionRuntimeActivity => {
   const source = ts.createSourceFile(
     'ipc.ts',
@@ -810,11 +812,19 @@ const archiveRuntime = (
   return new Function(
     'sideChatOwnerRef',
     'detectArchiveBlockingSessions',
+    'detectSessionExportBlockingSessions',
     'reviewerProjectRuntime',
     'computeJobActivityRef',
     'runtimeRef',
     script
-  )({}, detect, { isProjectBusy: () => false }, { current: jobs }, {})
+  )(
+    { current: { hasForParent: hasSideChat } },
+    detectArchive,
+    detectExport,
+    { isProjectBusy: () => false },
+    { current: jobs },
+    {}
+  )
 }
 
 const createArchiveHarness = (
@@ -878,6 +888,46 @@ const sessionArchiveRequest = (
 })
 
 describe('archive admission regressions', () => {
+  it('uses the export-specific activity projection from the real IPC adapter', async () => {
+    const jobs = {
+      countNonTerminalBySession: vi.fn().mockResolvedValue(0),
+      findNonTerminal: vi.fn().mockResolvedValue([])
+    }
+    const detectArchive = vi.fn(() => [{ projectId: 'project-1', sessionId: 'session-1' }])
+    const detectExport = vi.fn(() => [])
+    const { coordinator } = createArchiveHarness(archiveRuntime(jobs, detectArchive, detectExport))
+
+    const release = await coordinator.reserveSessionExport(
+      'project-1',
+      'session-1',
+      async () => undefined
+    )
+
+    expect(detectExport).toHaveBeenCalledTimes(2)
+    expect(detectArchive).not.toHaveBeenCalled()
+    release()
+  })
+
+  it('keeps an open Side Chat archive-blocking in the real IPC adapter', async () => {
+    const jobs = {
+      countNonTerminalBySession: vi.fn().mockResolvedValue(0),
+      findNonTerminal: vi.fn().mockResolvedValue([])
+    }
+    const { coordinator, repository } = createArchiveHarness(
+      archiveRuntime(
+        jobs,
+        () => [],
+        () => [],
+        (sessionId) => sessionId === 'session-1'
+      )
+    )
+
+    await expect(coordinator.updateSessionArchive(sessionArchiveRequest(true, 1))).rejects.toThrow(
+      'Finish or stop'
+    )
+    expect(repository.saveSession).not.toHaveBeenCalled()
+  })
+
   it.each(['queued', 'submitted', 'running'])(
     'rejects an idle Session with a %s Compute Job through the real IPC activity adapter',
     async (status) => {

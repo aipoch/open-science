@@ -44,7 +44,7 @@ const registerSideChatIpcHandlers = (
     if (starts.has(startId)) throw new Error('Side chat is already starting.')
     starts.set(startId, request.parentSessionId)
     try {
-      return await dependencies.withParentAvailable(request.parentSessionId, async () => {
+      const admitted = await dependencies.withParentAvailable(request.parentSessionId, async () => {
         const parent = await loadAvailableParent(request.projectId, request.parentSessionId)
         if (closedStarts.delete(startId)) {
           throw new Error('Side chat closed before startup completed.')
@@ -65,13 +65,16 @@ const registerSideChatIpcHandlers = (
                 ...(inherited.model ? { model: inherited.model } : {})
               }
             : undefined)
-        return runtime.start({
-          ...request,
-          ...(modelSelection ? { modelSelection } : {}),
-          sideSessionId: startId,
-          historyPreamble
-        })
+        return {
+          result: runtime.start({
+            ...request,
+            ...(modelSelection ? { modelSelection } : {}),
+            sideSessionId: startId,
+            historyPreamble
+          })
+        }
       })
+      return admitted.result
     } finally {
       starts.delete(startId)
       closedStarts.delete(startId)
@@ -84,7 +87,7 @@ const registerSideChatIpcHandlers = (
     const send = { cancellation: new AbortController(), dispatching: false }
     sends.set(request.sideSessionId, send)
     try {
-      return await dependencies.withParentAvailable(parent.parentSessionId, async () => {
+      const admitted = await dependencies.withParentAvailable(parent.parentSessionId, async () => {
         send.cancellation.signal.throwIfAborted()
         const parentSession = await loadAvailableParent(parent.projectId, parent.parentSessionId)
         send.cancellation.signal.throwIfAborted()
@@ -95,8 +98,9 @@ const registerSideChatIpcHandlers = (
             })
           : undefined
         send.dispatching = true
-        return runtime.send({ ...request, historyPreamble }, send.cancellation)
+        return { result: runtime.send({ ...request, historyPreamble }, send.cancellation) }
       })
+      return admitted.result
     } finally {
       if (sends.get(request.sideSessionId) === send) sends.delete(request.sideSessionId)
     }

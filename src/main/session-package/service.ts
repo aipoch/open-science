@@ -138,8 +138,10 @@ type PackageExportOptions = {
   onProgress?: (progress: PackageProgress) => void
 }
 
-// Strip only known runtime metadata. A similarly named key inside research evidence must be
-// inspected and rejected when sensitive, never silently removed from the evidence.
+// Strip only known private or auxiliary runtime metadata. Delivered Side Chat relays already live
+// in the main conversation graph and remain exportable; the auxiliary transcripts and queue do not.
+// A similarly named key inside research evidence must still be inspected and rejected when
+// sensitive, never silently removed from the evidence.
 const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSession => ({
   ...session,
   providerSessionId: undefined,
@@ -148,16 +150,64 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
     ? {
         ...session.runtimeContext,
         permission: undefined,
-        sideChat: session.runtimeContext.sideChat
-          ? {
-              ...session.runtimeContext.sideChat,
-              providerSessionId: undefined,
-              providerContinuityToken: undefined
-            }
-          : undefined
+        sideChat: undefined,
+        sideChats: undefined,
+        sideChatRelays: undefined
       }
     : undefined
 })
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
+  if (!isRecord(envelope)) return false
+  const hasEnvelopeField = Object.hasOwn(envelope, 'version') || Object.hasOwn(envelope, 'session')
+  const session = hasEnvelopeField ? envelope.session : envelope
+  if (!isRecord(session)) return false
+  if (
+    Object.hasOwn(session, 'providerSessionId') ||
+    Object.hasOwn(session, 'providerContinuityToken')
+  )
+    return true
+  const runtimeContext = session.runtimeContext
+  return (
+    isRecord(runtimeContext) &&
+    ['permission', 'sideChat', 'sideChats', 'sideChatRelays'].some((key) =>
+      Object.hasOwn(runtimeContext, key)
+    )
+  )
+}
+
+const exportRelevantSession = (session: PersistedChatSession): PersistedChatSession => {
+  // The persistence export reservation admits only Side Chat projection writes. Those fields are
+  // excluded above, but their save still advances Session/runtime revisions and the active branch's
+  // derived timestamp; normalize that bookkeeping while keeping exported research state strict.
+  const shared = withoutPrivateAuthority(session)
+  const hasRuntimeState =
+    shared.runtimeContext &&
+    Object.entries(shared.runtimeContext).some(
+      ([key, value]) => key !== 'version' && key !== 'revision' && value !== undefined
+    )
+  return {
+    ...shared,
+    revision: undefined,
+    updatedAt: 0,
+    runtimeContext:
+      hasRuntimeState && shared.runtimeContext
+        ? { ...shared.runtimeContext, revision: 0 }
+        : undefined,
+    conversationGraph: shared.conversationGraph
+      ? {
+          ...shared.conversationGraph,
+          branches: shared.conversationGraph.branches.map((branch) => ({
+            ...branch,
+            updatedAt: 0
+          }))
+        }
+      : undefined
+  }
+}
 
 // Recognizers stop export; they never silently rewrite research text. File preview is still
 // necessary: arbitrary binary research data cannot be certified free of private information.
@@ -365,7 +415,15 @@ export class SessionPackageService {
       if (manifest.source.projectId !== origin.sourceManifest.source.projectId)
         throw new Error('Session package source identity mismatch.')
       await assertShareable(manifest, this.signal)
-      await assertShareable(await readPackageJson(join(source, 'session.json')), this.signal)
+      const sourceSessionEnvelope = await readPackageJson(join(source, 'session.json'))
+      const sourceSession = await readSession(source)
+      const forwardedSession = withoutPrivateAuthority(sourceSession)
+      await assertShareable(forwardedSession, this.signal)
+      // Inspect the raw envelope so malformed legacy Side Chat data dropped by the Session
+      // sanitizer cannot bypass the rewrite and be copied into the forwarded package.
+      const forwardedSessionJson = requiresPrivateAuthorityRemoval(sourceSessionEnvelope)
+        ? JSON.stringify({ version: 2, session: forwardedSession })
+        : undefined
       const records = parseNativeRecords(await readPackageJson(join(source, 'records.json')))
       await assertShareable(records, this.signal)
       const alreadyExcluded = validateExcludedFiles(records, manifest.excludedFiles)
@@ -420,11 +478,19 @@ export class SessionPackageService {
           excluded.add(copy.storageKey)
         }
       }
-      const forwarded = {
+      const forwarded: SessionPackageManifest = {
         ...manifest,
-        inventory: manifest.inventory.filter(
-          (entry) => !entry.storageKey || !excluded.has(entry.storageKey)
-        ),
+        inventory: manifest.inventory
+          .filter((entry) => !entry.storageKey || !excluded.has(entry.storageKey))
+          .map((entry) =>
+            entry.path === 'session.json' && forwardedSessionJson
+              ? {
+                  ...entry,
+                  sizeBytes: Buffer.byteLength(forwardedSessionJson),
+                  checksum: sha256(forwardedSessionJson)
+                }
+              : entry
+          ),
         excludedFiles: [...manifest.excludedFiles, ...additional]
       }
       assertNoExcludedContentCopies(records, forwarded.excludedFiles, forwarded.inventory)
@@ -438,6 +504,10 @@ export class SessionPackageService {
           await mkdir(join(staging, 'objects'))
           for (const entry of forwarded.inventory) {
             this.signal.throwIfAborted()
+            if (entry.path === 'session.json' && forwardedSessionJson) {
+              await writeFile(join(staging, entry.path), forwardedSessionJson)
+              continue
+            }
             await assertShareableFile(join(source, entry.path), this.signal)
             await copyFileWithinBudget(
               join(source, entry.path),
@@ -461,7 +531,7 @@ export class SessionPackageService {
           await publishUserFile(path, (temporary) =>
             writePackageArchive(staging, temporary, this.signal)
           )
-          return preview(forwarded, await readSession(source))
+          return preview(forwarded, forwardedSession)
         },
         () => rm(staging, { recursive: true, force: true })
       )
@@ -737,7 +807,10 @@ export class SessionPackageService {
         )
         if (
           current.status !== 'found' ||
-          !isDeepStrictEqual(current.session, session) ||
+          !isDeepStrictEqual(
+            exportRelevantSession(current.session),
+            exportRelevantSession(session)
+          ) ||
           !isDeepStrictEqual(currentRecords, records)
         )
           throw new Error('The Session changed during export. Try again.')

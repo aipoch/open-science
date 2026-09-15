@@ -463,6 +463,50 @@ describe('SessionPersistenceCoordinator', () => {
     expect(mutation).toHaveBeenCalledTimes(2)
   })
 
+  it('persists excluded Side chat projections while export keeps parent mutations frozen', async () => {
+    let durable = createSession({
+      runtimeContext: { version: 1, revision: 1, sideChat: createSideChatProjection() }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
+        durable = structuredClone(session)
+        return structuredClone(durable)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const release = await coordinator.reserveSessionExport('project-1', 'session-1')
+
+    await expect(
+      coordinator.saveSideChatProjection({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        sideChat: createSideChatProjection({
+          entries: [
+            { id: 'assistant-1', kind: 'message', role: 'assistant', text: 'Saved output' }
+          ],
+          updatedAt: 11
+        })
+      })
+    ).resolves.toMatchObject({ entries: [expect.objectContaining({ text: 'Saved output' })] })
+    await expect(
+      coordinator.appendSideChatRelay({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        sideChatId: 'side-chat-1',
+        relay: { id: 'relay-1', text: 'Deliver later', createdAt: 12 }
+      })
+    ).rejects.toThrow('locked')
+    expect(durable.runtimeContext?.sideChat?.entries).toEqual([
+      expect.objectContaining({ text: 'Saved output' })
+    ])
+    expect(durable.runtimeContext?.sideChatRelays).toBeUndefined()
+    release()
+  })
+
   it('saves an imported renderer projection through Main without losing runtime evidence', async () => {
     const root = await mkdtemp(join(tmpdir(), 'imported-session-save-'))
     try {

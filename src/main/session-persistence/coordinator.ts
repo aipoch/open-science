@@ -229,7 +229,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
     this.sideChatOwner = new SessionSideChatPersistenceOwner({
       repository,
-      assertMutable: (projectId, sessionId) => this.assertMutable(projectId, sessionId, 'mutate'),
+      assertMutable: (projectId, sessionId, projectionOnly) =>
+        this.assertMutable(projectId, sessionId, 'mutate', projectionOnly),
       recordSession: (session) => this.stateOwner.recordSession(session),
       notifySessionUpdated: (session) => publishSessionUpdate(session, 'runtime-context')
     })
@@ -1146,8 +1147,13 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
-  private assertMutable(projectId: string, sessionId: string, operation: 'save' | 'mutate'): void {
-    if (this.exportingSessions.has(sessionKey(projectId, sessionId)))
+  private assertMutable(
+    projectId: string,
+    sessionId: string,
+    operation: 'save' | 'mutate',
+    projectionOnly = false
+  ): void {
+    if (!projectionOnly && this.exportingSessions.has(sessionKey(projectId, sessionId)))
       throw new Error('This Session is locked while its research package is being exported.')
     if (this.deletedProjects.has(projectId)) {
       throw new Error(`Cannot ${operation} a session whose project has been deleted.`)

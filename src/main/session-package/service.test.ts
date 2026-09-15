@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from 'node:fs/promises'
 import { writeFileSync } from 'node:fs'
 import { c as createTar, x as extractTar } from 'tar'
-import { fileChecksum } from './archive'
+import { fileChecksum, packageEntry } from './archive'
 import { ProjectRepository } from '../projects/repository'
 import { afterEach, expect, it, vi } from 'vitest'
 import {
@@ -1273,6 +1273,70 @@ it('rejects a Notebook file changed during export without replacing the destinat
   await expect(readFile(archive, 'utf8')).resolves.toBe('Previous export')
 })
 
+it('allows excluded Side Chat projection updates while exporting the parent Session', async () => {
+  const source = await createProvenanceTestFixture()
+  fixtures.push(source)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+  const sessions = new SessionRepository(source.storageRoot)
+  await sessions.saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Stable parent research',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 2
+  })
+  const archive = join(source.storageRoot, 'side-chat-update.science')
+  const service = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+
+  await expect(
+    service.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive, {
+      selectFiles: async () => {
+        const current = await sessions.loadSession('project-1', 'session-1')
+        if (!current) throw new Error('Session fixture is missing')
+        await sessions.saveSession({
+          ...current,
+          runtimeContext: {
+            version: 1,
+            revision: 1,
+            sideChat: {
+              version: 1,
+              id: 'side-chat-1',
+              lifecycle: 'open',
+              frameworkId: 'codex',
+              historyPreamble: 'Auxiliary context',
+              entries: [
+                {
+                  id: 'assistant-1',
+                  kind: 'message',
+                  role: 'assistant',
+                  text: 'New auxiliary output'
+                }
+              ],
+              createdAt: 1,
+              updatedAt: 3
+            }
+          },
+          updatedAt: 3
+        })
+        return []
+      }
+    })
+  ).resolves.toBeDefined()
+  const expanded = join(source.storageRoot, 'side-chat-update-expanded')
+  await mkdir(expanded)
+  await extractTar({ file: archive, cwd: expanded })
+  const envelope = JSON.parse(await readFile(join(expanded, 'session.json'), 'utf8')) as {
+    session: { runtimeContext?: Record<string, unknown> }
+  }
+  expect(envelope.session.runtimeContext?.sideChat).toBeUndefined()
+})
+
 it('aborts active export and queued work when its lifecycle owner closes', async () => {
   const source = await createProvenanceTestFixture()
   fixtures.push(source)
@@ -1444,7 +1508,7 @@ it.each(['organized', 'deleted', 'projection-pending'] as const)(
   }
 )
 
-it('transfers every conversation branch across separate config and data roots and reopens it offline', async () => {
+it('transfers conversation branches and delivered Side Chat relays without auxiliary Side Chats', async () => {
   const source = await createProvenanceTestFixture()
   const target = await createProvenanceTestFixture()
   fixtures.push(source, target)
@@ -1475,6 +1539,17 @@ it('transfers every conversation branch across separate config and data roots an
           eventIds: [],
           createdAt: 2,
           updatedAt: 2
+        },
+        {
+          id: 'relay-to-main',
+          role: 'user',
+          content: 'Use a black line in the main analysis.',
+          status: 'complete',
+          eventIds: [],
+          responseToMessageId: 'question',
+          relayedFrom: { kind: 'side-chat', direction: 'to-main' },
+          createdAt: 3,
+          updatedAt: 3
         }
       ]
     }),
@@ -1511,7 +1586,19 @@ it('transfers every conversation branch across separate config and data roots an
         ],
         createdAt: 1,
         updatedAt: 2
-      }
+      },
+      sideChats: [
+        {
+          version: 1,
+          id: 'side-chat-2',
+          lifecycle: 'open',
+          frameworkId: 'claude-code',
+          historyPreamble: 'More private Side Chat context',
+          entries: [],
+          createdAt: 2,
+          updatedAt: 3
+        }
+      ]
     },
     permissionProfile: 'full',
     createdAt: 1,
@@ -1530,10 +1617,83 @@ it('transfers every conversation branch across separate config and data roots an
   const archive = join(source.storageRoot, 'research.science')
   await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
   const preview = await importer.inspect(archive)
-  expect(preview).toMatchObject({ title: 'Sample comparison', branchCount: 2, messageCount: 2 })
+  expect(preview).toMatchObject({ title: 'Sample comparison', branchCount: 2, messageCount: 3 })
   const imported = await importer.importFrom(archive)
   expect(imported.projectId).not.toBe('project-1')
   expect(imported.sessionId).not.toBe('session-1')
+  const retainedSource = join(
+    target.storageRoot,
+    'artifacts',
+    imported.projectId,
+    imported.sessionId,
+    '.session-package',
+    'source'
+  )
+  const retainedSessionPath = join(retainedSource, 'session.json')
+  const retainedEnvelope = JSON.parse(await readFile(retainedSessionPath, 'utf8')) as {
+    version: number
+    session: { runtimeContext?: Record<string, unknown> }
+  }
+  retainedEnvelope.session.runtimeContext = {
+    ...(retainedEnvelope.session.runtimeContext ?? { version: 1, revision: 1 }),
+    sideChat: {
+      version: 1,
+      id: '../malformed-legacy-side-chat',
+      lifecycle: 'open',
+      frameworkId: 'claude-code',
+      historyPreamble: 'Legacy retained Side Chat',
+      providerSessionId: 'private-legacy-provider',
+      entries: [
+        {
+          id: 'private-entry',
+          kind: 'message',
+          role: 'assistant',
+          text: 'Private malformed legacy transcript'
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+  }
+  // Retained packages can use the historical bare Session format. Keep the malformed Side Chat in
+  // those raw bytes to prove forwarding checks before the Session sanitizer drops it.
+  await writeFile(retainedSessionPath, JSON.stringify(retainedEnvelope.session))
+  const retainedManifestPath = join(retainedSource, 'manifest.json')
+  const retainedManifest = JSON.parse(await readFile(retainedManifestPath, 'utf8')) as {
+    inventory: Array<{ path: string; kind: 'session' | 'records' | 'readme' | 'file' | 'notebook' }>
+  }
+  const retainedSessionEntry = retainedManifest.inventory.find(
+    (entry) => entry.path === 'session.json'
+  )
+  if (!retainedSessionEntry) throw new Error('Retained package Session entry is missing')
+  Object.assign(retainedSessionEntry, await packageEntry(retainedSource, 'session.json', 'session'))
+  await writeFile(retainedManifestPath, JSON.stringify(retainedManifest))
+  const retainedReceiptPath = join(dirname(retainedSource), 'receipt.json')
+  const retainedReceipt = JSON.parse(await readFile(retainedReceiptPath, 'utf8')) as {
+    manifestChecksum: string
+  }
+  retainedReceipt.manifestChecksum = await fileChecksum(retainedManifestPath)
+  await writeFile(retainedReceiptPath, JSON.stringify(retainedReceipt))
+  const forwarded = join(target.storageRoot, 'forwarded.science')
+  await importer.exportTo(imported, forwarded)
+  const forwardedRoot = join(target.storageRoot, 'forwarded-package')
+  await mkdir(forwardedRoot)
+  await extractTar({ file: forwarded, cwd: forwardedRoot })
+  const forwardedEnvelope = JSON.parse(
+    await readFile(join(forwardedRoot, 'session.json'), 'utf8')
+  ) as {
+    session: {
+      runtimeContext?: Record<string, unknown>
+      conversationGraph?: { messages: Array<Record<string, unknown>> }
+    }
+  }
+  expect(forwardedEnvelope.session.runtimeContext?.sideChat).toBeUndefined()
+  expect(forwardedEnvelope.session.conversationGraph?.messages).toContainEqual(
+    expect.objectContaining({
+      content: 'Use a black line in the main analysis.',
+      relayedFrom: { kind: 'side-chat', direction: 'to-main' }
+    })
+  )
   await target.client.$disconnect()
   const reopened = await new SessionRepository(targetConfigRoot).loadSession(
     imported.projectId,
@@ -1545,16 +1705,23 @@ it('transfers every conversation branch across separate config and data roots an
   )
   expect(reopened?.conversationGraph?.messages.map((message) => message.content)).toEqual([
     'Compare the samples',
-    'The original result'
+    'The original result',
+    'Use a black line in the main analysis.'
   ])
   expect(reopened?.providerSessionId).toBeUndefined()
-  expect(reopened?.runtimeContext?.sideChat).toMatchObject({
-    historyPreamble: 'Research context',
-    entries: [{ text: 'An alternative explanation' }]
+  expect(reopened?.runtimeContext?.sideChat).toBeUndefined()
+  expect(reopened?.runtimeContext?.sideChats).toBeUndefined()
+  expect(origin.identities['side-chat-1']).toBeUndefined()
+  expect(origin.identities['side-chat-2']).toBeUndefined()
+  expect(
+    reopened?.conversationGraph?.messages.find(
+      (message) => message.id === origin.identities['relay-to-main']
+    )
+  ).toMatchObject({
+    content: 'Use a black line in the main analysis.',
+    responseToMessageId: origin.identities.question,
+    relayedFrom: { kind: 'side-chat', direction: 'to-main' }
   })
-  expect(reopened?.runtimeContext?.sideChat?.providerSessionId).toBeUndefined()
-  expect(reopened?.runtimeContext?.sideChat?.id).toBe(origin.identities['side-chat-1'])
-  expect(origin.identities['side-chat-1']).not.toBe('side-chat-1')
   expect(reopened?.status).toBe('idle')
   expect(reopened?.packageOrigin?.sourceSessionId).toBe('session-1')
   if (!reopened) throw new Error('Imported Session was not readable')
@@ -1574,8 +1741,14 @@ it('transfers every conversation branch across separate config and data roots an
   )
   expect(restored?.messages.map((message) => message.content)).toEqual([
     'Compare the samples',
-    'The original result'
+    'The original result',
+    'Use a black line in the main analysis.'
   ])
+  expect(
+    restored?.messages.find(
+      (message) => message.content === 'Use a black line in the main analysis.'
+    )
+  ).toMatchObject({ relayedFrom: { kind: 'side-chat', direction: 'to-main' } })
   expect(restored?.packageOrigin).toEqual(reopened.packageOrigin)
   await expect(
     new SessionRepository(targetConfigRoot).saveSession({
@@ -2446,7 +2619,7 @@ it.each(['pdf-context', 'pdf-annotation', 'text-annotation', 'image-annotation']
   }
 )
 
-it('refuses an idle Session with queued runtime delivery rather than importing runnable history', async () => {
+it('drops an undelivered Side Chat relay instead of blocking Session export', async () => {
   const source = await createProvenanceTestFixture()
   fixtures.push(source)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
@@ -2471,12 +2644,17 @@ it('refuses an idle Session with queued runtime delivery rather than importing r
     storageRoot: source.storageRoot,
     getClient: async () => source.client
   })
+  const archive = join(source.storageRoot, 'queued.science')
   await expect(
-    service.exportTo(
-      { projectId: 'project-1', sessionId: 'session-1' },
-      join(source.storageRoot, 'queued.science')
-    )
-  ).rejects.toThrow('finish')
+    service.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+  ).resolves.toBeDefined()
+  const expanded = join(source.storageRoot, 'queued-expanded')
+  await mkdir(expanded)
+  await extractTar({ file: archive, cwd: expanded })
+  const envelope = JSON.parse(await readFile(join(expanded, 'session.json'), 'utf8')) as {
+    session: { runtimeContext?: { sideChatRelays?: unknown[] } }
+  }
+  expect(envelope.session.runtimeContext?.sideChatRelays).toBeUndefined()
 })
 
 it('blocks recognized sensitive content when forwarding an externally created package', async () => {

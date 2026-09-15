@@ -1140,7 +1140,7 @@ const createApplicationModules = async (
       storageRoot: resolveDataRoot(),
       getClient: () => getProjectDbClient(resolveConfigRoot()),
       isSessionActive: (projectId, sessionId) =>
-        detectArchiveBlockingSessions().some(
+        detectSessionExportBlockingSessions().some(
           (item) => item.projectId === projectId && item.sessionId === sessionId
         )
     })
@@ -1425,6 +1425,9 @@ const createApplicationModules = async (
   const delegatedActivity = createDelegatedActivityProjection()
   const getActiveDelegatedSessions = (): { projectId: string; sessionId: string }[] =>
     delegatedActivity.getActiveDelegatedSessions()
+  // Side Chat prompts remain activity for disruptive archive, migration and shutdown operations.
+  // Package export uses a narrower projection because auxiliary transcripts are excluded; delivered
+  // relays already live in the main conversation graph independently of this activity projection.
   const getActiveSideChatSessions = (): { projectId: string; sessionId: string }[] =>
     (sideChatOwnerRef.current?.list().chats ?? [])
       .filter((chat) => chat.running)
@@ -1659,18 +1662,26 @@ const createApplicationModules = async (
     },
     applicationEvents
   )
-  const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
+  const detectBlockingSessions = (
+    includeSideChat: boolean
+  ): ReturnType<typeof detectActiveSessions> =>
     detectActiveSessions({
       runtime: {
         getActivePromptSessions: () => runtimeRef.current?.getActivePromptSessions() ?? []
       },
-      sideChat: { getActivePromptSessions: getActiveSideChatSessions },
+      sideChat: {
+        getActivePromptSessions: () => (includeSideChat ? getActiveSideChatSessions() : [])
+      },
       delegated: { getActiveDelegatedSessions },
       notebook: {
         getActiveNotebookSessions: () =>
           notebookActivityRef.current?.getActiveNotebookSessions() ?? []
       }
     })
+  const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
+    detectBlockingSessions(true)
+  const detectSessionExportBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
+    detectBlockingSessions(false)
   const archiveCoordinator = new ArchiveCoordinator(
     projectRepository,
     sessionPersistenceCoordinator,
@@ -1684,6 +1695,17 @@ const createApplicationModules = async (
           jobs > 0 ||
           sideChatOwnerRef.current?.hasForParent(sessionId) === true ||
           detectArchiveBlockingSessions().some(
+            (session) => session.projectId === projectId && session.sessionId === sessionId
+          )
+        )
+      },
+      isSessionExportBusy: async (projectId, sessionId) => {
+        const computeJobs = computeJobActivityRef.current
+        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
+        const jobs = await computeJobs.countNonTerminalBySession(sessionId)
+        return (
+          jobs > 0 ||
+          detectSessionExportBlockingSessions().some(
             (session) => session.projectId === projectId && session.sessionId === sessionId
           )
         )

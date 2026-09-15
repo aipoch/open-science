@@ -181,7 +181,7 @@ describe('Side chat IPC', () => {
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
-  it('holds parent availability until restored follow-up admission completes', async () => {
+  it('releases parent availability after dispatch without waiting for the Side Chat turn', async () => {
     let finishSend!: () => void
     const send = new Promise<void>((resolve) => {
       finishSend = resolve
@@ -211,11 +211,10 @@ describe('Side chat IPC', () => {
     } as never) as Promise<void>
     await vi.waitFor(() => expect(runtime.send).toHaveBeenCalledOnce())
     expect(withParentAvailable).toHaveBeenCalledWith('main-1', expect.any(Function))
-    expect(gateReleased).toBe(false)
+    await vi.waitFor(() => expect(gateReleased).toBe(true))
 
     finishSend()
     await followUp
-    expect(gateReleased).toBe(true)
   })
 
   it('does not start a temporary runtime when the panel closes during parent preflight', async () => {
