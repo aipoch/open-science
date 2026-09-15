@@ -177,7 +177,6 @@ const options = (
       ensureSessionReady: vi.fn(() => Promise.resolve())
     },
     sideChatOpen: false,
-    setAutoReviewEnabled: vi.fn(),
     resetNewConversationSettings: vi.fn(),
     abortFixLoop: vi.fn(() => Promise.resolve()),
     getSession: (sessionId) => (sessionId === 'session-a' ? session() : undefined),
@@ -1231,7 +1230,7 @@ describe('workspace conversation controller', () => {
     expect(hook.result.current.optimisticMessage).toBeUndefined()
   })
 
-  it('includes new-Session Memory and Compute intent and stamps Review after submit succeeds', async () => {
+  it('includes new-Session Review, Memory and Compute intent in the initial send', async () => {
     const input = options({
       activeSession: undefined,
       currentDraftKey: 'new:project-a',
@@ -1257,17 +1256,39 @@ describe('workspace conversation controller', () => {
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
     await vi.waitFor(() => expect(input.resetNewConversationSettings).toHaveBeenCalled())
 
-    expect(input.setAutoReviewEnabled).toHaveBeenCalledWith('pending-session', true)
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         agentConfiguration: input.agentConfiguration,
         memoryEnabled: false,
+        autoReviewEnabled: true,
         delegationPolicy: 'deny',
         enabledComputeHosts: ['ssh:lab', 'ssh:available'],
         selectedComputeHosts: ['ssh:lab']
       })
     )
     expect(input.session.actions.resetNewConversationSpecialist).toHaveBeenCalledOnce()
+  })
+
+  it('sends an explicit disabled Review setting for a new conversation', async () => {
+    const input = options({ activeSession: undefined, newConversationAutoReviewEnabled: false })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalled())
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ autoReviewEnabled: false })
+    )
+  })
+
+  it('does not apply the new-conversation Review preference to an existing Session', async () => {
+    const input = options({ newConversationAutoReviewEnabled: true })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalled())
+    expect(vi.mocked(input.runtime.sendMessage).mock.calls[0][0]).not.toHaveProperty(
+      'autoReviewEnabled'
+    )
   })
 
   it('keeps revise stable while applying the latest gate and runtime mapping', async () => {
