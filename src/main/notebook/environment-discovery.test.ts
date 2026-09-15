@@ -57,41 +57,44 @@ describe('defaultDiscoveryDeps Windows conda R probes', () => {
     expect(exec).toHaveBeenCalledWith('/python', ['--version'], expect.objectContaining({ env }))
   })
 
-  it('activates the interpreter own conda prefix for version and jsonlite probes', async () => {
-    const prefix = 'C:\\Users\\HM\\OpenScience\\runtime\\envs\\default-r'
-    const interpreter = `${prefix}\\Lib\\R\\bin\\R.exe`
-    const exec = vi.fn(
-      async (
-        _file: string,
-        args: readonly string[],
-        options: { env?: NodeJS.ProcessEnv }
-      ): Promise<{ stdout: string; stderr: string }> => {
-        const expectedStart = [
-          prefix,
-          `${prefix}\\Library\\mingw-w64\\bin`,
-          `${prefix}\\Library\\usr\\bin`,
-          `${prefix}\\Library\\bin`,
-          `${prefix}\\Scripts`,
-          `${prefix}\\bin`
-        ].join(';')
-        expect(options.env?.PATH?.split(';').slice(0, 6).join(';')).toBe(expectedStart)
-        return args.includes('--version')
-          ? { stdout: '', stderr: 'R version 4.4.3 (2025-02-28 ucrt)' }
-          : { stdout: 'TRUE', stderr: '' }
-      }
-    )
-    const deps = defaultDiscoveryDeps('C:\\Users\\HM\\OpenScience\\runtime', undefined, {
-      platform: 'win32',
-      exec
-    })
+  it.each(['', 'x64\\'])(
+    'activates the interpreter own conda prefix for version and jsonlite probes in bin/%s',
+    async (architectureDirectory) => {
+      const prefix = 'C:\\Users\\HM\\OpenScience\\runtime\\envs\\default-r'
+      const interpreter = `${prefix}\\Lib\\R\\bin\\${architectureDirectory}R.exe`
+      const exec = vi.fn(
+        async (
+          _file: string,
+          args: readonly string[],
+          options: { env?: NodeJS.ProcessEnv }
+        ): Promise<{ stdout: string; stderr: string }> => {
+          const expectedStart = [
+            prefix,
+            `${prefix}\\Library\\mingw-w64\\bin`,
+            `${prefix}\\Library\\usr\\bin`,
+            `${prefix}\\Library\\bin`,
+            `${prefix}\\Scripts`,
+            `${prefix}\\bin`
+          ].join(';')
+          expect(options.env?.PATH?.split(';').slice(0, 6).join(';')).toBe(expectedStart)
+          return args.includes('--version')
+            ? { stdout: '', stderr: 'R version 4.4.3 (2025-02-28 ucrt)' }
+            : { stdout: 'TRUE', stderr: '' }
+        }
+      )
+      const deps = defaultDiscoveryDeps('C:\\Users\\HM\\OpenScience\\runtime', undefined, {
+        platform: 'win32',
+        exec
+      })
 
-    await expect(deps.probeVersion(interpreter, 'r')).resolves.toBe('4.4.3')
-    await expect(deps.rRunnable(interpreter)).resolves.toBe(true)
-    expect(exec.mock.calls.map(([file]) => file)).toEqual([
-      `${prefix}\\Lib\\R\\bin\\Rscript.exe`,
-      `${prefix}\\Lib\\R\\bin\\Rscript.exe`
-    ])
-  })
+      await expect(deps.probeVersion(interpreter, 'r')).resolves.toBe('4.4.3')
+      await expect(deps.rRunnable(interpreter)).resolves.toBe(true)
+      expect(exec.mock.calls.map(([file]) => file)).toEqual([
+        `${prefix}\\Lib\\R\\bin\\${architectureDirectory}Rscript.exe`,
+        `${prefix}\\Lib\\R\\bin\\${architectureDirectory}Rscript.exe`
+      ])
+    }
+  )
 
   it('does not inject conda activation into an external Windows R installation', async () => {
     const interpreter = 'C:\\Program Files\\R\\R-4.4.3\\bin\\R.exe'
