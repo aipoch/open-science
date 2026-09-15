@@ -1445,3 +1445,146 @@ it('separates native probability and hazard-interval runs using measured glyph a
     expect.objectContaining({ str: f.target.str })
   )
 })
+
+it.each(['native', 'bold-native', 'wrong-font', 'missing-name'])(
+  'decodes private numeral glyphs only with matching %s evidence',
+  async (variant) => {
+    const chars = Array.from({ length: 10 }, (_, n) => String.fromCharCode(0xf130 + n)).join('')
+    const font = {
+      name:
+        variant === 'wrong-font'
+          ? 'Times-Roman'
+          : variant === 'bold-native'
+            ? 'ABCDEF+AdvOT58b04b30.B+f1'
+            : 'ABCDEF+AdvOTfc06a83e+f1',
+      differences:
+        variant === 'missing-name' ? [] : Array.from({ length: 10 }, (_, n) => `uniF13${n}`)
+    }
+    const content = { items: [{ str: chars, fontName: 'source' }] }
+    const result = await repairPdfSymbolText({ commonObjs: { get: () => font } }, content, {
+      fnArray: [],
+      argsArray: []
+    })
+    expect(result.items[0].str).toBe(
+      ['native', 'bold-native'].includes(variant) ? '0123456789' : chars
+    )
+    expect(content.items[0].str).toBe(chars)
+  }
+)
+it.each([
+  ['Universal-GreekwithMathPi', 5, 833, 'H11003', '×'],
+  ['Universal-GreekwithMathPi', 6, 833, 'H11003', '×'],
+  ['MathematicalPi-Six', 2, 500, 'H11569', '*']
+])(
+  'decodes %s slot %s using its embedded glyph',
+  async (name, code, width, glyphName, expected) => {
+    const unicode = String.fromCharCode(code)
+    for (const variant of ['native', 'wrong-font', 'wrong-name', 'wrong-width']) {
+      const font = {
+        name: variant === 'wrong-font' ? 'Times-Roman' : `ABCDEF+${name}`,
+        differences: { [code]: variant === 'wrong-name' ? 'unknown' : glyphName }
+      }
+      const result = await repairPdfSymbolText(
+        { commonObjs: { get: () => font } },
+        { items: [{ str: unicode, fontName: 'source' }] },
+        {
+          fnArray: [OPS.setFont, OPS.showText],
+          argsArray: [
+            ['source', 12],
+            [
+              [
+                {
+                  originalCharCode: code,
+                  unicode,
+                  width: variant === 'wrong-width' ? width + 1 : width
+                }
+              ]
+            ]
+          ]
+        }
+      )
+      expect(result.items[0].str).toBe(variant === 'native' ? expected : unicode)
+    }
+  }
+)
+
+it.each([0, 90, 180, 270])(
+  'respects a path clip for rotated text at %s degrees and retains partial visibility',
+  async (angle) => {
+    const radians = (angle * Math.PI) / 180,
+      a = Math.cos(radians),
+      b = Math.sin(radians)
+    const item = (
+      str: string,
+      x: number,
+      y: number
+    ): { str: string; fontName: string; width: number; height: number; transform: number[] } => ({
+      str,
+      fontName: 'f',
+      width: 20,
+      height: 10,
+      transform: [10 * a, 10 * b, -10 * b, 10 * a, x, y]
+    })
+    const content = {
+      items: [item('hidden', 200, 200), item('visible', 50, 50), item('edge', 99, 50)]
+    }
+    const glyphs = (text: string): { unicode: string }[][] => [
+      [...text].map((unicode) => ({ unicode }))
+    ]
+    const operators = {
+      fnArray: [
+        OPS.save,
+        OPS.clip,
+        OPS.constructPath,
+        OPS.setFont,
+        OPS.showText,
+        OPS.showText,
+        OPS.showText,
+        OPS.restore
+      ],
+      argsArray: [
+        [],
+        [],
+        [OPS.endPath, [], [0, 0, 100, 100]],
+        ['f', 10],
+        glyphs('hidden'),
+        glyphs('visible'),
+        glyphs('edge'),
+        []
+      ]
+    }
+    const result = await repairPdfSymbolText({}, content, operators)
+    expect(result.items.map((i: { str: string }) => i.str)).toEqual(['visible', 'edge'])
+    expect(content.items).toHaveLength(3)
+  }
+)
+it.each([250, 500, 900])(
+  'splits paired mean/deviation runs only across a verified column gap of %s',
+  (gap) => {
+    const a = '55.8 (10.9)',
+      b = '57.1 (11.6)',
+      str = a + ' ' + b
+    const glyphs = [...str].map((unicode, n) => ({
+      unicode,
+      width: n === a.length ? gap : 500,
+      isSpace: unicode === ' '
+    }))
+    const item = {
+      str,
+      fontName: 'f',
+      dir: 'ltr',
+      width: (str.length - 1) * 5 + gap / 100,
+      height: 10,
+      transform: [10, 0, 0, 10, 100, 500],
+      hasEOL: true
+    }
+    const operators = { fnArray: [OPS.setFont, OPS.showText], argsArray: [['f', 10], [glyphs]] }
+    const result = splitPdfNumericRuns({ items: [item] }, operators).items
+    if (gap < 500) expect(result).toEqual([item])
+    else {
+      expect(result.map((i: { str: string }) => i.str)).toEqual([a, b])
+      expect(result[1].transform[4]).toBe(100 + a.length * 5 + gap / 100)
+      expect(result[0].width + gap / 100 + result[1].width).toBe(item.width)
+    }
+  }
+)

@@ -161,3 +161,14 @@ it('splits several complete source groups without losing or duplicating the fina
     splitOwnedSourceRows(rows, items, [groups[0], groups[2], groups[1]], [0, 40])
   ).toBeUndefined()
 })
+
+it('keeps a slightly smaller adjoining letter with its raised baseline owner', () => {
+  const anchor = { ...token('FUP1', 1, 20, 20), height: 12.75, rect: [1, 7.25, 20, 20] }
+  const script = { ...token('a', 20, 25, 14.3), height: 10.5, rect: [20, 3.8, 25, 14.3] }
+  expect(groupSourceRowsWithScripts([script, anchor], 12.75, 0.3)).toEqual([[anchor, script]])
+  const separated = { ...script, rect: [50, 3.8, 55, 14.3] }
+  expect(groupSourceRowsWithScripts([separated, anchor], 12.75, 0.3)).toEqual([
+    [separated],
+    [anchor]
+  ])
+})

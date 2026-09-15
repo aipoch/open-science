@@ -42,7 +42,7 @@ const continuesExternalParagraph = (line, bounds, lines, minimumLineLength = 40)
   const below = line.y >= bounds[3]
   if (
     below &&
-    /^(?:Conclusions?|Discussion|Results|Methods|Acknowledgments?|References)$/i.test(
+    /^(?:Conclusions?|Discussion|Results|Methods|Interventions?|Data collection|Acknowledgments?|References)$/i.test(
       line.text.trim()
     )
   ) {
@@ -141,6 +141,23 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
     associateStandaloneFigurePlate(page, pageCaptions, tableRects)
   if (standalone) return [standalone]
   const assigned = captions.map(() => [])
+  // A numbered running author head establishes a page-furniture band. Some
+  // publisher logos extend slightly below the text baseline or closing rule.
+  const numberedAuthorHead =
+    page.lines.some(
+      (l) =>
+        l.y < page.height * 0.06 &&
+        l.height < page.height * 0.025 &&
+        /\bet al\./i.test(l.text) &&
+        page.lines.some(
+          (n) =>
+            n.y < page.height * 0.06 &&
+            /^(?:\d{1,4}(?: of \d{1,4})?)(?:\s|$|[A-Z])/.test(n.text) &&
+            Math.abs(n.y - l.y) < Math.max(n.height, l.height)
+        )
+    ) ||
+    (page.marginRuleBounds?.some((r) => r[3] < 0.07 && r[2] - r[0] > 0.8) &&
+      page.lines.some((l) => l.y < page.height * 0.06 && /^\d+ of \d+$/.test(l.text.trim())))
   page = {
     ...page,
     graphicsBounds: page.graphicsBounds.filter(
@@ -574,7 +591,20 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
     )
       continue
     // Running headers and publisher marks are not figure content.
-    if (rect[3] < page.height * 0.055) continue
+    if (rect[3] < page.height * (numberedAuthorHead ? 0.065 : 0.055)) continue
+    // A full-width raster running head can contain the author and journal art.
+    // Require a separate substantial plate and a clear vertical gap below it.
+    if (
+      graphic.kind === 'image' &&
+      rect[1] < page.height * 0.02 &&
+      rect[3] < page.height * 0.09 &&
+      rect[2] - rect[0] > page.width * 0.9 &&
+      rasterPlates.some((r) => r[1] > rect[3] + 24) &&
+      page.lines.some(
+        (l) => l.text.length >= 8 && l.height < 16 && intersection(lineRect(l), rect) > 0
+      )
+    )
+      continue
     if (graphic.kind === 'path' && rect[1] >= page.height * 0.98) continue
     // Several isolated paragraph rules do not become a tall graphic when unioned.
     // Keep horizontal axes attached to a plate or other substantial drawing.
@@ -613,7 +643,16 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
       tableRects.some(
         (table) =>
           intersection(table, rect) / area(rect) >=
-          (graphic.kind === 'path' && rect[2] - rect[0] > (rect[3] - rect[1]) * 8 ? 0.7 : 0.8)
+            (graphic.kind === 'path' && rect[2] - rect[0] > (rect[3] - rect[1]) * 8 ? 0.7 : 0.8) ||
+          // Quantized path boxes can straddle the refined table's bottom edge.
+          // A long closing rule with the same columns still belongs to that table.
+          (graphic.kind === 'path' &&
+            rect[2] - rect[0] > (rect[3] - rect[1]) * 20 &&
+            table[3] - table[1] > (rect[3] - rect[1]) * 8 &&
+            Math.abs((rect[1] + rect[3]) / 2 - table[3]) <= page.height / 256 &&
+            Math.max(0, Math.min(table[2], rect[2]) - Math.max(table[0], rect[0])) /
+              Math.max(table[2] - table[0], rect[2] - rect[0]) >=
+              0.85)
       )
     )
       continue
@@ -1006,7 +1045,7 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
     // missed by caption distance. A disconnected or competing component is not
     // evidence that every graphic on that side belongs to this diagram.
     if (
-      /\b(?:CONSORT|flowchart|flow diagram)\b/i.test(caption.lines.join(' ')) &&
+      /\b(?:CONSORT|flowchart|flow diagram|patient flow)\b/i.test(caption.lines.join(' ')) &&
       connected.length &&
       connected.every((item) => item.kind === 'path') &&
       diagramFrames.length >= 3
@@ -1177,6 +1216,7 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
           (r) =>
             r[2] - r[0] <= 12 &&
             r[3] - r[1] <= 12 &&
+            !(numberedAuthorHead && r[3] < page.height * 0.065) &&
             r[0] >= bounds[0] - 32 &&
             r[2] <= bounds[2] + 32 &&
             r[1] >= bounds[1] - 24 &&
@@ -1260,6 +1300,19 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
     const nearby = page.lines.filter(
       (l) =>
         !runningHeaders.includes(l) &&
+        // A manuscript wrapper can repeat the printed page number below a plate.
+        // Require its independent "Page N of M" witness before dropping a number.
+        !(
+          /^\d+$/.test(l.text.trim()) &&
+          l.y > Math.max(bounds[3], page.height * 0.9) &&
+          Math.abs(l.x + l.width / 2 - page.width / 2) < page.width * 0.03 &&
+          page.lines.some(
+            (other) =>
+              other.y > page.height * 0.9 &&
+              /^Page (\d+) of \d+$/i.exec(other.text.trim())?.[1] === l.text.trim()
+          )
+        ) &&
+        !(numberedAuthorHead && l.y + l.height < page.height * 0.055) &&
         !tableRects.some((r) => intersection(r, lineRect(l)) > 0) &&
         !(
           l.y < page.height * 0.045 &&
@@ -1584,6 +1637,60 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
       bounds,
       page.lines
     )
+    // On a single-figure page, several retained labels inside one raster
+    // establish that panel's full painted extent, even when its distance
+    // from the caption exceeded the initial association window.
+    if (captions.length === 1 && !tableRects.length) {
+      for (const g of page.graphicsBounds.filter((g) => g.kind === 'image')) {
+        const r = g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
+        if (
+          area(g.normalizedRect) >= 0.01 &&
+          area(g.normalizedRect) <= 0.2 &&
+          intersection(r, rect) / area(r) > 0.5 &&
+          intersection(r, caption.rect) === 0 &&
+          nearby.filter((l) => intersection(lineRect(l), r) / area(lineRect(l)) > 0.95).length >=
+            3 &&
+          !pageCaptions.some((c) => c !== caption && intersection(c.rect, r) > 0)
+        )
+          rect.splice(0, 4, ...union([rect, r]))
+      }
+    }
+    // Native figure notes may begin inside a raster's quantized bottom box.
+    // Keep the complete aligned note block instead of cropping through its
+    // first line. A new caption, table, font or paragraph gap ends ownership.
+    if (!side && !below && plates.length === 1) {
+      const first = page.lines.find(
+        (l) =>
+          /^(?:Notes?:|The vertical lines are .*confidence intervals?\b|Each (?:dot|bar) represents the coefficient\b)/i.test(
+            l.text
+          ) &&
+          l.fontSize <= 10 &&
+          Math.abs(l.y - bounds[3]) <= l.fontSize * 2 &&
+          l.x >= bounds[0] - 2 &&
+          l.x + l.width <= bounds[2] + 2
+      )
+      if (first) {
+        const note = [first]
+        for (const next of page.lines
+          .filter((l) => l.y > first.y && l.x < first.x + first.width && l.x + l.width > first.x)
+          .sort((a, b) => a.y - b.y)) {
+          const previous = note.at(-1)
+          if (
+            next.y - previous.y > first.fontSize * 1.8 ||
+            Math.abs(next.fontSize - first.fontSize) > 0.5 ||
+            Math.abs(next.x - first.x) > 2 ||
+            next.x + next.width > bounds[2] + 2 ||
+            captionKind(next.text) ||
+            tableRects.some((r) => intersection(r, lineRect(next)) > 0)
+          )
+            break
+          note.push(next)
+          if (/[.!?]$/.test(next.text) && next.width < first.width * 0.8) break
+        }
+        if (note.length >= 2 && note.length <= 12)
+          rect.splice(0, 4, ...union([rect, ...note.map(lineRect)]))
+      }
+    }
     // Recorded operation boxes are quantized; keep the caption itself out of the resulting crop.
     if (side === 'left') rect[2] = Math.min(rect[2], caption.rect[0] - 2)
     else if (side === 'right') rect[0] = Math.max(rect[0], caption.rect[2] + 2)

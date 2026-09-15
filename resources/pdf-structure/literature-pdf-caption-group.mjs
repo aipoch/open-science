@@ -158,6 +158,12 @@ export function captionKind(text) {
     .replace(/^Appendix\s+(?=(?:Figure|Fig\.|Table)\b)/i, '')
   if (/^(?:Figure|Fig\.?)\s+\d+\s+(?:but\b|\(available\b)/i.test(text)) return undefined
   if (
+    /^(?:Table|Fig\.?|Figure)\s+(?:[AS]?\d+|[IVXLCDM]+)\s+in\s+(?:Appendix|Supplement(?:ary)?|Section)\b/i.test(
+      text
+    )
+  )
+    return undefined
+  if (
     /^(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+(?:\s+and\s+(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+)?\s+(?:shows?|shown|presents?|presented|illustrates?|depicts?|represents?|reiterates?|reviews?)\b/i.test(
       text ?? ''
     )
@@ -522,7 +528,12 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
             (line, index) =>
               !captionKind(line.text) &&
               Math.abs(line.x - title[0].x) <= 2 &&
-              Math.abs(line.fontSize - start.fontSize) <= 1.5 &&
+              // Italic font matrices can slightly inflate fontSize while the
+              // painted height still matches the surrounding upright title.
+              Math.min(
+                Math.abs(line.fontSize - start.fontSize),
+                Math.abs(line.bottom - line.y - (start.bottom - start.y))
+              ) <= 1.5 &&
               line.y - (index ? title[index - 1].bottom : start.bottom) <= start.fontSize * 1.5
           ) &&
           title[0].x < start.x &&

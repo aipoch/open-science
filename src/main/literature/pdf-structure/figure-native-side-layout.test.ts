@@ -16,6 +16,26 @@ const associate = (f: ReturnType<typeof fixture>): ReturnType<typeof JSON.parse>
 const rect = (g: { normalizedRect: number[] }, page: { width: number; height: number }): number[] =>
   g.normalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width))
 
+it('keeps a confirmed duplicate page number below the raster letter outside its crop', () => {
+  const f = fixture('framed-letter-above-confirmed-page-number')
+  const number = f.page.lines.find((l: { text: string }) => l.text === '32')
+  expect(associate(f)[0].rect[3]).toBeLessThan(number.y)
+  f.page.lines = f.page.lines.filter((l: { text: string }) => !/^Page 32 of/.test(l.text))
+  // Without the independent page-number witness, a numeric figure label stays owned.
+  expect(associate(f)[0].rect[3]).toBeGreaterThan(number.y)
+})
+
+it('keeps a quantized table footer above a raster plot outside the figure crop', () => {
+  const f = fixture('raster-plot-below-quantized-table-footer')
+  const plot = f.page.graphicsBounds.find(
+    (g: { operationIndex: number }) => g.operationIndex === 831
+  )
+  expect(associate(f)[1].rect[1]).toBeGreaterThan(rect(plot, f.page)[1] - 2)
+  f.tables = []
+  // A nearby rule without table ownership may be a plot border.
+  expect(associate(f)[1].rect[1]).toBeLessThan(rect(plot, f.page)[1] - 4)
+})
+
 it('follows both native flowchart branches past a side caption without including article prose', () => {
   const f = fixture('branching-flowchart'),
     original = structuredClone(f)
@@ -165,3 +185,103 @@ it.each(['no-side-graphic', 'complete-caption', 'distant-tail', 'uppercase-tail'
     expect(findCaptionCandidates([f.page])[0].lines).toEqual([start.text])
   }
 )
+
+it.each([
+  ['side-schema-below-numbered-running-head', [213, 45, 554, 462]],
+  ['stacked-raster-beside-running-logo', [44, 45, 384, 480]],
+  ['patient-flow-beside-terminal-caption', [60, 325, 396, 726]],
+  ['single-photograph-below-raster-running-head', [299, 94, 554, 452]]
+])('retains all panels without running page art in %s', (name, bounds) => {
+  const f = fixture(name),
+    original = structuredClone(f)
+  const result = associate(f)[0]
+  expect(result.rect).toBeDefined()
+  expect(result.rect[0]).toBeGreaterThanOrEqual(bounds[0])
+  expect(result.rect[1]).toBeGreaterThanOrEqual(bounds[1])
+  expect(result.rect[2]).toBeLessThanOrEqual(bounds[2])
+  expect(result.rect[3]).toBeLessThanOrEqual(bounds[3])
+  // Also require the complete occupied extent, not just an arbitrary small crop.
+  expect(result.rect[2] - result.rect[0]).toBeGreaterThan(bounds[2] - bounds[0] - 5)
+  expect(result.rect[3] - result.rect[1]).toBeGreaterThan(bounds[3] - bounds[1] - 5)
+  expect(f).toEqual(original)
+})
+it('does not interpret an appendix cross-reference between plots as a graphical table', () => {
+  const f = fixture('appendix-table-reference-between-plots')
+  const captions = findCaptionCandidates([f.page])
+  expect(captions).toHaveLength(2)
+  expect(captions.map((c: { lines: string[] }) => c.lines[0])).toEqual([
+    'Figure 5: The change in screening probability across social groups',
+    'Figure 6: Percentage mammography use across the deprivation index'
+  ])
+  expect(associateFigures(f.page, captions).every((r: { rect?: number[] }) => r.rect)).toBe(true)
+})
+
+it.each([
+  ['italic-description-below-centered-table-number', 'Demographic characteristics'],
+  ['italic-correlation-title-before-ruled-header', 'Correlation Matrix for Main Study Variables.']
+])('retains the native manuscript description in %s', (name, title) => {
+  const f = fixture(name),
+    original = structuredClone(f)
+  const captions = findCaptionCandidates([f.page], new Map([[f.page.pageNumber, f.rules]]))
+  expect(captions).toHaveLength(1)
+  expect(captions[0].lines.join(' ')).toContain(title)
+  expect(captions[0].rect[3]).toBeLessThan(120)
+  expect(f).toEqual(original)
+})
+it('retains running-head evidence after repeated author text has already been removed', () => {
+  const f = fixture('stacked-raster-beside-running-logo')
+  f.page.lines = f.page.lines.filter((l: { text: string }) => !l.text.includes('et al.'))
+  f.page.marginRuleBounds = [[0.07421875, 0.0390625, 0.9296875, 0.046875]]
+  const result = associate(f)[0]
+  expect(result.rect[1]).toBeGreaterThan(45)
+  expect(result.rect[3]).toBeGreaterThan(479)
+})
+
+it('retains the entire raster containing native labels above captioned vector logos', () => {
+  const f = fixture('raster-letterhead-above-captioned-logos'),
+    original = structuredClone(f)
+  expect(associate(f)[0].rect).toEqual([92.8125, 153, 225.84375, 387.28125])
+  expect(f).toEqual(original)
+  f.page.lines = f.page.lines.filter(
+    (l: { text: string }) => !/^DÉPISTAGE|DANS L|DECAD|337|ZI de|27000/.test(l.text)
+  )
+  expect(associate(f)[0].rect[1]).toBeGreaterThan(153)
+})
+
+it('filters a repeated vector publisher mark before associating a side-captioned flowchart', async () => {
+  const { excludeRepeatedMarginContent } = await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-graphics.mjs')).href
+  )
+  const f = fixture('vector-wordmark-above-flowchart'),
+    original = structuredClone(f)
+  const pages = excludeRepeatedMarginContent(f.pages)
+  const page = pages.find((p: { pageNumber: number }) => p.pageNumber === 4)
+  const result = associateFigures(page, findCaptionCandidates(pages))[0]
+  expect(result.rect).toEqual([60.45771875, 325.54142578125, 395.30046875, 725.4923203125])
+  expect(result.graphicsCount).toBe(24)
+  expect(f).toEqual(original)
+  // An unrepeated mark is retained; its shape alone does not prove publisher ownership.
+  const alone = excludeRepeatedMarginContent([f.pages[1]])[0]
+  expect(alone.graphicsBounds).toEqual(f.pages[1].graphicsBounds)
+})
+
+it('retains complete native notes beginning inside raster plot bounds', () => {
+  const f = fixture('raster-plots-with-overlapping-native-notes'),
+    original = structuredClone(f)
+  const results = f.pages.flatMap((p: unknown) => associateFigures(p, f.captions))
+  expect(results.map((r: { rect: number[] }) => r.rect[3])).toEqual([
+    565.511, 307.6, 407.403, 640.419
+  ])
+  expect(f).toEqual(original)
+  // Adjacent article text uses a different font, and cannot extend this note.
+  const page = f.pages[0]
+  page.lines.push({
+    text: 'Unrelated article prose.',
+    fontSize: 12,
+    height: 12,
+    x: 200.19,
+    y: 569,
+    width: 200
+  })
+  expect(associateFigures(page, f.captions)[0].rect[3]).toBe(565.511)
+})

@@ -181,7 +181,14 @@ export function collectTableRules(operators, viewport) {
         filled &&
         points.some((point, index) => {
           const next = points[(index + 1) % points.length]
-          return Math.min(Math.abs(point[0] - next[0]), Math.abs(point[1] - next[1])) > 0.01
+          const dx = Math.abs(point[0] - next[0]),
+            dy = Math.abs(point[1] - next[1])
+          // Filled table rules can have beveled ends. Only a short end edge
+          // may be diagonal; a slanted long edge is not an axis-aligned rule.
+          return (
+            Math.min(dx, dy) > 0.01 &&
+            (Math.max(dx, dy) > fillThickness || Math.abs(dx - dy) > 0.01)
+          )
         })
       )
         continue
@@ -306,6 +313,52 @@ export function excludeRepeatedMarginContent(pages) {
       )
       .flatMap((mark) => mark.graphics)
   )
+  // A publisher wordmark can be painted as one vector path. Repetition alone
+  // is insufficient: require a separately confirmed running header in its band
+  // and no touching body graphic or native figure label.
+  const headerMarks = pages.flatMap((page, pageIndex) =>
+    (page.graphicsBounds ?? [])
+      .filter(
+        ({ kind, normalizedRect: r }) =>
+          kind === 'path' &&
+          r[3] <= 0.07 &&
+          r[2] - r[0] <= 0.25 &&
+          r[3] - r[1] <= 0.03 &&
+          page.lines?.some(
+            (l) =>
+              excludedLines.has(l) &&
+              l.y / page.height < r[3] &&
+              (l.y + l.height) / page.height > r[1]
+          ) &&
+          !page.lines?.some(
+            (l) =>
+              l.x / page.width < r[2] &&
+              (l.x + l.width) / page.width > r[0] &&
+              l.y / page.height < r[3] &&
+              (l.y + l.height) / page.height > r[1]
+          ) &&
+          !(page.graphicsBounds ?? []).some(
+            (g) =>
+              g.normalizedRect !== r &&
+              g.normalizedRect[3] > 0.07 &&
+              g.normalizedRect[0] < r[2] &&
+              g.normalizedRect[2] > r[0] &&
+              g.normalizedRect[1] < r[3]
+          )
+      )
+      .map((graphic) => ({ pageIndex, graphic }))
+  )
+  for (const mark of headerMarks)
+    if (
+      headerMarks.some(
+        (other) =>
+          other.pageIndex !== mark.pageIndex &&
+          mark.graphic.normalizedRect.every(
+            (v, i) => Math.abs(v - other.graphic.normalizedRect[i]) <= 1 / 256
+          )
+      )
+    )
+      excluded.add(mark.graphic)
   // Side banners repeated on several pages are publisher furniture. Require
   // matching path geometry and isolation from all raster content.
   const sideMarks = pages.flatMap((page, pageIndex) =>

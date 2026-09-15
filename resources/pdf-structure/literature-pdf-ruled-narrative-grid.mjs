@@ -11,6 +11,8 @@ import {
 // Use those native bands instead of model rows that split a long instruction.
 // The right border must be consistent, and every glyph must have one owner.
 export function recoverRuledNarrativeGrid(table, items, captions, rules, sourceRules = rules) {
+  const checklist = recoverRuledChecklist(table, items, sourceRules)
+  if (checklist) return checklist
   if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
   const [left, top, right, bottom] = table.cropRect
   const predicted = table.structure.objects
@@ -27,10 +29,56 @@ export function recoverRuledNarrativeGrid(table, items, captions, rules, sourceR
               0.7
           )
     )
+  const segmented = recoverSegmentedNarrativeColumns(table, items, predicted, sourceRules)
+  if (segmented) return segmented
   const paragraphs = recoverParagraphColumns(table, items, predicted, sourceRules)
   if (paragraphs) return paragraphs
   const centered = recoverCenteredBulletedGroups(table, items, predicted)
   if (centered) return centered
+  const parallelLists = recoverParallelNumberedLists(table, items, predicted, rules)
+  if (parallelLists) return parallelLists
+  // A captioned theme outline has nested indents, not independent columns.
+  // Require complete, uniformly spaced native entries at three indent levels;
+  // paragraph continuations and side-by-side text do not satisfy this layout.
+  if (
+    predicted.length <= 2 &&
+    captions.some(
+      (c) =>
+        captionKind(c.lines[0]) === 'table' &&
+        c.rect[3] <= top &&
+        top - c.rect[3] < 30 &&
+        c.rect[0] >= left - 4 &&
+        c.rect[0] < right
+    )
+  ) {
+    const source = tableSourceItems(items, table.cropRect)
+    const indents = [...new Set(source.map((i) => Math.round(i.rect[0])))].sort((a, b) => a - b)
+    if (
+      source.length >= 12 &&
+      indents.length === 3 &&
+      indents[1] - indents[0] >= source[0].height * 0.5 &&
+      Math.abs(indents[2] - indents[1] - (indents[1] - indents[0])) <= 1 &&
+      indents.every((x) => source.filter((i) => Math.abs(i.rect[0] - x) <= 1).length >= 3) &&
+      source.every(
+        (i, n) =>
+          /^\p{Lu}/u.test(i.text.trim()) &&
+          !/[.;:]$/.test(i.text.trim()) &&
+          i.text.split(/\s+/).length <= 16 &&
+          Math.abs(i.height - source[0].height) < 0.5 &&
+          (!n ||
+            (i.rect[1] > source[n - 1].rect[3] &&
+              i.baseline - source[n - 1].baseline < i.height * 1.5))
+      )
+    )
+      return {
+        rows: source.map((i) => [left, i.rect[1], right, i.rect[3]]),
+        columns: [[left, top, right, bottom]],
+        headerRows: [],
+        spans: [],
+        completeSpans: true,
+        ownedTokens: new Set(source)
+      }
+  }
   // Native rules alternate unindented attribute headings with indented lists.
   // Keep one record per entry; only join a wrapped line within its ruled band.
   if (predicted.length === 1) {
@@ -643,6 +691,246 @@ function recoverParagraphColumns(table, items, predicted, rules) {
     spans,
     completeSpans: true,
     headerRows: header.length ? [0] : [],
+    ownedTokens: new Set(source)
+  }
+}
+
+// Two consecutive numbered lists share a ruled heading but have independent
+// text columns. Native item numbers establish both records and their gutter.
+function recoverParallelNumberedLists(table, items, predicted, rules) {
+  if (predicted.length < 2 || predicted.length > 4) return
+  const [left, top, right, bottom] = table.cropRect
+  const source = tableSourceItems(items, table.cropRect)
+  const markers = source.filter(
+    (i) =>
+      /^\d+$/.test(i.text) &&
+      source.some(
+        (p) =>
+          p.text === '.' &&
+          Math.abs(p.baseline - i.baseline) < 0.1 &&
+          Math.abs(p.rect[0] - i.rect[2]) < 1
+      )
+  )
+  const xs = [...new Set(markers.map((i) => Math.round(i.rect[0])))].sort((a, b) => a - b)
+  if (xs.length !== 2) return
+  const lists = xs.map((x) =>
+    markers.filter((i) => Math.abs(i.rect[0] - x) < 1).sort((a, b) => a.baseline - b.baseline)
+  )
+  const count = lists[0].length
+  if (
+    count < 4 ||
+    lists[1].length !== count ||
+    lists.some((list, c) =>
+      list.some(
+        (i, n) =>
+          Number(i.text) !== c * count + n + 1 ||
+          Math.abs(i.baseline - lists[0][n].baseline) > i.height * 0.2
+      )
+    )
+  )
+    return
+  const borders = rules.filter(
+    (r) => r[1] === r[3] && r[0] <= xs[0] + 1 && r[2] >= right - 12 && r[1] >= top && r[1] <= bottom
+  )
+  const divider = borders.find(
+    (r) => r[1] < lists[0][0].rect[1] && lists[0][0].rect[1] - r[1] < lists[0][0].height
+  )
+  const footer = borders.find((r) => r[1] > lists[0].at(-1).rect[3])
+  if (!divider || !footer) return
+  const head = source.filter((i) => i.rect[3] < divider[1]),
+    body = source.filter((i) => i.rect[1] > divider[1] && i.rect[3] < footer[1])
+  if (
+    head.length !== 1 ||
+    !/^\p{Lu}[\p{L} -]+$/u.test(head[0].text) ||
+    !borders.some((r) => r[1] < head[0].rect[1])
+  )
+    return
+  const leftText = body.filter((i) => i.rect[0] < xs[1] - 1)
+  const gutter =
+    (Math.max(...leftText.map((i) => i.rect[2])) + Math.min(...lists[1].map((i) => i.rect[0]))) / 2
+  if (leftText.some((i) => i.rect[2] >= xs[1] - 1)) return
+  const ys = [divider[1], ...lists[0].slice(1).map((i) => i.rect[1] - 0.1), footer[1]]
+  const records = lists[0].map((_, n) =>
+    body.filter((i) => i.rect[1] >= ys[n] && i.rect[3] <= ys[n + 1])
+  )
+  if (
+    !hasUniqueRecordTokens(source, [head, ...records]) ||
+    records.some((g, n) => {
+      const values = readSourceRow(g, [left, gutter, right])
+      return (
+        !values ||
+        values.some((v, c) => !v.startsWith(`${c * count + n + 1}.`) || !/\p{L}/u.test(v))
+      )
+    })
+  )
+    return
+  return {
+    rows: [
+      [left, head[0].rect[1], right, divider[1]],
+      ...records.map((_, n) => [left, ys[n], right, ys[n + 1]])
+    ],
+    columns: [
+      [left, top, gutter, bottom],
+      [gutter, top, right, bottom]
+    ],
+    headerRows: [0],
+    spans: [{ row: 0, column: 0, rowSpan: 1, colSpan: 2 }],
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// A boxed checklist has repeated, adjoining header/footer rule segments and
+// sign-only value columns. Its wrapped section headings span the whole matrix.
+function recoverRuledChecklist(table, items, rules) {
+  const [left, top, right, bottom] = table.cropRect
+  if (
+    !items.some(
+      (i) =>
+        /^Box\s+\d+$/.test(i.text.trim()) &&
+        i.rect[3] <= top &&
+        top - i.rect[3] < i.height &&
+        Math.abs(i.rect[0] - left) < i.height
+    )
+  )
+    return
+  const horizontal = rules.filter(
+    (r) => r[1] === r[3] && r[1] >= top && r[1] <= bottom && r[0] >= left && r[2] <= right + 1
+  )
+  const bands = []
+  for (const rule of horizontal.sort((a, b) => a[1] - b[1] || a[0] - b[0])) {
+    let band = bands.find((b) => Math.abs(b[0][1] - rule[1]) < 1)
+    if (!band) bands.push((band = []))
+    band.push(rule)
+  }
+  if (
+    bands.length !== 3 ||
+    bands.some(
+      (b) =>
+        b.length < 3 ||
+        b.length > 6 ||
+        b.length !== bands[0].length ||
+        b.some((r, n) => n && Math.abs(r[0] - b[n - 1][2]) > 1)
+    )
+  )
+    return
+  const cuts = [left, ...bands[0].slice(1).map((r) => r[0] - 0.1), right]
+  if (bands.some((b) => b.slice(1).some((r, n) => Math.abs(r[0] - cuts[n + 1]) > 1))) return
+  const source = tableSourceItems(items, [left, bands[0][0][1], right, bands[2][0][1]])
+  const header = source.filter((i) => i.rect[3] < bands[1][0][1])
+  const values = readSourceRow(header, cuts)
+  if (!values || values[0] || values.slice(1).some((v) => !/[a-z]/i.test(v))) return
+  const body = source.filter((i) => !header.includes(i))
+  const anchors = body.filter((i) => i.rect[0] >= cuts[1] && /^[✓✔−–/ -]+$/.test(i.text.trim()))
+  const ys = [...new Set(anchors.map((i) => Math.round(i.baseline)))].sort((a, b) => a - b)
+  if (ys.length < 4 || ys.length > 20) return
+  const sections = body.filter((i) => i.rect[0] < cuts[1] && i.rect[2] > cuts[2])
+  if (
+    sections.length < 2 ||
+    sections.some((i) => ys.some((y) => Math.abs(y - i.baseline) < i.height * 0.5))
+  )
+    return
+  const starts = [
+    ...ys.map((y) => ({ y, section: false })),
+    ...sections.map((i) => ({ y: i.baseline, section: true }))
+  ].sort((a, b) => a.y - b.y)
+  const groups = starts.map((s, n) =>
+    body.filter(
+      (i) => i.baseline >= s.y - 1 && (n === starts.length - 1 || i.baseline < starts[n + 1].y - 1)
+    )
+  )
+  if (!hasUniqueRecordTokens(body, groups)) return
+  for (let n = 0; n < groups.length; n++) {
+    if (starts[n].section) continue
+    const v = readSourceRow(groups[n], cuts)
+    if (!v || !/[a-z]/i.test(v[0]) || v.slice(1).some((x) => !x || !/^[✓✔−–/ -]+$/.test(x))) return
+  }
+  const rects = [union(header), ...groups.map(union)]
+  if (rects.some((r, n) => n && r[1] <= rects[n - 1][3])) return
+  return {
+    rows: rects.map((r) => [left, r[1], right, r[3]]),
+    columns: cuts.slice(1).map((x, n) => [cuts[n], top, x, bottom]),
+    headerRows: [0],
+    spans: starts.flatMap((s, n) =>
+      s.section ? [{ row: n + 1, column: 0, rowSpan: 1, colSpan: cuts.length - 1 }] : []
+    ),
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// Independently ruled narrative columns retain their own paragraph spans.
+// A long paragraph can cross several week/test rows without being split.
+function recoverSegmentedNarrativeColumns(table, items, predicted, rules) {
+  if (![3, 4].includes(predicted.length)) return
+  const [left, top, right, bottom] = table.cropRect
+  const horizontal = rules.filter(
+    (r) => r[1] === r[3] && r[1] > top && r[1] <= bottom + 10 && r[0] >= left && r[2] <= right + 20
+  )
+  const segments = []
+  for (const r of horizontal) {
+    let g = segments.find((g) => Math.abs(g[0][0] - r[0]) < 0.1 && Math.abs(g[0][2] - r[2]) < 0.1)
+    if (!g) segments.push((g = []))
+    g.push(r)
+  }
+  const regular = segments.filter((g) => g.length >= 3).sort((a, b) => a[0][0] - b[0][0])
+  if (!regular.length) return
+  // The second column supplies every row; a shorter first-column segment
+  // marks groups. A three-column schedule may have no first-column rules.
+  const modelSecond = left + predicted[1].rect[0]
+  const primary = regular.find((g) => Math.abs(g[0][0] - modelSecond) < 40)
+  if (!primary) return
+  const chain = [primary]
+  while (chain.length < predicted.length - 1) {
+    const next = segments.find((g) => g.length >= 2 && Math.abs(g[0][0] - chain.at(-1)[0][2]) < 0.1)
+    if (!next) return
+    chain.push(next)
+  }
+  const cuts = [left, ...chain.map((g) => g[0][0] - 0.1), right]
+  if (cuts.some((x, n) => n && x <= cuts[n - 1])) return
+  const source = tableSourceItems(items, table.cropRect)
+  const first = source[0],
+    header = source.filter((i) => Math.abs(i.baseline - first.baseline) < first.height * 0.3)
+  const head = readSourceRow(header, cuts)
+  if (!head || head.some((v) => !/[a-z]/i.test(v))) return
+  const body = source.filter((i) => !header.includes(i)),
+    start = (union(header)[3] + Math.min(...body.map((i) => i.rect[1]))) / 2
+  const ends = primary.map((r) => r[1]).sort((a, b) => a - b)
+  if (ends.length < 4 || ends.length > 30 || body.some((i) => i.rect[3] > ends.at(-1))) return
+  const edges = [start, ...ends]
+  const stub = segments.find((g) => Math.abs(g[0][2] - primary[0][0]) < 0.1 && g[0][0] < left + 15)
+  const columnBands = [stub ?? primary, ...chain]
+  const spans = [],
+    owned = []
+  for (let c = 0; c < columnBands.length; c++) {
+    const ys = [start, ...columnBands[c].map((r) => r[1]).sort((a, b) => a - b)]
+    if (ys.at(-1) !== edges.at(-1) || ys.some((y) => !edges.some((e) => Math.abs(e - y) < 0.1)))
+      return
+    for (let n = 0; n < ys.length - 1; n++) {
+      const g = body.filter(
+        (i) =>
+          i.rect[0] >= cuts[c] &&
+          i.rect[2] <= cuts[c + 1] &&
+          i.rect[1] >= ys[n] &&
+          i.rect[3] <= ys[n + 1]
+      )
+      const row = edges.findIndex((y) => Math.abs(y - ys[n]) < 0.1) + 1,
+        end = edges.findIndex((y) => Math.abs(y - ys[n + 1]) < 0.1) + 1
+      if (c === 1 && !g.some((i) => /[a-z]/i.test(i.text))) return
+      if (g.length) owned.push(g)
+      if (end - row > 1) spans.push({ row, column: c, rowSpan: end - row, colSpan: 1 })
+    }
+  }
+  if (!hasUniqueRecordTokens(body, owned) || !spans.length) return
+  return {
+    rows: [
+      [left, union(header)[1], right, start],
+      ...ends.map((y, n) => [left, edges[n], right, Math.min(y, bottom)])
+    ],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    headerRows: [0],
+    spans,
+    completeSpans: true,
     ownedTokens: new Set(source)
   }
 }

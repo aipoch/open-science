@@ -327,6 +327,8 @@ export function recoverRuledCategoryGrid(table, items, captions, rules) {
 // Accept only single-line records with indented labels and explicitly empty
 // comparison cells. Wrapped labels and bare numeric continuation rows decline.
 export function recoverNativeHeaderGrid(table, items, captions, rules) {
+  const domains = recoverRuledDomainGrid(table, items, captions, rules)
+  if (domains) return domains
   const underlined = recoverUnderlinedNumericGrid(table, items, captions, rules)
   if (underlined) return underlined
   const review = recoverRuledReviewHeader(table, items, captions, rules)
@@ -1042,6 +1044,23 @@ export function recoverClippedHeading({ rows, objects, groups, columnRects, rule
       }
     }
   }
+  const sampleLine =
+    groups
+      .slice(2, 4)
+      .find((g) => g.some((i) => columnOf(i) === column && /^[Nn]$/.test(i.text))) ?? []
+  const sample = sampleLine.filter((i) => columnOf(i) === column)
+  const sampledGroup =
+    suffix.length === 1 &&
+    /^[\p{L} ,.-]+$/u.test(suffix[0].text) &&
+    Math.abs((suffix[0].rect[0] + suffix[0].rect[2]) / 2 - (rect[0] + rect[2]) / 2) <
+      height * 0.25 &&
+    /^[Nn]\s*=\s*\d+$/.test(sample.map((i) => i.text).join(' ')) &&
+    sample.every(
+      (i) =>
+        i.baseline - suffix[0].baseline > height * 0.8 &&
+        i.baseline - suffix[0].baseline < height * 1.6
+    ) &&
+    sampleLine.some((i) => columnOf(i) !== column && /^[Nn]$/.test(i.text))
   const confidence =
     suffix.length === 1 &&
     /^\((?:90|95|99)% CI\)$/.test(suffix[0].text.trim()) &&
@@ -1065,7 +1084,7 @@ export function recoverClippedHeading({ rows, objects, groups, columnRects, rule
     leading.length === 1 &&
     first[1] - rect[1] < height * 1.6 &&
     header &&
-    (confidence || comparison) &&
+    (confidence || comparison || sampledGroup) &&
     suffix[0].baseline - leading[0].baseline > height * 0.8 &&
     suffix[0].baseline - leading[0].baseline < height * 1.6 &&
     !rules.some(
@@ -1990,12 +2009,12 @@ function recoverUnderlinedNumericGrid(table, items, captions, rules) {
     (b) =>
       b.parts[0][0] < crop[0] + Math.max(16, (crop[2] - crop[0]) * 0.05) &&
       b.parts.at(-1)[2] > crop[2] - Math.max(16, (crop[2] - crop[0]) * 0.05) &&
-      b.parts.every((r, n) => !n || Math.abs(r[0] - b.parts[n - 1][2]) < 0.1)
+      b.parts.every((r, n) => !n || (r[0] <= b.parts[n - 1][2] + 0.1 && r[2] > b.parts[n - 1][2]))
   )
   const footer = full.at(-1)
   if (!footer || Math.abs(footer.y - crop[3]) > 16) return
   const leafPattern =
-    /^(?:n|%|Mean|SD|F|Utility|RI|Allgrades|Grade3-4|No|Yes|P\*|\((?:SE|SQ|TWT|SOL|WASO)\)|Arm[A-Z]:.+|HR\(95%CI\)|Pvalue|(?:Negative|Positive)\(n=\d+\))$/
+    /^(?:n|%|Mean|SD|F|Utility|RI|Allgrades|Grade3-4|No|Yes|P\*|\((?:SE|SQ|TWT|SOL|WASO)\)|Arm[A-Z]:.+|HR\(95%CI\)|Pvalue|[bB]|t\(df\)|(?:Negative|Positive)\(n=\d+\))$/
   const native = tableSourceItems(items, [crop[0], caption.rect[3], crop[2], crop[3]])
   const candidates = [...full]
   // A single full divider can still use predicted gutters when repeated paired
@@ -2021,6 +2040,126 @@ function recoverUnderlinedNumericGrid(table, items, captions, rules) {
           b.parts.length === 1 && b.y > population[0].baseline && b.y - population[0].baseline < 40
       ))
         candidates.unshift({ ...b, parts: cuts.slice(1).map((x, c) => [cuts[c], b.y, x, b.y]) })
+    }
+  }
+  // Repeated coefficient/test pairs are independently delimited by parent
+  // underlines. Their single body rule needs the detector's leaf gutters only.
+  const coefficients = native.filter((i) => /^[bB]$/.test(i.text) && i.rect[1] < crop[1] + 100)
+  if (
+    coefficients.length >= 3 &&
+    coefficients.length <= 6 &&
+    coefficients.every((i) => Math.abs(i.baseline - coefficients[0].baseline) < i.height * 0.2)
+  ) {
+    const predicted = table.structure.objects
+      .filter((o) => o.label === 'table column')
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    for (let n = predicted.length - 1; n > 0; n--) {
+      const a = predicted[n - 1].rect,
+        b = predicted[n].rect
+      if ((Math.min(a[2], b[2]) - Math.max(a[0], b[0])) / Math.min(a[2] - a[0], b[2] - b[0]) > 0.9)
+        predicted.splice(n, 1)
+    }
+    const parents = bands.find(
+      (b) =>
+        b.parts.length === coefficients.length &&
+        b.y < coefficients[0].rect[1] &&
+        coefficients[0].rect[1] - b.y < coefficients[0].height
+    )
+    const border = full.find(
+      (b) => b.y > coefficients[0].rect[3] && b.y - coefficients[0].rect[3] < coefficients[0].height
+    )
+    if (parents && border && predicted.length === coefficients.length * 2 + 1) {
+      const cuts = [
+        crop[0],
+        ...predicted.slice(1).map((c, n) => crop[0] + (predicted[n].rect[2] + c.rect[0]) / 2),
+        crop[2]
+      ]
+      const leaves = native.filter((i) => i.rect[1] > parents.y && i.rect[3] < border.y)
+      const values = readSourceRow(leaves, cuts)
+      if (values && values.slice(1).every((v, n) => (n % 2 ? v === 't(df)' : /^[bB]$/.test(v))))
+        candidates.unshift({
+          ...border,
+          parts: cuts.slice(1).map((x, c) => [cuts[c], border.y, x, border.y])
+        })
+    }
+  }
+  const roles = native
+    .filter(
+      (i) =>
+        /^(?:Patients?|Spouses?|Intervention|Control)$/.test(i.text) && i.rect[1] < crop[1] + 100
+    )
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    roles.length === 4 &&
+    roles.every(
+      (i, n) =>
+        (n % 2 ? /^(?:Spouse|Control)/ : /^(?:Patient|Intervention)/).test(i.text) &&
+        Math.abs(i.baseline - roles[0].baseline) < i.height * 0.2
+    )
+  ) {
+    const parent = bands.find(
+      (b) =>
+        b.parts.length === 2 && b.y < roles[0].rect[1] && roles[0].rect[1] - b.y < roles[0].height
+    )
+    const border = full.find(
+      (b) => b.y > roles[0].baseline && b.y - roles[0].baseline < roles[0].height * 2 + 1
+    )
+    if (parent && border) {
+      const predicted = table.structure.objects
+        .filter((o) => o.label === 'table column')
+        .sort((a, b) => a.rect[0] - b.rect[0])
+        .filter(
+          (c, n, all) =>
+            !all
+              .slice(0, n)
+              .some(
+                (p) =>
+                  (Math.min(p.rect[2], c.rect[2]) - Math.max(p.rect[0], c.rect[0])) /
+                    Math.max(p.rect[2] - p.rect[0], c.rect[2] - c.rect[0]) >
+                  0.9
+              )
+        )
+      if (predicted.length === (roles[0].text === 'Intervention' ? 7 : 5)) {
+        const cuts = [
+          crop[0],
+          ...predicted.slice(1).map((c, n) => crop[0] + (predicted[n].rect[2] + c.rect[0]) / 2),
+          crop[2]
+        ]
+        const leaf = native.filter((i) => i.rect[1] > parent.y && i.rect[3] < border.y)
+        const rawValues = readSourceRow(leaf, cuts)
+        const values =
+          rawValues &&
+          cuts.slice(1).map((x, c) =>
+            leaf
+              .filter((i) => i.rect[0] >= cuts[c] && i.rect[2] <= x)
+              .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+              .map((i) => i.text)
+              .join('')
+              .replace(/\s/g, '')
+          )
+        if (
+          values &&
+          values
+            .slice(1)
+            .every((v, n) =>
+              (roles[0].text === 'Intervention'
+                ? n % 3 === 2
+                  ? /^p-?Value$/i
+                  : n % 3 === 1
+                    ? /^Control\(n=\d+\)$/
+                    : /^Intervention\(n=\d+\)$/
+                : n % 2
+                  ? /^Spouses?(?:M?\(SE\)|\(n=\d+\))?$/
+                  : /^Patients?(?:M\(SE\)|\(n=\d+\))?$/
+              ).test(v)
+            )
+        )
+          candidates.unshift({
+            ...border,
+            roleHeader: parent.y,
+            parts: cuts.slice(1).map((x, c) => [cuts[c], border.y, x, border.y])
+          })
+      }
     }
   }
   const repeated = native.filter((i) => leafPattern.test(i.text.replace(/\s/g, '')))
@@ -2065,9 +2204,11 @@ function recoverUnderlinedNumericGrid(table, items, captions, rules) {
         ? Math.max(...bands.filter((b) => b.y < divider.y && b.parts.length === 3).map((b) => b.y))
         : -Infinity
     const leaves = heading.filter((i) =>
-      population.length === 6
-        ? i.rect[1] > populationTier
-        : Math.abs(i.baseline - leafY) < height * 0.3
+      divider.roleHeader
+        ? i.rect[1] > divider.roleHeader
+        : population.length === 6
+          ? i.rect[1] > populationTier
+          : Math.abs(i.baseline - leafY) < height * 0.3
     )
     let cuts = [left, ...divider.parts.slice(1).map((r) => r[0] - 0.1), right]
     // Empty narrow rule segments are spacing between groups, not data columns.
@@ -2084,13 +2225,16 @@ function recoverUnderlinedNumericGrid(table, items, captions, rules) {
     if (
       !leafValues ||
       leafValues.slice(1).filter(Boolean).length < 3 ||
-      leafValues.slice(1).filter((v) => leafPattern.test(v)).length < 3
+      (!divider.roleHeader && leafValues.slice(1).filter((v) => leafPattern.test(v)).length < 3)
     )
       continue
     const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
     const shared =
       leafValues.slice(1).every((v, n) => v === (n % 2 ? 'RI' : 'Utility')) &&
       leafValues.length >= 7
+    const coefficientPairs = leafValues
+      .slice(1)
+      .every((v, n) => (n % 2 ? v === 't(df)' : /^[bB]$/.test(v)))
     const probability = leafValues.filter((v) => v === 'P*').length >= 2
     const pValues = probability ? body.filter((i) => leafValues[col(i)] === 'P*') : []
     const sharedValues = shared ? body.filter((i) => col(i) > 0 && col(i) % 2 === 0) : pValues
@@ -2142,7 +2286,8 @@ function recoverUnderlinedNumericGrid(table, items, captions, rules) {
           .some(
             (s) =>
               s &&
-              !/^(?:[<>≤≥−+–-]?\d[\d.,()<>%±−+–/:-]*(?:\(ref\))?[*#†]{0,3}|\(\d+(?:\.\d+)?\)|[—–-]|\*{1,3})$/.test(
+              !(divider.roleHeader && /^[$€£]\d[\d,]*(?:\.\d+)?$/.test(s)) &&
+              !/^(?:[<>≤≥−+–-]?(?:\d|\.\d)[\d.,()<>%±−+–/:-]*(?:\(ref\))?[a-z]{0,2}[*#†]{0,3}|\(\d+(?:\.\d+)?(?:[–−-]\d+(?:\.\d+)?)?\)|[—–-]|\*{1,3})$/.test(
                 s
               )
           )
@@ -2152,12 +2297,42 @@ function recoverUnderlinedNumericGrid(table, items, captions, rules) {
       }
       if (v.slice(1).some(Boolean)) {
         if (!v[0]) {
+          const prior = owned.at(-1)
+          if (
+            divider.roleHeader &&
+            prior &&
+            !sections.at(-1) &&
+            v.slice(1).filter(Boolean).length >= 2 &&
+            v.slice(1).every((x) => !x || /^\(\d+[–−-]\d+\)$/.test(x)) &&
+            union(g)[1] > union(prior)[3] &&
+            union(g)[1] - union(prior)[3] < height
+          ) {
+            prior.push(...g)
+            continue
+          }
           valid = false
           break
         }
         records++
-        owned.push([...g])
-        sections.push(false)
+        const previous = owned.at(-1)
+        if (
+          previous &&
+          sections.at(-1) &&
+          ((coefficientPairs && previous.some((i) => /[×*]\s*$/.test(i.text))) ||
+            (divider.roleHeader &&
+              (/^\(/.test(v[0]) ||
+                Math.min(...previous.map((i) => i.rect[0])) -
+                  Math.min(...body.filter((i) => col(i) === 0).map((i) => i.rect[0])) >=
+                  height * 0.5))) &&
+          Math.min(...g.map((i) => i.rect[1])) - Math.max(...previous.map((i) => i.rect[3])) <
+            height
+        ) {
+          previous.push(...g)
+          sections[sections.length - 1] = false
+        } else {
+          owned.push([...g])
+          sections.push(false)
+        }
       } else if (v[0]) {
         const previous = owned.at(-1)
         if (
@@ -2184,6 +2359,21 @@ function recoverUnderlinedNumericGrid(table, items, captions, rules) {
     }
     if (!valid || records < 3 || !hasUniqueRecordTokens(recordBody, owned)) continue
     const bodyBounds = owned.map(union)
+    // Raised significance marks can graze the preceding line's font box.
+    // Keep the native baseline grouping and divide only this sub-point overlap.
+    if (coefficientPairs || divider.roleHeader)
+      for (let n = 1; n < bodyBounds.length; n++) {
+        const previous = bodyBounds[n - 1],
+          current = bodyBounds[n]
+        if (
+          current[1] <= previous[3] &&
+          previous[3] - current[1] < height * (divider.roleHeader ? 0.2 : 0.1)
+        ) {
+          const boundary = (previous[3] + current[1]) / 2
+          previous[3] = boundary - 0.001
+          current[1] = boundary + 0.001
+        }
+      }
     if (bodyBounds.some((r, n) => n && r[1] <= bodyBounds[n - 1][3])) continue
     const tiers = bands
       .filter(
@@ -2323,5 +2513,132 @@ function recoverUnderlinedNumericGrid(table, items, captions, rules) {
       completeSpans: true,
       ownedTokens: new Set(source)
     }
+  }
+}
+
+// Native domain labels occupy the first column and start on the first member
+// baseline. They must never inherit the preceding model row's group boundary.
+function recoverRuledDomainGrid(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const [left, top, right, bottom] = table.cropRect
+  const bands = []
+  for (const r of rules
+    .filter((r) => r[1] === r[3] && r[1] >= top && r[1] <= bottom)
+    .sort((a, b) => a[1] - b[1] || a[0] - b[0])) {
+    let b = bands.find((b) => Math.abs(b.y - r[1]) < 0.1)
+    if (!b) bands.push((b = { y: r[1], parts: [] }))
+    b.parts.push(r)
+  }
+  const divider = bands.find(
+    (b) =>
+      [5, 11].includes(b.parts.length) &&
+      b.y - top < 100 &&
+      b.parts[0][0] < left + 2 &&
+      b.parts.at(-1)[2] > right - 4 &&
+      b.parts.every((r, n) => !n || (r[0] < b.parts[n - 1][2] && r[2] > b.parts[n - 1][2]))
+  )
+  const footer = bands.find(
+    (b) =>
+      b.parts.length === 1 &&
+      b.y > divider?.y + 50 &&
+      bottom - b.y < 16 &&
+      b.parts[0][0] < left + 2 &&
+      b.parts[0][2] > right - 4
+  )
+  if (!divider || !footer) return
+  const cuts = [
+    left,
+    ...divider.parts.slice(1).map((r, n) => (divider.parts[n][2] + r[0]) / 2),
+    right
+  ]
+  const source = tableSourceItems(items, [left, top, right, footer.y]),
+    height = source.map((i) => i.height).sort((a, b) => a - b)[Math.floor(source.length / 2)]
+  const head = source.filter((i) => i.rect[3] < divider.y),
+    body = source.filter((i) => i.rect[1] > divider.y)
+  if (!head.length || !hasUniqueRecordTokens(source, [head, body])) return
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const parents = body.filter((i) => col(i) === 0)
+  if (
+    parents.length < 2 ||
+    parents.length > 5 ||
+    parents.some((i) => !/^\p{Lu}[\p{Lu}\d-]{2,24}$/u.test(i.text))
+  )
+    return
+  const groups = groupSourceRowsWithScripts(
+    body.filter((i) => col(i) !== 0),
+    height,
+    0.3
+  )
+  if (!groups) return
+  const records = []
+  for (const g of groups) {
+    const v = readSourceRow(g, cuts)
+    if (!v || !/[a-z]/i.test(v[1]) || v[0]) return
+    if (v.slice(2).every((x) => x && /^[<>≤≥−–+-]?(?:\d|\.\d)[\d.,() %≤≥−–+/*-]*[a-z]?$/.test(x)))
+      records.push([...g])
+    else if (
+      v.slice(2).every((x) => !x) &&
+      records.length &&
+      g[0].baseline - records.at(-1)[0].baseline < height * 1.6
+    )
+      records.at(-1).push(...g)
+    else return
+  }
+  if (
+    records.length < 12 ||
+    !hasUniqueRecordTokens(
+      body.filter((i) => col(i) !== 0),
+      records
+    )
+  )
+    return
+  const bounds = records.map(union)
+  if (bounds.some((r, n) => n && r[1] <= bounds[n - 1][3])) return
+  const starts = parents.map((p) =>
+    records.findIndex((g) => Math.abs(g[0].baseline - p.baseline) < height * 0.3)
+  )
+  if (starts[0] !== 0 || starts.some((n, i) => n < 0 || (i && n - starts[i - 1] < 3))) return
+  const tiers = bands.filter((b) => b.y < divider.y && b.parts.length === 2)
+  if ((cuts.length === 12 && tiers.length !== 2) || (cuts.length === 6 && tiers.length)) return
+  const ys = [top, ...tiers.map((b) => b.y), divider.y],
+    spans = []
+  const headerRows = ys.length - 1
+  for (let n = 0; n < parents.length; n++)
+    spans.push({
+      row: headerRows + starts[n],
+      column: 0,
+      rowSpan: (starts[n + 1] ?? records.length) - starts[n],
+      colSpan: 1
+    })
+  if (tiers.length) {
+    const labels = head.filter((i) => i.rect[3] < tiers[0].y)
+    if (labels.length !== 2 || labels[0].text !== 'Intervention' || labels[1].text !== 'Control')
+      return
+    for (const [n, label] of labels.entries()) {
+      const first = col(label),
+        end = n === 0 ? col(labels[1]) : cuts.length - 1
+      if (first !== 2 + n * 4) return
+      spans.push({ row: 0, column: first, rowSpan: 1, colSpan: end - first })
+    }
+    for (let c = 2; c < cuts.length - 1; c++) {
+      const tokens = head.filter((i) => col(i) === c && i.rect[1] > tiers[0].y)
+      if (
+        tokens.some((i) => i.rect[1] < tiers[1].y) &&
+        tokens.some((i) => i.rect[3] > tiers[1].y) &&
+        !tokens.some((i) => i.text === 'Mean value')
+      )
+        spans.push({ row: 1, column: c, rowSpan: 2, colSpan: 1 })
+    }
+  }
+  return {
+    rows: [
+      ...ys.slice(1).map((y, n) => [left, ys[n], right, y]),
+      ...bounds.map((r) => [left, r[1], right, r[3]])
+    ],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, footer.y]),
+    headerRows: Array.from({ length: headerRows }, (_, n) => n),
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source)
   }
 }

@@ -43,6 +43,48 @@ export function hasTableEvidence(table, caption, pageItems = []) {
   )
     return false
   const measurement = (text) => /^[-+−]?\d+(?:\.\d+)?(?:\s*\([^)]*\))?$/.test(text.trim())
+  if (table.cropRect && table.grid.every((r) => r.length <= 2 && !r.some(measurement))) {
+    const [left, top, right, bottom] = table.cropRect
+    const prose = pageItems.filter(
+      (i) =>
+        i.horizontal &&
+        i.rect[1] >= top - i.height &&
+        i.rect[3] <= bottom + i.height &&
+        i.text.trim().split(/\s+/).length >= 5
+    )
+    // A short detector box can cut into the left article column while its right
+    // edge happens to coincide with the other column's margin.
+    if (
+      table.grid.length <= 6 &&
+      prose.filter((i) => i.rect[0] < left - i.height && i.rect[2] > left).length >= 3 &&
+      prose.filter(
+        (i) => i.rect[0] > left + (right - left) * 0.4 && Math.abs(i.rect[2] - right) < i.height
+      ).length >= 3 &&
+      pageItems.filter(
+        (i) =>
+          i.horizontal &&
+          i.rect[1] < bottom &&
+          i.rect[3] > bottom &&
+          i.text.trim().split(/\s+/).length >= 5
+      ).length >= 2
+    )
+      return false
+    // A clipped questionnaire outline can leave most of the predicted table
+    // empty. Its repeated source bullets outside the crop establish list prose.
+    if (
+      prose.length >= 6 &&
+      Math.max(...prose.map((i) => i.rect[3])) < top + (bottom - top) * 0.4 &&
+      pageItems.filter(
+        (i) =>
+          /^[•◦]$/.test(i.text) &&
+          i.rect[0] < left &&
+          i.rect[0] >= left - i.height * 3 &&
+          i.rect[1] >= top &&
+          i.rect[3] < bottom
+      ).length >= 3
+    )
+      return false
+  }
   if (
     !table.grid.some((row) => row.filter(measurement).length >= 2) &&
     ((/Prepublication history/i.test(cropText) &&

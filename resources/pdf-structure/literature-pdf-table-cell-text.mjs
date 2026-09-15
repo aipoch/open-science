@@ -487,7 +487,10 @@ export function populateTableCellText({
           Math.abs(item.rect[0] - line[index - 1].rect[2]) < item.height * 0.08
         append(
           joinedIdentifier ? item.text.trimStart() : item.text,
-          anchor && (item.height < anchor.height * 0.8 || raisedNoteMarkers.has(item))
+          anchor &&
+            (item.height < anchor.height * 0.8 ||
+              (/^[a-z]$/.test(item.text) && item.height < anchor.height * 0.9) ||
+              raisedNoteMarkers.has(item))
             ? item.baseline < anchor.baseline
               ? 'superscript'
               : 'subscript'

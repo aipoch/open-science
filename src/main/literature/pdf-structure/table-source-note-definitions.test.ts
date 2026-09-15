@@ -232,3 +232,41 @@ it('keeps note ownership and consumed lines local when different pages reuse tex
   notes(pages[0])[0][0].text = 'Changed returned note'
   for (const index of [2, 0, 1, 0]) expect(notes(pages[index])).toEqual(expected[index])
 })
+
+it.each([
+  ['raised-letter-model-notes', ['a Akaike information criterion.', 'b Not available.']],
+  [
+    'raised-letter-followup-glossary',
+    [
+      'a FUP1: first follow-up.',
+      'b FUP2: second follow-up.',
+      'c NCQ: Nijmegen Continuity Questionnaire.',
+      'd TCC: team and cross-boundary continuity.',
+      'e GAD-7: Generalized Anxiety Disorder Screener.',
+      'f P≤.05 (t tests were used to compare change scores).',
+      'g PHQ-9: Patient Health Questionnaire on Major Depression.',
+      'h PPE-15: Picker Patient Experience Questionnaire.'
+    ]
+  ]
+])('attaches closely raised source letters in %s', (name, expected) => {
+  expect(notes(fixture(name))[0].map((n: { text: string }) => n.text)).toEqual(expected)
+})
+it.each(['same-baseline', 'same-size', 'distant-marker'])(
+  'requires raised source evidence for a detached letter with %s',
+  (variant) => {
+    const x = fixture('raised-letter-model-notes')
+    for (const line of x.page.lines) {
+      if (!/^[ab]$/.test(line.text) || line.y < 640) continue
+      if (variant === 'same-baseline') line.y += 3.825
+      if (variant === 'same-size') line.fontSize = 8.5
+      if (variant === 'distant-marker') line.x -= 10
+    }
+    expect(notes(x)[0]).toEqual([])
+  }
+)
+it('stops a wrapped footnote before the next indented methods paragraph', () => {
+  const n = notes(fixture('footnote-before-indented-methods'))[0]
+  expect(n).toHaveLength(1)
+  expect(n[0].text).toMatch(/by guessing the answers\.$/)
+  expect(n[0].text).not.toContain('intention')
+})

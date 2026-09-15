@@ -59,12 +59,21 @@ export function hasUniqueRecordTokens(items, groups) {
 export function groupSourceRowsWithScripts(source, height, tolerance) {
   if (!(height > 0) || !(tolerance > 0)) return
   const groups = []
-  for (const item of source.filter((i) => i.height >= height * 0.8)) {
+  const scripts = new Set(
+    source.filter(
+      (i) =>
+        i.height < height * 0.8 ||
+        (/^[a-z]$/.test(i.text) &&
+          i.height < height * 0.9 &&
+          source.some((a) => isAdjacentTableScript(i, a)))
+    )
+  )
+  for (const item of source.filter((i) => !scripts.has(i))) {
     const last = groups.at(-1)
     if (last && Math.abs(item.baseline - last[0].baseline) < height * tolerance) last.push(item)
     else groups.push([item])
   }
-  for (const item of source.filter((i) => i.height < height * 0.8)) {
+  for (const item of source.filter((i) => scripts.has(i))) {
     const owners = groups.filter((group) => group.some((i) => isAdjacentTableScript(item, i)))
     if (owners.length !== 1) return
     owners[0].push(item)

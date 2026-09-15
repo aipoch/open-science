@@ -1338,6 +1338,58 @@ export function separateCountedCategoryHeader({ rows, groups, columnRects, heade
 // Attach it only when the rest of its source baseline already has one owner;
 // do not expand across any unrelated text.
 export function repairInlineFragmentRows({ rows, groups, items, left, right, repairs }) {
+  // A sample size can wrap below the first mean/CI heading while the other
+  // sample sizes fit alongside it. Join only that complete three-group header.
+  for (let n = 1; n < groups.length - 1; n++) {
+    const tail = groups[n],
+      head = groups[n - 1],
+      following = groups[n + 1]
+    const mean = head.find((i) => /^Mean \(95% CI\)$/.test(i.text))
+    if (
+      !mean ||
+      !/^n=\d+$/.test(
+        tail
+          .map((i) => i.text)
+          .join('')
+          .replace(/\s/g, '')
+      ) ||
+      Math.abs(tail[0].rect[0] - mean.rect[0]) > 1 ||
+      (
+        [...head]
+          .sort((a, b) => a.rect[0] - b.rect[0])
+          .map((i) => i.text)
+          .join('')
+          .replace(/\s/g, '')
+          .match(/n=\d+/g) ?? []
+      ).length !== 2 ||
+      following.filter((i) => /^\d+\.\d+ \(\d+\.\d+[–−-]\d+\.\d+\)$/.test(i.text)).length !== 3 ||
+      union(tail)[1] - union(head)[3] > mean.height
+    )
+      continue
+    const members = [...head, ...tail]
+    const touched = rows.filter((r) =>
+      members.some((i) => inside([left, r.rect[1], right, r.rect[3]], i))
+    )
+    if (touched.length !== 2) continue
+    const first = rows.indexOf(touched[0]),
+      second = rows.indexOf(touched[1])
+    const rect = [
+      left,
+      Math.min(touched[0].rect[1], union(head)[1]),
+      right,
+      Math.max(touched[1].rect[3], union(tail)[3])
+    ]
+    if (
+      second !== first + 1 ||
+      items.some((i) => inside(rect, i) && !members.includes(i)) ||
+      members.some((i) => !inside(rect, i))
+    )
+      continue
+    rows[first].rect = rect
+    rows.splice(second, 1)
+    repairs.push('inline-fragment-row-recovered')
+  }
+
   for (const group of groups) {
     const height = Math.max(...group.map((i) => i.height))
     const body = group.filter((i) => i.height >= height * 0.8)
@@ -1390,10 +1442,94 @@ export function recoverProjectedSectionRows({
   headers,
   repairs
 }) {
-  if (columnRects.length < 4) return
+  // A complete count record followed by a projected section and another
+  // complete record supplies both sides of a lost row boundary.
+  if (columnRects.length >= 3 && rows.length) {
+    const left = columnRects[0][0],
+      right = columnRects.at(-1)[2]
+    const col = (i) => columnRects.findIndex((c) => inside(c, i))
+    const counts = (g) =>
+      g.some((i) => col(i) === 0 && /\p{L}/u.test(i.text)) &&
+      columnRects.slice(1, columnRects.length === 5 ? -1 : undefined).every((_, n) =>
+        /^\d+\s*\(\d+(?:\.\d+)?%?\)$/.test(
+          g
+            .filter((i) => col(i) === n + 1)
+            .map((i) => i.text)
+            .join('')
+        )
+      )
+    for (let n = 1; n < groups.length - 1; n++) {
+      const heading = groups[n],
+        before = groups[n - 1],
+        after = groups[n + 1]
+      if (
+        heading.length !== 1 ||
+        col(heading[0]) !== 0 ||
+        !/^\p{Lu}/u.test(heading[0].text) ||
+        !counts(before) ||
+        !counts(after) ||
+        !(
+          headers.some(
+            (h) => intersection(h.rect, heading[0].rect) / area(heading[0].rect) > 0.4
+          ) ||
+          (groups.filter(
+            (g) =>
+              g.length === 1 &&
+              col(g[0]) === 0 &&
+              Math.abs(g[0].rect[0] - heading[0].rect[0]) < 1 &&
+              headers.some((h) => intersection(h.rect, g[0].rect) / area(g[0].rect) > 0.4)
+          ).length >= 3 &&
+            ([before, after].every((g) =>
+              g
+                .filter((i) => col(i) === 0)
+                .every((i) => i.rect[0] - heading[0].rect[0] >= heading[0].height * 0.5)
+            ) ||
+              /\([^)]*(?:outcome|score|scale|status)\)/i.test(heading[0].text)))
+        ) ||
+        heading[0].baseline - before[0].baseline > heading[0].height * 1.8 ||
+        after[0].baseline - heading[0].baseline > heading[0].height * 1.8
+      )
+        continue
+      const split = splitOwnedSourceRow(rows, items, before, heading, [left, right])
+      if (!split) continue
+      split.rows[0].numericRecord = true
+      split.rows[1].section = true
+      rows.splice(split.index, 1, ...split.rows)
+      repairs.push('projected-section-record-separated')
+    }
+  }
+  if (columnRects.length < 4 || !rows.length) return
   const left = columnRects[0][0],
     right = columnRects.at(-1)[2]
   const columnOf = (item) => columnRects.findIndex((column) => inside(column, item))
+  // A section title may be the last source line before a page break. The
+  // repeated count-heading format and alignment establish its role even when
+  // the model ends at the preceding data row; its records continue next page.
+  const countHeading = (item) => /^\p{Lu}[\p{L} /-]+,\s*N\s*\(%\)$/u.test(item.text)
+  const tail = items.filter((i) => i.horizontal && i.rect[1] > rows.at(-1).rect[3])
+  if (tail.length === 1 && countHeading(tail[0])) {
+    const label = tail[0]
+    const peers = items.filter(
+      (i) =>
+        countHeading(i) &&
+        Math.abs(i.rect[0] - label.rect[0]) < label.height * 0.2 &&
+        rows.some((row) => inside(row.rect, i)) &&
+        headers.some((h) => intersection(h.rect, i.rect) / area(i.rect) > 0.4)
+    )
+    if (
+      peers.length >= 3 &&
+      label.rect[1] - rows.at(-1).rect[3] < label.height &&
+      label.rect[0] >= left - label.height &&
+      label.rect[2] < columnRects[0][2]
+    ) {
+      rows.push({
+        rect: [left, label.rect[1], right, label.rect[3]],
+        origin: 'source-text',
+        section: true
+      })
+      repairs.push('projected-section-row-recovered')
+    }
+  }
   // Repeated centered section labels can have a projected span but no row.
   // Matching literal wording, two existing section peers and consecutive
   // records on both sides establish the omitted band without guessing its text.
@@ -2015,11 +2151,161 @@ export function removeEmptyOverlappingRows({ rows, cells, items, rules, repairs 
 // underlines must partition every value column, with repeated child labels.
 export function splitRuledParentRow({ rows, items, columnRects, rules, repairs }) {
   if (rows.length < 2 || columnRects.length < 5) return
+  // A comparison p-value sits outside two repeated four-column arms.
+  // The arm underlines may cover only the centered title, while all eight
+  // child labels and the separate between-groups label establish the spans.
+  if (columnRects.length === 10 && rows.length >= 4) {
+    const at = (r, c) => items.filter((i) => inside(rows[r].rect, i) && inside(columnRects[c], i))
+    const text = (r, c) =>
+      at(r, c)
+        .map((i) => i.text)
+        .join('')
+        .replace(/\s/g, '')
+    const labels = columnRects.slice(1).map((_, c) => text(1, c + 1))
+    const parentTokens = items
+      .filter((i) => inside(rows[0].rect, i))
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    if (
+      parentTokens.length === 2 &&
+      parentTokens[0].text === 'Intervention' &&
+      parentTokens[1].text === 'Control' &&
+      labels.join('|').replace(/p-Value[a-z]/g, 'p-Value') ===
+        'Baseline|Follow-up|Change|p-Value|Baseline|Follow-up|Change|p-Value|p-Value' &&
+      text(2, 9) === 'Betweengroups' &&
+      [4, 8].every((c) => text(2, c) === 'Withingroup') &&
+      [1, 2, 3, 5, 6, 7].every((c) => text(2, c) === 'Mean(SD)') &&
+      parentTokens.every((i) =>
+        rules.some(
+          (r) =>
+            r[1] === r[3] &&
+            r[1] >= i.rect[3] &&
+            r[1] - i.rect[3] < i.height &&
+            r[0] <= i.rect[0] + 1 &&
+            r[2] >= i.rect[2] - 1
+        )
+      )
+    )
+      return [
+        { row: 0, column: 1, rowSpan: 1, colSpan: 4 },
+        { row: 0, column: 5, rowSpan: 1, colSpan: 4 }
+      ]
+  }
+  if (columnRects.length === 5 && rows.length >= 5) {
+    const text = (r, c) =>
+      items
+        .filter((i) => inside(rows[r].rect, i) && inside(columnRects[c], i))
+        .map((i) => i.text)
+        .join('')
+        .replace(/\s/g, '')
+    if (
+      text(0, 1) === 'No.(%)' &&
+      text(0, 2) === '' &&
+      text(0, 3) === '' &&
+      /^p-value$/i.test(text(0, 4)) &&
+      [1, 2, 3].every((c) => /\(n=\d+\)$/.test(text(1, c))) &&
+      rows
+        .slice(2)
+        .filter((_, n) => [1, 2, 3].every((c) => /^\d+\(\d+(?:\.\d+)?\)$/.test(text(n + 2, c))))
+        .length >= 6
+    )
+      return [{ row: 0, column: 1, rowSpan: 1, colSpan: 3 }]
+  }
   const first = [...rows[0].rect]
   // A missing child-header band can lie in the gap before the first data row.
   // The repeated labels and separate parent rules below must establish it.
   if (rows[1].rect[1] - first[3] <= (first[3] - first[1]) * 3)
     first[3] = Math.max(first[3], rows[1].rect[1])
+  const existingChildren =
+    columnRects.length === 5 &&
+    [1, 2, 3, 4].every((c) => {
+      const cell = items.filter((i) => inside(rows[1].rect, i) && inside(columnRects[c], i))
+      return /^(?:Intervention|Control)\(n=\d+\)$/.test(
+        cell
+          .map((i) => i.text)
+          .join('')
+          .replace(/\s/g, '')
+      )
+    })
+  if (existingChildren) first[3] = rows[1].rect[3]
+  // Some ruled tables omit the parent underlines. Two repeated statistic/arm
+  // pairs, with parents aligned at each pair's left edge, establish the tiers.
+  if ([5, 7, 9].includes(columnRects.length)) {
+    const source = items
+      .filter((i) => i.horizontal && inside(first, i))
+      .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+    const height = Math.max(...source.map((i) => i.height))
+    const groups = groupSourceRowsWithScripts(source, height, 0.4)
+    if (groups?.length >= 2 && groups.length <= 3) {
+      const upper = groups[0],
+        lower = groups.slice(1).flat()
+      const children = columnRects.slice(1).map((c) => lower.filter((i) => inside(c, i)))
+      const labels = children.map((g) =>
+        g
+          .map((i) => i.text)
+          .join('')
+          .replace(/\s/g, '')
+      )
+      const pair =
+        labels.every(
+          (v, n) =>
+            /^(?:Intervention|Control)(?:\(n=\d+\))?$/.test(v) &&
+            v.replace(/\d+/g, '') === labels[n % 2].replace(/\d+/g, '')
+        ) || labels.join('|') === 'B(SE)|Pvalue|B(SE)|Pvalue'
+      const quartet =
+        labels.join('|') ===
+        'Intervention,mean(SD)|Control,mean(SD)|Difference(SE)|Pvalue|Intervention,mean(SD)|Control,mean(SD)|Difference(SE)|Pvalue'
+      const size = quartet ? 4 : 2,
+        count = (columnRects.length - 1) / size
+      if ((pair || quartet) && Number.isInteger(count) && count >= 2 && count <= 3) {
+        const parents = Array.from({ length: count }, (_, n) =>
+          upper.filter(
+            (i) =>
+              i.rect[0] >= columnRects[1 + n * size][0] &&
+              i.rect[2] <= columnRects[(n + 1) * size][2]
+          )
+        )
+        const fullRule = (a, b) =>
+          rules.some(
+            (r) =>
+              r[1] === r[3] &&
+              r[1] >= a &&
+              r[1] <= b &&
+              r[0] <= first[0] + height &&
+              r[2] >= first[2] - height
+          )
+        if (
+          union(upper)[3] < union(lower)[1] &&
+          parents.every((g, n) => {
+            const titles = g.filter((i) => i.height >= height * 0.9)
+            return (
+              titles.length === 1 &&
+              /^\p{L}/u.test(titles[0].text) &&
+              children[n * size].length &&
+              Math.abs(titles[0].rect[0] - children[n * size][0].rect[0]) < height * 0.3 &&
+              g.every((i) => i === titles[0] || isAdjacentTableScript(i, titles[0]))
+            )
+          }) &&
+          upper.every((i) => parents.flat().includes(i) || inside(columnRects[0], i)) &&
+          lower.every((i) => children.flat().includes(i) || inside(columnRects[0], i)) &&
+          fullRule(first[1] - height, union(upper)[1]) &&
+          fullRule(union(lower)[3], first[3] + height)
+        ) {
+          const y = (union(upper)[3] + union(lower)[1]) / 2
+          rows.splice(
+            0,
+            existingChildren ? 2 : 1,
+            { rect: [first[0], first[1], first[2], y], origin: 'source-header' },
+            { rect: [first[0], y, first[2], first[3]], origin: 'source-header' }
+          )
+          repairs.push('ruled-parent-row-split')
+          return [
+            { row: 0, column: 0, rowSpan: 2, colSpan: 1 },
+            ...parents.map((_, n) => ({ row: 0, column: 1 + n * size, rowSpan: 1, colSpan: size }))
+          ]
+        }
+      }
+    }
+  }
   const levels = Map.groupBy(
     rules.filter((r) => r[1] === r[3] && r[1] > first[1] && r[1] < first[3]),
     (r) => Math.round(r[1])

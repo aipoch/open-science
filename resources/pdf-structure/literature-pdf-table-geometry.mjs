@@ -43,6 +43,7 @@ export function isAdjacentTableScript(item, anchor) {
     item.horizontal &&
     anchor.horizontal &&
     (item.height < anchor.height * 0.8 ||
+      (/^[a-z]$/.test(item.text) && item.height < anchor.height * 0.9) ||
       ((item.inlineSymbol || /^[′″]$/.test(item.text)) &&
         !anchor.inlineSymbol &&
         item.height <= anchor.height * 1.1)) &&

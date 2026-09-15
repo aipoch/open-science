@@ -568,3 +568,18 @@ it('preserves repeated continuation captions while removing ordinary running tit
   ])
   expect(result.map((p: { lines: unknown[] }) => p.lines)).toEqual([[caption], [caption]])
 })
+
+it.each([1, 1.5, 3])('recognizes filled rules with short mitered ends at scale %s', (scale) => {
+  const path = [0, 42.52, 377.6, 1, 552.757, 377.6, 1, 553.257, 378.1, 1, 42.02, 378.1, 4]
+  const input = {
+    fnArray: [OPS.constructPath],
+    argsArray: [[OPS.fill, [path], [42.02, 377.6, 553.257, 378.1]]]
+  }
+  const original = structuredClone(input)
+  const [rule] = collectTableRules(input, { transform: [scale, 0, 0, -scale, 0, 800 * scale] })
+  expect(rule[0]).toBeCloseTo(42.02 * scale)
+  expect(rule[2]).toBeCloseTo(553.257 * scale)
+  expect(rule[1]).toBeCloseTo((800 - 377.85) * scale)
+  expect(rule[1]).toBe(rule[3])
+  expect(input).toEqual(original)
+})
