@@ -239,7 +239,7 @@ const ResourceTagMenu = ({
                     onPointerMove={() => setActiveKey(option.key)}
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => void activate(option)}
-                    className="flex min-h-8 cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none select-none data-[active]:bg-muted data-[active]:text-foreground active:bg-muted aria-disabled:cursor-wait aria-disabled:opacity-50 [@media(pointer:coarse)]:min-h-11"
+                    className="flex min-h-8 cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none select-none data-[active]:bg-muted data-[active]:text-foreground active:bg-muted aria-disabled:opacity-50 [@media(pointer:coarse)]:min-h-11"
                   >
                     <span className="flex size-4 shrink-0 items-center justify-center">
                       {pendingKey === option.key ? (
