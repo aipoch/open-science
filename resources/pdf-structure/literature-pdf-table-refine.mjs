@@ -133,7 +133,7 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
   }
   rules = [...rules.filter((r) => r[1] !== r[3]), ...horizontalRules]
   // An inset table can have a detector edge in the neighboring prose column,
-  // or through its own stub. Matching header/footer rules and a footer caption
+  // or through its own stub. Matching header/footer rules and a nearby caption
   // establish ownership independently of that detector edge.
   const modelColumns = table.structure.objects.filter((o) => o.label === 'table column')
   const border = horizontalRules.find((header) => {
@@ -161,17 +161,40 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
       ) &&
       horizontalRules.some(
         (footer) =>
-          footer[1] > originalCrop[3] &&
-          footer[1] - originalCrop[3] <= 120 &&
           Math.abs(footer[0] - header[0]) <= 2 &&
           Math.abs(footer[2] - header[2]) <= 2 &&
-          captions.some(
-            (c) =>
-              captionKind(c.lines[0]) === 'table' &&
-              c.rect[1] >= footer[1] &&
-              c.rect[1] - footer[1] <= 18 &&
-              Math.abs(c.rect[0] - footer[0]) <= 6
-          )
+          ((footer[1] > originalCrop[3] &&
+            footer[1] - originalCrop[3] <= 120 &&
+            captions.some(
+              (c) =>
+                captionKind(c.lines[0]) === 'table' &&
+                c.rect[1] >= footer[1] &&
+                c.rect[1] - footer[1] <= 18 &&
+                Math.abs(c.rect[0] - footer[0]) <= 6
+            )) ||
+            (footer[1] > header[1] + (originalCrop[3] - originalCrop[1]) * 0.7 &&
+              footer[1] <= originalCrop[3] &&
+              originalCrop[3] - footer[1] <= 16 &&
+              pageItems.some(
+                (i) =>
+                  i.horizontal &&
+                  i.rect[1] >= header[1] &&
+                  i.rect[3] <= footer[1] &&
+                  ((inside(originalCrop, i) &&
+                    i.rect[0] >= header[0] &&
+                    i.rect[2] <= header[2] &&
+                    (i.rect[0] < originalCrop[0] || i.rect[2] > originalCrop[2])) ||
+                    (intersect(i.rect, originalCrop) > 0 &&
+                      intersect(i.rect, originalCrop) / area(i.rect) < 0.1 &&
+                      (i.rect[0] >= header[2] + i.height || i.rect[2] <= header[0] - i.height)))
+              ) &&
+              captions.some(
+                (c) =>
+                  captionKind(c.lines[0]) === 'table' &&
+                  ((c.rect[3] <= header[1] && header[1] - c.rect[3] <= 24) ||
+                    (c.rect[1] >= header[1] && c.rect[3] - header[1] <= 24)) &&
+                  Math.abs(c.rect[0] - header[0]) <= 6
+              )))
       )
     )
   })
@@ -187,6 +210,7 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     const headings = pageItems.filter(
       (i) =>
         i.horizontal &&
+        !captions.some((c) => intersect(i.rect, c.rect) / area(i.rect) > 0.8) &&
         i.rect[0] >= border[0] &&
         i.rect[2] <= border[2] &&
         i.rect[3] <= border[1] &&
@@ -302,7 +326,7 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     recoverRepeatedUnitGrid(table, pageItems, captions, sourceRules) ??
     recoverRepeatedHeaderGrid(table, pageItems, captions, sourceRules) ??
     recoverNativeHeaderGrid(table, pageItems, captions, sourceRules) ??
-    recoverRuledNarrativeGrid(table, pageItems, captions, rules) ??
+    recoverRuledNarrativeGrid(table, pageItems, captions, rules, sourceRules) ??
     recoverNumberedMatrix(table, pageItems, captions, rules) ??
     recoverWrappedProportionGrid(table, pageItems, captions, rules) ??
     recoverPairedDeviationGrid(table, pageItems, captions, rules) ??
@@ -3835,6 +3859,38 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     !recordGrid && !ruledTierSpans && externalCaptions.length
       ? splitRuledParentRow({ rows, items, columnRects, rules, repairs })
       : undefined
+  // A frequency/% table may use a paired mean/SD record. Its wrapped
+  // measurement label and values share one record, including a raised P value.
+  if (
+    !recordGrid &&
+    columns.length === 6 &&
+    externalCaptions.length &&
+    groups.some(
+      (g) =>
+        g.filter((i) => i.text === 'frequency').length === 2 &&
+        g.filter((i) => i.text === '%').length === 2
+    )
+  ) {
+    for (let r = 1; r < rows.length; r++) {
+      const members = items.filter((i) => inside(rows[r].rect, i))
+      const label = members
+        .filter((i) => columnOf(i) === 0)
+        .map((i) => i.text)
+        .join('')
+        .replace(/\s/g, '')
+      const prior = items.filter((i) => inside(rows[r - 1].rect, i))
+      if (
+        label === 'Mean(SD)' &&
+        prior.some((i) => columnOf(i) === 0 && /\p{L}/u.test(i.text)) &&
+        prior.every((i) => columnOf(i) === 0 || columnOf(i) === 5) &&
+        members.filter((i) => columnOf(i) > 0 && /\d+(?:\.\d+)?\s*\([\d.]+\)/.test(i.text))
+          .length === 2
+      ) {
+        rows[r - 1].rect[3] = rows[r].rect[3]
+        rows.splice(r--, 1)
+      }
+    }
+  }
   const baseCells = rows.flatMap((r, row) =>
     columnRects.map((c, column) => ({
       row,
@@ -5012,6 +5068,122 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
       )
         proposals.splice(i, 1)
     }
+  }
+  // A boxed questionnaire prompt precedes its actual column headings. The
+  // enclosing native rules establish one full-width cell across the first row.
+  if (!recordGrid && columns.length >= 3 && rows.length >= 3 && externalCaptions.length) {
+    const prompt = groups.find(
+      (g) =>
+        g.length === 1 &&
+        /\?$/.test(g[0].text.trim()) &&
+        g[0].rect[2] - g[0].rect[0] > (right - left) * 0.7 &&
+        g[0].rect[1] >= top &&
+        g[0].rect[3] < rows[1].rect[1]
+    )
+    if (prompt) {
+      const rect = union(prompt)
+      const borders = rules.filter((r) => r[1] === r[3] && r[0] <= left + 8 && r[2] >= right - 8)
+      if (
+        borders.some((r) => r[1] <= rect[1] && rect[1] - r[1] < prompt[0].height) &&
+        borders.some((r) => r[1] >= rect[3] && r[1] < rows[1].rect[1])
+      ) {
+        const slots = baseCells.filter((c) => c.row === 0)
+        removeOverlappingMergeProposals(proposals, slots)
+        proposals.push({ slots, origin: 'source-ruled-stub' })
+      }
+    }
+  }
+  if (!recordGrid && externalCaptions.length) {
+    // Native treatment underlines retain both halves of a frequency/% header,
+    // even when a sample-size suffix lands in the second predicted column.
+    if (
+      columns.length === 6 &&
+      baseCells.some(
+        (c) =>
+          c.row === 1 &&
+          c.column === 1 &&
+          items.some((i) => inside(c.rect, i) && i.text === 'frequency')
+      )
+    ) {
+      const parents = rules.filter(
+        (r) =>
+          r[1] === r[3] &&
+          r[1] > rows[0].rect[1] &&
+          r[1] < rows[1].rect[1] &&
+          r[0] > columnRects[0][2] - 16
+      )
+      for (const rule of parents) {
+        const slots = baseCells.filter(
+          (c) =>
+            c.row === 0 &&
+            (c.rect[0] + c.rect[2]) / 2 > rule[0] &&
+            (c.rect[0] + c.rect[2]) / 2 < rule[2]
+        )
+        const tokens = items.filter(
+          (i) =>
+            i.rect[1] >= rows[0].rect[1] &&
+            i.rect[3] < rule[1] &&
+            i.rect[0] >= rule[0] - 1 &&
+            i.rect[2] <= rule[2] + 1
+        )
+        if (
+          slots.length === 2 &&
+          /\(n=\d+\)/i.test(
+            tokens
+              .map((i) => i.text)
+              .join('')
+              .replace(/\s/g, '')
+          )
+        ) {
+          removeOverlappingMergeProposals(proposals, slots)
+          proposals.push({ slots, origin: 'source-ruled-stub' })
+        }
+      }
+    }
+    // Repeated change columns establish paired treatment parents above them.
+    if (
+      columns.length === 5 &&
+      [2, 4].every((c) =>
+        baseCells.some(
+          (b) =>
+            b.row === 1 &&
+            b.column === c &&
+            items
+              .filter((i) => inside(b.rect, i))
+              .map((i) => i.text)
+              .join('')
+              .replace(/\s/g, '') === 'ChangefromBaseline'
+        )
+      )
+    ) {
+      for (const c of [1, 3]) {
+        const slots = baseCells.filter((b) => b.row === 0 && (b.column === c || b.column === c + 1))
+        if (
+          slots.length === 2 &&
+          items.some((i) => inside(slots[0].rect, i) && /\p{L}/u.test(i.text)) &&
+          !items.some((i) => inside(slots[1].rect, i))
+        ) {
+          removeOverlappingMergeProposals(proposals, slots)
+          proposals.push({ slots, origin: 'source-ruled-stub' })
+        }
+      }
+    }
+    // An internal count/percentage heading starts a new section. An age label
+    // above it must not span that later header's empty stub.
+    if (columns.length === 3)
+      for (let r = 1; r < rows.length; r++) {
+        const heading = [1, 2].map((c) =>
+          items
+            .filter((i) => inside(baseCells.find((b) => b.row === r && b.column === c).rect, i))
+            .map((i) => i.text)
+            .join('')
+            .trim()
+        )
+        if (heading.join('|') === 'n|%') {
+          const slots = baseCells.filter((c) => c.column === 0 && (c.row === r - 1 || c.row === r))
+          removeOverlappingMergeProposals(proposals, slots)
+        }
+      }
   }
   if (parentRowSpans) applySourceHeaderSpans(proposals, baseCells, parentRowSpans, 2)
   if (ruledTierSpans) applySourceHeaderSpans(proposals, baseCells, ruledTierSpans, 3)

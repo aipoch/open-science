@@ -8,6 +8,20 @@ const symbolDefinitions = (text) =>
   /^[α-ωΑ-Ω]\s+\p{L}/u.test(text.trim()) &&
   (text.match(/,\s*[A-Z]{2,4}\s+[a-z]/g) ?? []).length >= 3
 const statisticDefinition = (text) =>
+  /^Values are medians? except those in parenthes(?:is|es), which are minimum to maximum\.?$/i.test(
+    text.trim()
+  ) ||
+  /^Data are reported as mean\s*±\s*SD(?:[;,.]|$)/i.test(text.trim()) ||
+  /^Valid percent was reported\.?$/i.test(text.trim()) ||
+  /^(?:Subjective|Behavioral) sleep data was derived from\b.*\*p\s*[<≤]\s*0?\.\d+/i.test(
+    text.trim()
+  ) ||
+  /^SDs are reported (?:in parenthes[ei]s|to the right of the mean in parentheses)\b/i.test(
+    text.trim()
+  ) ||
+  /^Data are (?:median \(interquartile range\) or percentage \(%\)|numbers or Odds Ratio \(OR\))\./i.test(
+    text.trim()
+  ) ||
   /^(?:Baseline\s+)?Data are means?\s*±\s*SD(?:[;,.]|$)/i.test(text.trim()) ||
   /^(?:All )?values are expressed as (?:the )?(?:number|n)\s*\(%\) and mean\s*±\s*SD\.?$/i.test(
     text.trim()
@@ -321,6 +335,21 @@ export function associateTableNotes(page, tables, rules = []) {
     return next
   }
   const touchesRuledBottom = (line, rect) => {
+    // A model's final row can swallow a cited note whose font box touches
+    // the native closing rule. Use that rule, not the predicted row bottom.
+    if (
+      citedSymbol(line, rect) &&
+      startsNote(line.text) &&
+      line.y <= rect[3] &&
+      rect[3] - line.y < line.fontSize * 1.2 &&
+      rules.some(
+        (r) =>
+          r[1] === r[3] &&
+          Math.abs(r[1] - line.y) < line.fontSize * 0.2 &&
+          Math.min(r[2], rect[2]) - Math.max(r[0], rect[0]) > (rect[2] - rect[0]) * 0.85
+      )
+    )
+      return true
     if (
       !(
         raisedMarker(line) ||
@@ -524,8 +553,18 @@ export function associateTableNotes(page, tables, rules = []) {
     const explicitNote = startsNote(start.text)
     const citedDefinitions = tables.map(({ rect }) => {
       const gap = start.y - rect[3]
+      const ruledSingle =
+        /^[A-Z]{2,8} [\p{L}][\p{L} -]+\.?$/u.test(start.text) &&
+        rules.some(
+          (r) =>
+            r[1] === r[3] &&
+            r[1] > rect[3] &&
+            r[1] < start.y &&
+            r[2] - r[0] > (rect[2] - rect[0]) * 0.85
+        )
       const singleDefinition =
-        /^[A-Z]{2,8}, [A-Z][a-z].*[.]$/.test(start.text) && start.text.split(/\s+/).length >= 5
+        ruledSingle ||
+        (/^[A-Z]{2,8}, [A-Z][a-z].*[.]$/.test(start.text) && start.text.split(/\s+/).length >= 5)
       // A source bottom rule can separate a slightly more distant glossary.
       // Keep the original unruled gap limit and require a wide native separator.
       const ruledGap =
@@ -546,8 +585,8 @@ export function associateTableNotes(page, tables, rules = []) {
       const pairs = [
         ...start.text.matchAll(/(?:^|;\s*)([A-Za-z][A-Za-z0-9.-]{0,7})\s*[:,]\s*\p{L}/gu)
       ]
-      if (!pairs.length && /^[A-Z]{2,8} [a-z]/.test(start.text))
-        pairs.push(...start.text.matchAll(/(?:^|,\s*)([A-Z]{2,8}) [a-z]/g))
+      if (!pairs.length && /^[A-Z]{2,8} [A-Za-z]/.test(start.text))
+        pairs.push(...start.text.matchAll(/(?:^|,\s*)([A-Z]{2,8}) [A-Za-z]/g))
       const words = lines
         .filter(
           (l) =>

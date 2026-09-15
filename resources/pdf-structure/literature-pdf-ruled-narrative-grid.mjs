@@ -10,14 +10,84 @@ import {
 // Dense two-column narrative tables print a separator below each paragraph.
 // Use those native bands instead of model rows that split a long instruction.
 // The right border must be consistent, and every glyph must have one owner.
-export function recoverRuledNarrativeGrid(table, items, captions, rules) {
+export function recoverRuledNarrativeGrid(table, items, captions, rules, sourceRules = rules) {
   if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
   const [left, top, right, bottom] = table.cropRect
   const predicted = table.structure.objects
     .filter((o) => o.label === 'table column')
     .sort((a, b) => a.rect[0] - b.rect[0])
+    .filter(
+      (c, n, all) =>
+        !all
+          .slice(0, n)
+          .some(
+            (p) =>
+              (Math.min(p.rect[2], c.rect[2]) - Math.max(p.rect[0], c.rect[0])) /
+                Math.max(p.rect[2] - p.rect[0], c.rect[2] - c.rect[0]) >
+              0.7
+          )
+    )
+  const paragraphs = recoverParagraphColumns(table, items, predicted, sourceRules)
+  if (paragraphs) return paragraphs
   const centered = recoverCenteredBulletedGroups(table, items, predicted)
   if (centered) return centered
+  // Native rules alternate unindented attribute headings with indented lists.
+  // Keep one record per entry; only join a wrapped line within its ruled band.
+  if (predicted.length === 1) {
+    const borders = rules
+      .filter(
+        (r) =>
+          r[1] === r[3] &&
+          r[0] <= left + 2 &&
+          r[2] >= right - 2 &&
+          r[1] >= top - 2 &&
+          r[1] <= bottom
+      )
+      .sort((a, b) => a[1] - b[1])
+    const ys = borders.map((r) => r[1]).filter((y, n, all) => !n || y - all[n - 1] > 2)
+    if (ys.length < 9) return
+    const source = tableSourceItems(items, [
+      left - 1,
+      ys[0],
+      Math.max(right, borders[0][2]),
+      ys.at(-1)
+    ])
+    const groups = []
+    for (let n = 0; n < ys.length - 1; n++) {
+      const band = source.filter((i) => i.rect[1] > ys[n] && i.rect[3] < ys[n + 1])
+      if (!band.length) return
+      const rows = []
+      for (const i of band) {
+        const prior = rows.at(-1)
+        if (prior && Math.abs(i.baseline - prior[0].baseline) < i.height * 0.3) prior.push(i)
+        else if (
+          prior &&
+          (Math.max(...prior.map((i) => i.rect[2])) > right - i.height * 2 ||
+            i.rect[0] > prior[0].rect[0] + i.height * 0.5) &&
+          i.baseline - Math.max(...prior.map((i) => i.baseline)) < i.height * 1.6
+        )
+          prior.push(i)
+        else rows.push([i])
+      }
+      groups.push(...rows)
+    }
+    if (!hasUniqueRecordTokens(source, groups) || groups.length < 12) return
+    const indent = Math.min(...source.map((i) => i.rect[0]))
+    if (
+      groups.filter((g) => Math.abs(g[0].rect[0] - indent) < 1).length < 3 ||
+      groups.filter((g) => g[0].rect[0] > indent + g[0].height * 0.5).length < 6
+    )
+      return
+    const bounds = groups.map(union)
+    return {
+      rows: bounds.map((r) => [left, r[1], Math.max(right, borders[0][2]), r[3]]),
+      columns: [[left, top, Math.max(right, borders[0][2]), bottom]],
+      headerRows: [],
+      spans: [],
+      completeSpans: true,
+      ownedTokens: new Set(source)
+    }
+  }
   if (predicted.length !== 2) return
   const sections = recoverParallelRecommendations(table, items, rules, predicted)
   if (sections) return sections
@@ -42,7 +112,7 @@ export function recoverRuledNarrativeGrid(table, items, captions, rules) {
     )
     .sort((a, b) => a[1] - b[1])
   const ys = [...new Set(borders.map((r) => r[1]))]
-  if (ys.length < 12 || borders.some((r) => Math.abs(r[2] - borders[0][2]) > 1)) return
+  if (ys.length < 8 || borders.some((r) => Math.abs(r[2] - borders[0][2]) > 1)) return
   const body = source.filter(
     (i) => (i.rect[1] + i.rect[3]) / 2 >= ys[0] && (i.rect[1] + i.rect[3]) / 2 <= ys.at(-1)
   )
@@ -52,13 +122,25 @@ export function recoverRuledNarrativeGrid(table, items, captions, rules) {
       body.filter((i) => (i.rect[1] + i.rect[3]) / 2 >= ys[n] && (i.rect[1] + i.rect[3]) / 2 < y)
     )
   if (!hasUniqueRecordTokens(body, groups)) return
-  if (
-    groups.some((g) => {
-      const stubs = g.filter((i) => i.rect[0] < cut)
-      return stubs.some((i) => Math.abs(i.baseline - stubs[0].baseline) > i.height * 0.5)
-    })
-  )
-    return
+  for (const group of groups) {
+    const stub = group.filter((i) => i.rect[0] < cut),
+      lines = []
+    for (const i of stub) {
+      const last = lines.at(-1)
+      if (last && Math.abs(last[0].baseline - i.baseline) < i.height * 0.5) last.push(i)
+      else lines.push([i])
+    }
+    if (
+      lines
+        .slice(0, -1)
+        .some(
+          (line) =>
+            Math.max(...line.map((i) => i.rect[2])) < cut - line[0].height * 2 &&
+            line.map((i) => i.text).join('').length < 36
+        )
+    )
+      return
+  }
   const cells = groups.map(
     (g) =>
       readSourceRow(g, [left, cut, right]) ??
@@ -450,5 +532,117 @@ function recoverBulletedPairs(table, items, rules, columns) {
     completeSpans: true,
     ownedTokens: new Set(source),
     repair: 'parallel-bullet-records-recovered'
+  }
+}
+
+// A ruled narrative table has independent paragraph records, not one model row
+// per printed line. Native column borders and aligned stub starts own each record.
+function recoverParagraphColumns(table, items, predicted, rules) {
+  if (predicted.length !== 3) return
+  const [left, top, right, bottom] = table.cropRect
+  const bands = []
+  for (const r of rules
+    .filter((r) => r[1] === r[3] && r[1] >= top && r[1] <= bottom)
+    .sort((a, b) => a[1] - b[1] || a[0] - b[0])) {
+    let band = bands.find((b) => Math.abs(b.y - r[1]) < 0.02)
+    if (!band) bands.push((band = { y: r[1], parts: [] }))
+    band.parts.push(r)
+  }
+  const frames = bands.filter(
+    (b) =>
+      b.parts[0][0] < left + 16 &&
+      b.parts.at(-1)[2] > right - 16 &&
+      b.parts.every((r, n) => !n || Math.abs(r[0] - b.parts[n - 1][2]) < 0.5)
+  )
+  if (frames.length < 2 || frames.length > 3 || Math.abs(frames.at(-1).y - bottom) > 16) return
+  const boundary = frames.find((b) => b.parts.length === 3)
+  if (!boundary) return
+  const cuts = [left, ...boundary.parts.slice(1).map((r) => r[0] - 0.1), right]
+  const source = tableSourceItems(items, [left, frames[0].y, right, frames.at(-1).y])
+  const header = frames.length === 3 ? source.filter((i) => i.rect[3] < frames[1].y) : []
+  const body = source.filter((i) => !header.includes(i))
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  if (
+    !body.length ||
+    body.some((i) => col(i) < 0 || i.rect[0] < cuts[col(i)] || i.rect[2] > cuts[col(i) + 1])
+  )
+    return
+  const height = body.map((i) => i.height).sort((a, b) => a - b)[Math.floor(body.length / 2)]
+  const session = body.filter((i) => col(i) === 0 && /^Session \d+$/.test(i.text)).length >= 3
+  const labels = (c) => {
+    const groups = []
+    for (const i of body.filter((i) => col(i) === c)) {
+      const previous = groups.at(-1)
+      if (
+        previous &&
+        !(c === 1 && /^[a-z]\.\s*\p{L}/u.test(i.text)) &&
+        i.baseline - Math.max(...previous.map((i) => i.baseline)) < height * (session ? 0.3 : 1.6)
+      )
+        previous.push(i)
+      else groups.push([i])
+    }
+    return groups
+  }
+  const primary = labels(0),
+    secondary = session ? [] : labels(1)
+  const starts = [...primary, ...secondary]
+    .map((g) => Math.min(...g.map((i) => i.rect[1])))
+    .sort((a, b) => a - b)
+    .filter((y, n, all) => !n || y - all[n - 1] > height * 0.5)
+  if (
+    starts.length < 3 ||
+    starts.length > 40 ||
+    starts[0] - Math.min(...body.map((i) => i.rect[1])) > height
+  )
+    return
+  const ys = [
+    frames.length === 3 ? frames[1].y : frames[0].y,
+    ...starts.slice(1).map((y) => y - 0.1),
+    frames.at(-1).y
+  ]
+  const groups = ys
+    .slice(1)
+    .map((y, n) =>
+      body.filter((i) => (i.rect[1] + i.rect[3]) / 2 >= ys[n] && (i.rect[1] + i.rect[3]) / 2 < y)
+    )
+  if (!hasUniqueRecordTokens(source, [...(header.length ? [header] : []), ...groups])) return
+  if (
+    groups.filter(
+      (g) =>
+        g
+          .filter((i) => col(i) === 2)
+          .map((i) => i.text)
+          .join(' ').length > 80
+    ).length < 3
+  )
+    return
+  const spans = []
+  for (const [n, g] of groups.entries()) {
+    const label = g.filter((i) => col(i) === 0)
+    if (session) {
+      if (label.length === 1 && /^Session \d+$/.test(label[0].text)) {
+        if (g.length !== 1) return
+        spans.push({ row: n + Number(Boolean(header.length)), column: 0, rowSpan: 1, colSpan: 3 })
+      }
+    } else if (label.length) {
+      const next = groups.findIndex((g, j) => j > n && g.some((i) => col(i) === 0))
+      spans.push({
+        row: n + Number(Boolean(header.length)),
+        column: 0,
+        rowSpan: (next < 0 ? groups.length : next) - n,
+        colSpan: 1
+      })
+    }
+  }
+  return {
+    rows: [
+      ...(header.length ? [[left, frames[0].y, right, frames[1].y]] : []),
+      ...ys.slice(1).map((y, n) => [left, ys[n], right, y])
+    ],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    spans,
+    completeSpans: true,
+    headerRows: header.length ? [0] : [],
+    ownedTokens: new Set(source)
   }
 }

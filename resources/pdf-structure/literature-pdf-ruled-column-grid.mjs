@@ -19,6 +19,10 @@ export function recoverRuledColumnGrid(table, items, captions, rules) {
     if (!band) bands.push((band = { y: r[1], parts: [] }))
     band.parts.push(r)
   }
+  const graded = recoverGradedEventGrid(table, items, bands)
+  if (graded) return graded
+  const assessment = recoverAssessmentSchedule(table, items, bands)
+  if (assessment) return assessment
   const matches = bands.filter(({ y, parts }) => {
     const overlap = parts[0]?.[2] - parts[1]?.[0]
     const edgeTolerance = Math.max(16, (crop[2] - crop[0]) * 0.05)
@@ -323,7 +327,7 @@ export function recoverHeaderlessRuledRecords(table, items, captions, rules) {
     predicted = table.structure.objects
       .filter((o) => o.label === 'table column')
       .sort((a, b) => a.rect[0] - b.rect[0])
-  if (predicted.length < 3 || predicted.length > 6) return
+  if (predicted.length < 2 || predicted.length > 6) return
   const joined = []
   for (const r of rules.filter((r) => r[1] === r[3]).sort((a, b) => a[1] - b[1] || a[0] - b[0])) {
     const last = joined.at(-1)
@@ -341,6 +345,110 @@ export function recoverHeaderlessRuledRecords(table, items, captions, rules) {
         r[1] <= crop[3] + 12
     )
     .sort((a, b) => a[1] - b[1])
+  // Percentage distributions may print a P-value on its own line after each
+  // category. That line is a record, not the next category's value.
+  if (predicted.length === 2 && borders.length === 3) {
+    const [upper, divider, lower] = borders
+    const left = Math.min(crop[0], upper[0]),
+      right = Math.max(crop[2], upper[2])
+    const cut = crop[0] + (predicted[0].rect[2] + predicted[1].rect[0]) / 2
+    const source = tableSourceItems(items, [left, upper[1], right, lower[1]])
+    const header = source.filter((i) => i.rect[3] < divider[1]),
+      body = source.filter((i) => i.rect[1] > divider[1])
+    const height = body[0]?.height,
+      groups = groupSourceRowsWithScripts(body, height, 0.3)
+    if (groups && header.length && hasUniqueRecordTokens(source, [header, ...groups])) {
+      const values = groups.map((g) =>
+        g
+          .filter((i) => i.rect[0] >= cut)
+          .map((i) => i.text)
+          .join('')
+          .replace(/\s/g, '')
+      )
+      const labels = groups.map((g) => g.filter((i) => i.rect[2] < cut))
+      if (
+        values.filter((v) => /^p[=<]0?\.\d+$/i.test(v)).length >= 3 &&
+        values.filter((v) => /^\d+(?:\.\d+)?%$/.test(v)).length >= 8 &&
+        values.every((v, n) =>
+          v
+            ? /^(?:p[=<]0?\.\d+|\d+(?:\.\d+)?%)$/i.test(v)
+            : labels[n].length && labels[n].some((i) => /\p{L}/u.test(i.text))
+        ) &&
+        source.every((i) => i.rect[2] < cut || i.rect[0] >= cut)
+      ) {
+        const bounds = groups.map(union)
+        if (bounds.every((r, n) => !n || r[1] > bounds[n - 1][3]))
+          return {
+            cropRect: [left, upper[1], right, lower[1]],
+            rows: [
+              [left, upper[1], right, divider[1]],
+              ...bounds.map((r) => [left, r[1], right, r[3]])
+            ],
+            columns: [
+              [left, upper[1], cut, lower[1]],
+              [cut, upper[1], right, lower[1]]
+            ],
+            spans: [],
+            headerRows: [0],
+            completeSpans: true,
+            ownedTokens: new Set(source)
+          }
+      }
+    }
+  }
+  // Unheaded demographic tables begin with an outdented category, followed
+  // by indented measured records. Keep that first category as body content.
+  if (predicted.length === 2 && borders.length === 2) {
+    const [upper, lower] = borders
+    const left = Math.min(crop[0], upper[0]),
+      right = Math.max(crop[2], upper[2])
+    const cut = crop[0] + (predicted[0].rect[2] + predicted[1].rect[0]) / 2
+    const source = tableSourceItems(items, [left, upper[1], right, lower[1]])
+    if (!source.length) return
+    const height = source.map((i) => i.height).sort((a, b) => a - b)[Math.floor(source.length / 2)]
+    const groups = groupSourceRowsWithScripts(source, height, 0.3)
+    if (!groups || groups.length < 8) return
+    const labels = groups.map((g) => g.filter((i) => i.rect[2] < cut)),
+      values = groups.map((g) => g.filter((i) => i.rect[0] >= cut))
+    if (
+      labels.some((g) => !g.length) ||
+      !hasUniqueRecordTokens(source, [...labels, ...values.filter((g) => g.length)])
+    )
+      return
+    const indent = Math.min(...labels.flat().map((i) => i.rect[0]))
+    const section = values.map((v, n) => !v.length && Math.abs(labels[n][0].rect[0] - indent) < 0.5)
+    if (
+      !section[0] ||
+      section.filter(Boolean).length < 3 ||
+      values.some(
+        (g, n) =>
+          !section[n] &&
+          (!g.length ||
+            !/^[−+–-]?\d[\d.,()%–−/ -]*(?:years?|months?|cm|cc)?(?:\([\d. –−-]+(?:years?|months?|cm|cc)(?:-[\d ]+(?:years?|months?|cm|cc))?\))?$/.test(
+              g
+                .map((i) => i.text)
+                .join('')
+                .replace(/\s/g, '')
+            ))
+      )
+    )
+      return
+    const bounds = groups.map(union)
+    if (bounds.some((r, n) => n && r[1] <= bounds[n - 1][3])) return
+    return {
+      cropRect: [left, upper[1], right, lower[1]],
+      rows: bounds.map((r) => [left, r[1], right, r[3]]),
+      columns: [
+        [left, upper[1], cut, lower[1]],
+        [cut, upper[1], right, lower[1]]
+      ],
+      spans: section.flatMap((s, n) => (s ? [{ row: n, column: 0, rowSpan: 1, colSpan: 2 }] : [])),
+      headerRows: [],
+      completeSpans: true,
+      ownedTokens: new Set(source),
+      repair: 'headerless-ruled-records-recovered'
+    }
+  }
   if (borders.length < 8) return
   const left = Math.min(crop[0], borders[0][0]),
     right = Math.max(crop[2], borders[0][2]),
@@ -400,5 +508,210 @@ export function recoverHeaderlessRuledRecords(table, items, captions, rules) {
     completeSpans: true,
     ownedTokens: new Set(source),
     repair: 'headerless-ruled-records-recovered'
+  }
+}
+
+// Assessment schedules use repeated segmented rules for complete row and column
+// boundaries. Checkmarks establish the body; native time labels establish tiers.
+function recoverAssessmentSchedule(table, items, bands) {
+  const [left, top, right, bottom] = table.cropRect
+  const full = bands.filter(
+    (b) =>
+      b.y >= top &&
+      b.y <= bottom + 12 &&
+      b.parts.length >= 5 &&
+      b.parts.length <= 12 &&
+      Math.abs(b.parts[0][0] - left) < 16 &&
+      Math.abs(b.parts.at(-1)[2] - right) < 16 &&
+      b.parts.every((r, n) => !n || Math.abs(r[0] - b.parts[n - 1][2]) < 0.1)
+  )
+  if (full.length < 8 || Math.abs(full.at(-1).y - bottom) > 16) return
+  const cuts = [left, ...full[0].parts.slice(1).map((r) => r[0]), right]
+  if (
+    full.some(
+      (b) =>
+        b.parts.length !== cuts.length - 1 ||
+        b.parts.slice(1).some((r, n) => Math.abs(r[0] - cuts[n + 1]) > 0.1)
+    )
+  )
+    return
+  const ys = full.map((b) => b.y),
+    source = tableSourceItems(items, [left, ys[0], right, ys.at(-1)])
+  const groups = ys.slice(1).map((y, n) => source.filter((i) => i.rect[1] > ys[n] && i.rect[3] < y))
+  if (!hasUniqueRecordTokens(source, groups)) return
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  if (source.some((i) => col(i) < 0 || i.rect[0] < cuts[col(i)] || i.rect[2] > cuts[col(i) + 1]))
+    return
+  const compact = (g) =>
+    g
+      .map((i) => i.text)
+      .join('')
+      .replace(/\s/g, '')
+  if (
+    !groups[0].some((i) => i.text === 'Study period') ||
+    !groups[2].some((i) => i.text === 'TIME POINT') ||
+    groups.slice(3).filter((g) => g.some((i) => col(i) > 0 && i.text === '✓')).length < 5 ||
+    groups.slice(3).some((g) => g.some((i) => col(i) > 0 && i.text !== '✓'))
+  )
+    return
+  const spans = [{ row: 0, column: 1, rowSpan: 1, colSpan: cuts.length - 2 }]
+  const parents = [...new Set(groups[1].map(col))].sort((a, b) => a - b)
+  if (parents.length < 3 || parents[0] !== 1 || groups[1].some((i) => !/[A-Za-z]/.test(i.text)))
+    return
+  for (const [n, c] of parents.entries()) {
+    const end = parents[n + 1] ?? cuts.length - 1
+    if (end - c > 1) spans.push({ row: 1, column: c, rowSpan: 1, colSpan: end - c })
+  }
+  for (let row = 3; row < groups.length; row++)
+    if (
+      groups[row].every((i) => col(i) === 0) &&
+      /^(?:[A-Z-]+|Primaryoutcome|Secondaryoutcomes|Processevaluation)$/.test(compact(groups[row]))
+    )
+      spans.push({ row, column: 0, rowSpan: 1, colSpan: cuts.length - 1 })
+  return {
+    cropRect: [left, ys[0], right, ys.at(-1)],
+    rows: ys.slice(1).map((y, n) => [left, ys[n], right, y]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], ys[0], x, ys.at(-1)]),
+    spans,
+    headerRows: [0, 1, 2],
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// Graded event tables put a full-width topic above treatment parents and
+// repeated two-line Grade 1/2 leaves. Each native grade anchors one data column.
+function recoverGradedEventGrid(table, items, bands) {
+  const crop = table.cropRect,
+    source = tableSourceItems(items, [crop[0], crop[1], crop[2] + 8, crop[3]])
+  const grades = source.filter((i) => i.text === 'Grade').sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    grades.length < 4 ||
+    grades.length > 10 ||
+    grades.length % 2 ||
+    grades.some((i) => Math.abs(i.baseline - grades[0].baseline) > 0.5)
+  )
+    return
+  const height = grades[0].height
+  const digits = grades.map((g) =>
+    source.filter(
+      (i) =>
+        i.rect[1] > g.rect[3] &&
+        i.rect[1] - g.rect[3] < height &&
+        Math.abs(i.rect[0] - g.rect[0]) < 0.5
+    )
+  )
+  if (digits.some((g, n) => g.length !== 1 || g[0].text !== String((n % 2) + 1))) return
+  const predicted = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (predicted.length !== grades.length + 1) return
+  const cuts = [
+    crop[0],
+    ...predicted.slice(1).map((c, n) => crop[0] + (predicted[n].rect[2] + c.rect[0]) / 2),
+    crop[2] + 8
+  ]
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  if (grades.some((g, n) => col(g) !== n + 1)) return
+  const boundaries = bands.filter(
+    (b) =>
+      b.y > crop[1] &&
+      b.y < grades[0].rect[1] &&
+      b.parts[0][0] < crop[0] + 16 &&
+      b.parts.at(-1)[2] > crop[2] - 16
+  )
+  if (boundaries.length !== 3) return
+  const [upper, topic, parent] = boundaries
+  const footer = bands
+    .filter(
+      (b) =>
+        b.y > grades[0].baseline &&
+        Math.abs(b.y - crop[3]) < 16 &&
+        b.parts[0][0] < crop[0] + 16 &&
+        b.parts.at(-1)[2] > crop[2] - 16
+    )
+    .at(-1)
+  if (!footer) return
+  const leafBottom = Math.max(...digits.flat().map((i) => i.rect[3]))
+  const first = source
+    .filter((i) => i.rect[1] > leafBottom)
+    .sort((a, b) => a.rect[1] - b.rect[1])[0]
+  if (!first || first.rect[1] - leafBottom > height) return
+  const divider = (leafBottom + first.rect[1]) / 2
+  const body = source.filter((i) => i.rect[1] > divider && i.rect[3] < footer.y)
+  const groups = groupSourceRowsWithScripts(body, height, 0.3)
+  if (!groups || groups.length < 5) return
+  for (let n = 1; n < groups.length; n++) {
+    const g = groups[n],
+      prior = groups[n - 1]
+    if (
+      g.length === 1 &&
+      g[0].rect[2] < cuts[1] &&
+      /^\p{L}+$/u.test(g[0].text.trim()) &&
+      prior.filter((i) => col(i) > 0).length >= grades.length &&
+      g[0].baseline - Math.max(...prior.map((i) => i.baseline)) < height * 1.5 &&
+      g[0].rect[0] >= prior[0].rect[0] - 0.5 &&
+      g[0].rect[0] - prior[0].rect[0] < height * 1.1
+    ) {
+      prior.push(...g)
+      groups.splice(n--, 1)
+    }
+  }
+  const sections = []
+  for (const [n, g] of groups.entries()) {
+    const values = cuts.slice(1).map((_, c) =>
+      g
+        .filter((i) => col(i) === c)
+        .map((i) => i.text)
+        .join('')
+        .replace(/\s/g, '')
+    )
+    if (g.some((i) => i.rect[0] < cuts[col(i)] || i.rect[2] > cuts[col(i) + 1])) {
+      if (
+        g.filter((i) => i.height > height * 0.8).length !== 1 ||
+        !/^\p{L}/u.test(g[0].text) ||
+        g[0].rect[0] > cuts[1]
+      )
+        return
+      sections.push(n)
+    } else if (!values[0] || values.slice(1).some((v) => !/^(?:\d+|[–—-])$/.test(v))) return
+  }
+  const headers = [upper.y, topic.y, parent.y, divider],
+    spans = [{ row: 0, column: 0, rowSpan: 1, colSpan: cuts.length - 1 }]
+  const parents = source.filter((i) => i.rect[1] > topic.y && i.rect[3] < parent.y)
+  for (let c = 1; c < cuts.length - 1; c += 2) {
+    const g = parents.filter((i) => i.rect[0] >= cuts[c] && i.rect[2] <= cuts[c + 2])
+    if (
+      !g.length ||
+      !/[A-Za-z].*\(N=\d+\)/.test(
+        g
+          .map((i) => i.text)
+          .join('')
+          .replace(/\s/g, '')
+      )
+    )
+      return
+    spans.push({ row: 1, column: c, rowSpan: 1, colSpan: 2 })
+  }
+  const head = source.filter((i) => i.rect[1] > upper.y && i.rect[3] < divider)
+  const owned = source.filter((i) => i.rect[1] > upper.y && i.rect[3] < footer.y)
+  if (!hasUniqueRecordTokens(owned, [head, ...groups])) return
+  return {
+    cropRect: [cuts[0], upper.y, cuts.at(-1), footer.y],
+    rows: [
+      ...headers.slice(1).map((y, n) => [cuts[0], headers[n], cuts.at(-1), y]),
+      ...groups.map((g) => {
+        const r = union(g)
+        return [cuts[0], r[1], cuts.at(-1), r[3]]
+      })
+    ],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], upper.y, x, footer.y]),
+    spans: [
+      ...spans,
+      ...sections.map((n) => ({ row: n + 3, column: 0, rowSpan: 1, colSpan: cuts.length - 1 }))
+    ],
+    headerRows: [0, 1, 2],
+    completeSpans: true,
+    ownedTokens: new Set(owned)
   }
 }

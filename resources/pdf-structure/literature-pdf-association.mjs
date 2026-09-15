@@ -903,6 +903,48 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
             )
         )
       : assigned[index]
+    // A compact diagram beside ordinary prose can share a page with a shaded
+    // text box and a publisher mark. Require a directly captioned enclosing path
+    // and many contained strokes before excluding those disconnected decorations.
+    if (!plates.length) {
+      const seeds = connected.filter(
+        (g) =>
+          g.kind === 'path' &&
+          g.rect[3] <= caption.rect[1] &&
+          caption.rect[1] - g.rect[3] < 20 &&
+          g.rect[0] <= caption.rect[0] + 4 &&
+          g.rect[2] >= caption.rect[2] &&
+          g.rect[3] - g.rect[1] > 40 &&
+          connected.filter(
+            (other) => other !== g && intersection(g.rect, other.rect) / area(other.rect) > 0.95
+          ).length >= 5
+      )
+      const seed = seeds.sort((a, b) => area(b.rect) - area(a.rect))[0]
+      if (seed) {
+        const component = [seed]
+        connectFigureGraphics(component, new Set(connected.filter((g) => g !== seed)))
+        const remaining = new Set(connected.filter((g) => !component.includes(g)))
+        const outside = []
+        while (remaining.size) {
+          const first = remaining.values().next().value
+          remaining.delete(first)
+          const group = [first]
+          connectFigureGraphics(group, remaining)
+          outside.push(union(group.map((g) => g.rect)))
+        }
+        if (
+          outside.length &&
+          outside.every(
+            (rect) =>
+              (rect[1] > page.height * 0.92 && area(rect) < page.width * page.height * 0.002) ||
+              page.lines.filter(
+                (l) => l.text.split(/\s+/).length >= 6 && intersection(lineRect(l), rect) > 0
+              ).length >= 3
+          )
+        )
+          connected = component
+      }
+    }
     // A stray legend dash below this caption needs its own substantial panel;
     // the legend box above the caption cannot lend it false support.
     connected = connected.filter(

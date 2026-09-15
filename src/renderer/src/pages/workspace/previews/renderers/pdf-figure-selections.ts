@@ -117,14 +117,18 @@ const header = (table: Table): { key: string; rows: number } | undefined => {
 // Full-width section rows remain body content and are never stripped on a join.
 const multilevelHeader = (table: Table): { key: string; rows: number } | undefined => {
   if (table.unassignedText.length || table.columnCount > 128) return
+  const schedule =
+    table.cells.some((c) => c.row === 0 && c.text === 'Study period') &&
+    table.cells.some((c) => c.row === 2 && c.column === 0 && c.text === 'TIME POINT')
   const isValue = (cell: Table['cells'][number]): boolean =>
+    (schedule && cell.text === '✓') ||
     /^(?:NA|[-–—]|[<>≤≥−+-]?\s*(?:\d|\.\d)[\d\s.,()%–−±/+-]*\*{0,2})$/.test(numericRecordText(cell))
   let recordRow = -1
   for (let row = 1; row < Math.min(table.rowCount, 9); row++) {
     const cells = table.cells.filter((c) => c.row === row)
     if (
       cells.some((c) => c.column === 0 && c.text.trim()) &&
-      cells.filter((c) => c.column > 0 && isValue(c)).length >= 2 &&
+      cells.filter((c) => c.column > 0 && isValue(c)).length >= (schedule ? 1 : 2) &&
       cells.every((c) => c.column === 0 || !c.text.trim() || isValue(c))
     ) {
       recordRow = row
@@ -191,6 +195,38 @@ const multilevelHeader = (table: Table): { key: string; rows: number } | undefin
   }
 }
 
+// Explicitly continued quotation tables have no repeated column header to strip.
+// Repeated numbered quotations and matching native column geometry establish
+// continuity; ordinary three-column prose remains separate.
+const quoteContinuation = (a: Table, b: Table): boolean => {
+  const quoted = (table: Table): boolean =>
+    table.columnCount === 3 &&
+    !table.unassignedText.length &&
+    table.rowCount >= 2 &&
+    table.cells.filter(
+      (c) =>
+        c.column === 2 &&
+        c.text.length > 80 &&
+        /^\d+(?:\s*\.\s*\d+)?\s*[a-z]?\s*[“"]/i.test(c.text.trim())
+    ).length >= 2
+  if (!quoted(a) || !quoted(b)) return false
+  return [0, 1, 2].every((column) => {
+    const regions = (table: Table): Table['cells'][number]['regions'] =>
+      table.cells.filter((c) => c.column === column && c.columnSpan === 1).flatMap((c) => c.regions)
+    const x = regions(a),
+      y = regions(b)
+    return (
+      x.length > 0 &&
+      y.length > 0 &&
+      Math.abs(Math.min(...x.map((r) => r.x)) - Math.min(...y.map((r) => r.x))) < 0.015 &&
+      (column !== 2 ||
+        Math.abs(
+          Math.max(...x.map((r) => r.x + r.width)) - Math.max(...y.map((r) => r.x + r.width))
+        ) < 0.02)
+    )
+  })
+}
+
 const joinContinuation = (prior: Selection, next: Selection): Table | undefined => {
   const last = prior.continuations?.at(-1) ?? prior
   const number = /^Table\s+([A-Z]?\d+)\b/i.exec(prior.element.caption?.text ?? '')?.[1]
@@ -210,8 +246,15 @@ const joinContinuation = (prior: Selection, next: Selection): Table | undefined 
   }
   const a = prior.combinedTable ?? prior.element.table,
     b = next.element.table
-  const aHeader = a && (header(a) ?? multilevelHeader(a)),
-    bHeader = b && (header(b) ?? multilevelHeader(b))
+  const narrative =
+    a &&
+    b &&
+    number &&
+    number.toLowerCase() === continued?.toLowerCase() &&
+    quoteContinuation(last.element.table ?? a, b)
+  const noHeader = narrative ? { key: 'continued-quotations', rows: 0 } : undefined
+  const aHeader = a && (header(a) ?? multilevelHeader(a) ?? noHeader),
+    bHeader = b && (header(b) ?? multilevelHeader(b) ?? noHeader)
   const lastRegion = last.element.regions.at(-1)!,
     nextRegion = next.element.regions[0]
   const unlabelledContinuation =

@@ -327,6 +327,8 @@ export function recoverRuledCategoryGrid(table, items, captions, rules) {
 // Accept only single-line records with indented labels and explicitly empty
 // comparison cells. Wrapped labels and bare numeric continuation rows decline.
 export function recoverNativeHeaderGrid(table, items, captions, rules) {
+  const underlined = recoverUnderlinedNumericGrid(table, items, captions, rules)
+  if (underlined) return underlined
   const review = recoverRuledReviewHeader(table, items, captions, rules)
   if (review) return review
   const events = recoverRepeatedEventGrid(table, items, captions, rules)
@@ -1354,7 +1356,15 @@ export function recoverRuledComparisonRecords(table, items, captions, rules) {
     !captions.some((c) => captionKind(c.lines[0]) === 'table')
   )
     return
-  const borders = rules
+  const joined = []
+  for (const r of rules.filter((r) => r[1] === r[3]).sort((a, b) => a[1] - b[1] || a[0] - b[0])) {
+    const previous = joined.at(-1)
+    if (previous && Math.abs(previous[1] - r[1]) < 0.5 && r[0] <= previous[2] + 0.01) {
+      previous[0] = Math.min(previous[0], r[0])
+      previous[2] = Math.max(previous[2], r[2])
+    } else joined.push([...r])
+  }
+  const borders = joined
     .filter(
       (r) =>
         r[1] === r[3] &&
@@ -1379,7 +1389,7 @@ export function recoverRuledComparisonRecords(table, items, captions, rules) {
   if (!body.length) return
   const height = body.map((i) => i.height).sort((a, b) => a - b)[Math.floor(body.length / 2)]
   const groups = groupSourceRowsWithScripts(body, height, 0.3)
-  if (!groups || groups.length < 8) return
+  if (!groups || groups.length < 5) return
   const cuts = [
     left,
     ...predicted.slice(1).map((c, n) => crop[0] + (predicted[n].rect[2] + c.rect[0]) / 2),
@@ -1400,7 +1410,7 @@ export function recoverRuledComparisonRecords(table, items, captions, rules) {
   const values = groups.map((g) => readSourceRow(g, cuts))
   if (values.some((v) => !v)) return
   const numeric = (v) =>
-    /^(?:(?:n=)?[<>≤≥−+–-]?(?:\d|\.\d)[\d.,()%/±–−+*a-z=<>≤≥-]*|\([\d.−–%-]+\)|[–—-][*†‡]?)$/i.test(
+    /^(?:(?:n=)?[<>≤≥−+–-]?(?:\d|\.\d)[\d.,()%/±–−+*a-z=<>≤≥-]*|\((?:n=)?[\d.−–%-]+\)|[–—-][*†‡]?)$/i.test(
       v
     )
   const records = values.filter((v) => v[0] && v.slice(1).filter(numeric).length >= 2)
@@ -1415,7 +1425,7 @@ export function recoverRuledComparisonRecords(table, items, captions, rules) {
       : []
   )
   if (
-    sections.length < 2 ||
+    (sections.length < 2 && records.some((v) => v.slice(1).some((s) => !s))) ||
     sections.some((n) => /^[a-z]\./.test(values[n][0])) ||
     groups.some((g) =>
       /\s\d+(?:\.\d+)?\s\d+(?:\.\d+)?(?:\s\d+(?:\.\d+)?)?$/.test(
@@ -1448,7 +1458,7 @@ export function recoverRuledComparisonRecords(table, items, captions, rules) {
         return
       // A label-only numeric category is a real record, never a continuation.
       if (
-        !/\p{L}/u.test(v[0]) ||
+        (!/\p{L}/u.test(v[0]) && !/^[%)]+$/.test(v[0])) ||
         /^[<>≤≥]/.test(v[0]) ||
         /\s\d+\s+\d+$/.test(stub.map((i) => i.text).join(' '))
       )
@@ -1472,7 +1482,9 @@ export function recoverRuledComparisonRecords(table, items, captions, rules) {
     spans = []
   const underlines = rules.filter(
     (r) =>
-      !borders.includes(r) &&
+      !borders.some(
+        (b) => Math.abs(b[1] - r[1]) < 0.5 && r[0] >= b[0] - 0.01 && r[2] <= b[2] + 0.01
+      ) &&
       r[1] === r[3] &&
       r[1] > top &&
       r[1] < divider[1] &&
@@ -1942,5 +1954,374 @@ function recoverRuledReviewHeader(table, items, captions, rules) {
     columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
     spans,
     completeSpans: true
+  }
+}
+
+// Native segmented underlines supply leaf columns; shorter underlines supply
+// parent spans. Accept only complete numeric records with unique token ownership.
+function recoverUnderlinedNumericGrid(table, items, captions, rules) {
+  const crop = table.cropRect
+  const caption = captions
+    .filter(
+      (c) =>
+        captionKind(c.lines[0]) === 'table' &&
+        c.rect[3] <= crop[1] + 40 &&
+        c.rect[2] > crop[0] &&
+        c.rect[0] < crop[2]
+    )
+    .sort((a, b) => b.rect[3] - a.rect[3])[0]
+  if (!caption || crop[1] - caption.rect[3] > 30) return
+  const bands = []
+  for (const r of rules
+    .filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[1] >= caption.rect[3] &&
+        r[1] <= crop[3] + 8 &&
+        r[0] >= crop[0] - 16 &&
+        r[2] <= crop[2] + 16
+    )
+    .sort((a, b) => a[1] - b[1] || a[0] - b[0])) {
+    let band = bands.find((b) => Math.abs(b.y - r[1]) < 0.05)
+    if (!band) bands.push((band = { y: r[1], parts: [] }))
+    band.parts.push(r)
+  }
+  const full = bands.filter(
+    (b) =>
+      b.parts[0][0] < crop[0] + Math.max(16, (crop[2] - crop[0]) * 0.05) &&
+      b.parts.at(-1)[2] > crop[2] - Math.max(16, (crop[2] - crop[0]) * 0.05) &&
+      b.parts.every((r, n) => !n || Math.abs(r[0] - b.parts[n - 1][2]) < 0.1)
+  )
+  const footer = full.at(-1)
+  if (!footer || Math.abs(footer.y - crop[3]) > 16) return
+  const leafPattern =
+    /^(?:n|%|Mean|SD|F|Utility|RI|Allgrades|Grade3-4|No|Yes|P\*|\((?:SE|SQ|TWT|SOL|WASO)\)|Arm[A-Z]:.+|HR\(95%CI\)|Pvalue|(?:Negative|Positive)\(n=\d+\))$/
+  const native = tableSourceItems(items, [crop[0], caption.rect[3], crop[2], crop[3]])
+  const candidates = [...full]
+  // A single full divider can still use predicted gutters when repeated paired
+  // population headings and their native underlines independently confirm them.
+  const population = native.filter(
+    (i) => i.rect[1] < crop[1] + 100 && /^(?:Negative|Positive)$/.test(i.text)
+  )
+  if (
+    population.length === 6 &&
+    new Set(population.map((i) => Math.round(i.baseline))).size === 1
+  ) {
+    const predicted = table.structure.objects
+      .filter((o) => o.label === 'table column')
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    if (predicted.length === 10) {
+      const cuts = [
+        crop[0],
+        ...predicted.slice(1).map((c, n) => crop[0] + (predicted[n].rect[2] + c.rect[0]) / 2),
+        crop[2]
+      ]
+      for (const b of full.filter(
+        (b) =>
+          b.parts.length === 1 && b.y > population[0].baseline && b.y - population[0].baseline < 40
+      ))
+        candidates.unshift({ ...b, parts: cuts.slice(1).map((x, c) => [cuts[c], b.y, x, b.y]) })
+    }
+  }
+  const repeated = native.filter((i) => leafPattern.test(i.text.replace(/\s/g, '')))
+  for (const anchor of repeated) {
+    const leaf = repeated.filter(
+      (i) => Math.abs(i.baseline - anchor.baseline) < anchor.height * 0.3
+    )
+    if (leaf.length < 3 || anchor.baseline - caption.rect[3] > 100) continue
+    const end = Math.max(...leaf.map((i) => i.rect[3]))
+    const boundary = full.find((b) => b.y > end && b.parts.length >= 5)
+    const first = native.filter((i) => i.rect[1] > end).sort((a, b) => a.rect[1] - b.rect[1])[0]
+    if (
+      boundary &&
+      first &&
+      first.rect[1] < boundary.y &&
+      first.rect[1] - end < anchor.height * 2 &&
+      !candidates.some((b) => Math.abs(b.y - (end + first.rect[1]) / 2) < 0.1)
+    )
+      candidates.unshift({ ...boundary, y: (end + first.rect[1]) / 2 })
+  }
+  for (const divider of candidates.filter(
+    (b) =>
+      b.parts.length >= 5 && b.parts.length <= 25 && b.y - caption.rect[3] < 120 && b !== footer
+  )) {
+    const left = Math.min(crop[0], divider.parts[0][0]),
+      right = Math.max(crop[2], divider.parts.at(-1)[2])
+    const top = caption.rect[3] + 0.1,
+      bottom = footer.y
+    const source = tableSourceItems(items, [left, top, right, bottom])
+    const heading = source.filter((i) => i.rect[3] < divider.y)
+    const times = heading.filter((i) => /^T\d+$/.test(i.text))
+    if (times.length >= 4) {
+      const counts = [...Map.groupBy(times, (i) => i.text).values()].map((g) => g.length)
+      if (counts.some((n) => n < 2 || n !== counts[0])) continue
+    }
+    const body = source.filter((i) => i.rect[1] > divider.y)
+    if (!heading.length || !body.length || !hasUniqueRecordTokens(source, [heading, body])) continue
+    const height = body.map((i) => i.height).sort((a, b) => a - b)[Math.floor(body.length / 2)]
+    const leafY = Math.max(...heading.map((i) => i.baseline))
+    const populationTier =
+      population.length === 6
+        ? Math.max(...bands.filter((b) => b.y < divider.y && b.parts.length === 3).map((b) => b.y))
+        : -Infinity
+    const leaves = heading.filter((i) =>
+      population.length === 6
+        ? i.rect[1] > populationTier
+        : Math.abs(i.baseline - leafY) < height * 0.3
+    )
+    let cuts = [left, ...divider.parts.slice(1).map((r) => r[0] - 0.1), right]
+    // Empty narrow rule segments are spacing between groups, not data columns.
+    for (let c = cuts.length - 2; c > 0; c--) {
+      if (
+        cuts[c + 1] - cuts[c] < height &&
+        ![...leaves, ...body].some(
+          (i) => (i.rect[0] + i.rect[2]) / 2 >= cuts[c] && (i.rect[0] + i.rect[2]) / 2 < cuts[c + 1]
+        )
+      )
+        cuts.splice(c, 1)
+    }
+    const leafValues = readSourceRow(leaves, cuts)
+    if (
+      !leafValues ||
+      leafValues.slice(1).filter(Boolean).length < 3 ||
+      leafValues.slice(1).filter((v) => leafPattern.test(v)).length < 3
+    )
+      continue
+    const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+    const shared =
+      leafValues.slice(1).every((v, n) => v === (n % 2 ? 'RI' : 'Utility')) &&
+      leafValues.length >= 7
+    const probability = leafValues.filter((v) => v === 'P*').length >= 2
+    const pValues = probability ? body.filter((i) => leafValues[col(i)] === 'P*') : []
+    const sharedValues = shared ? body.filter((i) => col(i) > 0 && col(i) % 2 === 0) : pValues
+    const recordBody = body.filter((i) => !sharedValues.includes(i))
+    const groups = groupSourceRowsWithScripts(recordBody, height, 0.3)
+    if (!groups || groups.length < 3) continue
+    const owned = [],
+      sections = [],
+      labelSpans = []
+    let valid = true,
+      records = 0
+    for (const g of groups) {
+      let v = readSourceRow(g, cuts)
+      if (!v && population.length === 6) {
+        const stub = g.filter((i) => i.rect[0] < cuts[1]),
+          values = g.filter((i) => i.rect[0] >= cuts[1])
+        const start = Math.min(...values.map(col)),
+          data = readSourceRow(values, cuts)
+        if (
+          stub.length === 1 &&
+          /\p{L}/u.test(stub[0].text) &&
+          start >= 2 &&
+          stub[0].rect[2] < cuts[start] &&
+          data
+        ) {
+          v = [stub[0].text.replace(/\s/g, ''), ...data.slice(1)]
+          labelSpans.push({ row: owned.length, column: 0, rowSpan: 1, colSpan: start })
+        }
+      }
+      if (!v && g.every((i) => i.rect[0] < cuts[1] && /\p{L}/u.test(i.text))) {
+        const previous = owned.at(-1)
+        if (
+          previous &&
+          sections.at(-1) &&
+          /^[a-z]/.test(g[0].text) &&
+          g[0].baseline - Math.max(...previous.map((i) => i.baseline)) < height * 1.6
+        )
+          previous.push(...g)
+        else {
+          owned.push([...g])
+          sections.push(true)
+        }
+        continue
+      }
+      if (
+        !v ||
+        v
+          .slice(1)
+          .some(
+            (s) =>
+              s &&
+              !/^(?:[<>≤≥−+–-]?\d[\d.,()<>%±−+–/:-]*(?:\(ref\))?[*#†]{0,3}|\(\d+(?:\.\d+)?\)|[—–-]|\*{1,3})$/.test(
+                s
+              )
+          )
+      ) {
+        valid = false
+        break
+      }
+      if (v.slice(1).some(Boolean)) {
+        if (!v[0]) {
+          valid = false
+          break
+        }
+        records++
+        owned.push([...g])
+        sections.push(false)
+      } else if (v[0]) {
+        const previous = owned.at(-1)
+        if (
+          previous &&
+          (/^[a-z(]/.test(v[0]) ||
+            /^(?:RateofChange|RandomEffects)$/.test(
+              previous
+                .map((i) => i.text)
+                .join('')
+                .replace(/\s/g, '') + v[0]
+            )) &&
+          Math.min(...g.map((i) => i.baseline)) - Math.max(...previous.map((i) => i.baseline)) <
+            height * 1.6
+        )
+          previous.push(...g)
+        else {
+          owned.push([...g])
+          sections.push(true)
+        }
+      } else {
+        valid = false
+        break
+      }
+    }
+    if (!valid || records < 3 || !hasUniqueRecordTokens(recordBody, owned)) continue
+    const bodyBounds = owned.map(union)
+    if (bodyBounds.some((r, n) => n && r[1] <= bodyBounds[n - 1][3])) continue
+    const tiers = bands
+      .filter(
+        (b) =>
+          b.y < divider.y &&
+          b.y > Math.min(...heading.map((i) => i.rect[1])) &&
+          b.parts.some((r) => r[0] > left + height || r[2] < right - height)
+      )
+      .map((b) => ({ ...b, parts: [...b.parts] }))
+    for (let n = tiers.length - 1; n > 0; n--) {
+      if (tiers[n].y - tiers[n - 1].y < height * 0.15) {
+        tiers[n - 1].parts.push(...tiers[n].parts)
+        tiers[n - 1].parts.sort((a, b) => a[0] - b[0])
+        tiers.splice(n, 1)
+      }
+    }
+    if (
+      tiers.length > 2 ||
+      (!tiers.length && leafValues.filter((v) => /^\([A-Z]+\)$/.test(v)).length < 4)
+    )
+      continue
+    const ys = [top, ...tiers.map((b) => b.y), divider.y]
+    const spans = labelSpans.map((s) => ({ ...s, row: s.row + ys.length - 1 })),
+      assigned = new Set()
+    if (probability) {
+      const gs = []
+      for (let c = 1; c < cuts.length - 1; c++)
+        if (leafValues[c] === 'P*') {
+          const g = pValues.filter((i) => col(i) === c)
+          if (g.length !== 1 || !/^0?\.\d+$/.test(g[0].text)) {
+            valid = false
+            break
+          }
+          gs.push(g)
+          spans.push({ row: ys.length - 1, column: c, rowSpan: owned.length, colSpan: 1 })
+        }
+      if (!valid || !hasUniqueRecordTokens(pValues, gs)) continue
+    }
+    if (shared) {
+      const sectionRows = sections.flatMap((s, n) => (s ? [n] : []))
+      if (sectionRows.length < 3 || sectionRows[0] !== 0) continue
+      const sharedGroups = []
+      for (const [index, start] of sectionRows.entries()) {
+        const end = sectionRows[index + 1] ?? owned.length
+        if (end - start < 3) {
+          valid = false
+          break
+        }
+        for (let c = 2; c < cuts.length - 1; c += 2) {
+          const g = sharedValues.filter(
+            (i) =>
+              col(i) === c &&
+              i.rect[1] > bodyBounds[start][3] &&
+              i.rect[3] <= bodyBounds[end - 1][3] + height * 0.3
+          )
+          if (g.length !== 1 || !/^\d+(?:\.\d+)?$/.test(g[0].text)) {
+            valid = false
+            break
+          }
+          sharedGroups.push(g)
+          spans.push({ row: start + ys.length, column: c, rowSpan: end - start - 1, colSpan: 1 })
+        }
+      }
+      if (!valid || !hasUniqueRecordTokens(sharedValues, sharedGroups)) continue
+    }
+    for (let row = 0; row < ys.length - 1; row++) {
+      const tokens = heading.filter((i) => i.rect[1] >= ys[row] && i.rect[3] <= ys[row + 1])
+      if (row < tiers.length) {
+        const segments = []
+        for (const r of tiers[row].parts) {
+          const p = segments.at(-1)
+          if (p && Math.abs(p[2] - r[0]) < 0.1) p[2] = r[2]
+          else segments.push([...r])
+        }
+        for (const r of segments) {
+          const owned = tokens.filter((i) => i.rect[0] >= r[0] - 0.2 && i.rect[2] <= r[2] + 0.2)
+          if (!owned.length) continue
+          const covered = cuts
+            .slice(1)
+            .flatMap((x, c) =>
+              leaves.some((i) => col(i) === c && i.rect[0] >= r[0] - 0.2 && i.rect[2] <= r[2] + 0.2)
+                ? [c]
+                : []
+            )
+          if (!covered.length || covered.some((c, n) => n && c !== covered[n - 1] + 1)) {
+            valid = false
+            break
+          }
+          spans.push({ row, column: covered[0], rowSpan: 1, colSpan: covered.length })
+          owned.forEach((i) => assigned.add(i))
+        }
+      }
+      for (const i of tokens.filter((i) => !assigned.has(i))) {
+        const c = col(i)
+        if (c < 0 || i.rect[0] < cuts[c] - 0.2 || i.rect[2] > cuts[c + 1] + 0.2) {
+          valid = false
+          break
+        }
+        assigned.add(i)
+      }
+    }
+    for (const i of heading.filter((i) => !assigned.has(i))) {
+      const c = col(i)
+      if (
+        c < 0 ||
+        i.rect[0] < cuts[c] ||
+        i.rect[2] > cuts[c + 1] ||
+        spans.some((s) => c >= s.column && c < s.column + s.colSpan)
+      ) {
+        valid = false
+        break
+      }
+      assigned.add(i)
+    }
+    if (!valid || assigned.size !== heading.length) continue
+    // A wrapped stub can cross a tier boundary without crossing a data column.
+    for (let c = 0; c < cuts.length - 1; c++) {
+      const tokens = heading.filter(
+        (i) => col(i) === c && !spans.some((s) => c >= s.column && c < s.column + s.colSpan)
+      )
+      if (tokens.length && tokens.every((i) => i.rect[0] >= cuts[c] && i.rect[2] <= cuts[c + 1]))
+        spans.push({ row: 0, column: c, rowSpan: ys.length - 1, colSpan: 1 })
+    }
+    return {
+      rows: [
+        ...ys.slice(1).map((y, n) => [left, ys[n], right, y]),
+        ...bodyBounds.map((r) => [left, r[1], right, r[3]])
+      ],
+      columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+      spans: [
+        ...spans,
+        ...sections.flatMap((s, n) =>
+          s ? [{ row: n + ys.length - 1, column: 0, rowSpan: 1, colSpan: cuts.length - 1 }] : []
+        )
+      ],
+      headerRows: ys.slice(1).map((_, n) => n),
+      completeSpans: true,
+      ownedTokens: new Set(source)
+    }
   }
 }

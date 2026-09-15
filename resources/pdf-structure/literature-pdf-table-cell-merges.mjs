@@ -195,6 +195,41 @@ export function resolveTableCellMerges({
           r[2] >= textRect[2]
       )
     const units = spanText.filter((i) => i.baseline > (spanText[0]?.baseline ?? 0) + i.height * 0.6)
+    // A confidence-interval qualifier can wrap inside one native header face.
+    // Require enclosing rules and no divider through that face; adjacent
+    // treatment/Mean (SD) header tiers must remain independent.
+    const wrappedIntervalQualifier =
+      p.origin === 'model-span' &&
+      row === 0 &&
+      rowSpan === 2 &&
+      colSpan === 1 &&
+      headerRows.includes(0) &&
+      headerRows.includes(1) &&
+      spanText.length === 2 &&
+      /^\p{L}[\p{L} -]*$/u.test(spanText[0].text) &&
+      /^\d{2}%\s*CI$/.test(spanText[1].text) &&
+      Math.abs(spanText[0].rect[0] - spanText[1].rect[0]) < spanText[0].height * 0.2 &&
+      spanText[1].baseline - spanText[0].baseline > spanText[0].height &&
+      spanText[1].baseline - spanText[0].baseline < spanText[0].height * 1.5 &&
+      [true, false].every((above) =>
+        rules.some(
+          (r) =>
+            r[1] === r[3] &&
+            r[0] <= textRect[0] &&
+            r[2] >= textRect[2] &&
+            (above
+              ? r[1] <= textRect[1] && textRect[1] - r[1] < spanText[0].height
+              : r[1] >= textRect[3] && r[1] - textRect[3] < spanText[0].height)
+        )
+      ) &&
+      !rules.some(
+        (r) =>
+          r[1] === r[3] &&
+          r[1] > textRect[1] &&
+          r[1] < textRect[3] &&
+          r[0] < textRect[2] &&
+          r[2] > textRect[0]
+      )
     const wrappedHeaderUnits =
       p.origin === 'model-span' &&
       row === 0 &&
@@ -262,6 +297,7 @@ export function resolveTableCellMerges({
       p.origin !== 'wrapped-interval-header' &&
       p.origin !== 'source-unit-header' &&
       !wrappedHeaderUnits &&
+      !wrappedIntervalQualifier &&
       !wrappedRowLabel &&
       !wrappedCountLabel &&
       new Set(

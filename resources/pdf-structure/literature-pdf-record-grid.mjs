@@ -2,7 +2,8 @@
 import {
   tableSourceItems,
   readSourceRow,
-  groupSourceRowsWithScripts
+  groupSourceRowsWithScripts,
+  hasUniqueRecordTokens
 } from './literature-pdf-source-records.mjs'
 import { union } from './literature-pdf-table-geometry.mjs'
 
@@ -796,6 +797,8 @@ function recoverRuledFollowupSeries(table, items, captions, rules) {
 // outcome and effect statistics. Use their ruled frame and repeated time labels
 // instead of splitting a shared statistic at each printed baseline.
 export function recoverFollowupGrid(table, items, captions, rules) {
+  const groups = recoverRepeatedGroupRecords(table, items, captions, rules)
+  if (groups) return groups
   const correlations = recoverGroupedCorrelationRecords(table, items, captions, rules)
   if (correlations) return correlations
   const summaries = recoverPairedSummaryRecords(table, items, captions, rules)
@@ -1660,5 +1663,137 @@ function recoverGroupedCorrelationRecords(table, items, captions, rules) {
     columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, end]),
     spans: [1, half + 1].map((r) => ({ row: r, column: 0, rowSpan: half, colSpan: 1 })),
     completeSpans: true
+  }
+}
+
+// Repeated treatment codes anchor each printed record, including a final P row.
+// A single label/statistic within a complete block owns that block's native span.
+function recoverRepeatedGroupRecords(table, items, captions, rules) {
+  if (!captions.some((c) => /^Table\s/i.test(c.lines[0]))) return
+  const [left, top, right, bottom] = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length < 5 || columns.length > 12) return
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const source = tableSourceItems(items, table.cropRect)
+  const codes = source.filter(
+    (i) => col(i) === 1 && /^(?:G[1-3]|Control|Teach back|Faradic|Ultrasound)$/.test(i.text)
+  )
+  if (codes.length < 4) return
+  const height = codes[0].height
+  const borders = rules.filter(
+    (r) => r[1] === r[3] && r[0] < left + 16 && r[2] > right - 16 && r[1] >= top && r[1] <= bottom
+  )
+  const divider = borders.filter((r) => r[1] < codes[0].rect[1]).sort((a, b) => b[1] - a[1])[0]?.[1]
+  const footer = borders
+    .filter((r) => r[1] > codes.at(-1).rect[3])
+    .sort((a, b) => b[1] - a[1])[0]?.[1]
+  if (divider === undefined || footer === undefined) return
+  const header = source.filter((i) => i.rect[3] < divider),
+    body = source.filter((i) => i.rect[1] > divider && i.rect[3] < footer)
+  const labels = groupSourceRowsWithScripts(
+    body.filter((i) => col(i) === 1),
+    height,
+    0.3
+  )
+  if (!labels) return
+  const names = labels.map((g) =>
+    g
+      .map((i) => i.text)
+      .join('')
+      .replace(/\s/g, '')
+  )
+  const size = names.findIndex((s, n) => n > 0 && s === names[0])
+  if (
+    size < 2 ||
+    size > 4 ||
+    names.length % size ||
+    names.some((s, n) => s !== names[n % size]) ||
+    new Set(names.slice(0, size)).size !== size
+  )
+    return
+  const numeric = (s) => /^(?:[<>≤≥−‑+–-]?(?:\d|\.\d)[\d.,()%±−‑+–/:a-z*<>≤≥ -]*|[—–-])$/i.test(s)
+  const ys = [
+    divider,
+    ...labels.slice(1).map((g, n) => (union(labels[n])[3] + union(g)[1]) / 2),
+    footer
+  ]
+  const row = (i) => ys.slice(1).findIndex((y) => (i.rect[1] + i.rect[3]) / 2 < y)
+  const spans = [],
+    owned = []
+  let count = 1
+  const time = header.find((i) => i.text === 'Time')
+  const underline =
+    time &&
+    rules.find(
+      (r) =>
+        r[1] === r[3] &&
+        r[1] > time.rect[3] &&
+        r[1] < divider &&
+        r[0] <= time.rect[0] &&
+        r[2] >= time.rect[2]
+    )
+  if (!header.length) return
+  const headerTop = Math.min(...header.map((i) => i.rect[1])) - 0.1
+  const headerRows = underline
+    ? [
+        [left, headerTop, right, underline[1]],
+        [left, underline[1], right, divider]
+      ]
+    : [[left, headerTop, right, divider]]
+  count = headerRows.length
+  if (underline) {
+    const children = header.filter(
+      (i) =>
+        i.rect[1] > underline[1] && i.rect[0] >= underline[0] - 1 && i.rect[2] <= underline[2] + 1
+    )
+    const cs = [...new Set(children.map(col))].sort((a, b) => a - b)
+    if (cs.length < 2 || cs.some((c, n) => n && c !== cs[n - 1] + 1)) return
+    spans.push({ row: 0, column: cs[0], rowSpan: 1, colSpan: cs.length })
+    for (let c = 0; c < columns.length; c++)
+      if (!cs.includes(c)) spans.push({ row: 0, column: c, rowSpan: 2, colSpan: 1 })
+    if (header.some((i) => i !== time && cs.includes(col(i)) && !children.includes(i))) return
+  } else if (!readSourceRow(header, cuts)) return
+  for (let start = 0; start < labels.length; start += size) {
+    for (let c = 0; c < columns.length; c++) {
+      const g = body.filter((i) => col(i) === c && row(i) >= start && row(i) < start + size)
+      if (g.some((i) => i.rect[0] < cuts[c] || i.rect[2] > cuts[c + 1])) return
+      owned.push(g)
+      if (c === 0) {
+        if (!g.length || !g.some((i) => /\p{L}/u.test(i.text))) return
+        spans.push({ row: start + count, column: 0, rowSpan: size, colSpan: 1 })
+      } else if (c >= 2) {
+        const lines = groupSourceRowsWithScripts(g, height, 0.3)
+        if (!lines) return
+        const values = lines.map((g) =>
+          g
+            .map((i) => i.text)
+            .join('')
+            .replace(/\s/g, '')
+        )
+        if (values.some((v) => !numeric(v))) return
+        if (lines.length === 1)
+          spans.push({ row: start + count, column: c, rowSpan: size, colSpan: 1 })
+        else {
+          if (c < 4 && lines.length !== size) return
+          if (new Set(lines.map((g) => row(g[0]))).size !== lines.length) return
+        }
+      }
+    }
+  }
+  if (!hasUniqueRecordTokens(source, [header, ...owned.filter((g) => g.length)])) return
+  return {
+    rows: [...headerRows, ...ys.slice(1).map((y, n) => [left, ys[n], right, y])],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    spans,
+    headerRows: headerRows.map((_, n) => n),
+    completeSpans: true,
+    ownedTokens: new Set(source)
   }
 }

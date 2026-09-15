@@ -33,6 +33,7 @@ import {
   recoverCaptionedRuledTables
 } from './literature-pdf-table-refine.mjs'
 import { deduplicateTableRegions } from './literature-pdf-table-regions.mjs'
+import { tableCaptionCropTop } from './literature-pdf-table-geometry.mjs'
 import { recoverWrappedCountTable } from './literature-pdf-wrapped-count-grid.mjs'
 import { groupTableParts } from './literature-pdf-table-group.mjs'
 import { renderPdfCrop, recoverScannedFigures } from './literature-pdf-crop.mjs'
@@ -631,8 +632,10 @@ try {
         const cropRect = [...table.cropRect]
         const caption = association.caption
         if (!acceptedTables[index]) continue
+        // Glyph outlines can extend beyond their font-metric boxes. Cut inside
+        // the measured caption/content gap instead of hugging the caption.
         if (caption && caption.rect[3] <= contentRects[index][1])
-          cropRect[1] = Math.max(cropRect[1], (caption.rect[3] + 1) * 1.5)
+          cropRect[1] = tableCaptionCropTop(table, caption.rect[3] * 1.5, rules)
         if (caption && caption.rect[1] >= contentRects[index][3])
           cropRect[3] = Math.min(cropRect[3], (caption.rect[1] - 1) * 1.5)
         for (const note of notes[index]) {

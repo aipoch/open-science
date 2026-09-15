@@ -44,6 +44,24 @@ export function hasTableEvidence(table, caption, pageItems = []) {
     return false
   const measurement = (text) => /^[-+−]?\d+(?:\.\d+)?(?:\s*\([^)]*\))?$/.test(text.trim())
   if (
+    !table.grid.some((row) => row.filter(measurement).length >= 2) &&
+    ((/Prepublication history/i.test(cropText) &&
+      /supplemental\s+material/i.test(cropText) &&
+      /doi(?:[.:]|\.org)/i.test(cropText)) ||
+      (/Acknowledgements/i.test(cropText) &&
+        table.grid.filter(
+          (row) =>
+            /^[A-Z][A-Za-z]{1,8}$/.test(row[0]) &&
+            row.slice(1).some((text) => text.split(/\s+/).length >= 2)
+        ).length >= 3) ||
+      (table.grid.every((row) => row.length <= 3) &&
+        (cropText.match(/\b(?:Department|University|Institute|College|School)\b/g) ?? []).length >=
+          5 &&
+        (cropText.match(/\b(?:UK|USA|Ukraine|Korea|Belarus|Federation)\b/g) ?? []).length >= 3))
+  )
+    return false
+
+  if (
     /Full protocol available at:/i.test(cropText) &&
     /Raw data available at:/i.test(cropText) &&
     /\S+@\S+/.test(cropText) &&

@@ -1394,3 +1394,54 @@ it.each([
     }
   }
 )
+
+it.each(['native', 'wrong-font', 'wrong-slot', 'wrong-width', 'ambiguous'])(
+  'decodes native statistical and comparison fonts with %s evidence',
+  async (variant) => {
+    const { samples } = readPdfFixture(
+      resolve(
+        'src/main/literature/pdf-structure/fixtures/native-statistical-and-comparison-glyphs.jsonl'
+      )
+    )
+    for (const sample of samples) {
+      const { font, glyph, expected } = sample
+      if (variant === 'wrong-font') font.name = 'Times-Roman'
+      if (variant === 'wrong-slot') glyph.originalCharCode = 999
+      if (variant === 'wrong-width') glyph.width += 1
+      const glyphs =
+        variant === 'ambiguous' ? [glyph, { ...glyph, originalCharCode: 998 }] : [glyph]
+      const content = { items: [{ str: glyph.unicode, fontName: 'native' }] }
+      const result = await repairPdfSymbolText({ commonObjs: { get: () => font } }, content, {
+        fnArray: [OPS.setFont, OPS.showText],
+        argsArray: [['native', 10], [glyphs]]
+      })
+      expect(result.items[0].str).toBe(variant === 'native' ? expected : glyph.unicode)
+    }
+  }
+)
+it('separates native probability and hazard-interval runs using measured glyph advances', () => {
+  const f = readPdfFixture(
+    resolve(
+      'src/main/literature/pdf-structure/fixtures/native-probability-beside-hazard-interval.jsonl'
+    )
+  )
+  const original = structuredClone(f)
+  const split = splitPdfNumericRuns(f.content, f.operators).items
+  const first = split.find(
+    (i: { str: string; transform: number[] }) =>
+      i.str === '0.177' &&
+      i.transform[4] === f.target.transform[4] &&
+      i.transform[5] === f.target.transform[5]
+  )
+  expect(first).toBeDefined()
+  const next = split[split.indexOf(first) + 1]
+  expect(next.str).toBe('0.96 (0.69–1.28)')
+  expect(next.transform[4]).toBeGreaterThan(first.transform[4] + first.width)
+  expect(next.transform[4] + next.width).toBeCloseTo(f.target.transform[4] + f.target.width, 5)
+  expect(f).toEqual(original)
+  const invalid = structuredClone(f.content)
+  invalid.items.find((i: { str: string }) => i.str === f.target.str).width += f.target.height * 3
+  expect(splitPdfNumericRuns(invalid, f.operators).items).toContainEqual(
+    expect.objectContaining({ str: f.target.str })
+  )
+})

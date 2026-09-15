@@ -158,7 +158,7 @@ export function captionKind(text) {
     .replace(/^Appendix\s+(?=(?:Figure|Fig\.|Table)\b)/i, '')
   if (/^(?:Figure|Fig\.?)\s+\d+\s+(?:but\b|\(available\b)/i.test(text)) return undefined
   if (
-    /^(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+(?:\s+and\s+(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+)?\s+(?:shows?|shown|presents?|presented|illustrates?|depicts?|reiterates?|reviews?)\b/i.test(
+    /^(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+(?:\s+and\s+(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+)?\s+(?:shows?|shown|presents?|presented|illustrates?|depicts?|represents?|reiterates?|reviews?)\b/i.test(
       text ?? ''
     )
   )

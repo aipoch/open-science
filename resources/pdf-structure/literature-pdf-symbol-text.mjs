@@ -8,7 +8,8 @@ export function splitPdfNumericRuns(content, operators) {
   const pattern = /^\d+(?:\.\d+)?\s*\(\d+\/\d+\)(?:\s+\d+(?:\.\d+)?\s*\(\d+\/\d+\))+$/
   const joinedHeader = /^(\d+\))\s+([A-Za-z][A-Za-z -]+\s*\(n)$/
   const joinedRange = /^(.+\((?:range|IQR)\))\s+(\d+(?:\.\d+)?\s*\(\d+(?:\.\d+)?)$/i
-  const spacedStatistics = /^(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?|\*{1,3})$/
+  const spacedStatistics =
+    /^(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?(?:\s*\([−–+-]?\d+(?:\.\d+)?[−–-][−–+-]?\d+(?:\.\d+)?\))?|\*{1,3})$/
   const eligible = (text) =>
     pattern.test(text.trim()) ||
     joinedHeader.test(text.trim()) ||
@@ -220,6 +221,13 @@ const publisherSymbols = new Map([
   ['MinionMathSymbols', new Map([[136, ['�', '=', 583]]])],
   ['TeX_CM_Bold_Maths_Symbols', new Map([[136, ['¼', '=', 885]]])],
   ['AdvTT454a7a89', new Map([[98, ['b', '<', 562]]])],
+  [
+    'AdvPS4731B1',
+    new Map([
+      [33, ['!', '<', 1000]],
+      [79, ['O', '>', 1000]]
+    ])
+  ],
   ['AdvPS3F4C13', new Map([[117, ['u', 'ω', 718]]])],
   [
     'AdvP0003',
@@ -275,7 +283,14 @@ const publisherSymbols = new Map([
       [53, ['5', '=', 833, 'five']]
     ])
   ],
-  ['AdvPi1', new Map([[52, ['4', '>', 1000]]])],
+  [
+    'AdvPi1',
+    new Map([
+      [52, ['4', '>', 1000]],
+      [43, ['+', '±', 1000]],
+      [119, ['w', 'χ', 552]]
+    ])
+  ],
   [
     'AdvMacMthSyN',
     new Map([
@@ -338,6 +353,8 @@ const publisherSymbols = new Map([
     'AdvPS7DA6',
     new Map([
       [36, ['$', '≥', 833]],
+      [35, ['#', '≤', 833]],
+      [53, ['5', '=', 833]],
       [44, [',', '<', 833, 'comma']]
     ])
   ],
@@ -463,6 +480,7 @@ export async function repairPdfSymbolText(page, content, operators) {
             'Ω'
           ].some((char) => item.str.includes(char)) ||
             /^[jGQ9](?:$|[\d.])|(?:^|\d)Y(?:$|\d)/.test(item.str) ||
+            ['+', 'w', '!', 'O', '#'].includes(item.str) ||
             item.str === 'e' ||
             item.str === 'm' ||
             item.str === 'u' ||
@@ -574,55 +592,60 @@ export async function repairPdfSymbolText(page, content, operators) {
           fontInfo.differences?.[121] === 'y' &&
           fontInfo.differences?.[254] === 'thorn'
         const publisher =
-          treatmentComparison && [3, 4, 254].includes(glyph.originalCharCode)
-            ? new Map([
-                [3, ['\u0015', '≥', 770]],
-                [4, ['\u0014', '≤', 770]],
-                [254, ['þ', '+', 770]]
-              ]).get(glyph.originalCharCode)
-            : alternateComparison
-              ? (new Map([
-                  [2, ['\u0015', '≥', 770]],
+          name === 'AdvP4C4E74' &&
+          Array.isArray(fontInfo.differences) &&
+          fontInfo.differences.length === 0 &&
+          glyph.originalCharCode === 254
+            ? ['þ', '+', 770]
+            : treatmentComparison && [3, 4, 254].includes(glyph.originalCharCode)
+              ? new Map([
+                  [3, ['\u0015', '≥', 770]],
                   [4, ['\u0014', '≤', 770]],
                   [254, ['þ', '+', 770]]
-                ]).get(glyph.originalCharCode) ??
-                publisherSymbols.get(name)?.get(glyph.originalCharCode))
-              : alternateGalliard
-                ? galliardComparisonSubset.get(glyph.originalCharCode)
-                : name === 'AdvP4C4E74' &&
-                    fontInfo.differences?.[1] === 'C0' &&
-                    fontInfo.differences?.[3] === 'C6' &&
-                    fontInfo.differences?.[121] === 'y' &&
-                    fontInfo.differences?.[122] === 'z' &&
-                    footnoteSubset.has(glyph.originalCharCode)
-                  ? footnoteSubset.get(glyph.originalCharCode)
-                  : // The range/comparison subset reuses slots that mean ± in other subsets.
-                    isComparisonSubset && comparisonSubset.has(glyph.originalCharCode)
-                    ? comparisonSubset.get(glyph.originalCharCode)
-                    : name === 'Universal-GreekwithMathPi' &&
-                        fontInfo.differences?.[3] === 'H11001' &&
-                        glyph.originalCharCode === 3
-                      ? ['\u0003', '+', 833]
+                ]).get(glyph.originalCharCode)
+              : alternateComparison
+                ? (new Map([
+                    [2, ['\u0015', '≥', 770]],
+                    [4, ['\u0014', '≤', 770]],
+                    [254, ['þ', '+', 770]]
+                  ]).get(glyph.originalCharCode) ??
+                  publisherSymbols.get(name)?.get(glyph.originalCharCode))
+                : alternateGalliard
+                  ? galliardComparisonSubset.get(glyph.originalCharCode)
+                  : name === 'AdvP4C4E74' &&
+                      fontInfo.differences?.[1] === 'C0' &&
+                      fontInfo.differences?.[3] === 'C6' &&
+                      fontInfo.differences?.[121] === 'y' &&
+                      fontInfo.differences?.[122] === 'z' &&
+                      footnoteSubset.has(glyph.originalCharCode)
+                    ? footnoteSubset.get(glyph.originalCharCode)
+                    : // The range/comparison subset reuses slots that mean ± in other subsets.
+                      isComparisonSubset && comparisonSubset.has(glyph.originalCharCode)
+                      ? comparisonSubset.get(glyph.originalCharCode)
                       : name === 'Universal-GreekwithMathPi' &&
-                          fontInfo.differences?.[1] === 'H11005' &&
-                          fontInfo.differences?.[2] === 'H11021' &&
-                          glyph.originalCharCode === 2
-                        ? ['\u0002', '<', 833]
-                        : name === 'AdvP4C4E74' &&
-                            fontInfo.differences?.[1] === 'C21' &&
-                            glyph.originalCharCode === 1
-                          ? ['\u0015', '≥', 770]
+                          fontInfo.differences?.[3] === 'H11001' &&
+                          glyph.originalCharCode === 3
+                        ? ['\u0003', '+', 833]
+                        : name === 'Universal-GreekwithMathPi' &&
+                            fontInfo.differences?.[1] === 'H11005' &&
+                            fontInfo.differences?.[2] === 'H11021' &&
+                            glyph.originalCharCode === 2
+                          ? ['\u0002', '<', 833]
                           : name === 'AdvP4C4E74' &&
-                              (fontInfo.differences?.[1] === 'C21' ||
-                                (fontInfo.differences?.[2] === 'C21' &&
-                                  fontInfo.differences?.[3] === 'C14' &&
-                                  fontInfo.differences?.[188] === 'onequarter') ||
-                                (fontInfo.differences?.[2] === 'C0' &&
-                                  fontInfo.differences?.[188] === 'onequarter')) &&
-                              fontInfo.differences?.[254] === 'thorn' &&
-                              glyph.originalCharCode === 254
-                            ? ['þ', '+', 770]
-                            : publisherSymbols.get(name)?.get(glyph.originalCharCode)
+                              fontInfo.differences?.[1] === 'C21' &&
+                              glyph.originalCharCode === 1
+                            ? ['\u0015', '≥', 770]
+                            : name === 'AdvP4C4E74' &&
+                                (fontInfo.differences?.[1] === 'C21' ||
+                                  (fontInfo.differences?.[2] === 'C21' &&
+                                    fontInfo.differences?.[3] === 'C14' &&
+                                    fontInfo.differences?.[188] === 'onequarter') ||
+                                  (fontInfo.differences?.[2] === 'C0' &&
+                                    fontInfo.differences?.[188] === 'onequarter')) &&
+                                fontInfo.differences?.[254] === 'thorn' &&
+                                glyph.originalCharCode === 254
+                              ? ['þ', '+', 770]
+                              : publisherSymbols.get(name)?.get(glyph.originalCharCode)
         // Subset slots vary; the embedded glyph name is authoritative when present.
         const namedUniversal =
           name === 'Universal-GreekwithMathPi' && glyph.width === 833

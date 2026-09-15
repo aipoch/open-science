@@ -332,3 +332,67 @@ it('joins source-backed multilevel continuations while preserving sections and s
     expect(groupPdfFigureSelections([a, next]), mode).toHaveLength(2)
   }
 })
+
+it('joins native assessment schedules and unheaded quotations without dropping body rows', async () => {
+  const { readPdfFixture } =
+    await import('../../../../../../main/literature/pdf-structure/read-fixture')
+  const { resolve } = await import('node:path')
+  const cases = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/native-table-continuations.jsonl')
+  )
+  for (const [name, rows] of [
+    ['schedules', 30],
+    ['quotations', 9]
+  ] as const) {
+    const results = cases[name] as PdfStructureResult[]
+    const original = structuredClone(results),
+      grouped = groupPdfFigureSelections(results)
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0].combinedTable?.rowCount).toBe(rows)
+    expect(grouped[0].continuations).toHaveLength(1)
+    expect(results).toEqual(original)
+    if (name === 'quotations') {
+      expect(grouped[0].combinedTable?.cells.map((c) => c.text)).toEqual(
+        results.flatMap((r) => r.elements[0].table!.cells.map((c) => c.text))
+      )
+      expect(copyPdfTable(grouped[0].combinedTable!, 'tsv', '')).toContain('3.1 a “And I agree')
+    }
+  }
+})
+it.each([
+  'no-caption',
+  'different-number',
+  'different-columns',
+  'ordinary-prose',
+  'unassigned',
+  'different-source',
+  'nonadjacent'
+])('leaves a narrative continuation separate with %s evidence', async (variant) => {
+  const { readPdfFixture } =
+    await import('../../../../../../main/literature/pdf-structure/read-fixture')
+  const { resolve } = await import('node:path')
+  const { quotations } = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/native-table-continuations.jsonl')
+  )
+  const next = quotations[1] as PdfStructureResult,
+    element = next.elements[0],
+    table = element.table!
+  if (variant === 'no-caption') delete element.caption
+  if (variant === 'different-number') element.caption!.text = 'Table 2 (continued)'
+  if (variant === 'different-columns')
+    table.cells
+      .filter((c) => c.column === 1)
+      .forEach((c) =>
+        c.regions.forEach((r) => {
+          r.x += 0.04
+        })
+      )
+  if (variant === 'ordinary-prose')
+    table.cells.forEach((c) => {
+      c.text = c.text.replace(/^\d.*?[“"]/, '')
+    })
+  if (variant === 'unassigned') table.unassignedText = [{ text: 'Unplaced content', regions: [] }]
+  if (variant === 'different-source') next.sourceChecksum = 'd'.repeat(64)
+  if (variant === 'nonadjacent') element.regions[0].page += 1
+  expect(groupPdfFigureSelections(quotations)).toHaveLength(2)
+})
