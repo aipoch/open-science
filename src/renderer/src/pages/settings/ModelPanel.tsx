@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
+import { motion, useReducedMotion } from 'motion/react'
 import { AlertDialog, Tabs } from 'radix-ui'
 import { Brain, Cpu, Download, ShieldCheck, Table2, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -19,6 +20,8 @@ import {
   type LocalModelSnapshot
 } from '../../../../shared/local-models'
 import { SettingsSection } from './SettingsLayout'
+
+const MotionTabsList = motion.create(Tabs.List)
 
 const size = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MiB`
 
@@ -267,23 +270,40 @@ export const ModelPanel = ({
   children: ReactNode
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const indicatorId = useId()
+  const reduceMotion = useReducedMotion()
+  const indicator = (
+    <motion.span
+      aria-hidden="true"
+      layoutId={indicatorId}
+      initial={false}
+      transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className="pointer-events-none absolute inset-x-0 -bottom-0.5 h-0.5 bg-primary"
+    />
+  )
   const tabClass =
-    'flex items-center gap-2 border-b-2 border-transparent px-1 py-3 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring'
+    'relative flex items-center gap-2 border-b-2 border-transparent px-1 py-3 text-xs text-muted-foreground data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring'
   return (
     <Tabs.Root
       value={local ? 'local' : 'agent'}
       onValueChange={(value) => onChange(value === 'local')}
     >
-      <Tabs.List aria-label={t('Models')} className="flex gap-6 border-b border-border px-5">
+      <MotionTabsList
+        layoutRoot
+        aria-label={t('Models')}
+        className="flex gap-6 border-b border-border px-5"
+      >
         <Tabs.Trigger value="agent" className={tabClass}>
           <Brain className="size-4" aria-hidden="true" />
           {t('Agent models')}
+          {!local && indicator}
         </Tabs.Trigger>
         <Tabs.Trigger value="local" className={tabClass}>
           <Cpu className="size-4" aria-hidden="true" />
           {t('Local parsing models')}
+          {local && indicator}
         </Tabs.Trigger>
-      </Tabs.List>
+      </MotionTabsList>
       <Tabs.Content value="agent">{children}</Tabs.Content>
       <Tabs.Content value="local">
         <LocalModelsPanel />
