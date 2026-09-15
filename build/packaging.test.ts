@@ -13,7 +13,7 @@ describe('packaging config', () => {
   it('keeps the macOS internal bundle name aligned with generated Helper names', () => {
     const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
     const productName = yml.match(/^productName: (.+)$/m)?.[1]
-    const bundleName = yml.match(/^    CFBundleName: (.+)$/m)?.[1]
+    const bundleName = yml.match(/^ {4}CFBundleName: (.+)$/m)?.[1]
     // Electron resolves its Helper using CFBundleName; electron-builder names it from productName.
     // Finder branding belongs in CFBundleDisplayName and dmg.contents.name instead.
     expect(productName).toBeTruthy()
