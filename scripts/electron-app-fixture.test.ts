@@ -1,10 +1,13 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { PassThrough } from 'node:stream'
+import type { ElectronApplication } from 'playwright'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   closeElectronApplicationForCleanup,
+  observeElectronFlushDiagnostics,
   STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
   suppressWorkspaceStarNudge
 } from '../e2e/fixtures/electron-app'
@@ -111,6 +114,74 @@ describe('Electron E2E cleanup', () => {
     await vi.advanceTimersByTimeAsync(150)
     await rejection
     expect(forceClose).toHaveBeenCalledOnce()
+  })
+})
+
+describe('Electron E2E flush diagnostics', () => {
+  it('collects split stdout lines after inspector loss and detaches without closing the pipe', async () => {
+    const stdout = new PassThrough()
+    const existingConsumer = vi.fn()
+    stdout.on('data', existingConsumer)
+    const evaluate = vi.fn().mockResolvedValue(undefined)
+    const record = vi.fn()
+    const stop = await observeElectronFlushDiagnostics(
+      { process: () => ({ stdout }) as ReturnType<ElectronApplication['process']>, evaluate },
+      { evaluate: vi.fn().mockResolvedValue(undefined) },
+      record
+    )
+    try {
+      evaluate.mockRejectedValue(new Error('inspector disconnected'))
+      stdout.write('ordinary application log\nE2E_FLUSH {"requestId":"one",')
+      stdout.write(
+        '"status":"renderer-received"}\nE2E_FLUSH {"requestId":"one","status":"completed"}\n'
+      )
+      expect(record.mock.calls.map(([line]) => line)).toEqual([
+        '{"requestId":"one","status":"renderer-received"}',
+        '{"requestId":"one","status":"completed"}'
+      ])
+      stop()
+      stdout.write('E2E_FLUSH late\n')
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(existingConsumer).toHaveBeenLastCalledWith(Buffer.from('E2E_FLUSH late\n'))
+      expect(record).toHaveBeenCalledTimes(2)
+      expect(stdout.destroyed).toBe(false)
+    } finally {
+      stop()
+      stdout.destroy()
+    }
+  })
+
+  it('retains the original close error when observation cannot be installed', async () => {
+    const stdout = new PassThrough()
+    const record = vi.fn()
+    const stop = await observeElectronFlushDiagnostics(
+      {
+        process: () => ({ stdout }) as ReturnType<ElectronApplication['process']>,
+        evaluate: vi.fn().mockRejectedValue(new Error('inspector unavailable'))
+      },
+      { evaluate: vi.fn() },
+      record
+    )
+    const failure = new Error('original close error')
+    try {
+      expect(record).toHaveBeenCalledWith(expect.stringContaining('observer-installation-failed'))
+      expect(() => stdout.emit('error', new Error('pipe unavailable'))).not.toThrow()
+      expect(record).toHaveBeenCalledWith(expect.stringContaining('stdout-error'))
+      await expect(
+        closeElectronApplicationForCleanup(
+          {
+            close: async () => {
+              throw failure
+            },
+            forceClose: async () => undefined
+          },
+          { gracefulTimeoutMs: 100, forcedTimeoutMs: 100, requireGraceful: true }
+        )
+      ).rejects.toBe(failure)
+    } finally {
+      stop()
+      stdout.destroy()
+    }
   })
 })
 

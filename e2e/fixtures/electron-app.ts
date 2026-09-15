@@ -1,7 +1,18 @@
 import { expect, test as base, type TestInfo } from '@playwright/test'
 import { spawn } from 'node:child_process'
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  appendFile,
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
@@ -62,6 +73,65 @@ type LaunchRoots = {
 }
 
 type ShortcutModifier = 'alt' | 'control' | 'meta' | 'shift'
+
+const observeElectronFlushDiagnostics = async (
+  application: Pick<ElectronApplication, 'process' | 'evaluate'>,
+  page: Pick<Page, 'evaluate'>,
+  record: (line: string) => void
+): Promise<() => void> => {
+  const prefix = 'E2E_FLUSH '
+  const unavailable = (status: string): void =>
+    record(JSON.stringify({ timestamp: Date.now(), requestId: '', status }))
+  const stdout = application.process().stdout
+  if (!stdout) {
+    unavailable('stdout-unavailable')
+    return () => undefined
+  }
+  const reader = createInterface({ input: stdout })
+  reader.on('line', (line) => {
+    if (line.startsWith(prefix)) record(line.slice(prefix.length))
+  })
+  reader.on('error', () => unavailable('stdout-error'))
+  try {
+    // Native stdout remains observable after Playwright disconnects the main inspector.
+    await application.evaluate(({ BrowserWindow, ipcMain }, prefix) => {
+      // The test-owned pipe can close while Electron is still stopping.
+      process.stdout.on('error', () => undefined)
+      const write = (line: string): void => {
+        try {
+          process.stdout.write(line + '\n')
+        } catch {
+          /* Diagnostics must not interrupt IPC. */
+        }
+      }
+      ipcMain.on('sessions:flush-response', (_event, response) => {
+        const { requestId, status } = response ?? {}
+        if (typeof requestId === 'string' && ['completed', 'conflict', 'failed'].includes(status)) {
+          write(prefix + JSON.stringify({ timestamp: Date.now(), requestId, status }))
+        }
+      })
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.on('console-message', ({ message }) => {
+          if (message.startsWith(prefix)) write(message)
+        })
+      }
+    }, prefix)
+    await page.evaluate((prefix) => {
+      window.api.sessions.onFlushRequest?.(({ requestId }) => {
+        console.info(
+          prefix + JSON.stringify({ timestamp: Date.now(), requestId, status: 'renderer-received' })
+        )
+      })
+    }, prefix)
+  } catch {
+    unavailable('observer-installation-failed')
+  }
+  return () => {
+    reader.close()
+    // readline pauses its input on close; preserve other consumers of Playwright's shared pipe.
+    if (stdout.listenerCount('data') > 0) stdout.resume()
+  }
+}
 
 type ElectronCleanupTarget = {
   close: () => Promise<void>
@@ -369,6 +439,8 @@ class ElectronAppHarness implements ElectronApp {
   private application: ElectronApplication | undefined
   private currentPage: Page | undefined
   private mainLogDirectory: string | undefined
+  private flushTimeline = ''
+  private stopFlushDiagnostics: (() => void) | undefined
   private fakeAgentEnabled = false
   private fakeRemoteItEnabled = false
   private readonly rendererFailures = new RendererFailureGate()
@@ -439,6 +511,12 @@ class ElectronAppHarness implements ElectronApp {
     const destination = join(evidenceRoot, name)
     if (!this.mainLogDirectory) throw new Error('Electron log directory is unavailable.')
     await copyFile(join(this.mainLogDirectory, 'main.log'), destination)
+    if (this.flushTimeline) {
+      await appendFile(
+        destination,
+        `\n--- Electron E2E flush timeline ---\n${this.flushTimeline}`
+      ).catch(() => undefined)
+    }
     return destination
   }
 
@@ -1140,6 +1218,15 @@ class ElectronAppHarness implements ElectronApp {
           : undefined
       )
       this.recordResourceTiming(timingName, performance.now() - launchStartedAt)
+      if (process.platform === 'win32' || process.env.OPEN_SCIENCE_E2E_FLUSH_DIAGNOSTICS === '1') {
+        this.stopFlushDiagnostics = await observeElectronFlushDiagnostics(
+          this.application,
+          this.currentPage,
+          (line) => {
+            this.flushTimeline += line + '\n'
+          }
+        )
+      }
     } finally {
       this.mainLogDirectory = await this.application
         .evaluate(({ app }) => app.getPath('logs'))
@@ -1227,7 +1314,10 @@ class ElectronAppHarness implements ElectronApp {
         forcedTimeoutMs: CLEANUP_FORCED_TIMEOUT_MS,
         requireGraceful
       }
-    )
+    ).finally(() => {
+      this.stopFlushDiagnostics?.()
+      this.stopFlushDiagnostics = undefined
+    })
   }
 }
 
@@ -1273,6 +1363,7 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
 
 export {
   closeElectronApplicationForCleanup,
+  observeElectronFlushDiagnostics,
   electronLaunchTarget,
   launchEnvironment,
   removeTreeForCleanup,
