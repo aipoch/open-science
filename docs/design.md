@@ -1038,6 +1038,11 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Manage lists Featured, Directory and Custom Connectors with group/status/search filters and shares the Skill management list, checkbox-only selection, bottom action dock, operation locks, inline non-modal deletion review, result feedback, and focus behavior described above. These actions persist Main Agent availability through the existing settings commands; Specialist assignments and approval policy are unchanged. Unauthenticated or credential-blocked custom Connectors cannot be enabled. Commands run sequentially and report partial completion, keeping failed targets selected for retry.
 - Bulk deletion previews custom Connector configurations only. Bundled Connectors and Connectors used by Specialists are protected. Usage must load successfully from a healthy catalog before preview and is refreshed again before confirmation executes; newly referenced targets are kept. Deletion reuses the existing cleanup workflow and journal, retains shared credentials, and reports failed targets. The preview never expands the set the user reviewed.
 
+- Native web reading in OpenCode and Claude Code offers **Once** and **This conversation**. The
+  conversation grant includes its delegated children and permits reading across websites; show
+  that scope in the approval card body before the user approves. Keep the provider response
+  one-shot so application-owned revocation remains effective. This capability does not grant
+  shell execution, web search, or arbitrary MCP access, and does not change Auto editing.
 - Remembered permission rows identify Connector tools by the current Connector display name,
   public server ID, and exact tool name. The name opens the existing Connector Settings route in
   active, policy-covered, and blocked states. Revoke accessible names also include the scope.

@@ -6205,6 +6205,12 @@
     "View installed Skill": "Ver la habilidad instalada",
     "This folder cannot be used to install packages for this R. Click Recheck and use a detected personal package folder, or use an app-managed R environment.": "No se pueden instalar paquetes de este R en esta carpeta. Haga clic en «Volver a comprobar» y utilice una carpeta personal de paquetes detectada, o utilice un entorno de R gestionado por la aplicación.",
     "If you have already set up a personal package folder in this R, select that folder here.": "Si ya ha configurado una carpeta personal de paquetes en este R, selecciónela aquí.",
-    "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "No se ha encontrado ninguna carpeta personal de paquetes para este R. Utilice un entorno de R gestionado por la aplicación, o configure una carpeta personal de paquetes en este R y haga clic en «Volver a comprobar»."
+    "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "No se ha encontrado ninguna carpeta personal de paquetes para este R. Utilice un entorno de R gestionado por la aplicación, o configure una carpeta personal de paquetes en este R y haga clic en «Volver a comprobar».",
+    "Read web pages": "Leer páginas web",
+    "Allow web reading?": "¿Permitir la lectura de páginas web?",
+    "Conversation approval allows web reading across websites for this conversation and its subagents.": "La autorización para esta conversación permite leer páginas de distintos sitios web en esta conversación y en sus subagentes.",
+    "This conversation": "Esta conversación",
+    "Remembered for this conversation": "Se recuerda para esta conversación",
+    "This conversation or this call": "Esta conversación o esta llamada"
   }
 }

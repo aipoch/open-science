@@ -6345,6 +6345,12 @@
     "View installed Skill": "Открыть установленный навык",
     "This folder cannot be used to install packages for this R. Click Recheck and use a detected personal package folder, or use an app-managed R environment.": "В эту папку нельзя устанавливать пакеты для данной среды R. Нажмите «Повторить проверку» и используйте обнаруженную личную папку пакетов либо среду R, управляемую приложением.",
     "If you have already set up a personal package folder in this R, select that folder here.": "Если вы уже настроили личную папку пакетов в этой среде R, выберите её здесь.",
-    "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "Личная папка пакетов для данной среды R не найдена. Используйте среду R, управляемую приложением, либо настройте личную папку пакетов в этой среде R и нажмите «Повторить проверку»."
+    "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "Личная папка пакетов для данной среды R не найдена. Используйте среду R, управляемую приложением, либо настройте личную папку пакетов в этой среде R и нажмите «Повторить проверку».",
+    "Read web pages": "Чтение веб-страниц",
+    "Allow web reading?": "Разрешить чтение веб-страниц?",
+    "Conversation approval allows web reading across websites for this conversation and its subagents.": "Разрешение для этого диалога позволяет читать страницы разных сайтов в этом диалоге и его субагентах.",
+    "This conversation": "Этот диалог",
+    "Remembered for this conversation": "Запомнить для этого диалога",
+    "This conversation or this call": "Этот диалог или этот вызов"
   }
 }
