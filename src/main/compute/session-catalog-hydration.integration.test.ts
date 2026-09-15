@@ -51,7 +51,7 @@ describe('production Session catalog hydration wiring', () => {
     const recoverPendingDeletions = vi.fn(async () => undefined)
     const hydrateFromSessionCatalog = vi.fn(async (loadCatalog) => loadCatalog())
     const hydration = createSessionCatalogHydration({
-      owner: () => ({ hydrateFromSessionCatalog } as never),
+      owner: () => ({ hydrateFromSessionCatalog }) as never,
       projectRecovery: { recoverPendingDeletions },
       sessionLoader: {
         loadAll: vi.fn(async () => ({
@@ -86,7 +86,7 @@ describe('production Session catalog hydration wiring', () => {
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('recovery unavailable'))
     const hydration = createSessionCatalogHydration({
-      owner: () => ({ hydrateFromSessionCatalog } as never),
+      owner: () => ({ hydrateFromSessionCatalog }) as never,
       projectRecovery: { recoverPendingDeletions },
       sessionLoader: {
         loadAll: vi.fn(async () => ({
@@ -123,9 +123,10 @@ describe('production Session catalog hydration wiring', () => {
       })
     const inspectSessionDetailsStartupSessions = vi.fn()
     const hydration = createSessionCatalogHydration({
-      owner: () => ({
-        hydrateFromSessionCatalog: async (loadCatalog: () => Promise<unknown>) => loadCatalog()
-      }) as never,
+      owner: () =>
+        ({
+          hydrateFromSessionCatalog: async (loadCatalog: () => Promise<unknown>) => loadCatalog()
+        }) as never,
       projectRecovery: { recoverPendingDeletions: vi.fn(async () => undefined) },
       sessionLoader: {
         loadAll,
