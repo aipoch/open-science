@@ -417,15 +417,18 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
             size="sm"
             onClick={() => void updateSelected(true)}
             disabled={busy || validSelectedIds.size === 0}
+            aria-busy={Boolean(pendingEnabled === true)}
           >
-            {pendingEnabled === true ? (
-              <>
-                <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />
-                {t('Enabling…')}
-              </>
-            ) : (
-              t('Enable')
-            )}
+            <span key={String(pendingEnabled === true)} className="button-feedback">
+              {pendingEnabled === true ? (
+                <>
+                  <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />
+                  {t('Enabling…')}
+                </>
+              ) : (
+                t('Enable')
+              )}
+            </span>
           </Button>
           <Button
             type="button"
@@ -433,15 +436,18 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
             size="sm"
             onClick={() => void updateSelected(false)}
             disabled={busy || validSelectedIds.size === 0}
+            aria-busy={Boolean(pendingEnabled === false)}
           >
-            {pendingEnabled === false ? (
-              <>
-                <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />
-                {t('Disabling…')}
-              </>
-            ) : (
-              t('Disable')
-            )}
+            <span key={String(pendingEnabled === false)} className="button-feedback">
+              {pendingEnabled === false ? (
+                <>
+                  <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />
+                  {t('Disabling…')}
+                </>
+              ) : (
+                t('Disable')
+              )}
+            </span>
           </Button>
           <Button
             type="button"
@@ -451,16 +457,19 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
             size="sm"
             onClick={() => void previewDeletion()}
             disabled={busy || validSelectedIds.size === 0}
+            aria-busy={Boolean(checkingDeletion)}
           >
-            {checkingDeletion ? (
-              <LoaderCircle
-                className="size-4 animate-spin motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-            ) : (
-              <Trash2 aria-hidden="true" />
-            )}
-            {t('Delete…')}
+            <span key={String(checkingDeletion)} className="button-feedback">
+              {checkingDeletion ? (
+                <LoaderCircle
+                  className="size-4 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+              ) : (
+                <Trash2 aria-hidden="true" />
+              )}
+              {t('Delete…')}
+            </span>
           </Button>
         </>
       }
@@ -585,18 +594,24 @@ const ConnectorBulkManageView = (): React.JSX.Element => {
                   event.preventDefault()
                   void deleteSelected()
                 }}
+                aria-busy={Boolean(deleteBusy)}
               >
-                {deleteBusy ? (
-                  <>
-                    <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />
-                    {t('Deleting…')}
-                  </>
-                ) : (
-                  t('Delete {{count}} Connectors', {
-                    count: deletableConnectors.length,
-                    defaultValue_one: 'Delete {{count}} Connector'
-                  })
-                )}
+                <span key={String(deleteBusy)} className="button-feedback">
+                  {deleteBusy ? (
+                    <>
+                      <LoaderCircle
+                        className="animate-spin motion-reduce:animate-none"
+                        aria-hidden
+                      />
+                      {t('Deleting…')}
+                    </>
+                  ) : (
+                    t('Delete {{count}} Connectors', {
+                      count: deletableConnectors.length,
+                      defaultValue_one: 'Delete {{count}} Connector'
+                    })
+                  )}
+                </span>
               </Button>
             }
           />

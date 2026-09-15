@@ -1009,6 +1009,7 @@
     "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported.": "Kopiert die Codex-Authentifizierung und, sofern kompatibel, die nicht geheime Loopback-Route des aktiven Anbieters in die Open Science-App-Daten. Andere globale Konfigurationen, Fähigkeiten und Sitzungen werden nicht importiert.",
     "Copy": "Kopieren",
     "Copy code": "Code kopieren",
+    "Could not copy code. Try again.": "Code konnte nicht kopiert werden. Versuchen Sie es erneut.",
     "Copy command": "Befehl kopieren",
     "Copy details": "Details kopieren",
     "Copy link": "Link kopieren",
@@ -6036,6 +6037,9 @@
     "View installed Skill": "Installierte Fähigkeit anzeigen",
     "This folder cannot be used to install packages for this R. Click Recheck and use a detected personal package folder, or use an app-managed R environment.": "In diesem Ordner können keine Pakete für dieses R installiert werden. Klicken Sie auf „Erneut prüfen“ und verwenden Sie einen erkannten persönlichen Paketordner oder eine von der App verwaltete R-Umgebung.",
     "If you have already set up a personal package folder in this R, select that folder here.": "Wenn Sie in diesem R bereits einen persönlichen Paketordner eingerichtet haben, wählen Sie diesen Ordner hier aus.",
-    "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "Für dieses R wurde kein persönlicher Paketordner gefunden. Verwenden Sie eine von der App verwaltete R-Umgebung oder richten Sie in diesem R einen persönlichen Paketordner ein und klicken Sie auf „Erneut prüfen“."
+    "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "Für dieses R wurde kein persönlicher Paketordner gefunden. Verwenden Sie eine von der App verwaltete R-Umgebung oder richten Sie in diesem R einen persönlichen Paketordner ein und klicken Sie auf „Erneut prüfen“.",
+    "{{count}} unchanged lines omitted_one": "{{count}} unveränderte Zeile ausgelassen",
+    "{{count}} unchanged lines omitted_other": "{{count}} unveränderte Zeilen ausgelassen",
+    "No newline at end of file": "Kein Zeilenumbruch am Dateiende"
   }
 }

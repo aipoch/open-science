@@ -1111,6 +1111,7 @@
     "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported.": "将 Codex 认证信息，以及兼容时当前服务商的非机密回环路由，复制到 Open Science 应用数据中。其他全局配置、技能和会话不会导入。",
     "Copy": "复制",
     "Copy code": "复制代码",
+    "Could not copy code. Try again.": "无法复制代码，请重试。",
     "Copy command": "复制命令",
     "Copy details": "复制详情",
     "Copy link": "复制链接",
@@ -5875,6 +5876,8 @@
     "View installed Skill": "查看已安装技能",
     "This folder cannot be used to install packages for this R. Click Recheck and use a detected personal package folder, or use an app-managed R environment.": "此文件夹无法用于安装这个 R 的软件包。请点击“重新检测”并使用检测到的个人软件包文件夹，或使用应用托管的 R 环境。",
     "If you have already set up a personal package folder in this R, select that folder here.": "如果您已在此 R 中设置了个人软件包文件夹，可在这里选择该文件夹。",
-    "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "未找到此 R 的个人软件包文件夹。可以使用应用托管的 R 环境；如需继续使用此 R，请先在 R 中设置个人软件包文件夹，再点击“重新检测”。"
+    "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "未找到此 R 的个人软件包文件夹。可以使用应用托管的 R 环境；如需继续使用此 R，请先在 R 中设置个人软件包文件夹，再点击“重新检测”。",
+    "{{count}} unchanged lines omitted_other": "已省略 {{count}} 行未修改内容",
+    "No newline at end of file": "文件末尾没有换行"
   }
 }

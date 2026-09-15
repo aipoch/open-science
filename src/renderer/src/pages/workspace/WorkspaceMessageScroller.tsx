@@ -1491,6 +1491,7 @@ const WorkspaceMessageScrollerImpl = ({
             onRevealed={handleMessageScrollerScroll}
           />
           <WorkspaceRunMarks
+            key={currentPresentationScopeId}
             items={presentedConversationItems}
             viewport={messageScrollerViewport}
             onRevealMessage={

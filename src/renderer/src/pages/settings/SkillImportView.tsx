@@ -227,18 +227,21 @@ const SkillImportView = ({
             onClick={() => void runPreview()}
             disabled={busy || input.trim().length === 0}
             className="shrink-0 [@media(pointer:coarse)]:min-h-11"
+            aria-busy={Boolean(operation?.kind === 'find')}
           >
-            {operation?.kind === 'find' ? (
-              <>
-                <LoaderCircle
-                  className="size-4 animate-spin motion-reduce:animate-none"
-                  aria-hidden="true"
-                />
-                {t('Finding…')}
-              </>
-            ) : (
-              t('Find skills')
-            )}
+            <span key={String(operation?.kind === 'find')} className="button-feedback">
+              {operation?.kind === 'find' ? (
+                <>
+                  <LoaderCircle
+                    className="size-4 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                  {t('Finding…')}
+                </>
+              ) : (
+                t('Find skills')
+              )}
+            </span>
           </Button>
         </div>
       </div>
@@ -319,24 +322,32 @@ const SkillImportView = ({
                               })
                             }}
                           >
-                            {operation?.kind === 'scan' &&
-                            operation.repositoryName === repository.fullName ? (
-                              <>
-                                <LoaderCircle
-                                  className="size-4 animate-spin motion-reduce:animate-none"
-                                  aria-hidden="true"
-                                />
-                                {t('Scanning…')}
-                              </>
-                            ) : scannedRepo === repository.fullName ? (
-                              scanned && scanned.length > 0 ? (
-                                t('Scanned')
+                            <span
+                              key={String(
+                                operation?.kind === 'scan' &&
+                                  operation.repositoryName === repository.fullName
+                              )}
+                              className="button-feedback"
+                            >
+                              {operation?.kind === 'scan' &&
+                              operation.repositoryName === repository.fullName ? (
+                                <>
+                                  <LoaderCircle
+                                    className="size-4 animate-spin motion-reduce:animate-none"
+                                    aria-hidden="true"
+                                  />
+                                  {t('Scanning…')}
+                                </>
+                              ) : scannedRepo === repository.fullName ? (
+                                scanned && scanned.length > 0 ? (
+                                  t('Scanned')
+                                ) : (
+                                  t('No skills found')
+                                )
                               ) : (
-                                t('No skills found')
-                              )
-                            ) : (
-                              t('Scan for skills')
-                            )}
+                                t('Scan for skills')
+                              )}
+                            </span>
                           </Button>
                         </div>
                       </li>
@@ -380,18 +391,21 @@ const SkillImportView = ({
                 onClick={() => void importSelected()}
                 disabled={busy || selected.size === 0}
                 className="self-start [@media(pointer:coarse)]:min-h-11 sm:self-auto"
+                aria-busy={Boolean(operation?.kind === 'import')}
               >
-                {operation?.kind === 'import' ? (
-                  <>
-                    <LoaderCircle
-                      className="size-4 animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                    {t('Importing…')}
-                  </>
-                ) : (
-                  t('Import selected ({{count}})', { count: selected.size })
-                )}
+                <span key={String(operation?.kind === 'import')} className="button-feedback">
+                  {operation?.kind === 'import' ? (
+                    <>
+                      <LoaderCircle
+                        className="size-4 animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                      {t('Importing…')}
+                    </>
+                  ) : (
+                    t('Import selected ({{count}})', { count: selected.size })
+                  )}
+                </span>
               </Button>
             </div>
 

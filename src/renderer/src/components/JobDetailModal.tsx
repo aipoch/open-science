@@ -7,7 +7,11 @@ import { useTranslation } from 'react-i18next'
 import type { JobSummary } from '../../../shared/compute'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { Button } from '@/components/ui/button'
-import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import {
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import { cn, formatByteSize } from '@/lib/utils'
 import { JobStatusBadge } from './JobStatusBadge'
 import { JobTerminalOutput } from './JobTerminalOutput'
@@ -637,7 +641,7 @@ export function JobDetailModal({
           >
             {/* Header */}
             <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
-              <span className="text-[14px] font-semibold">{t('Remote job details')}</span>
+              <span className={dialogTitleClassName}>{t('Remote job details')}</span>
               <Dialog.Close asChild>
                 <Button type="button" variant="ghost" size="icon-sm" aria-label={t('Close')}>
                   <X className="size-4" />

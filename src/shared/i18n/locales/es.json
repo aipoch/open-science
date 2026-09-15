@@ -1072,6 +1072,7 @@
     "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported.": "Copia la autenticación de Codex y, cuando es compatible, la ruta de loopback no secreta del proveedor activo en los datos de la aplicación Open Science. No se importan otras configuraciones globales, habilidades ni sesiones.",
     "Copy": "Copiar",
     "Copy code": "Copiar código",
+    "Could not copy code. Try again.": "No se pudo copiar el código. Inténtelo de nuevo.",
     "Copy command": "Copiar comando",
     "Copy details": "Copiar detalles",
     "Copy link": "Copiar enlace",
@@ -6205,6 +6206,10 @@
     "View installed Skill": "Ver la habilidad instalada",
     "This folder cannot be used to install packages for this R. Click Recheck and use a detected personal package folder, or use an app-managed R environment.": "No se pueden instalar paquetes de este R en esta carpeta. Haga clic en «Volver a comprobar» y utilice una carpeta personal de paquetes detectada, o utilice un entorno de R gestionado por la aplicación.",
     "If you have already set up a personal package folder in this R, select that folder here.": "Si ya ha configurado una carpeta personal de paquetes en este R, selecciónela aquí.",
-    "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "No se ha encontrado ninguna carpeta personal de paquetes para este R. Utilice un entorno de R gestionado por la aplicación, o configure una carpeta personal de paquetes en este R y haga clic en «Volver a comprobar»."
+    "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "No se ha encontrado ninguna carpeta personal de paquetes para este R. Utilice un entorno de R gestionado por la aplicación, o configure una carpeta personal de paquetes en este R y haga clic en «Volver a comprobar».",
+    "{{count}} unchanged lines omitted_one": "{{count}} línea sin cambios omitida",
+    "{{count}} unchanged lines omitted_many": "{{count}} líneas sin cambios omitidas",
+    "{{count}} unchanged lines omitted_other": "{{count}} líneas sin cambios omitidas",
+    "No newline at end of file": "Sin salto de línea al final del archivo"
   }
 }

@@ -493,6 +493,8 @@ describe('Session persistence coordinator architecture', () => {
         'setSessionEnabledComputeHosts',
         'settleMessage',
         'settleTaskCompletion',
+        'bindTaskSession',
+        'admitTaskTurn',
         'stageTaskCompletion',
         'startAttemptRuntime',
         'startContinuationAttempt',
@@ -729,6 +731,8 @@ describe('Session persistence coordinator architecture', () => {
         'saveSideChatProjection',
         'setSessionComputeConcurrencyLimit',
         'settleTaskCompletion',
+        'bindTaskSession',
+        'admitTaskTurn',
         'stageTaskCompletion',
         'setSessionDelegationPolicy',
         'setSessionEnabledComputeHosts',
@@ -803,7 +807,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(43)
+    expect(expectedSchedulerRoute.size).toBe(45)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')
@@ -952,6 +956,8 @@ describe('Session persistence coordinator architecture', () => {
         'setDelegationPolicy',
         'setEnabledComputeHosts',
         'settleTaskCompletion',
+        'bindTaskSession',
+        'admitTaskTurn',
         'stageTaskCompletion',
         'updateSessionConfiguration'
       ].sort()
@@ -1055,6 +1061,8 @@ describe('Session persistence coordinator architecture', () => {
       recoverInterruptedDelegatedWork: ['delegatedWorkOwner.recoverInterruptedDelegatedWork'],
       settleMessage: ['delegatedWorkOwner.settleMessage'],
       settleTaskCompletion: ['stateOwner.settleTaskCompletion'],
+      bindTaskSession: ['stateOwner.bindTaskSession'],
+      admitTaskTurn: ['stateOwner.admitTaskTurn'],
       stageTaskCompletion: ['stateOwner.stageTaskCompletion'],
       startMessageDispatch: ['delegatedWorkOwner.startMessageDispatch'],
       startPendingMessageTurn: ['delegatedWorkOwner.startPendingMessageTurn'],

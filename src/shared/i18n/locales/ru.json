@@ -1066,6 +1066,7 @@
     "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported.": "Копирует данные аутентификации Codex и, если это совместимо, активный локальный маршрут поставщика без секретов в данные приложения Open Science. Остальные глобальные настройки, навыки и сессии не импортируются.",
     "Copy": "Скопировать",
     "Copy code": "Скопировать код",
+    "Could not copy code. Try again.": "Не удалось скопировать код. Повторите попытку.",
     "Copy command": "Скопировать команду",
     "Copy details": "Скопировать детали",
     "Copy link": "Скопировать ссылку",
@@ -6345,6 +6346,11 @@
     "View installed Skill": "Открыть установленный навык",
     "This folder cannot be used to install packages for this R. Click Recheck and use a detected personal package folder, or use an app-managed R environment.": "В эту папку нельзя устанавливать пакеты для данной среды R. Нажмите «Повторить проверку» и используйте обнаруженную личную папку пакетов либо среду R, управляемую приложением.",
     "If you have already set up a personal package folder in this R, select that folder here.": "Если вы уже настроили личную папку пакетов в этой среде R, выберите её здесь.",
-    "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "Личная папка пакетов для данной среды R не найдена. Используйте среду R, управляемую приложением, либо настройте личную папку пакетов в этой среде R и нажмите «Повторить проверку»."
+    "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "Личная папка пакетов для данной среды R не найдена. Используйте среду R, управляемую приложением, либо настройте личную папку пакетов в этой среде R и нажмите «Повторить проверку».",
+    "{{count}} unchanged lines omitted_one": "Пропущена {{count}} неизменённая строка",
+    "{{count}} unchanged lines omitted_few": "Пропущены {{count}} неизменённые строки",
+    "{{count}} unchanged lines omitted_many": "Пропущено {{count}} неизменённых строк",
+    "{{count}} unchanged lines omitted_other": "Пропущено {{count}} неизменённой строки",
+    "No newline at end of file": "Нет перевода строки в конце файла"
   }
 }

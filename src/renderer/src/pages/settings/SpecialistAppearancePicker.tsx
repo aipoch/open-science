@@ -1,3 +1,4 @@
+import { Notice } from '@/components/notice'
 /* Hallmark · component: Specialist appearance picker · genre: modern-minimal · theme: Open Science Settings
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: uses the project semantic foreground, muted, ring, destructive, and success tokens
@@ -273,19 +274,17 @@ const SpecialistAppearancePicker = ({
                 <span>{t('Saved')}</span>
               </>
             ) : saveState === 'error' ? (
-              <>
-                <AlertCircle className="size-3.5 shrink-0 text-destructive" aria-hidden />
-                <span className="min-w-0 flex-1 text-destructive">
-                  {t('Appearance wasn’t saved. Try again.')}
-                </span>
-                <button
-                  type="button"
-                  className="min-h-9 shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-1 font-medium text-foreground underline underline-offset-2 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-px motion-reduce:active:translate-y-0 [@media(pointer:coarse)]:min-h-11"
-                  onClick={() => pendingPatch && void save(pendingPatch)}
-                >
-                  {t('Try again')}
-                </button>
-              </>
+              <Notice
+                level="error"
+                className="w-full"
+                description={t('Appearance wasn’t saved. Try again.')}
+                primaryButton={{
+                  label: t('Try again'),
+                  onClick: () => {
+                    if (pendingPatch) void save(pendingPatch)
+                  }
+                }}
+              />
             ) : null}
           </div>
         ) : null}

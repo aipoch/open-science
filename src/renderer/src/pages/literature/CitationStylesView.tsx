@@ -419,15 +419,18 @@ const CitationStylesView = ({
             aria-label={t('Delete {{style}}', { style: style.title })}
             title={t('Delete')}
             onClick={() => void deleteStyle(style.id)}
+            aria-busy={Boolean(deletingId === style.id)}
           >
-            {deletingId === style.id ? (
-              <LoaderCircle
-                className="size-4 animate-spin motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-            ) : (
-              <Trash2 className="size-4" aria-hidden="true" />
-            )}
+            <span key={String(deletingId === style.id)} className="button-feedback">
+              {deletingId === style.id ? (
+                <LoaderCircle
+                  className="size-4 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+              ) : (
+                <Trash2 className="size-4" aria-hidden="true" />
+              )}
+            </span>
           </Button>
         ) : null}
       </li>
@@ -465,16 +468,23 @@ const CitationStylesView = ({
                 if (file) void importStyle(file)
               }}
             />
-            <Button type="button" disabled={mutating} onClick={() => inputRef.current?.click()}>
-              {importing ? (
-                <LoaderCircle
-                  className="size-4 animate-spin motion-reduce:animate-none"
-                  aria-hidden="true"
-                />
-              ) : (
-                <Upload className="size-4" aria-hidden="true" />
-              )}
-              {importing ? t('Importing…') : t('Import CSL')}
+            <Button
+              type="button"
+              disabled={mutating}
+              onClick={() => inputRef.current?.click()}
+              aria-busy={Boolean(importing)}
+            >
+              <span key={String(importing)} className="button-feedback">
+                {importing ? (
+                  <LoaderCircle
+                    className="size-4 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Upload className="size-4" aria-hidden="true" />
+                )}
+                {importing ? t('Importing…') : t('Import CSL')}
+              </span>
             </Button>
           </div>
         </div>

@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { EventEmitter } from 'node:events'
 import { resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { ElectronApplication } from 'playwright'
@@ -7,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   closeElectronApplicationForCleanup,
+  installRestartPersistenceRetry,
   observeElectronFlushDiagnostics,
   STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
   suppressWorkspaceStarNudge
@@ -114,6 +116,114 @@ describe('Electron E2E cleanup', () => {
     await vi.advanceTimersByTimeAsync(150)
     await rejection
     expect(forceClose).toHaveBeenCalledOnce()
+  })
+})
+
+describe('Electron E2E restart persistence recovery', () => {
+  afterEach(() => vi.useRealTimers())
+
+  const setup = vi.fn(async () => {
+    const app = new EventEmitter()
+    const ipcMain = new EventEmitter()
+    const send = vi.fn()
+    const contents = { send }
+    const electron = { app, ipcMain, BrowserWindow: { fromId: () => ({ webContents: contents }) } }
+    const application = {
+      evaluate: async (script: (electron: unknown, arg: unknown) => unknown, arg: unknown) =>
+        script(electron, arg)
+    } as unknown as Pick<ElectronApplication, 'evaluate'>
+    await installRestartPersistenceRetry(application, 1, 100)
+    const answers = vi.fn()
+    ipcMain.on('window:close-confirm-response', answers)
+    const prompt = (): void =>
+      contents.send('window:close-confirm-request', {
+        requestId: 'confirmation',
+        variant: 'persistence-failed'
+      })
+    const respond = (requestId: string, status: string, sender: unknown = contents): boolean =>
+      ipcMain.emit('sessions:flush-response', { sender }, { requestId, status })
+    return { app, ipcMain, contents, send, answers, prompt, respond }
+  })
+
+  it('retries once only after the matching window and request finish saving', async () => {
+    const h = await setup()
+    h.contents.send('sessions:flush-request', { requestId: 'closing' })
+    expect(h.send).toHaveBeenCalledWith('sessions:flush-request', { requestId: 'closing' })
+    h.prompt()
+    expect(h.answers).toHaveBeenCalledWith(
+      { sender: h.contents },
+      {
+        requestId: 'confirmation',
+        ack: true
+      }
+    )
+    h.respond('old', 'completed')
+    h.respond('closing', 'completed', {})
+    h.contents.send('sessions:flush-request', { requestId: 'unrelated' })
+    h.respond('unrelated', 'completed')
+    await Promise.resolve()
+    expect(h.answers).toHaveBeenCalledOnce()
+    h.respond('closing', 'completed')
+    await Promise.resolve()
+    expect(h.answers).toHaveBeenLastCalledWith(
+      { sender: h.contents },
+      {
+        requestId: 'confirmation',
+        choice: 'retry'
+      }
+    )
+    expect(h.contents.send).toBe(h.send)
+    expect(h.ipcMain.listenerCount('sessions:flush-response')).toBe(0)
+    expect(h.app.listenerCount('will-quit')).toBe(0)
+    h.prompt()
+    expect(h.send).toHaveBeenLastCalledWith('window:close-confirm-request', {
+      requestId: 'confirmation',
+      variant: 'persistence-failed'
+    })
+    expect(h.answers).toHaveBeenCalledTimes(2)
+  })
+
+  it('accepts a late completion delivered just before the confirmation opens', async () => {
+    const h = await setup()
+    h.contents.send('sessions:flush-request', { requestId: 'closing' })
+    h.respond('closing', 'completed')
+    h.prompt()
+    expect(h.answers.mock.calls.at(-1)?.[1]).toMatchObject({ choice: 'retry' })
+  })
+
+  it.each(['conflict', 'failed'])('does not retry a %s acknowledgement', async (status) => {
+    const h = await setup()
+    h.contents.send('sessions:flush-request', { requestId: 'closing' })
+    h.prompt()
+    h.respond('closing', status)
+    await Promise.resolve()
+    expect(h.answers.mock.calls.at(-1)?.[1]).toMatchObject({ choice: 'cancel' })
+    expect(h.contents.send).toBe(h.send)
+  })
+
+  it('bounds missing acknowledgements and does not reuse an earlier successful flush', async () => {
+    vi.useFakeTimers()
+    const h = await setup()
+    h.contents.send('sessions:flush-request', { requestId: 'previous' })
+    h.respond('previous', 'completed')
+    h.contents.send('sessions:flush-request', { requestId: 'closing' })
+    h.prompt()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(h.answers.mock.calls.at(-1)?.[1]).toMatchObject({ choice: 'cancel' })
+    expect(h.ipcMain.listenerCount('sessions:flush-response')).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('leaves other confirmations and ordinary shutdown untouched', async () => {
+    const h = await setup()
+    h.prompt()
+    h.contents.send('sessions:flush-request', { requestId: 'closing' })
+    h.contents.send('window:close-confirm-request', { requestId: 'active', variant: 'quit' })
+    expect(h.send).toHaveBeenCalledTimes(3)
+    expect(h.answers).not.toHaveBeenCalled()
+    h.app.emit('will-quit')
+    expect(h.contents.send).toBe(h.send)
+    expect(h.ipcMain.listenerCount('sessions:flush-response')).toBe(0)
   })
 })
 

@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { X } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -178,9 +179,9 @@ export function ComputeHostRemovalDialog({
             </AlertDialog.Description>
             {deletionStatus?.blockedByJobs ? (
               <div className="mt-3 space-y-3">
-                <p role="alert" className="text-sm text-destructive">
+                <InlineNotice level="error" role="alert">
                   {t('This Host cannot be removed while Compute Jobs still need remote cleanup.')}
-                </p>
+                </InlineNotice>
                 <Button
                   type="button"
                   variant="outline"
@@ -246,9 +247,9 @@ export function ComputeHostRemovalDialog({
               </div>
             ) : null}
             {error ? (
-              <p role="alert" className="mt-3 text-sm text-destructive">
+              <InlineNotice level="error" role="alert" className="mt-3">
                 {error}
-              </p>
+              </InlineNotice>
             ) : null}
           </div>
           <div className={dialogFooterClassName}>

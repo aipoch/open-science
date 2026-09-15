@@ -1,3 +1,4 @@
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import type { TFunction } from 'i18next'
 import { ChevronDown, Eye, EyeOff } from 'lucide-react'
@@ -83,7 +84,6 @@ type ProviderFormProps = {
 }
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
-const fieldErrorClassName = 'text-xs text-destructive'
 const CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS = [
   32_000, 64_000, 128_000, 200_000, 256_000, 1_000_000
 ] as const

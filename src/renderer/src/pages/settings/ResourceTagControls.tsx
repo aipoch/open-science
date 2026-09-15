@@ -1,3 +1,4 @@
+import { Notice } from '@/components/notice'
 import { Check, Plus, Search, Tags, X } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -304,9 +305,13 @@ const ResourceTagMenu = ({
               })}
             </div>
             {error ? (
-              <div id={errorId} role="alert" className="px-2 py-1.5 text-xs text-destructive">
-                {error}
-              </div>
+              <Notice
+                id={errorId}
+                level="error"
+                role="alert"
+                className="mx-1 my-1"
+                description={error}
+              />
             ) : null}
           </PopoverContent>
         </Popover>
@@ -472,9 +477,7 @@ const ResourceTagBadges = ({
         ) : null}
       </div>
       {error ? (
-        <span role="alert" className="shrink-0 text-xs text-destructive">
-          {error}
-        </span>
+        <Notice level="error" role="alert" className="basis-full" description={error} />
       ) : null}
     </>
   )

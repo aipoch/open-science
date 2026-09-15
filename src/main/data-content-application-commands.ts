@@ -91,6 +91,12 @@ type PreviewApplicationCommandOwner = Readonly<{
 }>
 
 type SessionApplicationCommandOwner = Omit<SessionPersistenceHandlers, 'deleteSession'> & {
+  bindTaskSession(
+    request: SessionPersistence.BindTaskSessionRequest
+  ): Promise<SessionPersistence.PersistedChatSession>
+  admitTaskTurn(
+    request: SessionPersistence.AdmitTaskSessionTurnRequest
+  ): Promise<SessionPersistence.PersistedChatSession>
   stageTaskCompletion(
     request: SessionPersistence.StageTaskSessionCompletionRequest
   ): Promise<SessionPersistence.PersistedChatSession>
@@ -390,6 +396,16 @@ const dataContentApplicationCommands = Object.freeze({
     ],
     SessionPersistence.PersistedChatSession
   >('sessions:save-session', SessionPersistence.sessionApplicationCommandContracts.save),
+  sessionBindTask: defineApplicationCommand<
+    'sessions:bind-task-session',
+    readonly [request: SessionPersistence.BindTaskSessionRequest],
+    SessionPersistence.PersistedChatSession
+  >('sessions:bind-task-session'),
+  sessionAdmitTaskTurn: defineApplicationCommand<
+    'sessions:admit-task-turn',
+    readonly [request: SessionPersistence.AdmitTaskSessionTurnRequest],
+    SessionPersistence.PersistedChatSession
+  >('sessions:admit-task-turn'),
   sessionStageTaskCompletion: defineApplicationCommand<
     'sessions:stage-task-completion',
     readonly [request: SessionPersistence.StageTaskSessionCompletionRequest],
@@ -510,6 +526,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionUpdateArchive,
     dataContentApplicationCommands.sessionUnlinkPdfContext,
     dataContentApplicationCommands.sessionSave,
+    dataContentApplicationCommands.sessionBindTask,
+    dataContentApplicationCommands.sessionAdmitTaskTurn,
     dataContentApplicationCommands.sessionStageTaskCompletion,
     dataContentApplicationCommands.sessionSettleTaskCompletion,
     dataContentApplicationCommands.sessionFailTaskRun,
@@ -865,6 +883,32 @@ const registerDataContentApplicationCommands = (
               { session: result.session, originClientId }
             )
             return result.session
+          })
+        )
+      },
+      'sessions:bind-task-session': (invocation) => {
+        const originClientId = invocation.callerContext.lifecycleClientId
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            const session = await dependencies.sessions.bindTaskSession(invocation.args[0])
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId
+            })
+            return session
+          })
+        )
+      },
+      'sessions:admit-task-turn': (invocation) => {
+        const originClientId = invocation.callerContext.lifecycleClientId
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            const session = await dependencies.sessions.admitTaskTurn(invocation.args[0])
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId
+            })
+            return session
           })
         )
       },

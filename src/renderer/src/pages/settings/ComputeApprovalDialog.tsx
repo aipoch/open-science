@@ -121,7 +121,10 @@ export function ComputeApprovalDialog({
           )}
         >
           <div className={cn(dialogHeaderClassName, 'shrink-0 items-start justify-start')}>
-            <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-500" aria-hidden="true" />
+            <ShieldAlert
+              className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+              aria-hidden="true"
+            />
             <div className="min-w-0">
               <Dialog.Title className={dialogTitleClassName}>{title}</Dialog.Title>
               <Dialog.Description

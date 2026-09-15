@@ -46,9 +46,9 @@ const SUBAGENT_STATUS_LABELS = {
 
 const statusDotClassName: Record<SubagentRawStatus, string> = {
   running: 'bg-primary',
-  awaiting_user: 'bg-warning-100',
+  awaiting_user: 'bg-status-warning-surface dark:bg-status-warning-dark-surface',
   completed: 'bg-success-000',
-  cancelled: 'bg-warning-100',
+  cancelled: 'bg-status-warning-surface dark:bg-status-warning-dark-surface',
   error: 'bg-danger-000'
 }
 
@@ -244,7 +244,7 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
                       {' · '}
                       <span
                         id={`subagent-origin-warning-${session.id}-${child.frameId}`}
-                        className="text-warning-100"
+                        className="text-status-warning-foreground dark:text-status-warning-dark-foreground"
                       >
                         {t('Imported history may be incomplete')}
                       </span>
@@ -433,7 +433,7 @@ const SubagentPreview = ({
           <div className="shrink-0 border-b border-border-100 px-4 py-2 text-[11px] text-text-300">
             <span className="font-medium text-text-100">{detail.agentLabel}</span>
             {detail.originUnavailable ? (
-              <span className="text-warning-100">
+              <span className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
                 {' · '}
                 {t('Imported history may be incomplete')}
               </span>

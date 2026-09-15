@@ -4916,6 +4916,8 @@ const createApplicationModules = async (
           return context
         },
         editDetails: (request) => sessionDetailsOwner.edit(request),
+        bindTaskSession: (request) => sessionPersistenceCoordinator.bindTaskSession(request),
+        admitTaskTurn: (request) => sessionPersistenceCoordinator.admitTaskTurn(request),
         stageTaskCompletion: (request) =>
           sessionPersistenceCoordinator.stageTaskCompletion(request),
         settleTaskCompletion: (request) =>

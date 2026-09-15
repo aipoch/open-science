@@ -905,6 +905,29 @@ export type PersistedChatSession = {
   updatedAt: number
 }
 
+// Internal Task admission command; not part of the persisted Session format.
+export type BindTaskSessionRequest = Readonly<{
+  session: Pick<
+    PersistedChatSession,
+    | 'id'
+    | 'projectId'
+    | 'cwd'
+    | 'permissionProfile'
+    | 'agentFrameworkId'
+    | 'agentBackendId'
+    | 'providerSessionId'
+    | 'providerContinuityToken'
+    | 'agentConfiguration'
+    | 'updatedAt'
+  >
+  contextReset: boolean
+}>
+
+export type AdmitTaskSessionTurnRequest = Readonly<{
+  session: PersistedChatSession
+  contextReset: boolean
+}>
+
 export type StageTaskSessionCompletionRequest = Readonly<{
   projectId: string
   sessionId: string

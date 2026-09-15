@@ -8,6 +8,7 @@ import {
   type AcpTurnTokenUsage
 } from '../../shared/acp'
 import { isMediaOverflowError } from '../../shared/media-overflow'
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { createLogger, errorLogFields } from '../logger'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPermissionContext } from './permission-context'
@@ -352,11 +353,16 @@ export class AcpPromptOutcomeFinalizer {
       })
       throw error
     } finally {
+      let stopFailure: NotebookExecutionStopError | undefined
       safeCleanup('prompt preparation cleanup failed', () => handles.prepared?.close())
       if (!artifactPublished && !artifactRetryAttempted) await retryArtifact()
       try {
         await handles.disposeArtifact()
       } catch (error) {
+        if (error instanceof NotebookExecutionStopError) {
+          stopFailure = error
+          skillOutcome = 'failed'
+        }
         safeCleanup('Artifact cleanup event failed', () =>
           handles.pushEvent({
             kind: 'error',
@@ -387,6 +393,9 @@ export class AcpPromptOutcomeFinalizer {
       safeCleanup('prompt skill cleanup failed', () => handles.skill.close(skillOutcome))
       if (handles.skill.reloadDecision.kind === 'continue')
         safeCleanup('activity callback failed', handles.generationActivityChanged)
+      // A failed process stop must override provider cancellation, after every owner is released.
+      // eslint-disable-next-line no-unsafe-finally
+      if (stopFailure) throw stopFailure
     }
   }
 }

@@ -14,6 +14,8 @@ import {
   type SaveSessionManifestRequest,
   type FailTaskSessionRunRequest,
   type SettleTaskSessionCompletionRequest,
+  type BindTaskSessionRequest,
+  type AdmitTaskSessionTurnRequest,
   type StageTaskSessionCompletionRequest,
   type UpdateSessionArchiveRequest,
   type SessionRuntimeContext,
@@ -126,6 +128,10 @@ type SessionMutationRepository = {
     session: PersistedChatSession,
     expectedRevision?: number
   ): Promise<PersistedChatSession>
+  saveSessionWithBindingRepair?(
+    session: PersistedChatSession,
+    expectedRevision: number
+  ): Promise<PersistedChatSession>
   saveCommittedProjectSession(session: PersistedChatSession): Promise<void>
   deleteSession(projectId: string, sessionId: string): Promise<void>
   deleteProjectSessions(projectId: string): Promise<void>
@@ -153,6 +159,9 @@ type SessionFileIndex = {
 }
 
 type SessionProvenancePersistence = {
+  recoverLegacySessionGraph?(
+    session: PersistedChatSession
+  ): Promise<PersistedChatSession | undefined>
   validateFinalizedMessageBindings(session: PersistedChatSession): Promise<void>
   captureFinalizedMessages(session: PersistedChatSession): Promise<void>
   reconcileSessionDeletions(activeSessions: PersistedChatSession[]): Promise<void>
@@ -622,6 +631,18 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   ): Promise<SessionRuntimeContext> {
     return this.operationScheduler.runSession(command.projectId, command.sessionId, () =>
       this.stateOwner.patchRuntimeContext(command)
+    )
+  }
+
+  bindTaskSession(command: BindTaskSessionRequest): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(command.session.projectId, command.session.id, () =>
+      this.stateOwner.bindTaskSession(command)
+    )
+  }
+
+  admitTaskTurn(command: AdmitTaskSessionTurnRequest): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(command.session.projectId, command.session.id, () =>
+      this.stateOwner.admitTaskTurn(command)
     )
   }
 

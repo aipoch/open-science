@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { DiffViewer } from '@/components/diff-viewer'
 import { ErrorNotice } from '@/components/error-notice'
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import type { SkillMarketplaceUpdatePreview } from '../../../../shared/skill-marketplace'
@@ -85,20 +86,14 @@ export function SkillMarketplaceUpdateDialog({
                 }}
               />
               {preview.differences.map((file) => (
-                <details key={file.path} className="mt-2 rounded-md border border-border p-3">
-                  <summary className="cursor-pointer break-all font-mono text-xs">
-                    {file.path}
-                  </summary>
-                  {file.patch ? (
-                    <pre className="mt-3 overflow-x-auto whitespace-pre text-xs">{file.patch}</pre>
-                  ) : (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      {t(
-                        'Text comparison is unavailable for this file. It will be replaced or removed as listed above.'
-                      )}
-                    </p>
+                <DiffViewer
+                  key={file.path}
+                  name={file.path}
+                  patch={file.patch}
+                  unavailable={t(
+                    'Text comparison is unavailable for this file. It will be replaced or removed as listed above.'
                   )}
-                </details>
+                />
               ))}
               {error ? (
                 <div className="mt-3">

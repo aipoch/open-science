@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { createTwoFilesPatch } from 'diff'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SkillMarketplace, type SkillMarketplaceView } from './SkillMarketplace'
@@ -1199,7 +1200,17 @@ describe('Skill Marketplace', () => {
       added: ['references/new.md'],
       modified: ['SKILL.md'],
       removed: ['old.txt'],
-      differences: [{ path: 'SKILL.md', patch: '-old instructions\n+new instructions' }]
+      differences: [
+        {
+          path: 'SKILL.md',
+          patch: createTwoFilesPatch(
+            'SKILL.md',
+            'SKILL.md',
+            'old instructions\n',
+            'new instructions\n'
+          )
+        }
+      ]
     }
     detail.mockImplementation(async (request) => ({
       ok: true,
@@ -1217,7 +1228,12 @@ describe('Skill Marketplace', () => {
     expect(install).not.toHaveBeenCalled()
     expect(document.body.textContent).toContain('Research Specialist')
     expect(document.body.textContent).toContain('Local changes cannot be determined.')
-    expect(document.body.textContent).toContain('+new instructions')
+    expect(document.querySelector('[data-diff-kind=added] code')?.textContent).toContain(
+      'new instructions'
+    )
+    expect(document.querySelector('[data-diff-kind=removed] code')?.textContent).toContain(
+      'old instructions'
+    )
     await click('Cancel', document)
     expect(install).not.toHaveBeenCalled()
     await click('Review Skill update')

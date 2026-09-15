@@ -25,7 +25,9 @@ type ConnectorImportViewProps = {
 const kb = (bytes: number): string => `${Math.round(bytes / 1024)} KB`
 
 const diagnosticClassName = (diagnostic: ConnectorTemplateDiagnostic): string =>
-  diagnostic.severity === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-destructive'
+  diagnostic.severity === 'warning'
+    ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
+    : 'text-destructive'
 
 const transportLabel = (
   definition: ConnectorTemplateDefinition,

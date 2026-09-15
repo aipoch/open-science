@@ -94,16 +94,19 @@ export const LiteratureRecordImportDialog = ({
                   recordImport.preview.items.length === 0
                 }
                 onClick={() => onImport()}
+                aria-busy={Boolean(isImportingRecords)}
               >
-                {isImportingRecords ? (
-                  <LoaderCircle
-                    className="size-4 animate-spin motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <Upload className="size-4" aria-hidden="true" />
-                )}
-                {isImportingRecords ? t('Importing…') : t('Import references')}
+                <span key={String(isImportingRecords)} className="button-feedback">
+                  {isImportingRecords ? (
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Upload className="size-4" aria-hidden="true" />
+                  )}
+                  {isImportingRecords ? t('Importing…') : t('Import references')}
+                </span>
               </Button>
             </>
           )}

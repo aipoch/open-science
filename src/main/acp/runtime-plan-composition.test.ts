@@ -1,3 +1,6 @@
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { createPlanMcpServer } from '../session-plan/plan-mcp-server'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -24,7 +27,10 @@ import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/ses
 import { PlanService } from '../session-plan/plan-service'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
-import { AcpSessionInteractionOwner } from './session-interaction-owner'
+import {
+  AcpSessionInteractionOwner,
+  type AcpPromptSessionInteractionScope
+} from './session-interaction-owner'
 import { composeAcpRuntimePlanWorkflow } from './runtime-plan-composition'
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 import type { AcpPromptTurnMode } from './prompt-turn-workflow'
@@ -72,6 +78,7 @@ const approvedProjection = (revision: number): ActivePlanProjection => ({
 
 const createHarness = (
   options: Readonly<{
+    pauseProvider?: (sessionId: string, sequence: number) => () => void
     initialProjection?: ActivePlanProjection
     containsOriginatingMessage?: boolean
     deliveryContext?: Readonly<{
@@ -84,7 +91,7 @@ const createHarness = (
   workflow: ReturnType<typeof composeAcpRuntimePlanWorkflow>
   interactions: SessionPlanInteractionOwner
   sessionInteractions: AcpSessionInteractionOwner
-  interaction: ReturnType<AcpSessionInteractionOwner['claim']>
+  interaction: AcpPromptSessionInteractionScope
   respond: ReturnType<typeof vi.fn>
   queueSettledDecisionDelivery: ReturnType<typeof vi.fn>
   queueReviewFeedbackDelivery: ReturnType<typeof vi.fn>
@@ -95,7 +102,7 @@ const createHarness = (
   deliveryState: () => 'queued' | 'delivering' | 'accepted' | undefined
   deliveries: Readonly<{
     accept: ReturnType<typeof vi.fn>
-    begin: ReturnType<typeof vi.fn>
+    begin: ReturnType<typeof vi.fn<() => Promise<boolean>>>
     clear: ReturnType<typeof vi.fn>
     rearmUnaccepted: ReturnType<typeof vi.fn>
   }>
@@ -240,6 +247,7 @@ const createHarness = (
     } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[0],
     {
       planService: service,
+      backendGeneration: { current: { framework: { id: 'codex' } } },
       planInteractions: interactions,
       sessionInteractions,
       artifactTurns: {
@@ -251,7 +259,7 @@ const createHarness = (
       publication,
       sessionEnvironment: { projectId: vi.fn(() => 'project-1') }
     } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2],
-    { deliveries }
+    { deliveries, pauseProvider: options.pauseProvider }
   )
 
   return {
@@ -437,6 +445,234 @@ describe('ACP Session Plan approval causality', () => {
       approval: 'pending'
     })
     expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function))
+  })
+
+  it('keeps a healthy generate call blocked and returns approval without stopping the Provider', async () => {
+    const pauseProvider = vi.fn(() => vi.fn())
+    const harness = createHarness({ pauseProvider })
+    const generation = harness.workflow.call({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'generate',
+      input: {},
+      signal: new AbortController().signal
+    })
+    let finished = false
+    void generation.then(() => {
+      finished = true
+    })
+    await vi.waitFor(() =>
+      expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+    )
+    expect(finished).toBe(false)
+    expect(pauseProvider).not.toHaveBeenCalled()
+    await harness.workflow.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: 'version-1',
+      expectedRevision: 1,
+      decision: 'approved'
+    })
+    await expect(generation).resolves.toMatchObject({ projection: { approval: 'approved' } })
+    expect(pauseProvider).not.toHaveBeenCalled()
+    expect(harness.sessionInteractions.current('session-1')).toBe(harness.interaction)
+  })
+
+  it('pauses on a failed Plan tool notification even without MCP cancellation and deduplicates later disconnect', async () => {
+    const pauseProvider = vi.fn(() => vi.fn())
+    const harness = createHarness({ pauseProvider })
+    const controller = new AbortController()
+    const generation = harness.workflow.call({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'generate',
+      input: {},
+      signal: controller.signal
+    })
+    await vi.waitFor(() =>
+      expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+    )
+    harness.workflow.prompt.toolWaitFailed?.(harness.interaction)
+    expect(pauseProvider).toHaveBeenCalledOnce()
+    controller.abort()
+    await expect(generation).rejects.toThrow('transport disconnected')
+    expect(pauseProvider).toHaveBeenCalledOnce()
+    expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+    harness.interactions.clearAll('Test closed')
+  })
+
+  it('survives an actual MCP client request timeout without releasing application approval', async () => {
+    const harness = createHarness({ pauseProvider: () => vi.fn() })
+    const server = createPlanMcpServer({
+      generate: (input, signal) =>
+        harness.workflow.call({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          operation: 'generate',
+          input,
+          signal
+        }),
+      approve: vi.fn(),
+      reject: vi.fn(),
+      updateStepStatus: vi.fn()
+    })
+    const client = new Client({ name: 'plan-timeout-regression', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([client.connect(clientTransport), server.connect(serverTransport)])
+    try {
+      const content = { ...pendingProjection().document }
+      Reflect.deleteProperty(content, 'schema_version')
+      await expect(
+        client.callTool({ name: 'generate_plan', arguments: content }, undefined, { timeout: 30 })
+      ).rejects.toThrow(/timed out/i)
+      expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+      expect(harness.workflow.prompt.isProviderPaused?.(harness.interaction)).toBe(true)
+      await expect(
+        harness.workflow.call({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          operation: 'approve'
+        })
+      ).rejects.toMatchObject({ code: 'plan-review-pending' })
+      expect(harness.deliveries.begin).not.toHaveBeenCalled()
+    } finally {
+      harness.interactions.clearAll('Test closed')
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it.each(['approved', 'rejected', 'feedback'] as const)(
+    'keeps the application paused after MCP timeout and delivers %s only after Provider stop',
+    async (decision) => {
+      const dispose = vi.fn()
+      const pauseProvider = vi.fn(() => dispose)
+      const harness = createHarness({ pauseProvider })
+      const controller = new AbortController()
+      const generation = harness.workflow.call({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'generate',
+        input: {},
+        signal: controller.signal
+      })
+      await vi.waitFor(() =>
+        expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+      )
+      expect(pauseProvider).not.toHaveBeenCalled()
+      controller.abort()
+      expect(pauseProvider).toHaveBeenCalledOnce()
+      await expect(generation).rejects.toThrow('transport disconnected')
+      expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+      expect(harness.workflow.prompt.isProviderPaused?.(harness.interaction)).toBe(true)
+      const result = await harness.workflow.respond({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        ...(decision === 'feedback'
+          ? { feedback: 'Revise the analysis.' }
+          : { artifactVersionId: 'version-1', expectedRevision: 1, decision })
+      })
+      expect(result).not.toHaveProperty('deliveryCommandId') // no competing app continuation
+      expect(harness.deliveries.begin).not.toHaveBeenCalled()
+      expect(harness.deliveryState()).toBe('queued')
+      harness.getDeliveryContext.mockResolvedValue({
+        projection: await harness.workflow.projection('project-1', 'session-1'),
+        delivery: { commandId: 'receipt-1' }
+      })
+      const resumed = await harness.workflow.prompt.resumeAfterProviderStop?.(harness.interaction)
+      expect(dispose).toHaveBeenCalled()
+      expect(resumed).toBeDefined()
+      expect(harness.deliveryState()).toBe('queued')
+      await resumed?.dispatch?.()
+      expect(harness.deliveryState()).toBe('delivering')
+      expect(harness.deliveries.clear).not.toHaveBeenCalled()
+      if (decision === 'feedback') {
+        expect(resumed?.content).toContain('Revise the analysis.')
+        expect(resumed?.content).not.toContain('Use this approved Session Plan')
+        expect(resumed?.content).toContain('pending review, not approved execution context')
+        expect((await harness.workflow.projection('project-1', 'session-1'))?.approval).toBe(
+          'pending'
+        )
+      }
+      await resumed?.accepted()
+      expect(harness.deliveryState()).toBeUndefined()
+      expect(harness.deliveries.accept).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each(['approved', 'feedback'] as const)(
+    'preserves %s delivery when timeout races the live handoff claim',
+    async (decision) => {
+      const controller = new AbortController()
+      const harness = createHarness({ pauseProvider: () => vi.fn() })
+      const generation = harness.workflow
+        .call({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          operation: 'generate',
+          input: {},
+          signal: controller.signal
+        })
+        .catch((error: unknown) => error)
+      await vi.waitFor(() =>
+        expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+      )
+      const begin = harness.deliveries.begin.getMockImplementation()!
+      harness.deliveries.begin.mockImplementationOnce(async () => {
+        const claimed = await begin()
+        controller.abort()
+        return claimed
+      })
+      await harness.workflow.respond({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        ...(decision === 'feedback'
+          ? { feedback: 'Revise the plan.' }
+          : { decision, artifactVersionId: 'version-1', expectedRevision: 1 })
+      })
+      expect(await generation).toBeInstanceOf(Error)
+      expect(harness.deliveryState()).toBe('queued')
+      expect(harness.deliveries.clear).not.toHaveBeenCalled()
+      harness.getDeliveryContext.mockResolvedValue({
+        projection: await harness.workflow.projection('project-1', 'session-1'),
+        delivery: { commandId: 'receipt-1' }
+      })
+      const resumed = await harness.workflow.prompt.resumeAfterProviderStop!(harness.interaction)
+      expect(resumed).toBeDefined()
+      await resumed?.dispatch?.()
+      await resumed?.accepted()
+      expect(harness.deliveryState()).toBeUndefined()
+    }
+  )
+
+  it('waits without dispatching until a human responds and releases the wait on user cancellation', async () => {
+    const harness = createHarness({ pauseProvider: () => vi.fn() })
+    const controller = new AbortController()
+    const generation = harness.workflow.call({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'generate',
+      input: {},
+      signal: controller.signal
+    })
+    await vi.waitFor(() =>
+      expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+    )
+    controller.abort()
+    await expect(generation).rejects.toThrow('transport disconnected')
+    let resumed = false
+    const continuation = harness.workflow.prompt.resumeAfterProviderStop!(harness.interaction)
+    void continuation.then(
+      () => {
+        resumed = true
+      },
+      () => undefined
+    )
+    await Promise.resolve()
+    expect(resumed).toBe(false)
+    expect(harness.deliveries.begin).not.toHaveBeenCalled()
+    harness.workflow.capturePromptCancellation('session-1')()
+    await expect(continuation).rejects.toThrow('cancelled')
   })
 
   it('rejects concurrent Agent self-approval, then accepts one decision after routed human feedback', async () => {

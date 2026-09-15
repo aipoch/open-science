@@ -1025,6 +1025,7 @@
     "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported.": "Codex 認証と、互換性がある場合はアクティブなプロバイダーの非機密ループバックルートを Open Science のアプリデータにコピーします。他のグローバル構成、スキルおよびセッションはインポートされません。",
     "Copy": "コピー",
     "Copy code": "コードをコピーする",
+    "Could not copy code. Try again.": "コードをコピーできませんでした。もう一度お試しください。",
     "Copy command": "コマンドをコピー",
     "Copy details": "詳細をコピーする",
     "Copy link": "リンクをコピー",
@@ -5875,6 +5876,8 @@
     "View installed Skill": "インストール済みスキルを表示",
     "This folder cannot be used to install packages for this R. Click Recheck and use a detected personal package folder, or use an app-managed R environment.": "このフォルダーには、この R のパッケージをインストールできません。「再確認」をクリックして検出された個人用パッケージフォルダーを使うか、アプリ管理の R 環境を使用してください。",
     "If you have already set up a personal package folder in this R, select that folder here.": "この R で個人用パッケージフォルダーを設定済みの場合は、そのフォルダーをここで選択してください。",
-    "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "この R の個人用パッケージフォルダーが見つかりませんでした。アプリ管理の R 環境を使うか、この R で個人用パッケージフォルダーを設定してから「再確認」をクリックしてください。"
+    "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "この R の個人用パッケージフォルダーが見つかりませんでした。アプリ管理の R 環境を使うか、この R で個人用パッケージフォルダーを設定してから「再確認」をクリックしてください。",
+    "{{count}} unchanged lines omitted_other": "変更のない {{count}} 行を省略",
+    "No newline at end of file": "ファイル末尾に改行がありません"
   }
 }

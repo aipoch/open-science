@@ -772,6 +772,45 @@ describe('Session Plan MCP server', () => {
     }
   })
 
+  it('drops the previous execution binding when a replacement generation is interrupted', async () => {
+    const updateStepStatus = vi.fn(async () => ({}))
+    await withPlanMcpClient(
+      'paused-replacement-binding',
+      {
+        generate: async () => {
+          throw new Error('Provider turn paused')
+        },
+        approve: async () => ({
+          changed: true,
+          projection: {
+            artifactVersionId: 'old-version',
+            revision: 1,
+            approval: 'approved',
+            lifecycle: 'approved'
+          }
+        }),
+        reject: vi.fn(),
+        updateStepStatus
+      },
+      async (client) => {
+        await client.callTool({ name: 'generate_plan', arguments: { decision: 'approved' } })
+        await client.callTool({
+          name: 'generate_plan',
+          arguments: planGenerationArguments([VALID_PHASE])
+        })
+        await client.callTool({
+          name: 'update_step_status',
+          arguments: { title: 'Analyze', status: 'completed' }
+        })
+        expect(updateStepStatus).toHaveBeenCalledWith({
+          title: 'Analyze',
+          status: 'completed',
+          expectedArtifactVersionId: undefined
+        })
+      }
+    )
+  })
+
   it('exposes server-bound generation, decisions, and exact-title status commands', async () => {
     const generate = vi.fn().mockResolvedValue({
       projection: { artifactVersionId: 'version-1', lifecycle: 'approved' }
