@@ -6962,6 +6962,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/home/HomePage.tsx',
       'src/renderer/src/pages/settings/ArchivedPanel.tsx',
       'src/renderer/src/pages/settings/SettingsPage.tsx',
+      'src/renderer/src/pages/settings/visual-preview/preview-store.ts',
       'src/renderer/src/pages/workspace/ArtifactProvenancePanel.tsx',
       'src/renderer/src/pages/workspace/ContextWindowDialog.tsx',
       'src/renderer/src/pages/workspace/ConversationExportDialog.tsx',

@@ -8,8 +8,8 @@ import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
-type SettingsSectionProps = ComponentProps<'section'> & {
-  title: string
+type SettingsSectionProps = Omit<ComponentProps<'section'>, 'title'> & {
+  title: ReactNode
   titleId?: string
   headingAs?: 'h2' | 'h3'
   // Optional decorative glyph rendered just before the title (e.g. a language logo).
