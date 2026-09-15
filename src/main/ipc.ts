@@ -342,7 +342,7 @@ import { MarketplaceRepository } from './specialist/marketplace/repository'
 import { MarketplaceService } from './specialist/marketplace/service'
 import { MarketplaceOperationCoordinator } from './specialist/marketplace/operation-coordinator'
 import { UserSkillSpecialistPackageAdapter } from './skills/specialist-package-adapter'
-import { netFetchStandard } from './skills/net-fetch'
+import { netFetchStandard, netFetchWithManualRedirect } from './skills/net-fetch'
 import { AgentsService } from './agents/agents-service'
 import {
   CompletionGateCoordinator,
@@ -2185,7 +2185,7 @@ const createApplicationModules = async (
     repository: marketplaceRepository,
     operationCoordinator: marketplaceOperationCoordinator,
     packages: specialistPackageService,
-    fetch: netFetchStandard,
+    fetch: netFetchWithManualRedirect,
     officialSource: OFFICIAL_MARKETPLACE_SOURCE,
     getDisabledSkillIds: async () =>
       (await settingsRepository.getSettings()).disabledSkillIds ?? [],

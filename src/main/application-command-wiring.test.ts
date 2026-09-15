@@ -385,6 +385,15 @@ describe('production application command wiring', () => {
     )
   })
 
+  it('downloads Specialist Marketplace artifacts through the manual-redirect adapter', () => {
+    // GitHub Release assets always redirect, and Electron net.fetch cannot return manual redirects.
+    const marketplaceService = compact(
+      between(ipcSource, 'const marketplaceService = new MarketplaceService({', '})')
+    )
+    expect(marketplaceService).toContain('fetch: netFetchWithManualRedirect,')
+    expect(marketplaceService).not.toContain('fetch: netFetchStandard')
+  })
+
   it('holds side chat admission through the in-place update handoff', () => {
     const updateGate = compact(
       between(ipcSource, 'const durableBackendHandoffGate', 'const detectResearchBlockers')
