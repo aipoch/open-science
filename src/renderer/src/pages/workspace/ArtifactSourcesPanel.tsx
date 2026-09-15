@@ -37,10 +37,12 @@ const referencePublication = (reference: ArtifactLiteratureReference): string =>
 
 const ArtifactSourcesPanel = ({
   literature,
+  isPackageSession = false,
   versionSummary,
   formatContext
 }: {
   literature: ArtifactLiteratureManifest
+  isPackageSession?: boolean
   versionSummary?: ReactNode
   formatContext?: {
     projectId: string
@@ -403,6 +405,7 @@ const ArtifactSourcesPanel = ({
         })}
       </ol>
       <ArtifactLiteratureDetailDialog
+        snapshotOnly={isPackageSession}
         reference={selectedReference}
         onOpenChange={(open) => {
           if (!open) setSelectedReference(undefined)

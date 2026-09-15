@@ -1910,6 +1910,7 @@ const ArtifactProvenancePanel = ({
           <ArtifactSourcesPanel
             key={selectedVersionId}
             literature={literature}
+            isPackageSession={importedSession}
             versionSummary={editSummary}
             formatContext={
               item.artifactId &&
