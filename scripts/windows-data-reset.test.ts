@@ -279,21 +279,27 @@ describe.skipIf(process.platform !== 'win32')('Windows data reset', () => {
     }
   })
 
-  it('removes an ACL-protected owned legacy cache and preserves another cache', () => {
+  it('removes a legacy cache when its environment identity differs from the Windows ACL identity', () => {
     const f = fixture()
     const unrelated = join(f.profile, 'os-unrelated')
     mkdirSync(unrelated)
     writeFileSync(join(unrelated, 'keep.txt'), 'keep')
     const out = success(`
-      $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name;
+      $aclIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name;
+      $env:USERDOMAIN = 'RESET-FIXTURE';
+      $env:USERNAME = 'cache-owner';
+      $identity = 'RESET-FIXTURE\\cache-owner';
+      if ($identity -eq $aclIdentity) { throw 'Fixture identities must differ' };
       $runtime = ${quote(join(f.profile, '.open-science/runtime'))};
       $cache = Join-Path ${quote(f.profile)} (Get-CompactCacheLeaf $runtime $identity);
       New-Item -ItemType Directory -Path $cache | Out-Null;
       @{ schema=1; canonicalRoot=$runtime.ToLowerInvariant(); userIdentity=$identity } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $cache '.open-science-cache.json') -Encoding UTF8;
-      & "$env:SystemRoot\\System32\\icacls.exe" $cache /inheritance:r /grant:r ($identity + ':(OI)(CI)F') '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null;
+      & "$env:SystemRoot\\System32\\icacls.exe" $cache /inheritance:r /grant:r ($aclIdentity + ':(OI)(CI)F') '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null;
       if ($LASTEXITCODE -ne 0) { throw 'Fixture ACL setup failed' };
-      $plan = @(Get-ResetPlan ${quote(f.profile)} ${quote(f.appData)} '' $identity '' @());
+      $resolvedIdentity = Get-ResetCacheIdentity;
+      if ($resolvedIdentity -cne $identity) { throw 'Cache identity convention differs' };
+      $plan = @(Get-ResetPlan ${quote(f.profile)} ${quote(f.appData)} '' $resolvedIdentity '' @());
       ${stopped} ${confirmed}
       Invoke-Reset $plan ${quote(f.profile)} $identity;
       if (Test-Path -LiteralPath $cache) { throw 'Owned cache remains' };

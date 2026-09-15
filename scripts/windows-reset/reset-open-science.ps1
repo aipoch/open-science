@@ -161,6 +161,13 @@ function Test-TrustedManagedParent([string]$Path, [string]$UserIdentity) {
 }
 # CACHE OWNERSHIP FUNCTIONS END
 
+function Get-ResetCacheIdentity {
+  # Match cache creation and the installer; the OS identity is only used for ACL checks.
+  $parts = @($env:USERDOMAIN, $env:USERNAME) |
+    Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  return $parts -join '\'
+}
+
 function Get-ResetPath([string]$Path) {
   if ($Path -notmatch '^[A-Za-z]:[\\/]') { throw "A local absolute path is required: $Path" }
   return [IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
@@ -376,7 +383,7 @@ if ($MyInvocation.InvocationName -eq '.') { return }
 try {
   $profilePath = [Environment]::GetFolderPath('UserProfile')
   $appDataPath = [Environment]::GetFolderPath('ApplicationData')
-  $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+  $identity = Get-ResetCacheIdentity
   $plan = @(Get-ResetPlan $profilePath $appDataPath $DataRoot $identity $env:PUBLIC @($env:TEMP, $env:TMP))
   Invoke-Reset $plan $profilePath $identity -PreviewOnly:$Preview
   exit 0
