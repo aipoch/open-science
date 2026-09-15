@@ -6038,6 +6038,7 @@
     "If you have already set up a personal package folder in this R, select that folder here.": "Wenn Sie in diesem R bereits einen persönlichen Paketordner eingerichtet haben, wählen Sie diesen Ordner hier aus.",
     "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "Für dieses R wurde kein persönlicher Paketordner gefunden. Verwenden Sie eine von der App verwaltete R-Umgebung oder richten Sie in diesem R einen persönlichen Paketordner ein und klicken Sie auf „Erneut prüfen“.",
     "{{count}} unchanged lines omitted_one": "{{count}} unveränderte Zeile ausgelassen",
-    "{{count}} unchanged lines omitted_other": "{{count}} unveränderte Zeilen ausgelassen"
+    "{{count}} unchanged lines omitted_other": "{{count}} unveränderte Zeilen ausgelassen",
+    "No newline at end of file": "Kein Zeilenumbruch am Dateiende"
   }
 }

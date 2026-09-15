@@ -5,20 +5,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTwoFilesPatch } from 'diff'
 import { DiffViewer } from './diff-viewer'
 
-const harness = vi.hoisted(() => ({ plugin: undefined as unknown }))
+const harness = vi.hoisted(() => ({
+  plugin: undefined as unknown,
+  newlineLabel: 'No newline at end of file'
+}))
 vi.mock('@/components/streamdown/use-code-highlighter', () => ({
   useCodeHighlighter: () => harness.plugin
 }))
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: { count?: number }) =>
-      key.replace('{{count}}', String(options?.count))
+      key === 'No newline at end of file'
+        ? harness.newlineLabel
+        : key.replace('{{count}}', String(options?.count))
   })
 }))
 let root: Root
 let container: HTMLDivElement
 beforeEach(() => {
   harness.plugin = undefined
+  harness.newlineLabel = 'No newline at end of file'
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
@@ -73,6 +79,18 @@ describe('DiffViewer', () => {
       ).size
     ).toBe(1)
     expect(container.querySelectorAll('[data-diff-omitted]')).toHaveLength(1)
+  })
+  it('translates missing-final-newline metadata without changing source text', async () => {
+    harness.newlineLabel = '文件末尾没有换行'
+    await render(patch('old', 'new'))
+    const notices = container.querySelectorAll('[data-diff-newline-notice]')
+    expect([...notices].map((notice) => notice.textContent)).toEqual([
+      harness.newlineLabel,
+      harness.newlineLabel
+    ])
+    expect(container.textContent).not.toContain('No newline at end of file')
+    expect(container.querySelector('[data-diff-kind="removed"] code')?.textContent).toContain('old')
+    expect(container.querySelector('[data-diff-kind="added"] code')?.textContent).toContain('new')
   })
   it('counts leading and between-hunk omissions without inventing trailing context', async () => {
     const before = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join('\n')

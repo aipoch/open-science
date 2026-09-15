@@ -98,8 +98,12 @@ function DiffHunk({
         const marker = line[0]
         if (marker === '\\')
           return (
-            <div key={index} className="px-3 py-1 text-muted-foreground">
-              {line}
+            <div
+              key={index}
+              data-diff-newline-notice=""
+              className="px-3 py-1 text-muted-foreground"
+            >
+              {t('No newline at end of file')}
             </div>
           )
         const removed = marker === '-'

@@ -6208,6 +6208,7 @@
     "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "No se ha encontrado ninguna carpeta personal de paquetes para este R. Utilice un entorno de R gestionado por la aplicación, o configure una carpeta personal de paquetes en este R y haga clic en «Volver a comprobar».",
     "{{count}} unchanged lines omitted_one": "{{count}} línea sin cambios omitida",
     "{{count}} unchanged lines omitted_many": "{{count}} líneas sin cambios omitidas",
-    "{{count}} unchanged lines omitted_other": "{{count}} líneas sin cambios omitidas"
+    "{{count}} unchanged lines omitted_other": "{{count}} líneas sin cambios omitidas",
+    "No newline at end of file": "Sin salto de línea al final del archivo"
   }
 }
