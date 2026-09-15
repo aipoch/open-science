@@ -1607,6 +1607,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
         await this.cleanupProc(proc, 'cancel', { processesTerminated: result.reaped })
         return result
       })
+      // A rejected cleanup is still an unconfirmed teardown, not a permanently rejected barrier.
+      .catch(() => ({ reaped: false }))
       .then((result) => {
         // Keep an unsuccessful teardown as a barrier: neither a replacement kernel nor shutdown
         // may claim that the old process tree is gone merely because the kill attempt settled.

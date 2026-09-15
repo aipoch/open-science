@@ -1638,6 +1638,64 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     15_000
   )
 
+  it.each(['win32', 'linux'] as const)(
+    'reports rejected cancellation cleanup as unreaped on %s',
+    async (platform) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-cleanup-reject-', platform)
+      const terminated = vi.fn()
+      const cleanup = vi.fn(async () => {
+        throw new Error('sandbox cleanup rejected')
+      })
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform,
+        cancellationGraceMs: 1,
+        onTerminated: terminated,
+        processSandbox: {
+          wrap: async (invocation) => ({
+            ...invocation,
+            annotateStderr: (stderr: string) => stderr,
+            cleanup
+          })
+        }
+      })
+      try {
+        expect(
+          await executor.execute({
+            ...baseRequest(cwdDir),
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            code: 'warm'
+          })
+        ).toMatchObject({ status: 'completed', stderr: '' })
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          code: '__IGNORE_SIGINT__',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        await expect(run).rejects.toThrow('process tree could not be stopped')
+        expect.soft(terminated).toHaveBeenCalledWith('python', DEFAULT_PY_ENV)
+        await expect.soft(executor.shutdown()).resolves.toEqual({ reaped: false })
+        await expect(
+          executor.execute({
+            ...baseRequest(cwdDir),
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            code: 'again'
+          })
+        ).rejects.toThrow('process tree could not be stopped')
+      } finally {
+        await executor.shutdown().catch(() => undefined)
+      }
+    },
+    15_000
+  )
+
   it('drops and respawns the kernel when Windows cancellation cannot preserve it', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-windows-cancel-', 'win32')
     const terminated: Array<['python' | 'r' | 'repl', string]> = []

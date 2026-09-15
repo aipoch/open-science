@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, rm, rmdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import type { ArtifactFile, ArtifactWriteEncoding } from '../../shared/artifacts'
 import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
 import type {
@@ -629,6 +630,7 @@ class ArtifactTurnOwner {
 
   private async disposeTurn(turn: ArtifactTurn): Promise<void> {
     const cleanupErrors: unknown[] = []
+    let notebookStopFailure: NotebookExecutionStopError | undefined
     try {
       await this.closeWrites(turn)
     } catch (error) {
@@ -669,7 +671,10 @@ class ArtifactTurnOwner {
           )
         }
       } catch (error) {
-        cleanupErrors.push(error)
+        // The Notebook binding is already removed when its drain reports a failed stop. Preserve
+        // that failure for the Task, while releasing the completed Artifact-side ownership.
+        if (error instanceof NotebookExecutionStopError) notebookStopFailure = error
+        else cleanupErrors.push(error)
       }
       if (cleanupErrors.length === 0) {
         if (this.activeTurnsByHandoffFile.get(turn.currentRunFile) === turn) {
@@ -682,6 +687,7 @@ class ArtifactTurnOwner {
         turn.phase = 'disposed'
       }
     })
+    if (notebookStopFailure) throw notebookStopFailure
     if (cleanupErrors.length > 0) throw cleanupErrors[0]
   }
 
