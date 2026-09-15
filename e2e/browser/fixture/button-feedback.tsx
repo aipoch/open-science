@@ -1,8 +1,9 @@
 import '@/assets/main.css'
 import { useState } from 'react'
+import { LoaderCircle } from 'lucide-react'
 import { createRoot } from 'react-dom/client'
 import { initI18n, prepareI18nLocale } from '@/i18n'
-import type { Locale } from '../../../src/shared/locale'
+import { isLocale } from '../../../src/shared/locale'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
 import { ErrorNotice } from '@/components/error-notice'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
@@ -25,7 +26,8 @@ if (params.has('home')) {
   } as unknown as typeof window.api
   useProjectStore.setState({ isLoaded: true })
 }
-const locale = (params.get('locale') ?? 'en') as Locale
+const requestedLocale = params.get('locale')
+const locale = isLocale(requestedLocale) ? requestedLocale : 'en'
 await prepareI18nLocale(locale)
 initI18n(locale)
 document.documentElement.classList.toggle('dark', params.has('dark'))
@@ -79,6 +81,12 @@ export function Fixture(): React.JSX.Element {
         </div>
       </section>
       <section className="flex flex-wrap items-center gap-4" aria-label="Download states">
+        <Button disabled aria-label="Spinner fallback">
+          <span className="button-feedback">
+            <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+            {t('Installing…')}
+          </span>
+        </Button>
         {(['idle', 'saving', 'saved', 'error'] as const).map((status) => (
           <ManagedFileDownloadButton
             key={status}

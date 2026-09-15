@@ -136,3 +136,13 @@ test('fits the real Home header when the update action expands', async ({ page }
   expect(expanded.x + expanded.width).toBeLessThanOrEqual(1024)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1024)
 })
+
+for (const locale of ['unknown', '__proto__', 'constructor', 'toString']) {
+  test(`rejects unsupported fixture locale ${locale}`, async ({ page }) => {
+    const errors: string[] = []
+    page.on('pageerror', (error) => errors.push(error.message))
+    await page.goto(`/button-feedback.html?locale=${locale}`)
+    await expect(page.getByTestId('code-copy-button')).toHaveAccessibleName('Copy code')
+    expect(errors).toEqual([])
+  })
+}

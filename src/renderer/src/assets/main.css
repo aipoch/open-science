@@ -695,7 +695,8 @@
       animation: none;
     }
     .button-feedback .animate-spin {
-      animation: none;
+      /* Older controls lack motion-reduce utilities; override the higher utilities layer. */
+      animation: none !important;
     }
     .update-action-label {
       transition: none;
