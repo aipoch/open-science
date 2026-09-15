@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 
 import { terminateProcessTree } from '../process-tree'
 import { condaActivatedPath } from './runtime-paths'
+import { rscriptFor } from './environment-discovery'
 import { toErrorMessage } from '../error-message'
 
 const execFileAsync = promisify(execFile)
@@ -160,8 +161,8 @@ const assertRRuntimePaths = (
   }
 }
 
-// Verifies a materialized interpreter actually runs `<bin> --version` (spec §5 step 4 — the arm64 /
-// ad-hoc signature verification point). Rejects with the captured stderr on failure.
+// Verifies the materialized runtime: Python answers --version; R reports its managed paths. Windows
+// uses the matching Rscript entry point used by the kernel. Rejects with captured stderr on failure.
 export const verifyExecutable = async (
   bin: string,
   options: VerifyExecutableOptions = {}
@@ -169,10 +170,13 @@ export const verifyExecutable = async (
   try {
     options.signal?.throwIfAborted()
     const isR = ['r', 'r.exe', 'rscript', 'rscript.exe'].includes(basename(bin).toLowerCase())
+    // Windows kernels run the matching Rscript, so an executable R.exe alone is not verification.
+    const executable =
+      isR && (options.platform ?? process.platform) === 'win32' ? rscriptFor(bin) : bin
     let stdout = ''
     let oversized = false
     await runMicromamba(
-      [bin, ...(isR ? ['--vanilla', '--slave', '-e', R_RUNTIME_PATH_PROBE] : ['--version'])],
+      [executable, ...(isR ? ['--vanilla', '--slave', '-e', R_RUNTIME_PATH_PROBE] : ['--version'])],
       executableEnv(options),
       options.signal,
       undefined,

@@ -111,10 +111,11 @@ describe('verifyExecutable', () => {
     async () => {
       const dir = mkdtempSync(join(tmpdir(), 'os-r-path-'))
       const bin = join(dir, 'R.exe')
+      const rscript = join(dir, 'Rscript.exe')
       const prefix = 'C:\\runtime\\envs\\default-r'
       const expectedPath = condaActivatedPath(prefix, 'C:\\Windows', 'win32')
       writeFileSync(
-        bin,
+        rscript,
         `#!${process.execPath}\n` +
           `if (process.env.PATH !== process.env.EXPECTED_PATH) process.exit(19)\n` +
           `process.stdout.write([` +
@@ -123,7 +124,7 @@ describe('verifyExecutable', () => {
           `'OPEN_SCIENCE_R_LIBRARY=C:\\\\runtime\\\\envs\\\\default-r\\\\lib\\\\R\\\\library'` +
           `].join('\\n') + '\\n')\n`
       )
-      chmodSync(bin, 0o755)
+      chmodSync(rscript, 0o755)
 
       await expect(
         verifyExecutable(bin, {

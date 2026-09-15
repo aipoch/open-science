@@ -88,3 +88,60 @@ it.skipIf(process.platform !== 'win32' || !prefix)(
     await expect(discovery.rRunnable(executable)).resolves.toBe(true)
   }
 )
+it.skipIf(process.platform !== 'win32' || !prefix)(
+  'rejects a real partial x64 R installation without matching Rscript',
+  async () => {
+    const { cp } = await import('node:fs/promises')
+    const { existsSync } = await import('node:fs')
+    const { verifyExecutable } = await import('./provisioner-runtime')
+    const root = await mkdtemp(join(tmpdir(), 'os-partial-r-verification-'))
+    const rHome = join(root, 'Lib', 'R')
+    const bin = join(rHome, 'bin', 'x64')
+    try {
+      await cp(join(prefix!, 'Lib', 'R', 'bin', 'x64'), bin, {
+        recursive: true,
+        filter: (source) => !source.toLowerCase().endsWith('rscript.exe')
+      })
+      await cp(join(prefix!, 'Lib', 'R', 'library', 'base'), join(rHome, 'library', 'base'), {
+        recursive: true
+      })
+      await cp(
+        join(prefix!, 'Lib', 'R', 'library', 'compiler'),
+        join(rHome, 'library', 'compiler'),
+        { recursive: true }
+      )
+      await symlink(join(prefix!, 'Library'), join(root, 'Library'), 'junction')
+      for (const directory of ['etc', 'modules', 'share']) {
+        await symlink(join(prefix!, 'Lib', 'R', directory), join(rHome, directory), 'junction')
+      }
+      expect(existsSync(join(bin, 'Rscript.exe'))).toBe(false)
+      await expect(
+        verifyExecutable(join(bin, 'R.exe'), {
+          prefix: root,
+          platform: 'win32',
+          env: {
+            R_DEFAULT_PACKAGES: 'NULL',
+            R_LIBS_USER: join(rHome, 'library'),
+            R_USER: root,
+            HOME: root
+          }
+        })
+      ).rejects.toThrow(/Rscript\.exe/)
+      await cp(join(prefix!, 'Lib', 'R', 'bin', 'x64', 'Rscript.exe'), join(bin, 'Rscript.exe'))
+      await expect(
+        verifyExecutable(join(bin, 'R.exe'), {
+          prefix: root,
+          platform: 'win32',
+          env: {
+            R_DEFAULT_PACKAGES: 'NULL',
+            R_LIBS_USER: join(rHome, 'library'),
+            R_USER: root,
+            HOME: root
+          }
+        })
+      ).resolves.toBeUndefined()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)

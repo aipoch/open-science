@@ -71,6 +71,7 @@ import {
   managedRepairRegistryKey,
   pythonBin,
   rBin,
+  rScriptBin,
   repairRegistryPath,
   writeReadyMarker,
   writeRReadyMarker
@@ -10889,6 +10890,7 @@ describe('notebook runtime service', () => {
       const rBinPath = rBin(envPrefix(join(root, 'runtime'), DEFAULT_R_ENV))
       await mkdir(join(rBinPath, '..'), { recursive: true })
       await writeFile(rBinPath, '')
+      await writeFile(rScriptBin(envPrefix(join(root, 'runtime'), DEFAULT_R_ENV)), '')
       writeRReadyMarker(join(root, 'runtime'), DEFAULT_ENV_VERSION, 'now')
       await service.execute({ sessionId: 's', workspaceCwd: root, code: '2', language: 'r' })
       expect(provisionR).toHaveBeenCalledTimes(1)

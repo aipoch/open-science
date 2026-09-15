@@ -531,7 +531,13 @@ export const rReady = (
 ): boolean => {
   const marker = readRReadyMarker(root)
   return Boolean(
-    marker && marker.defaultEnvVersion >= expectedVersion && rMaterialized(root, platform)
+    marker &&
+    marker.defaultEnvVersion >= expectedVersion &&
+    rMaterialized(root, platform) &&
+    (platform !== 'win32' ||
+      isFile(
+        join(dirname(rBin(envPrefix(root, DEFAULT_R_ENV, platform), platform)), 'Rscript.exe')
+      ))
   )
 }
 

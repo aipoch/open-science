@@ -257,6 +257,24 @@ describe('.env-ready marker', () => {
 })
 
 describe('readiness gates', () => {
+  it.each(['', 'x64'])(
+    'requires the matching Windows Rscript for readiness in bin/%s',
+    (architecture) => {
+      const root = makeRoot()
+      const prefix = envPrefix(root, DEFAULT_R_ENV, 'win32')
+      const bin = join(prefix, 'Lib', 'R', 'bin', architecture)
+      touchBin(join(bin, 'R.exe'))
+      writeRReadyMarker(root, DEFAULT_ENV_VERSION, 'ready', '.r')
+
+      expect(rMaterialized(root, 'win32')).toBe(true)
+      expect(rReady(root, DEFAULT_ENV_VERSION, 'win32')).toBe(false)
+      touchBin(join(prefix, 'Lib', 'R', 'bin', architecture === 'x64' ? '' : 'x64', 'Rscript.exe'))
+      expect(rReady(root, DEFAULT_ENV_VERSION, 'win32')).toBe(false)
+      touchBin(join(bin, 'Rscript.exe'))
+      expect(rReady(root, DEFAULT_ENV_VERSION, 'win32')).toBe(true)
+    }
+  )
+
   it('pythonReady requires marker version >= expected and the python bin', () => {
     const root = makeRoot()
     expect(pythonReady(root, 1)).toBe(false)
@@ -271,6 +289,7 @@ describe('readiness gates', () => {
     const root = makeRoot()
     expect(rReady(root)).toBe(false)
     touchBin(rBin(envPrefix(root, DEFAULT_R_ENV)))
+    touchBin(rScriptBin(envPrefix(root, DEFAULT_R_ENV)))
     expect(rMaterialized(root)).toBe(true)
     expect(rReady(root)).toBe(false)
     writeRReadyMarker(root, DEFAULT_ENV_VERSION - 1, 'old')
