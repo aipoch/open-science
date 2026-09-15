@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
+import { validateToolArguments } from '../registry'
 import type { ToolDescriptor } from '../types'
 import { VARIANTS_GNOMAD_TOOLS } from './variants-gnomad'
 
@@ -27,6 +28,31 @@ async function run(
 }
 
 describe('variants-gnomad', () => {
+  it.each([
+    ['region_variants', 'start', 'stop', { chrom: '1' }],
+    ['mitochondrial_variants', 'region_start', 'region_stop', {}]
+  ] as const)(
+    '%s enforces the upstream coordinate ceiling',
+    async (id, startKey, stopKey, extra) => {
+      const valid = { ...extra, [startKey]: 999_999_999, [stopKey]: 999_999_999 }
+      expect(() => validateToolArguments(tool(id), valid)).not.toThrow()
+      const { variables } = await run(id, valid, {
+        data: { region: { variants: [], mitochondrial_variants: [] } }
+      })
+      expect(variables).toMatchObject({ start: 999_999_999, stop: 999_999_999 })
+
+      for (const key of [startKey, stopKey]) {
+        const invalid = { ...valid, [key]: 1_000_000_000 }
+        expect(() => validateToolArguments(tool(id), invalid)).toThrow(/999999999/)
+        const fetchImpl = vi.fn()
+        await expect(new ParserEngine({ fetchImpl }).call(tool(id), invalid, {})).rejects.toThrow(
+          /between 1 and 999999999/
+        )
+        expect(fetchImpl).not.toHaveBeenCalled()
+      }
+    }
+  )
+
   const referenceBuildCases = [
     ['exac', 'GRCh37'],
     ['gnomad_r2_1', 'GRCh37'],

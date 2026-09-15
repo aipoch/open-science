@@ -50,7 +50,8 @@ const DEFAULT_DATASET = 'gnomad_r4'
 const DEFAULT_SV_DATASET = 'gnomad_sv_r4'
 // Region queries are capped so a runaway window can't ask gnomAD for the whole genome.
 const MAX_REGION_BP = 1_000_000
-const MAX_GRAPHQL_INT = 2_147_483_647
+// The upstream region resolver requires both coordinates to be less than 1e9.
+const MAX_REGION_COORDINATE = 999_999_999
 
 // ---- GraphQL documents (adapted from upstream queries.py) ----------------------------------
 
@@ -299,9 +300,9 @@ function regionCoordinate(value: unknown, name: string): number {
     typeof value !== 'number' ||
     !Number.isInteger(value) ||
     value < 1 ||
-    value > MAX_GRAPHQL_INT
+    value > MAX_REGION_COORDINATE
   ) {
-    throw new Error(`${name} must be an integer between 1 and ${MAX_GRAPHQL_INT}`)
+    throw new Error(`${name} must be an integer between 1 and ${MAX_REGION_COORDINATE}`)
   }
   return value
 }
@@ -652,8 +653,8 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
           description:
             'Chromosome 1-22, X, or Y; an optional chr prefix and lowercase x/y are accepted'
         },
-        start: { type: 'integer', minimum: 1, maximum: MAX_GRAPHQL_INT },
-        stop: { type: 'integer', minimum: 1, maximum: MAX_GRAPHQL_INT },
+        start: { type: 'integer', minimum: 1, maximum: MAX_REGION_COORDINATE },
+        stop: { type: 'integer', minimum: 1, maximum: MAX_REGION_COORDINATE },
         dataset: { type: 'string', enum: [...DATASETS], default: DEFAULT_DATASET }
       },
       required: ['chrom', 'start', 'stop']
@@ -862,8 +863,8 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
       properties: {
         gene_symbol: { type: 'string' },
         gene_id: { type: 'string' },
-        region_start: { type: 'integer', minimum: 1, maximum: MAX_GRAPHQL_INT },
-        region_stop: { type: 'integer', minimum: 1, maximum: MAX_GRAPHQL_INT },
+        region_start: { type: 'integer', minimum: 1, maximum: MAX_REGION_COORDINATE },
+        region_stop: { type: 'integer', minimum: 1, maximum: MAX_REGION_COORDINATE },
         dataset: { type: 'string', enum: [...DATASETS], default: DEFAULT_DATASET }
       }
     },
