@@ -412,7 +412,8 @@ describe('notebook local RPC server', () => {
           'during-clear',
           'before-replace',
           'during-replace',
-          'during-close'
+          'during-close',
+          'after-close'
         ] as const
       ).map((timing) => ({ method, timing }))
     )
@@ -468,7 +469,9 @@ describe('notebook local RPC server', () => {
         })
       },
       'failed execution stop propagation'
-    ).then(async (response) => ({ status: response.status, body: await response.json() }))
+    )
+      .then(async (response) => ({ status: response.status, body: await response.json() }))
+      .catch((transportError: unknown) => ({ transportError }))
     let closing: Promise<void> | undefined
     try {
       await started.promise
@@ -492,15 +495,27 @@ describe('notebook local RPC server', () => {
           }
         })
       }
-      if (timing === 'during-close') closing = server.close()
+      if (timing === 'during-close' || timing === 'after-close') closing = server.close()
       const clearing = server.clearArtifactTurnBinding('session-1', 'turn-1')
       const rejected = expect(clearing).rejects.toBe(stopError)
+      // Hold execution until the real grace window expires to exercise slow-CI shutdown ordering.
+      if (timing === 'after-close') await closing
       failStop.resolve()
       await rejected
-      await expect(pending).resolves.toEqual({
-        status: 500,
-        body: { error: stopError.message }
-      })
+      const outcome = await pending
+      if ('transportError' in outcome) {
+        // Shutdown may close the socket before persistence and the HTTP error response finish.
+        // The turn-cleanup assertion above must still receive the exact typed stop failure.
+        expect(['during-close', 'after-close']).toContain(timing)
+        expect(outcome.transportError).toBeInstanceOf(Error)
+        const cause = (outcome.transportError as Error).cause as Error & { code?: string }
+        expect((cause?.cause as { code?: string } | undefined)?.code ?? cause?.code).toBe(
+          'UND_ERR_SOCKET'
+        )
+      } else {
+        expect(timing).not.toBe('after-close')
+        expect(outcome).toEqual({ status: 500, body: { error: stopError.message } })
+      }
     } finally {
       failStop.resolve()
       await pending
