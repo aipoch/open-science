@@ -43,7 +43,7 @@ describe('NotebookNetworkProtectionBanner', () => {
     )
     expect(
       container.querySelector('[data-testid="notebook-network-protection-banner"]')?.className
-    ).toContain('bg-bg-10')
+    ).toContain('bg-card')
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button')?.click()

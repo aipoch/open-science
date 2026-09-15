@@ -1,10 +1,11 @@
+import { Notice } from '@/components/notice'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 /* Hallmark · component: credential disclosure · genre: modern-minimal · theme: existing Settings system */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import type { TFunction } from 'i18next'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, CheckCircle2, LoaderCircle } from 'lucide-react'
+import { CheckCircle2, LoaderCircle } from 'lucide-react'
 
 import type { GitHubTokenStatus } from '../../../../shared/settings'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
@@ -181,23 +182,25 @@ const GitHubTokenControl = ({ onCancel }: { onCancel?(): void } = {}): React.JSX
           </p>
         ) : null}
         {feedback ? (
-          <>
+          feedback.kind === 'error' ? (
+            <Notice
+              id="github-token-feedback"
+              level="error"
+              role="alert"
+              description={feedbackCopy(feedback, t)}
+            >
+              <DiagnosticDetails detail={feedback.detail} />
+            </Notice>
+          ) : (
             <div
               id="github-token-feedback"
-              role={feedback.kind === 'error' ? 'alert' : 'status'}
-              className={`flex items-start gap-2 text-xs ${
-                feedback.kind === 'error' ? 'text-danger-000' : 'text-primary'
-              }`}
+              role="status"
+              className="flex items-start gap-2 text-xs text-primary"
             >
-              {feedback.kind === 'error' ? (
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-              ) : (
-                <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-              )}
+              <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
               <p>{feedbackCopy(feedback, t)}</p>
             </div>
-            {feedback.kind === 'error' ? <DiagnosticDetails detail={feedback.detail} /> : null}
-          </>
+          )
         ) : null}
       </div>
 

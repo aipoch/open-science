@@ -425,11 +425,11 @@ Active-dialog menus and other foreground child layers retain their own ordering.
   contenteditable editors, IME composition, modified chords, and key repeat retain native behavior.
   Expired receipts never consume the shortcut, and Settings -> Archived remains the durable restore
   path after the transient receipt disappears.
-- Undo notices appear immediately in the shared top-right application stack, entering over 400ms with an 8px upward offset
+- Undo notices appear immediately in the shared top-center application stack, entering over 400ms with an 8px upward offset
   and leaving over 280ms with a 6px upward offset. Animate only opacity and transform; reduced-motion
   uses a 120ms opacity crossfade. Remaining notices reposition over 220ms when the stack changes.
-  Pause expiry while the notice has pointer hover or keyboard focus. Use the shared opaque `bg-card`
-  surface with `border-border`, `rounded-lg` and `shadow-dialog`, and keep the Undo action visually light rather
+  Pause expiry while the notice has pointer hover, keyboard focus, or an in-flight restore. Resume the remaining time after the pause; do not restart a full timeout. Archive shortcut availability and receipt pruning use the same paused deadline. Permission receipt validity continues to use the authoritative renewal API. Use the shared opaque `bg-card`
+  surface with `border-border`, a compact `rounded-3xl` capsule (8px vertical padding), centered content and `shadow-dialog`, and keep the Undo action visually light rather
   than presenting it as a filled primary button.
 - Session visibility, App Shell shortcut eligibility, and `Cmd/Ctrl+W` routing must consume that
   projection. Do not rebuild parallel Boolean gate lists in `AppContent` or feature components.
@@ -467,19 +467,34 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Tool row group: `rounded-xl bg-muted/50 p-1.5`.
 - Do not nest decorative cards. Use cards only for repeated items, tool panels, dialog content, and viewers.
 
+### Information notice chrome
+
+- `components/ui/notice-chrome.ts` owns the visual classes shared by ActionToast, NotificationLiveToast and compact ErrorNotice: 16px card radius, semantic border/card surface, 16px padding, 14px text, and consistent 32px-minimum actions and dismiss controls.
+- Titles use 14px semibold; explanatory copy uses 14px with 24px line height. Notification metadata, detail previews and auxiliary labels may remain 12px for density.
+- `components/notice.tsx` is the shared message renderer for embedded guidance and floating recovery cards. Use the same 16px radius, card background, border, padding, typography and actions in either position. `ErrorNotice` and `InlineNotice` preserve existing caller APIs and delegate to this renderer; there is no separate muted inset style. Complex forms that compose `inlineNoticeClassName` reuse the same surface tokens. Keep related reasons in one notice.
+- Semantic `level` values are `info`, `warning` and `error`: info uses an information icon with status-info color, warning a triangle with status-warning color, and error a circle alert with status-failure color. Keep body text neutral for readability; level does not create business state or choose a live-region role. Existing teal/amber/red caller props map to these presentation levels.
+- Titles, description/content, actions and diagnostics are optional sections of the same component. Compact errors and Notebook provisioning failures compose ErrorNotice; narrow cards place trailing actions below the summary. Technical errors remain scrollable and fully selectable, with existing recovery callbacks.
+- Warning text, badges and confirmation icons use the status-warning token family in both themes. Unrelated amber chart series and favorite stars retain their own palette.
+- Title-only ActionToast feedback and Undo snackbars share noticeCapsuleClassName and reuse the shared surface colors and controls with a compact 24px-radius capsule, 8px vertical padding and vertically centered content. Short ActionToast and Undo text stays on one line with an ellipsis when it overflows. Keep the full text in the DOM and native hover title. Existing business action buttons remain visible; messages without a business action do not gain one. Do not add an expand/collapse row to a capsule. Title-only ActionToast capsules fit their content up to 24rem or the viewport minus 24px; the shared stack centers them horizontally without stretching them. The viewport-wide stack reserves space below the cards for a natural shadow fade; nested Undo wrappers do not clip shadows.
+- Arrow anchoring, event icons, timers, unread state, receipt expiry, recovery and dismissal remain with each existing owner. Embedded cards have no floating shadow; floating notices retain shadow-dialog. The notice stack does not own business state.
+- Notebook background upgrade progress and environment errors use the bottom-right `BottomNoticeStack`, alongside catalog, remote-job and notification-render recovery errors. Quit recovery stays outside that background stacking context so its existing emergency controls remain above active modals. Its cards flow vertically with an 8px gap, a viewport-bounded scroll area, and 12px edge spacing; it owns no state. Error cards use shared notice chrome; progress stays a compact capsule. Keep Notebook pane recovery local, and preserve the desktop message-center panel, mobile notification sheet, full-page startup gate and native OS surfaces.
+
 ### Dialog / AlertDialog
 
 - Use `Dialog` for regular form dialogs.
 - Use `AlertDialog` for destructive confirmations, except the dedicated Skill and Connector batch management review described below. Those secondary pages use an explicitly non-modal review in their bottom action dock; ordinary per-resource deletion remains an `AlertDialog`.
 - Medium `DialogContent`: `sm:max-w-[576px] max-h-[85svh] overscroll-contain rounded-xl border bg-background p-0 shadow-lg`; target size is approximately `576px x 612px`.
 - Large settings `DialogContent`: `sm:max-w-[960px] h-[min(688px,calc(100svh-2rem))] overscroll-contain rounded-xl bg-card p-0 shadow-md`.
-- Compact workspace rename/delete dialogs: `w-[min(420px,calc(100vw-2rem))] rounded-2xl bg-bg-000 p-6 text-text-000 shadow-dialog`, without header/footer dividers.
+- Compact confirmations use the shared `dialog-chrome` frame: `rounded-xl border border-border bg-card shadow-dialog`, a divided header/footer and `p-5` body. Session deletion is 420px wide; Project deletion is 440px. Clamp widths to the viewport.
 - Header: `px-5 py-4`, with `border-b` when needed.
 - Body: `px-5 py-5`; form items use `space-y-4` or `space-y-6`.
 - Footer: `flex justify-end gap-2 px-5 py-4`, with `border-t` when needed.
 - Close: `DialogClose` + `Button variant="ghost" size="icon"`, using `size-6` or `size-7`.
-- Overlay: `fixed inset-0 bg-black/50`, using Radix state animations for open and close; compact workspace dialogs use `bg-black/25 backdrop-blur-[2px]`.
+- Overlay: `fixed inset-0 bg-black/50`, using Radix state animations for open and close. Compact workspace confirmations share this overlay.
 - Delete confirmation copy must include the session name and state that session artifacts remain in the project.
+- Information and recovery headings reuse `dialogTitleClassName` (18px semibold), with `dialogDescriptionClassName` (14px) for explanations. Context metadata, counters and technical details may remain 12px. Keep purpose-specific widths, scroll containers and action order.
+- Compact migration outcome cards use the shared panel, title, description and wrapping button styles, with a continuous 20px inset rather than a divided header/footer. Status icons use the semantic status palette.
+- External-link confirmation uses translated JSX for its visible heading and the shared dialog header/body/footer and Button; its existing portal, focus scope and explicit close policy remain owned by LinkSafetyModal.
 - Rename dialog input uses `h-9 rounded-lg border-border-200 bg-bg-000 text-sm text-text-000 placeholder:text-text-100` and a subtle `ring-border-200/25` focus ring.
 - Session Artifact download dialog: use a scrollable `Dialog` up to `640px` wide and `80svh` high, with a compact header, an artifact checklist, and a persistent footer. Repair an incomplete Project Files index before treating the list as authoritative. Select every Artifact by default; show the selected/total count, file type, and size; disable download when none are selected; and keep failed items selected after a partial batch download.
 
@@ -1070,12 +1085,10 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 
 See the [page-by-page surface decisions](error-surfaces.md) for placement, lifetime, modal layout,
 intentional exceptions and validation. Cross-panel Settings write failures use a dismissible shared
-notice above the scroll area. Global event notices stack in normal flow within one top-right container.
+notice above the scroll area. Global action feedback uses the top-center stack; background Notebook and recovery notices share the bottom-right stack.
 Local-file failures and Literature undo stay inside their owning content region.
 
-Control-local preference-save and app-icon-preview failures use one line of small red text with an inline text
-action for dismiss or retry. Do not add a border, background, brand mark, or status icon. Keep the
-language rollback explanation available to screen readers.
+Settings region warnings and operation failures, including preference saves, app-icon previews, logs, credentials, connection tests and storage scans, use the shared Notice surface. Keep retry, dismiss and diagnostics inside the owning notice when present, and keep the language rollback explanation available to screen readers. Input-linked validation stays beside its input using fieldErrorClassName (12px text, 20px line height, destructive text color and safe word wrapping), preserving ids and aria-describedby. Do not ellipsize embedded messages. Dense resource-row status labels, validation counters and destructive actions retain their existing compact presentation.
 
 Use the shared `ErrorNotice` for error summaries. The default is a compact inline surface across
 Settings, workspace previews, conversations, and Literature: a neutral `bg-card` surface with a

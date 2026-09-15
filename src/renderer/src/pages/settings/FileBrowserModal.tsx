@@ -1,3 +1,4 @@
+import { Notice } from '@/components/notice'
 import { ErrorNotice } from '@/components/error-notice'
 // Remote file browser modal (compute-file-preview, issue 02 + issue 03).
 // Opened from the ComputePanel host card folder-icon button (and later from the Files panel Remote
@@ -846,20 +847,15 @@ export function FileBrowserModal({
             {/* File listing */}
             <div className="flex min-h-0 flex-1 flex-col overflow-auto">
               {bookmarksState.kind === 'error' && (
-                <div
-                  role={'alert'}
-                  className={
-                    'm-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive'
-                  }
+                <Notice
+                  level="error"
+                  role="alert"
+                  className="m-2"
+                  title={bookmarksState.summary}
+                  description={t('Close the file browser and open it again to retry.')}
                 >
-                  <div className={'flex-1'}>
-                    <p className={'font-semibold'}>{bookmarksState.summary}</p>
-                    <p className="mt-0.5 text-muted-foreground">
-                      {t('Close the file browser and open it again to retry.')}
-                    </p>
-                    <DiagnosticDetails detail={bookmarksState.detail} />
-                  </div>
-                </div>
+                  <DiagnosticDetails detail={bookmarksState.detail} />
+                </Notice>
               )}
               {/* Error banner */}
               {browserState.kind === 'error' && (

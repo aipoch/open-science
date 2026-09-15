@@ -5640,7 +5640,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             <Dialog.Content className={dialogPanelClassName('w-[min(620px,calc(100vw-2rem))] p-0')}>
               <div className={cn(dialogHeaderClassName, 'px-5 py-3')}>
                 <div className="min-w-0">
-                  <Dialog.Title className={cn(dialogTitleClassName, 'truncate text-base')}>
+                  <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
                     {selectedCandidate.candidate.item.title}
                   </Dialog.Title>
                   <Dialog.Description
@@ -5906,9 +5906,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                       <div className="min-w-0 flex-1">
                         {metadata.mode !== 'view' ? (
                           <>
-                            <Dialog.Title
-                              className={cn(dialogTitleClassName, 'truncate text-base')}
-                            >
+                            <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
                               {metadata.mode === 'edit'
                                 ? t('Edit metadata')
                                 : metadata.mode === 'complete'
@@ -5938,7 +5936,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             <Dialog.Title
                               className={cn(
                                 dialogTitleClassName,
-                                'line-clamp-3 break-words text-base leading-snug'
+                                'line-clamp-3 break-words leading-snug'
                               )}
                             >
                               {selectedItem.item.title}

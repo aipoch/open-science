@@ -1586,8 +1586,14 @@ describe('App startup routing', () => {
       container.querySelectorAll('[data-testid="session-persistence-alert"]')
     )
     expect(alerts).toHaveLength(2)
-    expect(alerts[0]?.textContent).toContain('Project index needs repair')
-    expect(alerts[1]?.textContent).toContain('Conversation storage needs attention')
+    const catalogAlert = alerts.find((alert) =>
+      alert.textContent?.includes('Project index needs repair')
+    )
+    const writeAlert = alerts.find((alert) =>
+      alert.textContent?.includes('Conversation storage needs attention')
+    )
+    expect(catalogAlert?.closest('[data-bottom-notice-stack]')).toBeTruthy()
+    expect(writeAlert?.closest('[data-action-toast-stack]')).toBeTruthy()
 
     const retries = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[data-testid="session-persistence-retry"]')
@@ -1987,6 +1993,7 @@ describe('App startup routing', () => {
       container.querySelectorAll('[data-testid="session-persistence-alert"]')
     ).find((candidate) => candidate.textContent?.includes('Quit was canceled'))
     expect(alert?.textContent).toContain('Quit was canceled')
+    expect(alert?.closest('[data-bottom-notice-stack]')).toBeNull()
     expect(alert?.closest('[inert]')).toBeNull()
     expect(alert?.closest('[aria-hidden="true"]')).toBeNull()
     expect(alert?.classList.contains('z-[70]!')).toBe(true)

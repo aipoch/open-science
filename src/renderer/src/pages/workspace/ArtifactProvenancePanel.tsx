@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useSessionStore } from '@/stores/session-store'
 import { usePackageOperationStore, sessionExportLocked } from '../../stores/package-operation-store'
 import { Tabs } from 'radix-ui'
@@ -1842,11 +1843,11 @@ const ArtifactProvenancePanel = ({
             {generatedCode?.sourceTruncated ||
             (codeReconstructionState?.state === 'ready' &&
               codeReconstructionState.sourceTruncated) ? (
-              <p className="border-b border-warning-100/50 bg-warning-100/10 px-4 py-2 text-xs text-text-200">
+              <InlineNotice className="m-2">
                 {t(
                   'The immutable Execution Log was bounded; the reconstruction may include a provenance-gap comment.'
                 )}
-              </p>
+              </InlineNotice>
             ) : null}
             {codeReconstructionResult?.status === 'generating' ? (
               <div
@@ -1933,7 +1934,7 @@ const ArtifactProvenancePanel = ({
           executionRuns.length > 0 ? (
             <div>
               {executionTruncation ? (
-                <p className="border-b border-warning-100/50 bg-warning-100/10 px-4 py-2 text-xs text-text-200">
+                <InlineNotice className="m-2">
                   {t(
                     'Execution evidence was bounded for storage: omitted {{runs}} earlier runs, {{outputs}} outputs, and {{inputs}} inputs.',
                     {
@@ -1942,7 +1943,7 @@ const ArtifactProvenancePanel = ({
                       inputs: executionTruncation.omittedInputCount
                     }
                   )}
-                </p>
+                </InlineNotice>
               ) : null}
               <div className={tabActionBarClassName}>
                 <Button

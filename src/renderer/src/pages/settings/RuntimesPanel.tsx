@@ -1,3 +1,5 @@
+import { Notice } from '@/components/notice'
+import { InlineNotice } from '@/components/ui/inline-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · macrostructure: Workbench · genre: modern-minimal · tone: technical/austere
  * theme: existing Open Science Settings tokens · enrichment: none · motion: existing controls only
@@ -618,13 +620,14 @@ const RuntimesPanel = ({
               </div>
             ) : null}
             {!operationActive && operation?.error ? (
-              <p
+              <InlineNotice
+                level="error"
                 role="alert"
-                className="mt-1 text-[13px] text-destructive"
+                className="mt-1"
                 data-testid={`runtime-operation-error-${language}`}
               >
                 {recoveryBlocked ? blockedLabel(language) : operation.error}
-              </p>
+              </InlineNotice>
             ) : null}
             <code className="mt-1 block truncate text-xs text-muted-foreground">
               {env.interpreterPath}
@@ -948,13 +951,13 @@ const RuntimesPanel = ({
           </p>
         ) : null}
         {error !== null && (
-          <p role="alert" className="text-sm text-destructive" data-testid="runtimes-error">
+          <InlineNotice level="error" role="alert" data-testid="runtimes-error">
             {error === 'Could not load runtimes.'
               ? t('Could not load runtimes.')
               : error === 'Could not re-check runtimes.'
                 ? t('Could not re-check runtimes.')
                 : error}
-          </p>
+          </InlineNotice>
         )}
         {!loading && envs !== null ? (
           <SettingsRow
@@ -1080,15 +1083,16 @@ const RuntimesPanel = ({
                             </div>
                           ) : null}
                           {!settingUp && langError ? (
-                            <p
+                            <InlineNotice
+                              level="error"
                               role="alert"
-                              className="mt-1 text-[13px] text-destructive"
+                              className="mt-1"
                               data-testid={`runtimes-provision-error-${id}`}
                             >
                               {langError.includes('RUNTIME_RECOVERY_BLOCKED')
                                 ? blockedLabel(id)
                                 : langError}
-                            </p>
+                            </InlineNotice>
                           ) : null}
                         </div>
                         {preparing ? (
@@ -1414,23 +1418,20 @@ const RuntimesPanel = ({
 
                   <div className="mt-2 max-h-[48vh] min-h-0 overflow-y-auto rounded-md border border-border">
                     {packagesError !== null ? (
-                      <div className="flex flex-col items-center gap-2 px-3 py-6">
-                        <p role="alert" className="text-sm text-destructive">
-                          {packagesError}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
+                      <Notice
+                        level="error"
+                        role="alert"
+                        className="m-3"
+                        description={packagesError}
+                        primaryButton={{
+                          label: t('Retry'),
+                          onClick: () => {
                             setPackages(null)
                             setPackagesError(null)
                             setPackagesRetryNonce((nonce) => nonce + 1)
-                          }}
-                        >
-                          {t('Retry')}
-                        </Button>
-                      </div>
+                          }
+                        }}
+                      />
                     ) : packages === null ? (
                       <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                         {t('Listing packages…')}

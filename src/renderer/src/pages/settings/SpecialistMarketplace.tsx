@@ -1,3 +1,5 @@
+import { inlineNoticeClassName } from '@/components/ui/notice-chrome'
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -1044,7 +1046,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
               </div>
 
               {installNeedsAttention ? (
-                <div className="mt-4 rounded-xl border border-warning-100/50 bg-warning-100/10 p-4">
+                <div className={`${inlineNoticeClassName} mt-4 block`}>
                   {!marketplacePreviewBlocked ? (
                     <div className="flex gap-2 text-xs text-foreground">
                       <CheckCircle2
@@ -1067,7 +1069,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                           incoming: installPreview.package.overwrite.incomingVersion
                         })}
                       </p>
-                      <p className="mt-1 text-warning-900">
+                      <p className="mt-1 text-status-warning-foreground dark:text-status-warning-dark-foreground">
                         {t(
                           'Local changes to this Specialist will be replaced by the Marketplace version.'
                         )}
@@ -1087,24 +1089,26 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                     />
                   </div>
                   {marketplacePreviewBlocked ? (
-                    <ul className="mt-3 rounded-lg border border-danger-000/30 bg-danger-000/10 p-3 text-xs text-danger-000">
-                      {installPreview?.package.diagnostics
-                        .filter((item) => item.severity === 'error')
-                        .map((item) => {
-                          const copy = specialistDiagnosticCopy(item)
-                          return (
-                            <li key={`${item.code}-${item.path ?? ''}`}>
-                              <span className="font-medium">{t(copy.title)}</span>
-                              <span className="block text-muted-foreground">{t(copy.body)}</span>
-                              {item.path ? (
-                                <span className="block font-mono text-[10px] text-muted-foreground">
-                                  {item.path}
-                                </span>
-                              ) : null}
-                            </li>
-                          )
-                        })}
-                    </ul>
+                    <InlineNotice level="error" role="alert" className="mt-3">
+                      <ul className="space-y-2">
+                        {installPreview?.package.diagnostics
+                          .filter((item) => item.severity === 'error')
+                          .map((item) => {
+                            const copy = specialistDiagnosticCopy(item)
+                            return (
+                              <li key={`${item.code}-${item.path ?? ''}`}>
+                                <span className="font-medium">{t(copy.title)}</span>
+                                <span className="block text-muted-foreground">{t(copy.body)}</span>
+                                {item.path ? (
+                                  <span className="block font-mono text-[10px] text-muted-foreground">
+                                    {item.path}
+                                  </span>
+                                ) : null}
+                              </li>
+                            )
+                          })}
+                      </ul>
+                    </InlineNotice>
                   ) : null}
                 </div>
               ) : null}
@@ -1275,27 +1279,20 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
           />
         ) : null}
         {!loading && snapshot && lastRefreshFailed ? (
-          <div
-            role="status"
-            className="mb-3 rounded-lg border border-warning-100/40 bg-warning-100/10 p-3 text-sm text-foreground"
-          >
+          <InlineNotice role="status" className="mb-3">
             {integrityFailed
               ? t(
                   'Marketplace data needs repair. The original {{fileName}} file has been preserved.',
                   { fileName: 'specialist-marketplace.json' }
                 )
               : t('Could not refresh Marketplace. Showing the last available data.')}
-          </div>
+          </InlineNotice>
         ) : null}
         {!loading
           ? snapshot?.sources
               .filter((source) => source.usingCachedMetadata && source.lastRefreshedAt)
               .map((source) => (
-                <div
-                  key={`cached-${source.id}`}
-                  role="status"
-                  className="mb-3 rounded-lg border border-warning-100/40 bg-warning-100/10 p-3 text-sm text-foreground"
-                >
+                <InlineNotice key={`cached-${source.id}`} role="status" className="mb-3">
                   {t(
                     'Showing verified cached data from {{time}} for {{source}}. Installation still requires a verified download.',
                     {
@@ -1303,7 +1300,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                       source: source.name
                     }
                   )}
-                </div>
+                </InlineNotice>
               ))
           : null}
         {allSourcesUnavailable ? (

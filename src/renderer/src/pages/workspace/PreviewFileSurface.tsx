@@ -424,7 +424,7 @@ const PreviewFileHeader = ({
               {item.originSession?.state === 'deleted' ? (
                 <span
                   data-testid="deleted-origin-session"
-                  className="shrink-0 rounded bg-warning-100 px-1.5 py-0.5 text-[10px] text-warning-900"
+                  className="shrink-0 rounded bg-status-warning-surface dark:bg-status-warning-dark-surface px-1.5 py-0.5 text-[10px] text-status-warning-foreground dark:text-status-warning-dark-foreground"
                 >
                   {t('Source session deleted')}
                 </span>

@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: Tag master-detail + reorder · genre: modern-minimal · tone: technical/utilitarian
@@ -302,9 +303,9 @@ const TagForm = ({
         </div>
       </fieldset>
       {formError ? (
-        <p role="alert" className="text-xs text-destructive">
+        <InlineNotice level="error" role="alert">
           {formError}
-        </p>
+        </InlineNotice>
       ) : null}
       <div className="mt-auto flex justify-end gap-2 pt-2">
         <Button type="button" variant="ghost" onClick={onCancel}>
@@ -732,9 +733,9 @@ const TagsList = ({
           }
         />
         {error ? (
-          <p role="alert" className="mb-3 text-xs text-destructive">
+          <InlineNotice level="error" role="alert" className="mb-3">
             {t('Tags could not be loaded.')}
-          </p>
+          </InlineNotice>
         ) : null}
         <div
           data-slot="tag-master-detail"
@@ -745,9 +746,9 @@ const TagsList = ({
             aria-busy={reorderBusy || undefined}
           >
             {reorderError ? (
-              <p role="alert" className="mb-2 px-2 text-xs text-destructive">
+              <InlineNotice level="error" role="alert" className="mb-2">
                 {reorderError}
-              </p>
+              </InlineNotice>
             ) : null}
             <p className="sr-only" aria-live="polite" aria-atomic="true">
               {reorderAnnouncement}
@@ -937,9 +938,9 @@ const TagsList = ({
                   </Select>
                 </div>
                 {assignmentError ? (
-                  <p role="alert" className="mb-3 text-xs text-destructive">
+                  <InlineNotice level="error" role="alert" className="mb-3">
                     {assignmentError}
-                  </p>
+                  </InlineNotice>
                 ) : null}
                 {visibleCatalogTypes.map((type) => {
                   const catalog = catalogLoads[type]
@@ -1107,9 +1108,9 @@ const TagsList = ({
                   })}
                 </p>
                 {deleteError ? (
-                  <p role="alert" className="mt-3 text-xs text-destructive">
+                  <InlineNotice level="error" role="alert" className="mt-3">
                     {deleteError}
-                  </p>
+                  </InlineNotice>
                 ) : null}
               </div>
               <div className={dialogFooterClassName}>

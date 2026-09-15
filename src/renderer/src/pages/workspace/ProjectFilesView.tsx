@@ -703,7 +703,7 @@ const ProjectFilesViewContent = ({
       ) : (
         <div data-testid="project-files-scroll" className="min-h-0 flex-1 overflow-y-auto pb-4">
           {!catalogIndex.overview.isIndexComplete ? (
-            <div className="mx-4 mb-2 flex items-center justify-between gap-3 border-l-2 border-warning-000 px-3 py-2 text-[11px] text-text-200">
+            <div className="mx-4 mb-2 flex items-center justify-between gap-3 border-l-2 border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 px-3 py-2 text-[11px] text-text-200">
               <span className="min-w-0 flex-1">
                 {catalogIndex.repairError ?? t('Some files could not be indexed yet.')}
               </span>

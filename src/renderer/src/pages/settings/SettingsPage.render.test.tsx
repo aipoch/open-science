@@ -3239,7 +3239,9 @@ describe('SettingsPage layout', () => {
 
     expect(writeText).toHaveBeenCalledWith(publicSnapshot.accessUrl)
     const copyError = document.body.querySelector('[data-testid="remote-link-copy-error"]')
-    expect(copyError?.getAttribute('role')).toBe('alert')
+    expect(copyError?.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not copy the browser link'
+    )
     expect(copyError?.textContent).toContain('Could not copy the browser link')
   })
 

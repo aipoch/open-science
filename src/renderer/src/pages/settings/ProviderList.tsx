@@ -335,7 +335,7 @@ const ProviderList = ({
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span
-                            className="inline-flex shrink-0 text-amber-500"
+                            className="inline-flex shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
                             aria-label={describeValidationFailure(failure, t)}
                           >
                             <TriangleAlert
@@ -437,7 +437,7 @@ const ProviderList = ({
                       </>
                     )}
                     {failure ? (
-                      <div className="text-amber-600 dark:text-amber-500">
+                      <div className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
                         {describeValidationFailure(failure, t)}
                       </div>
                     ) : null}
