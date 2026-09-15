@@ -4465,8 +4465,8 @@ describe('LiteratureLibraryPage', () => {
     await openReferenceDetail(await screen.findByText('Corrective Retrieval Augmented Generation'))
 
     const detailDialog = screen.getByRole('dialog')
-    await openMenu(within(detailDialog).getByRole('button', { name: 'Manage Tags' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Favorites' }))
+    fireEvent.click(within(detailDialog).getByRole('button', { name: 'Manage Tags' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Favorites' }))
     await waitFor(() => expect(tagsApi.setAssignment).toHaveBeenCalledOnce())
     await act(async () => {
       emitChanged?.({ revision: 3 })
@@ -4474,9 +4474,9 @@ describe('LiteratureLibraryPage', () => {
     })
 
     expect(screen.getByText('Add or remove Tags')).not.toBeNull()
-    expect(screen.getByRole('menuitem', { name: 'Favorites' })).not.toBeNull()
+    expect(screen.getByRole('option', { name: 'Favorites' })).not.toBeNull()
 
-    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Escape' })
     await waitFor(() => expect(screen.queryByText('Add or remove Tags')).toBeNull())
   })
 
@@ -4495,13 +4495,13 @@ describe('LiteratureLibraryPage', () => {
     filePreviewRenderCount.value = 0
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false })
     fireEvent.click(trigger)
-    expect(screen.getByRole('menu')).not.toBeNull()
+    expect(screen.getByRole('listbox')).not.toBeNull()
     expect(filePreviewRenderCount.value).toBe(0)
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false })
     fireEvent.click(trigger)
 
-    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
     expect(screen.getByRole('dialog')).toBe(detail)
   })
 
@@ -4516,15 +4516,15 @@ describe('LiteratureLibraryPage', () => {
 
     const detail = screen.getByRole('dialog')
     const trigger = within(detail).getByRole('button', { name: 'Manage Tags' })
-    await openMenu(trigger)
-    expect(screen.getByRole('menu')).not.toBeNull()
+    fireEvent.click(trigger)
+    expect(screen.getByRole('listbox')).not.toBeNull()
 
-    fireEvent.keyDown(trigger, { key: 'Enter' })
+    fireEvent.click(trigger)
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 10))
     })
 
-    expect(screen.queryByRole('menu')).toBeNull()
+    expect(screen.queryByRole('listbox')).toBeNull()
     expect(screen.getByRole('dialog')).toBe(detail)
   })
 

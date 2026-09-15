@@ -1,17 +1,11 @@
-import { Check, Plus, Search, Tags, X } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { Check, Loader2, Plus, Search, Tags, X } from 'lucide-react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { TAG_NAME_MAX_LENGTH, type TagResourceRef } from '../../../../shared/tags'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -39,7 +33,36 @@ const ResourceTagMenu = ({
   const createTag = useTagStore((state) => state.create)
   const [error, setError] = useState<string>()
   const [query, setQuery] = useState('')
-  const [creating, setCreating] = useState(false)
+  const [localOpen, setLocalOpen] = useState(false)
+  const isOpen = open ?? localOpen
+  const [activeKey, setActiveKey] = useState<string>()
+  const [pendingKey, setPendingKey] = useState<string>()
+  const pending = useRef(false)
+  const interactionVersion = useRef(0)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const tabDismissal = useRef(false)
+  const listboxId = useId()
+  const errorId = useId()
+  const changeOpen = (nextOpen: boolean): void => {
+    interactionVersion.current += 1
+    setLocalOpen(nextOpen)
+    onOpenChange?.(nextOpen)
+  }
+  const scope = JSON.stringify([isOpen, reference.resourceType, reference.resourceId])
+  const [previousScope, setPreviousScope] = useState(scope)
+  if (previousScope !== scope) {
+    setPreviousScope(scope)
+    setQuery('')
+    setActiveKey(undefined)
+    setError(undefined)
+  }
+  useEffect(() => {
+    interactionVersion.current += 1
+    return () => {
+      interactionVersion.current += 1
+    }
+  }, [scope])
   const assignedIds = new Set(
     assignments
       .filter(
@@ -58,32 +81,66 @@ const ResourceTagMenu = ({
     query.trim().length > 0 &&
     !tags.some((tag) => normalizeName(tagPresentation(tag, t).name) === normalizedQuery)
 
-  const createAndAssign = async (): Promise<void> => {
-    if (!canCreate || creating) return
-    setCreating(true)
+  const options = [
+    ...visibleTags.map((tag) => ({ key: `tag:${tag.id}`, tag })),
+    ...(canCreate ? [{ key: 'create', tag: undefined }] : [])
+  ]
+  const activeIndex = Math.max(
+    0,
+    options.findIndex((option) => option.key === activeKey)
+  )
+  const activeOption = options[activeIndex]
+  const activeId = activeOption ? `${listboxId}-${activeIndex}` : undefined
+
+  useEffect(() => {
+    if (isOpen && activeId) {
+      document.getElementById(activeId)?.scrollIntoView?.({ block: 'nearest' })
+    }
+  }, [isOpen, activeId, normalizedQuery])
+
+  const activate = async (option: (typeof options)[number]): Promise<void> => {
+    if (pending.current) return
+    pending.current = true
+    setPendingKey(option.key)
     setError(undefined)
+    const version = interactionVersion.current
     try {
-      const tagId = await createTag({ name: query, iconKey: 'tag', colorKey: 'blue' })
-      await setAssignment({ ...reference, tagId, assigned: true })
-      setQuery('')
+      if (option.tag) {
+        await setAssignment({
+          ...reference,
+          tagId: option.tag.id,
+          assigned: !assignedIds.has(option.tag.id)
+        })
+      } else {
+        const tagId = await createTag({ name: query, iconKey: 'tag', colorKey: 'blue' })
+        await setAssignment({ ...reference, tagId, assigned: true })
+      }
+      if (version === interactionVersion.current) {
+        if (!option.tag) {
+          setQuery('')
+          setActiveKey(undefined)
+        }
+        if (!keepOpenOnSelect) changeOpen(false)
+      }
     } catch {
-      setError(t('Could not update Tags.'))
+      if (version === interactionVersion.current) setError(t('Could not update Tags.'))
     } finally {
-      setCreating(false)
+      pending.current = false
+      setPendingKey(undefined)
     }
   }
 
   return (
     <TooltipProvider>
       <Tooltip>
-        <DropdownMenu modal={false} open={open} onOpenChange={onOpenChange}>
+        <Popover open={isOpen} onOpenChange={changeOpen}>
           <TooltipTrigger
             asChild
             onFocus={(event) => {
               if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
             }}
           >
-            <DropdownMenuTrigger asChild>
+            <PopoverTrigger asChild ref={triggerRef}>
               {trigger ?? (
                 <Button
                   type="button"
@@ -95,62 +152,125 @@ const ResourceTagMenu = ({
                   <Tags className="size-4" aria-hidden="true" />
                 </Button>
               )}
-            </DropdownMenuTrigger>
+            </PopoverTrigger>
           </TooltipTrigger>
-          <DropdownMenuContent align="end" className="min-w-52">
-            <DropdownMenuLabel>{error ?? t('Add or remove Tags')}</DropdownMenuLabel>
-            <div className="relative px-2 pb-1">
+          <PopoverContent
+            align="end"
+            aria-label={t('Manage Tags')}
+            className="w-64 max-w-[calc(100vw-1rem)] overflow-hidden border border-border bg-popover p-1 text-popover-foreground shadow-menu"
+            onOpenAutoFocus={(event) => {
+              event.preventDefault()
+              inputRef.current?.focus()
+            }}
+            onCloseAutoFocus={(event) => {
+              if (tabDismissal.current) event.preventDefault()
+              tabDismissal.current = false
+            }}
+          >
+            <div className="px-2 py-1.5 text-xs font-medium">{t('Add or remove Tags')}</div>
+            <div className="relative px-1 pb-1">
               <Search
-                className="pointer-events-none absolute top-1/2 left-4 size-3.5 -translate-y-1/2 text-muted-foreground"
+                className="pointer-events-none absolute top-4 left-3 size-3.5 -translate-y-1/2 text-muted-foreground"
                 aria-hidden="true"
               />
               <Input
-                type="search"
+                ref={inputRef}
+                type="text"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={isOpen}
+                aria-controls={listboxId}
+                aria-activedescendant={activeId}
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? errorId : undefined}
+                autoComplete="off"
                 maxLength={TAG_NAME_MAX_LENGTH}
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => event.stopPropagation()}
+                onChange={(event) => {
+                  interactionVersion.current += 1
+                  setQuery(event.target.value)
+                  setActiveKey(undefined)
+                  setError(undefined)
+                }}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
+                  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    if (options.length) {
+                      const offset = event.key === 'ArrowDown' ? 1 : -1
+                      setActiveKey(
+                        options[(activeIndex + offset + options.length) % options.length].key
+                      )
+                    }
+                  } else if (event.key === 'Enter') {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    if (activeOption) void activate(activeOption)
+                  } else if (event.key === 'Tab') {
+                    tabDismissal.current = true
+                    triggerRef.current?.focus()
+                    changeOpen(false)
+                  }
+                }}
                 placeholder={t('Search Tags…')}
                 aria-label={t('Search Tags')}
-                className="h-8 pl-7"
+                className="h-8 pl-7 transition-none [@media(pointer:coarse)]:h-11"
               />
             </div>
-            {visibleTags.map((tag) => {
-              const assigned = assignedIds.has(tag.id)
-              return (
-                <DropdownMenuItem
-                  key={tag.id}
-                  className="gap-2"
-                  onSelect={(event) => {
-                    if (keepOpenOnSelect) event.preventDefault()
-                    setError(undefined)
-                    void setAssignment({ ...reference, tagId: tag.id, assigned: !assigned }).catch(
-                      () => setError(t('Could not update Tags.'))
-                    )
-                  }}
-                >
-                  <span className="flex size-4 items-center justify-center">
-                    {assigned ? <Check className="size-3.5" aria-hidden="true" /> : null}
-                  </span>
-                  <span className="truncate">{tagPresentation(tag, t).name}</span>
-                </DropdownMenuItem>
-              )
-            })}
-            {canCreate ? (
-              <DropdownMenuItem
-                className="gap-2"
-                disabled={creating}
-                onSelect={(event) => {
-                  if (keepOpenOnSelect) event.preventDefault()
-                  void createAndAssign()
-                }}
-              >
-                <Plus className="size-4" aria-hidden="true" />
-                <span className="truncate">{t('Create “{{name}}”', { name: query.trim() })}</span>
-              </DropdownMenuItem>
+            <div
+              id={listboxId}
+              role="listbox"
+              aria-label={t('Tags')}
+              aria-multiselectable="true"
+              aria-busy={Boolean(pendingKey)}
+              className="max-h-60 overflow-y-auto overscroll-contain"
+            >
+              {options.map((option, index) => {
+                const assigned = Boolean(option.tag && assignedIds.has(option.tag.id))
+                return (
+                  <div
+                    key={option.key}
+                    id={`${listboxId}-${index}`}
+                    role="option"
+                    aria-selected={assigned}
+                    aria-disabled={Boolean(pendingKey)}
+                    data-active={index === activeIndex || undefined}
+                    onPointerMove={() => setActiveKey(option.key)}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => void activate(option)}
+                    className="flex min-h-8 cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none select-none data-[active]:bg-muted data-[active]:text-foreground active:bg-muted aria-disabled:cursor-wait aria-disabled:opacity-50 [@media(pointer:coarse)]:min-h-11"
+                  >
+                    <span className="flex size-4 shrink-0 items-center justify-center">
+                      {pendingKey === option.key ? (
+                        <Loader2
+                          className="size-3.5 animate-spin motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                      ) : !option.tag ? (
+                        <Plus className="size-4" aria-hidden="true" />
+                      ) : assigned ? (
+                        <Check className="size-3.5" aria-hidden="true" />
+                      ) : null}
+                    </span>
+                    {option.tag ? (
+                      <TagBadge tag={option.tag} className="max-w-full" />
+                    ) : (
+                      <span className="truncate">
+                        {t('Create “{{name}}”', { name: query.trim() })}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            {error ? (
+              <div id={errorId} role="alert" className="px-2 py-1.5 text-xs text-destructive">
+                {error}
+              </div>
             ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
+          </PopoverContent>
+        </Popover>
         <TooltipContent>{t('Manage Tags')}</TooltipContent>
       </Tooltip>
     </TooltipProvider>

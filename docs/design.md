@@ -913,6 +913,19 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 
 #### Cross-resource Tags
 
+- Resource assignment pickers in Literature, Skills, Connectors, and Specialists share a
+  searchable combobox. Opening focuses the input; filtering highlights the first matching Tag.
+  Up/Down cycle through matches and the final **Create** option; Enter activates the highlighted
+  option. Existing Tags toggle assignment. With no matching Tags, Enter creates and assigns the
+  input name. Exact normalized names suppress duplicate creation; IME confirmation never submits.
+  The active highlight is independent from the checkmark indicating an existing assignment.
+- Escape dismisses the picker and restores its trigger. Tab dismisses without submitting and
+  continues keyboard navigation. Keep each owner's existing close-on-select policy: Literature
+  supports repeated selection; Settings summaries close after a successful update. Pending
+  writes cannot be submitted twice. Failures remain visible in the picker with the query retained;
+  newer input and reopened pickers are not overwritten by an older asynchronous completion.
+  The full Tags editor remains the place to choose a custom name, icon, and color.
+
 - Settings -> Workspace -> Tags is the shared organization surface for catalog resources. V1
   adapters cover Skills, Connectors, and runnable Specialists; the Reviewer placeholder is excluded.
   The bordered master-detail frame owns the available content height: its independently scrolling
