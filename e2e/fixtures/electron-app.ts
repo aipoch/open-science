@@ -24,6 +24,7 @@ import {
 import { terminateProcessTree } from '../../src/main/process-tree'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
 import { RendererFailureGate } from './renderer-failure-gate'
+import type { ConversationSkillImportApprovalRequest } from '../../src/shared/settings'
 import type { PackageOperationSnapshot } from '../../src/shared/session-package'
 import type { UpdateStatus } from '../../src/shared/update'
 
@@ -215,6 +216,7 @@ type ElectronApp = {
   restartWithPackage: (path: string) => Promise<Page>
   emitPackageFileOpen: (path: string) => Promise<void>
   emitSessionPackageProgress: (snapshot: PackageOperationSnapshot) => Promise<void>
+  emitSkillImportApprovalRequest: (request: ConversationSkillImportApprovalRequest) => Promise<void>
   emitUpdateStatus: (status: UpdateStatus) => Promise<void>
   enableFakeRemoteIt: () => Promise<Page>
   findOverlayIsVisible: () => Promise<boolean>
@@ -951,6 +953,16 @@ class ElectronAppHarness implements ElectronApp {
       if (!mainWindow) throw new Error('Open Science main window was not found.')
       mainWindow.webContents.send('update:status', nextStatus)
     }, status)
+  }
+
+  async emitSkillImportApprovalRequest(
+    request: ConversationSkillImportApprovalRequest
+  ): Promise<void> {
+    await this.runningApplication.evaluate(({ BrowserWindow }, nextRequest) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0]
+      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      mainWindow.webContents.send('skills:conversation-import-request', nextRequest)
+    }, request)
   }
 
   async showMainWindow(): Promise<void> {

@@ -1,5 +1,14 @@
 import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-composer-drafts'
-import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
@@ -79,9 +88,15 @@ const UpdateDialog = lazy(() =>
   import('@/components/UpdateDialog').then(({ UpdateDialog }) => ({ default: UpdateDialog }))
 )
 
-// Keep the update owner mounted after its first activation so its nested confirmation and close
-// lifecycle stay unchanged. Until then, avoid requesting release-note Markdown on the startup path.
-const DeferredUpdateDialog = ({ active }: { active: boolean }): React.JSX.Element | null => {
+// Keep stateful presentation owners mounted after their first activation so nested confirmation and
+// close lifecycles stay unchanged. Before then, avoid loading Markdown used only by those surfaces.
+const DeferredPresentationOwner = ({
+  active,
+  children
+}: {
+  active: boolean
+  children: (active: boolean) => ReactNode
+}): React.JSX.Element | null => {
   const [hasActivated, setHasActivated] = useState(active)
   useEffect(() => {
     if (!active) return
@@ -94,11 +109,7 @@ const DeferredUpdateDialog = ({ active }: { active: boolean }): React.JSX.Elemen
     }
   }, [active])
 
-  return hasActivated ? (
-    <Suspense fallback={null}>
-      <UpdateDialog active={active} />
-    </Suspense>
-  ) : null
+  return hasActivated ? <Suspense fallback={null}>{children(active)}</Suspense> : null
 }
 
 const ApplicationPresentationHost = (): React.JSX.Element => {
@@ -369,16 +380,22 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           blockedSessionIds={events.blockedApprovalSessionIds}
         />
         <ConnectorCredentialDialog active={activePresentation === 'credentialRequest'} />
-        <SkillImportApprovalDialog
-          active={activePresentation === 'skillImportApproval'}
-          blockedSessionIds={events.blockedApprovalSessionIds}
-        />
         <ComputeApprovalDialog
           active={activePresentation === 'computeApproval'}
           blockedSessionIds={events.blockedApprovalSessionIds}
         />
       </Suspense>
-      <DeferredUpdateDialog active={activePresentation === 'update'} />
+      <DeferredPresentationOwner active={activePresentation === 'skillImportApproval'}>
+        {(active) => (
+          <SkillImportApprovalDialog
+            active={active}
+            blockedSessionIds={events.blockedApprovalSessionIds}
+          />
+        )}
+      </DeferredPresentationOwner>
+      <DeferredPresentationOwner active={activePresentation === 'update'}>
+        {(active) => <UpdateDialog active={active} />}
+      </DeferredPresentationOwner>
       <CloseConfirmModal
         active={activePresentation === 'closeConfirmation'}
         onOpenChange={events.closeConfirmation.setOpen}

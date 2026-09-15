@@ -873,7 +873,7 @@ describe('App startup routing', () => {
 
     expect(mocks.presentationProps.computeApproval?.active).toBe(true)
     expect(mocks.presentationProps.connectorApproval?.active).toBe(false)
-    expect(mocks.presentationProps.skillImportApproval?.active).toBe(false)
+    expect(mocks.presentationProps.skillImportApproval).toBeUndefined()
     expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('closed')
     expect(
       container.querySelector('[data-testid="home-page"]')?.closest('[aria-hidden="true"]')
@@ -895,6 +895,14 @@ describe('App startup routing', () => {
 
     expect(mocks.presentationProps.computeApproval?.active).toBe(false)
     expect(mocks.presentationProps.connectorApproval?.active).toBe(true)
+    expect(mocks.presentationProps.skillImportApproval).toBeUndefined()
+
+    mocks.settings.pendingApprovals = []
+    await act(async () => root.render(<App />))
+    await vi.waitFor(() => expect(mocks.presentationProps.skillImportApproval?.active).toBe(true))
+
+    mocks.skillImport.pending = []
+    await act(async () => root.render(<App />))
     expect(mocks.presentationProps.skillImportApproval?.active).toBe(false)
   })
 

@@ -19,9 +19,42 @@ test('loads Markdown presentation chunks only when their surfaces first open', a
 
   expect(
     [...requestedResources].filter((resource) =>
-      /^(?:AgentMarkdown|GlobalSearchDialog|UpdateDialog)-.*\.js$/u.test(resource)
+      /^(?:AgentMarkdown|GlobalSearchDialog|SkillImportApprovalDialog|UpdateDialog)-.*\.js$/u.test(
+        resource
+      )
     )
   ).toEqual([])
+
+  await app.emitSkillImportApprovalRequest({
+    id: 'deferred-skill-import',
+    sessionId: 'session-1',
+    source: { kind: 'attachment', label: 'deferred.skill' },
+    previews: [
+      {
+        subPath: '.',
+        name: 'Deferred Skill',
+        description: 'Lazy approval boundary fixture',
+        metadata: {},
+        body: '# Deferred Skill',
+        files: ['SKILL.md'],
+        alreadyImported: false
+      }
+    ],
+    skipped: []
+  })
+  const skillImportDialog = page.getByRole('dialog', { name: 'Import Skill package?' })
+  await expect(skillImportDialog).toBeVisible()
+  await expect(skillImportDialog).toContainText('Deferred Skill')
+  await expect
+    .poll(() => [...requestedResources])
+    .toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^AgentMarkdown-.*\.js$/),
+        expect.stringMatching(/^SkillImportApprovalDialog-.*\.js$/)
+      ])
+    )
+  await skillImportDialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(skillImportDialog).toBeHidden()
 
   await page.getByRole('button', { name: 'Search', exact: true }).click()
   const searchDialog = page.getByRole('dialog', { name: 'Global search' })
@@ -30,12 +63,7 @@ test('loads Markdown presentation chunks only when their surfaces first open', a
   await expect(searchInput).toBeFocused()
   await expect
     .poll(() => [...requestedResources])
-    .toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^AgentMarkdown-.*\.js$/),
-        expect.stringMatching(/^GlobalSearchDialog-.*\.js$/)
-      ])
-    )
+    .toEqual(expect.arrayContaining([expect.stringMatching(/^GlobalSearchDialog-.*\.js$/)]))
   await searchInput.press('Escape')
   await expect(searchDialog).toBeHidden()
 
