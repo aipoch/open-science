@@ -14,6 +14,11 @@ test('Settings covers the persistent recovery alert until the modal closes', asy
   const modalLayer = await settings.evaluate((el) => Number(getComputedStyle(el).zIndex))
   expect(alertLayer).toBeLessThan(modalLayer)
   expect(
+    await page
+      .locator('[data-action-toast-stack]')
+      .evaluate((el) => Number(getComputedStyle(el).zIndex))
+  ).toBeLessThan(modalLayer)
+  expect(
     await alert.evaluate((el) => {
       const rect = el.getBoundingClientRect()
       const hit = document.elementFromPoint(rect.right - 20, rect.bottom - 20)

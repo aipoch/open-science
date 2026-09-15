@@ -10,6 +10,7 @@ import { useTagStore } from '@/stores/tag-store'
 import { useMemoryStore } from '@/stores/memory-store'
 import { useUpdateStore } from '@/stores/update-store'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { ActionToast, ActionToastStack } from '@/components/ActionToast'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 
 // Native boundaries only. Components, navigation, i18n, CSS and browser geometry are production code.
@@ -62,12 +63,23 @@ export function Fixture(): React.JSX.Element {
     <TooltipProvider>
       <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={() => undefined} />
       {new URLSearchParams(location.search).has('catalog') ? (
-        <SessionCatalogRecoveryAlert
-          recovery={{
-            kind: 'damaged-authority',
-            affectedFiles: [{ projectId: 'research', fileName: 'conversation.json' }]
-          }}
-        />
+        <>
+          {open && (
+            <ActionToastStack>
+              <ActionToast
+                title="Background cleanup notice"
+                dismissLabel="Dismiss cleanup"
+                onDismiss={() => {}}
+              />
+            </ActionToastStack>
+          )}
+          <SessionCatalogRecoveryAlert
+            recovery={{
+              kind: 'damaged-authority',
+              affectedFiles: [{ projectId: 'research', fileName: 'conversation.json' }]
+            }}
+          />
+        </>
       ) : null}
       <SettingsPage
         open={open}

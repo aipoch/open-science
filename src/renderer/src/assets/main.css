@@ -273,7 +273,7 @@
   --shadow-dialog: var(--shadow-dialog-value);
   --shadow-sheet: var(--shadow-sheet-value);
   --z-index-modal: 50;
-  --z-index-toast: 70;
+  --z-index-toast: 40;
   --z-index-markdown-menu: 200;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

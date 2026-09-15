@@ -288,13 +288,17 @@ colors communicate a successful or failed probe/migration result.
 | Token                     | Tailwind class    | Value | Usage                                                                |
 | ------------------------- | ----------------- | ----- | -------------------------------------------------------------------- |
 | `--z-index-modal`         | `z-modal`         | `50`  | Standard portaled modal layer (e.g. the notification center popover) |
-| `--z-index-toast`         | `z-toast`         | `70`  | Toasts and undo snackbars above the modal layer                      |
+| `--z-index-toast`         | `z-toast`         | `40`  | Background notices and undo snackbars below modal backdrops                      |
 | `--z-index-markdown-menu` | `z-markdown-menu` | `200` | Streamdown Mermaid and table format menus above fullscreen content   |
 
-Standalone persistent storage recovery alerts use `z-40`, below modal backdrops. Settings and
-recovery-detail dialogs must cover these background alerts while blocking their interaction.
-Inline recovery notices inherit their containing surface; notices in the shared toast stack retain
-the stack's layer.
+Background notices share `z-toast`: action toasts, the notification stack, persistent storage
+recovery alerts, live message notices and their error fallback. Modal backdrops must cover these
+notices while the background is blocked. Inline errors stay within their owning surface. Preserve
+existing notice lifetimes and Undo deadlines when a modal opens.
+
+Body-portaled selection controls must respect `inert` and `aria-hidden` on their source ancestors.
+Hide them while that source is inactive and restore them if the original selection remains valid.
+Active-dialog menus and other foreground child layers retain their own ordering.
 
 ### Border Opacity
 

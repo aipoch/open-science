@@ -76,9 +76,10 @@ const NotificationRecovery = ({
   if (surface !== 'center') {
     return (
       <div
+        data-notification-recovery-toast={surface === 'toast' ? '' : undefined}
         className={
           surface === 'toast'
-            ? 'fixed bottom-4 right-4 z-[75] max-h-[80dvh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto'
+            ? 'fixed bottom-4 right-4 z-toast max-h-[80dvh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto'
             : 'my-1 min-w-0'
         }
       >

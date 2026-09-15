@@ -252,7 +252,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
         if (!event.currentTarget.contains(event.relatedTarget)) setPaused(false)
       }}
       className={cn(
-        'fixed z-[75] rounded-xl border border-border-200/80 bg-bg-000 p-3 text-text-000 shadow-dialog motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150 motion-reduce:animate-none',
+        'fixed z-toast rounded-xl border border-border-200/80 bg-bg-000 p-3 text-text-000 shadow-dialog motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150 motion-reduce:animate-none',
         !position && 'invisible'
       )}
     >
