@@ -1,3 +1,4 @@
+import { validatePackageLiteratureSession } from './literature'
 import { join } from 'node:path'
 import { decodeSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
 import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-projection'
@@ -64,13 +65,8 @@ export const inspectSessionPackage = async (
   const session = await readSession(directory)
   if (manifest.source.projectId !== session.projectId || manifest.source.sessionId !== session.id)
     throw new Error('Session package source identity mismatch.')
-  await validatePackageRecords(
-    directory,
-    manifest,
-    parseNativeRecords(await readPackageJson(join(directory, 'records.json'))),
-    signal,
-    manifest.source,
-    temporaryRoot
-  )
+  const records = parseNativeRecords(await readPackageJson(join(directory, 'records.json')))
+  validatePackageLiteratureSession(records, session)
+  await validatePackageRecords(directory, manifest, records, signal, manifest.source, temporaryRoot)
   return preview(manifest, session)
 }

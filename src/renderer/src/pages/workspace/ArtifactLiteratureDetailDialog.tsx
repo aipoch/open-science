@@ -26,6 +26,7 @@ import {
 } from '../../../../shared/literature'
 
 type ArtifactLiteratureDetailDialogProps = Readonly<{
+  snapshotOnly?: boolean
   reference: ArtifactLiteratureReference | undefined
   onOpenChange: (open: boolean) => void
 }>
@@ -68,6 +69,7 @@ const formatBytes = (bytes: number): string => {
 
 const ArtifactLiteratureDetailDialog = ({
   reference,
+  snapshotOnly = false,
   onOpenChange
 }: ArtifactLiteratureDetailDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -78,7 +80,7 @@ const ArtifactLiteratureDetailDialog = ({
   const [liveReference, setLiveReference] = useState<LiveReferenceState>({ status: 'idle' })
 
   useEffect(() => {
-    if (!reference) return
+    if (!reference || snapshotOnly) return
 
     let active = true
     void window.api.literature.get(reference.itemId).then(
@@ -98,13 +100,15 @@ const ArtifactLiteratureDetailDialog = ({
     return () => {
       active = false
     }
-  }, [reference, literatureRevision])
+  }, [reference, literatureRevision, snapshotOnly])
 
   const resolvedReference =
     reference && liveReference.itemId === reference.itemId ? liveReference : undefined
-  const loadStatus = resolvedReference?.status ?? (reference ? 'loading' : 'idle')
+  const loadStatus = snapshotOnly
+    ? 'idle'
+    : (resolvedReference?.status ?? (reference ? 'loading' : 'idle'))
   const item = reference?.item
-  const attachments = resolvedReference?.item?.attachments ?? []
+  const attachments = snapshotOnly ? [] : (resolvedReference?.item?.attachments ?? [])
   const itemTypeLabels: Record<LiteratureItemType, string> = {
     journalArticle: t('Journal article'),
     review: t('Review'),
@@ -173,7 +177,9 @@ const ArtifactLiteratureDetailDialog = ({
 
             <div className="min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
               <p className="py-3 text-xs text-muted-foreground">
-                {t('Saved reference metadata. Attachments reflect the current Library entry.')}
+                {snapshotOnly
+                  ? t('Saved reference metadata from the Session package.')
+                  : t('Saved reference metadata. Attachments reflect the current Library entry.')}
               </p>
               {loadStatus === 'missing' || loadStatus === 'error' ? (
                 <ErrorNotice

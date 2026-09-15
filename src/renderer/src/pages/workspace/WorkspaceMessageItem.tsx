@@ -1362,6 +1362,9 @@ const WorkspaceMessageItemImpl = ({
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const { t } = useTranslation()
   const bookmarks = useBookmarks()
+  const packageReference = useSessionStore((state) =>
+    Boolean(state.sessions.find((session) => session.id === bookmarks.sessionId)?.packageOrigin)
+  )
   const isUserMessage = message.role === 'user'
   const isHumanUser = isHumanUserMessage(message)
   const reviewerCorrectionActive =
@@ -1977,6 +1980,7 @@ const WorkspaceMessageItemImpl = ({
         />
         {selectedLiteratureReference ? (
           <ArtifactLiteratureDetailDialog
+            snapshotOnly={packageReference}
             reference={selectedLiteratureReference}
             onOpenChange={(open) => {
               if (!open) setSelectedLiteratureReference(undefined)

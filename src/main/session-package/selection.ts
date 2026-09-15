@@ -62,7 +62,12 @@ export const selectablePackageFiles = (
         filename: String(row.filename),
         sizeBytes: Number(row.sizeBytes),
         groupId: String(row.artifactId ?? row.uploadFileId),
-        source: table === 'ArtifactVersion' ? ('artifact' as const) : ('upload' as const),
+        source:
+          table === 'ArtifactVersion'
+            ? ('artifact' as const)
+            : records.literature?.attachments.some((entry) => entry.versionId === row.id)
+              ? ('literature' as const)
+              : ('upload' as const),
         versionNumber: Number(row.versionNumber),
         dependentFiles: [
           ...new Set([

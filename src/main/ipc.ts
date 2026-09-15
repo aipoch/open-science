@@ -1,3 +1,4 @@
+import { PackageLiteratureReader } from './session-package/literature-reader'
 import { PdfElementAgentReader } from './literature/pdf-structure/agent-reader'
 import { transactLiterature } from './literature/transact'
 import { createPdfStructureOwner } from './literature/pdf-structure/owner'
@@ -1209,7 +1210,12 @@ const createApplicationModules = async (
   })
   const literatureAttachmentAuthority = new LiteratureAttachmentAuthority({
     getClient: () => getProjectDbClient(resolveConfigRoot()),
-    content: contentRepository
+    content: contentRepository,
+    packages: new PackageLiteratureReader({
+      storageRoot: resolveDataRoot(),
+      getClient: () => getProjectDbClient(resolveConfigRoot()),
+      files: managedFileVersionService
+    })
   })
   const sessionPdfSourceResolver = new SessionPdfSourceResolver({
     inputs: immutableInputAuthority,

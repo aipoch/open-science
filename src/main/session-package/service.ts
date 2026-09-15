@@ -1,3 +1,8 @@
+import {
+  capturePackageLiterature,
+  sessionLiteratureReferences,
+  validatePackageLiteratureSession
+} from './literature'
 import { assertSettledHistory, readSession, preview, inspectSessionPackage } from './inspection'
 import {
   capturePackageReproducibility,
@@ -471,9 +476,10 @@ export class SessionPackageService {
     const project = await client.project.findUniqueOrThrow({ where: { id: request.projectId } })
     const notebookKeys = await notebookStorageKeys(this.options.storageRoot, request)
     const notebooks = await readPackageNotebooks(this.options.storageRoot, notebookKeys)
+    const literatureIds = sessionLiteratureReferences(session).versionIds
     const versionIds = [
       ...new Set([
-        ...sessionFileVersionIds(session),
+        ...sessionFileVersionIds(session).filter((id) => !literatureIds.has(id)),
         ...notebooks.flatMap((document) =>
           document.runs.flatMap((run) =>
             (run.inputFiles ?? []).map((input) => input.inputFileVersionId)
@@ -482,6 +488,8 @@ export class SessionPackageService {
       ])
     ]
     const records = await captureNativeRecords(client, request, versionIds)
+    const literatureSources = await capturePackageLiterature(client, session, records)
+    const sourceKey = (key: string): string => literatureSources.get(key) ?? key
     const history = await capturePackageHistory(this.configRoot, this.options.getClient, request)
     records.history = history
     records.reproducibility = await capturePackageReproducibility(
@@ -514,11 +522,11 @@ export class SessionPackageService {
     ])) {
       if (optionalKeys.has(key)) continue
       this.signal.throwIfAborted()
-      await assertPackageSourcePath(this.options.storageRoot, key)
+      await assertPackageSourcePath(this.options.storageRoot, sourceKey(key))
       retainedFiles.push({
         storageKey: key,
         filename: key,
-        sizeBytes: (await lstat(resolveStorageKey(this.options.storageRoot, key))).size
+        sizeBytes: (await lstat(resolveStorageKey(this.options.storageRoot, sourceKey(key)))).size
       })
     }
     const sessionJson = JSON.stringify({ version: 2, session: sharedSession })
@@ -564,8 +572,8 @@ export class SessionPackageService {
         ].filter((key) => !excludedKeys.has(key))
         const sizes = new Map<string, number>()
         for (const key of storageKeys) {
-          await assertPackageSourcePath(this.options.storageRoot, key)
-          const original = resolveStorageKey(this.options.storageRoot, key)
+          await assertPackageSourcePath(this.options.storageRoot, sourceKey(key))
+          const original = resolveStorageKey(this.options.storageRoot, sourceKey(key))
           const metadata = await lstat(original)
           if (
             isNotebookInputCopy(key) &&
@@ -600,8 +608,8 @@ export class SessionPackageService {
         let completedFiles = 0
         for (const storageKey of sizes.keys()) {
           assertPortablePackageStorageKey(storageKey)
-          await assertPackageSourcePath(this.options.storageRoot, storageKey)
-          const original = resolveStorageKey(this.options.storageRoot, storageKey)
+          await assertPackageSourcePath(this.options.storageRoot, sourceKey(storageKey))
+          const original = resolveStorageKey(this.options.storageRoot, sourceKey(storageKey))
           const metadata = await lstat(original)
           if (!metadata.isFile() || metadata.size > PACKAGE_MAX_FILE_BYTES)
             throw new Error('Invalid or oversized package source file.')
@@ -641,6 +649,7 @@ export class SessionPackageService {
         }
         const manifest: SessionPackageManifest = {
           format: 'open-science-session',
+          ...(records.literature ? { requiredFeatures: ['literature' as const] } : {}),
           schemaVersion: 1,
           createdAt: Date.now(),
           source: { ...request, projectName: project.name, title: session.title },
@@ -693,9 +702,9 @@ export class SessionPackageService {
           throw new Error('The Session changed during export. Try again.')
         for (const entry of inventory) {
           if (!entry.storageKey) continue
-          await assertPackageSourcePath(this.options.storageRoot, entry.storageKey)
+          await assertPackageSourcePath(this.options.storageRoot, sourceKey(entry.storageKey))
           const currentFile = await digestFileWithinBudget(
-            resolveStorageKey(this.options.storageRoot, entry.storageKey),
+            resolveStorageKey(this.options.storageRoot, sourceKey(entry.storageKey)),
             entry.sizeBytes,
             this.signal
           )
@@ -708,6 +717,13 @@ export class SessionPackageService {
           request.sessionId
         )
         const currentRecords = await captureNativeRecords(client, request, versionIds)
+        const currentLiteratureSources = await capturePackageLiterature(
+          client,
+          session,
+          currentRecords
+        )
+        if (!isDeepStrictEqual(currentLiteratureSources, literatureSources))
+          throw new Error('The Session changed during export. Try again.')
         currentRecords.history = await capturePackageHistory(
           this.configRoot,
           this.options.getClient,
@@ -818,6 +834,7 @@ export class SessionPackageService {
       const sourceSession = await readSession(sourceRoot)
       this.assertIdentity(manifest, sourceSession)
       const records = parseNativeRecords(await readPackageJson(join(sourceRoot, 'records.json')))
+      validatePackageLiteratureSession(records, sourceSession)
       const native = await prepareNativeImport(
         sourceRoot,
         destinationRoot,
@@ -899,6 +916,7 @@ export class SessionPackageService {
           excludedFiles: manifest.excludedFiles
         }
       }
+      validatePackageLiteratureSession(native.records, session)
       const sessionStage = join(configOperationRoot, 'session-stage')
       const evidenceDirectory = join(
         destinationRoot,
