@@ -8,7 +8,10 @@ const loggerMocks = vi.hoisted(() => {
   return { log, createLogger: vi.fn(() => log) }
 })
 
-vi.mock('node:child_process', () => ({ spawnSync }))
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:child_process')>()),
+  spawnSync
+}))
 vi.mock('../logger', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../logger')>()),
   createLogger: loggerMocks.createLogger
