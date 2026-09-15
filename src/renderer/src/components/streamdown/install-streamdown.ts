@@ -1,12 +1,5 @@
 import type { SaveBlobFileRequest, SaveBlobFileResult } from '../../../../shared/file-save'
 import {
-  extractTableDataFromElement,
-  tableDataToCSV,
-  tableDataToMarkdown,
-  tableDataToTSV
-} from 'streamdown'
-
-import {
   STREAMDOWN_FULLSCREEN_SELECTOR,
   STREAMDOWN_MERMAID_FULLSCREEN_SELECTOR,
   STREAMDOWN_TABLE_FULLSCREEN_SELECTOR
@@ -295,6 +288,9 @@ const INLINE_TOOLBAR_BUTTON =
 type TableFormat = 'csv' | 'md' | 'tsv'
 type TableAction = 'copy' | 'download'
 
+const loadTableDataRuntime = (): Promise<typeof import('./table-data-runtime')> =>
+  import('./table-data-runtime')
+
 const FORMAT_OPTIONS: Record<TableAction, Array<{ id: TableFormat; label: string }>> = {
   copy: [
     { id: 'md', label: 'Markdown' },
@@ -340,6 +336,8 @@ const getToolbarAction = (relative: HTMLElement): TableAction | null => {
 }
 
 const copyTable = async (table: HTMLTableElement, format: TableFormat): Promise<void> => {
+  const { extractTableDataFromElement, tableDataToCSV, tableDataToMarkdown, tableDataToTSV } =
+    await loadTableDataRuntime()
   const data = extractTableDataFromElement(table)
   const text =
     format === 'csv'
@@ -356,6 +354,8 @@ const copyTable = async (table: HTMLTableElement, format: TableFormat): Promise<
 }
 
 const downloadTable = async (table: HTMLTableElement, format: 'csv' | 'md'): Promise<void> => {
+  const { extractTableDataFromElement, tableDataToCSV, tableDataToMarkdown } =
+    await loadTableDataRuntime()
   const data = extractTableDataFromElement(table)
   const isCsv = format === 'csv'
   const text = isCsv ? tableDataToCSV(data) : tableDataToMarkdown(data)
