@@ -10,7 +10,7 @@ import {
   type ProcessTreeSnapshot
 } from './process-snapshot'
 
-const PROFILE_SCHEMA_VERSION = 4
+const PROFILE_SCHEMA_VERSION = 5
 const DEFAULT_SAMPLE_INTERVAL_MS = 1_000
 const MIN_SAMPLE_INTERVAL_MS = 250
 const MAX_SAMPLE_INTERVAL_MS = 10_000
@@ -119,6 +119,7 @@ type RuntimeProfileSummary = {
   sampleIntervalMs: number
   schemaVersion: number
   sessionHydrationTrace: SessionHydrationTraceEvent[]
+  startupTrace: StartupTraceEvent[]
   timings?: Record<string, NumberStats & { median: number; count: number }>
   startedAt: number
 }
@@ -145,6 +146,14 @@ type SessionHydrationTraceEvent = {
   sessionBytes?: number
   recoveryFailureCount?: number
   degradedReconciliationCount?: number
+}
+
+type StartupTraceEvent = SessionHydrationTraceEvent & {
+  operation: 'application-startup' | 'application-composition'
+  delayKind?: 'cpu' | 'io-or-wait' | 'mixed'
+  operationDelayKind?: 'cpu' | 'io-or-wait' | 'mixed'
+  phaseWaitMs?: number
+  waitMs?: number
 }
 
 type SessionHydrationDiagnosticInput = {
@@ -268,6 +277,73 @@ const SESSION_TRACE_NUMBER_FIELDS = [
   'degradedReconciliationCount'
 ] as const satisfies readonly (keyof SessionHydrationTraceEvent)[]
 
+const STARTUP_TRACE_NUMBER_FIELDS = [
+  'elapsedMs',
+  'phaseDurationMs',
+  'durationMs',
+  'cpuUserMs',
+  'cpuSystemMs',
+  'cpuTotalMs',
+  'phaseCpuUserMs',
+  'phaseCpuSystemMs',
+  'phaseCpuTotalMs',
+  'phaseWaitMs',
+  'waitMs'
+] as const satisfies readonly (keyof StartupTraceEvent)[]
+
+const diagnosticIdentifier = (value: unknown, maxLength: number): string | undefined =>
+  typeof value === 'string' && value.length <= maxLength && /^[a-z0-9][a-z0-9:._-]*$/iu.test(value)
+    ? value
+    : undefined
+
+const diagnosticEvent = (
+  message: string,
+  phase: string | undefined
+): SessionHydrationTraceEvent['event'] | undefined => {
+  const event = / operation (started|phase|completed|cancelled|failed)$/u.exec(message)?.[1]
+  if (event === 'phase') return phase ? 'phase' : undefined
+  return event === 'started' || event === 'completed' || event === 'cancelled' || event === 'failed'
+    ? event
+    : undefined
+}
+
+const APPLICATION_STARTUP_PHASES = new Set([
+  'single-instance-lock',
+  'prepare-runtime',
+  'load-bootstrap-modules',
+  'crash-reporting',
+  'electron-ready',
+  'load-startup-shell-modules',
+  'prepare-shell',
+  'startup-shell-timeout',
+  'database-and-application-modules',
+  'load-application-modules',
+  'application-modules-loaded',
+  'compose-runtime',
+  'register-application-ipc',
+  'compose-desktop-surfaces',
+  'compose-remote-access',
+  'install-lifecycle'
+])
+const APPLICATION_COMPOSITION_PHASES = new Set([
+  'data-root',
+  'permission-grants',
+  'notebook-runtime',
+  'specialist-catalog',
+  'builtin-specialists',
+  'agent-home-skill-identity-migration',
+  'marketplace-recover',
+  'connectors',
+  'deletion-barriers',
+  'notebook-rpc',
+  'acp-runtime',
+  'skills',
+  'side-chat',
+  'notebook-provisioner',
+  'commands',
+  'ipc-adapters'
+])
+
 const parseSessionHydrationDiagnostic = ({
   capturedAt,
   data,
@@ -282,32 +358,91 @@ const parseSessionHydrationDiagnostic = ({
     return undefined
   }
   const record = data as Record<string, unknown>
-  if (record.operation !== 'session-hydration' || typeof record.operationId !== 'string') {
+  const operationId = diagnosticIdentifier(record.operationId, 128)
+  if (record.operation !== 'session-hydration' || !operationId) {
     return undefined
   }
-  const outcome = record.outcome
-  const event: SessionHydrationTraceEvent['event'] =
-    outcome === 'started'
-      ? 'started'
-      : outcome === 'completed' || outcome === 'cancelled' || outcome === 'failed'
-        ? outcome
-        : typeof record.phase === 'string'
-          ? 'phase'
-          : 'started'
+  const phase = diagnosticIdentifier(record.phase, 80)
+  const cpuIntervalPhase = diagnosticIdentifier(record.cpuIntervalPhase, 80)
+  const event = diagnosticEvent(message, phase)
+  if (!event) return undefined
   const trace: SessionHydrationTraceEvent = {
     capturedAt,
     event,
-    operationId: record.operationId
+    operationId
   }
-  if (typeof record.phase === 'string') trace.phase = record.phase
-  if (typeof record.cpuIntervalPhase === 'string') {
-    trace.cpuIntervalPhase = record.cpuIntervalPhase
-  }
+  if (phase) trace.phase = phase
+  if (cpuIntervalPhase) trace.cpuIntervalPhase = cpuIntervalPhase
   for (const field of SESSION_TRACE_NUMBER_FIELDS) {
     const value = record[field]
     if (typeof value === 'number' && Number.isFinite(value)) {
       Object.assign(trace, { [field]: value })
     }
+  }
+  return trace
+}
+
+const parseStartupDiagnostic = ({
+  capturedAt,
+  data,
+  message
+}: SessionHydrationDiagnosticInput): StartupTraceEvent | undefined => {
+  if (
+    !/^\[[a-z0-9:-]{1,80}\] operation (?:started|phase|completed|cancelled|failed)$/iu.test(message)
+  ) {
+    return undefined
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined
+  const record = data as Record<string, unknown>
+  const operation = record.operation
+  const operationId = diagnosticIdentifier(record.operationId, 128)
+  if (
+    (operation !== 'application-startup' && operation !== 'application-composition') ||
+    !operationId
+  ) {
+    return undefined
+  }
+  const phases =
+    operation === 'application-startup'
+      ? APPLICATION_STARTUP_PHASES
+      : APPLICATION_COMPOSITION_PHASES
+  const rawPhase = diagnosticIdentifier(record.phase, 80)
+  const phase = rawPhase && phases.has(rawPhase) ? rawPhase : undefined
+  const rawCpuIntervalPhase = diagnosticIdentifier(record.cpuIntervalPhase, 80)
+  const cpuIntervalPhase =
+    rawCpuIntervalPhase === 'operation-start' ||
+    (rawCpuIntervalPhase !== undefined && phases.has(rawCpuIntervalPhase))
+      ? rawCpuIntervalPhase
+      : undefined
+  const event = diagnosticEvent(message, phase)
+  if (!event) return undefined
+  const trace: StartupTraceEvent = {
+    capturedAt,
+    event,
+    operation,
+    operationId
+  }
+  if (phase) trace.phase = phase
+  if (cpuIntervalPhase) trace.cpuIntervalPhase = cpuIntervalPhase
+  for (const field of STARTUP_TRACE_NUMBER_FIELDS) {
+    const value = record[field]
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      Object.assign(trace, { [field]: value })
+    }
+  }
+  if (
+    record.delayKind === 'cpu' ||
+    record.delayKind === 'io-or-wait' ||
+    record.delayKind === 'mixed'
+  ) {
+    trace.delayKind = record.delayKind
+  }
+  if (
+    record.operationDelayKind === 'cpu' ||
+    record.operationDelayKind === 'io-or-wait' ||
+    record.operationDelayKind === 'mixed'
+  ) {
+    trace.operationDelayKind = record.operationDelayKind
   }
   return trace
 }
@@ -416,7 +551,8 @@ const summarizeSamples = (
     sampleIntervalMs: number
     startedAt: number
   },
-  sessionHydrationTrace: readonly SessionHydrationTraceEvent[] = []
+  sessionHydrationTrace: readonly SessionHydrationTraceEvent[] = [],
+  startupTrace: readonly StartupTraceEvent[] = []
 ): RuntimeProfileSummary => {
   const byPhase = new Map<string, RuntimeResourceSample[]>()
   for (const sample of samples) {
@@ -505,6 +641,7 @@ const summarizeSamples = (
       (sample) => !sample.processTreeComplete || !sample.electronMetricsComplete
     ).length,
     sessionHydrationTrace: sessionHydrationTrace.map((event) => ({ ...event })),
+    startupTrace: startupTrace.map((event) => ({ ...event })),
     phases
   }
 }
@@ -566,6 +703,33 @@ Operation | CPU interval | Boundary/outcome | Wall ms | CPU user ms | CPU system
 ---: | --- | --- | ---: | ---: | ---: | ---:
 ${numberedSessionTraceRows.join('\n')}
 `
+  const startupOperationNumbers = new Map<string, number>()
+  const startupTraceRows = summary.startupTrace
+    .filter((event) => event.phaseDurationMs !== undefined)
+    .map((event) => {
+      const operationKey = `${event.operation}:${event.operationId}`
+      const operationNumber =
+        startupOperationNumbers.get(operationKey) ?? startupOperationNumbers.size + 1
+      startupOperationNumbers.set(operationKey, operationNumber)
+      return [
+        `${event.operation} #${operationNumber}`,
+        event.cpuIntervalPhase ?? 'unavailable',
+        event.event === 'phase' ? (event.phase ?? 'phase') : event.event,
+        formatNumber(event.phaseDurationMs ?? 0),
+        event.phaseCpuTotalMs === undefined ? 'unavailable' : formatNumber(event.phaseCpuTotalMs),
+        event.delayKind ?? 'unavailable'
+      ].join(' | ')
+    })
+  const startupTraceSection =
+    startupTraceRows.length === 0
+      ? ''
+      : `
+## Startup operation trace
+
+Operation | CPU interval | Boundary/outcome | Wall ms | CPU total ms | Delay classification
+--- | --- | --- | ---: | ---: | ---
+${startupTraceRows.join('\n')}
+`
   const storageRows = Object.entries(summary.phases).flatMap(([phase, stats]) => {
     if (!stats.storage) return []
     return [
@@ -605,6 +769,7 @@ ${storageRows.join('\n')}
 Phase | Included/total | CPU mean % | CPU p95 % | CPU peak % | CPU end % | RSS start MB | RSS peak MB | RSS end MB | RSS delta MB | Process peak | Top CPU role | Top RSS role
 --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---
 ${rows.join('\n')}
+${startupTraceSection}
 ${sessionTraceSection}
 ${storageSection}
 ## Journey timings
@@ -619,7 +784,10 @@ ${Object.entries(summary.timings ?? {})
   .join('\n')}
 
 Startup-ready measures process launch through the fixture's UI readiness gate; it is not a browser TTI estimate.
-The first-startup-ready metric stops at the first renderer/database/settings readiness gate.
+The first-startup-ready metric stops at the first renderer application-runtime/settings readiness gate.
+First-window-visible observes the normal BrowserWindow's first show (or attachment after it was already visible).
+First-runtime-ready observes Main's completed application runtime and lifecycle through the renderer bridge.
+First-workspace-ready additionally requires the expected Home route and its primary action to be usable.
 The startup-ready metric also includes the fixture’s controlled reload to suppress the Star nudge.
 Paint timings are reported only when Chromium supplies them. Disk caches are not cleared between runs.
 Persistence stage timings retain the latest completed lookup at each capture, not every lookup.
@@ -716,6 +884,7 @@ class RuntimeResourceProfiler {
   private readonly storageRoot: string | undefined
   private readonly samples: RuntimeResourceSample[] = []
   private readonly sessionHydrationTrace: SessionHydrationTraceEvent[] = []
+  private readonly startupTrace: StartupTraceEvent[] = []
   private phase = 'startup'
   private readonly timings = new Map<string, number[]>()
   private sampleInFlight: Promise<void> | undefined
@@ -743,7 +912,7 @@ class RuntimeResourceProfiler {
   async attach(application: ElectronApplication): Promise<void> {
     this.application = application
     if (!this.consoleListeners.has(application)) {
-      const listener = (message: ConsoleMessage): void => this.queueSessionTraceCapture(message)
+      const listener = (message: ConsoleMessage): void => this.queueDiagnosticTraceCapture(message)
       this.consoleListeners.set(application, listener)
       application.on('console', listener)
     }
@@ -801,7 +970,8 @@ class RuntimeResourceProfiler {
         nodeVersion: process.versions.node,
         electronVersion: this.electronVersion
       },
-      this.sessionHydrationTrace
+      this.sessionHydrationTrace,
+      this.startupTrace
     )
     summary.timings = Object.fromEntries(
       [...this.timings].map(([name, values]) => [
@@ -836,21 +1006,31 @@ class RuntimeResourceProfiler {
     this.consoleListeners.clear()
   }
 
-  private queueSessionTraceCapture(message: ConsoleMessage): void {
+  private queueDiagnosticTraceCapture(message: ConsoleMessage): void {
     const capturedAt = this.now()
     const capture = (async (): Promise<void> => {
       const consoleText = message.text()
-      if (!consoleText.startsWith(SESSION_TRACE_MESSAGE_PREFIX)) return
-      const data = await message
-        .args()[1]
-        ?.jsonValue()
-        .catch(() => undefined)
-      const trace = parseSessionHydrationDiagnostic({
+      if (
+        !consoleText.startsWith(SESSION_TRACE_MESSAGE_PREFIX) &&
+        !/^\[[a-z0-9:-]{1,80}\] operation /iu.test(consoleText)
+      ) {
+        return
+      }
+      const args = message.args()
+      const [rawMessage, data] = await Promise.all([
+        args[0]?.jsonValue().catch(() => undefined),
+        args[1]?.jsonValue().catch(() => undefined)
+      ])
+      if (typeof rawMessage !== 'string' || rawMessage.length > 120) return
+      const input = {
         capturedAt,
-        message: consoleText,
+        message: rawMessage,
         data
-      })
-      if (trace) this.sessionHydrationTrace.push(trace)
+      }
+      const sessionTrace = parseSessionHydrationDiagnostic(input)
+      if (sessionTrace) this.sessionHydrationTrace.push(sessionTrace)
+      const startupTrace = parseStartupDiagnostic(input)
+      if (startupTrace) this.startupTrace.push(startupTrace)
     })().catch(() => undefined)
     this.traceCaptureInFlight = Promise.all([this.traceCaptureInFlight, capture]).then(
       () => undefined
@@ -932,6 +1112,7 @@ export {
   RuntimeResourceProfiler,
   mergeResourceSample,
   parseSessionHydrationDiagnostic,
+  parseStartupDiagnostic,
   readRuntimeStorageSnapshot,
   renderSummaryMarkdown,
   summarizeSamples,
@@ -950,5 +1131,6 @@ export type {
   RuntimeResourceTotals,
   RuntimeStorageSummary,
   RuntimeStorageTotals,
-  SessionHydrationTraceEvent
+  SessionHydrationTraceEvent,
+  StartupTraceEvent
 }
