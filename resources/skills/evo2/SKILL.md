@@ -32,7 +32,7 @@ metadata:
 | ----------- | --------------- | ------------ |
 | Python      | 3.11            | 3.12 (<3.13) |
 | CUDA        | 12.1+           | 12.4+        |
-| GPU VRAM    | 24 GB (7B bf16) | 80 GB (40B)  |
+| GPU VRAM    | 24 GB (7B bf16) | Multiple H100 GPUs (40B) |
 | RAM         | 32 GB           | 128 GB       |
 
 ## How to run
@@ -71,8 +71,8 @@ print(out.sequences[0])
 | Name           | Params | Context | VRAM (bf16) | Notes                                |
 | -------------- | ------ | ------- | ----------- | ------------------------------------ |
 | `evo2_7b`      | 7 B    | 1 M nt  | ~22 GB      | Default; fits on a single 24 GB+ GPU |
-| `evo2_40b`     | 40 B   | 1 M nt  | ~78 GB      | H100 80 GB or multi-GPU              |
-| `evo2_1b_base` | 1 B    | 8 K nt  | ~6 GB       | FP8 path requires sm_89+ (H100)      |
+| `evo2_40b`     | 40 B   | 1 M nt  | Multi-GPU   | Requires TE/FP8; multiple H100 GPUs |
+| `evo2_1b_base` | 1 B    | 8 K nt  | ~6 GB       | Requires TE/FP8 and a supported GPU |
 
 ## Output format
 
@@ -95,7 +95,7 @@ Need a DNA model?
 
 ## Remote compute
 
-7B/40B inference is GPU-bound (≥24 GB / 80 GB VRAM). Read
+7B/40B inference is GPU-bound (7B: ≥24 GB VRAM; 40B: multiple H100 GPUs). Read
 `compute_details({provider, mode:'read'})` for an environment with `evo2` +
 `flash-attn` and a pre-cached HF weight mount, then submit:
 
@@ -134,10 +134,14 @@ doesn't try to write `refs/` into a read-only mount. Weight footprint:
 
 | Symptom                               | Cause                        | Fix                                         |
 | ------------------------------------- | ---------------------------- | ------------------------------------------- |
-| `Transformer Engine not installed`    | No FP8 — falls back to bf16  | Informational only on non-H100; ignore      |
-| OOM on load                           | 40B on <80 GB GPU            | Use `evo2_7b` or shard with `device_map`    |
+| `Transformer Engine not installed` | TE is unavailable | In Evo2 0.6.0, only 7B variants fall back to bf16 projections. 40B/20B/1B variants raise `ImportError`; install TE on supported hardware or choose a 7B model. |
+| OOM on load | Insufficient GPU memory for the selected model | Use `evo2_7b` or provide sufficient supported GPUs. Vortex handles placement across GPUs visible to the process. For direct execution, select available GPUs with `CUDA_VISIBLE_DEVICES` before starting Python if needed. Under Slurm, request GPUs using the provider's required job directives and preserve the scheduler-set `CUDA_VISIBLE_DEVICES`; setting this variable does not allocate GPUs. Evo2 0.6.0 does not accept `device_map`; do not manually call `.to(device)` on a model split across GPUs. |
 | HF tries to write `refs/main`         | `HF_HOME` points at RO mount | Set `HF_HUB_OFFLINE=1`                      |
 | `dtype mismatch` in `score_sequences` | Passing tensors not strings  | Pass `list[str]`; the API tokenises for you |
+
+Loading guidance above follows the [Evo2 0.6.0 package](https://pypi.org/project/evo2/0.6.0/)
+and its `Evo2` loader. Consult the [upstream installation requirements](https://github.com/ArcInstitute/evo2#installation)
+for TE/GPU compatibility; installing TE alone does not establish hardware support.
 
 ---
 
