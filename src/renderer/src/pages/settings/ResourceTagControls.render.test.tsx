@@ -378,6 +378,63 @@ describe('ResourceTagMenu', () => {
     }
   )
 
+  it('keeps earlier saves accounted for when search changes before another selection', async () => {
+    let fail!: (error: Error) => void
+    let succeed!: () => void
+    setAssignment
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_, reject) => {
+            fail = reject
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            succeed = resolve
+          })
+      )
+    render(<ResourceTagMenu reference={reference} keepOpenOnSelect={false} />)
+    openPicker()
+    fireEvent.click(screen.getByRole('option', { name: 'ds-v4-flash' }))
+    search('pro')
+    key('Enter')
+    await act(async () => succeed())
+    expect(input().value).toBe('pro')
+    await act(async () => fail(new Error('offline')))
+    expect(screen.getByRole('alert').textContent).toBe('Could not update Tags.')
+    expect(input().value).toBe('pro')
+  })
+
+  it('allows a successful retry to clear its failure while another save remains pending', async () => {
+    let fail!: (error: Error) => void
+    let succeed!: () => void
+    setAssignment
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_, reject) => {
+            fail = reject
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            succeed = resolve
+          })
+      )
+    render(<ResourceTagMenu reference={reference} keepOpenOnSelect={false} />)
+    openPicker()
+    fireEvent.click(screen.getByRole('option', { name: 'ds-v4-flash' }))
+    fireEvent.click(screen.getByRole('option', { name: 'ds-v4-pro' }))
+    await act(async () => fail(new Error('offline')))
+    fireEvent.click(screen.getByRole('option', { name: 'ds-v4-flash' }))
+    await act(async () => {})
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(input()).not.toBeNull()
+    await act(async () => succeed())
+    expect(screen.queryByRole('combobox')).toBeNull()
+  })
+
   it('closes Settings only once all concurrent saves succeed', async () => {
     const finish: Array<() => void> = []
     setAssignment.mockImplementation(() => new Promise<void>((resolve) => finish.push(resolve)))

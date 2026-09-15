@@ -39,9 +39,14 @@ const ResourceTagMenu = ({
   const [creating, setCreating] = useState(false)
   const createPending = useRef(false)
   const interactionVersion = useRef(0)
-  const saveBatch = useRef<{ version: number; pending: number; failed: boolean } | undefined>(
-    undefined
-  )
+  const saveBatch = useRef<
+    | {
+        version: number
+        pending: number
+        operations: Map<string, { failed: boolean }>
+      }
+    | undefined
+  >(undefined)
   const inputRef = useRef<HTMLInputElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const tabDismissal = useRef(false)
@@ -62,8 +67,10 @@ const ResourceTagMenu = ({
   }
   useEffect(() => {
     interactionVersion.current += 1
+    saveBatch.current = undefined
     return () => {
       interactionVersion.current += 1
+      saveBatch.current = undefined
     }
   }, [scope])
   const assignedIds = new Set(
@@ -109,14 +116,13 @@ const ResourceTagMenu = ({
     }
     setError(undefined)
     const version = interactionVersion.current
-    if (
-      !saveBatch.current ||
-      saveBatch.current.version !== version ||
-      saveBatch.current.pending === 0
-    ) {
-      saveBatch.current = { version, pending: 0, failed: false }
-    }
+    // Search edits invalidate completion effects, but do not end the picker's save lifecycle.
+    saveBatch.current ??= { version, pending: 0, operations: new Map() }
     const batch = saveBatch.current
+    const operation = { failed: false }
+    let operationKey = option.key
+    batch.version = version
+    batch.operations.set(operationKey, operation)
     batch.pending += 1
     try {
       if (option.tag) {
@@ -134,6 +140,10 @@ const ResourceTagMenu = ({
         })
       } else {
         const tagId = await createTag({ name: query, iconKey: 'tag', colorKey: 'blue' })
+        // A retry after creation succeeds is an assignment of this existing Tag.
+        batch.operations.delete(operationKey)
+        operationKey = `tag:${tagId}`
+        batch.operations.set(operationKey, operation)
         await setAssignment({ ...reference, tagId, assigned: true })
       }
       if (version === interactionVersion.current) {
@@ -143,14 +153,17 @@ const ResourceTagMenu = ({
         }
       }
     } catch {
-      batch.failed = true
-      if (version === interactionVersion.current) setError(t('Could not update Tags.'))
+      operation.failed = true
+      if (saveBatch.current === batch && batch.operations.get(operationKey) === operation) {
+        setError(t('Could not update Tags.'))
+      }
     } finally {
       batch.pending -= 1
       if (
         batch.pending === 0 &&
-        !batch.failed &&
-        version === interactionVersion.current &&
+        ![...batch.operations.values()].some((item) => item.failed) &&
+        saveBatch.current === batch &&
+        batch.version === interactionVersion.current &&
         !keepOpenOnSelect
       ) {
         changeOpen(false)
