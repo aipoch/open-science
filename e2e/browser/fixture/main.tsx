@@ -10,6 +10,7 @@ import { useTagStore } from '@/stores/tag-store'
 import { useMemoryStore } from '@/stores/memory-store'
 import { useUpdateStore } from '@/stores/update-store'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 
 // Native boundaries only. Components, navigation, i18n, CSS and browser geometry are production code.
 // Missing APIs fail normally: do not use a catch-all proxy that could hide accidental dependencies.
@@ -60,6 +61,14 @@ export function Fixture(): React.JSX.Element {
   return (
     <TooltipProvider>
       <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={() => undefined} />
+      {new URLSearchParams(location.search).has('catalog') ? (
+        <SessionCatalogRecoveryAlert
+          recovery={{
+            kind: 'damaged-authority',
+            affectedFiles: [{ projectId: 'research', fileName: 'conversation.json' }]
+          }}
+        />
+      ) : null}
       <SettingsPage
         open={open}
         onClose={() => useSettingsStore.getState().closeSettings()}

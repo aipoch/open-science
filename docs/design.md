@@ -291,6 +291,11 @@ colors communicate a successful or failed probe/migration result.
 | `--z-index-toast`         | `z-toast`         | `70`  | Toasts and undo snackbars above the modal layer                      |
 | `--z-index-markdown-menu` | `z-markdown-menu` | `200` | Streamdown Mermaid and table format menus above fullscreen content   |
 
+Standalone persistent storage recovery alerts use `z-40`, below modal backdrops. Settings and
+recovery-detail dialogs must cover these background alerts while blocking their interaction.
+Inline recovery notices inherit their containing surface; notices in the shared toast stack retain
+the stack's layer.
+
 ### Border Opacity
 
 | Context                   | Light                   | Dark                         |
