@@ -435,7 +435,10 @@ type DelegatedNotebookConnection = NotebookRpcConnection & {
   revoke(): Promise<void>
 }
 
-type BoundArtifactTurn = ActiveArtifactTurnBinding & { stopFailure?: NotebookExecutionStopError }
+type BoundArtifactTurn = ActiveArtifactTurnBinding & {
+  pendingRequests: Set<Promise<void>>
+  stopFailure?: NotebookExecutionStopError
+}
 
 type NotebookRpcRequestLifecycle = {
   request: IncomingMessage
@@ -1515,7 +1518,7 @@ class NotebookLocalRpcServer {
       this.claimedDurableExecutionAuthorizations.delete(sessionId)
       this.consumedExecutionToolCalls.delete(sessionId)
     }
-    const boundTurn = { ...binding }
+    const boundTurn: BoundArtifactTurn = { ...binding, pendingRequests: new Set() }
     let ownedTurns = this.artifactTurnBindingsByExecution.get(sessionId)
     if (!ownedTurns) {
       ownedTurns = new Map()
@@ -1544,11 +1547,8 @@ class NotebookLocalRpcServer {
     const ownedTurns = this.artifactTurnBindingsByExecution.get(sessionId)
     const binding = ownedTurns?.get(ownerExecutionId)
     if (!binding) return
-    const draining = [...(this.serverLifecycle?.activeRequests ?? [])].filter(
-      (request) =>
-        request.foregroundTurn?.sessionId === sessionId &&
-        request.foregroundTurn.binding === binding
-    )
+    // Request ownership outlives the HTTP server reference, including during server shutdown.
+    const draining = [...binding.pendingRequests]
     // Replacement already cancelled the old producers. Never revoke the new turn's authority
     // while draining an older owner.
     if (this.activeArtifactTurnBindings.get(sessionId) === binding) {
@@ -1558,7 +1558,7 @@ class NotebookLocalRpcServer {
       this.claimedDurableExecutionAuthorizations.delete(sessionId)
       this.consumedExecutionToolCalls.delete(sessionId)
     }
-    await Promise.all(draining.map((request) => request.settled))
+    await Promise.all(draining)
     if (ownedTurns?.get(ownerExecutionId) === binding) {
       ownedTurns.delete(ownerExecutionId)
       if (ownedTurns.size === 0) this.artifactTurnBindingsByExecution.delete(sessionId)
@@ -1865,6 +1865,7 @@ class NotebookLocalRpcServer {
                 sessionId,
                 binding
               }
+              binding.pendingRequests.add(activeRequest.settled)
               writeProducerSignal = this.codeWriteProducerSignal(bearerToken, sessionId)
             }
           }
@@ -2305,6 +2306,7 @@ class NotebookLocalRpcServer {
       request.off('aborted', abortDisconnectedRequest)
       response.off('close', abortDisconnectedResponse)
       lifecycle.activeRequests.delete(activeRequest)
+      activeRequest.foregroundTurn?.binding.pendingRequests.delete(activeRequest.settled)
       activeRequest.settle()
       releaseArtifactRequest?.()
       artifactAdmission?.release()

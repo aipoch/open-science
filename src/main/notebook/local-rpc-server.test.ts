@@ -406,9 +406,15 @@ describe('notebook local RPC server', () => {
 
   it.each(
     (['execute', 'executeControl'] as const).flatMap((method) =>
-      (['before-clear', 'during-clear', 'before-replace', 'during-replace'] as const).map(
-        (timing) => ({ method, timing })
-      )
+      (
+        [
+          'before-clear',
+          'during-clear',
+          'before-replace',
+          'during-replace',
+          'during-close'
+        ] as const
+      ).map((timing) => ({ method, timing }))
     )
   )('retains a $method stop failure $timing for turn cleanup', async ({ method, timing }) => {
     const root = await createStorageRoot()
@@ -463,6 +469,7 @@ describe('notebook local RPC server', () => {
       },
       'failed execution stop propagation'
     ).then(async (response) => ({ status: response.status, body: await response.json() }))
+    let closing: Promise<void> | undefined
     try {
       await started.promise
       if (timing === 'before-clear' || timing === 'before-replace') {
@@ -485,6 +492,7 @@ describe('notebook local RPC server', () => {
           }
         })
       }
+      if (timing === 'during-close') closing = server.close()
       const clearing = server.clearArtifactTurnBinding('session-1', 'turn-1')
       const rejected = expect(clearing).rejects.toBe(stopError)
       failStop.resolve()
@@ -497,6 +505,7 @@ describe('notebook local RPC server', () => {
       failStop.resolve()
       await pending
       connection.release?.()
+      await closing
       await server.close()
       await service.dispose()
     }
