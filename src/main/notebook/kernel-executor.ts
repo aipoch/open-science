@@ -1045,12 +1045,28 @@ class NotebookKernelExecutor implements NotebookExecutor {
         })
       : undefined
     let sandboxCleanupPromise: Promise<NotebookSandboxCleanupResult> | undefined
+    let ownershipReceipt: KernelProcessReceipt | undefined
+    const nativeTerminationProof = sandboxed?.confirmProcessTreeTermination
+    let terminationConfirmed = false
+    // A one-time native proof may arrive after the direct child exits. Retain the callback for
+    // admission retries, and retain a verified result if removing its durable receipt must retry.
+    const confirmTermination = nativeTerminationProof
+      ? async (): Promise<boolean> => {
+          terminationConfirmed ||= await nativeTerminationProof()
+          if (terminationConfirmed && ownershipReceipt)
+            this.processLifecycle?.complete(ownershipReceipt, true)
+          return terminationConfirmed
+        }
+      : undefined
     const cleanupSandbox = (
       reason: NotebookSandboxCleanupReason,
       processOutcome: NotebookSandboxProcessOutcome
     ): Promise<NotebookSandboxCleanupResult> =>
       (sandboxCleanupPromise ??=
-        sandboxed?.cleanup(reason, processOutcome) ??
+        sandboxed?.cleanup(reason, {
+          ...processOutcome,
+          ...(confirmTermination ? { confirmTermination } : {})
+        }) ??
         Promise.resolve({
           processesTerminated: processOutcome.processesTerminated,
           networkClosed: true,
@@ -1114,7 +1130,6 @@ class NotebookKernelExecutor implements NotebookExecutor {
     }
     if (this.platform !== 'win32' && this.canTrackPosixProcesses)
       this.registerOwnedProcessGroup(child, processTreeOwnership.token)
-    let ownershipReceipt: KernelProcessReceipt | undefined
     const cleanupFailedSpawn = async (): Promise<void> => {
       const result = await this.terminateTree(child)
       if (ownershipReceipt) this.processLifecycle?.complete(ownershipReceipt, result.reaped)
