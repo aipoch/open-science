@@ -5491,8 +5491,9 @@ describe('notebook runtime service', () => {
       const elapsedMs = Date.now() - startedAt
 
       // Settlement waits for the process-tree terminator. Hosted Windows taskkill of PowerShell
-      // Start-Sleep can take a few seconds, so keep the bound well under the full sleep.
-      expect(elapsedMs).toBeLessThan(10_000)
+      // Start-Sleep plus durable admission can exceed ten seconds on hosted Windows.
+      // Keep the bound below the command duration while still checking timeout status below.
+      expect(elapsedMs).toBeLessThan(process.platform === 'win32' ? 20_000 : 10_000)
       expect(result.exitCode).not.toBe(0)
 
       const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
@@ -9139,21 +9140,35 @@ describe('notebook runtime service', () => {
       const repository = new NotebookRunRepository(root)
       const statusWrite = vi.spyOn(repository, 'updateKernelStatus')
       let release: (() => void) | undefined
+      let signalStarted!: () => void
+      const started = new Promise<void>((resolve) => {
+        signalStarted = resolve
+      })
       const service = holdingService(
         root,
         (_request, resolve) => {
           release = resolve
+          signalStarted()
         },
         repository
       )
 
       const run = service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
-      await vi.waitFor(() => expect(release).toBeDefined())
-      expect(
-        (await service.state({ sessionId: 'session-1', workspaceCwd: root })).kernelStatus
-      ).toBe('running')
-      release?.()
-      await run
+      try {
+        // Await the executor boundary, not a one-second polling budget under CI coverage.
+        await Promise.race([
+          started,
+          run.then(() => {
+            throw new Error('Run settled before the holding executor started')
+          })
+        ])
+        expect(
+          (await service.state({ sessionId: 'session-1', workspaceCwd: root })).kernelStatus
+        ).toBe('running')
+      } finally {
+        release?.()
+        await run
+      }
 
       expect(statusWrite).not.toHaveBeenCalled()
     })

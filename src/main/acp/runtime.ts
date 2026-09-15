@@ -58,6 +58,7 @@ import {
   type AgentModelChangeTarget,
   type ResolvedAgentBackend
 } from '../agent-framework'
+import { requestPlanReviewProviderStop } from './plan-review-provider-stop'
 import { renderAppMcpToolReferences } from '../agent-framework/app-mcp-names'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { redactSensitiveText } from '../diagnostic-redaction'
@@ -745,7 +746,37 @@ class AcpRuntime {
     this.reviewerSessions = session.reviewerSessions
     this.sessionUpdateProjector = session.sessionUpdateProjector
     this.sessionPlanWorkflow = composeAcpRuntimePlanWorkflow(options, base, session, {
-      deliveries: this.planDeliveryOwner
+      deliveries: this.planDeliveryOwner,
+      pauseProvider: (sessionId, sequence) => {
+        const connection = this.connection
+        const provider = this.activeSessionFor(sessionId)
+        return requestPlanReviewProviderStop({
+          ...(connection && provider
+            ? {
+                notify: () =>
+                  connection.agent.notify(acp.methods.agent.session.cancel, {
+                    sessionId: provider.sessionId
+                  })
+              }
+            : {}),
+          isCurrent: () => this.sessionInteractions.current(sessionId)?.sequence === sequence,
+          onUnconfirmed: (reason) => {
+            this.pushEvent({
+              kind: 'error',
+              level: 'error',
+              sessionId,
+              title: 'Could not pause the Agent for Plan review',
+              text:
+                reason === 'unavailable'
+                  ? 'The Provider connection is unavailable. The Plan remains pending.'
+                  : reason === 'notification-failed'
+                    ? 'The Provider stop request could not be delivered. The connection will close; the Plan remains pending.'
+                    : 'Provider stop was not confirmed. The connection will close; the Plan remains pending.'
+            })
+            void this.disconnect()
+          }
+        })
+      }
     })
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
       plan: this.sessionPlanWorkflow.prompt,
