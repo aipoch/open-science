@@ -591,13 +591,16 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                 type="button"
                 onClick={() => void inspectSource()}
                 disabled={sourceBusy || !repositoryUrl.trim()}
+                aria-busy={Boolean(sourceBusy)}
               >
-                {sourceBusy ? (
-                  <Loader2 className="animate-spin" aria-hidden="true" />
-                ) : (
-                  <GitBranch aria-hidden="true" />
-                )}
-                {t('Inspect source')}
+                <span key={String(sourceBusy)} className="button-feedback">
+                  {sourceBusy ? (
+                    <Loader2 className="animate-spin" aria-hidden="true" />
+                  ) : (
+                    <GitBranch aria-hidden="true" />
+                  )}
+                  {t('Inspect source')}
+                </span>
               </Button>
             </div>
 
@@ -771,11 +774,14 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                     onClick={() => {
                       if (sourcePendingRemoval) void removeSource(sourcePendingRemoval.id)
                     }}
+                    aria-busy={Boolean(sourceRemovalBusy)}
                   >
-                    {sourceRemovalBusy ? (
-                      <Loader2 className="animate-spin" aria-hidden="true" />
-                    ) : null}
-                    {t(sourceRemovalBusy ? 'Removing…' : 'Remove source')}
+                    <span key={String(sourceRemovalBusy)} className="button-feedback">
+                      {sourceRemovalBusy ? (
+                        <Loader2 className="animate-spin" aria-hidden="true" />
+                      ) : null}
+                      {t(sourceRemovalBusy ? 'Removing…' : 'Remove source')}
+                    </span>
                   </Button>
                 </div>
               </AlertDialog.Content>
@@ -874,21 +880,24 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                     }
                     void install()
                   }}
+                  aria-busy={Boolean(installBusy)}
                 >
-                  {installBusy ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
-                  {installBusy
-                    ? t('Installing…')
-                    : releaseStatus === 'installed'
-                      ? t('Manage')
-                      : releaseStatus === 'setup-incomplete'
-                        ? t('Finish setup')
-                        : installNeedsAttention
-                          ? installPreview?.package.overwrite?.modifiedSinceImport
-                            ? t('Replace local changes')
-                            : t('Continue installation')
-                          : releaseStatus === 'update-available'
-                            ? t('Update Specialist')
-                            : t('Install Specialist')}
+                  <span key={String(installBusy)} className="button-feedback">
+                    {installBusy ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+                    {installBusy
+                      ? t('Installing…')
+                      : releaseStatus === 'installed'
+                        ? t('Manage')
+                        : releaseStatus === 'setup-incomplete'
+                          ? t('Finish setup')
+                          : installNeedsAttention
+                            ? installPreview?.package.overwrite?.modifiedSinceImport
+                              ? t('Replace local changes')
+                              : t('Continue installation')
+                            : releaseStatus === 'update-available'
+                              ? t('Update Specialist')
+                              : t('Install Specialist')}
+                  </span>
                 </Button>
               </div>
 

@@ -216,26 +216,32 @@ const GitHubTokenControl = ({ onCancel }: { onCancel?(): void } = {}): React.JSX
             variant="outline"
             disabled={busy !== null}
             onClick={() => void remove()}
+            aria-busy={Boolean(busy === 'removing')}
           >
-            {busy === 'removing' ? t('Removing…') : t('Remove token')}
+            <span key={String(busy === 'removing')} className="button-feedback">
+              {busy === 'removing' ? t('Removing…') : t('Remove token')}
+            </span>
           </Button>
         ) : null}
         <Button
           type="button"
           disabled={busy !== null || token.trim().length === 0}
           onClick={() => void save()}
+          aria-busy={Boolean(busy === 'saving')}
         >
-          {busy === 'saving' ? (
-            <>
-              <LoaderCircle
-                className="size-4 animate-spin motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-              {t('Verifying…')}
-            </>
-          ) : (
-            t('Verify and save')
-          )}
+          <span key={String(busy === 'saving')} className="button-feedback">
+            {busy === 'saving' ? (
+              <>
+                <LoaderCircle
+                  className="size-4 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+                {t('Verifying…')}
+              </>
+            ) : (
+              t('Verify and save')
+            )}
+          </span>
         </Button>
       </div>
     </section>

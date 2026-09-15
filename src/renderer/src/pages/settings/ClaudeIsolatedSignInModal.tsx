@@ -201,17 +201,19 @@ const ClaudeIsolatedSignInModalBody = ({
                     onClick={() => void copyCommand()}
                     aria-label={t('Copy command')}
                   >
-                    {copied ? (
-                      <>
-                        <Check className="size-3.5" aria-hidden="true" />
-                        {t('Copied')}
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="size-3.5" aria-hidden="true" />
-                        {t('Copy')}
-                      </>
-                    )}
+                    <span key={String(copied)} className="button-feedback">
+                      {copied ? (
+                        <>
+                          <Check className="size-3.5" aria-hidden="true" />
+                          {t('Copied')}
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="size-3.5" aria-hidden="true" />
+                          {t('Copy')}
+                        </>
+                      )}
+                    </span>
                   </Button>
                 </div>
               </div>

@@ -451,6 +451,9 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Small button: `h-7 px-2.5 text-[0.8rem]`; large button: `h-9 px-2.5`.
 - Icon button: usually `size-8 rounded-lg`; compact top bars and row actions use `size-7`.
 - Focus is `focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50`; disabled is non-interactive at `opacity-50`. Button feedback uses an explicit transition property list and disables it for reduced motion.
+- Async command and copy buttons reuse their existing owner state. Wrap their icon/label in `.button-feedback`, keyed to the operation phase, for a 180ms whole-label fade and 3px entry offset. Keep the button itself mounted so focus, Radix triggers and hit targets survive. Do not key to progress percentages or countdown text, animate individual letters, or defer an operation for animation. Existing progress, partial failures and recovery notices remain authoritative. Keep live regions outside keyed content.
+- Loading commands expose `aria-busy` and preserve their existing disabled rules. Reduced motion disables the content animation and nested spinner rotation. Dense navigation, selection, send/stop and cancellation controls retain immediate feedback.
+- The Home update action reveals its label on hover and keyboard focus over 200ms. Touch, download progress and failures keep the label visible. Clicking always opens the existing update dialog once; revealing a label adds no disclosure state. The Session update action retains its persistent label.
 
 ### External Link
 

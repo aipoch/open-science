@@ -1025,6 +1025,7 @@
     "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported.": "Codex 認証と、互換性がある場合はアクティブなプロバイダーの非機密ループバックルートを Open Science のアプリデータにコピーします。他のグローバル構成、スキルおよびセッションはインポートされません。",
     "Copy": "コピー",
     "Copy code": "コードをコピーする",
+    "Could not copy code. Try again.": "コードをコピーできませんでした。もう一度お試しください。",
     "Copy command": "コマンドをコピー",
     "Copy details": "詳細をコピーする",
     "Copy link": "リンクをコピー",

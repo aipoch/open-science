@@ -655,13 +655,15 @@ export function DeviceCredentialEditor({
             {t('Cancel')}
           </Button>
           <Button type="button" onClick={() => void save()} disabled={!canSave} aria-busy={busy}>
-            {busyAction === 'saving'
-              ? t('Saving…')
-              : busyAction === 'authenticating'
-                ? t('Signing in…')
-                : !editing && kind === 'oauth'
-                  ? t('Save and sign in')
-                  : t('Save')}
+            <span key={String(busyAction ?? 'idle')} className="button-feedback">
+              {busyAction === 'saving'
+                ? t('Saving…')
+                : busyAction === 'authenticating'
+                  ? t('Signing in…')
+                  : !editing && kind === 'oauth'
+                    ? t('Save and sign in')
+                    : t('Save')}
+            </span>
           </Button>
         </div>
       </div>

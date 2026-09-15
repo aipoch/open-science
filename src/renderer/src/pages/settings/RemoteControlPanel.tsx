@@ -713,8 +713,13 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                               size="sm"
                               onClick={() => void copyUrl()}
                             >
-                              <Copy className="size-3.5" aria-hidden="true" />
-                              {copyStatus === 'copied' ? t('Copied') : t('Copy')}
+                              <span
+                                key={String(copyStatus === 'copied')}
+                                className="button-feedback"
+                              >
+                                <Copy className="size-3.5" aria-hidden="true" />
+                                {copyStatus === 'copied' ? t('Copied') : t('Copy')}
+                              </span>
                             </Button>
                             <Button type="button" variant="outline" size="sm" asChild>
                               <a href={snapshot.accessUrl} target="_blank" rel="noreferrer">

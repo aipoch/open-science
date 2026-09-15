@@ -195,11 +195,21 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
         <Button type="button" variant="outline" onClick={onDone} disabled={isSaving}>
           {t('Done')}
         </Button>
-        <Button type="button" onClick={() => void handleSave()} disabled={isSaving}>
-          {isSaving ? (
-            <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
-          ) : null}
-          {isSaving ? t('Saving…') : t('Save')}
+        <Button
+          type="button"
+          onClick={() => void handleSave()}
+          disabled={isSaving}
+          aria-busy={Boolean(isSaving)}
+        >
+          <span key={String(isSaving)} className="button-feedback">
+            {isSaving ? (
+              <LoaderCircle
+                className="animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : null}
+            {isSaving ? t('Saving…') : t('Save')}
+          </span>
         </Button>
       </div>
     </div>

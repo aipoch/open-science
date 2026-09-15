@@ -1066,6 +1066,7 @@
     "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported.": "Копирует данные аутентификации Codex и, если это совместимо, активный локальный маршрут поставщика без секретов в данные приложения Open Science. Остальные глобальные настройки, навыки и сессии не импортируются.",
     "Copy": "Скопировать",
     "Copy code": "Скопировать код",
+    "Could not copy code. Try again.": "Не удалось скопировать код. Повторите попытку.",
     "Copy command": "Скопировать команду",
     "Copy details": "Скопировать детали",
     "Copy link": "Скопировать ссылку",

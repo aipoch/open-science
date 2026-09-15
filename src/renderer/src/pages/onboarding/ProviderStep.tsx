@@ -511,14 +511,17 @@ const ProviderStep = ({
           onClick={() => void handleSaveProvider()}
           disabled={isSaving}
           className="px-4"
+          aria-busy={Boolean(isSaving)}
         >
-          {isSaving
-            ? isBrowserSignInProvider(formValue.type)
-              ? t('Waiting for sign-in…')
-              : t('Testing connection…')
-            : isBrowserSignInProvider(formValue.type)
-              ? t('Sign in & continue')
-              : t('Test & continue')}
+          <span key={String(isSaving)} className="button-feedback">
+            {isSaving
+              ? isBrowserSignInProvider(formValue.type)
+                ? t('Waiting for sign-in…')
+                : t('Testing connection…')
+              : isBrowserSignInProvider(formValue.type)
+                ? t('Sign in & continue')
+                : t('Test & continue')}
+          </span>
         </Button>
       </CardFooter>
       <ClaudeIsolatedSignInModal

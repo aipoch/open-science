@@ -1111,6 +1111,7 @@
     "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported.": "将 Codex 认证信息，以及兼容时当前服务商的非机密回环路由，复制到 Open Science 应用数据中。其他全局配置、技能和会话不会导入。",
     "Copy": "复制",
     "Copy code": "复制代码",
+    "Could not copy code. Try again.": "无法复制代码，请重试。",
     "Copy command": "复制命令",
     "Copy details": "复制详情",
     "Copy link": "复制链接",

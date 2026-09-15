@@ -177,17 +177,19 @@ const LinkSafetyModal = ({
           </div>
           <div className={dialogFooterClassName}>
             <Button type="button" variant="outline" onClick={() => void copyLink()}>
-              {copied && isOpen ? (
-                <>
-                  <Check className="size-3.5" aria-hidden />
-                  {t('Copied')}
-                </>
-              ) : (
-                <>
-                  <Copy className="size-3.5" aria-hidden />
-                  {t('Copy link')}
-                </>
-              )}
+              <span key={String(copied && isOpen)} className="button-feedback">
+                {copied && isOpen ? (
+                  <>
+                    <Check className="size-3.5" aria-hidden />
+                    {t('Copied')}
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-3.5" aria-hidden />
+                    {t('Copy link')}
+                  </>
+                )}
+              </span>
             </Button>
             <Button
               type="button"

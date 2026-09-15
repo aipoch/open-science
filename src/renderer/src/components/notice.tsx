@@ -87,13 +87,15 @@ const NoticeButton = ({
         aria-busy={button.loading || undefined}
         aria-describedby={button.description ? descriptionId : undefined}
       >
-        {button.loading ? (
-          <LoaderCircle
-            className="size-4 animate-spin motion-reduce:animate-none"
-            aria-hidden="true"
-          />
-        ) : null}
-        {button.label}
+        <span key={String(button.loading)} className="button-feedback">
+          {button.loading ? (
+            <LoaderCircle
+              className="size-4 animate-spin motion-reduce:animate-none"
+              aria-hidden="true"
+            />
+          ) : null}
+          {button.label}
+        </span>
       </Button>
       {button.description ? (
         <p id={descriptionId} className="mt-1.5 text-xs leading-5 text-muted-foreground">

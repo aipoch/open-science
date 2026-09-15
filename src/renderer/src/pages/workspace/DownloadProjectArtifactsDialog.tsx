@@ -350,18 +350,21 @@ const DownloadProjectArtifactsDialog = ({
                 data-testid="download-project-artifacts-confirm"
                 disabled={status !== 'ready' || selectedFiles.length === 0 || isDownloading}
                 onClick={() => void downloadSelected()}
+                aria-busy={Boolean(isDownloading)}
               >
-                {isDownloading ? (
-                  <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Download className="size-4" aria-hidden="true" />
-                )}
-                {isDownloading
-                  ? t('Downloading…')
-                  : t('Download {{count}} artifacts', {
-                      defaultValue_one: 'Download {{count}} artifact',
-                      count: selectedFiles.length
-                    })}
+                <span key={String(isDownloading)} className="button-feedback">
+                  {isDownloading ? (
+                    <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Download className="size-4" aria-hidden="true" />
+                  )}
+                  {isDownloading
+                    ? t('Downloading…')
+                    : t('Download {{count}} artifacts', {
+                        defaultValue_one: 'Download {{count}} artifact',
+                        count: selectedFiles.length
+                      })}
+                </span>
               </Button>
             </div>
           </div>

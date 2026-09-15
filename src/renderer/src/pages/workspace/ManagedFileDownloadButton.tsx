@@ -126,17 +126,20 @@ const ManagedFileDownloadButtonState = ({
       aria-label={label}
       disabled={effectiveDisabled || status === 'saving'}
       onClick={isHistoricalVersion ? undefined : () => void download.execute(null)}
+      aria-busy={Boolean(status === 'saving')}
     >
-      {status === 'saving' ? (
-        <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
-      ) : status === 'saved' ? (
-        <Check aria-hidden="true" />
-      ) : status === 'error' ? (
-        <CircleAlert aria-hidden="true" />
-      ) : (
-        <Download aria-hidden="true" />
-      )}
-      {isPrimary ? <span>{visibleLabel}</span> : null}
+      <span key={String(status)} className="button-feedback">
+        {status === 'saving' ? (
+          <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+        ) : status === 'saved' ? (
+          <Check aria-hidden="true" />
+        ) : status === 'error' ? (
+          <CircleAlert aria-hidden="true" />
+        ) : (
+          <Download aria-hidden="true" />
+        )}
+        {isPrimary ? <span>{visibleLabel}</span> : null}
+      </span>
     </Button>
   )
 

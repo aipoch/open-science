@@ -354,8 +354,10 @@ function DetailPanel({
           onClick={() => void copyPath()}
           aria-label={t('Copy remote absolute path to clipboard')}
         >
-          <ClipboardCopy className="size-3.5" />
-          {copied ? t('Copied!') : t('Copy path')}
+          <span key={String(copied)} className="button-feedback">
+            <ClipboardCopy className="size-3.5" />
+            {copied ? t('Copied!') : t('Copy path')}
+          </span>
         </Button>
       </div>
     </div>

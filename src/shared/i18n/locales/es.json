@@ -1072,6 +1072,7 @@
     "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported.": "Copia la autenticación de Codex y, cuando es compatible, la ruta de loopback no secreta del proveedor activo en los datos de la aplicación Open Science. No se importan otras configuraciones globales, habilidades ni sesiones.",
     "Copy": "Copiar",
     "Copy code": "Copiar código",
+    "Could not copy code. Try again.": "No se pudo copiar el código. Inténtelo de nuevo.",
     "Copy command": "Copiar comando",
     "Copy details": "Copiar detalles",
     "Copy link": "Copiar enlace",

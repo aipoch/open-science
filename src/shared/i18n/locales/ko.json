@@ -1044,6 +1044,7 @@
     "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported.": "Codex 인증 및 호환되는 경우 활성 모델 제공업체의 비밀이 아닌 루프백 경로를 Open Science 앱 데이터에 복사합니다. 다른 전역 구성인 스킬 및 세션은 가져오지 않습니다.",
     "Copy": "복사",
     "Copy code": "코드 복사",
+    "Could not copy code. Try again.": "코드를 복사하지 못했습니다. 다시 시도하세요.",
     "Copy command": "명령 복사",
     "Copy details": "세부정보 복사",
     "Copy link": "링크 복사",

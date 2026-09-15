@@ -2023,14 +2023,23 @@ const InstalledSpecialistsPanel = ({
                                   aria-label={t('Actions for {{name}}', {
                                     name: item.displayName ?? item.name
                                   })}
+                                  aria-busy={Boolean(exportingId === item.id)}
                                 >
-                                  {exportingId === item.id ? (
-                                    <span role="status" aria-label={t('Preparing export')}>
-                                      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                                    </span>
-                                  ) : (
-                                    <ChevronDown aria-hidden="true" />
-                                  )}
+                                  <span
+                                    key={String(exportingId === item.id)}
+                                    className="button-feedback"
+                                  >
+                                    {exportingId === item.id ? (
+                                      <span role="status" aria-label={t('Preparing export')}>
+                                        <Loader2
+                                          className="size-4 animate-spin"
+                                          aria-hidden="true"
+                                        />
+                                      </span>
+                                    ) : (
+                                      <ChevronDown aria-hidden="true" />
+                                    )}
+                                  </span>
                                 </Button>
                               </DropdownMenuTrigger>
                             </TooltipTrigger>
@@ -2507,13 +2516,16 @@ const InstalledSpecialistsPanel = ({
                     }
                   })()
                 }}
+                aria-busy={Boolean(deleteBusy)}
               >
-                {deleteBusy ? (
-                  <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" />
-                ) : null}
-                {deletingItem?.action === 'uninstall'
-                  ? t(deleteBusy ? 'Uninstalling…' : 'Uninstall')
-                  : t(deleteBusy ? 'Deleting…' : 'Delete Specialist')}
+                <span key={String(deleteBusy)} className="button-feedback">
+                  {deleteBusy ? (
+                    <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" />
+                  ) : null}
+                  {deletingItem?.action === 'uninstall'
+                    ? t(deleteBusy ? 'Uninstalling…' : 'Uninstall')
+                    : t(deleteBusy ? 'Deleting…' : 'Delete Specialist')}
+                </span>
               </Button>
             </div>
           </AlertDialog.Content>

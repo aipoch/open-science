@@ -1738,7 +1738,9 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                             size="sm"
                             onClick={() => void copyEditDraft()}
                           >
-                            {copied ? t('Copied!') : t('Copy draft')}
+                            <span key={String(copied)} className="button-feedback">
+                              {copied ? t('Copied!') : t('Copy draft')}
+                            </span>
                           </Button>
                           {conflictHead ? (
                             <Button

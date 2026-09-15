@@ -882,16 +882,19 @@ const RuntimesPanel = ({
                     loading ||
                     LANGUAGES.some(({ id }) => languageOperationActive(id))
                   }
+                  aria-busy={Boolean(importingEnvironmentLock)}
                 >
-                  {importingEnvironmentLock ? (
-                    <LoaderCircle
-                      className="animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <Upload aria-hidden="true" />
-                  )}
-                  {importingEnvironmentLock ? t('Importing…') : t('Import environment…')}
+                  <span key={String(importingEnvironmentLock)} className="button-feedback">
+                    {importingEnvironmentLock ? (
+                      <LoaderCircle
+                        className="animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <Upload aria-hidden="true" />
+                    )}
+                    {importingEnvironmentLock ? t('Importing…') : t('Import environment…')}
+                  </span>
                 </Button>
               ) : null}
               <Button
