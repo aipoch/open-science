@@ -252,9 +252,34 @@ it('keeps metadata-only Literature references', () => {
   })
 })
 
-it('includes a Reading PDF used only on an inactive stored branch', async () => {
-  const source = await setup()
+it('round-trips two versions of one Literature attachment across stored branches', async () => {
+  const source = await setup(),
+    target = await setup()
   await seed(source)
+  const secondPdf = createTestPdf('second version')
+  await writeFile(join(source.storageRoot, 'content/blobs/second'), secondPdf)
+  await source.client.contentBlob.create({
+    data: {
+      id: 'blob-2',
+      storageKey: 'content/blobs/second',
+      checksum: sha256(secondPdf),
+      sizeBytes: BigInt(secondPdf.length),
+      contentType: 'application/pdf',
+      state: 'available'
+    }
+  })
+  await source.client.literatureAttachmentVersion.create({
+    data: {
+      id: 'version-2',
+      attachmentId: 'attachment-1',
+      contentBlobId: 'blob-2',
+      versionNumber: 2,
+      filename: 'paper-revised.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: BigInt(secondPdf.length),
+      checksum: sha256(secondPdf)
+    }
+  })
   const value = session()
   const graph = forkEditedConversationMessage(
     createLinearConversationGraph({
@@ -275,25 +300,61 @@ it('includes a Reading PDF used only on an inactive stored branch', async () => 
       ]
     }),
     'old',
-    'Metadata only now',
+    'revised-message',
     2
   )
-  value.runtimeContext = undefined
+  value.runtimeContext = {
+    ...value.runtimeContext!,
+    pdfContext: {
+      version: 1,
+      bindings: [
+        {
+          ...value.runtimeContext!.pdfContext!.bindings[0],
+          sourceVersionId: 'version-2',
+          name: 'paper-revised.pdf',
+          sizeBytes: secondPdf.length,
+          checksum: sha256(secondPdf)
+        }
+      ]
+    }
+  }
+  for (const message of graph.messages)
+    if (message.id !== 'old') message.pdfContext = value.runtimeContext!.pdfContext
   value.conversationGraph = graph
   value.messages = resolveActiveConversationMessages(graph)
   expect(value.messages.some((message) => message.id === 'old')).toBe(false)
   expect(sessionLiteratureReferences(value).versionIds.has('version-1')).toBe(true)
+  expect(sessionLiteratureReferences(value).versionIds.has('version-2')).toBe(true)
   await new SessionRepository(source.storageRoot).saveSession(value)
-  await source.service.exportTo(
-    { projectId: value.projectId, sessionId: value.id },
-    join(source.storageRoot, 'branches.science'),
-    {
-      selectFiles: async (files) => {
-        expect(files[0].source).toBe('literature')
-        return []
-      }
+  const archive = join(source.storageRoot, 'branches.science')
+  await source.service.exportTo({ projectId: value.projectId, sessionId: value.id }, archive, {
+    selectFiles: async (files) => {
+      expect(files).toHaveLength(2)
+      expect(files.every((file) => file.source === 'literature')).toBe(true)
+      expect(new Set(files.map((file) => file.groupId)).size).toBe(1)
+      return []
     }
-  )
+  })
+  await target.service.importFrom(archive)
+  const versions = await target.client.uploadVersion.findMany({ orderBy: { versionNumber: 'asc' } })
+  expect(versions).toHaveLength(2)
+  expect(versions[0].uploadFileId).toBe(versions[1].uploadFileId)
+  const reader = new PackageLiteratureReader({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client,
+    files: new ManagedFileVersionService({
+      storageRoot: target.storageRoot,
+      getClient: async () => target.client
+    })
+  })
+  for (const [index, pdf] of [createTestPdf(), secondPdf].entries()) {
+    const lease = await reader.openContent(versions[index].id)
+    try {
+      expect(await readFile(lease.path)).toEqual(pdf)
+    } finally {
+      await lease.close()
+    }
+  }
 })
 
 it.each(['bytes', 'binding', 'attachment-owner'])(
