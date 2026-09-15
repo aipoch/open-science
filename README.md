@@ -96,6 +96,11 @@ brew install --cask open-science
 
 Homebrew selects the Apple Silicon or Intel package automatically.
 
+On Windows, reinstalling preserves your research data. If you intentionally need a
+fresh start, see the [Windows data reset tool](scripts/windows-reset/README.md).
+It previews the affected folders and requires confirmation before permanently
+removing settings, conversations, managed files, and runtimes.
+
 ### 2. Complete first-time setup
 
 The first launch has five guided steps:
