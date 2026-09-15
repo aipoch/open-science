@@ -54,11 +54,11 @@ test('body-portaled selection toolbar withdraws while its source is inert', asyn
 test('an open message panel closes when its source becomes inert', async ({ page }) => {
   await page.goto('/global-overlays.html')
   await page.getByRole('button', { name: 'Messages, no unread messages' }).click()
-  const panel = page.getByRole('dialog', { name: 'Message center' })
+  const panel = page.locator('[role="dialog"][aria-label="Message center"]')
   await expect(panel).toBeVisible()
   // A higher-priority presentation can open without a pointer event outside the panel.
   await page
     .getByRole('button', { name: 'Open modal', exact: true })
     .evaluate((el: HTMLButtonElement) => el.click())
-  await expect(panel).toBeHidden()
+  await expect(panel).toHaveCount(0)
 })

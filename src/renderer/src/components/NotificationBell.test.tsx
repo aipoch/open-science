@@ -753,6 +753,28 @@ describe('NotificationBell', () => {
     }
   )
 
+  it.each(['inert', 'aria-hidden'])(
+    'closes the desktop panel when its source becomes %s',
+    async (attribute) => {
+      await act(async () => root.render(<NotificationBell />))
+      const trigger = container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')
+      await act(async () => trigger?.click())
+      expect(document.body.querySelector('[aria-label="Message center"]')).not.toBeNull()
+
+      await act(async () => {
+        container.setAttribute(attribute, attribute === 'inert' ? '' : 'true')
+        await Promise.resolve()
+      })
+      expect(document.body.querySelector('[aria-label="Message center"]')).toBeNull()
+      expect(trigger?.getAttribute('aria-expanded')).toBe('false')
+
+      await act(async () => container.removeAttribute(attribute))
+      expect(document.body.querySelector('[aria-label="Message center"]')).toBeNull()
+      await act(async () => trigger?.click())
+      expect(document.body.querySelector('[aria-label="Message center"]')).not.toBeNull()
+    }
+  )
+
   it('uses a bottom drawer on mobile and notifies its host when opening', async () => {
     stubMobileViewport()
     const onOpen = vi.fn()
