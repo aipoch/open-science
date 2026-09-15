@@ -1,4 +1,6 @@
 import '@/assets/main.css'
+import { useState } from 'react'
+import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { createRoot } from 'react-dom/client'
 import { useTranslation } from 'react-i18next'
 import { initI18n } from '@/i18n'
@@ -58,6 +60,8 @@ useUpdateStore.setState({
 
 export function Fixture(): React.JSX.Element {
   useTranslation()
+  const [quitNotice, setQuitNotice] = useState(true)
+  const [retries, setRetries] = useState(0)
   const open = useSettingsStore((state) => state.isSettingsOpen)
   return (
     <TooltipProvider>
@@ -81,6 +85,16 @@ export function Fixture(): React.JSX.Element {
           />
         </>
       ) : null}
+      {new URLSearchParams(location.search).has('quit') && quitNotice ? (
+        <SessionPersistenceAlert
+          className="z-[70]!"
+          title="Quit was canceled"
+          message="Some changes have not been saved."
+          onRetry={() => setRetries(retries + 1)}
+          onDismiss={() => setQuitNotice(false)}
+        />
+      ) : null}
+      <output data-testid="quit-retries">{retries}</output>
       <SettingsPage
         open={open}
         onClose={() => useSettingsStore.getState().closeSettings()}

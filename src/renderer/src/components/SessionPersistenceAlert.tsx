@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 
+import { cn } from '@/lib/utils'
 import { ErrorNotice } from '@/components/error-notice'
 
 type SessionPersistenceAlertProps = {
@@ -7,6 +8,7 @@ type SessionPersistenceAlertProps = {
   message: string
   variant?: 'error' | 'warning'
   inline?: boolean
+  className?: string
   onDismiss?: () => void
   onRetry?: () => void
   retryLabel?: string
@@ -19,6 +21,7 @@ const SessionPersistenceAlert = ({
   message,
   variant = 'error',
   inline = false,
+  className,
   onDismiss,
   onRetry,
   retryLabel,
@@ -32,11 +35,12 @@ const SessionPersistenceAlert = ({
   return (
     <div
       data-testid="session-persistence-alert"
-      className={
+      className={cn(
         inline
           ? 'pointer-events-auto w-full max-w-md'
-          : 'pointer-events-auto fixed bottom-3 right-3 z-toast w-[min(420px,calc(100vw-24px))] max-h-[calc(100svh-24px)] overflow-y-auto shadow-sm'
-      }
+          : 'pointer-events-auto fixed bottom-3 right-3 z-toast w-[min(420px,calc(100vw-24px))] max-h-[calc(100svh-24px)] overflow-y-auto shadow-sm',
+        className
+      )}
     >
       <ErrorNotice
         role="alert"

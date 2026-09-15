@@ -207,6 +207,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
   ) : null
   const quitPersistenceAlert = startup.quitPersistence.notice ? (
     <SessionPersistenceAlert
+      className="z-[70]!"
       title={t('Quit was canceled')}
       message={
         startup.quitPersistence.notice.reason === 'conflict'

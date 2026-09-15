@@ -296,6 +296,10 @@ recovery alerts, live message notices and their error fallback. Modal backdrops 
 notices while the background is blocked. Inline errors stay within their owning surface. Preserve
 existing notice lifetimes and Undo deadlines when a modal opens.
 
+Quit-cancellation recovery is an explicit foreground exception: its owner mounts it outside the
+inert base presentation at layer 70 so Retry and Dismiss remain reachable over Settings. It does
+not use the background notice layer.
+
 Body-portaled selection controls must respect `inert` and `aria-hidden` on their source ancestors.
 Hide them while that source is inactive and restore them if the original selection remains valid.
 Active-dialog menus and other foreground child layers retain their own ordering.
