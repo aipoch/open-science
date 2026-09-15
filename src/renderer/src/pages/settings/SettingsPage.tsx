@@ -30,6 +30,7 @@ import {
   X,
   Zap
 } from 'lucide-react'
+import { ActionToastStack } from '@/components/ActionToast'
 import * as Dialog from '@/components/ui/dialog'
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import {
@@ -226,6 +227,7 @@ type SettingsPageProps = {
   hasCompleteSessionCatalog?: boolean
   catalogRecovery?: SessionCatalogRecovery
   onRetryCatalogRecovery?: () => void
+  undoHostRef?: React.Ref<HTMLDivElement>
 }
 
 type SettingsPageHandle = {
@@ -387,7 +389,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     canDeleteProjects = true,
     hasCompleteSessionCatalog = true,
     catalogRecovery = { kind: 'ready' },
-    onRetryCatalogRecovery
+    onRetryCatalogRecovery,
+    undoHostRef
   },
   ref
 ): React.JSX.Element {
@@ -979,7 +982,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]'
         )
       )
-        .filter((dialog) => dialog.dataset.slot !== 'settings-surface')
+        .filter((dialog) => dialog.dataset.slot !== 'settings-dialog')
         .at(-1)
       if (activeDialog) {
         activeDialog.dispatchEvent(
@@ -1168,7 +1171,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none" />
         <Dialog.Content
-          data-slot="settings-surface"
+          data-slot="settings-dialog"
+          className="pointer-events-none fixed inset-0 z-50 outline-none data-[state=closed]:animate-out motion-reduce:data-[state=closed]:animate-none"
           onOpenAutoFocus={() => {
             returnFocusRef.current =
               document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -1187,6 +1191,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           // closed intentionally via the ✕ button or Escape.
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => {
+            if (
+              event.target instanceof Element &&
+              event.target.closest('[data-testid="permission-undo-stack"]')
+            ) {
+              event.preventDefault()
+              return
+            }
             // Radix observes Escape in capture, before the inline review can cancel itself.
             if (
               event.target instanceof Element &&
@@ -1211,493 +1222,445 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             event.preventDefault()
             setIsMobileNavOpen(false)
           }}
-          className={cn(
-            'fixed z-50 flex overflow-hidden overscroll-contain rounded-xl border border-border bg-card text-foreground shadow-dialog outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none',
-            isExpanded
-              ? 'inset-0 rounded-none md:inset-4 md:rounded-xl'
-              : 'inset-0 h-[100dvh] w-screen rounded-none md:bottom-auto md:left-1/2 md:right-auto md:top-1/2 md:h-[min(688px,calc(100vh-2rem))] md:w-[min(960px,calc(100vw-2rem))] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl'
-          )}
         >
-          {/* Radix requires a Title/Description for a11y; the visible panel title lives in the header. */}
-          <Dialog.Title className="sr-only">{t('Settings')}</Dialog.Title>
-          <Dialog.Description className="sr-only">
-            {t('Manage your agent runtime and model providers.')}
-          </Dialog.Description>
-
-          {isMobileNavOpen ? (
-            <button
-              type="button"
-              className="fixed inset-0 z-[65] bg-black/45 md:hidden"
-              aria-label={t('Close settings navigation')}
-              tabIndex={-1}
-              onClick={() => setIsMobileNavOpen(false)}
-            />
-          ) : null}
-
-          {/* Left navigation becomes an off-canvas drawer on narrow browser screens. */}
-          <FocusScope
-            asChild
-            loop={isMobile && isMobileNavOpen}
-            trapped={isMobile && isMobileNavOpen}
-          >
-            <div
-              data-slot="mobile-settings-navigation"
-              role={isMobile && isMobileNavOpen ? 'dialog' : undefined}
-              aria-modal={isMobile && isMobileNavOpen ? true : undefined}
-              aria-label={isMobile && isMobileNavOpen ? t('Settings navigation') : undefined}
-              className="contents"
-              onKeyDown={(event) => {
-                if (event.key !== 'Escape' || !isMobileNavOpen) return
-                event.preventDefault()
-                event.stopPropagation()
-                setIsMobileNavOpen(false)
-              }}
-            >
-              <nav
-                ref={mobileNavRef}
-                aria-label={t('Settings')}
-                aria-hidden={isMobile && !isMobileNavOpen ? true : undefined}
-                inert={isMobile && !isMobileNavOpen ? true : undefined}
-                className={cn(
-                  'fixed inset-y-0 left-0 z-[70] flex min-h-0 w-[min(86vw,320px)] shrink-0 flex-col overflow-hidden border-r border-border bg-background transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0',
-                  isMobileNavOpen ? 'translate-x-0' : '-translate-x-full'
-                )}
-              >
-                <div
-                  data-slot="settings-navigation-scroll"
-                  className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-3"
-                >
-                  {SETTINGS_GROUPS.map((group) => (
-                    <div key={group.labelKey} className="flex flex-col gap-0.5">
-                      <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
-                        {t(group.labelKey)}
-                      </div>
-                      <ul className="flex flex-col gap-0.5">
-                        {group.panels.map(({ id, labelKey, Icon }) => {
-                          const isActive = activePanel === id
-                          return (
-                            <li key={id}>
-                              <button
-                                type="button"
-                                aria-current={isActive ? 'page' : undefined}
-                                onClick={() => {
-                                  setIsMobileNavOpen(false)
-                                  navigatePanel(id)
-                                }}
-                                className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm ${
-                                  isActive
-                                    ? 'bg-muted font-medium text-foreground'
-                                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                                }`}
-                              >
-                                <Icon
-                                  className="size-4 shrink-0 text-muted-foreground"
-                                  aria-hidden="true"
-                                />
-                                <span className="min-w-0 flex-1 truncate">{t(labelKey)}</span>
-                              </button>
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-                <div
-                  data-slot="settings-navigation-footer"
-                  className="shrink-0 border-t border-border px-3 py-2"
-                >
-                  <a
-                    href={APP.links.githubFeedback}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
-                  >
-                    <MessageSquare
-                      className="size-4 shrink-0 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    <span className="min-w-0 flex-1 truncate">{t('Feedback')}</span>
-                  </a>
-                </div>
-              </nav>
-            </div>
-          </FocusScope>
-
-          {/* Right column: header bar + scrollable panel content. */}
           <div
-            data-slot="settings-main"
-            aria-hidden={isMobile && isMobileNavOpen ? true : undefined}
-            inert={isMobile && isMobileNavOpen ? true : undefined}
-            className="flex min-h-0 min-w-0 flex-1 flex-col bg-card"
+            data-slot="settings-surface"
+            data-state={open ? 'open' : 'closed'}
+            className={cn(
+              'pointer-events-auto fixed z-50 flex overflow-hidden overscroll-contain rounded-xl border border-border bg-card text-foreground shadow-dialog outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none',
+              isExpanded
+                ? 'inset-0 rounded-none md:inset-4 md:rounded-xl'
+                : 'inset-0 h-[100dvh] w-screen rounded-none md:bottom-auto md:left-1/2 md:right-auto md:top-1/2 md:h-[min(688px,calc(100vh-2rem))] md:w-[min(960px,calc(100vw-2rem))] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl'
+            )}
           >
-            <TooltipProvider delayDuration={300}>
-              <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-2 md:px-3">
-                <div className="flex min-w-0 items-center gap-1">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        ref={mobileNavTriggerRef}
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => setIsMobileNavOpen(true)}
-                        aria-label={t('Open settings navigation')}
-                        className="shrink-0 rounded-lg text-muted-foreground md:hidden"
-                      >
-                        <Menu className="size-4" aria-hidden="true" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{t('Navigation')}</TooltipContent>
-                  </Tooltip>
-                  {/* Browser-like history controls for the settings navigation. */}
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={goBack}
-                        disabled={!canGoBack}
-                        aria-label={t('Back', { context: 'step' })}
-                        className="shrink-0 rounded-lg text-muted-foreground disabled:opacity-40"
-                      >
-                        <ArrowLeft className="size-4" aria-hidden="true" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{t('Back', { context: 'step' })}</TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={goForward}
-                        disabled={!canGoForward}
-                        aria-label={t('Forward')}
-                        className="shrink-0 rounded-lg text-muted-foreground disabled:opacity-40"
-                      >
-                        <ArrowRight className="size-4" aria-hidden="true" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{t('Forward')}</TooltipContent>
-                  </Tooltip>
-                  <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
-                  {breadcrumb !== null ? (
-                    <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
-                      <button
-                        type="button"
-                        onClick={() => navigate(breadcrumb.rootTo)}
-                        aria-label={t('Back to {{panel}}', {
-                          panel: t(PANEL_NAME_LOWER[breadcrumb.rootLabelKey])
-                        })}
-                        className="shrink-0 text-muted-foreground transition-colors motion-reduce:transition-none hover:text-foreground"
-                      >
-                        {t(breadcrumb.rootLabelKey)}
-                      </button>
-                      {breadcrumb.parents?.map((parent) => (
-                        <span key={parent.label} className="contents">
-                          <span className="shrink-0 text-muted-foreground" aria-hidden="true">
-                            ›
-                          </span>
-                          <button
-                            type="button"
-                            onClick={parent.onClick ?? (() => navigate(parent.to))}
-                            aria-label={parent.ariaLabel}
-                            className="shrink-0 text-muted-foreground transition-colors motion-reduce:transition-none hover:text-foreground"
-                          >
-                            {parent.label}
-                          </button>
-                        </span>
-                      ))}
-                      <span className="shrink-0 text-muted-foreground" aria-hidden="true">
-                        ›
-                      </span>
-                      <span className="truncate text-foreground">{breadcrumb.leaf}</span>
-                    </div>
-                  ) : (
-                    <h2 className="truncate text-sm font-semibold text-foreground">
-                      {(() => {
-                        const panel = SETTINGS_PANELS.find((item) => item.id === activePanel)
-                        return panel ? t(panel.labelKey) : null
-                      })()}
-                    </h2>
+            {/* Radix requires a Title/Description for a11y; the visible panel title lives in the header. */}
+            <Dialog.Title className="sr-only">{t('Settings')}</Dialog.Title>
+            <Dialog.Description className="sr-only">
+              {t('Manage your agent runtime and model providers.')}
+            </Dialog.Description>
+
+            {isMobileNavOpen ? (
+              <button
+                type="button"
+                className="fixed inset-0 z-[65] bg-black/45 md:hidden"
+                aria-label={t('Close settings navigation')}
+                tabIndex={-1}
+                onClick={() => setIsMobileNavOpen(false)}
+              />
+            ) : null}
+
+            {/* Left navigation becomes an off-canvas drawer on narrow browser screens. */}
+            <FocusScope
+              asChild
+              loop={isMobile && isMobileNavOpen}
+              trapped={isMobile && isMobileNavOpen}
+            >
+              <div
+                data-slot="mobile-settings-navigation"
+                role={isMobile && isMobileNavOpen ? 'dialog' : undefined}
+                aria-modal={isMobile && isMobileNavOpen ? true : undefined}
+                aria-label={isMobile && isMobileNavOpen ? t('Settings navigation') : undefined}
+                className="contents"
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape' || !isMobileNavOpen) return
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setIsMobileNavOpen(false)
+                }}
+              >
+                <nav
+                  ref={mobileNavRef}
+                  aria-label={t('Settings')}
+                  aria-hidden={isMobile && !isMobileNavOpen ? true : undefined}
+                  inert={isMobile && !isMobileNavOpen ? true : undefined}
+                  className={cn(
+                    'fixed inset-y-0 left-0 z-[70] flex min-h-0 w-[min(86vw,320px)] shrink-0 flex-col overflow-hidden border-r border-border bg-background transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0',
+                    isMobileNavOpen ? 'translate-x-0' : '-translate-x-full'
                   )}
-                </div>
-                {/* Not mounted below the md breakpoint, so ⌘K never targets an invisible field. */}
-                {!isMobile ? (
+                >
                   <div
-                    data-slot="settings-global-search"
-                    className="min-w-0 flex-1 px-2 md:max-w-xs"
+                    data-slot="settings-navigation-scroll"
+                    className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-3"
                   >
-                    <SettingsGlobalSearch panels={SETTINGS_PANELS} onNavigate={navigatePanel} />
+                    {SETTINGS_GROUPS.map((group) => (
+                      <div key={group.labelKey} className="flex flex-col gap-0.5">
+                        <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
+                          {t(group.labelKey)}
+                        </div>
+                        <ul className="flex flex-col gap-0.5">
+                          {group.panels.map(({ id, labelKey, Icon }) => {
+                            const isActive = activePanel === id
+                            return (
+                              <li key={id}>
+                                <button
+                                  type="button"
+                                  aria-current={isActive ? 'page' : undefined}
+                                  onClick={() => {
+                                    setIsMobileNavOpen(false)
+                                    navigatePanel(id)
+                                  }}
+                                  className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm ${
+                                    isActive
+                                      ? 'bg-muted font-medium text-foreground'
+                                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                                  }`}
+                                >
+                                  <Icon
+                                    className="size-4 shrink-0 text-muted-foreground"
+                                    aria-hidden="true"
+                                  />
+                                  <span className="min-w-0 flex-1 truncate">{t(labelKey)}</span>
+                                </button>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      </div>
+                    ))}
                   </div>
-                ) : null}
-                <div className="flex shrink-0 items-center gap-1">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => setIsExpanded((value) => !value)}
-                        aria-label={isExpanded ? t('Restore') : t('Maximize')}
-                        className="rounded-lg text-muted-foreground"
-                      >
-                        {isExpanded ? (
-                          <Minimize2 className="size-4" aria-hidden="true" />
-                        ) : (
-                          <Maximize2 className="size-4" aria-hidden="true" />
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{isExpanded ? t('Restore') : t('Maximize')}</TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <Dialog.Close asChild>
+                  <div
+                    data-slot="settings-navigation-footer"
+                    className="shrink-0 border-t border-border px-3 py-2"
+                  >
+                    <a
+                      href={APP.links.githubFeedback}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                    >
+                      <MessageSquare
+                        className="size-4 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 flex-1 truncate">{t('Feedback')}</span>
+                    </a>
+                  </div>
+                </nav>
+              </div>
+            </FocusScope>
+
+            {/* Right column: header bar + scrollable panel content. */}
+            <div
+              data-slot="settings-main"
+              aria-hidden={isMobile && isMobileNavOpen ? true : undefined}
+              inert={isMobile && isMobileNavOpen ? true : undefined}
+              className="flex min-h-0 min-w-0 flex-1 flex-col bg-card"
+            >
+              <TooltipProvider delayDuration={300}>
+                <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-2 md:px-3">
+                  <div className="flex min-w-0 items-center gap-1">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          ref={mobileNavTriggerRef}
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setIsMobileNavOpen(true)}
+                          aria-label={t('Open settings navigation')}
+                          className="shrink-0 rounded-lg text-muted-foreground md:hidden"
+                        >
+                          <Menu className="size-4" aria-hidden="true" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t('Navigation')}</TooltipContent>
+                    </Tooltip>
+                    {/* Browser-like history controls for the settings navigation. */}
+                    <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon-sm"
-                          aria-label={t('Close settings')}
-                          className="rounded-lg text-muted-foreground"
+                          onClick={goBack}
+                          disabled={!canGoBack}
+                          aria-label={t('Back', { context: 'step' })}
+                          className="shrink-0 rounded-lg text-muted-foreground disabled:opacity-40"
                         >
-                          <X className="size-4" aria-hidden="true" />
+                          <ArrowLeft className="size-4" aria-hidden="true" />
                         </Button>
                       </TooltipTrigger>
-                    </Dialog.Close>
-                    <TooltipContent>{t('Close settings')}</TooltipContent>
-                  </Tooltip>
+                      <TooltipContent>{t('Back', { context: 'step' })}</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={goForward}
+                          disabled={!canGoForward}
+                          aria-label={t('Forward')}
+                          className="shrink-0 rounded-lg text-muted-foreground disabled:opacity-40"
+                        >
+                          <ArrowRight className="size-4" aria-hidden="true" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t('Forward')}</TooltipContent>
+                    </Tooltip>
+                    <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
+                    {breadcrumb !== null ? (
+                      <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
+                        <button
+                          type="button"
+                          onClick={() => navigate(breadcrumb.rootTo)}
+                          aria-label={t('Back to {{panel}}', {
+                            panel: t(PANEL_NAME_LOWER[breadcrumb.rootLabelKey])
+                          })}
+                          className="shrink-0 text-muted-foreground transition-colors motion-reduce:transition-none hover:text-foreground"
+                        >
+                          {t(breadcrumb.rootLabelKey)}
+                        </button>
+                        {breadcrumb.parents?.map((parent) => (
+                          <span key={parent.label} className="contents">
+                            <span className="shrink-0 text-muted-foreground" aria-hidden="true">
+                              ›
+                            </span>
+                            <button
+                              type="button"
+                              onClick={parent.onClick ?? (() => navigate(parent.to))}
+                              aria-label={parent.ariaLabel}
+                              className="shrink-0 text-muted-foreground transition-colors motion-reduce:transition-none hover:text-foreground"
+                            >
+                              {parent.label}
+                            </button>
+                          </span>
+                        ))}
+                        <span className="shrink-0 text-muted-foreground" aria-hidden="true">
+                          ›
+                        </span>
+                        <span className="truncate text-foreground">{breadcrumb.leaf}</span>
+                      </div>
+                    ) : (
+                      <h2 className="truncate text-sm font-semibold text-foreground">
+                        {(() => {
+                          const panel = SETTINGS_PANELS.find((item) => item.id === activePanel)
+                          return panel ? t(panel.labelKey) : null
+                        })()}
+                      </h2>
+                    )}
+                  </div>
+                  {/* Not mounted below the md breakpoint, so ⌘K never targets an invisible field. */}
+                  {!isMobile ? (
+                    <div
+                      data-slot="settings-global-search"
+                      className="min-w-0 flex-1 px-2 md:max-w-xs"
+                    >
+                      <SettingsGlobalSearch panels={SETTINGS_PANELS} onNavigate={navigatePanel} />
+                    </div>
+                  ) : null}
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setIsExpanded((value) => !value)}
+                          aria-label={isExpanded ? t('Restore') : t('Maximize')}
+                          className="rounded-lg text-muted-foreground"
+                        >
+                          {isExpanded ? (
+                            <Minimize2 className="size-4" aria-hidden="true" />
+                          ) : (
+                            <Maximize2 className="size-4" aria-hidden="true" />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{isExpanded ? t('Restore') : t('Maximize')}</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <Dialog.Close asChild>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={t('Close settings')}
+                            className="rounded-lg text-muted-foreground"
+                          >
+                            <X className="size-4" aria-hidden="true" />
+                          </Button>
+                        </TooltipTrigger>
+                      </Dialog.Close>
+                      <TooltipContent>{t('Close settings')}</TooltipContent>
+                    </Tooltip>
+                  </div>
                 </div>
-              </div>
 
-              {preflightFailed ? (
-                <Notice
-                  level="error"
-                  role="alert"
-                  className="mx-3 mt-3"
-                  description={t(
-                    'Could not refresh environment readiness. Saved settings are unchanged.'
-                  )}
-                  primaryButton={{
-                    label: t('Retry preflight'),
-                    onClick: () => void refreshPreflight().catch(() => undefined)
-                  }}
-                />
-              ) : null}
-
-              {settingsWriteError ? (
-                <div data-slot="settings-write-error" className="mx-3 mt-3">
-                  <ErrorNotice
-                    tone="amber"
+                {preflightFailed ? (
+                  <Notice
+                    level="error"
                     role="alert"
-                    icon={AlertTriangle}
-                    title={t('Settings could not be saved')}
-                    description={settingsWriteError
-                      .split(' ')
-                      .map((code) => {
-                        const copyKey = SETTINGS_WRITE_ERROR_COPY[code as SettingsWriteErrorCode]
-                        return copyKey ? t(copyKey) : code
-                      })
-                      .join(' ')}
-                    dismissButton={{
-                      label: t('Dismiss settings error'),
-                      onClick: clearSettingsWriteError
+                    className="mx-3 mt-3"
+                    description={t(
+                      'Could not refresh environment readiness. Saved settings are unchanged.'
+                    )}
+                    primaryButton={{
+                      label: t('Retry preflight'),
+                      onClick: () => void refreshPreflight().catch(() => undefined)
                     }}
                   />
-                </div>
-              ) : null}
-            </TooltipProvider>
+                ) : null}
 
-            <div
-              data-slot="settings-content-scroll"
-              data-settings-active-panel={activePanel}
-              className="min-h-0 flex-1 overflow-y-auto"
-            >
+                {settingsWriteError ? (
+                  <div data-slot="settings-write-error" className="mx-3 mt-3">
+                    <ErrorNotice
+                      tone="amber"
+                      role="alert"
+                      icon={AlertTriangle}
+                      title={t('Settings could not be saved')}
+                      description={settingsWriteError
+                        .split(' ')
+                        .map((code) => {
+                          const copyKey = SETTINGS_WRITE_ERROR_COPY[code as SettingsWriteErrorCode]
+                          return copyKey ? t(copyKey) : code
+                        })
+                        .join(' ')}
+                      dismissButton={{
+                        label: t('Dismiss settings error'),
+                        onClick: clearSettingsWriteError
+                      }}
+                    />
+                  </div>
+                ) : null}
+              </TooltipProvider>
+
               <div
-                className={cn(
-                  'mx-auto w-full',
-                  activePanel === 'skills' &&
-                    (skillsView.kind === 'marketplace' || skillsView.kind === 'marketplace-batch')
-                    ? 'max-w-none'
-                    : 'max-w-[880px]',
-                  activePanel === 'memory' ||
-                    activePanel === 'tags' ||
-                    (activePanel === 'skills' &&
-                      (skillsView.kind === 'marketplace-batch' || skillsView.kind === 'manage')) ||
-                    (activePanel === 'connectors' && connectorsView.kind === 'manage')
-                    ? 'h-full'
-                    : 'min-h-full'
-                )}
+                data-slot="settings-content-scroll"
+                data-settings-active-panel={activePanel}
+                className="min-h-0 flex-1 overflow-y-auto"
               >
-                <SettingsPanelLoadingBoundary
-                  panelKey={
+                <div
+                  className={cn(
+                    'mx-auto w-full',
                     activePanel === 'skills' &&
-                    (skillsView.kind === 'marketplace' ||
-                      skillsView.kind === 'marketplace-detail' ||
-                      skillsView.kind === 'marketplace-batch')
-                      ? 'skills:marketplace'
-                      : activePanel === 'connectors' &&
-                          (connectorsView.kind === 'add' || connectorsView.kind === 'edit') &&
-                          connectorsView.credentialView === 'create'
-                        ? `${activePanel}:${Math.max(0, historyIndex - 1)}`
-                        : `${activePanel}:${historyIndex}`
-                  }
-                  onClose={onClose}
+                      (skillsView.kind === 'marketplace' || skillsView.kind === 'marketplace-batch')
+                      ? 'max-w-none'
+                      : 'max-w-[880px]',
+                    activePanel === 'memory' ||
+                      activePanel === 'tags' ||
+                      (activePanel === 'skills' &&
+                        (skillsView.kind === 'marketplace-batch' ||
+                          skillsView.kind === 'manage')) ||
+                      (activePanel === 'connectors' && connectorsView.kind === 'manage')
+                      ? 'h-full'
+                      : 'min-h-full'
+                  )}
                 >
-                  {activePanel === 'skills' ? (
-                    <SkillsPanel
-                      view={skillsView}
-                      onNavigate={navigateSkills}
-                      onOpenGitHubCredential={() =>
-                        navigate({
-                          panel: 'credentials',
-                          view: { kind: 'service', serviceId: 'github' }
-                        })
-                      }
-                      onOpenTag={navigateTag}
-                      onOpenSpecialist={(usage) =>
-                        navigate({
-                          panel: 'specialists',
-                          view:
-                            usage.kind === 'builtin'
-                              ? { kind: 'builtin', id: usage.id }
-                              : { kind: 'edit', id: usage.id }
-                        })
-                      }
-                      canImportInstalledSkills={canImportInstalledSkills}
-                    />
-                  ) : activePanel === 'specialists' ? (
-                    <SpecialistsPanel
-                      view={specialistsView}
-                      onNavigate={navigateSpecialists}
-                      onOpenTag={navigateTag}
-                      onOpenSkillDetail={(skillId) =>
-                        navigate({
-                          panel: 'skills',
-                          view: { kind: 'detail', id: skillId }
-                        })
-                      }
-                      onOpenConnectorDetail={(connectorId) =>
-                        navigate({
-                          panel: 'connectors',
-                          view: customServers.some((server) => server.id === connectorId)
-                            ? { kind: 'edit', id: connectorId }
-                            : { kind: 'detail', id: connectorId }
-                        })
-                      }
-                    />
-                  ) : activePanel === 'tags' ? (
-                    <TagsPanel
-                      view={tagsView}
-                      onNavigate={navigateTags}
-                      onSelectedTagChange={recordSelectedTag}
-                      onOpenResource={(reference) => {
-                        if (reference.resourceType === 'catalog.skill') {
+                  <SettingsPanelLoadingBoundary
+                    panelKey={
+                      activePanel === 'skills' &&
+                      (skillsView.kind === 'marketplace' ||
+                        skillsView.kind === 'marketplace-detail' ||
+                        skillsView.kind === 'marketplace-batch')
+                        ? 'skills:marketplace'
+                        : activePanel === 'connectors' &&
+                            (connectorsView.kind === 'add' || connectorsView.kind === 'edit') &&
+                            connectorsView.credentialView === 'create'
+                          ? `${activePanel}:${Math.max(0, historyIndex - 1)}`
+                          : `${activePanel}:${historyIndex}`
+                    }
+                    onClose={onClose}
+                  >
+                    {activePanel === 'skills' ? (
+                      <SkillsPanel
+                        view={skillsView}
+                        onNavigate={navigateSkills}
+                        onOpenGitHubCredential={() =>
+                          navigate({
+                            panel: 'credentials',
+                            view: { kind: 'service', serviceId: 'github' }
+                          })
+                        }
+                        onOpenTag={navigateTag}
+                        onOpenSpecialist={(usage) =>
+                          navigate({
+                            panel: 'specialists',
+                            view:
+                              usage.kind === 'builtin'
+                                ? { kind: 'builtin', id: usage.id }
+                                : { kind: 'edit', id: usage.id }
+                          })
+                        }
+                        canImportInstalledSkills={canImportInstalledSkills}
+                      />
+                    ) : activePanel === 'specialists' ? (
+                      <SpecialistsPanel
+                        view={specialistsView}
+                        onNavigate={navigateSpecialists}
+                        onOpenTag={navigateTag}
+                        onOpenSkillDetail={(skillId) =>
                           navigate({
                             panel: 'skills',
-                            view: { kind: 'detail', id: reference.resourceId }
+                            view: { kind: 'detail', id: skillId }
                           })
-                          return
                         }
-                        if (reference.resourceType === 'catalog.connector') {
+                        onOpenConnectorDetail={(connectorId) =>
                           navigate({
                             panel: 'connectors',
-                            view: customServers.some((server) => server.id === reference.resourceId)
-                              ? { kind: 'edit', id: reference.resourceId }
-                              : { kind: 'detail', id: reference.resourceId }
+                            view: customServers.some((server) => server.id === connectorId)
+                              ? { kind: 'edit', id: connectorId }
+                              : { kind: 'detail', id: connectorId }
                           })
-                          return
                         }
-                        if (reference.resourceType === 'literature.item') {
-                          useNavigationStore
-                            .getState()
-                            .openLiteratureItem(reference.resourceId, 'user')
-                          onClose()
-                          return
-                        }
-                        const specialist = specialistItems.find(
-                          (item) => item.id === reference.resourceId
-                        )
-                        navigate({
-                          panel: 'specialists',
-                          view:
-                            specialist?.kind === 'builtin'
-                              ? { kind: 'builtin', id: reference.resourceId }
-                              : { kind: 'edit', id: reference.resourceId }
-                        })
-                      }}
-                    />
-                  ) : activePanel === 'memory' ? (
-                    <MemoryPanel
-                      view={memoryView}
-                      onNavigate={navigateMemory}
-                      onOpenProject={(projectId) => {
-                        useNavigationStore.getState().openProject(projectId, 'user', onClose)
-                      }}
-                    />
-                  ) : activePanel === 'connectors' ? (
-                    connectorsView.kind === 'manage' ? (
-                      <ConnectorBulkManageView />
-                    ) : connectorsView.kind === 'detail' ? (
-                      <div>
-                        <ResourceTagSummary
-                          reference={{
-                            resourceType: 'catalog.connector',
-                            resourceId: connectorsView.id
-                          }}
-                          className="px-5 pt-5"
-                          onOpenTag={navigateTag}
-                        />
-                        <ConnectorDetailView
-                          key={connectorsView.id}
-                          id={connectorsView.id}
-                          onManagePermissions={() => navigatePanel('permissions')}
-                          onManageCredentials={() =>
+                      />
+                    ) : activePanel === 'tags' ? (
+                      <TagsPanel
+                        view={tagsView}
+                        onNavigate={navigateTags}
+                        onSelectedTagChange={recordSelectedTag}
+                        onOpenResource={(reference) => {
+                          if (reference.resourceType === 'catalog.skill') {
                             navigate({
-                              panel: 'credentials',
-                              view: { kind: 'service', serviceId: 'openalex' }
+                              panel: 'skills',
+                              view: { kind: 'detail', id: reference.resourceId }
                             })
+                            return
                           }
-                        />
-                      </div>
-                    ) : connectorsView.kind === 'add' ? (
-                      <ConnectorAddForm
-                        initialTransport={connectorsView.transport}
-                        initialTemplate={connectorsView.template}
-                        credentialViewOpen={connectorsView.credentialView === 'create'}
-                        onCredentialViewChange={(open) => {
-                          if (open) {
-                            navigateConnectors({ ...connectorsView, credentialView: 'create' })
-                          } else {
-                            goBack()
+                          if (reference.resourceType === 'catalog.connector') {
+                            navigate({
+                              panel: 'connectors',
+                              view: customServers.some(
+                                (server) => server.id === reference.resourceId
+                              )
+                                ? { kind: 'edit', id: reference.resourceId }
+                                : { kind: 'detail', id: reference.resourceId }
+                            })
+                            return
                           }
-                        }}
-                        onDone={() => navigateConnectors({ kind: 'list' })}
-                        onCancel={() => navigateConnectors({ kind: 'list' })}
-                      />
-                    ) : connectorsView.kind === 'import' ? (
-                      <ConnectorImportView
-                        onUse={(template) =>
-                          navigateConnectors({
-                            kind: 'add',
-                            transport: template.transport === 'stdio' ? 'local' : 'remote',
-                            template
+                          if (reference.resourceType === 'literature.item') {
+                            useNavigationStore
+                              .getState()
+                              .openLiteratureItem(reference.resourceId, 'user')
+                            onClose()
+                            return
+                          }
+                          const specialist = specialistItems.find(
+                            (item) => item.id === reference.resourceId
+                          )
+                          navigate({
+                            panel: 'specialists',
+                            view:
+                              specialist?.kind === 'builtin'
+                                ? { kind: 'builtin', id: reference.resourceId }
+                                : { kind: 'edit', id: reference.resourceId }
                           })
-                        }
-                        onCancel={() => navigateConnectors({ kind: 'list' })}
+                        }}
                       />
-                    ) : connectorsView.kind === 'export' ? (
-                      <ConnectorExportView
-                        key={connectorsView.id}
-                        id={connectorsView.id}
-                        onDone={() => navigateConnectors({ kind: 'list' })}
+                    ) : activePanel === 'memory' ? (
+                      <MemoryPanel
+                        view={memoryView}
+                        onNavigate={navigateMemory}
+                        onOpenProject={(projectId) => {
+                          useNavigationStore.getState().openProject(projectId, 'user', onClose)
+                        }}
                       />
-                    ) : connectorsView.kind === 'edit' ? (
-                      <div>
-                        {connectorsView.credentialView !== 'create' ? (
+                    ) : activePanel === 'connectors' ? (
+                      connectorsView.kind === 'manage' ? (
+                        <ConnectorBulkManageView />
+                      ) : connectorsView.kind === 'detail' ? (
+                        <div>
                           <ResourceTagSummary
                             reference={{
                               resourceType: 'catalog.connector',
@@ -1706,10 +1669,22 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             className="px-5 pt-5"
                             onOpenTag={navigateTag}
                           />
-                        ) : null}
+                          <ConnectorDetailView
+                            key={connectorsView.id}
+                            id={connectorsView.id}
+                            onManagePermissions={() => navigatePanel('permissions')}
+                            onManageCredentials={() =>
+                              navigate({
+                                panel: 'credentials',
+                                view: { kind: 'service', serviceId: 'openalex' }
+                              })
+                            }
+                          />
+                        </div>
+                      ) : connectorsView.kind === 'add' ? (
                         <ConnectorAddForm
-                          editServer={customServers.find((s) => s.id === connectorsView.id)}
-                          editServerId={connectorsView.id}
+                          initialTransport={connectorsView.transport}
+                          initialTemplate={connectorsView.template}
                           credentialViewOpen={connectorsView.credentialView === 'create'}
                           onCredentialViewChange={(open) => {
                             if (open) {
@@ -1721,284 +1696,341 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           onDone={() => navigateConnectors({ kind: 'list' })}
                           onCancel={() => navigateConnectors({ kind: 'list' })}
                         />
-                      </div>
-                    ) : (
-                      <ConnectorsPanel
-                        onNavigate={navigateConnectors}
-                        onOpenTag={navigateTag}
-                        onOpenSpecialist={(usage) =>
-                          navigate({
-                            panel: 'specialists',
-                            view:
-                              usage.kind === 'builtin'
-                                ? { kind: 'builtin', id: usage.id }
-                                : { kind: 'edit', id: usage.id }
-                          })
-                        }
-                      />
-                    )
-                  ) : activePanel === 'compute' ? (
-                    computeView.kind === 'add' ? (
-                      <ComputeAddForm
-                        onCreated={(providerId) => navigateCompute({ kind: 'detail', providerId })}
-                        onCancel={() => navigateCompute({ kind: 'list' })}
-                      />
-                    ) : computeView.kind === 'detail' ? (
-                      <ComputeHostDetail
-                        providerId={computeView.providerId}
-                        authenticationFocus={computeView.authenticationFocus}
-                        authenticationRequestId={computeView.authenticationRequestId}
-                      />
-                    ) : (
-                      <ComputePanel onNavigate={navigateCompute} />
-                    )
-                  ) : activePanel === 'credentials' ? (
-                    <CredentialsPanel
-                      view={credentialsView}
-                      onNavigate={navigateCredentials}
-                      onOpenConnector={(id) =>
-                        navigate({ panel: 'connectors', view: { kind: 'edit', id } })
-                      }
-                      onOpenProvider={(provider) => openEdit(provider)}
-                    />
-                  ) : activePanel === 'storage' ? (
-                    <StoragePanel
-                      onContinueToAgent={() => {
-                        navigatePanel('agent')
-                      }}
-                    />
-                  ) : activePanel === 'permissions' ? (
-                    <PermissionsPanel
-                      onOpenSession={onOpenSession}
-                      onOpenConnector={(id) =>
-                        navigateConnectors(
-                          customServers.some((server) => server.id === id)
-                            ? { kind: 'edit', id }
-                            : { kind: 'detail', id }
-                        )
-                      }
-                    />
-                  ) : activePanel === 'archived' ? (
-                    <ArchivedPanel
-                      view={archivedView}
-                      onNavigate={navigateArchived}
-                      canDeleteProjects={canDeleteProjects}
-                      hasCompleteSessionCatalog={hasCompleteSessionCatalog}
-                      catalogRecovery={catalogRecovery}
-                      onRetryCatalogRecovery={onRetryCatalogRecovery}
-                    />
-                  ) : activePanel === 'runtimes' ? (
-                    <RuntimesPanel
-                      title={t('Notebook runtimes')}
-                      description={t(
-                        'Choose which Python and R environments notebooks and the Agent can use. App-managed environments are enabled by default.'
-                      )}
-                      onOpenNetworkProtection={
-                        notebookNetworkAvailable
-                          ? () => navigateNetwork({ kind: 'domains' })
-                          : undefined
-                      }
-                    />
-                  ) : activePanel === 'network' ? (
-                    <NetworkPanel
-                      view={networkView}
-                      onNavigate={navigateNetwork}
-                      notebookNetworkAvailable={notebookNetworkAvailable}
-                    />
-                  ) : activePanel === 'usage' ? (
-                    <TokenUsagePanel sessions={sessions} projects={projects} />
-                  ) : activePanel === 'general' ? (
-                    <GeneralPanel />
-                  ) : activePanel === 'remote-control' ? (
-                    <RemoteControlPanel />
-                  ) : activePanel === 'agent' ? (
-                    <AgentPanel
-                      title={t('Agent framework')}
-                      description={t(
-                        "Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first."
-                      )}
-                    />
-                  ) : isProviderFormOpen ? (
-                    // Add/edit provider is a secondary page reached via the shared back/forward arrows.
-                    <div className="p-5">
-                      {/* Secret writes fail closed when the OS keychain is unavailable. */}
-                      {!encryptionAvailable ? (
-                        <ErrorNotice
-                          role="alert"
-                          tone="amber"
-                          className="mb-4"
-                          description={t(
-                            'Secure key storage is unavailable. API keys cannot be saved until the system keychain is unlocked or authorized.'
-                          )}
-                        />
-                      ) : null}
-                      {providerEditTargetMissing ? (
-                        <ErrorNotice
-                          role="alert"
-                          tone="amber"
-                          className="mb-4"
-                          description={t(
-                            'This Provider no longer exists. Your draft has not been saved.'
-                          )}
-                        />
-                      ) : null}
-                      {providerConflict ? (
-                        <ErrorNotice
-                          role="alert"
-                          className="mb-4"
-                          description={t(
-                            'Provider configuration changed. Your draft has not been saved.'
-                          )}
-                        >
-                          <details>
-                            <summary>{t('Latest saved configuration')}</summary>
-                            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-                              {[
-                                [t('Provider type'), editingProvider.type],
-                                [t('Name'), editingProvider.name],
-                                [t('Base URL'), editingProvider.baseUrl],
-                                [t('Model'), editingProvider.model],
-                                [t('API format'), editingProvider.apiEndpoints?.join(', ')],
-                                [t('Context window'), editingProvider.contextWindow],
-                                [t('Maximum input tokens'), editingProvider.maxInputTokens],
-                                [t('Maximum output tokens'), editingProvider.maxOutputTokens],
-                                [
-                                  t('Image input'),
-                                  editingProvider.supportsImageInput ? t('Enabled') : t('Disabled')
-                                ],
-                                [
-                                  t('Supported effort levels'),
-                                  editingProvider.reasoningEffortPreset
-                                ],
-                                [
-                                  t('Reasoning request format'),
-                                  editingProvider.reasoningEffortTransport
-                                ],
-                                [t('Transport'), editingProvider.codexTransport],
-                                [t('Vendor'), editingProvider.vendorId],
-                                [t('Region'), editingProvider.region]
-                              ].map(([label, value]) => (
-                                <div key={label} className="contents">
-                                  <dt>{label}</dt>
-                                  <dd className="break-all">
-                                    {value ?? t('Use provider default')}
-                                  </dd>
-                                </div>
-                              ))}
-                            </dl>
-                          </details>
-                          <Button
-                            type="button"
-                            disabled={isSaving}
-                            onClick={() => {
-                              const base = toFormValue(providerBase)
-                              const latest = toFormValue(editingProvider)
-                              const changes = Object.fromEntries(
-                                Object.entries(formValue).filter(
-                                  ([key, value]) => value !== base[key as keyof ProviderFormValue]
-                                )
-                              )
-                              setFormValue({ ...latest, ...changes })
-                              setProviderBase(editingProvider)
-                              setStatusMessage(undefined)
-                            }}
-                          >
-                            {t('Reapply my changes to the latest configuration')}
-                          </Button>
-                        </ErrorNotice>
-                      ) : null}
-                      <ProviderForm
-                        value={formValue}
-                        onChange={(patch) => setFormValue((current) => ({ ...current, ...patch }))}
-                        hasStoredKey={editingProvider?.hasKey}
-                        maskedKey={editingProvider?.maskedKey}
-                        needsKey={editingProvider?.needsKey}
-                        errors={formErrors}
-                        supportedModels={
-                          editingProvider?.type === formValue.type &&
-                          editingProvider?.vendorId === formValue.vendorId &&
-                          editingProvider?.region === formValue.region
-                            ? editingProvider?.models
-                            : undefined
-                        }
-                        onRefreshModels={
-                          editingProvider?.type === 'official' &&
-                          editingProvider.hasKey &&
-                          editingProvider.vendorId &&
-                          resolveVendorModelsUrl(editingProvider.vendorId, editingProvider.region)
-                            ? () => void handleRefreshModels(editingProvider.id)
-                            : undefined
-                        }
-                        isRefreshingModels={isRefreshingModels}
-                        disabled={isSaving}
-                        encryptionAvailable={encryptionAvailable}
-                        showCodexSubscriptions={
-                          agentFrameworkId === 'codex' && modelView.kind === 'create'
-                        }
-                        showClaudeIsolated={
-                          agentFrameworkId === 'claude-code' && modelView.kind === 'create'
-                        }
-                        defaultCustomApiEndpoint={customApiEndpoint}
-                        framework={activeFramework}
-                      />
-                      {statusMessage ? (
-                        statusOk ? (
-                          <p className="mt-3 text-sm text-primary" role="alert">
-                            {statusMessage}
-                          </p>
-                        ) : (
-                          <InlineNotice level="error" role="alert" className="mt-3">
-                            {statusMessage}
-                          </InlineNotice>
-                        )
-                      ) : null}
-                      <div className="mt-6 flex justify-end gap-2">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          onClick={closeForm}
-                          disabled={isSaving}
-                        >
-                          {t('Cancel')}
-                        </Button>
-                        <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
-                          {isSaving ? t('Saving…') : t('Save')}
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <ModelPanel
-                      local={modelView.kind === 'local-models'}
-                      onChange={(local) =>
-                        navigate({
-                          panel: 'model',
-                          view: { kind: local ? 'local-models' : 'list' }
-                        })
-                      }
-                    >
-                      {postSaveValidationFailed ? (
-                        <InlineNotice level="error" className="mx-5 mt-5" role="alert">
-                          {t('Could not test the provider connection.')}
-                        </InlineNotice>
-                      ) : null}
-                      <ProvidersPanel
-                        onCreateProvider={openCreate}
-                        onEditProvider={openEdit}
-                        busyProviderId={busyProviderId}
-                        onBusyProviderChange={(providerId) => {
-                          setBusyProviderId(providerId)
-                          if (providerId) {
-                            postSaveValidationGeneration.current += 1
-                            postSaveValidationProviderId.current = undefined
-                            setPostSaveValidationFailed(false)
+                      ) : connectorsView.kind === 'import' ? (
+                        <ConnectorImportView
+                          onUse={(template) =>
+                            navigateConnectors({
+                              kind: 'add',
+                              transport: template.transport === 'stdio' ? 'local' : 'remote',
+                              template
+                            })
                           }
+                          onCancel={() => navigateConnectors({ kind: 'list' })}
+                        />
+                      ) : connectorsView.kind === 'export' ? (
+                        <ConnectorExportView
+                          key={connectorsView.id}
+                          id={connectorsView.id}
+                          onDone={() => navigateConnectors({ kind: 'list' })}
+                        />
+                      ) : connectorsView.kind === 'edit' ? (
+                        <div>
+                          {connectorsView.credentialView !== 'create' ? (
+                            <ResourceTagSummary
+                              reference={{
+                                resourceType: 'catalog.connector',
+                                resourceId: connectorsView.id
+                              }}
+                              className="px-5 pt-5"
+                              onOpenTag={navigateTag}
+                            />
+                          ) : null}
+                          <ConnectorAddForm
+                            editServer={customServers.find((s) => s.id === connectorsView.id)}
+                            editServerId={connectorsView.id}
+                            credentialViewOpen={connectorsView.credentialView === 'create'}
+                            onCredentialViewChange={(open) => {
+                              if (open) {
+                                navigateConnectors({ ...connectorsView, credentialView: 'create' })
+                              } else {
+                                goBack()
+                              }
+                            }}
+                            onDone={() => navigateConnectors({ kind: 'list' })}
+                            onCancel={() => navigateConnectors({ kind: 'list' })}
+                          />
+                        </div>
+                      ) : (
+                        <ConnectorsPanel
+                          onNavigate={navigateConnectors}
+                          onOpenTag={navigateTag}
+                          onOpenSpecialist={(usage) =>
+                            navigate({
+                              panel: 'specialists',
+                              view:
+                                usage.kind === 'builtin'
+                                  ? { kind: 'builtin', id: usage.id }
+                                  : { kind: 'edit', id: usage.id }
+                            })
+                          }
+                        />
+                      )
+                    ) : activePanel === 'compute' ? (
+                      computeView.kind === 'add' ? (
+                        <ComputeAddForm
+                          onCreated={(providerId) =>
+                            navigateCompute({ kind: 'detail', providerId })
+                          }
+                          onCancel={() => navigateCompute({ kind: 'list' })}
+                        />
+                      ) : computeView.kind === 'detail' ? (
+                        <ComputeHostDetail
+                          providerId={computeView.providerId}
+                          authenticationFocus={computeView.authenticationFocus}
+                          authenticationRequestId={computeView.authenticationRequestId}
+                        />
+                      ) : (
+                        <ComputePanel onNavigate={navigateCompute} />
+                      )
+                    ) : activePanel === 'credentials' ? (
+                      <CredentialsPanel
+                        view={credentialsView}
+                        onNavigate={navigateCredentials}
+                        onOpenConnector={(id) =>
+                          navigate({ panel: 'connectors', view: { kind: 'edit', id } })
+                        }
+                        onOpenProvider={(provider) => openEdit(provider)}
+                      />
+                    ) : activePanel === 'storage' ? (
+                      <StoragePanel
+                        onContinueToAgent={() => {
+                          navigatePanel('agent')
                         }}
                       />
-                    </ModelPanel>
-                  )}
-                </SettingsPanelLoadingBoundary>
+                    ) : activePanel === 'permissions' ? (
+                      <PermissionsPanel
+                        onOpenSession={onOpenSession}
+                        onOpenConnector={(id) =>
+                          navigateConnectors(
+                            customServers.some((server) => server.id === id)
+                              ? { kind: 'edit', id }
+                              : { kind: 'detail', id }
+                          )
+                        }
+                      />
+                    ) : activePanel === 'archived' ? (
+                      <ArchivedPanel
+                        view={archivedView}
+                        onNavigate={navigateArchived}
+                        canDeleteProjects={canDeleteProjects}
+                        hasCompleteSessionCatalog={hasCompleteSessionCatalog}
+                        catalogRecovery={catalogRecovery}
+                        onRetryCatalogRecovery={onRetryCatalogRecovery}
+                      />
+                    ) : activePanel === 'runtimes' ? (
+                      <RuntimesPanel
+                        title={t('Notebook runtimes')}
+                        description={t(
+                          'Choose which Python and R environments notebooks and the Agent can use. App-managed environments are enabled by default.'
+                        )}
+                        onOpenNetworkProtection={
+                          notebookNetworkAvailable
+                            ? () => navigateNetwork({ kind: 'domains' })
+                            : undefined
+                        }
+                      />
+                    ) : activePanel === 'network' ? (
+                      <NetworkPanel
+                        view={networkView}
+                        onNavigate={navigateNetwork}
+                        notebookNetworkAvailable={notebookNetworkAvailable}
+                      />
+                    ) : activePanel === 'usage' ? (
+                      <TokenUsagePanel sessions={sessions} projects={projects} />
+                    ) : activePanel === 'general' ? (
+                      <GeneralPanel />
+                    ) : activePanel === 'remote-control' ? (
+                      <RemoteControlPanel />
+                    ) : activePanel === 'agent' ? (
+                      <AgentPanel
+                        title={t('Agent framework')}
+                        description={t(
+                          "Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first."
+                        )}
+                      />
+                    ) : isProviderFormOpen ? (
+                      // Add/edit provider is a secondary page reached via the shared back/forward arrows.
+                      <div className="p-5">
+                        {/* Secret writes fail closed when the OS keychain is unavailable. */}
+                        {!encryptionAvailable ? (
+                          <ErrorNotice
+                            role="alert"
+                            tone="amber"
+                            className="mb-4"
+                            description={t(
+                              'Secure key storage is unavailable. API keys cannot be saved until the system keychain is unlocked or authorized.'
+                            )}
+                          />
+                        ) : null}
+                        {providerEditTargetMissing ? (
+                          <ErrorNotice
+                            role="alert"
+                            tone="amber"
+                            className="mb-4"
+                            description={t(
+                              'This Provider no longer exists. Your draft has not been saved.'
+                            )}
+                          />
+                        ) : null}
+                        {providerConflict ? (
+                          <ErrorNotice
+                            role="alert"
+                            className="mb-4"
+                            description={t(
+                              'Provider configuration changed. Your draft has not been saved.'
+                            )}
+                          >
+                            <details>
+                              <summary>{t('Latest saved configuration')}</summary>
+                              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+                                {[
+                                  [t('Provider type'), editingProvider.type],
+                                  [t('Name'), editingProvider.name],
+                                  [t('Base URL'), editingProvider.baseUrl],
+                                  [t('Model'), editingProvider.model],
+                                  [t('API format'), editingProvider.apiEndpoints?.join(', ')],
+                                  [t('Context window'), editingProvider.contextWindow],
+                                  [t('Maximum input tokens'), editingProvider.maxInputTokens],
+                                  [t('Maximum output tokens'), editingProvider.maxOutputTokens],
+                                  [
+                                    t('Image input'),
+                                    editingProvider.supportsImageInput
+                                      ? t('Enabled')
+                                      : t('Disabled')
+                                  ],
+                                  [
+                                    t('Supported effort levels'),
+                                    editingProvider.reasoningEffortPreset
+                                  ],
+                                  [
+                                    t('Reasoning request format'),
+                                    editingProvider.reasoningEffortTransport
+                                  ],
+                                  [t('Transport'), editingProvider.codexTransport],
+                                  [t('Vendor'), editingProvider.vendorId],
+                                  [t('Region'), editingProvider.region]
+                                ].map(([label, value]) => (
+                                  <div key={label} className="contents">
+                                    <dt>{label}</dt>
+                                    <dd className="break-all">
+                                      {value ?? t('Use provider default')}
+                                    </dd>
+                                  </div>
+                                ))}
+                              </dl>
+                            </details>
+                            <Button
+                              type="button"
+                              disabled={isSaving}
+                              onClick={() => {
+                                const base = toFormValue(providerBase)
+                                const latest = toFormValue(editingProvider)
+                                const changes = Object.fromEntries(
+                                  Object.entries(formValue).filter(
+                                    ([key, value]) => value !== base[key as keyof ProviderFormValue]
+                                  )
+                                )
+                                setFormValue({ ...latest, ...changes })
+                                setProviderBase(editingProvider)
+                                setStatusMessage(undefined)
+                              }}
+                            >
+                              {t('Reapply my changes to the latest configuration')}
+                            </Button>
+                          </ErrorNotice>
+                        ) : null}
+                        <ProviderForm
+                          value={formValue}
+                          onChange={(patch) =>
+                            setFormValue((current) => ({ ...current, ...patch }))
+                          }
+                          hasStoredKey={editingProvider?.hasKey}
+                          maskedKey={editingProvider?.maskedKey}
+                          needsKey={editingProvider?.needsKey}
+                          errors={formErrors}
+                          supportedModels={
+                            editingProvider?.type === formValue.type &&
+                            editingProvider?.vendorId === formValue.vendorId &&
+                            editingProvider?.region === formValue.region
+                              ? editingProvider?.models
+                              : undefined
+                          }
+                          onRefreshModels={
+                            editingProvider?.type === 'official' &&
+                            editingProvider.hasKey &&
+                            editingProvider.vendorId &&
+                            resolveVendorModelsUrl(editingProvider.vendorId, editingProvider.region)
+                              ? () => void handleRefreshModels(editingProvider.id)
+                              : undefined
+                          }
+                          isRefreshingModels={isRefreshingModels}
+                          disabled={isSaving}
+                          encryptionAvailable={encryptionAvailable}
+                          showCodexSubscriptions={
+                            agentFrameworkId === 'codex' && modelView.kind === 'create'
+                          }
+                          showClaudeIsolated={
+                            agentFrameworkId === 'claude-code' && modelView.kind === 'create'
+                          }
+                          defaultCustomApiEndpoint={customApiEndpoint}
+                          framework={activeFramework}
+                        />
+                        {statusMessage ? (
+                          statusOk ? (
+                            <p className="mt-3 text-sm text-primary" role="alert">
+                              {statusMessage}
+                            </p>
+                          ) : (
+                            <InlineNotice level="error" role="alert" className="mt-3">
+                              {statusMessage}
+                            </InlineNotice>
+                          )
+                        ) : null}
+                        <div className="mt-6 flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={closeForm}
+                            disabled={isSaving}
+                          >
+                            {t('Cancel')}
+                          </Button>
+                          <Button
+                            type="button"
+                            onClick={() => void handleSave()}
+                            disabled={!canSave}
+                          >
+                            {isSaving ? t('Saving…') : t('Save')}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <ModelPanel
+                        local={modelView.kind === 'local-models'}
+                        onChange={(local) =>
+                          navigate({
+                            panel: 'model',
+                            view: { kind: local ? 'local-models' : 'list' }
+                          })
+                        }
+                      >
+                        {postSaveValidationFailed ? (
+                          <InlineNotice level="error" className="mx-5 mt-5" role="alert">
+                            {t('Could not test the provider connection.')}
+                          </InlineNotice>
+                        ) : null}
+                        <ProvidersPanel
+                          onCreateProvider={openCreate}
+                          onEditProvider={openEdit}
+                          busyProviderId={busyProviderId}
+                          onBusyProviderChange={(providerId) => {
+                            setBusyProviderId(providerId)
+                            if (providerId) {
+                              postSaveValidationGeneration.current += 1
+                              postSaveValidationProviderId.current = undefined
+                              setPostSaveValidationFailed(false)
+                            }
+                          }}
+                        />
+                      </ModelPanel>
+                    )}
+                  </SettingsPanelLoadingBoundary>
+                </div>
               </div>
             </div>
+          </div>
+          <div className="relative z-[60] max-md:[&_[data-testid=permission-undo-stack]]:max-w-[calc(100vw-7rem)]">
+            <ActionToastStack ref={undoHostRef} />
           </div>
         </Dialog.Content>
       </Dialog.Portal>

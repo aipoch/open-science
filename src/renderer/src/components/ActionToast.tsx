@@ -7,7 +7,7 @@ import {
 } from './ui/notice-chrome'
 /* Hallmark · component: action toast · genre: modern-minimal · theme: project app tokens */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 · contrast: project tokens · slop: pass */
-import { useState, type ReactNode } from 'react'
+import { useState, type ReactNode, type Ref } from 'react'
 import { X } from 'lucide-react'
 
 import { NoticeText } from './notice-text'
@@ -99,9 +99,16 @@ const ActionToast = ({
 
 // One viewport-wide scroller leaves room around centered cards for their shadows to fade.
 // Nested notice owners must not clip shadows; timers and event ownership stay with them.
-const ActionToastStack = ({ children }: { children: ReactNode }): React.JSX.Element => (
+const ActionToastStack = ({
+  children,
+  ref
+}: {
+  children?: ReactNode
+  ref?: Ref<HTMLDivElement>
+}): React.JSX.Element => (
   <div
     data-action-toast-stack
+    ref={ref}
     className="pointer-events-none fixed inset-x-0 top-0 z-toast flex max-h-svh flex-col items-center gap-2 overflow-y-auto px-3 pt-3 pb-10 [&>div]:static [&>div]:max-w-[min(24rem,100%)] [&>div:not([data-action-toast-compact])]:w-full [&>div]:shrink-0"
   >
     {children}

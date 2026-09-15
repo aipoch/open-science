@@ -1097,8 +1097,10 @@ describe('SettingsPage layout', () => {
     // Dialog content is portaled to the document body.
     const dialog = document.body.querySelector('[role="dialog"]')
     expect(dialog).not.toBeNull()
-    expect(dialog?.getAttribute('data-slot')).toBe('settings-surface')
-    expect(dialog?.className).toContain('overscroll-contain')
+    expect(dialog?.getAttribute('data-slot')).toBe('settings-dialog')
+    expect(dialog?.querySelector('[data-slot="settings-surface"]')?.className).toContain(
+      'overscroll-contain'
+    )
 
     // Left navigation grouped as Intelligence (Model, Agent, Skills, Specialists, Memory),
     // Connections (Connectors, Network, Remote, Credentials), Workspace (Tags, Permissions,
