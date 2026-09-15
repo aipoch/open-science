@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { win32 } from 'node:path'
 
 import {
   relocateManagedRuntimeEnablement,
@@ -6,6 +7,51 @@ import {
 } from './managed-runtime-relocation'
 
 describe('relocatedManagedRuntimeId', () => {
+  it.each(['default-r', '.r', 'Analysis'])(
+    'preserves a disabled x64 R during relocation of %s',
+    (directory) => {
+      const fromDataRoot = 'D:\\Old\\OpenScience'
+      const toDataRoot = 'E:\\New\\OpenScience'
+      const previous = win32.join(
+        fromDataRoot,
+        'runtime',
+        'envs',
+        directory,
+        'Lib',
+        'R',
+        'bin',
+        'x64',
+        'R.exe'
+      )
+      const next = win32.join(
+        toDataRoot,
+        'runtime',
+        'envs',
+        directory === 'default-r' ? '.r' : directory,
+        'Lib',
+        'R',
+        'bin',
+        'x64',
+        'R.exe'
+      )
+      const enablement = {
+        r: { enabled: { [previous]: false }, installAuthorized: { [previous]: true } }
+      }
+
+      const relocated = relocateManagedRuntimeEnablement({
+        enablement,
+        fromDataRoot,
+        toDataRoot,
+        platform: 'win32'
+      })
+
+      expect(relocated?.r?.enabled[next]).toBe(false)
+      expect(relocated?.r?.enabled[previous]).toBe(false)
+      expect(relocated?.r?.installAuthorized).toEqual(enablement.r.installAuthorized)
+      expect(enablement.r.enabled).toEqual({ [previous]: false })
+    }
+  )
+
   it.each([
     {
       scenario: 'Linux named Python',

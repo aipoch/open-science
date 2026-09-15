@@ -176,7 +176,7 @@ export const envPrefix = (
   if (
     name === DEFAULT_R_ENV &&
     (committedDirectory === undefined || committedDirectory === name) &&
-    existsSync(join(legacy, 'Lib', 'R', 'bin', 'R.exe'))
+    existsSync(rBin(legacy, platform))
   )
     return legacy
   // With no committed legacy environment, an existing partial short prefix remains authoritative so
