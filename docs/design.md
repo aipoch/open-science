@@ -299,7 +299,8 @@ existing notice lifetimes and Undo deadlines when a modal opens.
 Settings owns a foreground Undo host inside its dialog focus scope, above the panel and centered
 at the viewport top. A stable portal container moves between that host and the background stack;
 opening or closing Settings does not remount receipts or restart their countdowns. Other blocking
-presentations continue to cover and disable Undo. The viewport-sized dialog boundary has no
+presentations continue to cover and disable Undo. The mobile Settings navigation drawer hides
+and makes the foreground host inert until the drawer closes, without remounting receipts. The viewport-sized dialog boundary has no
 transform or clipping; the inner Settings panel retains its own size, clipping and animation.
 
 Quit-cancellation recovery is an explicit foreground exception: its owner mounts it outside the

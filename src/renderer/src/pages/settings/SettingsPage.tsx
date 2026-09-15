@@ -2029,7 +2029,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               </div>
             </div>
           </div>
-          <div className="relative z-[60] max-md:[&_[data-testid=permission-undo-stack]]:max-w-[calc(100vw-7rem)]">
+          <div
+            hidden={isMobile && isMobileNavOpen}
+            inert={isMobile && isMobileNavOpen}
+            className="relative z-[60] max-md:[&_[data-testid=permission-undo-stack]]:max-w-[calc(100vw-7rem)]"
+          >
             <ActionToastStack ref={undoHostRef} />
           </div>
         </Dialog.Content>
