@@ -1165,6 +1165,7 @@ class SessionRepository {
     if (diagnostic.status === 'unreadable') {
       throw new Error('Cannot delete a Session whose durable JSON is unreadable.')
     }
+    await this.removeBindingRepairBackups(safeProjectId, safeSessionId)
     const revisionKey = `${safeProjectId}:${safeSessionId}`
     if (diagnostic.status === 'missing') {
       this.sessionRevisions.delete(revisionKey)
@@ -1231,6 +1232,27 @@ class SessionRepository {
       await this.projection?.commitDelete(safeProjectId, safeSessionId).catch((error: unknown) => {
         throw new SessionDeletionCommittedError(error)
       })
+    }
+  }
+
+  private async removeBindingRepairBackups(projectId: string, sessionId: string): Promise<void> {
+    const boundary = await this.inspectActiveProjectBoundary(projectId)
+    if (boundary === 'missing') return
+    if (boundary !== 'valid')
+      throw new Error('Session Project directory is not a regular directory.')
+    const directory = this.projectDir(projectId)
+    const prefix = `${sessionId}.json.pre-artifact-binding-`
+    const entries = await this.dependencies.readDirectoryEntries(directory)
+    for (const entry of entries) {
+      if (
+        !entry.name.startsWith(prefix) ||
+        !/^[a-f0-9]{64}\.backup$/.test(entry.name.slice(prefix.length))
+      ) {
+        continue
+      }
+      const path = join(directory, entry.name)
+      await this.assertFileBoundary(path, 'Session binding repair backup')
+      await this.dependencies.remove(path, { force: true, recursive: false })
     }
   }
 
