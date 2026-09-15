@@ -27,6 +27,53 @@ async function run(
 }
 
 describe('variants-gnomad', () => {
+  const referenceBuildCases = [
+    ['exac', 'GRCh37'],
+    ['gnomad_r2_1', 'GRCh37'],
+    ['gnomad_r2_1_controls', 'GRCh37'],
+    ['gnomad_r2_1_non_cancer', 'GRCh37'],
+    ['gnomad_r2_1_non_neuro', 'GRCh37'],
+    ['gnomad_r2_1_non_topmed', 'GRCh37'],
+    ['gnomad_r3', 'GRCh38'],
+    ['gnomad_r3_controls_and_biobanks', 'GRCh38'],
+    ['gnomad_r3_non_cancer', 'GRCh38'],
+    ['gnomad_r3_non_neuro', 'GRCh38'],
+    ['gnomad_r3_non_topmed', 'GRCh38'],
+    ['gnomad_r3_non_v2', 'GRCh38'],
+    ['gnomad_r4', 'GRCh38'],
+    ['gnomad_r4_non_ukb', 'GRCh38']
+  ] as const
+
+  it.each(referenceBuildCases)(
+    'uses the reference build for %s in gene and region queries',
+    async (dataset, referenceGenome) => {
+      for (const [id, args] of [
+        ['gene_variants', { gene_symbol: 'APOE', dataset }],
+        ['region_variants', { chrom: '19', start: 45411941, stop: 45411941, dataset }]
+      ] as const) {
+        const result = await run(id, args, { data: { gene: null, region: null } })
+        expect(result.variables).toMatchObject({ dataset, referenceGenome })
+        expect(result.query).toContain('$referenceGenome: ReferenceGenomeId!')
+        expect(result.query).toContain('reference_genome: $referenceGenome')
+        expect(result.query).not.toContain('reference_genome: GRCh38')
+      }
+    }
+  )
+
+  it.each([
+    ['gnomad_sv_r2_1', 'GRCh37'],
+    ['gnomad_sv_r4', 'GRCh38']
+  ])('uses the reference build for structural dataset %s', async (dataset, referenceGenome) => {
+    const result = await run(
+      'structural_variants',
+      { gene_symbol: 'APOE', dataset },
+      { data: { gene: null } }
+    )
+    expect(result.variables).toMatchObject({ dataset, referenceGenome })
+    expect(result.query).toContain('$referenceGenome: ReferenceGenomeId!')
+    expect(result.query).toContain('reference_genome: $referenceGenome')
+  })
+
   it('exports the 10 tools in order, all under the variants connector', () => {
     expect(VARIANTS_GNOMAD_TOOLS.map((t) => t.id)).toEqual([
       'get_variant',
@@ -174,6 +221,61 @@ describe('variants-gnomad', () => {
 
   // ---- gene_variants ------------------------------------------------------------------------
 
+  it.each([{ gene_symbol: 'APOE' }, { gene_id: 'ENSG00000130203' }])(
+    'gene_variants: keeps r2 APOE bounds and variant data on GRCh37 for %j',
+    async (geneQuery) => {
+      // Reduced from the live gnomAD r2.1 APOE response checked on 2026-09-15.
+      // Keep one real row, not the full 637-row listing. The old GRCh38 parent returned
+      // bounds 44905791–44909393 alongside this GRCh37 variant, placing it outside the gene.
+      const variant = {
+        variant_id: '19-45409055-A-G',
+        pos: 45409055,
+        ref: 'A',
+        alt: 'G',
+        rsids: ['rs1447504749'],
+        exome: { ac: 1, an: 141070, af: 0.000007088679379031686 },
+        genome: null
+      }
+      const { out, query, variables } = await run(
+        'gene_variants',
+        { ...geneQuery, dataset: 'gnomad_r2_1' },
+        {
+          data: {
+            gene: {
+              gene_id: 'ENSG00000130203',
+              symbol: 'APOE',
+              chrom: '19',
+              start: 45409011,
+              stop: 45412650,
+              variants: [variant]
+            }
+          }
+        }
+      )
+      // Assert the request as well as the fixture output: replay alone cannot prove
+      // that the connector selected the correct upstream reference genome.
+      expect(query).toContain('reference_genome: $referenceGenome')
+      expect(variables).toEqual({
+        symbol: geneQuery.gene_symbol ?? null,
+        geneId: geneQuery.gene_id ?? null,
+        dataset: 'gnomad_r2_1',
+        referenceGenome: 'GRCh37'
+      })
+      expect(out).toEqual({
+        gene_id: 'ENSG00000130203',
+        symbol: 'APOE',
+        chrom: '19',
+        start: 45409011,
+        stop: 45412650,
+        dataset: 'gnomad_r2_1',
+        n_variants: 1,
+        variants: [variant]
+      })
+      const result = out as { start: number; stop: number; variants: Array<{ pos: number }> }
+      expect(result.variants.filter((v) => v.pos < result.start || v.pos > result.stop)).toEqual([])
+    }
+  )
+
   it('gene_variants: dispatches GeneVariants, sorts rows by pos, shapes lean freq blocks + rsids', async () => {
     const { out, query, variables } = await run(
       'gene_variants',
@@ -212,7 +314,12 @@ describe('variants-gnomad', () => {
     )
     expect(query).toContain('query GeneVariants(')
     expect(query).toContain('variants(dataset: $dataset)')
-    expect(variables).toEqual({ symbol: 'APOE', geneId: null, dataset: 'gnomad_r4' })
+    expect(variables).toEqual({
+      symbol: 'APOE',
+      geneId: null,
+      dataset: 'gnomad_r4',
+      referenceGenome: 'GRCh38'
+    })
     expect(out).toMatchObject({
       gene_id: 'ENSG00000130203',
       symbol: 'APOE',
@@ -246,7 +353,12 @@ describe('variants-gnomad', () => {
       { gene_id: 'ENSG00000130203' },
       { data: { gene: null } }
     )
-    expect(variables).toEqual({ symbol: null, geneId: 'ENSG00000130203', dataset: 'gnomad_r4' })
+    expect(variables).toEqual({
+      symbol: null,
+      geneId: 'ENSG00000130203',
+      dataset: 'gnomad_r4',
+      referenceGenome: 'GRCh38'
+    })
   })
 
   it('gene_variants: throws when both gene_symbol and gene_id are given (usage error)', async () => {
@@ -345,7 +457,13 @@ describe('variants-gnomad', () => {
       }
     )
     expect(query).toContain('query RegionVariants(')
-    expect(variables).toEqual({ chrom: '1', start: 55039475, stop: 55064852, dataset: 'gnomad_r4' })
+    expect(variables).toEqual({
+      chrom: '1',
+      start: 55039475,
+      stop: 55064852,
+      dataset: 'gnomad_r4',
+      referenceGenome: 'GRCh38'
+    })
     const rows = out as { n_variants: number; variants: Array<{ variant_id: string }> }
     expect(rows.n_variants).toBe(2)
     expect(rows.variants.map((r) => r.variant_id)).toEqual(['1-55039774-C-T', '1-55064000-A-G'])
@@ -500,7 +618,12 @@ describe('variants-gnomad', () => {
       }
     )
     expect(query).toContain('query StructuralVariantsGene(')
-    expect(variables).toEqual({ symbol: 'TP53', geneId: null, dataset: 'gnomad_sv_r4' })
+    expect(variables).toEqual({
+      symbol: 'TP53',
+      geneId: null,
+      dataset: 'gnomad_sv_r4',
+      referenceGenome: 'GRCh38'
+    })
     const rows = out as {
       dataset: string
       variants: Array<{ variant_id: string; filters: string[] }>
