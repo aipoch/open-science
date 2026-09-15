@@ -464,6 +464,7 @@ describe('Session persistence coordinator architecture', () => {
         'listLegacyProjectSessionTombstones',
         'loadAll',
         'loadAllReadOnly',
+        'inspectSessionDetailsStartupSessions',
         'loadSessionForContinuation',
         'loadPersistedSideChats',
         'markCommittedProjectSessionsPrepared',
@@ -689,6 +690,7 @@ describe('Session persistence coordinator architecture', () => {
     expect(walk(handlerSetter, isAwaitExpression)).toEqual([])
     const schedulerRoutes: Record<string, string[]> = {
       runGlobal: [
+        'inspectSessionDetailsStartupSessions',
         'withUnreferencedLiteratureAttachment',
         'withLiteratureAttachmentRemoval',
         'listLegacyProjectSessionTombstones',
@@ -803,7 +805,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(43)
+    expect(expectedSchedulerRoute.size).toBe(44)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')

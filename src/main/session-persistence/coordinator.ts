@@ -310,6 +310,41 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
   }
 
+  /**
+   * Enumerates fresh authority for Session-details recovery without repeating catalog hydration or
+   * derived-state reconciliation. The caller must restore Project deletion authority first.
+   */
+  inspectSessionDetailsStartupSessions(): Promise<readonly PersistedChatSession[]> {
+    return this.operationScheduler.runGlobal(async () => {
+      const operation = startDiagnosticOperation(this.log, {
+        operation: 'session-details-startup-enumeration',
+        cpuUsage: SESSION_CPU_TRACE_ENABLED ? process.cpuUsage : undefined,
+        fields: { mode: 'read-only' }
+      })
+      let scan: Awaited<ReturnType<SessionMutationRepository['loadAllWithDiagnostics']>>
+      try {
+        scan = await this.repository.loadAllWithDiagnostics({ mode: 'read-only' })
+      } catch (error) {
+        operation.fail(error, { status: 'failed', sessionsAvailable: false })
+        throw error
+      }
+      const isAuthoritative = isSessionCatalogAuthoritative(scan)
+      if (!isAuthoritative) {
+        // A later incomplete read invalidates the prior completeness claim even though this lean
+        // inspection deliberately does not replace metadata or reconcile derived owners.
+        this.stateOwner.markMetadataIncomplete()
+        this.fileIndex.markReconciliationIncomplete()
+      }
+      operation.complete({
+        status: isAuthoritative ? 'ready' : 'partial',
+        sessionCount: scan.result.sessions.length,
+        warningCount: scan.warnings?.length ?? 0,
+        ...scan.scanMetrics
+      })
+      return scan.result.sessions
+    })
+  }
+
   // Degraded authority read: keeps healthy transcripts navigable while writes remain blocked.
   loadAllReadOnly(): Promise<LoadAllSessionsResult> {
     return this.operationScheduler.runGlobal(async () => {
