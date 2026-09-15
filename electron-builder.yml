@@ -150,7 +150,8 @@ mac:
   minimumSystemVersion: '12.0.0'
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    CFBundleName: Open-Science
+    # Electron locates its Helper bundles using this internal name.
+    CFBundleName: Open Science
     CFBundleDisplayName: Open-Science
     NSCameraUsageDescription: Application requests access to the device's camera.
     NSMicrophoneUsageDescription: Application requests access to the device's microphone.
