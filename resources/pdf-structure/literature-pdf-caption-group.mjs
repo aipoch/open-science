@@ -84,6 +84,50 @@ export function joinPdfSmallCapsLine(items) {
     .trim()
 }
 
+// Manuscript line numbers are separate native runs. Require an aligned,
+// consecutive margin sequence and matching body baselines before excluding it.
+// Isolated numbers, chart ticks and numbered list content remain untouched.
+export function excludePdfLineNumbers(content, viewport) {
+  const candidates = content.items.filter((item) => {
+    if (!/^\d{1,4}$/.test(item.str?.trim() ?? '') || item.height <= 0) return false
+    const [x] = viewport.convertToViewportPoint(...item.transform.slice(4))
+    return x < viewport.width * 0.1 || x > viewport.width * 0.9
+  })
+  const excluded = new Set()
+  for (const anchor of candidates) {
+    if (excluded.has(anchor)) continue
+    const column = candidates
+      .filter(
+        (item) =>
+          Math.abs(item.transform[4] - anchor.transform[4]) < 2 &&
+          Math.abs(item.height - anchor.height) < 0.5
+      )
+      .sort((a, b) => b.transform[5] - a.transform[5])
+    if (
+      column.length < 8 ||
+      column.some(
+        (item, i) =>
+          i &&
+          (Number(item.str) !== Number(column[i - 1].str) + 1 ||
+            column[i - 1].transform[5] - item.transform[5] < item.height)
+      )
+    )
+      continue
+    const paired = column.filter((item) =>
+      content.items.some(
+        (body) =>
+          body.str?.length > 20 &&
+          Math.abs(body.transform[5] - item.transform[5]) < 1 &&
+          (body.transform[4] > item.transform[4] + item.width + item.height ||
+            body.transform[4] + body.width < item.transform[4] - item.height)
+      )
+    )
+    if (paired.length < 6) continue
+    for (const item of column) excluded.add(item)
+  }
+  return { ...content, items: content.items.filter((item) => !excluded.has(item)) }
+}
+
 // PDF streams can interleave columns at almost the same baseline without EOL.
 // Split at a physical gutter or a backward column jump before concatenating text.
 export function startsDetachedTextColumn(pending, item) {
@@ -114,7 +158,7 @@ export function captionKind(text) {
     .replace(/^Appendix\s+(?=(?:Figure|Fig\.|Table)\b)/i, '')
   if (/^(?:Figure|Fig\.?)\s+\d+\s+(?:but\b|\(available\b)/i.test(text)) return undefined
   if (
-    /^(?:Table|Fig\.?|Figure)\s+[AS]?\d+(?:\s+and\s+(?:Table|Fig\.?|Figure)\s+[AS]?\d+)?\s+(?:shows?|shown|presents?|presented|illustrates?|depicts?|reiterates?)\b/i.test(
+    /^(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+(?:\s+and\s+(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+)?\s+(?:shows?|shown|presents?|presented|illustrates?|depicts?|reiterates?|reviews?)\b/i.test(
       text ?? ''
     )
   )
@@ -135,7 +179,7 @@ export function captionKind(text) {
   if (/^(?:Fig\.?|Figure)\s+\d+[A-Z][.:]\s/i.test(text ?? '')) return 'figure'
   if (/^(?:Table|Tab\.)\s+[IVXLCDM]+(?=[\s.:：．、]|$)/i.test(text ?? '')) return 'table'
   const match =
-    /^(?:(?:Supplementary|Supplemental|Supplement|Extended\s+Data)\s+)?(F\s*I\s*G\s*U\s*R\s*E|F\s*I\s*G\.?|T\s*A\s*B\s*L\s*E|T\s*A\s*B\.?|图|圖|表)\s*[AS]?\d+(?:[.-]\d+)*(?=[\s.:：．、。]|$)/i.exec(
+    /^(?:(?:Supplementary|Supplemental|Supplement|Extended\s+Data)\s+)?(F\s*I\s*G\s*U\s*R\s*E|F\s*I\s*G\.?|C\s*H\s*A\s*R\s*T|T\s*A\s*B\s*L\s*E|T\s*A\s*B\.?|图|圖|表)\s*[AS]?\d+(?:[.-]\d+)*(?=[\s.:：．、。]|$)/i.exec(
       text ?? ''
     )
   return match
@@ -297,10 +341,12 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       // Require its preceding source line, matching typography and tight leading.
       if (
         (/^Table\s+\d+\s+for\s+[a-z]/.test(start.text) ||
-          /^(?:Figure|Fig\.)\s+\d+[.:]\s+[A-Z]/.test(start.text)) &&
+          /^(?:(?:Figure|Fig\.)\s+\d+|Table\s+[IVXLCDM]+)[.:]\s+[A-Z]/.test(start.text)) &&
         runs.some(
           (line) =>
-            /\b(?:listed|shown|provided|presented|reported) in$/.test(line.text) &&
+            /(?:\b(?:listed|shown|provided|presented|reported|conditions) in|\bbetween conditions,)$/.test(
+              line.text
+            ) &&
             Math.abs(line.x - start.x) <= 2 &&
             Math.abs(line.fontSize - start.fontSize) <= 0.5 &&
             line.bottom <= start.y &&
@@ -662,13 +708,27 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
           .join(' ')
           .matchAll(/(?:Note:|;)\s*([A-Y])\.\s/g)
       ].at(-1)?.[1]
+      const lowerPanels = [
+        ...lines
+          .map((l) => l.text)
+          .join(' ')
+          .matchAll(/[:,]\s*([a-y])\s+(?=[a-z])/g)
+      ]
+      const lowerContinuation =
+        lowerPanels.length >= 2 &&
+        lowerPanels.every(
+          (p, i) => !i || p[1].charCodeAt(0) === lowerPanels[i - 1][1].charCodeAt(0) + 1
+        ) &&
+        !/[.!?]$/.test(lines.at(-1).text)
+          ? String.fromCharCode(lowerPanels.at(-1)[1].charCodeAt(0) + 1)
+          : undefined
       const continuedPanel =
         captionKind(start.text) === 'figure' &&
         lastPanel &&
         /\b(?:between|and|of|with|for)$/.test(lines.at(-1).text)
           ? String.fromCharCode(lastPanel.charCodeAt(0) + 1)
           : undefined
-      if ((start.text.includes('|') || continuedPanel) && lines.length >= 2) {
+      if ((start.text.includes('|') || continuedPanel || lowerContinuation) && lines.length >= 2) {
         const right = runs.find(
           (line) =>
             line.x > Math.max(...lines.map((l) => l.right)) &&
@@ -677,7 +737,9 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
             Math.abs(line.fontSize - start.fontSize) <= 0.7 &&
             line.text.length >= 40 &&
             (start.text.includes('|') ||
-              new RegExp(';\\s*' + continuedPanel + '\\.\\s').test(line.text)) &&
+              new RegExp(';\\s*' + continuedPanel + '\\.\\s').test(line.text) ||
+              (lowerContinuation &&
+                new RegExp(',\\s*' + lowerContinuation + '\\s').test(line.text))) &&
             !captionKind(line.text)
         )
         if (right) {

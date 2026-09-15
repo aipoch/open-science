@@ -35,6 +35,86 @@ export function recoverRepeatedHeaderGrid(table, items, captions, rules) {
       Math.abs(b.at(-1)[2] - right) < 15 &&
       b.slice(1).every((r, n) => Math.abs(r[0] - b[n][2]) < 0.05)
   )
+  const pairedBorders = bands
+    .filter(
+      (b) =>
+        b.length === 6 &&
+        Math.abs(b[0][0] - left) < 15 &&
+        Math.abs(b.at(-1)[2] - right) < 15 &&
+        b.slice(1).every((r, n) => Math.abs(r[0] - b[n][2]) < 0.05)
+    )
+    .sort((a, b) => a[0][1] - b[0][1])
+  if (pairedBorders.length >= 2) {
+    const [upperRule, lowerRule] = pairedBorders,
+      y0 = upperRule[0][1],
+      y1 = lowerRule[0][1]
+    const cuts = [left, ...lowerRule.slice(1).map((r) => r[0] - 0.1), right]
+    const childRules = bands.find((b) => b.length === 2 && b[0][1] > y0 && b[0][1] < y1)
+    if (childRules) {
+      const split = childRules[0][1]
+      const upper = source.filter((i) => i.rect[1] >= y0 && i.rect[3] < split)
+      const lower = source.filter((i) => i.rect[1] >= split && i.rect[3] < y1)
+      const leaves = readSourceRow(lower, cuts)
+      const parents = childRules.map((r) =>
+        upper.filter((i) => i.rect[0] >= r[0] - 0.1 && i.rect[2] <= r[2])
+      )
+      if (
+        leaves?.join('|') === '|n|M(SD)or%|n|M(SD)or%|' &&
+        parents.every((g) => g.length === 1 && /\p{L}/u.test(g[0].text)) &&
+        childRules.every(
+          (r, n) => Math.abs(r[0] - cuts[1 + n * 2]) < 0.2 && r[2] < cuts[3 + n * 2]
+        ) &&
+        upper
+          .filter((i) => !parents.flat().includes(i))
+          .every((i) => i.rect[0] >= cuts[5] && /^p$/i.test(i.text))
+      ) {
+        const body = source.filter((i) => i.rect[1] > y1),
+          groups = groupSourceRowsWithScripts(body, height, 0.3)
+        const records = [],
+          spans = [
+            { row: 0, column: 1, rowSpan: 1, colSpan: 2 },
+            { row: 0, column: 3, rowSpan: 1, colSpan: 2 },
+            { row: 0, column: 5, rowSpan: 2, colSpan: 1 }
+          ]
+        let valid = Boolean(groups),
+          measures = 0
+        for (const g of groups ?? []) {
+          if (
+            /^\(?continued\)?$/i.test(
+              g
+                .map((i) => i.text)
+                .join(' ')
+                .trim()
+            )
+          )
+            break
+          const v = readSourceRow(g, cuts)
+          if (
+            !v ||
+            !v[0] ||
+            v.slice(1).some((x) => x && !/^[<>≤≥−+-]?\d[\d.,()%–−±/+-]*$/.test(x))
+          ) {
+            valid = false
+            break
+          }
+          if (v.slice(1).some(Boolean)) measures++
+          else spans.push({ row: records.length + 2, column: 0, rowSpan: 1, colSpan: 6 })
+          records.push(union(g))
+        }
+        if (valid && measures >= 3 && records.every((r, n) => !n || r[1] > records[n - 1][3]))
+          return {
+            rows: [
+              [left, y0, right, split],
+              [left, split, right, y1],
+              ...records.map((r) => [left, r[1], right, r[3]])
+            ],
+            columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+            spans,
+            completeSpans: true
+          }
+      }
+    }
+  }
   if (borders.length !== 1) return
   const border = borders[0],
     divider = border[0][1]
@@ -247,11 +327,98 @@ export function recoverRuledCategoryGrid(table, items, captions, rules) {
 // Accept only single-line records with indented labels and explicitly empty
 // comparison cells. Wrapped labels and bare numeric continuation rows decline.
 export function recoverNativeHeaderGrid(table, items, captions, rules) {
+  const review = recoverRuledReviewHeader(table, items, captions, rules)
+  if (review) return review
   const events = recoverRepeatedEventGrid(table, items, captions, rules)
   if (events) return events
   if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
   const [left, top, right, bottom] = table.cropRect
   const source = tableSourceItems(items, table.cropRect)
+  // Explicit count, percentage, summary and range headings establish sparse
+  // columns even when the model overlaps two count columns and loses '%'.
+  const summary = source.filter((i) => /^(?:n|%|Mean \(SD\)|Range)$/.test(i.text))
+  if (
+    summary.length === 4 &&
+    summary.map((i) => i.text).join('|') === 'n|%|Mean (SD)|Range' &&
+    summary.every((i) => Math.abs(i.baseline - summary[0].baseline) < 0.1)
+  ) {
+    const font = summary[0].height
+    const frame = rules
+      .filter(
+        (r) =>
+          r[1] === r[3] &&
+          r[0] >= left &&
+          r[2] <= right &&
+          r[2] - r[0] > (right - left) * 0.9 &&
+          r[1] >= top &&
+          r[1] <= bottom
+      )
+      .sort((a, b) => a[1] - b[1])
+    const predicted = table.structure.objects
+      .filter((o) => o.label === 'table column')
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    if (
+      frame.length === 3 &&
+      predicted.length === 5 &&
+      frame[0][1] < summary[0].rect[1] &&
+      frame[1][1] > summary[0].rect[3]
+    ) {
+      const cuts = [
+        left,
+        summary[0].rect[0] - font,
+        ...summary.slice(1).map((i, n) => (summary[n].rect[2] + i.rect[0]) / 2),
+        right
+      ]
+      const body = source.filter((i) => i.rect[1] > frame[1][1] && i.rect[3] < frame[2][1])
+      const groups = groupSourceRowsWithScripts(body, font, 0.35)
+      const records = [],
+        sections = []
+      let valid = Boolean(groups),
+        measures = 0
+      for (const g of groups ?? []) {
+        const v = readSourceRow(g, cuts)
+        if (!v || !v[0]) {
+          valid = false
+          break
+        }
+        if (
+          v[1] &&
+          /^\d+$/.test(v[1]) &&
+          v.slice(2).every((x) => !x || /^\d[\d.,()–-]*$/.test(x))
+        ) {
+          measures++
+          records.push([...g])
+        } else if (v.slice(1).every((x) => !x)) {
+          if (
+            records.length &&
+            /^[a-z(]/.test(v[0]) &&
+            g[0].baseline - records.at(-1).at(-1).baseline < font * 1.6
+          )
+            records.at(-1).push(...g)
+          else {
+            sections.push(records.length)
+            records.push([...g])
+          }
+        } else {
+          valid = false
+          break
+        }
+      }
+      if (valid && measures >= 20 && sections.length >= 5 && hasUniqueRecordTokens(body, records)) {
+        const rects = records.map(union)
+        if (rects.every((r, n) => !n || r[1] > rects[n - 1][3]))
+          return {
+            rows: [
+              [left, frame[0][1], right, frame[1][1]],
+              ...rects.map((r) => [left, r[1], right, r[3]])
+            ],
+            columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+            spans: sections.map((n) => ({ row: n + 1, column: 0, rowSpan: 1, colSpan: 5 })),
+            completeSpans: true
+          }
+      }
+    }
+  }
   const lines = new Map()
   for (const r of rules
     .filter((r) => r[1] === r[3] && r[1] >= top && r[1] <= bottom)
@@ -261,6 +428,75 @@ export function recoverNativeHeaderGrid(table, items, captions, rules) {
     lines.set(r[1], band)
   }
   const edges = [...lines].sort((a, b) => a[0] - b[0])
+  // Small tables can have column-width strokes at the header divider and
+  // footer even when the model emits no rows. Matching segment endpoints and
+  // complete numeric baselines establish the grid independently of inference.
+  const segmented = edges.filter(
+    ([, parts]) =>
+      parts.length >= 3 &&
+      parts.length <= 8 &&
+      parts[0][0] >= left - 12 &&
+      parts.at(-1)[2] <= right + 12 &&
+      parts.slice(1).every((r, i) => Math.abs(r[0] - parts[i][2]) < 0.1)
+  )
+  if (segmented.length === 2) {
+    const [[divider, upper], [footer, lower]] = segmented
+    const border = edges.findLast(
+      ([y, parts]) =>
+        y < divider &&
+        parts.length === 1 &&
+        Math.abs(parts[0][0] - upper[0][0]) < 0.1 &&
+        Math.abs(parts[0][2] - upper.at(-1)[2]) < 0.1
+    )?.[0]
+    if (
+      border !== undefined &&
+      upper.length === lower.length &&
+      upper.every(
+        (r, i) => Math.abs(r[0] - lower[i][0]) < 0.1 && Math.abs(r[2] - lower[i][2]) < 0.1
+      )
+    ) {
+      const cuts = [upper[0][0] - 0.1, ...upper.map((r) => r[2])]
+      cuts[cuts.length - 1] += 0.1
+      const body = source.filter((i) => i.rect[1] >= divider && i.rect[3] <= footer)
+      const groups = []
+      for (const i of body) {
+        const group = groups.at(-1)
+        if (group && Math.abs(group[0].baseline - i.baseline) < i.height * 0.3) group.push(i)
+        else groups.push([i])
+      }
+      const header = source.filter((i) => i.rect[1] >= border && i.rect[3] <= divider)
+      const values = groups.map((g) => readSourceRow(g, cuts))
+      if (
+        groups.length >= 2 &&
+        groups.length <= 8 &&
+        hasUniqueRecordTokens(source, [header, ...groups]) &&
+        values.every(
+          (r) =>
+            r && /\p{L}/u.test(r[0]) && r.slice(1).every((v) => /^[<>≤≥−+-]?\d[\d.,()%]*$/.test(v))
+        ) &&
+        cuts
+          .slice(1)
+          .every((x, c) =>
+            header.some((i) => i.rect[0] >= cuts[c] && i.rect[2] <= x && /\p{L}/u.test(i.text))
+          )
+      ) {
+        const ys = [
+          divider,
+          ...groups.slice(1).map((g, n) => (union(groups[n])[3] + union(g)[1]) / 2),
+          footer
+        ]
+        return {
+          rows: [
+            [cuts[0], border, cuts.at(-1), divider],
+            ...groups.map((_, n) => [cuts[0], ys[n], cuts.at(-1), ys[n + 1]])
+          ],
+          columns: cuts.slice(1).map((x, n) => [cuts[n], border, x, footer]),
+          spans: [],
+          completeSpans: true
+        }
+      }
+    }
+  }
   const matches = edges.filter(
     ([, segments]) =>
       segments.length >= 3 &&
@@ -739,7 +975,7 @@ export function recoverClippedHeading({ rows, objects, groups, columnRects, rule
   const height = Math.max(...leading.map((i) => i.height))
   const next = groups[1] ?? []
   const first = rows[0].rect
-  if (rect[1] >= first[1] || first[1] - rect[1] > height * 2) return
+  if (rect[1] >= first[1] || first[1] - rect[1] > height * 2 + 0.1) return
   const column = columnOf(leading[0])
   if (column < 1 || !leading.every((i) => columnOf(i) === column)) return
   const text = leading.map((i) => i.text.trim()).join(' ')
@@ -751,6 +987,59 @@ export function recoverClippedHeading({ rows, objects, groups, columnRects, rule
       suffix.length &&
       suffix.every((i) => i.rect[1] >= o.rect[1] - height * 0.2 && i.rect[3] <= o.rect[3])
   )
+  // A tall, left-aligned header may begin above all model rows while its
+  // lower lines share the neighboring two-tier header. Native child underlines
+  // and complete textual peers establish the header's extent.
+  const wrappedHeader =
+    header ??
+    objects.find(
+      (o) => o.label === 'table column header' && o.rect[1] <= first[3] && o.rect[3] >= first[3]
+    )
+  if (wrappedHeader && rows.length >= 3) {
+    const prefix = groups
+      .flat()
+      .filter(
+        (i) => columnOf(i) === column && i.rect[1] >= rect[1] && i.rect[3] <= wrappedHeader.rect[3]
+      )
+    const peers = groups
+      .flat()
+      .filter(
+        (i) => columnOf(i) !== column && i.rect[1] >= first[1] && i.rect[3] <= wrappedHeader.rect[3]
+      )
+    const headerRows = rows.filter((r) => r.rect[1] < wrappedHeader.rect[3] - height * 0.2)
+    if (
+      prefix.length >= 3 &&
+      prefix.length <= 5 &&
+      headerRows.length === 2 &&
+      prefix.every((i) => /\p{L}/u.test(i.text) && Math.abs(i.rect[0] - rect[0]) < 1) &&
+      prefix
+        .slice(1)
+        .every(
+          (i, n) =>
+            i.baseline - prefix[n].baseline > height * 0.8 &&
+            i.baseline - prefix[n].baseline < height * 1.6
+        ) &&
+      new Set(peers.filter((i) => /\p{L}/u.test(i.text)).map(columnOf)).size >= 3 &&
+      !peers.some((i) => /^\d/.test(i.text)) &&
+      rules.some(
+        (r) =>
+          r[1] === r[3] &&
+          r[1] > first[1] &&
+          r[1] < wrappedHeader.rect[3] &&
+          r[0] >= columnRects[0][0] &&
+          r[2] < columnRects[column][0] &&
+          r[2] - r[0] > height * 4
+      )
+    ) {
+      first[1] = rect[1]
+      wrappedHeader.rect[1] = Math.min(wrappedHeader.rect[1], rect[1])
+      repairs.push('clipped-wrapped-heading-recovered')
+      return {
+        column,
+        rect: [columnRects[column][0], rect[1], columnRects[column][2], headerRows[1].rect[3]]
+      }
+    }
+  }
   const confidence =
     suffix.length === 1 &&
     /^\((?:90|95|99)% CI\)$/.test(suffix[0].text.trim()) &&
@@ -1558,5 +1847,100 @@ function recoverRepeatedEventGrid(table, items, captions, rules) {
     completeSpans: true,
     headerRows: [0, 1],
     ownedTokens: new Set([...upper, ...lower, ...groups.flat()])
+  }
+}
+
+// A tall literature-review header can wrap independently beside a short parent
+// and two underlined children. Recover those gutters from complete child glyphs;
+// author anchors own the body, including separately footnoted outcome rows.
+function recoverRuledReviewHeader(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const [left, top, right, bottom] = table.cropRect
+  const predicted = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (predicted.length !== 11) return
+  const source = tableSourceItems(items, table.cropRect)
+  const author = source.find((i) => i.text === 'Author, year'),
+    parent = source.find((i) => i.text === 'Reported LRR')
+  const children = ['MRI (%)', 'No MRI (%)'].map((s) => source.find((i) => i.text === s))
+  if (!author || !parent || children.some((i) => !i)) return
+  const underline = rules.find(
+    (r) =>
+      r[1] === r[3] &&
+      r[1] > parent.rect[3] &&
+      r[1] < Math.min(...children.map((i) => i.rect[1])) &&
+      Math.abs(r[0] - children[0].rect[0]) < 1 &&
+      Math.abs(r[2] - children[1].rect[2]) < 1
+  )
+  if (!underline) return
+  const cuts = [
+    left,
+    ...predicted.slice(1).map((c, n) => left + (predicted[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const authors = source
+    .filter(
+      (i) => col(i) === 0 && (/\bet al\.\s*\d{4}$/.test(i.text) || /^Current series$/.test(i.text))
+    )
+    .sort((a, b) => a.baseline - b.baseline)
+  if (authors.length < 4) return
+  const bodyStart = authors[0].rect[1] - author.height * 0.25
+  const heading = source.filter((i) => i.rect[3] < bodyStart)
+  const neighbour = heading.filter((i) => col(i) === 7 && i !== parent)
+  cuts[8] = (Math.max(...neighbour.map((i) => i.rect[2])) + children[0].rect[0]) / 2
+  cuts[9] = (children[0].rect[2] + children[1].rect[0]) / 2
+  if (
+    cuts.some((x, n) => n && x <= cuts[n - 1]) ||
+    source.some(
+      (i) =>
+        i !== parent &&
+        (col(i) < 0 || i.rect[0] < cuts[col(i)] - 1 || i.rect[2] > cuts[col(i) + 1] + 1)
+    )
+  )
+    return
+  const rows = [
+    [left, Math.min(...heading.map((i) => i.rect[1])), right, underline[1]],
+    [left, underline[1], right, bodyStart]
+  ]
+  const spans = [{ row: 0, column: 8, rowSpan: 1, colSpan: 2 }]
+  for (let c = 0; c < 11; c++)
+    if (c !== 8 && c !== 9) spans.push({ row: 0, column: c, rowSpan: 2, colSpan: 1 })
+  const footer = rules.find(
+    (r) =>
+      r[1] === r[3] &&
+      r[1] >= Math.max(...source.map((i) => i.rect[3])) &&
+      r[2] - r[0] > (right - left) * 0.9
+  )?.[1]
+  if (!footer) return
+  for (const [n, a] of authors.entries()) {
+    const start = a.rect[1] - author.height * 0.25,
+      end = authors[n + 1] ? authors[n + 1].rect[1] - author.height * 0.25 : footer
+    const owned = source.filter(
+      (i) => (i.rect[1] + i.rect[3]) / 2 >= start && (i.rect[1] + i.rect[3]) / 2 < end
+    )
+    const values = owned
+      .filter((i) => col(i) === 8 && /^\d[\d.]*$/.test(i.text))
+      .sort((a, b) => a.baseline - b.baseline)
+    if (
+      !values.length ||
+      values.length > 2 ||
+      !owned.some((i) => col(i) === 1 && /^\d[\d,]*$/.test(i.text))
+    )
+      return
+    if (values.length === 2) {
+      const split = (values[0].rect[3] + values[1].rect[1]) / 2
+      if (owned.some((i) => col(i) < 8 && (i.rect[1] + i.rect[3]) / 2 >= split)) return
+      for (let c = 0; c < 8; c++)
+        spans.push({ row: rows.length, column: c, rowSpan: 2, colSpan: 1 })
+      rows.push([left, start, right, split], [left, split, right, end])
+    } else rows.push([left, start, right, end])
+  }
+  return {
+    rows,
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    spans,
+    completeSpans: true
   }
 }

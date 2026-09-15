@@ -53,6 +53,9 @@ const sourceCredit = (text) =>
 const changeDefinition = (text) =>
   /^[∆Δ]\s+(?:represents|denotes|indicates) the change\b/i.test(text.trim())
 const startsNote = (text) =>
+  /^(?:Values are r coefficients from correlation analyses\.|Generalized estimating equations? \(GEE\)|Multivariable analysis performed controlling for|Presented as mean\s*±\s*standard error\b)/i.test(
+    text.trim()
+  ) ||
   /^Data are mean \((?:SD|95%\s*CI)\)(?:[;. ]|$)/i.test(text.trim()) ||
   /^[A-Z]{2,8}\s+[–—-]\s+\p{L}[\p{L}\s-]+\.\s*[a-z]?\s*Independent samples\b/u.test(text.trim()) ||
   /^Low \(\+\)\s*0%[-–]25%;\s*moderate \(\+\+\)\s*25%[-–]50%;\s*high \(\+\+\+\)/i.test(
@@ -232,7 +235,7 @@ export function associateTableNotes(page, tables, rules = []) {
   }
   const raisedMarker = (line) =>
     !repeatedIsotope(line) &&
-    /^(?:[a-z]|\d{1,2}[a-z]?)(?:\s*,)?\s+\p{L}/u.test(line.text) &&
+    /^(?:[a-z]|\d{1,2}[a-z]?)(?:\s*,)?\s+(?:\p{L}|\d+[–-]\p{L})/u.test(line.text) &&
     page.lines.some(
       (part) =>
         /^(?:[a-z]|\d{1,2}[a-z]?)$/.test(part.text) &&
@@ -244,7 +247,7 @@ export function associateTableNotes(page, tables, rules = []) {
   // A neighboring column can put a raised marker in a different grouped row.
   // Recover only a small letter tightly adjoining this note on a raised baseline.
   const detachedMarker = (line) =>
-    /^\p{L}/u.test(line.text) &&
+    /^(?:\p{L}|\d+[–-]\p{L})/u.test(line.text) &&
     lines.find(
       (part) =>
         !used.has(part) &&
@@ -592,7 +595,9 @@ export function associateTableNotes(page, tables, rules = []) {
       })
       .filter(
         ({ rect, gap, index }) =>
-          (gap >= 0 || touchesRuledBottom(start, rect)) &&
+          (gap >= 0 ||
+            (notes[index].length && raisedMarker(start) && gap > -start.fontSize * 0.2) ||
+            touchesRuledBottom(start, rect)) &&
           (!changeDefinition(start.text) || citedSymbol(start, rect)) &&
           (!requiresCitation || citedDefinitions[index]) &&
           gap <= Math.max(36, start.fontSize * 3) &&
@@ -739,7 +744,9 @@ export function associateTableNotes(page, tables, rules = []) {
                 start.x - 1,
                 Math.max(candidates[0].rect[0] - 2, start.x - start.fontSize * 2)
               )
-            : wrappedAbbreviations(start) || statisticDefinition(start.text)
+            : wrappedAbbreviations(start) ||
+                /^Abbreviations?\s*:/i.test(start.text) ||
+                statisticDefinition(start.text)
               ? start.x - start.fontSize * 1.25
               : start.x - 4) ||
         next.x > start.x + 24 ||

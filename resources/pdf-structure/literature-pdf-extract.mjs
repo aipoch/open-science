@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { getDocument, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import {
   captionKind,
+  excludePdfLineNumbers,
   findCaptionCandidates,
   joinCaptionLines
 } from './literature-pdf-caption-group.mjs'
@@ -146,6 +147,11 @@ try {
     document.numPages > 20 &&
     document.numPages <= 100 &&
     (captions.some((c) => /^(?:Fig\.|Figure)\s*\d/i.test(c.lines[0])) ||
+      geometry.pages.some(
+        (p) =>
+          p.graphicsBounds?.filter((g) => g.kind === 'path').length >= 3 &&
+          p.lines.every((l) => l.text.length < 100)
+      ) ||
       geometry.pages.some((p) =>
         p.graphicsBounds?.some(
           (g) =>
@@ -218,7 +224,10 @@ try {
       )
       const viewport = page.getViewport({ scale: 1.5, rotation: pageGeometry.renderRotation })
       const content = splitPdfNumericRuns(
-        await repairPdfSymbolText(page, await page.getTextContent()),
+        excludePdfLineNumbers(
+          await repairPdfSymbolText(page, await page.getTextContent()),
+          page.getViewport({ scale: 1, rotation: pageGeometry.renderRotation })
+        ),
         await page.getOperatorList()
       )
       const tokens = content.items
@@ -484,7 +493,15 @@ try {
         /^(?:Figure|Fig\.)\s*(\d+)\.?$/i.exec(
           pageFigures[0].caption?.lines.join(' ') ?? ''
         )?.[1] === plateNumber
-      if (plateCaption && (plateImages.length || numberedPlate)) {
+      const nativePlate =
+        plateCaption &&
+        pageGeometry.graphicsBounds.filter(
+          (g) =>
+            g.kind === 'path' &&
+            (g.normalizedRect[2] - g.normalizedRect[0]) * pageGeometry.width > 10 &&
+            (g.normalizedRect[3] - g.normalizedRect[1]) * pageGeometry.height > 10
+        ).length >= 3
+      if (plateCaption && (plateImages.length || numberedPlate || nativePlate)) {
         const footerTop = Math.min(
           pageGeometry.height,
           ...pageGeometry.lines

@@ -765,3 +765,81 @@ it('associates dense vector marks without losing the panel envelope', () => {
   const caption = { page: 1, lines: ['Figure 1. Dense vector plot.'], rect: [60, 500, 540, 520] }
   expect(associateFigures(source, [caption])[0].rect).toEqual([60, 80, 540, 480])
 })
+
+it('keeps all raster panels across a shared native axis-title line below a table', () => {
+  const source = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/raster-panels-shared-axis-titles.jsonl')
+  )
+  const captions = findCaptionCandidates([source])
+  const [figure] = associateFigures(source, captions, [[42, 49, 556, 257]])
+  expect(figure.graphicsCount).toBe(6)
+  expect(figure.rect[0]).toBeLessThanOrEqual(52.18)
+  expect(figure.rect[1]).toBeLessThan(269)
+  expect(figure.rect[1]).toBeGreaterThan(257)
+  expect(figure.rect[3]).toBeGreaterThan(602)
+  expect(figure.rect[3]).toBeLessThan(figure.caption.rect[1])
+})
+
+it('includes split at-risk counts, left group labels and panel letters in stacked plots', () => {
+  const source = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/stacked-survival-risk-labels.jsonl')
+  )
+  const [figure] = associateFigures(source, findCaptionCandidates([source]))
+  expect(figure.graphicsCount).toBe(2)
+  expect(figure.rect[0]).toBeCloseTo(307.0155)
+  expect(figure.rect[1]).toBeLessThan(275)
+  expect(figure.rect[3]).toBeCloseTo(688.9923)
+  expect(figure.rect[3]).toBeLessThan(figure.caption.rect[1])
+})
+
+it.each(['ticks', 'prose', 'table'])(
+  'keeps the raster-panel boundary when %s contradicts axis-title ownership',
+  (barrier) => {
+    const source = readPdfFixture(
+      resolve('src/main/literature/pdf-structure/fixtures/raster-panels-shared-axis-titles.jsonl')
+    )
+    if (barrier === 'ticks') {
+      source.lines = source.lines.filter((line: { y: number }) => !(line.y > 350 && line.y < 368))
+    }
+    if (barrier === 'prose') {
+      source.lines.push({
+        text: 'An intervening paragraph separates these illustrations. '.repeat(2),
+        fontSize: 10,
+        x: 50,
+        y: 377,
+        width: 500,
+        height: 10
+      })
+    }
+    const tables = barrier === 'table' ? [[125, 270, 520, 363]] : []
+    const [figure] = associateFigures(source, findCaptionCandidates([source]), tables)
+    expect(figure.graphicsCount).toBe(4)
+    expect(figure.rect[1]).toBeGreaterThan(360)
+  }
+)
+
+it.each(['heading', 'numeric rows', 'table', 'caption'])(
+  'does not extend the lower risk block without unambiguous %s evidence',
+  (barrier) => {
+    const source = readPdfFixture(
+      resolve('src/main/literature/pdf-structure/fixtures/stacked-survival-risk-labels.jsonl')
+    )
+    if (barrier === 'heading') {
+      source.lines = source.lines.filter((line: { text: string }) => line.text !== 'Number at risk')
+    }
+    if (barrier === 'numeric rows') {
+      source.lines = source.lines.filter(
+        (line: { x: number; y: number; text: string }) =>
+          !(line.y > 660 && line.y < 695 && line.x > 300 && /\d/.test(line.text))
+      )
+    }
+    const captions = findCaptionCandidates([source])
+    if (barrier === 'caption') {
+      captions.push({ page: 1, lines: ['Table 2. Separate data'], rect: [303, 651, 550, 695] })
+    }
+    const tables = barrier === 'table' ? [[303, 651, 550, 695]] : []
+    const [figure] = associateFigures(source, captions, tables)
+    if (barrier === 'caption') expect(figure.rect).toBeUndefined()
+    else expect(figure.rect[3]).toBeLessThan(651)
+  }
+)

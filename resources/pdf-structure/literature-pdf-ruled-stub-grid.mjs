@@ -7,6 +7,8 @@ import { tableSourceItems } from './literature-pdf-source-records.mjs'
 // Reuse the same face traversal as ruled stubs; require individually enclosed
 // numeric body cells before overriding a detector's extra or missing column.
 export function recoverRuledHeaderGrid(table, items, captions, rules) {
+  const samples = recoverClosedSampleGrid(table, items, captions, rules)
+  if (samples) return samples
   const cohort = recoverClosedCohortGrid(table, items, captions, rules)
   if (cohort) return cohort
   const crop = [...table.cropRect]
@@ -507,5 +509,92 @@ function recoverClosedCohortGrid(table, items, captions, rules) {
     completeSpans: true,
     ownedTokens: new Set(source),
     repair: 'closed-record-grid-recovered'
+  }
+}
+
+// Boxed sample summaries keep all text inside each drawn face. Small inset
+// stroke ends and a double header rule are paint gaps, not extra data cells.
+function recoverClosedSampleGrid(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const [left, top, right, bottom] = table.cropRect
+  const native = tableSourceItems(items, table.cropRect)
+  const headers = native.filter((i) => i.rect[1] < top + 40 && /\(N\s*=\s*\d+\)/.test(i.text))
+  if (headers.length !== 3 || headers.some((i) => Math.abs(i.baseline - headers[0].baseline) > 1))
+    return
+  const font = headers[0].height,
+    tolerance = Math.min(3.5, font * 0.25)
+  const local = rules.filter(
+    (r) =>
+      r[0] >= left - font && r[2] <= right + font * 2 && r[1] >= top - 1 && r[3] <= bottom + font
+  )
+  const xs = clusterTableRulePositions(local.filter((r) => r[0] === r[2]).map((r) => r[0]))
+  if (xs.length !== 6) return
+  const ys = []
+  for (const y of [...new Set(local.filter((r) => r[1] === r[3]).map((r) => r[1]))].sort(
+    (a, b) => a - b
+  )) {
+    const last = ys.at(-1)
+    if (
+      last &&
+      y - last[0] <= tolerance &&
+      !native.some((i) => i.rect[1] >= last[0] && i.rect[3] <= y)
+    )
+      last.push(y)
+    else ys.push([y])
+  }
+  const snapX = (x) => xs.find((v) => Math.abs(v - x) <= tolerance) ?? x
+  const snapY = (y) => {
+    const g = ys.find((g) => y >= g[0] - tolerance && y <= g.at(-1) + tolerance)
+    return g ? (g[0] + g.at(-1)) / 2 : y
+  }
+  const strokes = local.map((r) => [snapX(r[0]), snapY(r[1]), snapX(r[2]), snapY(r[3])])
+  const y0 = Math.min(...strokes.map((r) => r[1])),
+    y1 = Math.max(...strokes.map((r) => r[3]))
+  const crop = [xs[0] - 1, y0 - 1, xs.at(-1) + 1, y1 + 1]
+  const source = items.filter(
+    (i) =>
+      i.horizontal &&
+      i.rect[0] >= xs[0] &&
+      i.rect[2] <= xs.at(-1) &&
+      (i.rect[1] + i.rect[3]) / 2 > y0 &&
+      (i.rect[1] + i.rect[3]) / 2 < y1
+  )
+  const columns = xs.slice(1).map((x, c) => ({ rect: [xs[c], y0, x, y1] }))
+  const grid = readRuledGrid(crop, columns, source, strokes, 'records')
+  if (!grid || grid.ys.length < 8) return
+  const text = (c) =>
+    source
+      .filter(
+        (i) =>
+          (i.rect[0] + i.rect[2]) / 2 > c.rect[0] &&
+          (i.rect[0] + i.rect[2]) / 2 < c.rect[2] &&
+          (i.rect[1] + i.rect[3]) / 2 > c.rect[1] &&
+          (i.rect[1] + i.rect[3]) / 2 < c.rect[3]
+      )
+      .map((i) => i.text)
+      .join(' ')
+  if (
+    grid.cells.some(
+      (c) =>
+        c.colSpan !== 1 ||
+        (c.column < 4 && c.rowSpan !== 1) ||
+        (c.row === 0
+          ? !/\p{L}/u.test(text(c))
+          : c.column === 0
+            ? !/\p{L}/u.test(text(c))
+            : c.column < 4
+              ? !/\d/.test(text(c))
+              : !/^(?:NS\*?|[<>≤≥]?\s*\d[\d.]*)$/.test(text(c).trim()))
+    ) ||
+    grid.cells.filter((c) => c.row === 0 && /\(N\s*=\s*\d+\)/.test(text(c))).length !== 3
+  )
+    return
+  return {
+    cropRect: crop,
+    rows: grid.ys.slice(1).map((y, r) => [xs[0], grid.ys[r], xs.at(-1), y]),
+    columns: columns.map((c) => c.rect),
+    spans: grid.cells.filter((c) => c.rowSpan > 1),
+    completeSpans: true,
+    ownedTokens: new Set(source)
   }
 }

@@ -109,10 +109,248 @@ export function repairWrappedTableRows({
   columnRects,
   rules,
   right,
-  repairs
+  repairs,
+  captioned = false,
+  headers = []
 }) {
   if (recoverResourceRows({ rows, items, columnRects, rules, repairs })) return
   const columnOf = (item) => columnRects.findIndex((column) => inside(column, item))
+  // Complete source records can fall between predicted bands, including a
+  // final Total row whose only model-owned glyphs are superscripts. Require
+  // repeated column signatures and preserve every neighboring source owner.
+  const fontSizes = items.map((i) => i.height).sort((a, b) => a - b)
+  const font = fontSizes[Math.floor(fontSizes.length / 2)]
+  const sourceRows =
+    groupSourceRowsWithScripts(
+      [...items].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+      font,
+      0.35
+    ) ?? []
+  const sourceCuts = [columnRects[0]?.[0], ...columnRects.map((r) => r[2])]
+  // A detector may label the first data record as the header and omit the
+  // actual labels immediately above it. Require independent text-only labels
+  // and a complete numeric record below, rather than borrowing caption prose.
+  if (captioned && rows.length >= 3) {
+    const first = rows[0]
+    const owned = items.filter((i) => inside(first.rect, i))
+    const values = readSourceRow(owned, sourceCuts)
+    const leading = sourceRows.filter(
+      (g) =>
+        g.every((i) => (i.rect[1] + i.rect[3]) / 2 < first.rect[1]) &&
+        first.rect[1] - union(g)[3] < font * 1.6
+    )
+    if (
+      values?.filter((v) => /^[<>≤≥−+-]?(?:\d|\.\d)/.test(v)).length >= 2 &&
+      leading.length === 1
+    ) {
+      const g = leading[0],
+        labels = columnRects.map((_, c) =>
+          g
+            .filter((i) => columnOf(i) === c)
+            .map((i) => i.text)
+            .join(' ')
+        )
+      if (
+        (rules.length || readSourceRow(g, sourceCuts)) &&
+        labels &&
+        labels.filter((v) => /\p{L}/u.test(v)).length >= 2 &&
+        labels.every((v) => !v || /\p{L}/u.test(v)) &&
+        g.every((i) => i.height >= font * 0.8 && i.height <= font * 1.2)
+      ) {
+        const b = union(g)
+        const edge = (b[3] + first.rect[1]) / 2
+        rows.unshift({ rect: [sourceCuts[0], b[1], right, edge], origin: 'source-native-header' })
+        first.rect[1] = edge
+        repairs.push('clipped-source-header-band-recovered')
+      }
+    }
+  }
+  const signature = (g) => {
+    const values = readSourceRow(g, sourceCuts)
+    if (!values) return
+    const stub = values.findIndex(Boolean)
+    if (stub < 0 || stub > 1 || !/\p{L}/u.test(values[stub])) return
+    const populated = values.slice(stub + 1).flatMap((s, n) => (s ? [n + stub + 1] : []))
+    if (
+      populated.length < 2 ||
+      populated.some((c) => !/^[<>≤≥−+-]?(?:\d|\.\d)[\d.,()%±*–—−+\s/-]*[a-d*]*$/.test(values[c]))
+    )
+      return
+    return stub + ':' + populated.join(',')
+  }
+  for (const g of sourceRows) {
+    const key = signature(g)
+    if (
+      !captioned ||
+      columnRects.length < 5 ||
+      !key ||
+      g.some((i) => i.height >= font * 0.8 && rows.some((r) => inside(r.rect, i))) ||
+      sourceRows.filter(
+        (peer) =>
+          peer !== g &&
+          signature(peer) === key &&
+          peer.every((i) => rows.some((r) => inside(r.rect, i)))
+      ).length < 3
+    )
+      continue
+    const b = union(g)
+    const overlapping = rows.filter((r) => r.rect[1] < b[3] && r.rect[3] > b[1])
+    const adjustments = overlapping.map((row) => {
+      const other = items.filter((i) => inside(row.rect, i) && !g.includes(i))
+      if (!other.length) return { row, remove: true }
+      const r = union(other)
+      if (r[3] < b[1]) return { row, bottom: (r[3] + b[1]) / 2 }
+      if (r[1] > b[3]) return { row, top: (b[3] + r[1]) / 2 }
+      const ys = other.map((i) => (i.rect[1] + i.rect[3]) / 2)
+      const gs = g.map((i) => (i.rect[1] + i.rect[3]) / 2)
+      // A vertically centered shared stub can overlap the next glyph box;
+      // its center still belongs unambiguously to the preceding record.
+      if (Math.max(...ys) < Math.min(...gs))
+        return { row, bottom: (Math.max(...ys) + Math.min(...gs)) / 2 }
+      if (Math.min(...ys) > Math.max(...gs))
+        return { row, top: (Math.min(...ys) + Math.max(...gs)) / 2 }
+      return undefined
+    })
+    if (adjustments.some((a) => !a)) continue
+    for (const a of adjustments) {
+      if (a.remove) rows.splice(rows.indexOf(a.row), 1)
+      else if (a.top !== undefined) a.row.rect[1] = a.top
+      else a.row.rect[3] = a.bottom
+    }
+    rows.push({
+      rect: [sourceCuts[0], b[1], right, b[3]],
+      origin: 'source-text',
+      numericRecord: true
+    })
+    rows.sort((a, b) => a.rect[1] - b.rect[1])
+    repairs.push('unowned-repeated-record-recovered')
+  }
+  // Complete comparison records may share one model band. A stub-only
+  // "versus" line belongs to the preceding record, not to its next estimate.
+  if (captioned && columnRects.length >= 5)
+    for (const row of [...rows]) {
+      const lines = sourceRows.filter((g) => g.every((i) => inside(row.rect, i)))
+      const records = lines.filter((g) => signature(g))
+      if (
+        records.length < 2 ||
+        records.some((g) => signature(g) !== signature(records[0])) ||
+        lines[0] !== records[0] ||
+        lines.some(
+          (g) =>
+            !records.includes(g) &&
+            (g.some((i) => columnOf(i) !== 0) || !/\bversus\b/.test(g.map((i) => i.text).join(' ')))
+        )
+      )
+        continue
+      const grouped = []
+      for (const g of lines) {
+        if (records.includes(g)) grouped.push([...g])
+        else grouped.at(-1).push(...g)
+      }
+      const split = splitOwnedSourceRows(rows, items, grouped, [sourceCuts[0], right])
+      if (split) {
+        rows.splice(split.index, 1, ...split.rows)
+        repairs.push('source-record-boundary-restored')
+      }
+    }
+  if (captioned && rows.length >= 3) {
+    const last = rows.at(-1)
+    const tail = sourceRows.filter(
+      (g) =>
+        g.every((i) => !inside(last.rect, i)) &&
+        union(g)[3] > last.rect[3] &&
+        union(g)[1] - last.rect[3] < font &&
+        g.every((i) => i.height >= font * 0.8)
+    )
+    if (tail.length === 1 && tail[0].every((i) => /^[a-z][\p{L}\s.]*$/u.test(i.text))) {
+      const g = tail[0],
+        columns = new Set(g.map(columnOf))
+      const previous = items.filter((i) => inside(last.rect, i) && columns.has(columnOf(i)))
+      if (
+        columns.size === 1 &&
+        !columns.has(-1) &&
+        previous.some((i) => /\p{L}/u.test(i.text) && i.text.length > 20) &&
+        !rules.some((r) => r[1] === r[3] && r[1] > last.rect[3] && r[1] < union(g)[1])
+      ) {
+        last.rect[3] = union(g)[3]
+        repairs.push('wrapped-source-row-recovered')
+      }
+    }
+  }
+  // A clipped first band can retain the lower halves of several column
+  // headings. Extend only to adjacent text-only header peers inside the crop.
+  const first = rows[0]
+  if (first && captioned) {
+    const units = sourceRows.find(
+      (g) =>
+        g.length >= 2 &&
+        g.every((i) => /^Mean\s*\(SD\)$/.test(i.text)) &&
+        union(g)[1] > first.rect[1] &&
+        union(g)[1] - first.rect[3] < font * 2
+    )
+    const edge =
+      units &&
+      rules.find(
+        (r) =>
+          r[1] === r[3] &&
+          r[2] - r[0] > (right - sourceCuts[0]) * 0.9 &&
+          r[1] > union(units)[3] &&
+          r[1] - union(units)[3] < font
+      )
+    if (
+      edge &&
+      units.every((i) =>
+        items.some(
+          (h) => inside(first.rect, h) && columnOf(h) === columnOf(i) && /\p{L}/u.test(h.text)
+        )
+      ) &&
+      !items.some((i) => i.rect[1] > first.rect[3] && i.rect[3] < edge[1] && !units.includes(i))
+    ) {
+      first.rect[3] = edge[1]
+      for (let r = rows.length - 1; r > 0; r--) {
+        if (rows[r].rect[3] <= edge[1]) rows.splice(r, 1)
+        else rows[r].rect[1] = Math.max(rows[r].rect[1], edge[1])
+      }
+      repairs.push('clipped-source-header-band-recovered')
+    }
+  }
+  if (first)
+    for (const g of groups) {
+      const b = union(g),
+        values = columnRects.map((_, c) =>
+          g
+            .filter((i) => columnOf(i) === c)
+            .map((i) => i.text)
+            .join(' ')
+        )
+      if (
+        !headers.length ||
+        !g.some((i) => headers.some((h) => intersection(h.rect, i.rect) > area(i.rect) * 0.1)) ||
+        g.some(
+          (i) =>
+            i.height < font * 0.8 ||
+            columnOf(i) < 0 ||
+            i.rect[0] < sourceCuts[columnOf(i)] - font * 0.15 ||
+            i.rect[2] > sourceCuts[columnOf(i) + 1] + font * 0.15
+        ) ||
+        b[3] > first.rect[3] ||
+        b[1] >= first.rect[1] ||
+        first.rect[1] - b[1] > font * 1.5 ||
+        !values ||
+        values.filter((s) => /\p{L}/u.test(s)).length < 2 ||
+        values.some((s) => /^[-+<>≤≥]?\d[\d.,()%±\s]*$/.test(s)) ||
+        rules.some(
+          (r) =>
+            r[1] === r[3] &&
+            r[1] > b[3] &&
+            r[1] < first.rect[1] &&
+            r[2] - r[0] > (right - sourceCuts[0]) * 0.8
+        )
+      )
+        continue
+      first.rect[1] = Math.min(first.rect[1], b[1])
+      repairs.push('clipped-source-header-band-recovered')
+    }
   // A separate ruled band of consecutive time headings may be excluded from
   // every model row. Join split glyphs for recognition only; keep source text.
   const head = groups[0]
@@ -598,6 +836,18 @@ export function repairWrappedTableRows({
     const prior = items.filter((i) => inside(rows[r - 1].rect, i)),
       tail = items.filter((i) => inside(rows[r].rect, i))
     const stub = prior.filter((i) => columnOf(i) === 0).sort((a, b) => a.baseline - b.baseline)
+    const narrativeTail =
+      columnRects.length === 2 &&
+      stub.length === 1 &&
+      /\b(?:and|or)$/.test(stub[0].text) &&
+      [0, 1].every((c) => tail.some((i) => columnOf(i) === c && /\p{L}/u.test(i.text))) &&
+      prior
+        .filter((i) => columnOf(i) === 1)
+        .map((i) => i.text)
+        .join(' ').length > 70 &&
+      tail
+        .filter((i) => columnOf(i) === 0)
+        .every((i) => Math.abs(i.rect[0] - stub[0].rect[0]) < i.height * 1.1)
     const joinedTreatment =
       stub.length &&
       /\+$/.test(stub.at(-1).text) &&
@@ -660,7 +910,7 @@ export function repairWrappedTableRows({
     if (
       !tail.length ||
       !stub.length ||
-      !(joinedTreatment || dosingTail || thresholdTail || statisticTail) ||
+      !(joinedTreatment || dosingTail || thresholdTail || statisticTail || narrativeTail) ||
       Math.min(...tail.map((i) => i.baseline)) - Math.max(...prior.map((i) => i.baseline)) >
         (statisticTail ? Math.max(...stub.map((i) => i.height)) : stub[0].height) * 1.8 ||
       rules.some(

@@ -293,7 +293,14 @@ const publisherSymbols = new Map([
       [118, ['v', 'χ', 552]]
     ])
   ],
-  ['AdvTir_symb', new Map([[63, ['?', '+', 781]]])],
+  [
+    'AdvTir_symb',
+    new Map([
+      [63, ['?', '+', 781]],
+      [66, ['B', '≤', 750]],
+      [67, ['C', '≥', 750]]
+    ])
+  ],
   [
     'WTimesGreekSF-One',
     new Map([
@@ -439,6 +446,7 @@ export async function repairPdfSymbolText(page, content, operators) {
             '\u0003',
             '\u0004',
             '\u0005',
+            '\u0006',
             '\u0007',
             '?',
             'à',
@@ -464,6 +472,7 @@ export async function repairPdfSymbolText(page, content, operators) {
             item.str === ',' ||
             item.str === 'D' ||
             item.str === 'C' ||
+            item.str === 'B' ||
             item.str === 'o' ||
             item.str === 'a' ||
             item.str === 'b' ||
@@ -648,6 +657,14 @@ export async function repairPdfSymbolText(page, content, operators) {
             : undefined
         const tex = texSymbols.get(glyph.originalCharCode)
         const pi =
+          (name === 'MathematicalPi-One' &&
+          glyph.unicode === String.fromCharCode(glyph.originalCharCode)
+            ? new Map([
+                ['H11021', [glyph.unicode, '<', 833]],
+                ['H11022', [glyph.unicode, '>', 833]],
+                ['H11350', [glyph.unicode, '≥', 833]]
+              ]).get(fontInfo.differences?.[glyph.originalCharCode])
+            : undefined) ??
           latinPi?.get(glyph.originalCharCode) ??
           (name === 'MathematicalPi-Four' &&
           glyph.originalCharCode === 2 &&

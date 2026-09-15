@@ -50,6 +50,8 @@ it.each([
 })
 
 it.each([
+  ['AdvTir_symb', 66, 'B', '≤', 750],
+  ['AdvTir_symb', 67, 'C', '≥', 750],
   ['AdvOT463cc31e', 53, '5', '=', 822],
   ['AdvPS586B', 54, '6', '±', 833],
   ['AdvPS586B', 53, '5', '=', 833],
@@ -1357,3 +1359,38 @@ it('corrects the extra Tc advance from an empty leading TJ string using exact gl
     )
   ).toEqual([280 - 18.47 * 8, 430 - 18.47 * 8, 296])
 })
+
+// The source glyphs render <, > and ≥; slot 5 in another Pi subset is χ.
+it.each([
+  ['H11021', 5, '<'],
+  ['H11022', 6, '>'],
+  ['H11350', 7, '≥']
+])(
+  'recovers named MathematicalPi comparison %s only with matching font evidence',
+  async (glyphName, code, expected) => {
+    const unicode = String.fromCharCode(Number(code))
+    for (const variant of ['native', 'wrong-font', 'wrong-width', 'wrong-name']) {
+      const differences: string[] = []
+      differences[Number(code)] = variant === 'wrong-name' ? 'unknown' : String(glyphName)
+      const result = await repairPdfSymbolText(
+        {
+          commonObjs: {
+            get: () => ({
+              name: variant === 'wrong-font' ? 'Times-Roman' : 'ABCDEF+MathematicalPi-One',
+              differences
+            })
+          }
+        },
+        { items: [{ str: unicode, fontName: 'native' }] },
+        {
+          fnArray: [OPS.setFont, OPS.showText],
+          argsArray: [
+            ['native', 10],
+            [[{ originalCharCode: code, unicode, width: variant === 'wrong-width' ? 832 : 833 }]]
+          ]
+        }
+      )
+      expect(result.items[0].str).toBe(variant === 'native' ? expected : unicode)
+    }
+  }
+)

@@ -113,16 +113,105 @@ const header = (table: Table): { key: string; rows: number } | undefined => {
   }
 }
 
+// Match all cells of a repeated multi-level header, including its span shape.
+// Full-width section rows remain body content and are never stripped on a join.
+const multilevelHeader = (table: Table): { key: string; rows: number } | undefined => {
+  if (table.unassignedText.length || table.columnCount > 128) return
+  const isValue = (cell: Table['cells'][number]): boolean =>
+    /^(?:NA|[-–—]|[<>≤≥−+-]?\s*(?:\d|\.\d)[\d\s.,()%–−±/+-]*\*{0,2})$/.test(numericRecordText(cell))
+  let recordRow = -1
+  for (let row = 1; row < Math.min(table.rowCount, 9); row++) {
+    const cells = table.cells.filter((c) => c.row === row)
+    if (
+      cells.some((c) => c.column === 0 && c.text.trim()) &&
+      cells.filter((c) => c.column > 0 && isValue(c)).length >= 2 &&
+      cells.every((c) => c.column === 0 || !c.text.trim() || isValue(c))
+    ) {
+      recordRow = row
+      break
+    }
+  }
+  if (recordRow < 2) return
+  let rows = recordRow
+  for (let row = 0; row < recordRow; row++) {
+    const cells = table.cells.filter((c) => c.row === row)
+    if (cells.length === 1 && cells[0].column === 0 && cells[0].columnSpan === table.columnCount) {
+      rows = row
+      break
+    }
+  }
+  if (rows < 2 || rows > 5) return
+  const cells = table.cells
+    .filter((c) => c.row < rows)
+    .sort((a, b) => a.row - b.row || a.column - b.column)
+  if (!cells.some((c) => c.columnSpan > 1 && c.columnSpan < table.columnCount && c.text.trim()))
+    return
+  const occupied = new Set<number>()
+  for (const cell of cells) {
+    if (
+      cell.rowSpan < 1 ||
+      cell.columnSpan < 1 ||
+      cell.column < 0 ||
+      cell.row + cell.rowSpan > rows ||
+      cell.column + cell.columnSpan > table.columnCount
+    )
+      return
+    for (let r = cell.row; r < cell.row + cell.rowSpan; r++)
+      for (let c = cell.column; c < cell.column + cell.columnSpan; c++) {
+        const slot = r * table.columnCount + c
+        if (occupied.has(slot)) return
+        occupied.add(slot)
+      }
+  }
+  if (occupied.size !== rows * table.columnCount) return
+  // Each data column needs a nonempty leaf label or a vertically spanning label.
+  if (
+    Array.from({ length: table.columnCount - 1 }, (_, n) => n + 1).some(
+      (column) =>
+        !cells.some(
+          (c) =>
+            c.column === column && c.columnSpan === 1 && c.row + c.rowSpan === rows && c.text.trim()
+        )
+    )
+  )
+    return
+  return {
+    rows,
+    key: JSON.stringify([
+      'multilevel',
+      table.columnCount,
+      cells.map((c) => [
+        c.row,
+        c.column,
+        c.rowSpan,
+        c.columnSpan,
+        c.text.replace(/\s+/g, ' ').trim()
+      ])
+    ])
+  }
+}
+
 const joinContinuation = (prior: Selection, next: Selection): Table | undefined => {
   const last = prior.continuations?.at(-1) ?? prior
   const number = /^Table\s+([A-Z]?\d+)\b/i.exec(prior.element.caption?.text ?? '')?.[1]
-  const continued = /^Table\s+([A-Z]?\d+)\s*[.:]?\s*\(?continued\s*\)?\.?$/i.exec(
+  let continued = /^Table\s+([A-Z]?\d+)\s*[.:]?\s*\(?continued\s*\)?\.?$/i.exec(
     next.element.caption?.text ?? ''
   )?.[1]
+  if (!continued && /\(?continued\)?\.?$/i.test(next.element.caption?.text ?? '')) {
+    const title = (text: string): string =>
+      text
+        .replace(/\s*\(?continued\)?\.?$/i, '')
+        .replace(/\s+/g, ' ')
+        .replace(/[. ]+$/, '')
+        .trim()
+        .toLowerCase()
+    if (title(next.element.caption!.text) === title(prior.element.caption?.text ?? ''))
+      continued = number
+  }
   const a = prior.combinedTable ?? prior.element.table,
     b = next.element.table
-  const aHeader = a && header(a),
-    bHeader = b && header(b)
+  const aHeader = a && (header(a) ?? multilevelHeader(a)),
+    bHeader = b && (header(b) ?? multilevelHeader(b))
   const lastRegion = last.element.regions.at(-1)!,
     nextRegion = next.element.regions[0]
   const unlabelledContinuation =

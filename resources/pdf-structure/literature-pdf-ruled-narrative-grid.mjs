@@ -16,7 +16,11 @@ export function recoverRuledNarrativeGrid(table, items, captions, rules) {
   const predicted = table.structure.objects
     .filter((o) => o.label === 'table column')
     .sort((a, b) => a.rect[0] - b.rect[0])
+  const centered = recoverCenteredBulletedGroups(table, items, predicted)
+  if (centered) return centered
   if (predicted.length !== 2) return
+  const sections = recoverParallelRecommendations(table, items, rules, predicted)
+  if (sections) return sections
   const pairs = recoverBulletedPairs(table, items, rules, predicted)
   if (pairs) return pairs
   const list = recoverBulletedList(table, items, rules, predicted)
@@ -79,6 +83,220 @@ export function recoverRuledNarrativeGrid(table, items, captions, rules) {
     ],
     spans,
     completeSpans: true
+  }
+}
+
+// A vertically centered stub can describe several complete bullet records.
+// Require an exact, contiguous partition by native text centers, not proximity
+// to individual rows. Every bullet, wrapped line and stub must have one owner.
+function recoverCenteredBulletedGroups(table, items, predicted) {
+  if (predicted.length !== 3) return
+  const [left, top, right, bottom] = table.cropRect
+  const cuts = [
+    left,
+    left + (predicted[0].rect[2] + predicted[1].rect[0]) / 2,
+    left + (predicted[1].rect[2] + predicted[2].rect[0]) / 2,
+    right
+  ]
+  const source = tableSourceItems(items, table.cropRect)
+  const bullets = source.filter((i) => i.text === '•')
+  if (bullets.length < 8) return
+  const height = bullets[0].height
+  if (
+    !(height > 0) ||
+    bullets.some(
+      (i) =>
+        i.rect[0] < cuts[1] ||
+        i.rect[2] > cuts[2] ||
+        Math.abs(i.rect[0] - bullets[0].rect[0]) > height * 0.15 ||
+        Math.abs(i.height - height) > height * 0.05
+    )
+  )
+    return
+  const heads = source.filter((i) => i.rect[3] < bullets[0].rect[1])
+  const header = readSourceRow(heads, [left, cuts[1], right])
+  if (
+    !header?.every((s) => /\p{L}/u.test(s) && s.length < 80) ||
+    heads.some((i) => Math.abs(i.baseline - heads[0].baseline) > height * 0.2)
+  )
+    return
+  const body = source.filter((i) => !heads.includes(i))
+  const stubs = body.filter((i) => i.rect[2] <= cuts[1])
+  if (
+    stubs.length < 3 ||
+    stubs.some(
+      (i) =>
+        !/^[\p{L} ]{3,60}$/u.test(i.text) ||
+        Math.abs(i.height - height) > height * 0.05 ||
+        Math.abs(i.rect[0] - stubs[0].rect[0]) > height * 0.1
+    )
+  )
+    return
+  const text = body.filter((i) => !stubs.includes(i))
+  const records = bullets.map((bullet, n) =>
+    text.filter(
+      (i) =>
+        i.rect[1] >= bullet.rect[1] - 0.05 && i.rect[1] < (bullets[n + 1]?.rect[1] ?? bottom) - 0.05
+    )
+  )
+  if (!hasUniqueRecordTokens(text, records)) return
+  for (const record of records) {
+    const cells = readSourceRow(record, [cuts[1], cuts[2], right])
+    const statement = record.filter((i) => i.rect[0] >= cuts[2])
+    if (
+      !cells ||
+      cells[0] !== '•' ||
+      cells[1].length < 20 ||
+      !/\p{L}/u.test(cells[1]) ||
+      !statement.length ||
+      Math.abs(statement[0].baseline - record[0].baseline) > height * 0.2 ||
+      statement.some((i, n) => n && i.baseline - statement[n - 1].baseline > height * 1.3)
+    )
+      return
+  }
+  const rects = records.map(union)
+  if (rects.some((r, n) => n && r[1] <= rects[n - 1][3])) return
+  const spans = [{ row: 0, column: 1, rowSpan: 1, colSpan: 2 }]
+  let start = 0
+  for (const stub of stubs) {
+    if (start >= rects.length) return
+    const ends = rects.flatMap((rect, n) =>
+      n > start &&
+      Math.abs((rects[start][1] + rect[3] - stub.rect[1] - stub.rect[3]) / 2) <= height * 0.03
+        ? [n]
+        : []
+    )
+    if (ends.length !== 1) return
+    const end = ends[0]
+    spans.push({ row: start + 1, column: 0, rowSpan: end - start + 1, colSpan: 1 })
+    start = end + 1
+  }
+  if (start !== records.length || !hasUniqueRecordTokens(source, [heads, stubs, ...records])) return
+  return {
+    rows: [union(heads), ...rects].map((r) => [left, r[1], right, r[3]]),
+    columns: cuts.slice(1).map((x, n) => [cuts[n], top, x, bottom]),
+    headerRows: [0],
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source)
+  }
+}
+
+// Boxed recommendation comparisons have independent paragraphs on each side.
+// Repeated outdented section headings establish comparable blocks; treating
+// each printed line as a table row loses text when the paragraphs differ in length.
+function recoverParallelRecommendations(table, items, rules, columns) {
+  const [left, top, right, bottom] = table.cropRect
+  const cut = left + (columns[0].rect[2] + columns[1].rect[0]) / 2
+  if (Math.min(cut - left, right - cut) < (right - left) * 0.3) return
+  const source = tableSourceItems(items, table.cropRect)
+  const heads = source.filter((i) => /Recommendation$/.test(i.text))
+  if (heads.length !== 2 || Math.abs(heads[0].baseline - heads[1].baseline) > 1) return
+  const height = heads[0].height
+  const footer = rules.find(
+    (r) =>
+      r[1] === r[3] &&
+      Math.abs(r[0] - left) < 12 &&
+      Math.abs(r[2] - right) < 12 &&
+      r[1] > heads[0].baseline &&
+      bottom - r[1] < height
+  )
+  const divider = rules.find(
+    (r) =>
+      r[1] === r[3] &&
+      r[2] - r[0] > (right - left) * 0.9 &&
+      r[1] > heads[0].baseline &&
+      r[1] - heads[0].baseline < height
+  )
+  if (
+    !footer ||
+    !divider ||
+    ![left, right].every((x) =>
+      rules.some(
+        (r) =>
+          r[0] === r[2] && Math.abs(r[0] - x) < 12 && r[1] <= divider[1] && r[3] >= footer[1] - 1
+      )
+    )
+  )
+    return
+  const body = source.filter((i) => i.rect[1] > divider[1] && i.rect[3] < footer[1])
+  const lines = []
+  for (const i of body) {
+    const last = lines.at(-1)
+    if (last && Math.abs(last[0].baseline - i.baseline) < height * 0.35) last.push(i)
+    else lines.push([i])
+  }
+  const lhs = Math.min(...body.map((i) => i.rect[0])),
+    rhs = Math.min(...body.filter((i) => i.rect[0] > cut).map((i) => i.rect[0]))
+  const parallel = (g) => {
+    const a = g.filter((i) => i.rect[0] < cut),
+      b = g.filter((i) => i.rect[0] >= cut)
+    const text = a.map((i) => i.text).join(' ')
+    return (
+      a.length &&
+      b.length &&
+      text.length < 90 &&
+      Math.abs(a[0].rect[0] - lhs) < 1 &&
+      Math.abs(b[0].rect[0] - rhs) < 1 &&
+      b
+        .map((i) => i.text)
+        .join(' ')
+        .startsWith(text) &&
+      a.every((i) => i.rect[2] < cut)
+    )
+  }
+  if (lines.filter(parallel).length < 2) return
+  const groups = [],
+    spanning = []
+  for (const g of lines) {
+    const question = /^Clinical Question \d+[.]/.test(g.map((i) => i.text).join(' '))
+    const heading = parallel(g)
+    if (question || heading) {
+      groups.push([...g])
+      spanning.push(Boolean(question))
+      continue
+    }
+    const previous = groups.at(-1)
+    if (
+      previous &&
+      spanning.at(-1) &&
+      !/\?$/.test(
+        previous
+          .map((i) => i.text)
+          .join(' ')
+          .trim()
+      ) &&
+      g[0].baseline - previous.at(-1).baseline < height * 1.6 &&
+      g.every((i) => i.rect[0] < cut)
+    )
+      previous.push(...g)
+    else if (!previous || spanning.at(-1) || parallel(previous)) {
+      groups.push([...g])
+      spanning.push(false)
+    } else previous.push(...g)
+  }
+  if (
+    !hasUniqueRecordTokens(body, groups) ||
+    groups.some((g, n) => !spanning[n] && !readSourceRow(g, [left, cut, right]))
+  )
+    return
+  const bounds = groups.map(union)
+  if (bounds.some((r, n) => n && r[1] <= bounds[n - 1][3])) return
+  return {
+    rows: [
+      [left, union(heads)[1], right, divider[1]],
+      ...bounds.map((r) => [left, r[1], right, r[3]])
+    ],
+    columns: [
+      [left, top, cut, bottom],
+      [cut, top, right, bottom]
+    ],
+    spans: spanning.flatMap((v, n) =>
+      v ? [{ row: n + 1, column: 0, rowSpan: 1, colSpan: 2 }] : []
+    ),
+    headerRows: [0],
+    completeSpans: true,
+    ownedTokens: new Set([...heads, ...body])
   }
 }
 

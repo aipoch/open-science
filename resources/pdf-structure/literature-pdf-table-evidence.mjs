@@ -73,6 +73,34 @@ export function hasTableEvidence(table, caption, pageItems = []) {
       return false
   }
 
+  // A numbered parameter list has punctuation on each ordinal and one prose
+  // field. Ordinals alone must not count as a measurement column.
+  if (
+    table.grid.every(
+      (row) => row.length === 2 && (!row[0].trim() || /^\d+\.$/.test(row[0].trim()))
+    ) &&
+    table.grid.filter((row) => /^\d+\.$/.test(row[0].trim()) && /\p{L}/u.test(row[1])).length >=
+      4 &&
+    !table.grid.some((row) => measurement(row[1]))
+  )
+    return false
+  // A small detection across several empty model columns is a prose fragment
+  // when native sentences cross its edges and it contains no measured records.
+  if (
+    table.cropRect &&
+    table.grid.length <= 3 &&
+    table.grid[0]?.length >= 4 &&
+    table.grid.every((row) => row.filter((s) => s.trim()).length <= 4 && !row.some(measurement)) &&
+    pageItems.filter(
+      (i) =>
+        i.text.length > 40 &&
+        i.rect[1] < table.cropRect[3] &&
+        i.rect[3] > table.cropRect[1] &&
+        (i.rect[0] < table.cropRect[0] || i.rect[2] > table.cropRect[2])
+    ).length >= 2
+  )
+    return false
+
   // Short metadata and bibliography fragments may produce plausible-looking
   // columns. Require explicit publication anchors and no measured data pairs.
   if (
@@ -97,7 +125,11 @@ export function hasTableEvidence(table, caption, pageItems = []) {
   if (
     table.grid.every((row) => row.filter(measurement).length <= 1) &&
     ((/Published Online:/i.test(cropText) && /doi:\s*10\./i.test(cropText)) ||
-      ((cropText.match(/\bDepartment of\b/gi) ?? []).length >= 3 &&
+      ((
+        cropText.match(
+          /\b(?:Department of|Clinic of|Clinical Epidemiology|College of|Medical School|Epidemiology Division)\b/gi
+        ) ?? []
+      ).length >= 3 &&
         table.grid.every((row) => row.length <= 3)) ||
       (/\b(?:PhD|MD)\b/.test(cropText) &&
         /\bJournal of\b/.test(cropText) &&
@@ -236,7 +268,7 @@ export function hasTableEvidence(table, caption, pageItems = []) {
     return false
   if (
     (cropText.match(/\[\d+\]/g) ?? []).length >= 3 &&
-    (cropText.match(/\b(?:19|20)\d{2}[;:]/g) ?? []).length >= 3 &&
+    (cropText.match(/\b(?:19|20)\d{2}\s*[;:,]/g) ?? []).length >= 3 &&
     !table.grid.some(
       (row) => row.filter((cell) => /^[-−+]?\d+(?:\.\d+)?$/.test(cell.trim())).length >= 2
     )
@@ -282,7 +314,9 @@ export function hasTableEvidence(table, caption, pageItems = []) {
   if (
     /\b(?:Abbreviations|Nomenclature)\b/i.test(sourceText + ' ' + cropText) &&
     table.grid.length >= 4 &&
-    table.grid.every((row) => row.length === 2 && row[0].length < 35) &&
+    table.grid.every(
+      (row) => row.length >= 2 && row[0].length < 35 && row.slice(2).every((s) => !s.trim())
+    ) &&
     table.grid.filter(
       ([key, value]) => /^[A-Z][A-Za-z\d-]{1,15}$/.test(key) && /\p{L}/u.test(value)
     ).length >= 4 &&

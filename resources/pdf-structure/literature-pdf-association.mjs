@@ -274,7 +274,10 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
     ) &&
     page.graphicsBounds.some(
       (g) =>
-        g.kind === 'path' &&
+        (g.kind === 'path' ||
+          (g.kind === 'image' &&
+            g.normalizedRect[0] * page.width < line.x + line.width &&
+            g.normalizedRect[2] * page.width > line.x)) &&
         g.normalizedRect[1] * page.height < line.y &&
         line.y - g.normalizedRect[3] * page.height < line.fontSize * 5 &&
         (g.normalizedRect[2] - g.normalizedRect[0]) * page.width > 40 &&
@@ -360,7 +363,11 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
         continue
       for (const line of note) figureNotes.add(line)
     }
-  const barriers = page.lines.filter((l) => l.text.length > 80 && !figureNotes.has(l))
+  // Native axis titles can span several raster panels in one PDF text run.
+  // The same tick/graphic evidence applies to raster and vector associations.
+  const barriers = page.lines.filter(
+    (l) => l.text.length > 80 && !axisTitle(l) && !figureNotes.has(l)
+  )
   const pathBarriers = page.lines.filter(
     (l) => l.text.length > 60 && !axisTitle(l) && !figureNotes.has(l) && !framedDiagramText(l)
   )
@@ -475,13 +482,29 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
       continue
     if (
       graphic.kind === 'path' &&
-      rect[2] - rect[0] > (rect[3] - rect[1]) * 6 &&
+      rect[2] - rect[0] > (rect[3] - rect[1]) * 4 &&
       rect[3] - rect[1] < page.height * 0.04 &&
       page.lines.some(
         (l) =>
-          /^(?:DISCUSSION|RESULTS|PATIENTS AND METHODS|METHODS|CONCLUSIONS|REFERENCES)$/.test(
+          /^(?:DISCUSSION|RESULTS|PATIENTS AND METHODS|METHODS|CONCLUSIONS|REFERENCES|COMMENT)$/.test(
             l.text.trim()
           ) && intersection(lineRect(l), rect) > 0
+      )
+    )
+      continue
+    // An outlined footer can enclose the printed page number. It cannot
+    // supply a second figure direction below an otherwise complete plate.
+    if (
+      graphic.kind === 'path' &&
+      rect[1] > page.height * 0.9 &&
+      rect[3] - rect[1] < page.height * 0.04 &&
+      rect[2] - rect[0] < page.width * 0.15 &&
+      rasterPlates.some((plate) => plate[3] < rect[1] - 24) &&
+      page.lines.some(
+        (line) => /^\d{1,4}$/.test(line.text.trim()) && intersection(lineRect(line), rect) > 0
+      ) &&
+      !page.lines.some(
+        (line) => !/^\d{1,4}$/.test(line.text.trim()) && intersection(lineRect(line), rect) > 0
       )
     )
       continue
@@ -668,6 +691,9 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
         const unrestrictedCaption =
           graphic.kind === 'path' &&
           ((captions.length === 1 && pageCaptions.length === 1) ||
+            (rect[3] <= c[1] &&
+              diagramFrames.filter((r) => r[3] <= c[1]).length >= 3 &&
+              /\b(?:CONSORT|flowchart|flow diagram)\b/i.test(caption.lines.join(' '))) ||
             /^(?:Fig\.?|Figure)\s+\d+\.?$/i.test(caption.lines.join(' ')))
         const vertical =
           (rect[3] <=
@@ -1125,6 +1151,65 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
       return { caption, reason: 'no-unambiguous-adjacent-graphics' }
     const below =
       caption.rect[1] > bounds[1] && caption.rect[1] >= bounds[3] - Math.max(edgeTolerance, 8)
+    // At-risk blocks belong to each plot, including upper panels in a stack.
+    // Require an explicit heading near an owned graphic and at least two
+    // numeric baselines; group labels may be separate runs left of the counts.
+    const riskLabels = page.lines.filter(
+      (line) =>
+        (/^(?:No\.?|Number)(?: of(?: patients| subjects)?)? at risk\b/i.test(line.text.trim()) ||
+          (/Kaplan[–−-]Meier/i.test(caption.lines.join(' ')) &&
+            /^(?:Years|Months|Days)$/i.test(line.text.trim()) &&
+            page.lines.filter(
+              (other) =>
+                /^(?:\d+\s+){2,}\d+$/.test(other.text.trim()) &&
+                other.y > line.y &&
+                other.y - line.y < line.fontSize * 4 &&
+                other.x < line.x &&
+                other.x + other.width > line.x &&
+                page.lines.some(
+                  (stub) =>
+                    /:$/u.test(stub.text.trim()) &&
+                    stub.text.length < 24 &&
+                    stub.x < other.x &&
+                    other.x - stub.x - stub.width < line.fontSize * 2 &&
+                    Math.abs(stub.y - other.y) < line.fontSize / 2
+                )
+            ).length >= 2)) &&
+        below &&
+        line.x >= bounds[0] - 100 &&
+        line.x + line.width <= bounds[2] &&
+        graphics.some((r) => line.y >= r[3] - 12 && line.y - r[3] <= 36)
+    )
+    for (const label of riskLabels) {
+      const rows = page.lines.filter(
+        (line) =>
+          line.y > label.y &&
+          line.y + line.height < caption.rect[1] - 2 &&
+          line.y - label.y < 64 &&
+          line.x >= Math.max(caption.rect[0] - 4, label.x - 120) &&
+          line.x + line.width <= bounds[2] + 12 &&
+          line.height <= 12 &&
+          Math.abs(line.fontSize - label.fontSize) <= 0.5 &&
+          line.text.replace(/[\d\s.,:−-]/g, '').length < 20 &&
+          !pageCaptions.some((c) => intersection(c.rect, lineRect(line)) > 0) &&
+          !tableRects.some((r) => intersection(r, lineRect(line)) > 0) &&
+          !continuesExternalParagraph(line, bounds, page.lines)
+      )
+      const counts = rows.filter((line) => /\d/.test(line.text))
+      const supported = counts.filter((line) =>
+        counts.some(
+          (other) =>
+            Math.abs(other.y - line.y) > line.height &&
+            Math.abs(other.y - line.y) <= line.height * 3 &&
+            Math.abs(other.x - line.x) <= label.fontSize * 2
+        )
+      )
+      if (!supported.length) continue
+      const content = rows.filter((line) =>
+        supported.some((count) => Math.abs(count.y - line.y) < label.fontSize * 0.5)
+      )
+      bounds.splice(0, 4, ...union([bounds, lineRect(label), ...content.map(lineRect)]))
+    }
     const paragraphRuns =
       plates.length &&
       page.lines.every((l) => [l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite))
@@ -1225,31 +1310,6 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
       )
         nearby.push(titles[0])
     }
-    // At-risk rows can sit farther below the axis than ordinary tick labels.
-    // An explicit label and at least two compact numeric rows establish the block.
-    const riskLabel = page.lines.find(
-      (line) =>
-        /^(?:No\.?|Number) of (?:patients |subjects )?at risk\b/i.test(line.text.trim()) &&
-        line.y >= bounds[3] - 12 &&
-        line.y - bounds[3] <= 36 &&
-        line.x >= bounds[0] - 100 &&
-        line.x + line.width <= bounds[2] &&
-        below
-    )
-    if (riskLabel) {
-      const riskRows = page.lines.filter(
-        (line) =>
-          line.y > riskLabel.y &&
-          line.y + line.height < caption.rect[1] - 2 &&
-          line.y - riskLabel.y < 64 &&
-          line.x >= riskLabel.x &&
-          line.x + line.width <= bounds[2] + 12 &&
-          /\d{2}|\d\s+\d/.test(line.text) &&
-          line.text.replace(/[\d\s.,-]/g, '').length < 20 &&
-          line.height <= 12
-      )
-      if (riskRows.length >= 2) nearby.push(riskLabel, ...riskRows)
-    }
     // A detached key below an above-captioned diagram can exceed the normal
     // label padding. Require several aligned explicit definitions and stop at
     // any intervening prose; never extend a crop merely because text is nearby.
@@ -1328,6 +1388,28 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
       )
         nearby.push(line)
     }
+    // Once a dense category axis is owned, its panel letter can sit above
+    // and just left of that axis. PDF text runs may also fuse that letter with
+    // the first category label, increasing the apparent font size of the line.
+    const ownedCategories = categoryLabels.filter((line) => nearby.includes(line))
+    if (ownedCategories.length >= 6) {
+      const extent = union(ownedCategories.map(lineRect))
+      nearby.push(
+        ...page.lines.filter(
+          (line) =>
+            line.x >= extent[0] - line.fontSize &&
+            line.x <= extent[0] + line.fontSize &&
+            line.fontSize <= ownedCategories[0].fontSize * 2 &&
+            line.height <= line.fontSize * 1.5 &&
+            graphics.some((r) => Math.abs(line.y - r[1]) <= line.fontSize * 1.5) &&
+            (/^[A-Z]$/.test(line.text.trim()) ||
+              (line.text.length < 100 && Math.abs(line.x + line.width - extent[2]) <= 2)) &&
+            !pageCaptions.some((c) => intersection(c.rect, lineRect(line)) > 0) &&
+            !tableRects.some((r) => intersection(r, lineRect(line)) > 0) &&
+            !continuesExternalParagraph(line, bounds, page.lines)
+        )
+      )
+    }
     const stubLabels = page.lines.filter(
       (line) =>
         line.x < bounds[0] - 24 &&
@@ -1356,6 +1438,26 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
           (other) =>
             Math.abs(other.x - line.x) <= 1 && Math.abs(other.fontSize - line.fontSize) <= 0.2
         ).length >= 6
+      )
+        nearby.push(line)
+    }
+    // Panel letters can share the outdented stub column rather than the raster edge.
+    for (const line of page.lines) {
+      if (
+        /^[A-Z](?:\s+[A-Z])*$/.test(line.text.trim()) &&
+        line.x + line.width <= bounds[2] &&
+        line.y >= bounds[1] - 24 &&
+        line.y + line.height <= bounds[3] &&
+        nearby.some(
+          (label) =>
+            label.text.length > 1 &&
+            label.text.length <= 35 &&
+            Math.abs(label.x - line.x) <= 1 &&
+            label.y >= line.y + line.height &&
+            label.y - line.y - line.height <= line.fontSize * 2
+        ) &&
+        !pageCaptions.some((c) => intersection(c.rect, lineRect(line)) > 0) &&
+        !tableRects.some((r) => intersection(r, lineRect(line)) > 0)
       )
         nearby.push(line)
     }

@@ -691,10 +691,121 @@ export function recoverThresholdSweepGrid(table, pageItems) {
   }
 }
 
+// A ruled outcome cell can contain several independently labelled follow-ups.
+// Split only repeated complete Baseline/FU series, preserving the shared outcome
+// cell and each separate test-summary row. The source frame owns all columns.
+function recoverRuledFollowupSeries(table, items, captions, rules) {
+  const crop = table.cropRect
+  const vertical = rules.filter(
+    (r) =>
+      r[0] === r[2] &&
+      r[1] >= crop[1] &&
+      r[3] <= crop[3] + 2 &&
+      r[0] >= crop[0] - 2 &&
+      r[0] <= crop[2] + 24
+  )
+  const cuts = [...new Set(vertical.map((r) => Math.round(r[0] * 10) / 10))].sort((a, b) => a - b)
+  if (cuts.length !== 6 || vertical.length < 18) return
+  const bottom = Math.max(...vertical.map((r) => r[3]))
+  const caption = captions
+    .filter((c) => /^Table\s/i.test(c.lines[0]) && c.rect[3] < crop[1] + 20)
+    .sort((a, b) => b.rect[3] - a.rect[3])[0]
+  if (!caption) return
+  const source = tableSourceItems(items, [
+    cuts[0] - 0.2,
+    caption.rect[3] + 0.1,
+    cuts.at(-1) + 0.2,
+    bottom
+  ])
+  const heights = source.map((i) => i.height).sort((a, b) => a - b)
+  const font = heights[Math.floor(heights.length / 2)]
+  const groups = groupSourceRowsWithScripts(source, font, 0.35)
+  if (!groups || groups.length < 14) return
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const cells = groups.map((g) =>
+    cuts.slice(1).map((_, c) =>
+      g
+        .filter((i) => col(i) === c)
+        .sort((a, b) => a.rect[0] - b.rect[0])
+        .map((i) => i.text)
+        .join(' ')
+        .trim()
+    )
+  )
+  if (
+    !/\p{L}/u.test(cells[0][0]) ||
+    cells[0][1] ||
+    !/^p$/i.test(cells[0][4]) ||
+    cells[0].slice(2, 4).some((s) => !/n\s*=\s*\d+/i.test(s))
+  )
+    return
+  const numeric = (s) => /^[<>≤≥−+-]?\d[\d.,()%\s–—−+*/-]*[a-d*]*$/.test(s)
+  const spans = []
+  let series = 0
+  for (let r = 1; r < cells.length;) {
+    const start = r
+    if (!/\p{L}/u.test(cells[r][0]) || cells[r][1] !== 'Baseline') return
+    do {
+      const row = cells[r]
+      if (
+        row[1] !== (r === start ? 'Baseline' : `FU${r - start}`) ||
+        (r > start && row[0]) ||
+        !row.slice(2).every(numeric)
+      )
+        return
+      r++
+    } while (r < cells.length && /^FU\d+$/.test(cells[r][1]))
+    if (
+      r - start < 2 ||
+      r - start > 6 ||
+      !cells[r] ||
+      !/\btest\b.*p value/i.test(cells[r][0]) ||
+      cells[r][1] ||
+      cells[r][4] ||
+      cells[r].slice(2, 4).some((s) => s && !numeric(s))
+    )
+      return
+    spans.push(
+      { row: start, column: 0, rowSpan: r - start, colSpan: 1 },
+      { row: r, column: 0, rowSpan: 1, colSpan: 2 }
+    )
+    series++
+    r++
+  }
+  if (series < 3) return
+  const ys = [
+    union(groups[0])[1],
+    ...groups.slice(1).map((g, n) => (union(groups[n])[3] + union(g)[1]) / 2),
+    bottom
+  ]
+  if (
+    source.some(
+      (i) => col(i) < 0 || i.rect[0] < cuts[col(i)] - 0.2 || i.rect[2] > cuts[col(i) + 1] + 0.2
+    )
+  )
+    return
+  return {
+    rows: groups.map((_, n) => [cuts[0], ys[n], cuts.at(-1), ys[n + 1]]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], ys[0], x, bottom]),
+    spans,
+    completeSpans: true
+  }
+}
+
 // Repeated-measures tables have independent time/value rows but share the
 // outcome and effect statistics. Use their ruled frame and repeated time labels
 // instead of splitting a shared statistic at each printed baseline.
 export function recoverFollowupGrid(table, items, captions, rules) {
+  const correlations = recoverGroupedCorrelationRecords(table, items, captions, rules)
+  if (correlations) return correlations
+  const summaries = recoverPairedSummaryRecords(table, items, captions, rules)
+  if (summaries) return summaries
+  const subgroups = recoverSubgroupEstimateRecords(table, items, captions, rules)
+  if (subgroups) return subgroups
+  const series = recoverRuledFollowupSeries(table, items, captions, rules)
+  if (series) return series
+  const paired = recoverPairedTimepointRecords(table, items, captions, rules)
+  if (paired) return paired
   if (!captions.some((c) => /^Table\s/i.test(c.lines[0]))) return undefined
   const [left, top, right, bottom] = table.cropRect
   const frame = rules
@@ -789,6 +900,132 @@ export function recoverFollowupGrid(table, items, captions, rules) {
     rows,
     columns: bounds.slice(1).map((x, c) => [bounds[c], frame[0][1], x, frame[2][1]]),
     spans,
+    completeSpans: true
+  }
+}
+
+// Explicit repeated timepoint pairs anchor wrapped estimates and P-value
+// lists. Section labels belong above POD pairs; biomarker stubs span pre/post
+// pairs. Native outer rules bound the complete body independently of inference.
+function recoverPairedTimepointRecords(table, items, captions, rules) {
+  if (!captions.some((c) => /^Table\s/i.test(c.lines[0]))) return
+  const [left, top, right, bottom] = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (![5, 7].includes(columns.length)) return
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const borders = rules
+    .filter(
+      (r) => r[1] === r[3] && r[2] - r[0] > (right - left) * 0.9 && r[1] >= top && r[1] <= bottom
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (borders.length !== 3) return
+  const source = items.filter(
+    (i) =>
+      i.horizontal &&
+      i.rect[0] >= left &&
+      i.rect[2] <= right &&
+      i.rect[1] >= borders[0][1] &&
+      i.rect[3] <= borders[2][1]
+  )
+  const body = source.filter((i) => i.rect[1] > borders[1][1])
+  const stub = columns.length === 7 ? 1 : 0
+  const times = body
+    .filter((i) => col(i) === stub && /^(?:Preoperative|Postoperative|POD[12])$/.test(i.text))
+    .sort((a, b) => a.baseline - b.baseline)
+  if (
+    times.length < 10 ||
+    times.length % 2 ||
+    times.some(
+      (i, n) => i.text !== (stub ? ['Preoperative', 'Postoperative'] : ['POD1', 'POD2'])[n % 2]
+    )
+  )
+    return
+  const height = times[0].height
+  const sections = []
+  if (!stub) {
+    const labels = body
+      .filter((i) => col(i) === 0 && !times.includes(i))
+      .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+    for (const i of labels) {
+      const last = sections.at(-1)
+      if (
+        last &&
+        i.rect[1] - union(last)[3] < height * 0.8 &&
+        !times.some((t) => t.baseline > last[0].baseline && t.baseline < i.baseline)
+      )
+        last.push(i)
+      else sections.push([i])
+    }
+    if (
+      sections.length < 5 ||
+      sections.some(
+        (g) =>
+          !/\p{L}/u.test(g.map((i) => i.text).join('')) ||
+          times.find((t) => t.rect[1] > union(g)[3])?.text !== 'POD1'
+      )
+    )
+      return
+  }
+  const anchors = [
+    ...times.map((i) => ({ items: [i], section: false })),
+    ...sections.map((g) => ({ items: g, section: true }))
+  ].sort((a, b) => union(a.items)[1] - union(b.items)[1])
+  const bodyEnd = stub
+    ? borders[2][1]
+    : Math.max(...body.filter((i) => col(i) < columns.length - 1).map((i) => i.rect[3])) + 0.1
+  const edges = [borders[1][1], ...anchors.slice(1).map((a) => union(a.items)[1] - 0.1), bodyEnd]
+  const rows = [
+    [left, borders[0][1], right, borders[1][1]],
+    ...anchors.map((_, n) => [left, edges[n], right, edges[n + 1]])
+  ]
+  const rowAt = (i) =>
+    rows.findIndex((r) => (i.rect[1] + i.rect[3]) / 2 >= r[1] && (i.rect[1] + i.rect[3]) / 2 < r[3])
+  for (const [n, a] of anchors.entries()) {
+    const g = body.filter((i) => rowAt(i) === n + 1 && (!stub || col(i) > 0))
+    if (a.section) {
+      if (g.some((i) => col(i) !== 0)) return
+      continue
+    }
+    const values = columns.slice(stub + 1).map((_, c) =>
+      g
+        .filter((i) => col(i) === c + stub + 1)
+        .map((i) => i.text)
+        .join('')
+    )
+    if (values.some((v) => !/\d/.test(v) || /[A-Za-z]/.test(v.replace(/to/g, '')))) return
+  }
+  if (
+    source.some(
+      (i) =>
+        rowAt(i) < 0 &&
+        !(
+          !stub &&
+          col(i) === columns.length - 1 &&
+          i.rect[1] > bodyEnd &&
+          /^[\d.]+\*?$/.test(i.text) &&
+          body.some((p) => p !== i && p.rect[3] < bodyEnd && p.text === i.text)
+        )
+    ) ||
+    body.some((i) => col(i) < 0)
+  )
+    return
+  const spans = stub
+    ? times.flatMap((_, n) => (n % 2 ? [] : [{ row: n + 1, column: 0, rowSpan: 2, colSpan: 1 }]))
+    : anchors.flatMap((a, n) =>
+        a.section ? [{ row: n + 1, column: 0, rowSpan: 1, colSpan: columns.length }] : []
+      )
+  return {
+    rows,
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    spans,
+    headerRows: [0],
     completeSpans: true
   }
 }
@@ -1127,6 +1364,301 @@ export function recoverDemographicRecords(table, items, captions, rules) {
     spans: records.flatMap((r, n) =>
       r.section ? [{ row: n + 1, column: 0, rowSpan: 1, colSpan: 2 }] : []
     ),
+    completeSpans: true
+  }
+}
+
+// Repeated Mean/SD headers separate between-group and within-group sections.
+// Each explicit pair owns one difference, interval and test, even when inference
+// shifts their spans into the preceding pair. Require all source cells to fit.
+function recoverPairedSummaryRecords(table, items, captions, rules) {
+  if (!captions.some((c) => /^Table\s/i.test(c.lines[0]))) return
+  const [left, top, right, bottom] = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length !== 7) return
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const source = tableSourceItems(items, table.cropRect)
+  const groups = groupSourceRowsWithScripts(source, source[0]?.height ?? 0, 0.35)
+  if (!groups || groups.length < 10) return
+  const text = groups.map((g) =>
+    cuts.slice(1).map((_, c) =>
+      g
+        .filter((i) => col(i) === c)
+        .sort((a, b) => a.rect[0] - b.rect[0])
+        .map((i) => i.text)
+        .join(' ')
+        .trim()
+    )
+  )
+  const headers = text.flatMap((r, n) =>
+    r[2] === 'Mean (SD)' &&
+    r[3] === 'Mean difference' &&
+    /^(?:CI 95%|95% CI)$/.test(r[4]) &&
+    /^t\s*\(\s*p\s*\)$/.test(r[5])
+      ? [n]
+      : []
+  )
+  if (
+    headers.length !== 2 ||
+    headers[0] !== 0 ||
+    headers[1] < 5 ||
+    headers[1] % 2 !== 1 ||
+    text[1][6] !== 'Between group' ||
+    text[headers[1]][6] !== 'Within group'
+  )
+    return
+  const spans = []
+  const number = (s) => /^[−–+\d.][−–+\d. ()]*$/.test(s)
+  for (const [h, end] of [
+    [0, headers[1]],
+    [headers[1], groups.length]
+  ]) {
+    if ((end - h - 1) % 2) return
+    for (let r = h + 1; r < end; r += 2) {
+      const a = text[r],
+        b = text[r + 1]
+      if (
+        !a[0] ||
+        b[0] ||
+        !a[1] ||
+        !b[1] ||
+        ![a[2], b[2]].every((s) => /^\d[\d.]*\s*\([\d.]+\)$/.test(s)) ||
+        !number(a[3]) ||
+        !/^[−–\d.]+\s+to\s+[−–\d.]+$/.test(a[4].replace(/− /g, '−')) ||
+        !number(a[5]) ||
+        b.slice(3, 6).some(Boolean)
+      )
+        return
+      if (h === 0 && (a[1] !== 'Experimental' || b[1] !== 'Control')) return
+      if (h > 0 && !/^(?:Experimental|Control)$/.test(a[0])) return
+      for (const c of [0, 3, 4, 5]) spans.push({ row: r, column: c, rowSpan: 2, colSpan: 1 })
+    }
+    const start = h === 0 ? 1 : h
+    if (text.slice(start + 1, end).some((r) => r[6])) return
+    spans.push({ row: start, column: 6, rowSpan: end - start, colSpan: 1 })
+  }
+  const bounds = union(source)
+  if (
+    !rules.some(
+      (r) =>
+        r[1] === r[3] &&
+        r[1] >= bounds[3] &&
+        r[1] - bounds[3] < source[0].height &&
+        r[2] - r[0] > (right - left) * 0.9
+    )
+  )
+    return
+  if (
+    source.some(
+      (i) => col(i) < 0 || i.rect[0] < cuts[col(i)] - 0.5 || i.rect[2] > cuts[col(i) + 1] + 0.5
+    )
+  )
+    return
+  const ys = [
+    bounds[1],
+    ...groups.slice(1).map((g, n) => (union(groups[n])[3] + union(g)[1]) / 2),
+    bounds[3]
+  ]
+  return {
+    rows: groups.map((_, n) => [left, ys[n], right, ys[n + 1]]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    spans,
+    completeSpans: true
+  }
+}
+
+// High/low subgroup pairs share a timepoint, with two independent sample-size
+// and estimate columns. A native underline establishes their common parent.
+function recoverSubgroupEstimateRecords(table, items, captions, rules) {
+  if (!captions.some((c) => /^Table\s/i.test(c.lines[0]))) return
+  const [left, top, right, bottom] = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (columns.length !== 9) return
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const source = tableSourceItems(items, table.cropRect)
+  const groups = groupSourceRowsWithScripts(source, source[0]?.height ?? 0, 0.35)
+  if (!groups || groups.length < 12) return
+  const text = groups.map((g) =>
+    cuts.slice(1).map((_, c) =>
+      g
+        .filter((i) => col(i) === c)
+        .sort((a, b) => a.rect[0] - b.rect[0])
+        .map((i) => i.text)
+        .join(' ')
+        .trim()
+    )
+  )
+  const parent = source.find((i) => i.text === 'Adjusted predicted estimates (SE)')
+  if (
+    !parent ||
+    text[0][1] !== 'Subgroup at baseline' ||
+    text[1].slice(2, 6).join('|') !== 'n|Group A|n|Group B'
+  )
+    return
+  if (
+    !rules.some(
+      (r) =>
+        r[1] === r[3] &&
+        r[1] > parent.rect[3] &&
+        r[1] < union(groups[1])[1] &&
+        r[0] <= parent.rect[0] &&
+        r[2] >= parent.rect[2] &&
+        groups[1].every((i) => i.rect[0] >= r[0] - 1 && i.rect[2] <= r[2] + 1)
+    )
+  )
+    return
+  const spans = [{ row: 0, column: 2, rowSpan: 1, colSpan: 4 }]
+  for (const c of [0, 1, 6, 7, 8]) spans.push({ row: 0, column: c, rowSpan: 2, colSpan: 1 })
+  let pairs = 0
+  for (let r = 2; r < text.length;) {
+    const a = text[r]
+    if (a[0] && a.slice(1).every((s) => !s)) {
+      spans.push({ row: r, column: 0, rowSpan: 1, colSpan: 9 })
+      r++
+      continue
+    }
+    const b = text[r + 1]
+    if (
+      !b ||
+      !a[0] ||
+      b[0] ||
+      !/^High\b/.test(a[1]) ||
+      !/^Low\b/.test(b[1]) ||
+      a[1].replace(/^High/, '').replace(/≥/g, '<') !== b[1].replace(/^Low/, '')
+    )
+      return
+    for (const row of [a, b])
+      if (
+        ![2, 4].every((c) => /^\d+$/.test(row[c])) ||
+        ![3, 5].every((c) => /^\d[\d.]*\s*\([\d.]+\)$/.test(row[c])) ||
+        !/^[−-]?[\d.]+$/.test(row[6]) ||
+        !/^[−-]?[\d.]+;\s*[−-]?[\d.]+$/.test(row[7]) ||
+        !/^[\d.]+$/.test(row[8])
+      )
+        return
+    spans.push({ row: r, column: 0, rowSpan: 2, colSpan: 1 })
+    pairs++
+    r += 2
+  }
+  if (
+    pairs < 4 ||
+    source.some(
+      (i) =>
+        i !== parent &&
+        (col(i) < 0 || i.rect[0] < cuts[col(i)] - 0.5 || i.rect[2] > cuts[col(i) + 1] + 0.5)
+    )
+  )
+    return
+  const ys = [
+    union(groups[0])[1],
+    ...groups.slice(1).map((g, n) => (union(groups[n])[3] + union(g)[1]) / 2),
+    union(groups.at(-1))[3]
+  ]
+  return {
+    rows: groups.map((_, n) => [left, ys[n], right, ys[n + 1]]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    spans,
+    completeSpans: true
+  }
+}
+
+// Grouped correlations repeat the same outcome labels under wrapped cohort
+// stubs. Native vertical edges bound the final multiline label independently
+// of the model's last row, while complete coefficient baselines anchor records.
+function recoverGroupedCorrelationRecords(table, items, captions, rules) {
+  if (
+    !captions.some((c) => /^Table\s/i.test(c.lines[0]) && /correlations/i.test(c.lines.join(' ')))
+  )
+    return
+  const [left, top, right, bottom] = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  const vertical = rules.filter(
+    (r) => r[0] === r[2] && r[0] >= left && r[0] <= right + 2 && r[1] >= top && r[3] <= bottom
+  )
+  if (columns.length !== 6 || vertical.length < 20) return
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const end = Math.max(...vertical.map((r) => r[3]))
+  const source = tableSourceItems(items, [left, top, right, end])
+  const firstValue = Math.min(
+    ...source.filter((i) => col(i) >= 2 && /^[-−]?0?\.\d/.test(i.text)).map((i) => i.rect[1])
+  )
+  const values = source.filter(
+    (i) => col(i) >= 2 && i.rect[1] >= firstValue - 0.1 && /^[-−\d.*]+$/.test(i.text)
+  )
+  const groups = groupSourceRowsWithScripts(values, values[0]?.height ?? 0, 0.35)
+  if (!groups || groups.length < 8 || groups.length % 2) return
+  const height = values[0].height
+  const start = union(groups[0])[1] - 0.1
+  const cohort = source
+    .filter((i) => col(i) === 0 && i.rect[1] >= start)
+    .sort((a, b) => a.baseline - b.baseline)
+  if (cohort.length !== 4 || cohort.some((i, n) => !(n % 2 ? /^[a-z]/ : /^[A-Z]/).test(i.text)))
+    return
+  const ys = [start, ...groups.slice(1).map((g) => union(g)[1] - 0.1), end]
+  const rows = [
+    [left, union(source)[1], right, start],
+    ...groups.map((_, n) => [left, ys[n], right, ys[n + 1]])
+  ]
+  const rowOf = (i) =>
+    rows.findIndex((r) => (i.rect[1] + i.rect[3]) / 2 >= r[1] && (i.rect[1] + i.rect[3]) / 2 < r[3])
+  const half = groups.length / 2
+  if (
+    rowOf(cohort[0]) !== 1 ||
+    rowOf(cohort[2]) !== half + 1 ||
+    cohort[1].baseline - cohort[0].baseline > height * 1.5 ||
+    cohort[3].baseline - cohort[2].baseline > height * 1.5
+  )
+    return
+  const stubs = []
+  for (let r = 1; r < rows.length; r++) {
+    const owned = source.filter((i) => rowOf(i) === r && col(i) > 0)
+    const text = cuts.slice(1).map((_, c) =>
+      owned
+        .filter((i) => col(i) === c)
+        .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+        .map((i) => i.text)
+        .join('')
+    )
+    if (
+      !/\p{L}/u.test(text[1]) ||
+      text.slice(2).some((s) => !/^[-−]?(?:0?\.\d+|1(?:\.0+)?)\*{0,3}$/.test(s))
+    )
+      return
+    stubs.push(text[1].replace(/[†*]/g, ''))
+  }
+  if (
+    stubs.slice(0, half).some((s, n) => s !== stubs[n + half]) ||
+    new Set(stubs).size !== half ||
+    source.some(
+      (i) => col(i) < 0 || i.rect[0] < cuts[col(i)] - 1 || i.rect[2] > cuts[col(i) + 1] + 1
+    )
+  )
+    return
+  return {
+    rows,
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, end]),
+    spans: [1, half + 1].map((r) => ({ row: r, column: 0, rowSpan: half, colSpan: 1 })),
     completeSpans: true
   }
 }

@@ -1,9 +1,14 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { captionKind, groupPageLines } from './literature-pdf-caption-group.mjs'
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import {
+  captionKind,
+  groupPageLines,
+  excludePdfLineNumbers
+} from './literature-pdf-caption-group.mjs'
 import { isUprightText } from './literature-pdf-orientation.mjs'
 
 const isLegendHeading = (text) =>
-  /^(?:figure\s+(?:legends|captions)|List of Figures)\s*$/i.test(text.trim())
+  /^(?:figure\s+(?:legends|captions)|List of Figures)\s*:?\s*$/i.test(text.trim())
 
 // Accepted manuscripts can put all legends before a consecutive block of plates.
 // Match only an explicit legend section, ordered 1..N, followed by exactly N
@@ -11,6 +16,17 @@ const isLegendHeading = (text) =>
 export function matchFigureSequence(pages) {
   const heading = pages.findIndex((page) => page.lines.some((line) => isLegendHeading(line.text)))
   if (heading < 0) return new Map()
+  // Appended drawing exports can use a different page size and contain native
+  // axis/node labels. Require the explicit legend section, a changed page box,
+  // several graphics and no prose-length lines; the final sequence must be exact.
+  const isExportedPlate = (page) =>
+    Number.isFinite(page.width) &&
+    Number.isFinite(pages[heading].width) &&
+    (Math.abs(page.width - pages[heading].width) > 12 ||
+      Math.abs(page.height - pages[heading].height) > 12) &&
+    page.graphicCount >= 3 &&
+    page.lines.every((l) => l.text.length < 100 && !captionKind(l.text)) &&
+    page.lines.reduce((sum, l) => sum + l.text.length, 0) < 1500
   const captions = []
   const repeatsCaption = (line, index) => {
     const expected = captions[index]?.lines[0]?.replace(/\s+/g, ' ').trim()
@@ -24,6 +40,7 @@ export function matchFigureSequence(pages) {
   let lastLegend = heading
   let central = false
   for (let i = heading; i < pages.length && pages[i].lines.length; i++) {
+    if (i > heading && isExportedPlate(pages[i])) break
     if (i > heading && pages[i].lines.some((l) => /^Table\s+\d+\s*[.:]/i.test(l.text))) break
     // A repeated standalone Figure 1 starts the numbered plates, not a
     // continuation of the final legend. Axis/diagram text belongs to that plate.
@@ -77,6 +94,7 @@ export function matchFigureSequence(pages) {
     )
     if (
       pages[i].lines.length &&
+      !isExportedPlate(pages[i]) &&
       !(labels.length === 1 && Number(/\d+/.exec(labels[0].text)[0]) === plates.length + 1)
     )
       break
@@ -92,7 +110,7 @@ export async function readFigureSequence(document) {
     const page = await document.getPage(number)
     try {
       const viewport = page.getViewport({ scale: 1 })
-      const content = await page.getTextContent()
+      const content = excludePdfLineNumbers(await page.getTextContent(), viewport)
       const lines = content.items.flatMap((item) => {
         if (!('str' in item) || !item.str.trim() || !isUprightText(item, page.rotate)) return []
         const [x, y] = viewport.convertToViewportPoint(...item.transform.slice(4))
@@ -121,7 +139,21 @@ export async function readFigureSequence(document) {
           }
         ]
       })
-      pages.push({ pageNumber: number, height: viewport.height, lines: groupPageLines({ lines }) })
+      const grouped = groupPageLines({ lines })
+      const afterLegends = pages.some((p) => p.lines.some((l) => isLegendHeading(l.text)))
+      const graphicCount =
+        afterLegends && page.getOperatorList
+          ? (await page.getOperatorList()).fnArray.filter(
+              (op) => op === OPS.constructPath || op === OPS.paintImageXObject
+            ).length
+          : 0
+      pages.push({
+        pageNumber: number,
+        width: viewport.width,
+        height: viewport.height,
+        graphicCount,
+        lines: grouped
+      })
     } finally {
       page.cleanup()
     }
