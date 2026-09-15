@@ -246,6 +246,42 @@ describe('NotebookNetworkSandboxOwner', () => {
     }
   )
 
+  it.each([false, true])(
+    'revokes historical R layout grants even if x64 is missing: %s',
+    async (missing) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-r-revoke-x64-'))
+      fixtureDirectories.push(root)
+      const bin = join(envPrefix(root, DEFAULT_R_ENV, 'win32'), 'Lib', 'R', 'bin', 'x64')
+      await mkdir(bin, { recursive: true })
+      const executable = join(bin, 'Rscript.exe')
+      if (!missing) await writeFile(executable, 'fixture')
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn(),
+        platform: 'win32'
+      })
+      try {
+        await owner.revokeManagedRAccess(root)
+        expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledWith(executable, false)
+        for (const prefix of [
+          envPrefix(root, DEFAULT_R_ENV, 'win32'),
+          legacyDefaultEnvPrefix(root, DEFAULT_R_ENV)
+        ]) {
+          for (const architecture of ['', 'x64']) {
+            expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledWith(
+              join(prefix, 'Lib', 'R', 'bin', architecture, 'Rscript.exe'),
+              false
+            )
+          }
+        }
+      } finally {
+        await owner.dispose()
+      }
+    }
+  )
+
   it('does not pass parent secrets or R startup overrides to the runtime verification child', async () => {
     const root = await mkdtemp(join(tmpdir(), 'os-r-verification-env-'))
     fixtureDirectories.push(root)

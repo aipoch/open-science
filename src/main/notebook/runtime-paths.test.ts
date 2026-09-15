@@ -67,6 +67,36 @@ afterEach(() => {
 })
 
 describe('runtime-paths layout', () => {
+  it.each(['neither', 'root-only', 'x64-only', 'both'])(
+    'resolves Windows R executables with %s layout while preserving other platforms',
+    (layout) => {
+      const prefix = makeRoot()
+      const bin = join(prefix, 'Lib', 'R', 'bin')
+      for (const name of ['R.exe', 'Rscript.exe']) {
+        if (layout === 'root-only' || layout === 'both') touchBin(join(bin, name))
+        if (layout === 'x64-only' || layout === 'both') touchBin(join(bin, 'x64', name))
+      }
+      const selected = layout === 'x64-only' ? join(bin, 'x64') : bin
+      expect(rBin(prefix, 'win32')).toBe(join(selected, 'R.exe'))
+      expect(rScriptBin(prefix, 'win32')).toBe(join(selected, 'Rscript.exe'))
+      for (const platform of ['darwin', 'linux'] as const) {
+        expect(rBin(prefix, platform)).toBe(join(prefix, 'bin', 'R'))
+        expect(rScriptBin(prefix, platform)).toBe(join(prefix, 'bin', 'Rscript'))
+      }
+    }
+  )
+
+  it('recognizes an x64-only managed R as materialized and ready', () => {
+    const root = makeRoot()
+    const prefix = envPrefix(root, DEFAULT_R_ENV, 'win32')
+    touchBin(join(prefix, 'Lib', 'R', 'bin', 'x64', 'R.exe'))
+    touchBin(join(prefix, 'Lib', 'R', 'bin', 'x64', 'Rscript.exe'))
+    writeRReadyMarker(root, DEFAULT_ENV_VERSION, '2026-09-15T00:00:00Z')
+
+    expect(rMaterialized(root, 'win32')).toBe(true)
+    expect(rReady(root, DEFAULT_ENV_VERSION, 'win32')).toBe(true)
+  })
+
   it('composes the runtime layout', () => {
     // Build expected paths with the host separator + platform-specific interpreter layout so the
     // assertions hold on Windows (Scripts\, python.exe, Lib\R\bin) as well as POSIX.

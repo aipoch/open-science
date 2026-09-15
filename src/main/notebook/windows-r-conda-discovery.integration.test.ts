@@ -1,10 +1,66 @@
 import { execFile } from 'node:child_process'
+import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
 import { defaultDiscoveryDeps } from './environment-discovery'
+import { NotebookKernelExecutor } from './kernel-executor'
 
 const prefix = process.env.OPEN_SCIENCE_TEST_R_CONDA_PREFIX
+
+it.skipIf(process.platform !== 'win32' || !prefix)(
+  'executes a real x64-only managed R kernel without a resolved interpreter override',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-real-managed-r-x64-'))
+    const runtimeRoot = join(root, 'runtime')
+    const managedPrefix = join(runtimeRoot, 'envs', '.r')
+    const rHome = join(managedPrefix, 'Lib', 'R')
+    const executor = new NotebookKernelExecutor({
+      platform: 'win32',
+      processSandbox: {
+        // This is a real host execution check of managed selection, not a native containment test.
+        wrap: async (invocation) => ({
+          executable: invocation.executable,
+          args: invocation.args,
+          env: invocation.env,
+          annotateStderr: (stderr) => stderr,
+          cleanup: async (_reason, outcome) => ({
+            processesTerminated: outcome.processesTerminated,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
+        })
+      }
+    })
+    try {
+      await mkdir(join(rHome, 'bin'), { recursive: true })
+      // Expose only x64 binaries, even when the real installation also has root-bin launchers.
+      // Junctions reuse read-only runtime assets without installing packages or modifying the source.
+      await symlink(join(prefix!, 'Library'), join(managedPrefix, 'Library'), 'junction')
+      await symlink(join(prefix!, 'Lib', 'R', 'bin', 'x64'), join(rHome, 'bin', 'x64'), 'junction')
+      for (const directory of ['etc', 'library', 'modules', 'share']) {
+        await symlink(join(prefix!, 'Lib', 'R', directory), join(rHome, directory), 'junction')
+      }
+      const result = await executor.execute({
+        cwd: root,
+        notebookSessionRoot: join(root, 'notebook'),
+        inputRoot: join(root, 'inputs'),
+        dataRoot: join(root, 'data'),
+        runtimeRoot,
+        language: 'r',
+        code: 'cat(1 + 1)',
+        sessionId: 'real-x64-r',
+        projectId: 'real-x64-r'
+      })
+      expect(result.status, result.stderr || result.traceback).toBe('completed')
+      expect(result.stdout).toBe('2')
+    } finally {
+      await executor.shutdown()
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
 
 it.skipIf(process.platform !== 'win32' || !prefix)(
   'recognizes a runnable Windows conda R in the bin/x64 layout without an activated parent PATH',

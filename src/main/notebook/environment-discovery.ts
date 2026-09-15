@@ -192,14 +192,7 @@ const prefixInterpreter = (
   prefix: string,
   language: NotebookLanguage,
   platform: NodeJS.Platform
-): string => {
-  if (language === 'python') return pythonBin(prefix, platform)
-  const interpreter = rBin(prefix, platform)
-  // Preserve the existing identity when both layouts exist; older conda R builds may only have x64.
-  return platform === 'win32' && !existsSync(interpreter)
-    ? join(prefix, 'Lib', 'R', 'bin', 'x64', 'R.exe')
-    : interpreter
-}
+): string => (language === 'python' ? pythonBin(prefix, platform) : rBin(prefix, platform))
 
 // A conda-forge Windows R interpreter lives in <prefix>\Lib\R\bin (optionally under x64) and depends on
 // DLLs in <prefix>\Library\bin. Return only that interpreter's own prefix: external CRAN R paths do

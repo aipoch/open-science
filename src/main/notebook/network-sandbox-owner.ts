@@ -53,8 +53,7 @@ import {
   condaActivatedPath,
   DEFAULT_R_ENV,
   envPrefix,
-  legacyDefaultEnvPrefix,
-  rScriptBin
+  legacyDefaultEnvPrefix
 } from './runtime-paths'
 
 export type NotebookNetworkDecision = 'deny' | 'allowOnce' | 'alwaysAllow' | 'unavailable'
@@ -1068,11 +1067,16 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       legacyDefaultEnvPrefix(runtimeRoot, DEFAULT_R_ENV)
     ])
     for (const prefix of prefixes) {
-      const result = await this.setWindowsRuntimeAccess(rScriptBin(prefix, this.platform), false)
-      if (result.cancelled) {
-        throw new Error(
-          'R permission removal was cancelled; the existing runtime must be preserved.'
-        )
+      // Receipts retain exact executable paths even after a binary disappears or its layout changes.
+      // Ask the native owner about both known layouts; it removes only matching owned records.
+      for (const architecture of ['', 'x64']) {
+        const executable = join(prefix, 'Lib', 'R', 'bin', architecture, 'Rscript.exe')
+        const result = await this.setWindowsRuntimeAccess(executable, false)
+        if (result.cancelled) {
+          throw new Error(
+            'R permission removal was cancelled; the existing runtime must be preserved.'
+          )
+        }
       }
     }
   }
