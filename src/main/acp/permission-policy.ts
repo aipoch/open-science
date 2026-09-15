@@ -166,19 +166,30 @@ const resolveAllowOptionId = (params: RequestPermissionRequest): string | undefi
 // (opencode/src/acp/{permission,tool}.ts). MCP tools map to other. Claude supplies WebFetch in
 // provider metadata. Do not infer native authority from a URL/title or from another framework's
 // generic fetch kind; Codex Responses/Bridge do not expose this native permission contract.
-const isNativeWebFetchPermission = (
+const isNativeWebFetchCandidate = (
   params: RequestPermissionRequest,
   context: PermissionPolicyContext | undefined
 ): boolean => {
   if (trustedMcpToolIdentity(params) || isMcpTool(params, context?.mcpServerNames ?? []))
     return false
   const name = extractProviderToolName(params.toolCall)
-  const native =
+  return (
     (context?.frameworkId === 'opencode' &&
       params.toolCall.kind === 'fetch' &&
       (name === undefined || name === 'webfetch')) ||
     (context?.frameworkId === 'claude-code' && name === 'WebFetch')
-  if (!native) return false
+  )
+}
+
+const isNativeWebFetchPermission = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): boolean => {
+  if (
+    trustedNativeToolIdentity(params) !== `${context?.frameworkId}/webfetch` ||
+    !isNativeWebFetchCandidate(params, context)
+  )
+    return false
   const input = params.toolCall.rawInput
   if (!input || typeof input !== 'object' || Array.isArray(input)) return false
   const url = (input as Record<string, unknown>).url
@@ -320,6 +331,7 @@ const resolveAutomaticPermission = (
 }
 
 export {
+  isNativeWebFetchCandidate,
   isNativeWebFetchPermission,
   canConservativelyAutoApprove,
   isMcpToolName,

@@ -1,4 +1,4 @@
-import type { RequestPermissionResponse } from '@agentclientprotocol/sdk'
+import type { RequestPermissionRequest, RequestPermissionResponse } from '@agentclientprotocol/sdk'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,19 +9,69 @@ import { seedDefaultPermissionGrants } from '../permission-grants/defaults'
 import { createPermissionGrantRegistry } from '../permission-grants/registry'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
-import { AcpPermissionBroker } from './permission-broker'
+import type { PermissionGrantRegistry } from '../permission-grants/registry'
 
 // Regression for report 7: native web reading was Once-only even under Auto.
 it('offers conversation approval for the reported OpenCode web fetch', async () => {
   const root = await mkdtemp(join(tmpdir(), 'permission-web-frequency-'))
   const client = createProjectDbClient(root)
-  let broker: AcpPermissionBroker | undefined
+  let broker: AcpPermissionContext | undefined
   try {
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-web', name: 'Web permission' } })
     const registry = await createPermissionGrantRegistry({ getClient: async () => client })
     const emit = vi.fn()
-    broker = new AcpPermissionBroker(emit, undefined, registry)
+    const createContext = (
+      emitPermissionRequest: () => void,
+      permissionGrantRegistry: PermissionGrantRegistry,
+      owner = 'parent-session'
+    ): AcpPermissionContext =>
+      new AcpPermissionContext({
+        emitPermissionRequest,
+        permissionGrantRegistry,
+        permissionGrantContext: { projectId: 'project-web', sessionId: owner },
+        routing: {
+          resolveAppSessionId: (id) => id,
+          sessionSnapshot: () => ({
+            cwd: root,
+            frameworkId: 'opencode',
+            permissionProfile: { selectedProfile: 'auto', autoReviewStrategy: 'conservative' }
+          }),
+          hasActivePrimarySession: () => true,
+          capturePrompt: () => ({ sequence: 1, isCancellationAccepted: () => false }),
+          currentInteractionSequence: () => 1,
+          mcpServerNamesFor: () => [],
+          reviewerContextFor: () => undefined,
+          resolveReviewerPermission: () => undefined,
+          currentFramework: () => opencodeFramework,
+          resolveProjectId: () => 'project-web'
+        }
+      })
+    const run = (
+      context: AcpPermissionContext,
+      req: RequestPermissionRequest
+    ): Promise<RequestPermissionResponse> => {
+      context.observeToolCall(
+        {
+          sessionId: req.sessionId,
+          update: {
+            toolCallId: req.toolCall.toolCallId,
+            kind: 'fetch',
+            rawInput: req.toolCall.rawInput,
+            title: req.toolCall.title ?? '',
+            sessionUpdate: 'tool_call',
+            status: 'pending'
+          }
+        },
+        {
+          sessionId: req.sessionId,
+          framework: 'opencode',
+          mcpServerNames: []
+        }
+      )
+      return context.handleProviderRequest(req)
+    }
+    broker = createContext(emit, registry)
     const request = {
       sessionId: 'child-rct5-10-round2',
       toolCall: {
@@ -36,15 +86,7 @@ it('offers conversation approval for the reported OpenCode web fetch', async () 
         { optionId: 'deny', name: 'Deny', kind: 'reject_once' as const }
       ]
     }
-    const policy = {
-      profile: 'auto' as const,
-      autoReviewStrategy: 'conservative' as const,
-      frameworkId: 'opencode' as const,
-      projectId: 'project-web',
-      permissionGrantSessionId: 'parent-session',
-      cwd: root
-    }
-    const first = broker.requestPermission(request, policy)
+    const first = run(broker, request)
     await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce())
     expect(
       broker
@@ -54,10 +96,13 @@ it('offers conversation approval for the reported OpenCode web fetch', async () 
     ).toEqual(['once', 'session'])
     const pending = broker.getPendingRequests()[0]
     expect(pending.providerToolName).toBe('WebFetch')
-    await broker.respond({
-      requestId: pending.requestId,
-      optionId: pending.options.find(({ scope }) => scope === 'session')!.optionId
-    })
+    await broker.respondToPermission(
+      {
+        requestId: pending.requestId,
+        optionId: pending.options.find(({ scope }) => scope === 'session')!.optionId
+      },
+      HUMAN_PERMISSION_ACTION_ORIGIN
+    )
     await expect(first).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'once' } })
     const [grant] = await registry.list()
     expect(grant).toMatchObject({
@@ -70,7 +115,7 @@ it('offers conversation approval for the reported OpenCode web fetch', async () 
     // recreation. Later pages on other websites are included; this is not a hostname grant.
     const restoredRegistry = await createPermissionGrantRegistry({ getClient: async () => client })
     const siblingEmit = vi.fn()
-    const sibling = new AcpPermissionBroker(siblingEmit, undefined, restoredRegistry)
+    const sibling = createContext(siblingEmit, restoredRegistry)
     const next = {
       ...request,
       sessionId: 'another-child',
@@ -82,44 +127,52 @@ it('offers conversation approval for the reported OpenCode web fetch', async () 
       }
     }
     try {
-      await expect(sibling.requestPermission(next, policy)).resolves.toEqual({
+      await expect(run(sibling, next)).resolves.toEqual({
         outcome: { outcome: 'selected', optionId: 'once' }
       })
       expect(siblingEmit).not.toHaveBeenCalled()
-      const isolated = sibling.requestPermission(next, {
-        ...policy,
-        permissionGrantSessionId: 'other-conversation'
-      })
+      const foreign = createContext(siblingEmit, restoredRegistry, 'other-conversation')
+      const isolated = run(foreign, next)
       await vi.waitFor(() => expect(siblingEmit).toHaveBeenCalledOnce())
-      await sibling.respond({
-        requestId: sibling.getPendingRequests()[0].requestId,
-        cancelled: true
-      })
+      await foreign.respondToPermission(
+        {
+          requestId: foreign.getPendingRequests()[0].requestId,
+          cancelled: true
+        },
+        HUMAN_PERMISSION_ACTION_ORIGIN
+      )
+      foreign.dispose()
       await expect(isolated).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
       await restoredRegistry.revoke({ grants: [{ id: grant.id, revision: grant.revision }] })
-      const afterRevoke = sibling.requestPermission(next, policy)
+      const afterRevoke = run(sibling, next)
       await vi.waitFor(() => expect(siblingEmit).toHaveBeenCalledTimes(2))
-      await sibling.respond({
-        requestId: sibling.getPendingRequests()[0].requestId,
-        optionId: 'once'
-      })
+      await sibling.respondToPermission(
+        {
+          requestId: sibling.getPendingRequests()[0].requestId,
+          optionId: 'once'
+        },
+        HUMAN_PERMISSION_ACTION_ORIGIN
+      )
       await expect(afterRevoke).resolves.toEqual({
         outcome: { outcome: 'selected', optionId: 'once' }
       })
-      const afterOnce = sibling.requestPermission(next, policy)
+      const afterOnce = run(sibling, next)
       await vi.waitFor(() => expect(siblingEmit).toHaveBeenCalledTimes(3))
-      await sibling.respond({
-        requestId: sibling.getPendingRequests()[0].requestId,
-        optionId: 'deny'
-      })
+      await sibling.respondToPermission(
+        {
+          requestId: sibling.getPendingRequests()[0].requestId,
+          optionId: 'deny'
+        },
+        HUMAN_PERMISSION_ACTION_ORIGIN
+      )
       await expect(afterOnce).resolves.toEqual({
         outcome: { outcome: 'selected', optionId: 'deny' }
       })
     } finally {
-      sibling.abandonAllPending()
+      sibling.dispose()
     }
   } finally {
-    broker?.abandonAllPending()
+    broker?.dispose()
     await client.$disconnect()
     await rm(root, { recursive: true, force: true })
   }

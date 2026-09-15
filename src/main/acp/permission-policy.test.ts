@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   isNativeWebFetchPermission,
+  withTrustedNativeToolIdentity,
   canConservativelyAutoApprove,
   isMcpToolName,
   isWithinWorkspace,
@@ -39,9 +40,11 @@ const createPermissionRequest = (
 
 describe('permission policy', () => {
   it('recognizes only the supported native web-reading contracts', () => {
-    const request = createPermissionRequest('fetch', undefined, {
+    const raw = createPermissionRequest('fetch', undefined, {
       rawInput: { url: 'https://example.org/' }
     })
+    expect(isNativeWebFetchPermission(raw, { profile: 'ask', frameworkId: 'opencode' })).toBe(false)
+    const request = withTrustedNativeToolIdentity(raw, 'opencode/webfetch')
     expect(isNativeWebFetchPermission(request, { profile: 'auto', frameworkId: 'opencode' })).toBe(
       true
     )
@@ -49,9 +52,12 @@ describe('permission policy', () => {
       ...request,
       toolCall: { ...request.toolCall, _meta: { claudeCode: { toolName: 'WebFetch' } } }
     }
-    expect(isNativeWebFetchPermission(claude, { profile: 'ask', frameworkId: 'claude-code' })).toBe(
-      true
-    )
+    expect(
+      isNativeWebFetchPermission(withTrustedNativeToolIdentity(claude, 'claude-code/webfetch'), {
+        profile: 'ask',
+        frameworkId: 'claude-code'
+      })
+    ).toBe(true)
     // Both Codex execution paths share this framework id; generic fetch is not their native identity.
     for (const frameworkId of ['codex', 'claude-code', 'codebuddy'] as const) {
       expect(isNativeWebFetchPermission(request, { profile: 'auto', frameworkId })).toBe(false)
