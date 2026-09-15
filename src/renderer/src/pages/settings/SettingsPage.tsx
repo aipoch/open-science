@@ -1539,6 +1539,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 )}
               >
                 <SettingsPanelLoadingBoundary
+                  resetKey={
+                    activePanel === 'model' ? `${historyIndex}:${modelView.kind}` : undefined
+                  }
                   panelKey={
                     activePanel === 'model' &&
                     (modelView.kind === 'list' || modelView.kind === 'local-models')
