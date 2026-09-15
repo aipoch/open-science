@@ -1,16 +1,14 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 
-const loadedRendererResources = async (page: import('@playwright/test').Page): Promise<string[]> =>
-  page.evaluate(() =>
-    performance
-      .getEntriesByType('resource')
-      .map((entry) => new URL(entry.name).pathname.split('/').at(-1) ?? entry.name)
-  )
+const resourceName = (url: string): string => new URL(url).pathname.split('/').at(-1) ?? url
 
 test('loads Markdown presentation chunks only when their surfaces first open', async ({ app }) => {
   const page = await app.completeOnboarding()
   await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+  const requestedResources = new Set<string>()
+  page.on('request', (request) => requestedResources.add(resourceName(request.url())))
+  await page.reload({ waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('button', { name: 'Search', exact: true })).toBeVisible()
   await page.evaluate(
     () =>
@@ -19,9 +17,8 @@ test('loads Markdown presentation chunks only when their surfaces first open', a
       )
   )
 
-  const startupResources = await loadedRendererResources(page)
   expect(
-    startupResources.filter((resource) =>
+    [...requestedResources].filter((resource) =>
       /^(?:AgentMarkdown|GlobalSearchDialog|UpdateDialog)-.*\.js$/u.test(resource)
     )
   ).toEqual([])
@@ -32,7 +29,7 @@ test('loads Markdown presentation chunks only when their surfaces first open', a
   await expect(searchDialog).toBeVisible()
   await expect(searchInput).toBeFocused()
   await expect
-    .poll(() => loadedRendererResources(page))
+    .poll(() => [...requestedResources])
     .toEqual(
       expect.arrayContaining([
         expect.stringMatching(/^AgentMarkdown-.*\.js$/),
@@ -57,6 +54,6 @@ test('loads Markdown presentation chunks only when their surfaces first open', a
   await expect(updateDialog).toBeVisible()
   await expect(updateDialog).toContainText('Deferred release notes')
   await expect
-    .poll(() => loadedRendererResources(page))
+    .poll(() => [...requestedResources])
     .toEqual(expect.arrayContaining([expect.stringMatching(/^UpdateDialog-.*\.js$/)]))
 })
