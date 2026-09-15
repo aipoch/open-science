@@ -1709,8 +1709,9 @@ class NotebookExecutionOwner {
               }
             }
           })
-          // Preserve the durable failed Run, then surface failed cleanup to the owning Task turn.
-          if (!ownedTreeReaped) throw new NotebookExecutionStopError()
+          // Cancellation must report an unconfirmed stop to its owning turn. Ordinary launch/exit
+          // cleanup failures retain the existing result and recovery instructions for their caller.
+          if (!ownedTreeReaped && lifecycleSignal.aborted) throw new NotebookExecutionStopError()
           const result = terminalized.result
           if (!result) {
             return publicShellResult(terminalized.run)

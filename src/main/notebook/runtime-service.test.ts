@@ -5262,6 +5262,36 @@ describe('notebook runtime service', () => {
       expect(execute).not.toHaveBeenCalled()
     })
 
+    it('preserves Shell launch cleanup recovery when cancellation was not requested', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: {
+          execute: async () => ({
+            stdout: '',
+            stderr: 'Shell cleanup could not be confirmed.',
+            exitCode: null,
+            ownedTreeReaped: false,
+            errorCode: 'shell-cleanup-incomplete',
+            recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
+          })
+        }
+      })
+      const request = { sessionId: 'session-1', workspaceCwd: root, command: 'short-lived' }
+      try {
+        await expect(service.executeShell(request)).resolves.toMatchObject({
+          errorCode: 'shell-cleanup-incomplete',
+          recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
+        })
+        expect((await service.state(request)).runs[0].status).toBe('failed')
+      } finally {
+        await service.dispose()
+      }
+    })
+
     it('rejects failed Shell process teardown after cancellation without persisting cancelled', async () => {
       const root = await createStorageRoot()
       const repository = new NotebookRunRepository(root)
