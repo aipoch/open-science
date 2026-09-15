@@ -1027,7 +1027,7 @@ export const PdfFiguresView = ({
           description={
             cleanupBlocked
               ? t(
-                  'A previous PDF task could not finish cleanup. Analyze again to retry cleanup. If this persists, restart Open Science and check for updates.'
+                  'A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.'
                 )
               : t(
                   'PDF analysis could not continue. Check the local model installation and try again.'

@@ -6296,10 +6296,10 @@
     "Attempted {{completed}} / {{total}} pages": "Обработано попыток: {{completed}} / {{total}} страниц",
     "Extracted {{completed}} / {{total}} pages": "Извлечено: {{completed}} / {{total}} страниц",
     "PDF analysis is blocked": "Анализ PDF заблокирован",
-    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup. If this persists, restart Open Science and check for updates.": "Предыдущая задача PDF не смогла завершить очистку. Запустите анализ снова, чтобы повторить очистку. Если проблема сохраняется, перезапустите Open Science и проверьте наличие обновлений.",
     "PDF analysis could not continue. Check the local model installation and try again.": "Не удалось продолжить анализ PDF. Проверьте установку локальной модели и повторите попытку.",
     "Extraction progress": "Ход извлечения",
     "Remaining pages": "Оставшиеся страницы",
-    "Pages not yet attempted: {{remaining}}": "Страницы без попытки обработки: {{remaining}}"
+    "Pages not yet attempted: {{remaining}}": "Страницы без попытки обработки: {{remaining}}",
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "Предыдущая задача PDF не смогла завершить очистку. Запустите анализ снова, чтобы безопасно повторить очистку. Если очистка снова не удастся, сообщите о проблеме."
   }
 }

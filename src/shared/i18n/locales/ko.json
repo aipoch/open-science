@@ -5824,10 +5824,10 @@
     "Attempted {{completed}} / {{total}} pages": "시도한 페이지: {{completed}} / {{total}}",
     "Extracted {{completed}} / {{total}} pages": "추출한 페이지: {{completed}} / {{total}}",
     "PDF analysis is blocked": "PDF 분석이 차단되었습니다",
-    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup. If this persists, restart Open Science and check for updates.": "이전 PDF 작업의 정리를 완료하지 못했습니다. 다시 분석하여 정리를 재시도하세요. 문제가 지속되면 Open Science를 다시 시작하고 업데이트를 확인하세요.",
     "PDF analysis could not continue. Check the local model installation and try again.": "PDF 분석을 계속할 수 없습니다. 로컬 모델 설치 상태를 확인하고 다시 시도하세요.",
     "Extraction progress": "추출 진행 상황",
     "Remaining pages": "남은 페이지",
-    "Pages not yet attempted: {{remaining}}": "아직 시도하지 않은 페이지: {{remaining}}"
+    "Pages not yet attempted: {{remaining}}": "아직 시도하지 않은 페이지: {{remaining}}",
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "이전 PDF 작업의 정리를 완료하지 못했습니다. 다시 분석하여 안전하게 정리를 재시도하세요. 정리가 계속 실패하면 문제를 보고하세요."
   }
 }

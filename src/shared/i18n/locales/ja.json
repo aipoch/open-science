@@ -5826,10 +5826,10 @@
     "Attempted {{completed}} / {{total}} pages": "試行済み {{completed}} / {{total}} ページ",
     "Extracted {{completed}} / {{total}} pages": "抽出済み {{completed}} / {{total}} ページ",
     "PDF analysis is blocked": "PDF の解析がブロックされています",
-    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup. If this persists, restart Open Science and check for updates.": "前の PDF タスクのクリーンアップを完了できませんでした。再解析するとクリーンアップを再試行します。問題が解決しない場合は、Open Science を再起動し、更新を確認してください。",
     "PDF analysis could not continue. Check the local model installation and try again.": "PDF の解析を続行できませんでした。ローカルモデルのインストール状況を確認して、再試行してください。",
     "Extraction progress": "抽出の進行状況",
     "Remaining pages": "残りのページ",
-    "Pages not yet attempted: {{remaining}}": "未試行のページ数：{{remaining}}"
+    "Pages not yet attempted: {{remaining}}": "未試行のページ数：{{remaining}}",
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "前の PDF タスクのクリーンアップを完了できませんでした。再解析するとクリーンアップを安全に再試行します。それでも失敗する場合は、問題を報告してください。"
   }
 }

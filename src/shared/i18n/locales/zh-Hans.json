@@ -5826,10 +5826,10 @@
     "Attempted {{completed}} / {{total}} pages": "已尝试 {{completed}} / {{total}} 页",
     "Extracted {{completed}} / {{total}} pages": "已提取 {{completed}} / {{total}} 页",
     "PDF analysis is blocked": "PDF 分析已被阻止",
-    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup. If this persists, restart Open Science and check for updates.": "之前的 PDF 任务未能完成清理。请再次分析以重试清理。如果问题持续存在，请重启 Open Science 并检查更新。",
     "PDF analysis could not continue. Check the local model installation and try again.": "PDF 分析无法继续。请检查本地模型的安装情况，然后重试。",
     "Extraction progress": "提取进度",
     "Remaining pages": "剩余页面",
-    "Pages not yet attempted: {{remaining}}": "尚未尝试的页数：{{remaining}}"
+    "Pages not yet attempted: {{remaining}}": "尚未尝试的页数：{{remaining}}",
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "之前的 PDF 任务未能完成清理。请点击“重新解析”以安全地重试清理。如果清理仍然失败，请报告此问题。"
   }
 }

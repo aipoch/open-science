@@ -5987,10 +5987,10 @@
     "Attempted {{completed}} / {{total}} pages": "Versucht: {{completed}} / {{total}} Seiten",
     "Extracted {{completed}} / {{total}} pages": "Extrahiert: {{completed}} / {{total}} Seiten",
     "PDF analysis is blocked": "PDF-Analyse ist blockiert",
-    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup. If this persists, restart Open Science and check for updates.": "Ein vorheriger PDF-Auftrag konnte die Bereinigung nicht abschließen. Analysieren Sie erneut, um die Bereinigung zu wiederholen. Falls das Problem weiterhin besteht, starten Sie Open Science neu und suchen Sie nach Updates.",
     "PDF analysis could not continue. Check the local model installation and try again.": "Die PDF-Analyse konnte nicht fortgesetzt werden. Prüfen Sie die Installation des lokalen Modells und versuchen Sie es erneut.",
     "Extraction progress": "Extraktionsfortschritt",
     "Remaining pages": "Verbleibende Seiten",
-    "Pages not yet attempted: {{remaining}}": "Noch nicht versuchte Seiten: {{remaining}}"
+    "Pages not yet attempted: {{remaining}}": "Noch nicht versuchte Seiten: {{remaining}}",
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.": "Ein vorheriger PDF-Auftrag konnte die Bereinigung nicht abschließen. Analysieren Sie erneut, um die Bereinigung sicher zu wiederholen. Falls die Bereinigung weiterhin fehlschlägt, melden Sie das Problem."
   }
 }
